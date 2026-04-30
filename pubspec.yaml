@@ -1,0 +1,33 @@
+name: store_manager_pro
+description: Production-ready offline-first store management app.
+publish_to: 'none'
+version: 1.0.6+16
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  intl: ^0.20.2
+  shared_preferences: ^2.5.3
+  hive_ce: ^2.19.3
+  hive_ce_flutter: ^2.3.4
+  pdf: ^3.11.1
+  printing: ^5.14.2
+  file_picker: ^8.1.2
+  crypto: ^3.0.6
+
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/translations/

@@ -1,0 +1,73 @@
+class CatalogItem {
+  CatalogItem({
+    required this.id,
+    required this.nameEn,
+    required this.nameAr,
+    this.code = '',
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    this.deletedAt,
+    this.deviceId = '',
+    this.syncStatus = 'pending',
+  })  : createdAt = createdAt ?? updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0),
+        updatedAt = updatedAt ?? createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+
+  final String id;
+  final String nameEn;
+  final String nameAr;
+  final String code;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final DateTime? deletedAt;
+  final String deviceId;
+  final String syncStatus;
+
+  bool get isDeleted => deletedAt != null;
+
+  String displayName(String languageCode) {
+    final primary = languageCode == 'ar' ? nameAr : nameEn;
+    final fallback = languageCode == 'ar' ? nameEn : nameAr;
+    return primary.trim().isNotEmpty ? primary.trim() : fallback.trim();
+  }
+
+  CatalogItem copyWith({String? id, String? nameEn, String? nameAr, String? code, DateTime? createdAt, DateTime? updatedAt, DateTime? deletedAt, bool clearDeletedAt = false, String? deviceId, String? syncStatus}) {
+    return CatalogItem(
+      id: id ?? this.id,
+      nameEn: nameEn ?? this.nameEn,
+      nameAr: nameAr ?? this.nameAr,
+      code: code ?? this.code,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      deletedAt: clearDeletedAt ? null : (deletedAt ?? this.deletedAt),
+      deviceId: deviceId ?? this.deviceId,
+      syncStatus: syncStatus ?? this.syncStatus,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'nameEn': nameEn,
+        'nameAr': nameAr,
+        'code': code,
+        'createdAt': createdAt.toIso8601String(),
+        'updatedAt': updatedAt.toIso8601String(),
+        'deletedAt': deletedAt?.toIso8601String(),
+        'deviceId': deviceId,
+        'syncStatus': syncStatus,
+      };
+
+  factory CatalogItem.fromJson(Map<String, dynamic> json) {
+    final updated = DateTime.tryParse(json['updatedAt'] as String? ?? '') ?? DateTime.now();
+    return CatalogItem(
+      id: json['id'] as String,
+      nameEn: json['nameEn'] as String? ?? json['name'] as String? ?? '',
+      nameAr: json['nameAr'] as String? ?? '',
+      code: json['code'] as String? ?? '',
+      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ?? updated,
+      updatedAt: updated,
+      deletedAt: DateTime.tryParse(json['deletedAt'] as String? ?? ''),
+      deviceId: json['deviceId'] as String? ?? '',
+      syncStatus: json['syncStatus'] as String? ?? 'synced',
+    );
+  }
+}

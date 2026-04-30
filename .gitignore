@@ -1,0 +1,92 @@
+# =========================
+# Flutter / Dart
+# =========================
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+
+# Keep pubspec.lock for app projects
+
+# =========================
+# Android
+# =========================
+android/.gradle/
+android/app/build/
+android/local.properties
+
+# Signing
+*.jks
+*.keystore
+key.properties
+android/key.properties
+
+# =========================
+# iOS
+# =========================
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.framework
+ios/Flutter/App.framework
+ios/Flutter/.last_build_id
+
+# =========================
+# macOS / Windows / Linux
+# =========================
+macos/Flutter/ephemeral/
+windows/flutter/ephemeral/
+windows/runner/Debug/
+windows/runner/Release/
+linux/flutter/ephemeral/
+
+# =========================
+# IDEs
+# =========================
+.idea/
+*.iml
+.vscode/
+
+# =========================
+# OS files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Logs
+# =========================
+*.log
+
+# =========================
+# Data & Security
+# =========================
+*.db
+*.sqlite
+*.hive
+backup/
+*.backup
+
+# Ignore all JSON by default
+*.json
+
+# Allow translation files
+!assets/translations/*.json
+
+# =========================
+# Secrets
+# =========================
+.env
+*.key
+*.pem
+
+# =========================
+# Misc
+# =========================
+*.class
+*.pyc
+*.swp
+.history
+.svn/
