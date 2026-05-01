@@ -512,6 +512,13 @@ class AppStore extends ChangeNotifier {
     }
     _securityPin = _hashPinV2(cleaned);
     await LocalDatabaseService.setString(_pinKey, _securityPin!);
+    _recordSyncChange(
+      entityType: 'security_pin',
+      entityId: 'store',
+      operation: 'update',
+      payload: {'pinHash': _securityPin},
+    );
+    await _saveAll();
     notifyListeners();
   }
 
@@ -619,7 +626,14 @@ class AppStore extends ChangeNotifier {
       if (_roles[index].isSystem) throw StateError('System roles cannot be edited.');
       _roles[index] = saved;
     }
+    _recordSyncChange(
+      entityType: 'role',
+      entityId: saved.id,
+      operation: index == -1 ? 'create' : 'update',
+      payload: saved.toJson(),
+    );
     await _saveRolesAndUsers();
+    await _saveAll();
     notifyListeners();
   }
 
@@ -627,8 +641,16 @@ class AppStore extends ChangeNotifier {
     requirePermission(AppPermission.rolesManage);
     if (id == 'admin') throw StateError('The Admin role cannot be deleted.');
     if (_users.any((user) => user.roleId == id)) throw StateError('Move users to another role before deleting this role.');
+    final removed = _roles.firstWhere((role) => role.id == id && !role.isSystem);
     _roles.removeWhere((role) => role.id == id && !role.isSystem);
+    _recordSyncChange(
+      entityType: 'role',
+      entityId: id,
+      operation: 'delete',
+      payload: removed.toJson(),
+    );
     await _saveRolesAndUsers();
+    await _saveAll();
     notifyListeners();
   }
 
@@ -665,7 +687,14 @@ class AppStore extends ChangeNotifier {
       _users[index] = saved;
       if (_activeUser?.id == saved.id) _activeUser = saved;
     }
+    _recordSyncChange(
+      entityType: 'user',
+      entityId: saved.id,
+      operation: isCreate ? 'create' : 'update',
+      payload: saved.toJson(),
+    );
     await _saveRolesAndUsers();
+    await _saveAll();
     notifyListeners();
   }
 
@@ -676,13 +705,27 @@ class AppStore extends ChangeNotifier {
     if (user.roleId == 'admin' && adminCount <= 1) throw StateError('Create another active admin before deleting this user.');
     if (user.isSystem) throw StateError('The built-in admin user cannot be deleted.');
     _users.removeWhere((item) => item.id == id);
+    _recordSyncChange(
+      entityType: 'user',
+      entityId: id,
+      operation: 'delete',
+      payload: user.toJson(),
+    );
     await _saveRolesAndUsers();
+    await _saveAll();
     notifyListeners();
   }
 
   Future<void> clearSecurityPin() async {
     _securityPin = null;
     await LocalDatabaseService.setString(_pinKey, '');
+    _recordSyncChange(
+      entityType: 'security_pin',
+      entityId: 'store',
+      operation: 'delete',
+      payload: <String, dynamic>{},
+    );
+    await _saveAll();
     notifyListeners();
   }
 
@@ -882,6 +925,12 @@ class AppStore extends ChangeNotifier {
   Future<void> updateStoreProfile(StoreProfile profile) async {
     requirePermission(AppPermission.settingsManage);
     _storeProfile = profile;
+    _recordSyncChange(
+      entityType: 'store_profile',
+      entityId: 'store',
+      operation: 'update',
+      payload: profile.toJson(),
+    );
     await _saveAll();
     notifyListeners();
   }
@@ -1416,9 +1465,7 @@ class AppStore extends ChangeNotifier {
     _expenses
       ..clear()
       ..addAll(expenses);
-    _syncChanges
-      ..clear()
-      ..addAll(syncChanges);
+    _syncChanges.clear();
     _storeProfile = profile;
     if (roles.isNotEmpty) {
       _roles
@@ -1434,6 +1481,12 @@ class AppStore extends ChangeNotifier {
     final importedCounter = (decoded['invoiceCounter'] as num?)?.toInt() ?? 0;
     _invoiceCounter = importedCounter > 0 ? importedCounter : _loadInvoiceCounter();
     _normalizeCustomers();
+    _recordSyncChange(
+      entityType: 'system',
+      entityId: 'store',
+      operation: 'restore_snapshot',
+      payload: _backupPayload(changes: const <SyncChange>[]),
+    );
 
     await _saveAll();
     notifyListeners();
@@ -1517,6 +1570,11 @@ class AppStore extends ChangeNotifier {
     _mergeByUpdatedAt<CatalogItem>(_brands, brands, (item) => item.id);
     _mergeByUpdatedAt<CatalogItem>(_units, units, (item) => item.id);
     _mergeByUpdatedAt<Expense>(_expenses, expenses, (item) => item.id);
+    if (decoded['storeProfile'] != null) {
+      _storeProfile = StoreProfile.fromJson(Map<String, dynamic>.from(decoded['storeProfile'] as Map));
+    }
+    _mergeByUpdatedAt<UserRole>(_roles, roles, (item) => item.id);
+    _mergeByUpdatedAt<AppUser>(_users, users, (item) => item.id);
     _mergeSyncChanges(syncChanges);
 
     final importedCounter = (decoded['invoiceCounter'] as num?)?.toInt() ?? 0;
@@ -1531,6 +1589,7 @@ class AppStore extends ChangeNotifier {
 
     _ensureCatalogDefaults();
     _normalizeCustomers();
+    await _saveRolesAndUsers();
     await _saveAll();
     notifyListeners();
   }
@@ -1613,7 +1672,7 @@ class AppStore extends ChangeNotifier {
     var changed = false;
     for (final change in sorted) {
       if (existingIds.contains(change.id)) continue;
-      _applySyncChangePayload(change);
+      await _applySyncChangePayload(change);
       _syncChanges.add(markAppliedAsSynced ? change.copyWith(isSynced: true, syncedAt: DateTime.now()) : change);
       existingIds.add(change.id);
       changed = true;
@@ -1621,6 +1680,8 @@ class AppStore extends ChangeNotifier {
     if (changed) {
       _ensureCatalogDefaults();
       _normalizeCustomers();
+      await _saveRolesAndUsers();
+      await LocalDatabaseService.setString(_pinKey, _securityPin ?? '');
       await _saveAll();
       notifyListeners();
     }
@@ -1635,7 +1696,7 @@ class AppStore extends ChangeNotifier {
     }
   }
 
-  void _applySyncChangePayload(SyncChange change) {
+  Future<void> _applySyncChangePayload(SyncChange change) async {
     final p = change.payload;
     switch (change.entityType) {
       case 'system':
@@ -1645,6 +1706,31 @@ class AppStore extends ChangeNotifier {
             keepStoreProfile: p['keepStoreProfile'] as bool? ?? true,
             keepSecurityPin: p['keepSecurityPin'] as bool? ?? true,
           );
+        } else if (change.operation == 'restore_snapshot') {
+          await _replaceFromBackupMap(p);
+        }
+        break;
+      case 'store_profile':
+        _storeProfile = StoreProfile.fromJson(p);
+        break;
+      case 'security_pin':
+        _securityPin = change.operation == 'delete' ? null : p['pinHash'] as String?;
+        break;
+      case 'role':
+        if (change.operation == 'delete') {
+          _roles.removeWhere((item) => item.id == change.entityId && !item.isSystem);
+        } else {
+          _upsertByUpdatedAt<UserRole>(_roles, UserRole.fromJson(p), (item) => item.id);
+        }
+        break;
+      case 'user':
+        if (change.operation == 'delete') {
+          _users.removeWhere((item) => item.id == change.entityId && !item.isSystem);
+          if (_activeUser?.id == change.entityId) _activeUser = null;
+        } else {
+          final incoming = AppUser.fromJson(p);
+          _upsertByUpdatedAt<AppUser>(_users, incoming, (item) => item.id);
+          if (_activeUser?.id == incoming.id) _activeUser = incoming;
         }
         break;
       case 'product':
@@ -1669,7 +1755,10 @@ class AppStore extends ChangeNotifier {
         _upsertByUpdatedAt<CatalogItem>(_units, CatalogItem.fromJson(p), (item) => item.id);
         break;
       case 'sale':
-        _upsertByUpdatedAt<Sale>(_sales, Sale.fromJson(p), (item) => item.id);
+        final incomingSale = Sale.fromJson(p);
+        _upsertByUpdatedAt<Sale>(_sales, incomingSale, (item) => item.id);
+        final invoiceNumber = int.tryParse(incomingSale.invoiceNo.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
+        if (invoiceNumber > _invoiceCounter) _invoiceCounter = invoiceNumber;
         break;
       case 'stock_movement':
         final productId = p['productId'] as String? ?? '';
