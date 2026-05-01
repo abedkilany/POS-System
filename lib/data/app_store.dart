@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
@@ -18,6 +19,7 @@ import '../models/supplier.dart';
 import '../models/sync_change.dart';
 import '../models/user_role.dart';
 import '../models/app_user.dart';
+import '../models/app_identity.dart';
 
 class BackupSummary {
   const BackupSummary({
@@ -77,6 +79,7 @@ class AppStore extends ChangeNotifier {
   static const _rolesKey = 'roles_v1';
   static const _usersKey = 'users_v1';
   static const _activeUserKey = 'active_user_v1';
+  static const _appIdentityKey = 'app_identity_v1';
 
   final List<Product> _products = [];
   final List<Customer> _customers = [];
@@ -95,6 +98,7 @@ class AppStore extends ChangeNotifier {
   final List<UserRole> _roles = [];
   final List<AppUser> _users = [];
   AppUser? _activeUser;
+  AppIdentity? _appIdentity;
 
   Customer get walkInCustomer => Customer(
         id: walkInCustomerId,
@@ -133,6 +137,7 @@ class AppStore extends ChangeNotifier {
   List<UserRole> get roles => List.unmodifiable(_roles);
   List<AppUser> get users => List.unmodifiable(_users);
   AppUser? get activeUser => _activeUser;
+  AppIdentity get appIdentity => _appIdentity ?? AppIdentity.defaults(deviceId: _deviceId, platform: _detectPlatform());
   UserRole? get currentUserRole => _activeUser == null ? null : roleById(_activeUser!.roleId);
   bool get isAdmin => _activeUser?.roleId == 'admin' || currentUserRole?.isAdmin == true;
   bool get canSell => hasPermission(AppPermission.salesCreate);
@@ -212,6 +217,7 @@ class AppStore extends ChangeNotifier {
       ..addAll(_loadUsers());
     await _ensureDefaultAdminUser();
     _restoreActiveUser();
+    _appIdentity = _loadOrCreateAppIdentity();
     _normalizeCustomers();
     _ensureCatalogDefaults();
     await _runDataMigrationsIfNeeded();
@@ -380,7 +386,7 @@ class AppStore extends ChangeNotifier {
 
   Future<void> _runDataMigrationsIfNeeded() async {
     final current = int.tryParse(LocalDatabaseService.getString(_schemaVersionKey) ?? '') ?? 0;
-    if (current >= 9) return;
+    if (current >= 10) return;
 
     if (current < 7) {
       // Version 7 captures unit cost on every historical sale item when possible
@@ -418,7 +424,9 @@ class AppStore extends ChangeNotifier {
       _prepareExistingDataForSync();
     }
 
-    await LocalDatabaseService.setString(_schemaVersionKey, '9');
+    _appIdentity = _loadOrCreateAppIdentity();
+
+    await LocalDatabaseService.setString(_schemaVersionKey, '10');
     await LocalDatabaseService.setString(_invoiceCounterKey, _invoiceCounter.toString());
     await _saveAll();
   }
@@ -503,6 +511,56 @@ class AppStore extends ChangeNotifier {
       used.add(generated.toUpperCase());
       _products[index] = product.copyWith(code: generated);
     }
+  }
+
+
+  AppPlatformType _detectPlatform() {
+    if (kIsWeb) return AppPlatformType.web;
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.windows:
+        return AppPlatformType.windows;
+      case TargetPlatform.android:
+        return AppPlatformType.android;
+      default:
+        return AppPlatformType.unknown;
+    }
+  }
+
+  AppIdentity _loadOrCreateAppIdentity() {
+    final raw = LocalDatabaseService.getString(_appIdentityKey);
+    if (raw != null && raw.trim().isNotEmpty) {
+      try {
+        final parsed = AppIdentity.fromJson(Map<String, dynamic>.from(jsonDecode(raw) as Map));
+        final normalized = parsed.copyWith(
+          deviceId: parsed.deviceId.isEmpty ? _deviceId : parsed.deviceId,
+          platform: parsed.platform == AppPlatformType.unknown ? _detectPlatform() : parsed.platform,
+        );
+        unawaited(LocalDatabaseService.setString(_appIdentityKey, jsonEncode(normalized.toJson())));
+        return normalized;
+      } catch (_) {}
+    }
+    final created = AppIdentity.defaults(deviceId: _deviceId, platform: _detectPlatform());
+    unawaited(LocalDatabaseService.setString(_appIdentityKey, jsonEncode(created.toJson())));
+    return created;
+  }
+
+  Future<void> updateAppIdentity(AppIdentity identity) async {
+    requirePermission(AppPermission.settingsManage);
+    final normalized = identity.copyWith(
+      deviceId: _deviceId,
+      platform: _detectPlatform(),
+      updatedAt: DateTime.now(),
+    );
+    _appIdentity = normalized;
+    await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(normalized.toJson()));
+    _recordSyncChange(
+      entityType: 'app_identity',
+      entityId: _deviceId,
+      operation: 'update',
+      payload: normalized.toJson(),
+    );
+    await _saveAll();
+    notifyListeners();
   }
 
   Future<void> setSecurityPin(String pin) async {
@@ -985,6 +1043,8 @@ class AppStore extends ChangeNotifier {
       deviceId: _deviceId,
       createdAt: now,
       payload: payload,
+      storeId: appIdentity.storeId,
+      branchId: appIdentity.branchId,
     ));
   }
 
@@ -1339,6 +1399,7 @@ class AppStore extends ChangeNotifier {
         'syncChanges': (changes ?? _syncChanges).map((item) => item.toJson()).toList(),
         'roles': _roles.map((item) => item.toJson()).toList(),
         'users': _users.map((item) => item.toJson()).toList(),
+        'appIdentity': appIdentity.toJson(),
       };
 
   String exportBackupJson() {
@@ -1467,6 +1528,10 @@ class AppStore extends ChangeNotifier {
       ..addAll(expenses);
     _syncChanges.clear();
     _storeProfile = profile;
+    if (decoded['appIdentity'] is Map) {
+      _appIdentity = AppIdentity.fromJson(Map<String, dynamic>.from(decoded['appIdentity'] as Map));
+      await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(_appIdentity!.toJson()));
+    }
     if (roles.isNotEmpty) {
       _roles
         ..clear()
@@ -1573,6 +1638,10 @@ class AppStore extends ChangeNotifier {
     if (decoded['storeProfile'] != null) {
       _storeProfile = StoreProfile.fromJson(Map<String, dynamic>.from(decoded['storeProfile'] as Map));
     }
+    if (decoded['appIdentity'] is Map) {
+      _appIdentity = AppIdentity.fromJson(Map<String, dynamic>.from(decoded['appIdentity'] as Map));
+      await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(_appIdentity!.toJson()));
+    }
     _mergeByUpdatedAt<UserRole>(_roles, roles, (item) => item.id);
     _mergeByUpdatedAt<AppUser>(_users, users, (item) => item.id);
     _mergeSyncChanges(syncChanges);
@@ -1656,6 +1725,10 @@ class AppStore extends ChangeNotifier {
     _expenses..clear()..addAll(expenses);
     _syncChanges..clear()..addAll(syncChanges);
     _storeProfile = profile;
+    if (decoded['appIdentity'] is Map) {
+      _appIdentity = AppIdentity.fromJson(Map<String, dynamic>.from(decoded['appIdentity'] as Map));
+      await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(_appIdentity!.toJson()));
+    }
     if (roles.isNotEmpty) _roles..clear()..addAll(roles);
     if (users.isNotEmpty) _users..clear()..addAll(users);
     await _ensureDefaultAdminUser();
@@ -1712,6 +1785,12 @@ class AppStore extends ChangeNotifier {
         break;
       case 'store_profile':
         _storeProfile = StoreProfile.fromJson(p);
+        break;
+      case 'app_identity':
+        if (change.entityId == _deviceId) {
+          _appIdentity = AppIdentity.fromJson(p);
+          await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(_appIdentity!.toJson()));
+        }
         break;
       case 'security_pin':
         _securityPin = change.operation == 'delete' ? null : p['pinHash'] as String?;

@@ -7,6 +7,8 @@ class SyncChange {
     required this.deviceId,
     required this.createdAt,
     required this.payload,
+    this.storeId = '',
+    this.branchId = '',
     this.isSynced = false,
     this.syncedAt,
   });
@@ -18,6 +20,8 @@ class SyncChange {
   final String deviceId;
   final DateTime createdAt;
   final Map<String, dynamic> payload;
+  final String storeId;
+  final String branchId;
   final bool isSynced;
   final DateTime? syncedAt;
 
@@ -29,6 +33,8 @@ class SyncChange {
     String? deviceId,
     DateTime? createdAt,
     Map<String, dynamic>? payload,
+    String? storeId,
+    String? branchId,
     bool? isSynced,
     DateTime? syncedAt,
   }) {
@@ -40,6 +46,8 @@ class SyncChange {
       deviceId: deviceId ?? this.deviceId,
       createdAt: createdAt ?? this.createdAt,
       payload: payload ?? this.payload,
+      storeId: storeId ?? this.storeId,
+      branchId: branchId ?? this.branchId,
       isSynced: isSynced ?? this.isSynced,
       syncedAt: syncedAt ?? this.syncedAt,
     );
@@ -53,6 +61,8 @@ class SyncChange {
         'deviceId': deviceId,
         'createdAt': createdAt.toIso8601String(),
         'payload': payload,
+        'storeId': storeId,
+        'branchId': branchId,
         'isSynced': isSynced,
         'syncedAt': syncedAt?.toIso8601String(),
       };
@@ -65,6 +75,8 @@ class SyncChange {
         deviceId: json['deviceId'] as String? ?? '',
         createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ?? DateTime.now(),
         payload: Map<String, dynamic>.from(json['payload'] as Map? ?? const {}),
+        storeId: json['storeId'] as String? ?? '',
+        branchId: json['branchId'] as String? ?? '',
         isSynced: json['isSynced'] as bool? ?? false,
         syncedAt: DateTime.tryParse(json['syncedAt'] as String? ?? ''),
       );

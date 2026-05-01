@@ -10,6 +10,8 @@ import '../../core/services/lan_sync_service.dart';
 import '../../core/localization/app_localizations.dart';
 import '../../data/app_store.dart';
 import '../../models/store_profile.dart';
+import '../../models/app_identity.dart';
+import '../../models/user_role.dart';
 import 'users_permissions_page.dart';
 
 class SettingsPage extends StatelessWidget {
@@ -53,6 +55,8 @@ class SettingsPage extends StatelessWidget {
             ),
           ),
         ),
+        const SizedBox(height: 12),
+        _SystemIdentityCard(store: store),
         const SizedBox(height: 12),
         Card(
           child: ListTile(
@@ -933,5 +937,118 @@ class _Line extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+
+class _SystemIdentityCard extends StatelessWidget {
+  const _SystemIdentityCard({required this.store});
+
+  final AppStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    final identity = store.appIdentity;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.hub_outlined),
+              title: const Text('System foundation'),
+              subtitle: const Text('Store, branch, device role, app role, and sync mode.'),
+              trailing: FilledButton.icon(
+                onPressed: store.hasPermission(AppPermission.settingsManage) ? () => _editIdentity(context, store) : null,
+                icon: const Icon(Icons.tune_outlined),
+                label: const Text('Configure'),
+              ),
+            ),
+            const Divider(height: 24),
+            _Line(title: 'Store ID', value: identity.storeId),
+            _Line(title: 'Branch ID', value: identity.branchId),
+            _Line(title: 'Device ID', value: identity.deviceId),
+            _Line(title: 'Platform', value: identity.platform.name),
+            _Line(title: 'Device role', value: identity.deviceRole.name),
+            _Line(title: 'App role', value: identity.appRole.name),
+            _Line(title: 'Sync mode', value: identity.syncMode.name),
+            _Line(title: 'Cloud tenant', value: identity.cloudTenantId.isEmpty ? '—' : identity.cloudTenantId),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _editIdentity(BuildContext context, AppStore store) async {
+    final current = store.appIdentity;
+    final storeIdController = TextEditingController(text: current.storeId);
+    final branchIdController = TextEditingController(text: current.branchId);
+    final deviceNameController = TextEditingController(text: current.deviceName);
+    final cloudTenantController = TextEditingController(text: current.cloudTenantId);
+    var deviceRole = current.deviceRole;
+    var appRole = current.appRole;
+    var syncMode = current.syncMode;
+
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('Configure system foundation'),
+          content: SizedBox(
+            width: 520,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(controller: storeIdController, decoration: const InputDecoration(labelText: 'Store ID')),
+                  TextField(controller: branchIdController, decoration: const InputDecoration(labelText: 'Branch ID')),
+                  TextField(controller: deviceNameController, decoration: const InputDecoration(labelText: 'Device name')),
+                  TextField(controller: cloudTenantController, decoration: const InputDecoration(labelText: 'Cloud tenant ID / future Neon tenant')),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<DeviceRole>(
+                    value: deviceRole,
+                    decoration: const InputDecoration(labelText: 'Device role'),
+                    items: DeviceRole.values.map((item) => DropdownMenuItem(value: item, child: Text(item.name))).toList(),
+                    onChanged: (value) => setState(() => deviceRole = value ?? deviceRole),
+                  ),
+                  DropdownButtonFormField<AppRole>(
+                    value: appRole,
+                    decoration: const InputDecoration(labelText: 'App role'),
+                    items: AppRole.values.map((item) => DropdownMenuItem(value: item, child: Text(item.name))).toList(),
+                    onChanged: (value) => setState(() => appRole = value ?? appRole),
+                  ),
+                  DropdownButtonFormField<SyncMode>(
+                    value: syncMode,
+                    decoration: const InputDecoration(labelText: 'Sync mode'),
+                    items: SyncMode.values.map((item) => DropdownMenuItem(value: item, child: Text(item.name))).toList(),
+                    onChanged: (value) => setState(() => syncMode = value ?? syncMode),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Save')),
+          ],
+        ),
+      ),
+    );
+
+    if (saved != true || !context.mounted) return;
+    await store.updateAppIdentity(current.copyWith(
+      storeId: storeIdController.text.trim().isEmpty ? current.storeId : storeIdController.text.trim(),
+      branchId: branchIdController.text.trim().isEmpty ? 'main' : branchIdController.text.trim(),
+      deviceName: deviceNameController.text.trim(),
+      cloudTenantId: cloudTenantController.text.trim(),
+      deviceRole: deviceRole,
+      appRole: appRole,
+      syncMode: syncMode,
+    ));
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('System foundation updated.')));
+    }
   }
 }
