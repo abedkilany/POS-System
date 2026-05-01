@@ -1,78 +1,11 @@
 class Customer {
-  Customer({
-    required this.id,
-    required this.name,
-    required this.phone,
-    required this.address,
-    DateTime? createdAt,
-    DateTime? updatedAt,
-    this.deletedAt,
-    this.deviceId = '',
-    this.syncStatus = 'pending',
-  })  : createdAt = createdAt ?? updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0),
-        updatedAt = updatedAt ?? createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
-
-  final String id;
-  final String name;
-  final String phone;
-  final String address;
-  final DateTime createdAt;
-  final DateTime updatedAt;
+  Customer({required this.id, required this.name, required this.phone, required this.address, DateTime? createdAt, DateTime? updatedAt, this.deletedAt, this.deviceId = '', this.syncStatus = 'pending', this.storeId = '', this.branchId = '', this.version = 1, this.lastModifiedByDeviceId = ''}) : createdAt = createdAt ?? updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0), updatedAt = updatedAt ?? createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+  final String id, name, phone, address, deviceId, syncStatus, storeId, branchId, lastModifiedByDeviceId;
+  final int version;
+  final DateTime createdAt, updatedAt;
   final DateTime? deletedAt;
-  final String deviceId;
-  final String syncStatus;
-
   bool get isDeleted => deletedAt != null;
-
-  Customer copyWith({
-    String? id,
-    String? name,
-    String? phone,
-    String? address,
-    DateTime? createdAt,
-    DateTime? updatedAt,
-    DateTime? deletedAt,
-    bool clearDeletedAt = false,
-    String? deviceId,
-    String? syncStatus,
-  }) {
-    return Customer(
-      id: id ?? this.id,
-      name: name ?? this.name,
-      phone: phone ?? this.phone,
-      address: address ?? this.address,
-      createdAt: createdAt ?? this.createdAt,
-      updatedAt: updatedAt ?? this.updatedAt,
-      deletedAt: clearDeletedAt ? null : (deletedAt ?? this.deletedAt),
-      deviceId: deviceId ?? this.deviceId,
-      syncStatus: syncStatus ?? this.syncStatus,
-    );
-  }
-
-  Map<String, dynamic> toJson() => {
-        'id': id,
-        'name': name,
-        'phone': phone,
-        'address': address,
-        'createdAt': createdAt.toIso8601String(),
-        'updatedAt': updatedAt.toIso8601String(),
-        'deletedAt': deletedAt?.toIso8601String(),
-        'deviceId': deviceId,
-        'syncStatus': syncStatus,
-      };
-
-  factory Customer.fromJson(Map<String, dynamic> json) {
-    final updated = DateTime.tryParse(json['updatedAt'] as String? ?? '') ?? DateTime.now();
-    return Customer(
-      id: json['id'] as String,
-      name: json['name'] as String? ?? '',
-      phone: json['phone'] as String? ?? '',
-      address: json['address'] as String? ?? '',
-      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ?? updated,
-      updatedAt: updated,
-      deletedAt: DateTime.tryParse(json['deletedAt'] as String? ?? ''),
-      deviceId: json['deviceId'] as String? ?? '',
-      syncStatus: json['syncStatus'] as String? ?? 'synced',
-    );
-  }
+  Customer copyWith({String? id, String? name, String? phone, String? address, DateTime? createdAt, DateTime? updatedAt, DateTime? deletedAt, bool clearDeletedAt = false, String? deviceId, String? syncStatus, String? storeId, String? branchId, int? version, String? lastModifiedByDeviceId}) => Customer(id: id ?? this.id, name: name ?? this.name, phone: phone ?? this.phone, address: address ?? this.address, createdAt: createdAt ?? this.createdAt, updatedAt: updatedAt ?? this.updatedAt, deletedAt: clearDeletedAt ? null : (deletedAt ?? this.deletedAt), deviceId: deviceId ?? this.deviceId, syncStatus: syncStatus ?? this.syncStatus, storeId: storeId ?? this.storeId, branchId: branchId ?? this.branchId, version: version ?? this.version, lastModifiedByDeviceId: lastModifiedByDeviceId ?? this.lastModifiedByDeviceId);
+  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'phone': phone, 'address': address, 'createdAt': createdAt.toIso8601String(), 'updatedAt': updatedAt.toIso8601String(), 'deletedAt': deletedAt?.toIso8601String(), 'deviceId': deviceId, 'syncStatus': syncStatus, 'storeId': storeId, 'branchId': branchId, 'version': version, 'lastModifiedByDeviceId': lastModifiedByDeviceId};
+  factory Customer.fromJson(Map<String, dynamic> json) { final updated = DateTime.tryParse(json['updatedAt'] as String? ?? '') ?? DateTime.now(); return Customer(id: json['id'] as String, name: json['name'] as String? ?? '', phone: json['phone'] as String? ?? '', address: json['address'] as String? ?? '', createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ?? updated, updatedAt: updated, deletedAt: DateTime.tryParse(json['deletedAt'] as String? ?? ''), deviceId: json['deviceId'] as String? ?? '', syncStatus: json['syncStatus'] as String? ?? 'synced', storeId: json['storeId'] as String? ?? '', branchId: json['branchId'] as String? ?? '', version: (json['version'] as num? ?? 1).toInt(), lastModifiedByDeviceId: json['lastModifiedByDeviceId'] as String? ?? json['deviceId'] as String? ?? ''); }
 }

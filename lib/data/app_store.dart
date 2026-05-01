@@ -17,6 +17,7 @@ import '../models/sale_item.dart';
 import '../models/store_profile.dart';
 import '../models/supplier.dart';
 import '../models/sync_change.dart';
+import '../models/sync_queue_item.dart';
 import '../models/user_role.dart';
 import '../models/app_user.dart';
 import '../models/app_identity.dart';
@@ -71,6 +72,7 @@ class AppStore extends ChangeNotifier {
   static const _invoiceCounterKey = 'invoice_counter_v1';
   static const _deviceIdKey = 'sync_device_id_v1';
   static const _syncChangesKey = 'sync_changes_v1';
+  static const _syncQueueKey = 'sync_queue_v1';
   static const _schemaVersionKey = 'schema_version_v1';
   static const _pinKey = 'security_pin_v1';
   static const _pinHashPrefix = 'sha256:';
@@ -90,6 +92,7 @@ class AppStore extends ChangeNotifier {
   final List<CatalogItem> _units = [];
   final List<Expense> _expenses = [];
   final List<SyncChange> _syncChanges = [];
+  final List<SyncQueueItem> _syncQueue = [];
   StoreProfile _storeProfile = StoreProfile.defaults;
   int _invoiceCounter = 0;
   String? _securityPin;
@@ -119,9 +122,12 @@ class AppStore extends ChangeNotifier {
   List<CatalogItem> get units => List.unmodifiable(_units.where((item) => !item.isDeleted));
   List<Expense> get expenses => List.unmodifiable(_expenses.where((item) => !item.isDeleted).toList().reversed);
   List<SyncChange> get syncChanges => List.unmodifiable(_syncChanges);
+  List<SyncQueueItem> get syncQueue => List.unmodifiable(_syncQueue);
+  List<SyncQueueItem> get pendingSyncQueue => List.unmodifiable(_syncQueue.where((item) => item.isPending));
   List<SyncChange> get pendingSyncChanges => List.unmodifiable(_syncChanges.where((item) => !item.isSynced));
   String get deviceId => _deviceId;
   int get pendingSyncCount => pendingSyncChanges.length;
+  int get pendingSyncQueueCount => pendingSyncQueue.length;
   DateTime? get latestResetSyncAt {
     DateTime? latest;
     for (final change in _syncChanges) {
@@ -205,6 +211,9 @@ class AppStore extends ChangeNotifier {
     _syncChanges
       ..clear()
       ..addAll(_loadSyncChanges());
+    _syncQueue
+      ..clear()
+      ..addAll(_loadSyncQueue());
     _storeProfile = _loadStoreProfile();
     _invoiceCounter = _loadInvoiceCounter();
     _securityPin = LocalDatabaseService.getString(_pinKey);
@@ -365,6 +374,13 @@ class AppStore extends ChangeNotifier {
     return decoded.map((item) => SyncChange.fromJson(Map<String, dynamic>.from(item as Map))).toList();
   }
 
+  List<SyncQueueItem> _loadSyncQueue() {
+    final raw = LocalDatabaseService.getString(_syncQueueKey);
+    if (raw == null) return <SyncQueueItem>[];
+    final decoded = jsonDecode(raw) as List<dynamic>;
+    return decoded.map((item) => SyncQueueItem.fromJson(Map<String, dynamic>.from(item as Map))).toList();
+  }
+
   List<Expense> _loadExpenses() {
     final raw = LocalDatabaseService.getString(_expensesKey);
     if (raw == null) return <Expense>[];
@@ -386,7 +402,7 @@ class AppStore extends ChangeNotifier {
 
   Future<void> _runDataMigrationsIfNeeded() async {
     final current = int.tryParse(LocalDatabaseService.getString(_schemaVersionKey) ?? '') ?? 0;
-    if (current >= 10) return;
+    if (current >= 11) return;
 
     if (current < 7) {
       // Version 7 captures unit cost on every historical sale item when possible
@@ -424,9 +440,13 @@ class AppStore extends ChangeNotifier {
       _prepareExistingDataForSync();
     }
 
+    if (current < 11) {
+      _prepareExistingDataForSync();
+    }
+
     _appIdentity = _loadOrCreateAppIdentity();
 
-    await LocalDatabaseService.setString(_schemaVersionKey, '10');
+    await LocalDatabaseService.setString(_schemaVersionKey, '11');
     await LocalDatabaseService.setString(_invoiceCounterKey, _invoiceCounter.toString());
     await _saveAll();
   }
@@ -440,6 +460,10 @@ class AppStore extends ChangeNotifier {
         updatedAt: item.updatedAt.millisecondsSinceEpoch == 0 ? now : item.updatedAt,
         deviceId: item.deviceId.isEmpty ? _deviceId : item.deviceId,
         syncStatus: item.syncStatus.isEmpty ? 'synced' : item.syncStatus,
+        storeId: item.storeId.isEmpty ? appIdentity.storeId : item.storeId,
+        branchId: item.branchId.isEmpty ? appIdentity.branchId : item.branchId,
+        version: item.version <= 0 ? 1 : item.version,
+        lastModifiedByDeviceId: item.lastModifiedByDeviceId.isEmpty ? (item.deviceId.isEmpty ? _deviceId : item.deviceId) : item.lastModifiedByDeviceId,
       );
     }
     for (var index = 0; index < _customers.length; index++) {
@@ -449,6 +473,10 @@ class AppStore extends ChangeNotifier {
         updatedAt: item.updatedAt.millisecondsSinceEpoch == 0 ? now : item.updatedAt,
         deviceId: item.deviceId.isEmpty ? _deviceId : item.deviceId,
         syncStatus: item.syncStatus.isEmpty ? 'synced' : item.syncStatus,
+        storeId: item.storeId.isEmpty ? appIdentity.storeId : item.storeId,
+        branchId: item.branchId.isEmpty ? appIdentity.branchId : item.branchId,
+        version: item.version <= 0 ? 1 : item.version,
+        lastModifiedByDeviceId: item.lastModifiedByDeviceId.isEmpty ? (item.deviceId.isEmpty ? _deviceId : item.deviceId) : item.lastModifiedByDeviceId,
       );
     }
     for (var index = 0; index < _sales.length; index++) {
@@ -458,6 +486,10 @@ class AppStore extends ChangeNotifier {
         updatedAt: item.updatedAt.millisecondsSinceEpoch == 0 ? now : item.updatedAt,
         deviceId: item.deviceId.isEmpty ? _deviceId : item.deviceId,
         syncStatus: item.syncStatus.isEmpty ? 'synced' : item.syncStatus,
+        storeId: item.storeId.isEmpty ? appIdentity.storeId : item.storeId,
+        branchId: item.branchId.isEmpty ? appIdentity.branchId : item.branchId,
+        version: item.version <= 0 ? 1 : item.version,
+        lastModifiedByDeviceId: item.lastModifiedByDeviceId.isEmpty ? (item.deviceId.isEmpty ? _deviceId : item.deviceId) : item.lastModifiedByDeviceId,
       );
     }
     for (var index = 0; index < _suppliers.length; index++) {
@@ -467,6 +499,10 @@ class AppStore extends ChangeNotifier {
         updatedAt: item.updatedAt.millisecondsSinceEpoch == 0 ? now : item.updatedAt,
         deviceId: item.deviceId.isEmpty ? _deviceId : item.deviceId,
         syncStatus: item.syncStatus.isEmpty ? 'synced' : item.syncStatus,
+        storeId: item.storeId.isEmpty ? appIdentity.storeId : item.storeId,
+        branchId: item.branchId.isEmpty ? appIdentity.branchId : item.branchId,
+        version: item.version <= 0 ? 1 : item.version,
+        lastModifiedByDeviceId: item.lastModifiedByDeviceId.isEmpty ? (item.deviceId.isEmpty ? _deviceId : item.deviceId) : item.lastModifiedByDeviceId,
       );
     }
     for (var index = 0; index < _categories.length; index++) {
@@ -485,6 +521,10 @@ class AppStore extends ChangeNotifier {
         updatedAt: item.updatedAt.millisecondsSinceEpoch == 0 ? now : item.updatedAt,
         deviceId: item.deviceId.isEmpty ? _deviceId : item.deviceId,
         syncStatus: item.syncStatus.isEmpty ? 'synced' : item.syncStatus,
+        storeId: item.storeId.isEmpty ? appIdentity.storeId : item.storeId,
+        branchId: item.branchId.isEmpty ? appIdentity.branchId : item.branchId,
+        version: item.version <= 0 ? 1 : item.version,
+        lastModifiedByDeviceId: item.lastModifiedByDeviceId.isEmpty ? (item.deviceId.isEmpty ? _deviceId : item.deviceId) : item.lastModifiedByDeviceId,
       );
     }
   }
@@ -495,6 +535,10 @@ class AppStore extends ChangeNotifier {
       updatedAt: item.updatedAt.millisecondsSinceEpoch == 0 ? now : item.updatedAt,
       deviceId: item.deviceId.isEmpty ? _deviceId : item.deviceId,
       syncStatus: item.syncStatus.isEmpty ? 'synced' : item.syncStatus,
+        storeId: item.storeId.isEmpty ? appIdentity.storeId : item.storeId,
+        branchId: item.branchId.isEmpty ? appIdentity.branchId : item.branchId,
+        version: item.version <= 0 ? 1 : item.version,
+        lastModifiedByDeviceId: item.lastModifiedByDeviceId.isEmpty ? (item.deviceId.isEmpty ? _deviceId : item.deviceId) : item.lastModifiedByDeviceId,
     );
   }
 
@@ -915,10 +959,11 @@ class AppStore extends ChangeNotifier {
     await LocalDatabaseService.setString(_unitsKey, jsonEncode(_units.map((item) => item.toJson()).toList()));
     await LocalDatabaseService.setString(_expensesKey, jsonEncode(_expenses.map((item) => item.toJson()).toList()));
     await LocalDatabaseService.setString(_syncChangesKey, jsonEncode(_syncChanges.map((item) => item.toJson()).toList()));
+    await LocalDatabaseService.setString(_syncQueueKey, jsonEncode(_syncQueue.map((item) => item.toJson()).toList()));
     await LocalDatabaseService.setString(_deviceIdKey, _deviceId);
     await LocalDatabaseService.setString(_storeProfileKey, jsonEncode(_storeProfile.toJson()));
     await LocalDatabaseService.setString(_invoiceCounterKey, _invoiceCounter.toString());
-    await LocalDatabaseService.setString(_schemaVersionKey, '9');
+    await LocalDatabaseService.setString(_schemaVersionKey, '11');
   }
 
 
@@ -962,6 +1007,7 @@ class AppStore extends ChangeNotifier {
     // clients that come back online receive the reset marker without replaying
     // stale pre-reset operations.
     _syncChanges.clear();
+    _syncQueue.clear();
     _resetBusinessDataInMemory(keepStoreProfile: keepStoreProfile, keepSecurityPin: keepSecurityPin);
     if (!keepSecurityPin) {
       await LocalDatabaseService.setString(_pinKey, '');
@@ -1035,8 +1081,9 @@ class AppStore extends ChangeNotifier {
     required Map<String, dynamic> payload,
   }) {
     final now = DateTime.now();
+    final changeId = '${now.microsecondsSinceEpoch}-${_syncChanges.length}';
     _syncChanges.add(SyncChange(
-      id: '${now.microsecondsSinceEpoch}-${_syncChanges.length}',
+      id: changeId,
       entityType: entityType,
       entityId: entityId,
       operation: operation,
@@ -1046,27 +1093,52 @@ class AppStore extends ChangeNotifier {
       storeId: appIdentity.storeId,
       branchId: appIdentity.branchId,
     ));
+    _enqueueSyncChange(changeId, now);
   }
 
-  Product _markProductForSync(Product product, DateTime now, {bool isCreate = false}) {
-    return product.copyWith(
-      createdAt: isCreate ? now : product.createdAt,
+  void _enqueueSyncChange(String changeId, DateTime now) {
+    final target = appIdentity.isCloudEnabled && appIdentity.isHost ? 'cloud' : (appIdentity.isClient ? 'host' : 'local');
+    if (target == 'local') return;
+    _syncQueue.add(SyncQueueItem(
+      id: '$changeId-$target',
+      changeId: changeId,
+      target: target,
+      status: 'pending',
+      attempts: 0,
+      createdAt: now,
       updatedAt: now,
-      deviceId: _deviceId,
-      syncStatus: 'pending',
-      clearDeletedAt: true,
-    );
+    ));
   }
 
-  CatalogItem _markCatalogItemForSync(CatalogItem item, DateTime now, {bool isCreate = false}) {
-    return item.copyWith(
-      createdAt: isCreate ? now : item.createdAt,
-      updatedAt: now,
-      deviceId: _deviceId,
-      syncStatus: 'pending',
-      clearDeletedAt: true,
-    );
+  T _withSyncMeta<T>(T item, DateTime now, {bool isCreate = false, bool clearDeletedAt = true}) {
+    final nextVersion = _readVersion(item) + (isCreate ? 0 : 1);
+    final storeId = appIdentity.storeId;
+    final branchId = appIdentity.branchId;
+    if (item is Product) {
+      return item.copyWith(createdAt: isCreate ? now : item.createdAt, updatedAt: now, deviceId: _deviceId, syncStatus: 'pending', storeId: storeId, branchId: branchId, version: nextVersion, lastModifiedByDeviceId: _deviceId, clearDeletedAt: clearDeletedAt) as T;
+    }
+    if (item is Customer) {
+      return item.copyWith(createdAt: isCreate ? now : item.createdAt, updatedAt: now, deviceId: _deviceId, syncStatus: 'pending', storeId: storeId, branchId: branchId, version: nextVersion, lastModifiedByDeviceId: _deviceId, clearDeletedAt: clearDeletedAt) as T;
+    }
+    if (item is Supplier) {
+      return item.copyWith(createdAt: isCreate ? now : item.createdAt, updatedAt: now, deviceId: _deviceId, syncStatus: 'pending', storeId: storeId, branchId: branchId, version: nextVersion, lastModifiedByDeviceId: _deviceId, clearDeletedAt: clearDeletedAt) as T;
+    }
+    if (item is Expense) {
+      return item.copyWith(createdAt: isCreate ? now : item.createdAt, updatedAt: now, deviceId: _deviceId, syncStatus: 'pending', storeId: storeId, branchId: branchId, version: nextVersion, lastModifiedByDeviceId: _deviceId, clearDeletedAt: clearDeletedAt) as T;
+    }
+    if (item is CatalogItem) {
+      return item.copyWith(createdAt: isCreate ? now : item.createdAt, updatedAt: now, deviceId: _deviceId, syncStatus: 'pending', storeId: storeId, branchId: branchId, version: nextVersion, lastModifiedByDeviceId: _deviceId, clearDeletedAt: clearDeletedAt) as T;
+    }
+    if (item is Sale) {
+      return item.copyWith(createdAt: isCreate ? now : item.createdAt, updatedAt: now, deviceId: _deviceId, syncStatus: 'pending', storeId: storeId, branchId: branchId, version: nextVersion, lastModifiedByDeviceId: _deviceId, clearDeletedAt: clearDeletedAt) as T;
+    }
+    return item;
   }
+
+  Product _markProductForSync(Product product, DateTime now, {bool isCreate = false}) => _withSyncMeta<Product>(product, now, isCreate: isCreate);
+
+  CatalogItem _markCatalogItemForSync(CatalogItem item, DateTime now, {bool isCreate = false}) => _withSyncMeta<CatalogItem>(item, now, isCreate: isCreate);
+
 
   Future<void> addOrUpdateProduct(Product product) async {
     final exists = _products.any((item) => item.id == product.id);
@@ -1098,7 +1170,7 @@ class AppStore extends ChangeNotifier {
     final index = _products.indexWhere((item) => item.id == id);
     if (index == -1) return;
     final now = DateTime.now();
-    _products[index] = _products[index].copyWith(deletedAt: now, updatedAt: now, deviceId: _deviceId, syncStatus: 'pending');
+    _products[index] = _withSyncMeta<Product>(_products[index].copyWith(deletedAt: now), now, clearDeletedAt: false);
     _recordSyncChange(entityType: 'product', entityId: id, operation: 'delete', payload: _products[index].toJson());
     await _saveAll();
     notifyListeners();
@@ -1112,12 +1184,12 @@ class AppStore extends ChangeNotifier {
     final now = DateTime.now();
     final normalizedName = customer.name.trim();
     final incoming = (customer.id == walkInCustomerId || normalizedName.toLowerCase() == walkInCustomerName.toLowerCase())
-        ? walkInCustomer.copyWith(updatedAt: now, deviceId: _deviceId, syncStatus: 'pending')
-        : customer.copyWith(name: normalizedName, updatedAt: now, deviceId: _deviceId, syncStatus: 'pending', clearDeletedAt: true);
+        ? _withSyncMeta<Customer>(walkInCustomer, now, isCreate: false)
+        : _withSyncMeta<Customer>(customer.copyWith(name: normalizedName), now, isCreate: false);
 
     final index = _customers.indexWhere((item) => item.id == incoming.id);
     final isCreate = index == -1;
-    final syncedCustomer = isCreate ? incoming.copyWith(createdAt: now) : incoming;
+    final syncedCustomer = _withSyncMeta<Customer>(incoming, now, isCreate: isCreate);
     if (isCreate) {
       _customers.add(syncedCustomer);
     } else {
@@ -1135,7 +1207,7 @@ class AppStore extends ChangeNotifier {
     final index = _customers.indexWhere((item) => item.id == id);
     if (index == -1) return;
     final now = DateTime.now();
-    _customers[index] = _customers[index].copyWith(deletedAt: now, updatedAt: now, deviceId: _deviceId, syncStatus: 'pending');
+    _customers[index] = _withSyncMeta<Customer>(_customers[index].copyWith(deletedAt: now), now, clearDeletedAt: false);
     _recordSyncChange(entityType: 'customer', entityId: id, operation: 'delete', payload: _customers[index].toJson());
     _normalizeCustomers();
     await _saveAll();
@@ -1150,7 +1222,7 @@ class AppStore extends ChangeNotifier {
     final now = DateTime.now();
     final index = _suppliers.indexWhere((item) => item.id == supplier.id);
     final isCreate = index == -1;
-    final syncedSupplier = supplier.copyWith(createdAt: isCreate ? now : supplier.createdAt, updatedAt: now, deviceId: _deviceId, syncStatus: 'pending', clearDeletedAt: true);
+    final syncedSupplier = _withSyncMeta<Supplier>(supplier, now, isCreate: isCreate);
     if (isCreate) {
       _suppliers.add(syncedSupplier);
     } else {
@@ -1166,7 +1238,7 @@ class AppStore extends ChangeNotifier {
     final index = _suppliers.indexWhere((item) => item.id == id);
     if (index == -1) return;
     final now = DateTime.now();
-    _suppliers[index] = _suppliers[index].copyWith(deletedAt: now, updatedAt: now, deviceId: _deviceId, syncStatus: 'pending');
+    _suppliers[index] = _withSyncMeta<Supplier>(_suppliers[index].copyWith(deletedAt: now), now, clearDeletedAt: false);
     _recordSyncChange(entityType: 'supplier', entityId: id, operation: 'delete', payload: _suppliers[index].toJson());
     await _saveAll();
     notifyListeners();
@@ -1229,7 +1301,7 @@ class AppStore extends ChangeNotifier {
     final now = DateTime.now();
     final index = _expenses.indexWhere((item) => item.id == expense.id);
     final isCreate = index == -1;
-    final syncedExpense = expense.copyWith(createdAt: isCreate ? now : expense.createdAt, updatedAt: now, deviceId: _deviceId, syncStatus: 'pending', clearDeletedAt: true);
+    final syncedExpense = _withSyncMeta<Expense>(expense, now, isCreate: isCreate);
     if (isCreate) {
       _expenses.add(syncedExpense);
     } else {
@@ -1245,7 +1317,7 @@ class AppStore extends ChangeNotifier {
     final index = _expenses.indexWhere((item) => item.id == id);
     if (index == -1) return;
     final now = DateTime.now();
-    _expenses[index] = _expenses[index].copyWith(deletedAt: now, updatedAt: now, deviceId: _deviceId, syncStatus: 'pending');
+    _expenses[index] = _withSyncMeta<Expense>(_expenses[index].copyWith(deletedAt: now), now, clearDeletedAt: false);
     _recordSyncChange(entityType: 'expense', entityId: id, operation: 'delete', payload: _expenses[index].toJson());
     await _saveAll();
     notifyListeners();
@@ -1311,6 +1383,10 @@ class AppStore extends ChangeNotifier {
       updatedAt: now,
       deviceId: _deviceId,
       syncStatus: 'pending',
+      storeId: appIdentity.storeId,
+      branchId: appIdentity.branchId,
+      version: 1,
+      lastModifiedByDeviceId: _deviceId,
     );
 
     _sales.add(sale);
@@ -1319,7 +1395,7 @@ class AppStore extends ChangeNotifier {
     for (final item in saleItems) {
       final index = _products.indexWhere((product) => product.id == item.productId);
       final product = _products[index];
-      final updatedProduct = product.copyWith(stock: product.stock - item.quantity, updatedAt: now, deviceId: _deviceId, syncStatus: 'pending');
+      final updatedProduct = _withSyncMeta<Product>(product.copyWith(stock: product.stock - item.quantity), now);
       _products[index] = updatedProduct;
       _recordSyncChange(entityType: 'stock_movement', entityId: '${sale.id}-${item.productId}', operation: 'sale_decrement', payload: {
         'saleId': sale.id,
@@ -1327,6 +1403,8 @@ class AppStore extends ChangeNotifier {
         'quantity': -item.quantity,
         'createdAt': now.toIso8601String(),
         'deviceId': _deviceId,
+        'storeId': appIdentity.storeId,
+        'branchId': appIdentity.branchId,
       });
     }
 
@@ -1352,7 +1430,7 @@ class AppStore extends ChangeNotifier {
         if (productIndex == -1) continue;
         final product = _products[productIndex];
         final now = DateTime.now();
-        final updatedProduct = product.copyWith(stock: product.stock + item.quantity, updatedAt: now, deviceId: _deviceId, syncStatus: 'pending');
+        final updatedProduct = _withSyncMeta<Product>(product.copyWith(stock: product.stock + item.quantity), now);
         _products[productIndex] = updatedProduct;
         _recordSyncChange(entityType: 'stock_movement', entityId: '$id-${item.productId}-restore', operation: 'sale_restore', payload: {
           'saleId': id,
@@ -1365,7 +1443,7 @@ class AppStore extends ChangeNotifier {
     }
 
     final now = DateTime.now();
-    _sales[index] = sale.copyWith(status: status, note: 'Stock restored on ${now.toIso8601String()}', updatedAt: now, deviceId: _deviceId, syncStatus: 'pending');
+    _sales[index] = _withSyncMeta<Sale>(sale.copyWith(status: status, note: 'Stock restored on ${now.toIso8601String()}'), now);
     _recordSyncChange(entityType: 'sale', entityId: id, operation: 'cancel', payload: _sales[index].toJson());
     await _saveAll();
     notifyListeners();
@@ -1397,6 +1475,7 @@ class AppStore extends ChangeNotifier {
         'expenses': _expenses.map((item) => item.toJson()).toList(),
         'deviceId': _deviceId,
         'syncChanges': (changes ?? _syncChanges).map((item) => item.toJson()).toList(),
+        'syncQueue': _syncQueue.map((item) => item.toJson()).toList(),
         'roles': _roles.map((item) => item.toJson()).toList(),
         'users': _users.map((item) => item.toJson()).toList(),
         'appIdentity': appIdentity.toJson(),
@@ -1491,6 +1570,9 @@ class AppStore extends ChangeNotifier {
     final syncChanges = (decoded['syncChanges'] as List<dynamic>? ?? [])
         .map((item) => SyncChange.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
+    final syncQueue = (decoded['syncQueue'] as List<dynamic>? ?? [])
+        .map((item) => SyncQueueItem.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
     final roles = (decoded['roles'] as List<dynamic>? ?? [])
         .map((item) => UserRole.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
@@ -1559,6 +1641,14 @@ class AppStore extends ChangeNotifier {
 
 
 
+  int _readVersion(dynamic item) {
+    try {
+      return item.version as int;
+    } catch (_) {
+      return 1;
+    }
+  }
+
   DateTime _readUpdatedAt(dynamic item) {
     try {
       final updatedAt = item.updatedAt as DateTime;
@@ -1619,6 +1709,9 @@ class AppStore extends ChangeNotifier {
         .toList();
     final syncChanges = (decoded['syncChanges'] as List<dynamic>? ?? [])
         .map((item) => SyncChange.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+    final syncQueue = (decoded['syncQueue'] as List<dynamic>? ?? [])
+        .map((item) => SyncQueueItem.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
     final roles = (decoded['roles'] as List<dynamic>? ?? [])
         .map((item) => UserRole.fromJson(Map<String, dynamic>.from(item as Map)))
@@ -1705,6 +1798,9 @@ class AppStore extends ChangeNotifier {
     final syncChanges = (decoded['syncChanges'] as List<dynamic>? ?? [])
         .map((item) => SyncChange.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
+    final syncQueue = (decoded['syncQueue'] as List<dynamic>? ?? [])
+        .map((item) => SyncQueueItem.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
     final roles = (decoded['roles'] as List<dynamic>? ?? [])
         .map((item) => UserRole.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
@@ -1724,6 +1820,7 @@ class AppStore extends ChangeNotifier {
     _units..clear()..addAll(units);
     _expenses..clear()..addAll(expenses);
     _syncChanges..clear()..addAll(syncChanges);
+    _syncQueue..clear()..addAll(syncQueue);
     _storeProfile = profile;
     if (decoded['appIdentity'] is Map) {
       _appIdentity = AppIdentity.fromJson(Map<String, dynamic>.from(decoded['appIdentity'] as Map));
@@ -1865,12 +1962,33 @@ class AppStore extends ChangeNotifier {
         _syncChanges[i] = _syncChanges[i].copyWith(isSynced: true, syncedAt: now);
       }
     }
+    for (var i = 0; i < _syncQueue.length; i++) {
+      if (idSet.contains(_syncQueue[i].changeId)) {
+        _syncQueue[i] = _syncQueue[i].copyWith(status: 'synced', updatedAt: now, clearNextRetryAt: true);
+      }
+    }
+    await _saveAll();
+    notifyListeners();
+  }
+
+  Future<void> markSyncQueueItemFailed(String queueItemId, String error) async {
+    final index = _syncQueue.indexWhere((item) => item.id == queueItemId);
+    if (index == -1) return;
+    final now = DateTime.now();
+    final attempts = _syncQueue[index].attempts + 1;
+    _syncQueue[index] = _syncQueue[index].copyWith(
+      status: 'failed',
+      attempts: attempts,
+      lastError: error,
+      updatedAt: now,
+      nextRetryAt: now.add(Duration(minutes: attempts.clamp(1, 30))),
+    );
     await _saveAll();
     notifyListeners();
   }
 
   BackupSummary get currentBackupSummary => BackupSummary(
-        version: 10,
+        version: 11,
         generatedAt: DateTime.now(),
         productsCount: products.length,
         customersCount: customers.length,
