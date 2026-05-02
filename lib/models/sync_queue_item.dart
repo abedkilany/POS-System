@@ -22,6 +22,14 @@ class SyncQueueItem {
   final DateTime? nextRetryAt;
 
   bool get isPending => status == 'pending' || status == 'failed';
+  bool get isInProgress => status == 'inProgress';
+  bool get isSynced => status == 'synced';
+  bool get isFailed => status == 'failed';
+
+  bool get isReadyToSend {
+    final retryAt = nextRetryAt;
+    return isPending && (retryAt == null || !retryAt.isAfter(DateTime.now()));
+  }
 
   SyncQueueItem copyWith({
     String? id,

@@ -722,6 +722,12 @@ class _LanSyncCardState extends State<_LanSyncCard> {
       lastSyncAt: lastSyncAt ?? _lastSyncAt,
     );
     await settings.save();
+    final identity = widget.store.appIdentity;
+    final desiredRole = _hostModeEnabled ? DeviceRole.host : DeviceRole.client;
+    final desiredSyncMode = identity.syncMode == SyncMode.localOnly ? SyncMode.lanOnly : identity.syncMode;
+    if (identity.deviceRole != desiredRole || identity.syncMode != desiredSyncMode) {
+      await widget.store.updateAppIdentity(identity.copyWith(deviceRole: desiredRole, syncMode: desiredSyncMode));
+    }
     _lastConnectionAt = settings.lastConnectionAt;
     _lastSyncAt = settings.lastSyncAt;
   }
@@ -763,6 +769,8 @@ class _LanSyncCardState extends State<_LanSyncCard> {
               children: [
                 Chip(label: Text('${tr.text('device_id')}: ${widget.store.deviceId}')),
                 Chip(label: Text('${tr.text('pending_changes')}: ${widget.store.pendingSyncCount}')),
+                Chip(label: Text('Queue: ${widget.store.pendingSyncQueueCount}')),
+                Chip(label: Text("Host queue: ${widget.store.pendingSyncQueueForTarget('host', readyOnly: false).length}")),
                 if (_lastConnectionAt != null) Chip(label: Text('${tr.text('last_connection')}: ${_lastConnectionAt!.toLocal()}')),
                 if (_lastSyncAt != null) Chip(label: Text('${tr.text('last_sync')}: ${_lastSyncAt!.toLocal()}')),
               ],
@@ -869,6 +877,16 @@ class _LanSyncCardState extends State<_LanSyncCard> {
                           }),
                   icon: const Icon(Icons.sync_outlined),
                   label: Text(tr.text('sync_now')),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _busy
+                      ? null
+                      : () => _run(() async {
+                            await widget.store.retryFailedSyncQueue(target: _hostModeEnabled ? null : 'host');
+                            setState(() => _status = 'Failed queue items are pending again.');
+                          }),
+                  icon: const Icon(Icons.replay_outlined),
+                  label: const Text('Retry failed queue'),
                 ),
                 OutlinedButton.icon(
                   onPressed: _busy

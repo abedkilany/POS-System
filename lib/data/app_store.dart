@@ -125,6 +125,16 @@ class AppStore extends ChangeNotifier {
   List<SyncQueueItem> get syncQueue => List.unmodifiable(_syncQueue);
   List<SyncQueueItem> get pendingSyncQueue => List.unmodifiable(_syncQueue.where((item) => item.isPending));
   List<SyncChange> get pendingSyncChanges => List.unmodifiable(_syncChanges.where((item) => !item.isSynced));
+  List<SyncQueueItem> pendingSyncQueueForTarget(String target, {bool readyOnly = true}) {
+    final items = _syncQueue.where((item) => item.target == target && item.isPending);
+    return List.unmodifiable(readyOnly ? items.where((item) => item.isReadyToSend) : items);
+  }
+
+  List<SyncChange> pendingSyncChangesForTarget(String target, {bool readyOnly = true}) {
+    final queueItems = pendingSyncQueueForTarget(target, readyOnly: readyOnly);
+    final ids = queueItems.map((item) => item.changeId).toSet();
+    return List.unmodifiable(_syncChanges.where((change) => ids.contains(change.id) && !change.isSynced));
+  }
   String get deviceId => _deviceId;
   int get pendingSyncCount => pendingSyncChanges.length;
   int get pendingSyncQueueCount => pendingSyncQueue.length;
@@ -393,8 +403,7 @@ class AppStore extends ChangeNotifier {
     final raw = LocalDatabaseService.getString(_invoiceCounterKey);
     final stored = int.tryParse(raw ?? '') ?? 0;
     final highestInvoiceNo = _sales.fold<int>(0, (highest, sale) {
-      final digits = RegExp(r'\d+').allMatches(sale.invoiceNo).map((m) => int.tryParse(m.group(0) ?? '') ?? 0);
-      final invoiceNumber = digits.isEmpty ? 0 : digits.reduce((a, b) => a > b ? a : b);
+      final invoiceNumber = _invoiceSequenceFromNo(sale.invoiceNo);
       return invoiceNumber > highest ? invoiceNumber : highest;
     });
     return stored > highestInvoiceNo ? stored : highestInvoiceNo;
@@ -576,8 +585,8 @@ class AppStore extends ChangeNotifier {
       try {
         final parsed = AppIdentity.fromJson(Map<String, dynamic>.from(jsonDecode(raw) as Map));
         final normalized = parsed.copyWith(
-          deviceId: parsed.deviceId.isEmpty ? _deviceId : parsed.deviceId,
-          platform: parsed.platform == AppPlatformType.unknown ? _detectPlatform() : parsed.platform,
+          deviceId: _deviceId,
+          platform: _detectPlatform(),
         );
         unawaited(LocalDatabaseService.setString(_appIdentityKey, jsonEncode(normalized.toJson())));
         return normalized;
@@ -586,6 +595,24 @@ class AppStore extends ChangeNotifier {
     final created = AppIdentity.defaults(deviceId: _deviceId, platform: _detectPlatform());
     unawaited(LocalDatabaseService.setString(_appIdentityKey, jsonEncode(created.toJson())));
     return created;
+  }
+
+  AppIdentity _identityForLanSnapshotImport(Map<String, dynamic> decoded) {
+    final local = appIdentity;
+    if (decoded['appIdentity'] is! Map) return local.copyWith(deviceId: _deviceId, platform: _detectPlatform());
+    final remote = AppIdentity.fromJson(Map<String, dynamic>.from(decoded['appIdentity'] as Map));
+    return local.copyWith(
+      storeId: remote.storeId.isNotEmpty ? remote.storeId : local.storeId,
+      branchId: remote.branchId.isNotEmpty ? remote.branchId : local.branchId,
+      deviceId: _deviceId,
+      platform: _detectPlatform(),
+      deviceRole: DeviceRole.client,
+      appRole: remote.appRole,
+      syncMode: local.syncMode == SyncMode.localOnly ? SyncMode.lanOnly : local.syncMode,
+      hostDeviceId: remote.deviceId.isNotEmpty ? remote.deviceId : local.hostDeviceId,
+      cloudTenantId: remote.cloudTenantId.isNotEmpty ? remote.cloudTenantId : local.cloudTenantId,
+      updatedAt: DateTime.now(),
+    );
   }
 
   Future<void> updateAppIdentity(AppIdentity identity) async {
@@ -1074,6 +1101,19 @@ class AppStore extends ChangeNotifier {
   }
 
 
+  String get _invoiceDevicePrefix {
+    final clean = _deviceId.replaceAll(RegExp(r'[^A-Za-z0-9]'), '').toUpperCase();
+    if (appIdentity.isHost) return 'H${clean.padRight(4, '0').substring(0, 4)}';
+    return 'C${clean.padRight(4, '0').substring(0, 4)}';
+  }
+
+  int _invoiceSequenceFromNo(String invoiceNo) {
+    final matches = RegExp(r'(\d+)').allMatches(invoiceNo).toList();
+    if (matches.isEmpty) return 0;
+    return int.tryParse(matches.last.group(1) ?? '') ?? 0;
+  }
+
+
   void _recordSyncChange({
     required String entityType,
     required String entityId,
@@ -1096,8 +1136,23 @@ class AppStore extends ChangeNotifier {
     _enqueueSyncChange(changeId, now);
   }
 
+  bool get _isLanClientConfigured {
+    final raw = LocalDatabaseService.getString('lan_sync_settings_v2');
+    if (raw == null || raw.trim().isEmpty) return false;
+    try {
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      final mode = decoded['mode']?.toString() ?? '';
+      final setupComplete = decoded['setupComplete'] as bool? ?? false;
+      final hostModeEnabled = decoded['hostModeEnabled'] as bool? ?? false;
+      return mode == 'client' || (setupComplete && !hostModeEnabled);
+    } catch (_) {
+      return false;
+    }
+  }
+
   void _enqueueSyncChange(String changeId, DateTime now) {
-    final target = appIdentity.isCloudEnabled && appIdentity.isHost ? 'cloud' : (appIdentity.isClient ? 'host' : 'local');
+    final isLanClient = appIdentity.isClient || _isLanClientConfigured;
+    final target = appIdentity.isCloudEnabled && appIdentity.isHost ? 'cloud' : (isLanClient ? 'host' : 'local');
     if (target == 'local') return;
     _syncQueue.add(SyncQueueItem(
       id: '$changeId-$target',
@@ -1372,7 +1427,7 @@ class AppStore extends ChangeNotifier {
     final now = DateTime.now();
     final sale = Sale(
       id: now.microsecondsSinceEpoch.toString(),
-      invoiceNo: 'INV-${_invoiceCounter.toString().padLeft(6, '0')}',
+      invoiceNo: 'INV-$_invoiceDevicePrefix-${_invoiceCounter.toString().padLeft(6, '0')}',
       customerName: customerName.trim().isEmpty ? walkInCustomerName : customerName.trim(),
       date: now,
       status: 'Paid',
@@ -1731,13 +1786,21 @@ class AppStore extends ChangeNotifier {
     if (decoded['storeProfile'] != null) {
       _storeProfile = StoreProfile.fromJson(Map<String, dynamic>.from(decoded['storeProfile'] as Map));
     }
-    if (decoded['appIdentity'] is Map) {
-      _appIdentity = AppIdentity.fromJson(Map<String, dynamic>.from(decoded['appIdentity'] as Map));
-      await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(_appIdentity!.toJson()));
-    }
+    // Never overwrite the local device identity during LAN pull/merge.
+    // The remote snapshot belongs to the Host, while this device must keep
+    // its own deviceId/deviceName/role so new local changes are queued
+    // correctly toward the Host.
+    _appIdentity = appIdentity.copyWith(deviceId: _deviceId, platform: _detectPlatform());
+    await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(_appIdentity!.toJson()));
     _mergeByUpdatedAt<UserRole>(_roles, roles, (item) => item.id);
     _mergeByUpdatedAt<AppUser>(_users, users, (item) => item.id);
-    _mergeSyncChanges(syncChanges);
+    final nowForMergedRemoteChanges = DateTime.now();
+    _mergeSyncChanges(markSynced
+        ? syncChanges
+        : syncChanges.map((change) {
+            if (change.deviceId == _deviceId || change.isSynced) return change;
+            return change.copyWith(isSynced: true, syncedAt: nowForMergedRemoteChanges);
+          }).toList());
 
     final importedCounter = (decoded['invoiceCounter'] as num?)?.toInt() ?? 0;
     if (importedCounter > _invoiceCounter) _invoiceCounter = importedCounter;
@@ -1767,10 +1830,13 @@ class AppStore extends ChangeNotifier {
 
   Future<void> importSyncSnapshotJson(String rawJson) async {
     final decoded = jsonDecode(rawJson) as Map<String, dynamic>;
-    await _replaceFromBackupMap(decoded);
+    await _replaceFromBackupMap(decoded, preserveLocalIdentityForLanClient: true);
   }
 
-  Future<void> _replaceFromBackupMap(Map<String, dynamic> decoded) async {
+  Future<void> _replaceFromBackupMap(
+    Map<String, dynamic> decoded, {
+    bool preserveLocalIdentityForLanClient = false,
+  }) async {
     final products = (decoded['products'] as List<dynamic>? ?? [])
         .map((item) => Product.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
@@ -1819,11 +1885,22 @@ class AppStore extends ChangeNotifier {
     _brands..clear()..addAll(brands);
     _units..clear()..addAll(units);
     _expenses..clear()..addAll(expenses);
-    _syncChanges..clear()..addAll(syncChanges);
-    _syncQueue..clear()..addAll(syncQueue);
+    _syncChanges
+      ..clear()
+      ..addAll(preserveLocalIdentityForLanClient
+          ? syncChanges.map((item) => item.copyWith(isSynced: true, syncedAt: DateTime.now()))
+          : syncChanges);
+    _syncQueue.clear();
+    if (!preserveLocalIdentityForLanClient) _syncQueue.addAll(syncQueue);
     _storeProfile = profile;
-    if (decoded['appIdentity'] is Map) {
-      _appIdentity = AppIdentity.fromJson(Map<String, dynamic>.from(decoded['appIdentity'] as Map));
+    if (preserveLocalIdentityForLanClient) {
+      _appIdentity = _identityForLanSnapshotImport(decoded);
+      await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(_appIdentity!.toJson()));
+    } else if (decoded['appIdentity'] is Map) {
+      _appIdentity = AppIdentity.fromJson(Map<String, dynamic>.from(decoded['appIdentity'] as Map)).copyWith(
+        deviceId: _deviceId,
+        platform: _detectPlatform(),
+      );
       await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(_appIdentity!.toJson()));
     }
     if (roles.isNotEmpty) _roles..clear()..addAll(roles);
@@ -1933,7 +2010,7 @@ class AppStore extends ChangeNotifier {
       case 'sale':
         final incomingSale = Sale.fromJson(p);
         _upsertByUpdatedAt<Sale>(_sales, incomingSale, (item) => item.id);
-        final invoiceNumber = int.tryParse(incomingSale.invoiceNo.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
+        final invoiceNumber = _invoiceSequenceFromNo(incomingSale.invoiceNo);
         if (invoiceNumber > _invoiceCounter) _invoiceCounter = invoiceNumber;
         break;
       case 'stock_movement':
@@ -1967,6 +2044,60 @@ class AppStore extends ChangeNotifier {
         _syncQueue[i] = _syncQueue[i].copyWith(status: 'synced', updatedAt: now, clearNextRetryAt: true);
       }
     }
+    await _saveAll();
+    notifyListeners();
+  }
+
+  Future<void> markSyncQueueChangesInProgress(Iterable<String> changeIds) async {
+    final idSet = changeIds.toSet();
+    if (idSet.isEmpty) return;
+    final now = DateTime.now();
+    var changed = false;
+    for (var i = 0; i < _syncQueue.length; i++) {
+      if (idSet.contains(_syncQueue[i].changeId) && _syncQueue[i].status != 'synced') {
+        _syncQueue[i] = _syncQueue[i].copyWith(status: 'inProgress', updatedAt: now, clearNextRetryAt: true);
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    await _saveAll();
+    notifyListeners();
+  }
+
+  Future<void> markSyncQueueChangesFailed(Iterable<String> changeIds, String error) async {
+    final idSet = changeIds.toSet();
+    if (idSet.isEmpty) return;
+    final now = DateTime.now();
+    var changed = false;
+    for (var i = 0; i < _syncQueue.length; i++) {
+      if (idSet.contains(_syncQueue[i].changeId) && _syncQueue[i].status != 'synced') {
+        final attempts = _syncQueue[i].attempts + 1;
+        _syncQueue[i] = _syncQueue[i].copyWith(
+          status: 'failed',
+          attempts: attempts,
+          lastError: error,
+          updatedAt: now,
+          nextRetryAt: now.add(Duration(minutes: attempts.clamp(1, 30))),
+        );
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    await _saveAll();
+    notifyListeners();
+  }
+
+  Future<void> retryFailedSyncQueue({String? target}) async {
+    final now = DateTime.now();
+    var changed = false;
+    for (var i = 0; i < _syncQueue.length; i++) {
+      final item = _syncQueue[i];
+      if (item.status == 'failed' && (target == null || item.target == target)) {
+        _syncQueue[i] = item.copyWith(status: 'pending', updatedAt: now, clearNextRetryAt: true);
+        changed = true;
+      }
+    }
+    if (!changed) return;
     await _saveAll();
     notifyListeners();
   }

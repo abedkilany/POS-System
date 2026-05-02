@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/services/lan_sync_service.dart';
 import '../../data/app_store.dart';
+import '../../models/app_identity.dart';
 
 class SyncSetupPage extends StatefulWidget {
   const SyncSetupPage({super.key, required this.store, required this.onDone});
@@ -48,6 +49,11 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
         secret: secret,
       );
       await settings.save();
+      final identity = widget.store.appIdentity;
+      await widget.store.updateAppIdentity(identity.copyWith(
+        deviceRole: DeviceRole.host,
+        syncMode: identity.syncMode == SyncMode.localOnly ? SyncMode.lanOnly : identity.syncMode,
+      ));
       await _syncService.startHost(port: _port);
       await widget.onDone();
     } catch (error) {
@@ -82,6 +88,11 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
         lastSyncAt: DateTime.now(),
       );
       await settings.save();
+      final identity = widget.store.appIdentity;
+      await widget.store.updateAppIdentity(identity.copyWith(
+        deviceRole: DeviceRole.client,
+        syncMode: identity.syncMode == SyncMode.localOnly ? SyncMode.lanOnly : identity.syncMode,
+      ));
       await widget.onDone();
     } catch (error) {
       setState(() => _status = 'Client setup failed: $error');
