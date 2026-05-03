@@ -167,17 +167,18 @@ export default async function handler(req, res) {
     for (const raw of changes) {
       const change = normalizeChange(raw, fallback);
       assertStoreAllowed(change.storeId);
-      await sql`
+      const inserted = await sql`
         insert into sync_events (
           id, store_id, branch_id, device_id, entity_type, entity_id, operation, payload, created_at
         ) values (
           ${change.id}, ${change.storeId}, ${change.branchId}, ${change.deviceId}, ${change.entityType}, ${change.entityId}, ${change.operation}, ${JSON.stringify(change.payload)}, ${change.createdAt}
         )
-        on conflict (id) do update set
-          payload = excluded.payload,
-          received_at = now()
+        on conflict (id) do nothing
+        returning id
       `;
-      await materializeChange(change);
+      if (inserted.length > 0) {
+        await materializeChange(change);
+      }
       ackIds.push(change.id);
     }
 

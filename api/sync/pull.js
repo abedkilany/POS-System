@@ -4,6 +4,12 @@ function asIso(value) {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }
 
+function safeIso(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+}
+
 export default async function handler(req, res) {
   try {
     assertSyncToken(req);
@@ -12,7 +18,7 @@ export default async function handler(req, res) {
     const storeId = String(req.query.store_id || req.query.storeId || 'default-store');
     const branchId = String(req.query.branch_id || req.query.branchId || 'main');
     assertStoreAllowed(storeId);
-    const since = req.query.since ? new Date(String(req.query.since)).toISOString() : null;
+    const since = req.query.since ? safeIso(String(req.query.since)) : null;
     const limit = Math.min(Number(req.query.limit || 1000), 5000);
 
     // First-time/new-device pull: return the latest materialized state so a new
@@ -44,11 +50,11 @@ export default async function handler(req, res) {
     }
 
     const rows = await sql`
-      select id, store_id, branch_id, device_id, entity_type, entity_id, operation, payload, created_at
+      select id, store_id, branch_id, device_id, entity_type, entity_id, operation, payload, created_at, received_at
       from sync_events
       where store_id = ${storeId}
-        and created_at > ${since}
-      order by created_at asc
+        and received_at > ${since}
+      order by received_at asc, created_at asc
       limit ${limit}
     `;
 
@@ -66,7 +72,8 @@ export default async function handler(req, res) {
       syncedAt: new Date().toISOString(),
     }));
 
-    res.status(200).json({ ok: true, changes, generatedAt: new Date().toISOString(), source: 'sync_events' });
+    const maxReceivedAt = rows.length ? asIso(rows[rows.length - 1].received_at) : new Date().toISOString();
+    res.status(200).json({ ok: true, changes, generatedAt: maxReceivedAt, source: 'sync_events' });
   } catch (error) {
     sendError(res, error);
   }

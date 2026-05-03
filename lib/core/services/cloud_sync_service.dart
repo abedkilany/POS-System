@@ -124,6 +124,74 @@ class CloudSyncService {
     }
   }
 
+  Future<int> _pushPendingToEndpoint(CloudSyncSettings settings, String target, String path) async {
+    final identity = store.appIdentity;
+    final pending = store.pendingSyncChangesForTarget(target);
+    final pendingIds = pending.map((item) => item.id).toList();
+    if (pending.isEmpty) return 0;
+
+    await store.markSyncQueueChangesInProgress(pendingIds);
+    final push = await _client
+        .post(
+          settings.endpoint(path),
+          headers: _headers(settings),
+          body: jsonEncode({
+            'deviceId': store.deviceId,
+            'storeId': identity.storeId,
+            'branchId': identity.branchId,
+            'changes': pending.map((item) => item.toJson()).toList(),
+          }),
+        )
+        .timeout(const Duration(seconds: 20));
+    if (push.statusCode < 200 || push.statusCode >= 300) {
+      final message = 'Cloud push failed: ${push.statusCode} ${push.body}';
+      await store.markSyncQueueChangesFailed(pendingIds, message);
+      throw StateError(message);
+    }
+    final decoded = jsonDecode(push.body) as Map<String, dynamic>;
+    final ackIds = (decoded['ackIds'] as List<dynamic>? ?? []).map((item) => '$item').toList();
+    await store.markSyncChangesSyncedByIds(ackIds.isEmpty ? pendingIds : ackIds);
+    return pending.length;
+  }
+
+  Future<int> _hostPullRemoteRequests(CloudSyncSettings settings) async {
+    final identity = store.appIdentity;
+    if (!identity.isHost) return 0;
+    final pull = await _client
+        .get(
+          settings.endpoint('/api/sync/requests/pull', {
+            'store_id': identity.storeId,
+            'branch_id': identity.branchId,
+            'host_device_id': store.deviceId,
+          }),
+          headers: _headers(settings),
+        )
+        .timeout(const Duration(seconds: 20));
+    if (pull.statusCode < 200 || pull.statusCode >= 300) {
+      throw StateError('Cloud request pull failed: ${pull.statusCode} ${pull.body}');
+    }
+    final decoded = jsonDecode(pull.body) as Map<String, dynamic>;
+    final changes = (decoded['changes'] as List<dynamic>? ?? [])
+        .map((item) => SyncChange.fromJson(Map<String, dynamic>.from(item as Map)))
+        .where((item) => item.deviceId != store.deviceId)
+        .toList();
+    if (changes.isEmpty) return 0;
+
+    // Host accepts remote drafts here, applies them locally, and queues them to
+    // Cloud as authoritative events. This keeps Cloud as a relay/mirror only.
+    await store.applyRemoteSyncChanges(changes, markAppliedAsSynced: true, mirrorToCloud: true);
+
+    final ackIds = changes.map((item) => item.id).toList();
+    await _client
+        .post(
+          settings.endpoint('/api/sync/requests/ack'),
+          headers: _headers(settings),
+          body: jsonEncode({'storeId': identity.storeId, 'hostDeviceId': store.deviceId, 'ackIds': ackIds}),
+        )
+        .timeout(const Duration(seconds: 20));
+    return changes.length;
+  }
+
   Future<CloudSyncResult> syncNow(CloudSyncSettings settings) async {
     final identity = store.appIdentity;
     if (identity.syncMode == SyncMode.localOnly || identity.syncMode == SyncMode.lanOnly) {
@@ -133,32 +201,26 @@ class CloudSyncService {
       return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
     }
 
-    final pending = store.pendingSyncChangesForTarget('cloud');
-    final pendingIds = pending.map((item) => item.id).toList();
-
     try {
-      if (pending.isNotEmpty) {
-        await store.markSyncQueueChangesInProgress(pendingIds);
-        final push = await _client
-            .post(
-              settings.endpoint('/api/sync/push'),
-              headers: _headers(settings),
-              body: jsonEncode({
-                'deviceId': store.deviceId,
-                'storeId': identity.storeId,
-                'branchId': identity.branchId,
-                'changes': pending.map((item) => item.toJson()).toList(),
-              }),
-            )
-            .timeout(const Duration(seconds: 20));
-        if (push.statusCode < 200 || push.statusCode >= 300) {
-          final message = 'Cloud push failed: ${push.statusCode} ${push.body}';
-          await store.markSyncQueueChangesFailed(pendingIds, message);
-          return CloudSyncResult(ok: false, message: message);
-        }
-        final decoded = jsonDecode(push.body) as Map<String, dynamic>;
-        final ackIds = (decoded['ackIds'] as List<dynamic>? ?? []).map((item) => '$item').toList();
-        await store.markSyncChangesSyncedByIds(ackIds.isEmpty ? pendingIds : ackIds);
+      var pushed = 0;
+      var pulled = 0;
+      var acceptedRemoteRequests = 0;
+
+      if (identity.isHost) {
+        await store.ensureHostCloudBootstrapSnapshotQueued();
+        acceptedRemoteRequests = await _hostPullRemoteRequests(settings);
+        pushed += await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
+        return CloudSyncResult(
+          ok: true,
+          pushed: pushed,
+          pulled: 0,
+          message: 'Host cloud sync completed. Accepted $acceptedRemoteRequests remote request(s), pushed $pushed authoritative change(s).',
+        );
+      } else if (identity.platform == AppPlatformType.web) {
+        pushed += await _pushPendingToEndpoint(settings, 'cloud_host', '/api/sync/requests/push');
+      } else {
+        // A non-host desktop/mobile client should talk to the Host over LAN.
+        // Keep Cloud read-only for it to avoid multiple sources of truth.
       }
 
       final query = <String, String>{
@@ -170,7 +232,6 @@ class CloudSyncService {
       final pull = await _client.get(settings.endpoint('/api/sync/pull', query), headers: _headers(settings)).timeout(const Duration(seconds: 20));
       if (pull.statusCode < 200 || pull.statusCode >= 300) {
         final message = 'Cloud pull failed: ${pull.statusCode} ${pull.body}';
-        if (pendingIds.isNotEmpty) await store.markSyncQueueChangesFailed(pendingIds, message);
         return CloudSyncResult(ok: false, message: message);
       }
 
@@ -182,15 +243,15 @@ class CloudSyncService {
           .toList();
       await store.applyRemoteSyncChanges(changes, markAppliedAsSynced: true);
       await settings.copyWith(lastPullCursor: generatedAt).save();
+      pulled += changes.length;
 
       return CloudSyncResult(
         ok: true,
-        pushed: pending.length,
-        pulled: changes.length,
-        message: 'Cloud sync completed. Pushed ${pending.length} change(s), pulled ${changes.length} change(s).',
+        pushed: pushed,
+        pulled: pulled,
+        message: 'Cloud sync completed. Sent $pushed request(s) to Host relay, pulled $pulled authoritative change(s).',
       );
     } catch (error) {
-      if (pendingIds.isNotEmpty) await store.markSyncQueueChangesFailed(pendingIds, error.toString());
       return CloudSyncResult(ok: false, message: 'Cloud sync failed: $error');
     }
   }
@@ -205,7 +266,7 @@ class AutoCloudSyncController {
 
   Future<void> start() async {
     stop();
-    if (!kIsWeb || !store.appIdentity.isCloudEnabled) return;
+    if (!store.appIdentity.isCloudEnabled) return;
     final settings = CloudSyncSettings.load();
     if (!settings.autoSyncEnabled || !settings.isConfigured) return;
     final interval = Duration(seconds: settings.intervalSeconds.clamp(5, 3600).toInt());

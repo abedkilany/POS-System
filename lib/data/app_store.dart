@@ -1159,9 +1159,22 @@ class AppStore extends ChangeNotifier {
   }
 
   void _enqueueSyncChange(String changeId, DateTime now) {
-    final isLanClient = appIdentity.isClient || _isLanClientConfigured;
-    final shouldQueueCloud = appIdentity.isCloudEnabled && (appIdentity.isHost || appIdentity.platform == AppPlatformType.web);
-    final target = shouldQueueCloud ? 'cloud' : (isLanClient ? 'host' : 'local');
+    final identity = appIdentity;
+    final isLanClient = identity.isClient || _isLanClientConfigured;
+
+    // Sync architecture v2: the Host is the only source of truth.
+    // - Host devices publish accepted/authoritative changes to Cloud.
+    // - LAN clients send drafts to the Host over LAN.
+    // - Web/remote clients cannot reach LAN directly, so they send drafts to a
+    //   Cloud relay inbox. The Host later pulls that inbox, applies the changes,
+    //   and republishes them as authoritative sync_events.
+    final target = identity.isHost && identity.isCloudEnabled
+        ? 'cloud'
+        : (identity.platform == AppPlatformType.web && identity.isCloudEnabled)
+            ? 'cloud_host'
+            : isLanClient
+                ? 'host'
+                : 'local';
     if (target == 'local') return;
     _syncQueue.add(SyncQueueItem(
       id: '$changeId-$target',
@@ -1938,14 +1951,71 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> applyRemoteSyncChanges(List<SyncChange> incoming, {bool markAppliedAsSynced = false}) async {
+  Future<void> ensureHostCloudBootstrapSnapshotQueued() async {
+    final identity = appIdentity;
+    if (!identity.isHost || !identity.isCloudEnabled) return;
+    final markerKey = 'cloud_host_bootstrap_snapshot_v2_${identity.storeId}';
+    if (LocalDatabaseService.getString(markerKey) == 'true') return;
+
+    final now = DateTime.now();
+    final changeId = '${now.microsecondsSinceEpoch}-host-bootstrap';
+    _syncChanges.add(SyncChange(
+      id: changeId,
+      entityType: 'system',
+      entityId: 'store',
+      operation: 'restore_snapshot',
+      deviceId: _deviceId,
+      createdAt: now,
+      payload: _backupPayload(changes: const <SyncChange>[]),
+      storeId: identity.storeId,
+      branchId: identity.branchId,
+    ));
+    _enqueueSyncChangeForTarget(changeId, 'cloud', now);
+    await LocalDatabaseService.setString(markerKey, 'true');
+    await _saveAll();
+    notifyListeners();
+  }
+
+  bool _shouldMirrorRemoteChangeToCloud(SyncChange change) {
+    if (!appIdentity.isCloudEnabled || !appIdentity.isHost) return false;
+    if (change.deviceId == _deviceId) return false;
+    if (change.deviceId == 'cloud-snapshot') return false;
+    if (change.storeId.isNotEmpty && change.storeId != appIdentity.storeId) return false;
+    return true;
+  }
+
+  void _enqueueSyncChangeForTarget(String changeId, String target, DateTime now) {
+    if (_syncQueue.any((item) => item.changeId == changeId && item.target == target)) return;
+    _syncQueue.add(SyncQueueItem(
+      id: '$changeId-$target',
+      changeId: changeId,
+      target: target,
+      status: 'pending',
+      attempts: 0,
+      createdAt: now,
+      updatedAt: now,
+    ));
+  }
+
+  Future<void> applyRemoteSyncChanges(
+    List<SyncChange> incoming, {
+    bool markAppliedAsSynced = false,
+    bool mirrorToCloud = false,
+  }) async {
     final existingIds = _syncChanges.map((item) => item.id).toSet();
     final sorted = [...incoming]..sort((a, b) => a.createdAt.compareTo(b.createdAt));
     var changed = false;
     for (final change in sorted) {
       if (existingIds.contains(change.id)) continue;
       await _applySyncChangePayload(change);
-      _syncChanges.add(markAppliedAsSynced ? change.copyWith(isSynced: true, syncedAt: DateTime.now()) : change);
+      final shouldMirrorToCloud = mirrorToCloud && _shouldMirrorRemoteChangeToCloud(change);
+      final storedChange = markAppliedAsSynced && !shouldMirrorToCloud
+          ? change.copyWith(isSynced: true, syncedAt: DateTime.now())
+          : change.copyWith(isSynced: false, syncedAt: null);
+      _syncChanges.add(storedChange);
+      if (shouldMirrorToCloud) {
+        _enqueueSyncChangeForTarget(change.id, 'cloud', DateTime.now());
+      }
       existingIds.add(change.id);
       changed = true;
     }

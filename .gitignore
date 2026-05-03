@@ -1,101 +1,45 @@
-# =========================
-# Flutter / Dart
-# =========================
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
 .dart_tool/
-.flutter-plugins
 .flutter-plugins-dependencies
 .pub-cache/
 .pub/
-/build/*
-!/build/web/
-!/build/web/**
+/build/
 /coverage/
 
-# Keep pubspec.lock for app projects
+# Symbolication related
+app.*.symbols
 
-# =========================
-# Android
-# =========================
-android/.gradle/
-android/app/build/*
-!/build/web/
-!/build/web/**
-android/local.properties
+# Obfuscation related
+app.*.map.json
 
-# Signing
-*.jks
-*.keystore
-key.properties
-android/key.properties
-
-# =========================
-# iOS
-# =========================
-ios/Pods/
-ios/.symlinks/
-ios/Flutter/Flutter.framework
-ios/Flutter/App.framework
-ios/Flutter/.last_build_id
-
-# =========================
-# macOS / Windows / Linux
-# =========================
-macos/Flutter/ephemeral/
-windows/flutter/ephemeral/
-windows/runner/Debug/
-windows/runner/Release/
-linux/flutter/ephemeral/
-
-# =========================
-# IDEs
-# =========================
-.idea/
-*.iml
-.vscode/
-
-# =========================
-# OS files
-# =========================
-.DS_Store
-Thumbs.db
-
-# =========================
-# Logs
-# =========================
-*.log
-
-# =========================
-# Data & Security
-# =========================
-*.db
-*.sqlite
-*.hive
-backup/
-*.backup
-
-# Ignore all JSON by default
-*.json
-
-# Allow translation files
-!assets/translations/*.json
-!build/web/**/*.json
-!vercel.json
-
-# =========================
-# Secrets
-# =========================
-.env
-*.key
-*.pem
-
-# =========================
-# Misc
-# =========================
-*.class
-*.pyc
-*.swp
-.history
-.svn/
-# Required for Vercel serverless API
-!package.json
-!package-lock.json
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release

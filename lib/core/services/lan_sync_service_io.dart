@@ -236,7 +236,7 @@ class LanSyncService {
         final applicableChanges = latestResetAt == null
             ? changes
             : changes.where((item) => item.createdAt.isAfter(latestResetAt)).toList();
-        await store.applyRemoteSyncChanges(applicableChanges, markAppliedAsSynced: true);
+        await store.applyRemoteSyncChanges(applicableChanges, markAppliedAsSynced: true, mirrorToCloud: store.appIdentity.isCloudEnabled && store.appIdentity.isHost);
         await _json(request, {
           'ok': true,
           // Acknowledge all received IDs. Changes older than the latest Host reset
