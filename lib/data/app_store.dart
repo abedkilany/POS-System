@@ -2018,17 +2018,14 @@ class AppStore extends ChangeNotifier {
       final shouldMirrorToCloud = mirrorToCloud && _shouldMirrorRemoteChangeToCloud(change);
 
       // Host-authority sync note:
-      // A change created on a Client may have a createdAt timestamp older than
-      // another Client's last LAN/Cloud pull cursor. If the Host stores and
-      // republishes that draft with the original Client timestamp, other
-      // Clients can miss it in delta pulls and only see it after a later
-      // fallback/snapshot cycle, which looked like a consistent 15-20s delay.
-      // When the Host accepts a draft, restamp it as an authoritative Host event
-      // at acceptance time. The id stays the same for idempotency/ack safety, but
-      // cursors now see the Host acceptance order, which is the real source of
-      // truth order in this architecture.
+      // Any draft accepted by the Host must become a new authoritative Host
+      // event, even in LAN-only mode. v12 only restamped events that were also
+      // mirrored to Cloud; pure Local/LAN installs kept the original Client
+      // timestamp, so other Clients could miss the delta behind their cursor.
+      // Restamping on every Host acceptance makes Local sync timing stable.
       final acceptedAt = DateTime.now();
-      final authoritativeChange = shouldMirrorToCloud
+      final shouldRestampAsHostAuthority = appIdentity.isHost && change.deviceId != _deviceId;
+      final authoritativeChange = shouldRestampAsHostAuthority
           ? change.copyWith(
               createdAt: acceptedAt,
               deviceId: _deviceId,
@@ -2201,7 +2198,10 @@ class AppStore extends ChangeNotifier {
           attempts: attempts,
           lastError: error,
           updatedAt: now,
-          nextRetryAt: now.add(Duration(minutes: attempts.clamp(1, 30))),
+          // LAN sync should not block manual/auto retries for minutes.
+          // A short backoff keeps reconnects responsive while still avoiding
+          // a tight loop during brief network failures.
+          nextRetryAt: now.add(Duration(seconds: (attempts * 5).clamp(5, 30))),
         );
         changed = true;
       }

@@ -21,7 +21,13 @@ class SyncQueueItem {
   final String lastError;
   final DateTime? nextRetryAt;
 
-  bool get isPending => status == 'pending' || status == 'failed';
+  bool get isPending {
+    if (status == 'pending' || status == 'failed') return true;
+    // Recover queue rows left in-progress after an app crash/network abort.
+    // Without this, manual Sync Now can appear to do nothing because the
+    // change is neither pending nor synced.
+    return status == 'inProgress' && updatedAt.isBefore(DateTime.now().subtract(const Duration(seconds: 30)));
+  }
   bool get isInProgress => status == 'inProgress';
   bool get isSynced => status == 'synced';
   bool get isFailed => status == 'failed';
