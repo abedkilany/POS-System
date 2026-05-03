@@ -72,8 +72,10 @@ export default async function handler(req, res) {
       syncedAt: new Date().toISOString(),
     }));
 
-    const maxReceivedAt = rows.length ? asIso(rows[rows.length - 1].received_at) : new Date().toISOString();
-    res.status(200).json({ ok: true, changes, generatedAt: maxReceivedAt, source: 'sync_events' });
+    // Keep an empty pull cursor unchanged. Advancing it to "now" can skip
+    // events inserted between the SELECT and response serialization.
+    const maxReceivedAt = rows.length ? asIso(rows[rows.length - 1].received_at) : since;
+    res.status(200).json({ ok: true, changes, generatedAt: maxReceivedAt || new Date().toISOString(), source: 'sync_events' });
   } catch (error) {
     sendError(res, error);
   }

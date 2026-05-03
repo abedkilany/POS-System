@@ -216,11 +216,12 @@ class CloudSyncService {
           pulled: 0,
           message: 'Host cloud sync completed. Accepted $acceptedRemoteRequests remote request(s), pushed $pushed authoritative change(s).',
         );
-      } else if (identity.platform == AppPlatformType.web) {
-        pushed += await _pushPendingToEndpoint(settings, 'cloud_host', '/api/sync/requests/push');
       } else {
-        // A non-host desktop/mobile client should talk to the Host over LAN.
-        // Keep Cloud read-only for it to avoid multiple sources of truth.
+        // Any cloud-enabled Client that has local draft changes should send
+        // them to the Host relay. LAN Clients normally queue to target "host",
+        // so this only affects Web or remote desktop/mobile Clients whose
+        // pending changes target "cloud_host".
+        pushed += await _pushPendingToEndpoint(settings, 'cloud_host', '/api/sync/requests/push');
       }
 
       final query = <String, String>{

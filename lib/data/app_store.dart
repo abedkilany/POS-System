@@ -1160,21 +1160,23 @@ class AppStore extends ChangeNotifier {
 
   void _enqueueSyncChange(String changeId, DateTime now) {
     final identity = appIdentity;
-    final isLanClient = identity.isClient || _isLanClientConfigured;
+    final isLanClient = _isLanClientConfigured || (identity.isClient && identity.syncMode == SyncMode.lanOnly);
 
     // Sync architecture v2: the Host is the only source of truth.
     // - Host devices publish accepted/authoritative changes to Cloud.
     // - LAN clients send drafts to the Host over LAN.
-    // - Web/remote clients cannot reach LAN directly, so they send drafts to a
-    //   Cloud relay inbox. The Host later pulls that inbox, applies the changes,
-    //   and republishes them as authoritative sync_events.
+    // - Web/remote desktop clients cannot reach LAN directly, so they send drafts
+    //   to a Cloud relay inbox. The Host later pulls that inbox, applies the
+    //   changes, and republishes them as authoritative sync_events.
     final target = identity.isHost && identity.isCloudEnabled
         ? 'cloud'
-        : (identity.platform == AppPlatformType.web && identity.isCloudEnabled)
-            ? 'cloud_host'
-            : isLanClient
-                ? 'host'
-                : 'local';
+        : isLanClient
+            ? 'host'
+            : (identity.isCloudEnabled && identity.isClient)
+                ? 'cloud_host'
+                : (identity.platform == AppPlatformType.web && identity.isCloudEnabled)
+                    ? 'cloud_host'
+                    : 'local';
     if (target == 'local') return;
     _syncQueue.add(SyncQueueItem(
       id: '$changeId-$target',
@@ -1582,11 +1584,16 @@ class AppStore extends ChangeNotifier {
   String exportSyncSnapshotJson() => const JsonEncoder.withIndent('  ').convert(_backupPayload());
 
   String exportSyncChangesJson({DateTime? since}) {
-    final changes = since == null ? _syncChanges : _syncChanges.where((item) => item.createdAt.isAfter(since)).toList();
+    final changes = since == null
+        ? _syncChanges
+        : _syncChanges.where((item) => !item.createdAt.isBefore(since)).toList();
+    final cursor = changes.isEmpty
+        ? (since ?? DateTime.fromMillisecondsSinceEpoch(0))
+        : changes.map((item) => item.createdAt).reduce((a, b) => a.isAfter(b) ? a : b);
     return jsonEncode({
       'ok': true,
       'deviceId': _deviceId,
-      'generatedAt': DateTime.now().toIso8601String(),
+      'generatedAt': cursor.toIso8601String(),
       'changes': changes.map((item) => item.toJson()).toList(),
     });
   }
@@ -2049,7 +2056,9 @@ class AppStore extends ChangeNotifier {
             keepSecurityPin: p['keepSecurityPin'] as bool? ?? true,
           );
         } else if (change.operation == 'restore_snapshot') {
-          await _replaceFromBackupMap(p);
+          // A cloud/LAN bootstrap snapshot contains the Host identity. Never let
+          // a Client import that identity or it may start behaving as the Host.
+          await _replaceFromBackupMap(p, preserveLocalIdentityForLanClient: true);
         }
         break;
       case 'store_profile':
