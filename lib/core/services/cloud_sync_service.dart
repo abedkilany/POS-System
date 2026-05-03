@@ -20,7 +20,7 @@ class CloudSyncSettings {
   final String apiToken;
   final DateTime? lastPullCursor;
 
-  bool get isConfigured => enabled && apiBaseUrl.trim().isNotEmpty && apiToken.trim().isNotEmpty;
+  bool get isConfigured => enabled && apiBaseUrl.trim().isNotEmpty;
 
   Uri endpoint(String path, [Map<String, String>? query]) {
     final base = apiBaseUrl.trim().replaceAll(RegExp(r'/+$'), '');
@@ -57,7 +57,7 @@ class CloudSyncService {
   Map<String, String> _headers(CloudSyncSettings settings) => {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
-        'Authorization': 'Bearer ${settings.apiToken.trim()}',
+        if (settings.apiToken.trim().isNotEmpty) 'Authorization': 'Bearer ${settings.apiToken.trim()}',
       };
 
   Future<CloudSyncResult> testConnection(CloudSyncSettings settings) async {
@@ -81,9 +81,6 @@ class CloudSyncService {
 
   Future<CloudSyncResult> syncNow(CloudSyncSettings settings) async {
     final identity = store.appIdentity;
-    if (!identity.isHost) {
-      return const CloudSyncResult(ok: false, message: 'Cloud sync is allowed from the Host device only.');
-    }
     if (identity.syncMode == SyncMode.localOnly || identity.syncMode == SyncMode.lanOnly) {
       return const CloudSyncResult(ok: false, message: 'Enable cloudConnected or marketplaceEnabled sync mode first.');
     }
@@ -119,7 +116,10 @@ class CloudSyncService {
         await store.markSyncChangesSyncedByIds(ackIds.isEmpty ? pendingIds : ackIds);
       }
 
-      final query = <String, String>{};
+      final query = <String, String>{
+        'store_id': identity.storeId,
+        'branch_id': identity.branchId,
+      };
       final cursor = settings.lastPullCursor;
       if (cursor != null) query['since'] = cursor.toIso8601String();
       final pull = await _client

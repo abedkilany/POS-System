@@ -96,3 +96,6 @@ backup/
 *.swp
 .history
 .svn/
+# Required for Vercel serverless API
+!package.json
+!package-lock.json

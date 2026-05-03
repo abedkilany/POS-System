@@ -6,7 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/services/backup_download_service.dart';
+import '../../core/services/cloud_sync_service.dart';
 import '../../core/services/lan_sync_service.dart';
+import '../../core/services/local_database_service.dart';
 
 import '../../core/localization/app_localizations.dart';
 import '../../data/app_store.dart';
@@ -672,6 +674,8 @@ class _LanSyncCardState extends State<_LanSyncCard> {
   final TextEditingController _hostController = TextEditingController();
   final TextEditingController _portController = TextEditingController();
   final TextEditingController _tokenController = TextEditingController();
+  final TextEditingController _cloudApiController = TextEditingController();
+  final TextEditingController _cloudTokenController = TextEditingController();
   String _status = 'Ready';
   bool _busy = false;
   bool _autoSyncEnabled = false;
@@ -687,6 +691,8 @@ class _LanSyncCardState extends State<_LanSyncCard> {
     _hostController.text = settings.host;
     _portController.text = settings.port.toString();
     _tokenController.text = settings.secret;
+    _cloudApiController.text = LocalDatabaseService.getString('cloud_api_base_url') ?? Uri.base.origin;
+    _cloudTokenController.text = LocalDatabaseService.getString('cloud_api_token') ?? '';
     _autoSyncEnabled = settings.autoSyncEnabled;
     _hostModeEnabled = settings.hostModeEnabled;
     _lastConnectionAt = settings.lastConnectionAt;
@@ -705,10 +711,28 @@ class _LanSyncCardState extends State<_LanSyncCard> {
     _hostController.dispose();
     _portController.dispose();
     _tokenController.dispose();
+    _cloudApiController.dispose();
+    _cloudTokenController.dispose();
     super.dispose();
   }
 
   int get _port => int.tryParse(_portController.text.trim()) ?? 8787;
+
+
+  CloudSyncSettings get _cloudSettings => CloudSyncSettings(
+        enabled: true,
+        apiBaseUrl: _cloudApiController.text.trim().isEmpty ? Uri.base.origin : _cloudApiController.text.trim(),
+        apiToken: _cloudTokenController.text.trim(),
+      );
+
+  Future<void> _saveCloudSettings() async {
+    await LocalDatabaseService.setString('cloud_api_base_url', _cloudSettings.apiBaseUrl);
+    await LocalDatabaseService.setString('cloud_api_token', _cloudSettings.apiToken);
+    final identity = widget.store.appIdentity;
+    if (identity.syncMode != SyncMode.cloudConnected || identity.deviceRole != DeviceRole.client) {
+      await widget.store.updateAppIdentity(identity.copyWith(syncMode: SyncMode.cloudConnected, deviceRole: DeviceRole.client));
+    }
+  }
 
   Future<void> _saveSettings({DateTime? lastConnectionAt, DateTime? lastSyncAt}) async {
     final settings = LanSyncSettings(
@@ -759,10 +783,88 @@ class _LanSyncCardState extends State<_LanSyncCard> {
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.cloud_sync_outlined),
                 title: const Text('Cloud sync / مزامنة سحابية'),
-                subtitle: const Text('LAN Host/Client is disabled on the web build. Use the cloud API + Neon for online sync.'),
+                subtitle: const Text('Web build uses Cloud API + Neon. LAN Host/Client is Desktop only.'),
                 trailing: const Chip(label: Text('Web mode')),
               ),
               const SizedBox(height: 8),
+              TextField(
+                controller: _cloudApiController,
+                decoration: const InputDecoration(
+                  labelText: 'Cloud API URL',
+                  helperText: 'On Vercel this is usually the current site URL.',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _cloudTokenController,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Cloud sync token',
+                  helperText: 'Use the same value as CLOUD_SYNC_TOKEN in Vercel. Leave empty only for testing.',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  Chip(label: Text("Cloud queue: ${widget.store.pendingSyncQueueForTarget('cloud', readyOnly: false).length}")),
+                  Chip(label: Text('Device: ${widget.store.deviceId}')),
+                  Chip(label: Text('Store: ${widget.store.appIdentity.storeId}')),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  FilledButton.icon(
+                    onPressed: _busy
+                        ? null
+                        : () => _run(() async {
+                              await _saveCloudSettings();
+                              setState(() => _status = 'Cloud settings saved.');
+                            }),
+                    icon: const Icon(Icons.save_outlined),
+                    label: const Text('Save cloud settings'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: _busy
+                        ? null
+                        : () => _run(() async {
+                              await _saveCloudSettings();
+                              final result = await CloudSyncService(widget.store).testConnection(_cloudSettings);
+                              setState(() => _status = result.message);
+                            }),
+                    icon: const Icon(Icons.network_check_outlined),
+                    label: const Text('Test API'),
+                  ),
+                  FilledButton.icon(
+                    onPressed: _busy
+                        ? null
+                        : () => _run(() async {
+                              await _saveCloudSettings();
+                              final result = await CloudSyncService(widget.store).syncNow(_cloudSettings);
+                              setState(() => _status = result.message);
+                            }),
+                    icon: const Icon(Icons.cloud_sync_outlined),
+                    label: const Text('Sync now'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: _busy
+                        ? null
+                        : () => _run(() async {
+                              await widget.store.retryFailedSyncQueue(target: 'cloud');
+                              setState(() => _status = 'Failed cloud queue items are pending again.');
+                            }),
+                    icon: const Icon(Icons.replay_outlined),
+                    label: const Text('Retry cloud queue'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(12),
@@ -770,9 +872,7 @@ class _LanSyncCardState extends State<_LanSyncCard> {
                   color: color.surfaceContainerHighest,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Text(
-                  'نسخة الويب تعمل كواجهة Online/Cloud. إعدادات Host IP و Port و Pairing token خاصة بنسخة Desktop/LAN فقط. الخطوة التالية هي ربط API على Vercel مع Neon PostgreSQL.',
-                ),
+                child: Text(_status),
               ),
             ],
           ),

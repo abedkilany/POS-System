@@ -1152,7 +1152,8 @@ class AppStore extends ChangeNotifier {
 
   void _enqueueSyncChange(String changeId, DateTime now) {
     final isLanClient = appIdentity.isClient || _isLanClientConfigured;
-    final target = appIdentity.isCloudEnabled && appIdentity.isHost ? 'cloud' : (isLanClient ? 'host' : 'local');
+    final shouldQueueCloud = appIdentity.isCloudEnabled && (appIdentity.isHost || appIdentity.platform == AppPlatformType.web);
+    final target = shouldQueueCloud ? 'cloud' : (isLanClient ? 'host' : 'local');
     if (target == 'local') return;
     _syncQueue.add(SyncQueueItem(
       id: '$changeId-$target',
