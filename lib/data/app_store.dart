@@ -1494,6 +1494,8 @@ class AppStore extends ChangeNotifier {
           'quantity': item.quantity,
           'createdAt': now.toIso8601String(),
           'deviceId': _deviceId,
+          'storeId': appIdentity.storeId,
+          'branchId': appIdentity.branchId,
         });
       }
     }

@@ -1,17 +1,36 @@
-# store_manager_pro
+# POS System — Cloud Sync V6
 
-A new Flutter project.
+This build keeps the Flutter offline/LAN POS app and adds a cleaner Vercel + Neon cloud path.
 
-## Getting Started
+## What changed
 
-This project is a starting point for a Flutter application.
+- Vercel deployment now builds Flutter Web with `npm run vercel-build` and serves `build/web`.
+- `/api` is the active production API. The older `vercel-api/` folder is kept only as reference and is not used by the root Vercel deployment.
+- Cloud sync now requires `CLOUD_SYNC_TOKEN`; the API no longer accepts unauthenticated sync when the token is missing.
+- Optional `CLOUD_SYNC_STORE_ID` can restrict a deployed API/token to one store ID.
+- Stock movements now update `entity_snapshots`, so new browsers/devices pull current inventory instead of stale product snapshots.
+- Flutter Web saves the cloud pull cursor and supports automatic cloud sync every 30 seconds after the API URL/token are configured.
 
-A few resources to get you started if this is your first Flutter project:
+## Vercel environment variables
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+Set these in Vercel Project Settings → Environment Variables:
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+```bash
+DATABASE_URL=postgresql://...
+CLOUD_SYNC_TOKEN=choose-a-long-random-secret
+# Optional but recommended for single-store deployments:
+CLOUD_SYNC_STORE_ID=store_your_store_id
+```
+
+## Neon setup
+
+1. Create a Neon database.
+2. Run `database/neon_sync_schema.sql` once in the Neon SQL editor.
+3. Deploy this project to Vercel.
+4. Open the app URL, go to Settings → Sync, enter the Vercel URL and the same `CLOUD_SYNC_TOKEN`, then save and sync.
+
+If you already synced data with an older API, run `database/neon_rebuild_snapshots_from_events.sql` once to rebuild snapshots, including stock deltas.
+
+## Important note about store IDs
+
+Each browser has its own local identity. To connect multiple devices to the same cloud store, set the same Store ID in Settings → Device / Store identity before syncing, or restore/import from the main store first. If `CLOUD_SYNC_STORE_ID` is configured, the Store ID in the app must match it.

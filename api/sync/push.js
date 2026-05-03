@@ -1,4 +1,4 @@
-import { sql, assertSyncToken, sendError } from '../_db.js';
+import { sql, assertSyncToken, assertStoreAllowed, sendError } from '../_db.js';
 
 function normalizeChange(raw, fallback) {
   if (!raw || typeof raw !== 'object') throw new Error('Invalid sync change.');
@@ -93,7 +93,50 @@ async function materializeChange(change) {
     return;
   }
 
-  if (change.entityType === 'stock_movement') return;
+  if (change.entityType === 'stock_movement') {
+    const p = change.payload || {};
+    const productId = String(p.productId || p.product_id || '').trim();
+    const quantity = Number(p.quantity || 0);
+    if (!productId || !Number.isFinite(quantity) || quantity === 0) return;
+
+    const rows = await sql`
+      select payload, operation, updated_at
+      from entity_snapshots
+      where store_id = ${change.storeId}
+        and entity_type = 'product'
+        and entity_id = ${productId}
+      limit 1
+    `;
+    if (!rows.length || rows[0].operation === 'delete') return;
+
+    const product = rows[0].payload || {};
+    const currentStock = Number(product.stock || 0);
+    const nextProduct = {
+      ...product,
+      stock: currentStock + quantity,
+      updatedAt,
+      syncStatus: 'synced',
+      storeId: change.storeId,
+      branchId: change.branchId || product.branchId || 'main',
+    };
+    await upsertSnapshot({
+      storeId: change.storeId,
+      entityType: 'product',
+      entityId: productId,
+      operation: 'upsert',
+      payload: nextProduct,
+      updatedAt,
+    });
+    await upsertSnapshot({
+      storeId: change.storeId,
+      entityType: 'stock_movement',
+      entityId: change.entityId,
+      operation: 'upsert',
+      payload: { ...p, appliedToProductSnapshot: productId },
+      updatedAt,
+    });
+    return;
+  }
 
   await upsertSnapshot({
     storeId: change.storeId,
@@ -118,9 +161,12 @@ export default async function handler(req, res) {
       deviceId: body.deviceId,
     };
 
+    if (fallback.storeId) assertStoreAllowed(String(fallback.storeId));
+
     const ackIds = [];
     for (const raw of changes) {
       const change = normalizeChange(raw, fallback);
+      assertStoreAllowed(change.storeId);
       await sql`
         insert into sync_events (
           id, store_id, branch_id, device_id, entity_type, entity_id, operation, payload, created_at

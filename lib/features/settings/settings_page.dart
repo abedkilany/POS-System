@@ -680,6 +680,7 @@ class _LanSyncCardState extends State<_LanSyncCard> {
   bool _busy = false;
   bool _autoSyncEnabled = false;
   bool _hostModeEnabled = false;
+  bool _cloudAutoSyncEnabled = true;
   DateTime? _lastConnectionAt;
   DateTime? _lastSyncAt;
 
@@ -691,8 +692,10 @@ class _LanSyncCardState extends State<_LanSyncCard> {
     _hostController.text = settings.host;
     _portController.text = settings.port.toString();
     _tokenController.text = settings.secret;
-    _cloudApiController.text = LocalDatabaseService.getString('cloud_api_base_url') ?? Uri.base.origin;
-    _cloudTokenController.text = LocalDatabaseService.getString('cloud_api_token') ?? '';
+    final cloudSettings = CloudSyncSettings.load();
+    _cloudApiController.text = cloudSettings.apiBaseUrl.isEmpty ? Uri.base.origin : cloudSettings.apiBaseUrl;
+    _cloudTokenController.text = cloudSettings.apiToken;
+    _cloudAutoSyncEnabled = cloudSettings.autoSyncEnabled;
     _autoSyncEnabled = settings.autoSyncEnabled;
     _hostModeEnabled = settings.hostModeEnabled;
     _lastConnectionAt = settings.lastConnectionAt;
@@ -719,15 +722,18 @@ class _LanSyncCardState extends State<_LanSyncCard> {
   int get _port => int.tryParse(_portController.text.trim()) ?? 8787;
 
 
-  CloudSyncSettings get _cloudSettings => CloudSyncSettings(
-        enabled: true,
-        apiBaseUrl: _cloudApiController.text.trim().isEmpty ? Uri.base.origin : _cloudApiController.text.trim(),
-        apiToken: _cloudTokenController.text.trim(),
-      );
+  CloudSyncSettings get _cloudSettings {
+    final loaded = CloudSyncSettings.load();
+    return loaded.copyWith(
+      enabled: true,
+      apiBaseUrl: _cloudApiController.text.trim().isEmpty ? Uri.base.origin : _cloudApiController.text.trim(),
+      apiToken: _cloudTokenController.text.trim(),
+      autoSyncEnabled: _cloudAutoSyncEnabled,
+    );
+  }
 
   Future<void> _saveCloudSettings() async {
-    await LocalDatabaseService.setString('cloud_api_base_url', _cloudSettings.apiBaseUrl);
-    await LocalDatabaseService.setString('cloud_api_token', _cloudSettings.apiToken);
+    await _cloudSettings.save();
     final identity = widget.store.appIdentity;
     if (identity.syncMode != SyncMode.cloudConnected || identity.deviceRole != DeviceRole.client) {
       await widget.store.updateAppIdentity(identity.copyWith(syncMode: SyncMode.cloudConnected, deviceRole: DeviceRole.client));
@@ -801,11 +807,18 @@ class _LanSyncCardState extends State<_LanSyncCard> {
                 obscureText: true,
                 decoration: const InputDecoration(
                   labelText: 'Cloud sync token',
-                  helperText: 'Use the same value as CLOUD_SYNC_TOKEN in Vercel. Leave empty only for testing.',
+                  helperText: 'Use the same value as CLOUD_SYNC_TOKEN in Vercel. Required for cloud sync.',
                   border: OutlineInputBorder(),
                 ),
               ),
               const SizedBox(height: 12),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Auto cloud sync'),
+                subtitle: const Text('Automatically pushes and pulls cloud changes about every 30 seconds when token is configured.'),
+                value: _cloudAutoSyncEnabled,
+                onChanged: _busy ? null : (value) => setState(() => _cloudAutoSyncEnabled = value),
+              ),
               Wrap(
                 spacing: 12,
                 runSpacing: 12,
@@ -813,6 +826,7 @@ class _LanSyncCardState extends State<_LanSyncCard> {
                   Chip(label: Text("Cloud queue: ${widget.store.pendingSyncQueueForTarget('cloud', readyOnly: false).length}")),
                   Chip(label: Text('Device: ${widget.store.deviceId}')),
                   Chip(label: Text('Store: ${widget.store.appIdentity.storeId}')),
+                  Chip(label: Text("Cursor: ${CloudSyncSettings.load().lastPullCursor?.toLocal().toString().split('.').first ?? 'first pull'}")),
                 ],
               ),
               const SizedBox(height: 12),

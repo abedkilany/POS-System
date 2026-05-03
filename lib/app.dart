@@ -5,6 +5,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'core/localization/app_localizations.dart';
 import 'core/theme/app_theme.dart';
 import 'core/services/lan_sync_service.dart';
+import 'core/services/cloud_sync_service.dart';
 import 'data/app_store.dart';
 import 'models/user_role.dart';
 import 'features/customers/customers_page.dart';
@@ -30,6 +31,7 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
   Locale _locale = const Locale('en');
   final AppStore _store = AppStore();
   late final AutoLanSyncController _autoSyncController = AutoLanSyncController(_store);
+  late final AutoCloudSyncController _autoCloudSyncController = AutoCloudSyncController(_store);
 
   @override
   void initState() {
@@ -40,11 +42,13 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
   Future<void> _initializeApp() async {
     await _store.initialize();
     await _autoSyncController.start();
+    await _autoCloudSyncController.start();
   }
 
   @override
   void dispose() {
     _autoSyncController.stop();
+    _autoCloudSyncController.stop();
     _store.dispose();
     super.dispose();
   }
@@ -77,6 +81,7 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
                       store: _store,
                       onDone: () async {
                         await _autoSyncController.start();
+                        await _autoCloudSyncController.start();
                         if (mounted) setState(() {});
                       },
                     ))

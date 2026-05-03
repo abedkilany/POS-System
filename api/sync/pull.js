@@ -1,4 +1,4 @@
-import { sql, assertSyncToken, sendError } from '../_db.js';
+import { sql, assertSyncToken, assertStoreAllowed, sendError } from '../_db.js';
 
 function asIso(value) {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
@@ -11,6 +11,7 @@ export default async function handler(req, res) {
 
     const storeId = String(req.query.store_id || req.query.storeId || 'default-store');
     const branchId = String(req.query.branch_id || req.query.branchId || 'main');
+    assertStoreAllowed(storeId);
     const since = req.query.since ? new Date(String(req.query.since)).toISOString() : null;
     const limit = Math.min(Number(req.query.limit || 1000), 5000);
 
@@ -22,6 +23,7 @@ export default async function handler(req, res) {
         from entity_snapshots
         where store_id = ${storeId}
           and operation <> 'delete'
+          and entity_type <> 'stock_movement'
         order by updated_at asc
         limit ${limit}
       `;
