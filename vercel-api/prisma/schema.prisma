@@ -58,6 +58,6 @@ model SyncChange {
   receivedAt DateTime @default(now())
   store      Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
 
-  @@index([storeId, createdAt])
+  @@index([storeId, branchId, createdAt])
   @@index([storeId, entityType, entityId])
 }

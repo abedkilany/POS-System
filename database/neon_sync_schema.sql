@@ -15,7 +15,7 @@ create table if not exists sync_events (
 );
 
 create index if not exists idx_sync_events_store_created
-  on sync_events (store_id, created_at);
+  on sync_events (store_id, branch_id, created_at);
 
 create index if not exists idx_sync_events_entity
   on sync_events (store_id, entity_type, entity_id);
@@ -24,12 +24,13 @@ create index if not exists idx_sync_events_entity
 -- The app sync engine only requires sync_events.
 create table if not exists entity_snapshots (
   store_id text not null,
+  branch_id text not null default 'main',
   entity_type text not null,
   entity_id text not null,
   payload jsonb not null default '{}'::jsonb,
   operation text not null,
   updated_at timestamptz not null default now(),
-  primary key (store_id, entity_type, entity_id)
+  primary key (store_id, branch_id, entity_type, entity_id)
 );
 
 -- Host-authoritative sync v2: remote/web clients do not write directly to
@@ -54,3 +55,7 @@ create table if not exists cloud_change_requests (
 
 create index if not exists idx_cloud_change_requests_pending
   on cloud_change_requests (store_id, branch_id, status, received_at);
+
+
+-- Migration safety for databases created before branch-scoped snapshots.
+alter table entity_snapshots add column if not exists branch_id text not null default 'main';

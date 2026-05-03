@@ -6,10 +6,11 @@ export async function GET(request: Request) {
     const user = await requireApiUser(request);
     const url = new URL(request.url);
     const since = url.searchParams.get('since');
+    const branchId = url.searchParams.get('branch_id') ?? url.searchParams.get('branchId') ?? 'main';
     const createdAt = since ? { gt: new Date(since) } : undefined;
 
     const changes = await prisma.syncChange.findMany({
-      where: { storeId: user.storeId, ...(createdAt ? { createdAt } : {}) },
+      where: { storeId: user.storeId, branchId, ...(createdAt ? { createdAt } : {}) },
       orderBy: { createdAt: 'asc' },
       take: 1000,
     });

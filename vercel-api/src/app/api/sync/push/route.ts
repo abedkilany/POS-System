@@ -19,7 +19,7 @@ export async function POST(request: Request) {
           create: {
             id: String(change.id),
             storeId: user.storeId,
-            branchId: change.branchId ? String(change.branchId) : null,
+            branchId: change.branchId ? String(change.branchId) : 'main',
             deviceId: String(change.deviceId),
             entityType: String(change.entityType),
             entityId: String(change.entityId),

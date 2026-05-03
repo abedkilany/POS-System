@@ -39,13 +39,13 @@ function idOf(item, fallback) {
   return fallback;
 }
 
-async function upsertSnapshot({ storeId, entityType, entityId, operation, payload, updatedAt }) {
+async function upsertSnapshot({ storeId, branchId, entityType, entityId, operation, payload, updatedAt }) {
   if (!storeId || !entityType || !entityId) return;
   if (operation === 'delete') {
     await sql`
-      insert into entity_snapshots (store_id, entity_type, entity_id, payload, operation, updated_at)
-      values (${storeId}, ${entityType}, ${entityId}, ${JSON.stringify(payload || {})}, ${operation}, ${updatedAt})
-      on conflict (store_id, entity_type, entity_id) do update set
+      insert into entity_snapshots (store_id, branch_id, entity_type, entity_id, payload, operation, updated_at)
+      values (${storeId}, ${branchId || 'main'}, ${entityType}, ${entityId}, ${JSON.stringify(payload || {})}, ${operation}, ${updatedAt})
+      on conflict (store_id, branch_id, entity_type, entity_id) do update set
         payload = excluded.payload,
         operation = excluded.operation,
         updated_at = excluded.updated_at
@@ -53,9 +53,9 @@ async function upsertSnapshot({ storeId, entityType, entityId, operation, payloa
     return;
   }
   await sql`
-    insert into entity_snapshots (store_id, entity_type, entity_id, payload, operation, updated_at)
-    values (${storeId}, ${entityType}, ${entityId}, ${JSON.stringify(payload || {})}, ${operation || 'upsert'}, ${updatedAt})
-    on conflict (store_id, entity_type, entity_id) do update set
+    insert into entity_snapshots (store_id, branch_id, entity_type, entity_id, payload, operation, updated_at)
+    values (${storeId}, ${branchId || 'main'}, ${entityType}, ${entityId}, ${JSON.stringify(payload || {})}, ${operation || 'upsert'}, ${updatedAt})
+    on conflict (store_id, branch_id, entity_type, entity_id) do update set
       payload = excluded.payload,
       operation = excluded.operation,
       updated_at = excluded.updated_at
@@ -74,6 +74,7 @@ async function materializeChange(change) {
         const entityId = idOf(item, `${key}-${i}`);
         await upsertSnapshot({
           storeId: change.storeId,
+          branchId: change.branchId,
           entityType,
           entityId,
           operation: 'upsert',
@@ -83,13 +84,13 @@ async function materializeChange(change) {
       }
     }
     if (p.storeProfile && typeof p.storeProfile === 'object') {
-      await upsertSnapshot({ storeId: change.storeId, entityType: 'store_profile', entityId: 'store', operation: 'upsert', payload: p.storeProfile, updatedAt });
+      await upsertSnapshot({ storeId: change.storeId, branchId: change.branchId, entityType: 'store_profile', entityId: 'store', operation: 'upsert', payload: p.storeProfile, updatedAt });
     }
     return;
   }
 
   if (change.operation === 'reset_store_data') {
-    await sql`delete from entity_snapshots where store_id = ${change.storeId}`;
+    await sql`delete from entity_snapshots where store_id = ${change.storeId} and branch_id = ${change.branchId || 'main'}`;
     return;
   }
 
@@ -103,6 +104,7 @@ async function materializeChange(change) {
       select payload, operation, updated_at
       from entity_snapshots
       where store_id = ${change.storeId}
+        and branch_id = ${change.branchId || 'main'}
         and entity_type = 'product'
         and entity_id = ${productId}
       limit 1
@@ -121,6 +123,7 @@ async function materializeChange(change) {
     };
     await upsertSnapshot({
       storeId: change.storeId,
+      branchId: change.branchId,
       entityType: 'product',
       entityId: productId,
       operation: 'upsert',
@@ -129,6 +132,7 @@ async function materializeChange(change) {
     });
     await upsertSnapshot({
       storeId: change.storeId,
+      branchId: change.branchId,
       entityType: 'stock_movement',
       entityId: change.entityId,
       operation: 'upsert',
@@ -140,6 +144,7 @@ async function materializeChange(change) {
 
   await upsertSnapshot({
     storeId: change.storeId,
+    branchId: change.branchId,
     entityType: change.entityType,
     entityId: change.entityId,
     operation: change.operation === 'delete' ? 'delete' : 'upsert',

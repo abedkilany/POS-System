@@ -6,9 +6,10 @@ begin;
 truncate table entity_snapshots;
 
 -- Latest non-stock entity state.
-insert into entity_snapshots (store_id, entity_type, entity_id, payload, operation, updated_at)
-select distinct on (store_id, entity_type, entity_id)
+insert into entity_snapshots (store_id, branch_id, entity_type, entity_id, payload, operation, updated_at)
+select distinct on (store_id, branch_id, entity_type, entity_id)
   store_id,
+  coalesce(branch_id, 'main'),
   entity_type,
   entity_id,
   payload,
@@ -17,11 +18,11 @@ select distinct on (store_id, entity_type, entity_id)
 from sync_events
 where entity_type <> 'stock_movement'
   and not (entity_type = 'system' and operation in ('restore_snapshot', 'reset_store_data'))
-order by store_id, entity_type, entity_id, created_at desc;
+order by store_id, branch_id, entity_type, entity_id, created_at desc;
 
 -- Restore snapshots are bulk events. Expand them into latest state rows.
-insert into entity_snapshots (store_id, entity_type, entity_id, payload, operation, updated_at)
-select se.store_id, v.entity_type, item->>'id', item, 'upsert', se.created_at
+insert into entity_snapshots (store_id, branch_id, entity_type, entity_id, payload, operation, updated_at)
+select se.store_id, coalesce(se.branch_id, 'main'), v.entity_type, item->>'id', item, 'upsert', se.created_at
 from sync_events se
 cross join lateral (values
   ('product', 'products'),
@@ -39,19 +40,19 @@ cross join lateral jsonb_array_elements(coalesce(se.payload -> v.collection_name
 where se.entity_type = 'system'
   and se.operation = 'restore_snapshot'
   and item ? 'id'
-on conflict (store_id, entity_type, entity_id) do update set
+on conflict (store_id, branch_id, entity_type, entity_id) do update set
   payload = excluded.payload,
   operation = excluded.operation,
   updated_at = excluded.updated_at
 where entity_snapshots.updated_at <= excluded.updated_at;
 
-insert into entity_snapshots (store_id, entity_type, entity_id, payload, operation, updated_at)
-select se.store_id, 'store_profile', 'store', se.payload->'storeProfile', 'upsert', se.created_at
+insert into entity_snapshots (store_id, branch_id, entity_type, entity_id, payload, operation, updated_at)
+select se.store_id, coalesce(se.branch_id, 'main'), 'store_profile', 'store', se.payload->'storeProfile', 'upsert', se.created_at
 from sync_events se
 where se.entity_type = 'system'
   and se.operation = 'restore_snapshot'
   and se.payload ? 'storeProfile'
-on conflict (store_id, entity_type, entity_id) do update set
+on conflict (store_id, branch_id, entity_type, entity_id) do update set
   payload = excluded.payload,
   operation = excluded.operation,
   updated_at = excluded.updated_at
@@ -61,13 +62,14 @@ where entity_snapshots.updated_at <= excluded.updated_at;
 with deltas as (
   select
     store_id,
+    coalesce(branch_id, 'main') as branch_id,
     payload->>'productId' as product_id,
     sum(coalesce((payload->>'quantity')::numeric, 0)) as qty_delta,
     max(created_at) as last_at
   from sync_events
   where entity_type = 'stock_movement'
     and payload ? 'productId'
-  group by store_id, payload->>'productId'
+  group by store_id, coalesce(branch_id, 'main'), payload->>'productId'
 )
 update entity_snapshots es
 set payload = jsonb_set(es.payload, '{stock}', to_jsonb(greatest(0, coalesce((es.payload->>'stock')::numeric, 0) + d.qty_delta)::int), true)
@@ -75,6 +77,7 @@ set payload = jsonb_set(es.payload, '{stock}', to_jsonb(greatest(0, coalesce((es
     updated_at = greatest(es.updated_at, d.last_at)
 from deltas d
 where es.store_id = d.store_id
+  and es.branch_id = d.branch_id
   and es.entity_type = 'product'
   and es.entity_id = d.product_id;
 

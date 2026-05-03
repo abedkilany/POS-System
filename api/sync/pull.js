@@ -25,9 +25,10 @@ export default async function handler(req, res) {
     // browser/device can hydrate Hive even if it never saw the original events.
     if (!since) {
       const snapshotRows = await sql`
-        select store_id, entity_type, entity_id, operation, payload, updated_at
+        select store_id, branch_id, entity_type, entity_id, operation, payload, updated_at
         from entity_snapshots
         where store_id = ${storeId}
+          and branch_id = ${branchId}
           and operation <> 'delete'
           and entity_type <> 'stock_movement'
         order by updated_at asc
@@ -36,7 +37,7 @@ export default async function handler(req, res) {
       const changes = snapshotRows.map((row) => ({
         id: `snapshot-${row.entity_type}-${row.entity_id}-${asIso(row.updated_at)}`,
         storeId: row.store_id,
-        branchId,
+        branchId: row.branch_id || branchId,
         deviceId: 'cloud-snapshot',
         entityType: row.entity_type,
         entityId: row.entity_id,
@@ -53,6 +54,7 @@ export default async function handler(req, res) {
       select id, store_id, branch_id, device_id, entity_type, entity_id, operation, payload, created_at, received_at
       from sync_events
       where store_id = ${storeId}
+        and branch_id = ${branchId}
         and received_at > ${since}
       order by received_at asc, created_at asc
       limit ${limit}

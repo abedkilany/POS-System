@@ -1601,18 +1601,23 @@ class AppStore extends ChangeNotifier {
   String exportEncryptedBackupJson(String password) {
     requirePermission(AppPermission.backupExport);
     final cleaned = password.trim();
-    if (cleaned.length < 6) {
-      throw ArgumentError('Backup password must be at least 6 characters.');
+    if (cleaned.length < 8) {
+      throw ArgumentError('Backup password must be at least 8 characters.');
     }
-    final plain = exportBackupJson();
+    final plain = utf8.encode(exportBackupJson());
     final salt = _generateSalt();
+    final nonce = _generateSalt();
     final key = _deriveBackupKey(cleaned, salt);
-    final bytes = utf8.encode(plain);
-    final encrypted = List<int>.generate(bytes.length, (index) => bytes[index] ^ key[index % key.length]);
+    final encrypted = _xorWithSha256Stream(plain, key, nonce);
+    final mac = Hmac(sha256, key).convert([...utf8.encode(nonce), ...encrypted]).bytes;
     final payload = {
       'format': 'store_manager_pro_encrypted_backup',
-      'version': 1,
+      'version': 2,
+      'kdf': 'sha256-pbkdf-100000',
+      'cipher': 'sha256-stream-hmac',
       'salt': salt,
+      'nonce': nonce,
+      'mac': base64UrlEncode(mac),
       'data': base64UrlEncode(encrypted),
     };
     return const JsonEncoder.withIndent('  ').convert(payload);
@@ -1626,18 +1631,67 @@ class AppStore extends ChangeNotifier {
     final salt = decoded['salt'] as String? ?? '';
     final data = decoded['data'] as String? ?? '';
     if (salt.isEmpty || data.isEmpty) throw ArgumentError('Invalid encrypted backup.');
+
+    // Backward compatibility with older backups created by the previous XOR-v1
+    // format. New exports use an authenticated stream with a nonce and MAC.
+    if ((decoded['version'] as num? ?? 1).toInt() < 2) {
+      final key = _deriveBackupKeyV1(password.trim(), salt);
+      final encrypted = base64Url.decode(data);
+      final plain = List<int>.generate(encrypted.length, (index) => encrypted[index] ^ key[index % key.length]);
+      return utf8.decode(plain);
+    }
+
+    final nonce = decoded['nonce'] as String? ?? '';
+    final macText = decoded['mac'] as String? ?? '';
+    if (nonce.isEmpty || macText.isEmpty) throw ArgumentError('Invalid encrypted backup.');
     final key = _deriveBackupKey(password.trim(), salt);
     final encrypted = base64Url.decode(data);
-    final plain = List<int>.generate(encrypted.length, (index) => encrypted[index] ^ key[index % key.length]);
+    final expectedMac = Hmac(sha256, key).convert([...utf8.encode(nonce), ...encrypted]).bytes;
+    final actualMac = base64Url.decode(macText);
+    if (!_constantTimeEquals(expectedMac, actualMac)) {
+      throw ArgumentError('Invalid backup password or corrupted encrypted backup.');
+    }
+    final plain = _xorWithSha256Stream(encrypted, key, nonce);
     return utf8.decode(plain);
   }
 
   List<int> _deriveBackupKey(String password, String salt) {
+    List<int> digest = utf8.encode('store_manager_pro|backup_v2|$salt|$password');
+    for (var i = 0; i < 100000; i++) {
+      digest = sha256.convert(digest).bytes;
+    }
+    return digest;
+  }
+
+  List<int> _deriveBackupKeyV1(String password, String salt) {
     List<int> digest = utf8.encode('store_manager_pro|backup_v1|$salt|$password');
     for (var i = 0; i < 25000; i++) {
       digest = sha256.convert(digest).bytes;
     }
     return digest;
+  }
+
+  List<int> _xorWithSha256Stream(List<int> input, List<int> key, String nonce) {
+    final output = <int>[];
+    var counter = 0;
+    while (output.length < input.length) {
+      final block = sha256.convert([...key, ...utf8.encode(nonce), ...utf8.encode(counter.toString())]).bytes;
+      for (final byte in block) {
+        if (output.length >= input.length) break;
+        output.add(input[output.length] ^ byte);
+      }
+      counter += 1;
+    }
+    return output;
+  }
+
+  bool _constantTimeEquals(List<int> a, List<int> b) {
+    if (a.length != b.length) return false;
+    var diff = 0;
+    for (var i = 0; i < a.length; i++) {
+      diff |= a[i] ^ b[i];
+    }
+    return diff == 0;
   }
 
   Future<void> importBackupJson(String rawJson) async {
@@ -2108,31 +2162,63 @@ class AppStore extends ChangeNotifier {
         }
         break;
       case 'product':
-        _upsertByUpdatedAt<Product>(_products, Product.fromJson(p), (item) => item.id);
+        if (change.operation == 'delete' && p.isEmpty) {
+          _products.removeWhere((item) => item.id == change.entityId);
+        } else {
+          _upsertByUpdatedAt<Product>(_products, Product.fromJson(p), (item) => item.id);
+        }
         break;
       case 'customer':
-        _upsertByUpdatedAt<Customer>(_customers, Customer.fromJson(p), (item) => item.id);
+        if (change.operation == 'delete' && p.isEmpty) {
+          _customers.removeWhere((item) => item.id == change.entityId);
+        } else {
+          _upsertByUpdatedAt<Customer>(_customers, Customer.fromJson(p), (item) => item.id);
+        }
         break;
       case 'supplier':
-        _upsertByUpdatedAt<Supplier>(_suppliers, Supplier.fromJson(p), (item) => item.id);
+        if (change.operation == 'delete' && p.isEmpty) {
+          _suppliers.removeWhere((item) => item.id == change.entityId);
+        } else {
+          _upsertByUpdatedAt<Supplier>(_suppliers, Supplier.fromJson(p), (item) => item.id);
+        }
         break;
       case 'expense':
-        _upsertByUpdatedAt<Expense>(_expenses, Expense.fromJson(p), (item) => item.id);
+        if (change.operation == 'delete' && p.isEmpty) {
+          _expenses.removeWhere((item) => item.id == change.entityId);
+        } else {
+          _upsertByUpdatedAt<Expense>(_expenses, Expense.fromJson(p), (item) => item.id);
+        }
         break;
       case 'category':
-        _upsertByUpdatedAt<CatalogItem>(_categories, CatalogItem.fromJson(p), (item) => item.id);
+        if (change.operation == 'delete' && p.isEmpty) {
+          _categories.removeWhere((item) => item.id == change.entityId);
+        } else {
+          _upsertByUpdatedAt<CatalogItem>(_categories, CatalogItem.fromJson(p), (item) => item.id);
+        }
         break;
       case 'brand':
-        _upsertByUpdatedAt<CatalogItem>(_brands, CatalogItem.fromJson(p), (item) => item.id);
+        if (change.operation == 'delete' && p.isEmpty) {
+          _brands.removeWhere((item) => item.id == change.entityId);
+        } else {
+          _upsertByUpdatedAt<CatalogItem>(_brands, CatalogItem.fromJson(p), (item) => item.id);
+        }
         break;
       case 'unit':
-        _upsertByUpdatedAt<CatalogItem>(_units, CatalogItem.fromJson(p), (item) => item.id);
+        if (change.operation == 'delete' && p.isEmpty) {
+          _units.removeWhere((item) => item.id == change.entityId);
+        } else {
+          _upsertByUpdatedAt<CatalogItem>(_units, CatalogItem.fromJson(p), (item) => item.id);
+        }
         break;
       case 'sale':
-        final incomingSale = Sale.fromJson(p);
-        _upsertByUpdatedAt<Sale>(_sales, incomingSale, (item) => item.id);
-        final invoiceNumber = _invoiceSequenceFromNo(incomingSale.invoiceNo);
-        if (invoiceNumber > _invoiceCounter) _invoiceCounter = invoiceNumber;
+        if (change.operation == 'delete' && p.isEmpty) {
+          _sales.removeWhere((item) => item.id == change.entityId);
+        } else {
+          final incomingSale = Sale.fromJson(p);
+          _upsertByUpdatedAt<Sale>(_sales, incomingSale, (item) => item.id);
+          final invoiceNumber = _invoiceSequenceFromNo(incomingSale.invoiceNo);
+          if (invoiceNumber > _invoiceCounter) _invoiceCounter = invoiceNumber;
+        }
         break;
       case 'stock_movement':
         final productId = p['productId'] as String? ?? '';
