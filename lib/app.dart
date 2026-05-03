@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
@@ -70,7 +71,7 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
             GlobalCupertinoLocalizations.delegate,
           ],
           home: _store.isReady
-              ? (LanSyncSettings.load().setupComplete
+              ? (kIsWeb || LanSyncSettings.load().setupComplete
                   ? PinLockPage(store: _store, child: MainShell(store: _store, onLocaleChanged: _changeLocale))
                   : SyncSetupPage(
                       store: _store,

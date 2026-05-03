@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -746,6 +747,39 @@ class _LanSyncCardState extends State<_LanSyncCard> {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final color = Theme.of(context).colorScheme;
+
+    if (kIsWeb) {
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.cloud_sync_outlined),
+                title: const Text('Cloud sync / مزامنة سحابية'),
+                subtitle: const Text('LAN Host/Client is disabled on the web build. Use the cloud API + Neon for online sync.'),
+                trailing: const Chip(label: Text('Web mode')),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: color.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Text(
+                  'نسخة الويب تعمل كواجهة Online/Cloud. إعدادات Host IP و Port و Pairing token خاصة بنسخة Desktop/LAN فقط. الخطوة التالية هي ربط API على Vercel مع Neon PostgreSQL.',
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
