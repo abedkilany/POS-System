@@ -16,7 +16,7 @@ class CloudSyncSettings {
     required this.apiToken,
     this.lastPullCursor,
     this.autoSyncEnabled = true,
-    this.intervalSeconds = 10,
+    this.intervalSeconds = 5,
   });
 
   static const _apiBaseUrlKey = 'cloud_api_base_url';
@@ -72,7 +72,7 @@ class CloudSyncSettings {
       apiToken: token,
       lastPullCursor: DateTime.tryParse(cursorRaw),
       autoSyncEnabled: autoRaw == null ? true : autoRaw == 'true',
-      intervalSeconds: int.tryParse(intervalRaw ?? '')?.clamp(5, 3600).toInt() ?? 10,
+      intervalSeconds: int.tryParse(intervalRaw ?? '')?.clamp(5, 3600).toInt() ?? 5,
     );
   }
 
@@ -263,30 +263,65 @@ class AutoCloudSyncController {
 
   final AppStore store;
   Timer? _timer;
+  Timer? _debounceTimer;
   bool _running = false;
+  bool _disposed = false;
+  int _lastCloudQueueCount = 0;
+  int _lastRelayQueueCount = 0;
 
   Future<void> start() async {
     stop();
+    _disposed = false;
     if (!store.appIdentity.isCloudEnabled) return;
     final settings = CloudSyncSettings.load();
     if (!settings.autoSyncEnabled || !settings.isConfigured) return;
+
+    _lastCloudQueueCount = store.pendingSyncQueueForTarget('cloud', readyOnly: false).length;
+    _lastRelayQueueCount = store.pendingSyncQueueForTarget('cloud_host', readyOnly: false).length;
+    store.removeListener(_onStoreChanged);
+    store.addListener(_onStoreChanged);
+
     final interval = Duration(seconds: settings.intervalSeconds.clamp(5, 3600).toInt());
     _timer = Timer.periodic(interval, (_) => _tick());
     await _tick();
   }
 
   void stop() {
+    _disposed = true;
+    store.removeListener(_onStoreChanged);
     _timer?.cancel();
+    _debounceTimer?.cancel();
     _timer = null;
+    _debounceTimer = null;
+  }
+
+  void _onStoreChanged() {
+    if (_disposed) return;
+    final settings = CloudSyncSettings.load();
+    if (!settings.autoSyncEnabled || !settings.isConfigured || !store.appIdentity.isCloudEnabled) return;
+
+    final cloudCount = store.pendingSyncQueueForTarget('cloud', readyOnly: false).length;
+    final relayCount = store.pendingSyncQueueForTarget('cloud_host', readyOnly: false).length;
+    final hasNewCloudWork = cloudCount > _lastCloudQueueCount || relayCount > _lastRelayQueueCount;
+    _lastCloudQueueCount = cloudCount;
+    _lastRelayQueueCount = relayCount;
+    if (!hasNewCloudWork) return;
+
+    // Do not wait for the next polling interval after a local edit. This is why
+    // some devices appeared to sync at 30 seconds even when polling was set to 5.
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(const Duration(seconds: 1), () => _tick());
   }
 
   Future<void> _tick() async {
-    if (_running) return;
+    if (_running || _disposed) return;
     _running = true;
     try {
       final settings = CloudSyncSettings.load();
       if (settings.autoSyncEnabled && settings.isConfigured && store.appIdentity.isCloudEnabled) {
         await CloudSyncService(store).syncNow(settings);
+        _lastCloudQueueCount = store.pendingSyncQueueForTarget('cloud', readyOnly: false).length;
+        _lastRelayQueueCount = store.pendingSyncQueueForTarget('cloud_host', readyOnly: false).length;
       }
     } finally {
       _running = false;

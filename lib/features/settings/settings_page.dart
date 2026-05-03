@@ -703,7 +703,7 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
 
   CloudSyncSettings get _settings {
     final loaded = CloudSyncSettings.load();
-    final interval = int.tryParse(_intervalController.text.trim())?.clamp(5, 3600).toInt() ?? 10;
+    final interval = int.tryParse(_intervalController.text.trim())?.clamp(5, 3600).toInt() ?? 5;
     return loaded.copyWith(
       enabled: true,
       apiBaseUrl: _apiController.text.trim(),
@@ -897,6 +897,7 @@ class _LanSyncCardState extends State<_LanSyncCard> {
   final TextEditingController _tokenController = TextEditingController();
   final TextEditingController _cloudApiController = TextEditingController();
   final TextEditingController _cloudTokenController = TextEditingController();
+  final TextEditingController _cloudIntervalController = TextEditingController();
   String _status = 'Ready';
   bool _busy = false;
   bool _autoSyncEnabled = false;
@@ -916,6 +917,7 @@ class _LanSyncCardState extends State<_LanSyncCard> {
     final cloudSettings = CloudSyncSettings.load();
     _cloudApiController.text = cloudSettings.apiBaseUrl.isEmpty ? (kIsWeb ? Uri.base.origin : '') : cloudSettings.apiBaseUrl;
     _cloudTokenController.text = cloudSettings.apiToken;
+    _cloudIntervalController.text = cloudSettings.intervalSeconds.toString();
     _cloudAutoSyncEnabled = cloudSettings.autoSyncEnabled;
     _autoSyncEnabled = settings.autoSyncEnabled;
     _hostModeEnabled = settings.hostModeEnabled;
@@ -937,6 +939,7 @@ class _LanSyncCardState extends State<_LanSyncCard> {
     _tokenController.dispose();
     _cloudApiController.dispose();
     _cloudTokenController.dispose();
+    _cloudIntervalController.dispose();
     super.dispose();
   }
 
@@ -945,11 +948,13 @@ class _LanSyncCardState extends State<_LanSyncCard> {
 
   CloudSyncSettings get _cloudSettings {
     final loaded = CloudSyncSettings.load();
+    final interval = int.tryParse(_cloudIntervalController.text.trim())?.clamp(5, 3600).toInt() ?? 5;
     return loaded.copyWith(
       enabled: true,
       apiBaseUrl: _cloudApiController.text.trim().isEmpty ? (kIsWeb ? Uri.base.origin : '') : _cloudApiController.text.trim(),
       apiToken: _cloudTokenController.text.trim(),
       autoSyncEnabled: _cloudAutoSyncEnabled,
+      intervalSeconds: interval,
     );
   }
 
@@ -1033,10 +1038,23 @@ class _LanSyncCardState extends State<_LanSyncCard> {
                 ),
               ),
               const SizedBox(height: 12),
+              SizedBox(
+                width: 220,
+                child: TextField(
+                  controller: _cloudIntervalController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Auto sync interval seconds',
+                    helperText: 'Minimum 5 seconds.',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Auto cloud sync'),
-                subtitle: const Text('Automatically pushes and pulls cloud changes about every 30 seconds when token is configured.'),
+                subtitle: const Text('Automatically pushes local changes quickly and polls cloud using the interval below.'),
                 value: _cloudAutoSyncEnabled,
                 onChanged: _busy ? null : (value) => setState(() => _cloudAutoSyncEnabled = value),
               ),
