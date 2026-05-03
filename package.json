@@ -4,7 +4,7 @@
   "version": "1.1.0",
   "type": "module",
   "scripts": {
-    "vercel-build": "bash scripts/vercel-build.sh"
+    "build": "bash scripts/vercel-build.sh"
   },
   "dependencies": {
     "@neondatabase/serverless": "^0.10.4"
