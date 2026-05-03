@@ -1,32 +1,44 @@
 # =========================
+
 # Flutter / Dart
+
 # =========================
+
 .dart_tool/
 .flutter-plugins
 .flutter-plugins-dependencies
 .pub-cache/
 .pub/
-/build/
+
+/build/*
+!/build/web/
+!/build/web/**
+
 /coverage/
 
-# Keep pubspec.lock for app projects
+# =========================
+
+# Android
 
 # =========================
-# Android
-# =========================
+
 android/.gradle/
 android/app/build/
 android/local.properties
 
 # Signing
+
 *.jks
 *.keystore
 key.properties
 android/key.properties
 
 # =========================
+
 # iOS
+
 # =========================
+
 ios/Pods/
 ios/.symlinks/
 ios/Flutter/Flutter.framework
@@ -34,8 +46,11 @@ ios/Flutter/App.framework
 ios/Flutter/.last_build_id
 
 # =========================
+
 # macOS / Windows / Linux
+
 # =========================
+
 macos/Flutter/ephemeral/
 windows/flutter/ephemeral/
 windows/runner/Debug/
@@ -43,26 +58,38 @@ windows/runner/Release/
 linux/flutter/ephemeral/
 
 # =========================
+
 # IDEs
+
 # =========================
+
 .idea/
 *.iml
 .vscode/
 
 # =========================
+
 # OS files
+
 # =========================
+
 .DS_Store
 Thumbs.db
 
 # =========================
+
 # Logs
+
 # =========================
+
 *.log
 
 # =========================
+
 # Data & Security
+
 # =========================
+
 *.db
 *.sqlite
 *.hive
@@ -70,21 +97,30 @@ backup/
 *.backup
 
 # Ignore all JSON by default
+
 *.json
 
-# Allow translation files
+# Allow required JSON files
+
 !assets/translations/*.json
+!build/web/**/*.json
 
 # =========================
+
 # Secrets
+
 # =========================
+
 .env
 *.key
 *.pem
 
 # =========================
+
 # Misc
+
 # =========================
+
 *.class
 *.pyc
 *.swp

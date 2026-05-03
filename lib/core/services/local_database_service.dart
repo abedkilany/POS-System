@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -16,21 +15,11 @@ class LocalDatabaseService {
   static Future<void> initialize() async {
     if (_box != null && _box!.isOpen) return;
 
-    if (Platform.isWindows) {
-      final appData = Platform.environment['APPDATA'];
-      if (appData == null || appData.isEmpty) {
-        throw StateError('APPDATA path not found.');
-      }
+    // Web-safe initialization. Hive.initFlutter() works on Flutter Web and
+    // desktop/mobile without importing dart:io. Direct Platform/Directory usage
+    // breaks dart2js compilation.
+    await Hive.initFlutter();
 
-      final dbDir = Directory('$appData\\store_manager_pro');
-      if (!await dbDir.exists()) {
-        await dbDir.create(recursive: true);
-      }
-
-      Hive.init(dbDir.path);
-    } else {
-      await Hive.initFlutter();
-    }
     final key = await _loadOrCreateEncryptionKey();
     _box = await Hive.openBox<String>(boxName, encryptionCipher: HiveAesCipher(key));
   }

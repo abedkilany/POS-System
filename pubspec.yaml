@@ -19,6 +19,7 @@ dependencies:
   printing: ^5.14.2
   file_picker: ^8.1.2
   crypto: ^3.0.6
+  http: ^1.2.2
 
   cupertino_icons: ^1.0.8
 
