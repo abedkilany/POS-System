@@ -2016,12 +2016,32 @@ class AppStore extends ChangeNotifier {
       if (existingIds.contains(change.id)) continue;
       await _applySyncChangePayload(change);
       final shouldMirrorToCloud = mirrorToCloud && _shouldMirrorRemoteChangeToCloud(change);
+
+      // Host-authority sync note:
+      // A change created on a Client may have a createdAt timestamp older than
+      // another Client's last LAN/Cloud pull cursor. If the Host stores and
+      // republishes that draft with the original Client timestamp, other
+      // Clients can miss it in delta pulls and only see it after a later
+      // fallback/snapshot cycle, which looked like a consistent 15-20s delay.
+      // When the Host accepts a draft, restamp it as an authoritative Host event
+      // at acceptance time. The id stays the same for idempotency/ack safety, but
+      // cursors now see the Host acceptance order, which is the real source of
+      // truth order in this architecture.
+      final acceptedAt = DateTime.now();
+      final authoritativeChange = shouldMirrorToCloud
+          ? change.copyWith(
+              createdAt: acceptedAt,
+              deviceId: _deviceId,
+              storeId: appIdentity.storeId,
+              branchId: appIdentity.branchId,
+            )
+          : change;
       final storedChange = markAppliedAsSynced && !shouldMirrorToCloud
-          ? change.copyWith(isSynced: true, syncedAt: DateTime.now())
-          : change.copyWith(isSynced: false, syncedAt: null);
+          ? authoritativeChange.copyWith(isSynced: true, syncedAt: acceptedAt)
+          : authoritativeChange.copyWith(isSynced: false, syncedAt: null);
       _syncChanges.add(storedChange);
       if (shouldMirrorToCloud) {
-        _enqueueSyncChangeForTarget(change.id, 'cloud', DateTime.now());
+        _enqueueSyncChangeForTarget(storedChange.id, 'cloud', acceptedAt);
       }
       existingIds.add(change.id);
       changed = true;
