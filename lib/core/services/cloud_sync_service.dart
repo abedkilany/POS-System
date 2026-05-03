@@ -16,7 +16,7 @@ class CloudSyncSettings {
     required this.apiToken,
     this.lastPullCursor,
     this.autoSyncEnabled = true,
-    this.intervalSeconds = 30,
+    this.intervalSeconds = 10,
   });
 
   static const _apiBaseUrlKey = 'cloud_api_base_url';
@@ -72,7 +72,7 @@ class CloudSyncSettings {
       apiToken: token,
       lastPullCursor: DateTime.tryParse(cursorRaw),
       autoSyncEnabled: autoRaw == null ? true : autoRaw == 'true',
-      intervalSeconds: int.tryParse(intervalRaw ?? '')?.clamp(15, 3600).toInt() ?? 30,
+      intervalSeconds: int.tryParse(intervalRaw ?? '')?.clamp(5, 3600).toInt() ?? 10,
     );
   }
 
@@ -208,7 +208,7 @@ class AutoCloudSyncController {
     if (!kIsWeb || !store.appIdentity.isCloudEnabled) return;
     final settings = CloudSyncSettings.load();
     if (!settings.autoSyncEnabled || !settings.isConfigured) return;
-    final interval = Duration(seconds: settings.intervalSeconds.clamp(15, 3600).toInt());
+    final interval = Duration(seconds: settings.intervalSeconds.clamp(5, 3600).toInt());
     _timer = Timer.periodic(interval, (_) => _tick());
     await _tick();
   }

@@ -918,10 +918,13 @@ class AppStore extends ChangeNotifier {
     final normalized = <Customer>[];
     var hasWalkIn = false;
     final seenIds = <String>{};
-    final seenNames = <String>{};
+    final activeNames = <String>{};
 
+    // Keep deleted tombstones for sync, but do not let a deleted customer name
+    // block a newly-created active customer with the same name.
     for (final customer in _customers) {
-      final normalizedName = customer.name.trim().toLowerCase();
+      final trimmedName = customer.name.trim();
+      final normalizedName = trimmedName.toLowerCase();
       final isWalkIn = customer.id == walkInCustomerId || normalizedName == walkInCustomerName.toLowerCase();
 
       if (isWalkIn) {
@@ -929,18 +932,23 @@ class AppStore extends ChangeNotifier {
           normalized.add(walkInCustomer);
           hasWalkIn = true;
           seenIds.add(walkInCustomerId);
-          seenNames.add(walkInCustomerName.toLowerCase());
         }
         continue;
       }
 
-      if (seenIds.contains(customer.id) || seenNames.contains(normalizedName)) {
+      if (seenIds.contains(customer.id)) {
         continue;
       }
 
-      normalized.add(customer.copyWith(name: customer.name.trim()));
+      if (!customer.isDeleted) {
+        if (activeNames.contains(normalizedName)) {
+          continue;
+        }
+        activeNames.add(normalizedName);
+      }
+
+      normalized.add(customer.copyWith(name: trimmedName));
       seenIds.add(customer.id);
-      seenNames.add(normalizedName);
     }
 
     if (!hasWalkIn) {
@@ -1243,9 +1251,23 @@ class AppStore extends ChangeNotifier {
         ? _withSyncMeta<Customer>(walkInCustomer, now, isCreate: false)
         : _withSyncMeta<Customer>(customer.copyWith(name: normalizedName), now, isCreate: false);
 
-    final index = _customers.indexWhere((item) => item.id == incoming.id);
+    var index = _customers.indexWhere((item) => item.id == incoming.id);
+
+    // If the user deletes a customer and later adds the same name again, revive
+    // the deleted tombstone instead of creating an invisible duplicate that gets
+    // removed by normalization/name de-duplication.
+    if (index == -1) {
+      final byDeletedName = _customers.indexWhere(
+        (item) => item.isDeleted && item.name.trim().toLowerCase() == normalizedName.toLowerCase(),
+      );
+      if (byDeletedName != -1) {
+        index = byDeletedName;
+      }
+    }
+
     final isCreate = index == -1;
-    final syncedCustomer = _withSyncMeta<Customer>(incoming, now, isCreate: isCreate);
+    final baseCustomer = isCreate ? incoming : incoming.copyWith(id: _customers[index].id, clearDeletedAt: true);
+    final syncedCustomer = _withSyncMeta<Customer>(baseCustomer, now, isCreate: isCreate, clearDeletedAt: true);
     if (isCreate) {
       _customers.add(syncedCustomer);
     } else {

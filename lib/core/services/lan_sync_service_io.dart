@@ -419,7 +419,7 @@ class AutoLanSyncController {
     store.removeListener(_onStoreChanged);
     store.addListener(_onStoreChanged);
     _periodicTimer?.cancel();
-    _periodicTimer = Timer.periodic(const Duration(seconds: 20), (_) => _syncBecauseOfTimer());
+    _periodicTimer = Timer.periodic(const Duration(seconds: 5), (_) => _syncBecauseOfTimer());
 
     if (settings.setupComplete && settings.autoSyncEnabled && settings.isClient) {
       unawaited(_runClientSync());
@@ -443,7 +443,7 @@ class AutoLanSyncController {
     if (!settings.setupComplete || !settings.autoSyncEnabled || !settings.isClient || !pendingIncreased) return;
 
     _debounceTimer?.cancel();
-    _debounceTimer = Timer(const Duration(seconds: 3), () => _runClientSync());
+    _debounceTimer = Timer(const Duration(seconds: 1), () => _runClientSync());
   }
 
   void _syncBecauseOfTimer() {

@@ -693,7 +693,7 @@ class _LanSyncCardState extends State<_LanSyncCard> {
     _portController.text = settings.port.toString();
     _tokenController.text = settings.secret;
     final cloudSettings = CloudSyncSettings.load();
-    _cloudApiController.text = cloudSettings.apiBaseUrl.isEmpty ? Uri.base.origin : cloudSettings.apiBaseUrl;
+    _cloudApiController.text = cloudSettings.apiBaseUrl.isEmpty ? (kIsWeb ? Uri.base.origin : '') : cloudSettings.apiBaseUrl;
     _cloudTokenController.text = cloudSettings.apiToken;
     _cloudAutoSyncEnabled = cloudSettings.autoSyncEnabled;
     _autoSyncEnabled = settings.autoSyncEnabled;
