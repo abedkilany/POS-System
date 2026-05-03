@@ -47227,6 +47227,12 @@ $2$verbatim(a,b){return this.H(this,B.F("call","$2$verbatim",0,[a,b],["verbatim"
 $3$color$defaultColor$disabledColor(a,b,c){return this.H(this,B.F("call","$3$color$defaultColor$disabledColor",0,[a,b,c],["color","defaultColor","disabledColor"],0))},
 $3$backgroundColor$color$defaultColor(a,b,c){return this.H(this,B.F("call","$3$backgroundColor$color$defaultColor",0,[a,b,c],["backgroundColor","color","defaultColor"],0))},
 $3$color$defaultColor$selectedColor(a,b,c){return this.H(this,B.F("call","$3$color$defaultColor$selectedColor",0,[a,b,c],["color","defaultColor","selectedColor"],0))},
+$2$bottom$top(a,b){return this.H(this,B.F("call","$2$bottom$top",0,[a,b],["bottom","top"],0))},
+$2$left$right(a,b){return this.H(this,B.F("call","$2$left$right",0,[a,b],["left","right"],0))},
+$3$rect(a,b,c){return this.H(this,B.F("call","$3$rect",0,[a,b,c],["rect"],0))},
+$2$hitTest$paintTransform(a,b){return this.H(this,B.F("call","$2$hitTest$paintTransform",0,[a,b],["hitTest","paintTransform"],0))},
+$3$crossAxisPosition$mainAxisPosition(a,b,c){return this.H(this,B.F("call","$3$crossAxisPosition$mainAxisPosition",0,[a,b,c],["crossAxisPosition","mainAxisPosition"],0))},
+$2$hitTest$paintOffset(a,b){return this.H(this,B.F("call","$2$hitTest$paintOffset",0,[a,b],["hitTest","paintOffset"],0))},
 $3$clearNextRetryAt$status$updatedAt(a,b,c){return this.H(this,B.F("call","$3$clearNextRetryAt$status$updatedAt",0,[a,b,c],["clearNextRetryAt","status","updatedAt"],0))},
 $1$name(a){return this.H(this,B.F("call","$1$name",0,[a],["name"],0))},
 $2$markAppliedAsSynced(a,b){return this.H(this,B.F("call","$2$markAppliedAsSynced",0,[a,b],["markAppliedAsSynced"],0))},
@@ -47248,16 +47254,10 @@ $3$composing$selection$text(a,b,c){return this.H(this,B.F("call","$3$composing$s
 $7$appRole$branchId$cloudTenantId$deviceName$deviceRole$storeId$syncMode(a,b,c,d,e,f,g){return this.H(this,B.F("call","$7$appRole$branchId$cloudTenantId$deviceName$deviceRole$storeId$syncMode",0,[a,b,c,d,e,f,g],["appRole","branchId","cloudTenantId","deviceName","deviceRole","storeId","syncMode"],0))},
 $4$displayFeatures$padding$viewInsets$viewPadding(a,b,c,d){return this.H(this,B.F("call","$4$displayFeatures$padding$viewInsets$viewPadding",0,[a,b,c,d],["displayFeatures","padding","viewInsets","viewPadding"],0))},
 $2$viewInsets$viewPadding(a,b){return this.H(this,B.F("call","$2$viewInsets$viewPadding",0,[a,b],["viewInsets","viewPadding"],0))},
-$3$rect(a,b,c){return this.H(this,B.F("call","$3$rect",0,[a,b,c],["rect"],0))},
 $3$error$errorText$hintText(a,b,c){return this.H(this,B.F("call","$3$error$errorText$hintText",0,[a,b,c],["error","errorText","hintText"],0))},
 $2$suffixIcon$suffixIconConstraints(a,b){return this.H(this,B.F("call","$2$suffixIcon$suffixIconConstraints",0,[a,b],["suffixIcon","suffixIconConstraints"],0))},
 $4$overscroll$physics$platform$scrollbars(a,b,c,d){return this.H(this,B.F("call","$4$overscroll$physics$platform$scrollbars",0,[a,b,c,d],["overscroll","physics","platform","scrollbars"],0))},
 $3$imperativeRemoval$isReplaced(a,b,c){return this.H(this,B.F("call","$3$imperativeRemoval$isReplaced",0,[a,b,c],["imperativeRemoval","isReplaced"],0))},
-$2$bottom$top(a,b){return this.H(this,B.F("call","$2$bottom$top",0,[a,b],["bottom","top"],0))},
-$2$left$right(a,b){return this.H(this,B.F("call","$2$left$right",0,[a,b],["left","right"],0))},
-$2$hitTest$paintTransform(a,b){return this.H(this,B.F("call","$2$hitTest$paintTransform",0,[a,b],["hitTest","paintTransform"],0))},
-$3$crossAxisPosition$mainAxisPosition(a,b,c){return this.H(this,B.F("call","$3$crossAxisPosition$mainAxisPosition",0,[a,b,c],["crossAxisPosition","mainAxisPosition"],0))},
-$2$hitTest$paintOffset(a,b){return this.H(this,B.F("call","$2$hitTest$paintOffset",0,[a,b],["hitTest","paintOffset"],0))},
 $1$foregroundColor(a){return this.H(this,B.F("call","$1$foregroundColor",0,[a],["foregroundColor"],0))},
 $3$foregroundColor$iconSize$overlayColor(a,b,c){return this.H(this,B.F("call","$3$foregroundColor$iconSize$overlayColor",0,[a,b,c],["foregroundColor","iconSize","overlayColor"],0))},
 $2$maxScaleFactor$minScaleFactor(a,b){return this.H(this,B.F("call","$2$maxScaleFactor$minScaleFactor",0,[a,b],["maxScaleFactor","minScaleFactor"],0))},
@@ -111586,41 +111586,46 @@ B.aIb.prototype={
 $1(a){return this.a.x0()},
 $S:17}
 B.Yg.prototype={
-N(a){var s,r,q,p,o,n,m,l,k,j,i=this,h=null,g=B.bi(a,A.ar,t.J),f=i.d,e=f.z,d=B.Q(g.J(0,"store_information"),h,h,h,h,h,h)
-d=B.dA(!1,A.b_,h,h,!0,h,h,h,!0,h,A.a0D,h,h,h,h,h,!1,h,h,h,h,B.Q(g.J(0,"store_information_desc"),h,h,h,h,h,h),h,d,h,B.fI(A.ex,B.Q(g.J(0,"edit"),h,h,h,h,h,h),new B.axx(i,a,e),h),h)
-s=g.J(0,"store_name")
-r=g.J(0,"phone")
-q=e.b
+N(a){var s,r,q,p,o,n,m,l=this,k=null,j=B.bi(a,A.ar,t.J),i=l.d,h=i.z,g=B.Q(j.J(0,"store_information"),k,k,k,k,k,k)
+g=B.dA(!1,A.b_,k,k,!0,k,k,k,!0,k,A.a0D,k,k,k,k,k,!1,k,k,k,k,B.Q(j.J(0,"store_information_desc"),k,k,k,k,k,k),k,g,k,B.fI(A.ex,B.Q(j.J(0,"edit"),k,k,k,k,k,k),new B.axx(l,a,h),k),k)
+s=j.J(0,"store_name")
+r=j.J(0,"phone")
+q=h.b
 if(q.length===0)q="\u2014"
-p=g.J(0,"address")
-o=e.c
+p=j.J(0,"address")
+o=h.c
 if(o.length===0)o="\u2014"
 n=t.p
-o=B.dJ(new B.b2(A.bk,B.c_(B.b([d,A.pq,new B.ei(s,e.a,h),new B.ei(r,q,h),new B.ei(p,o,h),new B.ei(g.J(0,"currency"),e.d,h),new B.ei(g.J(0,"invoice_footer"),e.e,h)],n),A.b3,A.W,A.af),h),h)
-p=B.Q(g.J(0,"users_permissions"),h,h,h,h,h,h)
-q=f.CW
-d=q==null
-s=d?h:q.b
+o=B.dJ(new B.b2(A.bk,B.c_(B.b([g,A.pq,new B.ei(s,h.a,k),new B.ei(r,q,k),new B.ei(p,o,k),new B.ei(j.J(0,"currency"),h.d,k),new B.ei(j.J(0,"invoice_footer"),h.e,k)],n),A.b3,A.W,A.af),k),k)
+p=B.Q(j.J(0,"users_permissions"),k,k,k,k,k,k)
+q=i.CW
+g=q==null
+s=g?k:q.b
 if(s==null)s="Unknown"
-d=d?h:f.FJ(q.e)
-d=d==null?h:d.b
-if(d==null)d=f.at
-d=B.Q("Signed in as "+s+" \u2022 Role: "+d,h,h,h,h,h,h)
-d=B.dJ(B.dA(!1,h,h,h,!0,h,h,h,!0,h,A.a0r,h,h,h,h,h,!1,h,h,h,h,d,h,p,h,B.fI(A.a0X,A.b5J,f.cA("users.manage")&&f.cA("roles.manage")?new B.axy(i,a):h,h),h),h)
-s=B.Q(g.J(0,"security_pin"),h,h,h,h,h,h)
-r=f.as
-q=B.Q((r==null?"":r).length!==0?g.J(0,"security_pin_enabled"):g.J(0,"security_pin_disabled"),h,h,h,h,h,h)
-r=f.as
+g=g?k:i.FJ(q.e)
+g=g==null?k:g.b
+if(g==null)g=i.at
+g=B.Q("Signed in as "+s+" \u2022 Role: "+g,k,k,k,k,k,k)
+g=B.dJ(B.dA(!1,k,k,k,!0,k,k,k,!0,k,A.a0r,k,k,k,k,k,!1,k,k,k,k,g,k,p,k,B.fI(A.a0X,A.b5J,i.cA("users.manage")&&i.cA("roles.manage")?new B.axy(l,a):k,k),k),k)
+s=B.Q(j.J(0,"security_pin"),k,k,k,k,k,k)
+r=i.as
+q=B.Q((r==null?"":r).length!==0?j.J(0,"security_pin_enabled"):j.J(0,"security_pin_disabled"),k,k,k,k,k,k)
+r=i.as
 p=r==null
-m=B.j6((p?"":r).length!==0?A.a0c:A.a_Z,h,h,h)
-s=B.dJ(B.dA(!1,h,h,h,!0,h,h,h,!0,h,A.a0q,h,h,h,h,h,!1,h,h,h,h,q,h,s,h,B.fI(m,B.Q((p?"":r).length!==0?g.J(0,"change_pin"):g.J(0,"enable_pin"),h,h,h,h,h,h),new B.axz(i,a),h),h),h)
-q=B.Q(g.J(0,"backup_restore"),h,h,h,h,h,h)
-q=B.dJ(new B.b2(A.bk,B.c_(B.b([B.dA(!1,A.b_,h,h,!0,h,h,h,!0,h,A.a0J,h,h,h,h,h,!1,h,h,h,h,B.Q(g.J(0,"backup_preview_desc"),h,h,h,h,h,h),h,q,h,h,h),A.Ty,new B.a1r(new B.O2(11,new B.aX(Date.now(),0,!1),f.giH().length,f.gDr().length,f.grK().length,f.gAe().length,f.gyb().length,f.z.a),h),A.av,B.i2(A.bI,B.b([B.fI(A.a0n,B.Q(g.J(0,"download_backup_file"),h,h,h,h,h,h),new B.axB(i,a),h),B.fI(A.a0m,A.b5A,new B.axC(i,a),h),B.kQ(A.a0L,B.Q(g.J(0,"preview_backup_json"),h,h,h,h,h,h),new B.axD(i,a)),B.kQ(A.a0z,B.Q(g.J(0,"copy_backup_json"),h,h,h,h,h,h),new B.axE(i,a)),B.kQ(A.a0E,B.Q(g.J(0,"import_backup_file"),h,h,h,h,h,h),new B.axF(i,a)),B.kQ(A.a1_,B.Q(g.J(0,"restore_backup"),h,h,h,h,h,h),new B.axG(i,a))],n),A.cg,12,12)],n),A.b3,A.W,A.af),h),h)
-m=B.j6(A.wH,B.S(a).ax.fy,h,h)
-l=B.Q(g.J(0,"data_management"),h,h,h,h,h,h)
-k=B.Q(g.J(0,"data_management_desc"),h,h,h,h,h,h)
-j=B.aXq(B.S(a).ax.fy,h,h)
-return B.x2(B.b([o,A.av,new B.a8x(f,h),A.av,d,A.av,s,A.av,new B.Jr(f,h),A.av,q,A.av,B.dJ(new B.b2(A.bk,B.c_(B.b([B.dA(!1,A.b_,h,h,!0,h,h,h,!0,h,m,h,h,h,h,h,!1,h,h,h,h,k,h,l,h,B.fI(A.a0A,B.Q(g.J(0,"reset_all_data"),h,h,h,h,h,h),new B.axH(i,a),j),h)],n),A.b3,A.W,A.af),h),h),A.av,B.dJ(new B.b2(A.bk,B.c_(B.b([B.Q(g.J(0,"language"),h,h,h,B.S(a).ok.w,h,h),A.av,B.i2(A.bI,B.b([B.aYV(A.b56,new B.axI(i)),B.aYV(A.b5E,new B.axA(i))],n),A.cg,12,12)],n),A.b3,A.W,A.af),h),h)],n),A.bk,h,!1)},
+m=B.j6((p?"":r).length!==0?A.a0c:A.a_Z,k,k,k)
+g=B.b([o,A.av,new B.a8x(i,k),A.av,g,A.av,B.dJ(B.dA(!1,k,k,k,!0,k,k,k,!0,k,A.a0q,k,k,k,k,k,!1,k,k,k,k,q,k,s,k,B.fI(m,B.Q((p?"":r).length!==0?j.J(0,"change_pin"):j.J(0,"enable_pin"),k,k,k,k,k,k),new B.axz(l,a),k),k),k),A.av,new B.Jr(i,k)],n)
+g.push(A.av)
+s=B.Q(j.J(0,"backup_restore"),k,k,k,k,k,k)
+g.push(B.dJ(new B.b2(A.bk,B.c_(B.b([B.dA(!1,A.b_,k,k,!0,k,k,k,!0,k,A.a0J,k,k,k,k,k,!1,k,k,k,k,B.Q(j.J(0,"backup_preview_desc"),k,k,k,k,k,k),k,s,k,k,k),A.Ty,new B.a1r(new B.O2(11,new B.aX(Date.now(),0,!1),i.giH().length,i.gDr().length,i.grK().length,i.gAe().length,i.gyb().length,i.z.a),k),A.av,B.i2(A.bI,B.b([B.fI(A.a0n,B.Q(j.J(0,"download_backup_file"),k,k,k,k,k,k),new B.axB(l,a),k),B.fI(A.a0m,A.b5A,new B.axC(l,a),k),B.kQ(A.a0L,B.Q(j.J(0,"preview_backup_json"),k,k,k,k,k,k),new B.axD(l,a)),B.kQ(A.a0z,B.Q(j.J(0,"copy_backup_json"),k,k,k,k,k,k),new B.axE(l,a)),B.kQ(A.a0E,B.Q(j.J(0,"import_backup_file"),k,k,k,k,k,k),new B.axF(l,a)),B.kQ(A.a1_,B.Q(j.J(0,"restore_backup"),k,k,k,k,k,k),new B.axG(l,a))],n),A.cg,12,12)],n),A.b3,A.W,A.af),k),k))
+g.push(A.av)
+i=B.j6(A.wH,B.S(a).ax.fy,k,k)
+s=B.Q(j.J(0,"data_management"),k,k,k,k,k,k)
+q=B.Q(j.J(0,"data_management_desc"),k,k,k,k,k,k)
+o=B.aXq(B.S(a).ax.fy,k,k)
+g.push(B.dJ(new B.b2(A.bk,B.c_(B.b([B.dA(!1,A.b_,k,k,!0,k,k,k,!0,k,i,k,k,k,k,k,!1,k,k,k,k,q,k,s,k,B.fI(A.a0A,B.Q(j.J(0,"reset_all_data"),k,k,k,k,k,k),new B.axH(l,a),o),k)],n),A.b3,A.W,A.af),k),k))
+g.push(A.av)
+g.push(B.dJ(new B.b2(A.bk,B.c_(B.b([B.Q(j.J(0,"language"),k,k,k,B.S(a).ok.w,k,k),A.av,B.i2(A.bI,B.b([B.aYV(A.b56,new B.axI(l)),B.aYV(A.b5E,new B.axA(l))],n),A.cg,12,12)],n),A.b3,A.W,A.af),k),k))
+return B.x2(g,A.bk,k,!1)},
 tt(a){return this.alP(a)},
 alP(a){var s=0,r=B.u(t.H),q,p=2,o=[],n=this,m,l,k,j,i,h,g,f,e
 var $async$tt=B.v(function(b,c){if(b===1){o.push(c)

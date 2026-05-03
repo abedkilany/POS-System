@@ -90,6 +90,10 @@ class SettingsPage extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         _LanSyncCard(store: store),
+        if (!kIsWeb) ...[
+          const SizedBox(height: 12),
+          _CloudHostSyncCard(store: store),
+        ],
         const SizedBox(height: 12),
         Card(
           child: Padding(
@@ -660,6 +664,223 @@ class _BackupSummaryDetails extends StatelessWidget {
 }
 
 
+
+
+class _CloudHostSyncCard extends StatefulWidget {
+  const _CloudHostSyncCard({required this.store});
+
+  final AppStore store;
+
+  @override
+  State<_CloudHostSyncCard> createState() => _CloudHostSyncCardState();
+}
+
+class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
+  final TextEditingController _apiController = TextEditingController();
+  final TextEditingController _tokenController = TextEditingController();
+  final TextEditingController _intervalController = TextEditingController();
+  bool _autoSyncEnabled = true;
+  bool _busy = false;
+  String _status = 'Ready';
+
+  @override
+  void initState() {
+    super.initState();
+    final settings = CloudSyncSettings.load();
+    _apiController.text = settings.apiBaseUrl;
+    _tokenController.text = settings.apiToken;
+    _autoSyncEnabled = settings.autoSyncEnabled;
+    _intervalController.text = settings.intervalSeconds.toString();
+  }
+
+  @override
+  void dispose() {
+    _apiController.dispose();
+    _tokenController.dispose();
+    _intervalController.dispose();
+    super.dispose();
+  }
+
+  CloudSyncSettings get _settings {
+    final loaded = CloudSyncSettings.load();
+    final interval = int.tryParse(_intervalController.text.trim())?.clamp(5, 3600).toInt() ?? 10;
+    return loaded.copyWith(
+      enabled: true,
+      apiBaseUrl: _apiController.text.trim(),
+      apiToken: _tokenController.text.trim(),
+      autoSyncEnabled: _autoSyncEnabled,
+      intervalSeconds: interval,
+    );
+  }
+
+  Future<void> _run(Future<void> Function() action) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      await action();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _save({bool makeThisDeviceHost = true}) async {
+    await _settings.save();
+    final identity = widget.store.appIdentity;
+    if (makeThisDeviceHost) {
+      await widget.store.updateAppIdentity(
+        identity.copyWith(syncMode: SyncMode.cloudConnected, deviceRole: DeviceRole.host),
+      );
+    } else if (identity.syncMode != SyncMode.cloudConnected) {
+      await widget.store.updateAppIdentity(identity.copyWith(syncMode: SyncMode.cloudConnected));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final identity = widget.store.appIdentity;
+    final isHost = identity.isHost;
+    final color = Theme.of(context).colorScheme;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.cloud_sync_outlined),
+              title: const Text('Cloud sync settings / إعدادات المزامنة السحابية'),
+              subtitle: Text(
+                isHost
+                    ? 'This Windows device is the HOST. It will mirror authoritative data to Vercel/Neon and accept remote requests.'
+                    : 'Cloud sync is available only for the HOST device. Save here to make this Windows device the cloud HOST.',
+              ),
+              trailing: Chip(
+                avatar: Icon(isHost ? Icons.verified_outlined : Icons.warning_amber_outlined, size: 18),
+                label: Text(isHost ? 'HOST cloud owner' : 'Not HOST'),
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _apiController,
+              decoration: const InputDecoration(
+                labelText: 'Cloud API URL',
+                hintText: 'https://your-project.vercel.app',
+                helperText: 'Use your Vercel project URL. Do not add /api at the end.',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _tokenController,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Cloud sync token',
+                helperText: 'Must match CLOUD_SYNC_TOKEN in Vercel Environment Variables.',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: 220,
+              child: TextField(
+                controller: _intervalController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Auto sync interval seconds',
+                  helperText: 'Minimum 5 seconds.',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Auto cloud sync'),
+              subtitle: const Text('The HOST checks Vercel for remote requests and pushes official changes automatically.'),
+              value: _autoSyncEnabled,
+              onChanged: _busy ? null : (value) => setState(() => _autoSyncEnabled = value),
+            ),
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                Chip(label: Text('Store: ${identity.storeId}')),
+                Chip(label: Text('Branch: ${identity.branchId}')),
+                Chip(label: Text('Device: ${widget.store.deviceId}')),
+                Chip(label: Text('Role: ${identity.deviceRole.name}')),
+                Chip(label: Text('Mode: ${identity.syncMode.name}')),
+                Chip(label: Text("Cloud queue: ${widget.store.pendingSyncQueueForTarget('cloud', readyOnly: false).length}")),
+                Chip(label: Text("Remote relay queue: ${widget.store.pendingSyncQueueForTarget('cloud_host', readyOnly: false).length}")),
+                Chip(label: Text("Cursor: ${CloudSyncSettings.load().lastPullCursor?.toLocal().toString().split('.').first ?? 'first pull'}")),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                FilledButton.icon(
+                  onPressed: _busy
+                      ? null
+                      : () => _run(() async {
+                            await _save(makeThisDeviceHost: true);
+                            setState(() => _status = 'Cloud settings saved. This device is now the cloud HOST. Restart the app to start auto cloud sync immediately.');
+                          }),
+                  icon: const Icon(Icons.save_outlined),
+                  label: const Text('Save as HOST'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _busy
+                      ? null
+                      : () => _run(() async {
+                            await _save(makeThisDeviceHost: true);
+                            final result = await CloudSyncService(widget.store).testConnection(_settings);
+                            setState(() => _status = result.message);
+                          }),
+                  icon: const Icon(Icons.network_check_outlined),
+                  label: const Text('Test API'),
+                ),
+                FilledButton.icon(
+                  onPressed: _busy
+                      ? null
+                      : () => _run(() async {
+                            await _save(makeThisDeviceHost: true);
+                            final result = await CloudSyncService(widget.store).syncNow(_settings);
+                            setState(() => _status = result.message);
+                          }),
+                  icon: const Icon(Icons.cloud_sync_outlined),
+                  label: const Text('Sync now'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _busy
+                      ? null
+                      : () => _run(() async {
+                            await widget.store.retryFailedSyncQueue(target: 'cloud');
+                            setState(() => _status = 'Failed cloud queue items are pending again.');
+                          }),
+                  icon: const Icon(Icons.replay_outlined),
+                  label: const Text('Retry cloud queue'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: color.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(_busy ? 'Working...' : _status),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _LanSyncCard extends StatefulWidget {
   const _LanSyncCard({required this.store});
 
@@ -726,7 +947,7 @@ class _LanSyncCardState extends State<_LanSyncCard> {
     final loaded = CloudSyncSettings.load();
     return loaded.copyWith(
       enabled: true,
-      apiBaseUrl: _cloudApiController.text.trim().isEmpty ? Uri.base.origin : _cloudApiController.text.trim(),
+      apiBaseUrl: _cloudApiController.text.trim().isEmpty ? (kIsWeb ? Uri.base.origin : '') : _cloudApiController.text.trim(),
       apiToken: _cloudTokenController.text.trim(),
       autoSyncEnabled: _cloudAutoSyncEnabled,
     );
