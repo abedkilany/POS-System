@@ -15,6 +15,7 @@ import 'features/dashboard/dashboard_page.dart';
 import 'features/expenses/expenses_page.dart';
 import 'features/inventory/inventory_page.dart';
 import 'features/products/products_page.dart';
+import 'features/purchases/purchases_page.dart';
 import 'features/reports/reports_page.dart';
 import 'features/sales/sales_page.dart';
 import 'features/security/pin_lock_page.dart';
@@ -129,6 +130,8 @@ class _MainShellState extends State<MainShell> {
         _ShellItem(label: tr.text('suppliers'), icon: Icons.local_shipping_outlined, selectedIcon: Icons.local_shipping, page: SuppliersPage(store: widget.store)),
       if (widget.store.hasPermission(AppPermission.salesCreate) || widget.store.hasPermission(AppPermission.salesCancel))
         _ShellItem(label: tr.text('sales'), icon: Icons.receipt_long_outlined, selectedIcon: Icons.receipt_long, page: SalesPage(store: widget.store)),
+      if (widget.store.hasPermission(AppPermission.suppliersManage))
+        _ShellItem(label: tr.text('purchases'), icon: Icons.add_shopping_cart_outlined, selectedIcon: Icons.add_shopping_cart, page: PurchasesPage(store: widget.store)),
       if (widget.store.hasPermission(AppPermission.expensesManage))
         _ShellItem(label: tr.text('expenses'), icon: Icons.payments_outlined, selectedIcon: Icons.payments, page: ExpensesPage(store: widget.store)),
       _ShellItem(label: tr.text('inventory'), icon: Icons.warehouse_outlined, selectedIcon: Icons.warehouse, page: InventoryPage(store: widget.store)),

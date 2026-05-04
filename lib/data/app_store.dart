@@ -12,6 +12,9 @@ import '../models/catalog_item.dart';
 import '../models/customer.dart';
 import '../models/expense.dart';
 import '../models/product.dart';
+import '../models/purchase.dart';
+import '../models/purchase_item.dart';
+import '../models/stock_movement.dart';
 import '../models/sale.dart';
 import '../models/sale_item.dart';
 import '../models/store_profile.dart';
@@ -86,6 +89,9 @@ class AppStore extends ChangeNotifier {
   static const _salesKey = 'sales_v4';
   static const _suppliersKey = 'suppliers_v4';
   static const _expensesKey = 'expenses_v4';
+  static const _purchasesKey = 'purchases_v1';
+  static const _stockMovementsKey = 'stock_movements_v1';
+  static const _purchaseCounterKey = 'purchase_counter_v1';
   static const _storeProfileKey = 'store_profile_v5';
   static const _categoriesKey = 'product_categories_v1';
   static const _brandsKey = 'product_brands_v1';
@@ -112,10 +118,13 @@ class AppStore extends ChangeNotifier {
   final List<CatalogItem> _brands = [];
   final List<CatalogItem> _units = [];
   final List<Expense> _expenses = [];
+  final List<Purchase> _purchases = [];
+  final List<StockMovement> _stockMovements = [];
   final List<SyncChange> _syncChanges = [];
   final List<SyncQueueItem> _syncQueue = [];
   StoreProfile _storeProfile = StoreProfile.defaults;
   int _invoiceCounter = 0;
+  int _purchaseCounter = 0;
   String? _securityPin;
   String _currentRole = 'admin'; // legacy compatibility
   String _deviceId = '';
@@ -145,6 +154,8 @@ class AppStore extends ChangeNotifier {
   int get dataConflictCount => dataConflicts.length;
   int get blockingDataConflictCount => dataConflicts.where((item) => item.blocking).length;
   List<Expense> get expenses => List.unmodifiable(_expenses.where((item) => !item.isDeleted).toList().reversed);
+  List<Purchase> get purchases => List.unmodifiable(_purchases.where((item) => !item.isDeleted).toList().reversed);
+  List<StockMovement> get stockMovements => List.unmodifiable(_stockMovements.toList().reversed);
   List<SyncChange> get syncChanges => List.unmodifiable(_syncChanges);
   List<SyncQueueItem> get syncQueue => List.unmodifiable(_syncQueue);
   List<SyncQueueItem> get pendingSyncQueue => List.unmodifiable(_syncQueue.where((item) => item.isPending));
@@ -209,6 +220,8 @@ class AppStore extends ChangeNotifier {
 
   double get totalSalesAmount => sales.fold<double>(0, (sum, sale) => sum + sale.total);
   double get totalExpensesAmount => expenses.fold<double>(0, (sum, expense) => sum + expense.amount);
+  double get totalPurchasesAmount => purchases.where((item) => !item.isCancelled).fold<double>(0, (sum, purchase) => sum + purchase.subtotal);
+  int get pendingPurchaseCount => purchases.where((item) => item.status.toLowerCase() == 'draft').length;
   int get lowStockCount => products.where((item) => item.stock <= 5).length;
   int get totalUnitsInStock => products.fold<int>(0, (sum, item) => sum + item.stock);
   double get inventoryRetailValue => products.fold<double>(0, (sum, item) => sum + (item.price * item.stock));
@@ -242,6 +255,12 @@ class AppStore extends ChangeNotifier {
     _expenses
       ..clear()
       ..addAll(_loadExpenses());
+    _purchases
+      ..clear()
+      ..addAll(_loadPurchases());
+    _stockMovements
+      ..clear()
+      ..addAll(_loadStockMovements());
     _syncChanges
       ..clear()
       ..addAll(_loadSyncChanges());
@@ -250,6 +269,7 @@ class AppStore extends ChangeNotifier {
       ..addAll(_loadSyncQueue());
     _storeProfile = _loadStoreProfile();
     _invoiceCounter = _loadInvoiceCounter();
+    _purchaseCounter = _loadPurchaseCounter();
     _securityPin = LocalDatabaseService.getString(_pinKey);
     _currentRole = LocalDatabaseService.getString(_currentRoleKey) ?? 'admin';
     _roles
@@ -357,6 +377,21 @@ class AppStore extends ChangeNotifier {
     if (raw == null) return <Supplier>[];
     final decoded = jsonDecode(raw) as List<dynamic>;
     return decoded.map((item) => Supplier.fromJson(Map<String, dynamic>.from(item as Map))).toList();
+  }
+
+
+  List<Purchase> _loadPurchases() {
+    final raw = LocalDatabaseService.getString(_purchasesKey);
+    if (raw == null) return <Purchase>[];
+    final decoded = jsonDecode(raw) as List<dynamic>;
+    return decoded.map((item) => Purchase.fromJson(Map<String, dynamic>.from(item as Map))).toList();
+  }
+
+  List<StockMovement> _loadStockMovements() {
+    final raw = LocalDatabaseService.getString(_stockMovementsKey);
+    if (raw == null) return <StockMovement>[];
+    final decoded = jsonDecode(raw) as List<dynamic>;
+    return decoded.map((item) => StockMovement.fromJson(Map<String, dynamic>.from(item as Map))).toList();
   }
 
 
@@ -481,6 +516,7 @@ class AppStore extends ChangeNotifier {
 
     await LocalDatabaseService.setString(_schemaVersionKey, '11');
     await LocalDatabaseService.setString(_invoiceCounterKey, _invoiceCounter.toString());
+    await LocalDatabaseService.setString(_purchaseCounterKey, _purchaseCounter.toString());
     await _saveAll();
   }
 
@@ -1015,11 +1051,14 @@ class AppStore extends ChangeNotifier {
     await LocalDatabaseService.setString(_brandsKey, jsonEncode(_brands.map((item) => item.toJson()).toList()));
     await LocalDatabaseService.setString(_unitsKey, jsonEncode(_units.map((item) => item.toJson()).toList()));
     await LocalDatabaseService.setString(_expensesKey, jsonEncode(_expenses.map((item) => item.toJson()).toList()));
+    await LocalDatabaseService.setString(_purchasesKey, jsonEncode(_purchases.map((item) => item.toJson()).toList()));
+    await LocalDatabaseService.setString(_stockMovementsKey, jsonEncode(_stockMovements.map((item) => item.toJson()).toList()));
     await LocalDatabaseService.setString(_syncChangesKey, jsonEncode(_syncChanges.map((item) => item.toJson()).toList()));
     await LocalDatabaseService.setString(_syncQueueKey, jsonEncode(_syncQueue.map((item) => item.toJson()).toList()));
     await LocalDatabaseService.setString(_deviceIdKey, _deviceId);
     await LocalDatabaseService.setString(_storeProfileKey, jsonEncode(_storeProfile.toJson()));
     await LocalDatabaseService.setString(_invoiceCounterKey, _invoiceCounter.toString());
+    await LocalDatabaseService.setString(_purchaseCounterKey, _purchaseCounter.toString());
     await LocalDatabaseService.setString(_schemaVersionKey, '11');
   }
 
@@ -1050,7 +1089,10 @@ class AppStore extends ChangeNotifier {
     _sales.clear();
     _suppliers.clear();
     _expenses.clear();
+    _purchases.clear();
+    _stockMovements.clear();
     _invoiceCounter = 0;
+    _purchaseCounter = 0;
     if (!keepStoreProfile) {
       _storeProfile = StoreProfile.defaults;
     }
@@ -1233,6 +1275,9 @@ class AppStore extends ChangeNotifier {
       return item.copyWith(createdAt: isCreate ? now : item.createdAt, updatedAt: now, deviceId: _deviceId, syncStatus: 'pending', storeId: storeId, branchId: branchId, version: nextVersion, lastModifiedByDeviceId: _deviceId, clearDeletedAt: clearDeletedAt) as T;
     }
     if (item is Sale) {
+      return item.copyWith(createdAt: isCreate ? now : item.createdAt, updatedAt: now, deviceId: _deviceId, syncStatus: 'pending', storeId: storeId, branchId: branchId, version: nextVersion, lastModifiedByDeviceId: _deviceId, clearDeletedAt: clearDeletedAt) as T;
+    }
+    if (item is Purchase) {
       return item.copyWith(createdAt: isCreate ? now : item.createdAt, updatedAt: now, deviceId: _deviceId, syncStatus: 'pending', storeId: storeId, branchId: branchId, version: nextVersion, lastModifiedByDeviceId: _deviceId, clearDeletedAt: clearDeletedAt) as T;
     }
     return item;
@@ -1440,6 +1485,177 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
+
+  String get _purchaseDevicePrefix => _deviceId.isEmpty ? 'LOCAL' : _deviceId.replaceAll(RegExp(r'[^A-Za-z0-9]'), '').toUpperCase().padRight(4, '0').substring(0, 4);
+
+  int _loadPurchaseCounter() {
+    final raw = LocalDatabaseService.getString(_purchaseCounterKey);
+    return int.tryParse(raw ?? '') ?? 0;
+  }
+
+  Future<Purchase> createPurchase({
+    required String supplierId,
+    required String supplierName,
+    required List<PurchaseItem> items,
+    bool receiveNow = true,
+    String note = '',
+  }) async {
+    requirePermission(AppPermission.suppliersManage);
+    if (items.isEmpty) throw ArgumentError('Purchase must contain at least one item.');
+    for (final item in items) {
+      if (item.quantity <= 0 || item.unitCost < 0) throw ArgumentError('Invalid purchase item values.');
+      if (_findProductById(item.productId) == null) throw ArgumentError('Product not found: ${item.productName}');
+    }
+    _purchaseCounter += 1;
+    final now = DateTime.now();
+    final purchase = Purchase(
+      id: now.microsecondsSinceEpoch.toString(),
+      purchaseNo: 'PO-$_purchaseDevicePrefix-${_purchaseCounter.toString().padLeft(6, '0')}',
+      supplierId: supplierId,
+      supplierName: supplierName.trim().isEmpty ? 'Supplier' : supplierName.trim(),
+      date: now,
+      status: receiveNow ? 'Received' : 'Draft',
+      items: items,
+      note: note,
+      createdAt: now,
+      updatedAt: now,
+      deviceId: _deviceId,
+      syncStatus: 'pending',
+      storeId: appIdentity.storeId,
+      branchId: appIdentity.branchId,
+      version: 1,
+      lastModifiedByDeviceId: _deviceId,
+    );
+    _purchases.add(purchase);
+    _recordSyncChange(entityType: 'purchase', entityId: purchase.id, operation: 'create', payload: purchase.toJson());
+    if (receiveNow) {
+      _applyPurchaseStock(purchase, now);
+    }
+    await _saveAll();
+    notifyListeners();
+    return purchase;
+  }
+
+  Future<void> receivePurchase(String id) async {
+    requirePermission(AppPermission.suppliersManage);
+    final index = _purchases.indexWhere((item) => item.id == id);
+    if (index == -1) throw ArgumentError('Purchase not found.');
+    final purchase = _purchases[index];
+    if (purchase.isReceived || purchase.isCancelled) return;
+    final now = DateTime.now();
+    final received = _withSyncMeta<Purchase>(purchase.copyWith(status: 'Received'), now);
+    _purchases[index] = received;
+    _recordSyncChange(entityType: 'purchase', entityId: received.id, operation: 'receive', payload: received.toJson());
+    _applyPurchaseStock(received, now);
+    await _saveAll();
+    notifyListeners();
+  }
+
+  Future<void> cancelPurchase(String id, {bool reverseStock = true}) async {
+    requirePermission(AppPermission.suppliersManage);
+    final index = _purchases.indexWhere((item) => item.id == id);
+    if (index == -1) throw ArgumentError('Purchase not found.');
+    final purchase = _purchases[index];
+    if (purchase.isCancelled) return;
+    final now = DateTime.now();
+    if (reverseStock && purchase.isReceived) {
+      for (final item in purchase.items) {
+        final productIndex = _products.indexWhere((product) => product.id == item.productId);
+        if (productIndex == -1) continue;
+        final product = _products[productIndex];
+        final qty = -item.quantity;
+        _products[productIndex] = _withSyncMeta<Product>(product.copyWith(stock: product.stock + qty), now);
+        _addStockMovement(StockMovement(
+          id: '${purchase.id}-${item.productId}-purchase-cancel',
+          productId: item.productId,
+          productName: item.productName,
+          type: 'purchase_cancel',
+          quantity: qty,
+          date: now,
+          referenceId: purchase.id,
+          referenceNo: purchase.purchaseNo,
+          reason: 'Purchase cancelled',
+          unitCost: item.unitCost,
+          createdAt: now,
+          updatedAt: now,
+          deviceId: _deviceId,
+          storeId: appIdentity.storeId,
+          branchId: appIdentity.branchId,
+          lastModifiedByDeviceId: _deviceId,
+        ), recordSync: true);
+      }
+    }
+    _purchases[index] = _withSyncMeta<Purchase>(purchase.copyWith(status: 'Cancelled'), now);
+    _recordSyncChange(entityType: 'purchase', entityId: id, operation: 'cancel', payload: _purchases[index].toJson());
+    await _saveAll();
+    notifyListeners();
+  }
+
+  Future<void> adjustStock({required String productId, required int quantityDelta, required String reason}) async {
+    requirePermission(AppPermission.productsEdit);
+    if (quantityDelta == 0) return;
+    final index = _products.indexWhere((product) => product.id == productId);
+    if (index == -1) throw ArgumentError('Product not found.');
+    final now = DateTime.now();
+    final product = _products[index];
+    _products[index] = _withSyncMeta<Product>(product.copyWith(stock: product.stock + quantityDelta), now);
+    _addStockMovement(StockMovement(
+      id: '${now.microsecondsSinceEpoch}-$productId-adjustment',
+      productId: productId,
+      productName: product.name,
+      type: 'adjustment',
+      quantity: quantityDelta,
+      date: now,
+      referenceId: productId,
+      referenceNo: product.code,
+      reason: reason.trim().isEmpty ? 'Manual adjustment' : reason.trim(),
+      unitCost: product.cost,
+      createdAt: now,
+      updatedAt: now,
+      deviceId: _deviceId,
+      storeId: appIdentity.storeId,
+      branchId: appIdentity.branchId,
+      lastModifiedByDeviceId: _deviceId,
+    ), recordSync: true);
+    await _saveAll();
+    notifyListeners();
+  }
+
+  void _applyPurchaseStock(Purchase purchase, DateTime now) {
+    for (final item in purchase.items) {
+      final index = _products.indexWhere((product) => product.id == item.productId);
+      if (index == -1) continue;
+      final product = _products[index];
+      _products[index] = _withSyncMeta<Product>(product.copyWith(stock: product.stock + item.quantity, cost: item.unitCost), now);
+      _addStockMovement(StockMovement(
+        id: '${purchase.id}-${item.productId}-purchase-receive',
+        productId: item.productId,
+        productName: item.productName,
+        type: 'purchase_receive',
+        quantity: item.quantity,
+        date: now,
+        referenceId: purchase.id,
+        referenceNo: purchase.purchaseNo,
+        reason: 'Purchase received',
+        unitCost: item.unitCost,
+        createdAt: now,
+        updatedAt: now,
+        deviceId: _deviceId,
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        lastModifiedByDeviceId: _deviceId,
+      ), recordSync: true);
+    }
+  }
+
+  void _addStockMovement(StockMovement movement, {bool recordSync = false}) {
+    if (_stockMovements.any((item) => item.id == movement.id)) return;
+    _stockMovements.add(movement);
+    if (recordSync) {
+      _recordSyncChange(entityType: 'stock_movement', entityId: movement.id, operation: movement.type, payload: movement.toJson());
+    }
+  }
+
   Future<Sale> createSale({
     required String customerName,
     required List<SaleItem> items,
@@ -1514,15 +1730,24 @@ class AppStore extends ChangeNotifier {
       final product = _products[index];
       final updatedProduct = _withSyncMeta<Product>(product.copyWith(stock: product.stock - item.quantity), now);
       _products[index] = updatedProduct;
-      _recordSyncChange(entityType: 'stock_movement', entityId: '${sale.id}-${item.productId}', operation: 'sale_decrement', payload: {
-        'saleId': sale.id,
-        'productId': item.productId,
-        'quantity': -item.quantity,
-        'createdAt': now.toIso8601String(),
-        'deviceId': _deviceId,
-        'storeId': appIdentity.storeId,
-        'branchId': appIdentity.branchId,
-      });
+      _addStockMovement(StockMovement(
+        id: '${sale.id}-${item.productId}-sale',
+        productId: item.productId,
+        productName: item.productName,
+        type: 'sale',
+        quantity: -item.quantity,
+        date: now,
+        referenceId: sale.id,
+        referenceNo: sale.invoiceNo,
+        reason: 'Sale invoice',
+        unitCost: item.unitCost,
+        createdAt: now,
+        updatedAt: now,
+        deviceId: _deviceId,
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        lastModifiedByDeviceId: _deviceId,
+      ), recordSync: true);
     }
 
     await _saveAll();
@@ -1549,15 +1774,24 @@ class AppStore extends ChangeNotifier {
         final now = DateTime.now();
         final updatedProduct = _withSyncMeta<Product>(product.copyWith(stock: product.stock + item.quantity), now);
         _products[productIndex] = updatedProduct;
-        _recordSyncChange(entityType: 'stock_movement', entityId: '$id-${item.productId}-restore', operation: 'sale_restore', payload: {
-          'saleId': id,
-          'productId': item.productId,
-          'quantity': item.quantity,
-          'createdAt': now.toIso8601String(),
-          'deviceId': _deviceId,
-          'storeId': appIdentity.storeId,
-          'branchId': appIdentity.branchId,
-        });
+        _addStockMovement(StockMovement(
+          id: '$id-${item.productId}-sale-restore',
+          productId: item.productId,
+          productName: item.productName,
+          type: 'sale_restore',
+          quantity: item.quantity,
+          date: now,
+          referenceId: id,
+          referenceNo: sale.invoiceNo,
+          reason: 'Sale cancelled',
+          unitCost: item.unitCost,
+          createdAt: now,
+          updatedAt: now,
+          deviceId: _deviceId,
+          storeId: appIdentity.storeId,
+          branchId: appIdentity.branchId,
+          lastModifiedByDeviceId: _deviceId,
+        ), recordSync: true);
       }
     }
 
@@ -1583,6 +1817,7 @@ class AppStore extends ChangeNotifier {
         'generatedAt': DateTime.now().toIso8601String(),
         'schemaVersion': 11,
         'invoiceCounter': _invoiceCounter,
+        'purchaseCounter': _purchaseCounter,
         'storeProfile': _storeProfile.toJson(),
         'products': _products.map((item) => item.toJson()).toList(),
         'customers': _customers.map((item) => item.toJson()).toList(),
@@ -1592,6 +1827,8 @@ class AppStore extends ChangeNotifier {
         'brands': _brands.map((item) => item.toJson()).toList(),
         'units': _units.map((item) => item.toJson()).toList(),
         'expenses': _expenses.map((item) => item.toJson()).toList(),
+        'purchases': _purchases.map((item) => item.toJson()).toList(),
+        'stockMovements': _stockMovements.map((item) => item.toJson()).toList(),
         'deviceId': _deviceId,
         'syncChanges': (changes ?? _syncChanges).map((item) => item.toJson()).toList(),
         'syncQueue': _syncQueue.map((item) => item.toJson()).toList(),
@@ -1745,6 +1982,12 @@ class AppStore extends ChangeNotifier {
     final expenses = (decoded['expenses'] as List<dynamic>? ?? [])
         .map((item) => Expense.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
+    final purchases = (decoded['purchases'] as List<dynamic>? ?? [])
+        .map((item) => Purchase.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+    final stockMovements = (decoded['stockMovements'] as List<dynamic>? ?? [])
+        .map((item) => StockMovement.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
     final syncChanges = (decoded['syncChanges'] as List<dynamic>? ?? [])
         .map((item) => SyncChange.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
@@ -1786,6 +2029,12 @@ class AppStore extends ChangeNotifier {
     _expenses
       ..clear()
       ..addAll(expenses);
+    _purchases
+      ..clear()
+      ..addAll(purchases);
+    _stockMovements
+      ..clear()
+      ..addAll(stockMovements);
     _syncChanges.clear();
     _storeProfile = profile;
     if (decoded['appIdentity'] is Map) {
@@ -1805,6 +2054,8 @@ class AppStore extends ChangeNotifier {
     await _ensureDefaultAdminUser();
     final importedCounter = (decoded['invoiceCounter'] as num?)?.toInt() ?? 0;
     _invoiceCounter = importedCounter > 0 ? importedCounter : _loadInvoiceCounter();
+    final importedPurchaseCounter = (decoded['purchaseCounter'] as num?)?.toInt() ?? 0;
+    _purchaseCounter = importedPurchaseCounter > 0 ? importedPurchaseCounter : _loadPurchaseCounter();
     _normalizeCustomers();
     _recordSyncChange(
       entityType: 'system',
@@ -1885,6 +2136,12 @@ class AppStore extends ChangeNotifier {
     final expenses = (decoded['expenses'] as List<dynamic>? ?? [])
         .map((item) => Expense.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
+    final purchases = (decoded['purchases'] as List<dynamic>? ?? [])
+        .map((item) => Purchase.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+    final stockMovements = (decoded['stockMovements'] as List<dynamic>? ?? [])
+        .map((item) => StockMovement.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
     final syncChanges = (decoded['syncChanges'] as List<dynamic>? ?? [])
         .map((item) => SyncChange.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
@@ -1906,6 +2163,8 @@ class AppStore extends ChangeNotifier {
     _mergeByUpdatedAt<CatalogItem>(_brands, brands, (item) => item.id);
     _mergeByUpdatedAt<CatalogItem>(_units, units, (item) => item.id);
     _mergeByUpdatedAt<Expense>(_expenses, expenses, (item) => item.id);
+    _mergeByUpdatedAt<Purchase>(_purchases, purchases, (item) => item.id);
+    _mergeByUpdatedAt<StockMovement>(_stockMovements, stockMovements, (item) => item.id);
     if (decoded['storeProfile'] != null) {
       _storeProfile = StoreProfile.fromJson(Map<String, dynamic>.from(decoded['storeProfile'] as Map));
     }
@@ -1927,6 +2186,8 @@ class AppStore extends ChangeNotifier {
 
     final importedCounter = (decoded['invoiceCounter'] as num?)?.toInt() ?? 0;
     if (importedCounter > _invoiceCounter) _invoiceCounter = importedCounter;
+    final importedPurchaseCounter = (decoded['purchaseCounter'] as num?)?.toInt() ?? 0;
+    if (importedPurchaseCounter > _purchaseCounter) _purchaseCounter = importedPurchaseCounter;
 
     if (markSynced) {
       final now = DateTime.now();
@@ -1984,6 +2245,12 @@ class AppStore extends ChangeNotifier {
     final expenses = (decoded['expenses'] as List<dynamic>? ?? [])
         .map((item) => Expense.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
+    final purchases = (decoded['purchases'] as List<dynamic>? ?? [])
+        .map((item) => Purchase.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+    final stockMovements = (decoded['stockMovements'] as List<dynamic>? ?? [])
+        .map((item) => StockMovement.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
     final syncChanges = (decoded['syncChanges'] as List<dynamic>? ?? [])
         .map((item) => SyncChange.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
@@ -2008,6 +2275,8 @@ class AppStore extends ChangeNotifier {
     _brands..clear()..addAll(brands);
     _units..clear()..addAll(units);
     _expenses..clear()..addAll(expenses);
+    _purchases..clear()..addAll(purchases);
+    _stockMovements..clear()..addAll(stockMovements);
     _syncChanges
       ..clear()
       ..addAll(preserveLocalIdentityForLanClient
@@ -2030,6 +2299,7 @@ class AppStore extends ChangeNotifier {
     if (users.isNotEmpty) _users..clear()..addAll(users);
     await _ensureDefaultAdminUser();
     _invoiceCounter = (decoded['invoiceCounter'] as num?)?.toInt() ?? _invoiceCounter;
+    _purchaseCounter = (decoded['purchaseCounter'] as num?)?.toInt() ?? _purchaseCounter;
     _ensureCatalogDefaults();
     _normalizeCustomers();
     await _saveAll();
@@ -2359,15 +2629,23 @@ class AppStore extends ChangeNotifier {
           if (invoiceNumber > _invoiceCounter) _invoiceCounter = invoiceNumber;
         }
         break;
+      case 'purchase':
+        final incomingPurchase = Purchase.fromJson(p);
+        _upsertByUpdatedAt<Purchase>(_purchases, incomingPurchase, (item) => item.id);
+        break;
       case 'stock_movement':
-        final productId = p['productId'] as String? ?? '';
-        final quantity = (p['quantity'] as num?)?.toInt() ?? 0;
+        final movement = StockMovement.fromJson(p);
+        if (_stockMovements.any((item) => item.id == movement.id)) break;
+        _stockMovements.add(movement.copyWith(syncStatus: 'synced'));
+        final productId = movement.productId;
+        final quantity = movement.quantity;
         final index = _products.indexWhere((item) => item.id == productId);
         if (index != -1 && quantity != 0) {
           final product = _products[index];
-          final at = DateTime.tryParse(p['createdAt'] as String? ?? '') ?? change.createdAt;
+          final at = movement.date;
           _products[index] = product.copyWith(
             stock: product.stock + quantity,
+            cost: movement.type == 'purchase_receive' && movement.unitCost > 0 ? movement.unitCost : product.cost,
             updatedAt: at.isAfter(product.updatedAt) ? at : product.updatedAt,
             syncStatus: 'synced',
           );
