@@ -61,6 +61,8 @@ class SettingsPage extends StatelessWidget {
         const SizedBox(height: 12),
         _SystemIdentityCard(store: store),
         const SizedBox(height: 12),
+        _DataConflictsCard(store: store),
+        const SizedBox(height: 12),
         Card(
           child: ListTile(
             leading: const Icon(Icons.people),
@@ -665,6 +667,67 @@ class _BackupSummaryDetails extends StatelessWidget {
 
 
 
+
+
+class _DataConflictsCard extends StatelessWidget {
+  const _DataConflictsCard({required this.store});
+
+  final AppStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    final conflicts = store.dataConflicts;
+    final blockingCount = conflicts.where((item) => item.blocking).length;
+    final color = conflicts.isEmpty
+        ? Theme.of(context).colorScheme.primary
+        : blockingCount > 0
+            ? Theme.of(context).colorScheme.error
+            : Theme.of(context).colorScheme.tertiary;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(conflicts.isEmpty ? Icons.verified_outlined : Icons.warning_amber_rounded, color: color),
+              title: const Text('Data conflicts'),
+              subtitle: Text(conflicts.isEmpty
+                  ? 'No duplicate-name/code conflicts detected.'
+                  : '$blockingCount blocking • ${conflicts.length} total. Records are not merged automatically.'),
+            ),
+            if (conflicts.isNotEmpty) ...[
+              const Divider(height: 24),
+              ...conflicts.take(8).map((conflict) => Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(conflict.blocking ? Icons.block_outlined : Icons.info_outline, size: 18, color: conflict.blocking ? Theme.of(context).colorScheme.error : null),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(conflict.title, style: const TextStyle(fontWeight: FontWeight.w700)),
+                              Text('Records: ${conflict.recordIds.take(4).join(', ')}${conflict.recordIds.length > 4 ? '…' : ''}'),
+                              if (conflict.message.isNotEmpty) Text(conflict.message),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  )),
+              if (conflicts.length > 8) Text('+${conflicts.length - 8} more conflicts. Use the relevant page to rename/edit records.'),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 class _CloudHostSyncCard extends StatefulWidget {
   const _CloudHostSyncCard({required this.store});

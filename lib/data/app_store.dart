@@ -44,6 +44,27 @@ class BackupSummary {
   final String storeName;
 }
 
+
+class DataConflict {
+  const DataConflict({
+    required this.entityType,
+    required this.keyName,
+    required this.keyValue,
+    required this.recordIds,
+    this.blocking = false,
+    this.message = '',
+  });
+
+  final String entityType;
+  final String keyName;
+  final String keyValue;
+  final List<String> recordIds;
+  final bool blocking;
+  final String message;
+
+  String get title => '$entityType duplicate $keyName: $keyValue';
+}
+
 class BackupValidationResult {
   const BackupValidationResult({
     required this.isValid,
@@ -120,6 +141,9 @@ class AppStore extends ChangeNotifier {
   List<CatalogItem> get categories => List.unmodifiable(_categories.where((item) => !item.isDeleted));
   List<CatalogItem> get brands => List.unmodifiable(_brands.where((item) => !item.isDeleted));
   List<CatalogItem> get units => List.unmodifiable(_units.where((item) => !item.isDeleted));
+  List<DataConflict> get dataConflicts => List.unmodifiable(_detectDataConflicts());
+  int get dataConflictCount => dataConflicts.length;
+  int get blockingDataConflictCount => dataConflicts.where((item) => item.blocking).length;
   List<Expense> get expenses => List.unmodifiable(_expenses.where((item) => !item.isDeleted).toList().reversed);
   List<SyncChange> get syncChanges => List.unmodifiable(_syncChanges);
   List<SyncQueueItem> get syncQueue => List.unmodifiable(_syncQueue);
@@ -552,19 +576,18 @@ class AppStore extends ChangeNotifier {
   }
 
   void _normalizeProductCodes() {
-    final used = <String>{};
+    // Legacy migration hook: never auto-renumber duplicate product codes.
+    // Product ID remains the identity; duplicate code/barcode conflicts are detected
+    // and displayed for manual review instead of silently changing business data.
     for (var index = 0; index < _products.length; index++) {
       final product = _products[index];
-      final normalized = product.code.trim().toUpperCase();
-      if (normalized.isNotEmpty && !used.contains(normalized)) {
-        used.add(normalized);
-        continue;
+      final trimmedCode = product.code.trim();
+      if (trimmedCode != product.code) {
+        _products[index] = product.copyWith(code: trimmedCode);
       }
-      final generated = _generateUniqueProductCode(exceptProductId: product.id, reservedCodes: used);
-      used.add(generated.toUpperCase());
-      _products[index] = product.copyWith(code: generated);
     }
   }
+
 
 
   AppPlatformType _detectPlatform() {
@@ -711,6 +734,11 @@ class AppStore extends ChangeNotifier {
 
   Future<bool> login(String username, String password) async {
     final normalized = username.trim().toLowerCase();
+    final activeMatches = _users.where((user) => user.username.trim().toLowerCase() == normalized && user.isActive).toList();
+    if (activeMatches.length > 1) {
+      // Security conflict: never guess which duplicated username should log in.
+      return false;
+    }
     for (var index = 0; index < _users.length; index++) {
       final user = _users[index];
       if (user.username.trim().toLowerCase() != normalized || !user.isActive) continue;
@@ -915,13 +943,14 @@ class AppStore extends ChangeNotifier {
   }
 
   void _normalizeCustomers() {
+    // Keep ID as the only source of truth.
+    // Do not merge, delete, or hide customers only because they share the same name.
+    // Offline devices may legitimately create separate records with identical names;
+    // those records are surfaced through dataConflicts after sync instead.
     final normalized = <Customer>[];
     var hasWalkIn = false;
     final seenIds = <String>{};
-    final activeNames = <String>{};
 
-    // Keep deleted tombstones for sync, but do not let a deleted customer name
-    // block a newly-created active customer with the same name.
     for (final customer in _customers) {
       final trimmedName = customer.name.trim();
       final normalizedName = trimmedName.toLowerCase();
@@ -938,13 +967,6 @@ class AppStore extends ChangeNotifier {
 
       if (seenIds.contains(customer.id)) {
         continue;
-      }
-
-      if (!customer.isDeleted) {
-        if (activeNames.contains(normalizedName)) {
-          continue;
-        }
-        activeNames.add(normalizedName);
       }
 
       normalized.add(customer.copyWith(name: trimmedName));
@@ -1011,10 +1033,12 @@ class AppStore extends ChangeNotifier {
 
   Product? findProductByCode(String code) {
     final normalized = code.trim().toLowerCase();
-    for (final product in _products) {
-      if (product.code.trim().toLowerCase() == normalized) return product;
-    }
-    return null;
+    final matches = _products
+        .where((product) => !product.isDeleted)
+        .where((product) => product.code.trim().toLowerCase() == normalized || (product.barcode.trim().isNotEmpty && product.barcode.trim().toLowerCase() == normalized))
+        .toList();
+    if (matches.length != 1) return null;
+    return matches.first;
   }
 
 
@@ -1260,25 +1284,21 @@ class AppStore extends ChangeNotifier {
     if (customer.name.trim().isEmpty) {
       throw ArgumentError('Customer name is required.');
     }
-    final now = DateTime.now();
     final normalizedName = customer.name.trim();
+    final activeDuplicate = _customers.any((item) =>
+        !item.isDeleted &&
+        item.id != customer.id &&
+        item.id != walkInCustomerId &&
+        item.name.trim().toLowerCase() == normalizedName.toLowerCase());
+    if (activeDuplicate) {
+      throw ArgumentError('Customer name already exists on this device. Sync duplicates will be reported as conflicts.');
+    }
+    final now = DateTime.now();
     final incoming = (customer.id == walkInCustomerId || normalizedName.toLowerCase() == walkInCustomerName.toLowerCase())
         ? _withSyncMeta<Customer>(walkInCustomer, now, isCreate: false)
         : _withSyncMeta<Customer>(customer.copyWith(name: normalizedName), now, isCreate: false);
 
     var index = _customers.indexWhere((item) => item.id == incoming.id);
-
-    // If the user deletes a customer and later adds the same name again, revive
-    // the deleted tombstone instead of creating an invisible duplicate that gets
-    // removed by normalization/name de-duplication.
-    if (index == -1) {
-      final byDeletedName = _customers.indexWhere(
-        (item) => item.isDeleted && item.name.trim().toLowerCase() == normalizedName.toLowerCase(),
-      );
-      if (byDeletedName != -1) {
-        index = byDeletedName;
-      }
-    }
 
     final isCreate = index == -1;
     final baseCustomer = isCreate ? incoming : incoming.copyWith(id: _customers[index].id, clearDeletedAt: true);
@@ -1312,10 +1332,14 @@ class AppStore extends ChangeNotifier {
     if (supplier.name.trim().isEmpty) {
       throw ArgumentError('Supplier name is required.');
     }
+    final normalizedName = supplier.name.trim().toLowerCase();
+    final duplicate = _suppliers.any((item) => !item.isDeleted && item.id != supplier.id && item.name.trim().toLowerCase() == normalizedName);
+    if (duplicate) throw ArgumentError('Supplier name already exists on this device. Sync duplicates will be reported as conflicts.');
     final now = DateTime.now();
-    final index = _suppliers.indexWhere((item) => item.id == supplier.id);
+    final cleanedSupplier = supplier.copyWith(name: supplier.name.trim());
+    final index = _suppliers.indexWhere((item) => item.id == cleanedSupplier.id);
     final isCreate = index == -1;
-    final syncedSupplier = _withSyncMeta<Supplier>(supplier, now, isCreate: isCreate);
+    final syncedSupplier = _withSyncMeta<Supplier>(cleanedSupplier, now, isCreate: isCreate);
     if (isCreate) {
       _suppliers.add(syncedSupplier);
     } else {
@@ -2105,6 +2129,121 @@ class AppStore extends ChangeNotifier {
       await _saveAll();
       notifyListeners();
     }
+  }
+
+  String _conflictKey(String value) => value.trim().toLowerCase();
+
+  void _addDuplicateConflicts<T>(
+    List<DataConflict> output,
+    Iterable<T> items,
+    String entityType,
+    String keyName,
+    String Function(T item) keyOf,
+    String Function(T item) idOf, {
+    bool blocking = false,
+    String message = '',
+  }) {
+    final groups = <String, List<T>>{};
+    final display = <String, String>{};
+    for (final item in items) {
+      final raw = keyOf(item).trim();
+      final key = _conflictKey(raw);
+      if (key.isEmpty) continue;
+      groups.putIfAbsent(key, () => <T>[]).add(item);
+      display.putIfAbsent(key, () => raw);
+    }
+    groups.forEach((key, grouped) {
+      final ids = grouped.map(idOf).where((id) => id.trim().isNotEmpty).toSet().toList();
+      if (ids.length > 1) {
+        output.add(DataConflict(
+          entityType: entityType,
+          keyName: keyName,
+          keyValue: display[key] ?? key,
+          recordIds: ids,
+          blocking: blocking,
+          message: message,
+        ));
+      }
+    });
+  }
+
+  List<DataConflict> _detectDataConflicts() {
+    final result = <DataConflict>[];
+    _addDuplicateConflicts<Customer>(
+      result,
+      _customers.where((item) => !item.isDeleted && item.id != walkInCustomerId),
+      'Customers',
+      'name',
+      (item) => item.name,
+      (item) => item.id,
+      message: 'Created offline on more than one device. Keep both records and review manually.',
+    );
+    _addDuplicateConflicts<Supplier>(
+      result,
+      _suppliers.where((item) => !item.isDeleted),
+      'Suppliers',
+      'name',
+      (item) => item.name,
+      (item) => item.id,
+      message: 'Supplier names are duplicated after sync. Review manually; records were not merged.',
+    );
+    _addDuplicateConflicts<Product>(
+      result,
+      _products.where((item) => !item.isDeleted),
+      'Products',
+      'code',
+      (item) => item.code,
+      (item) => item.id,
+      blocking: true,
+      message: 'Duplicate product codes can affect search, sales, stock, and reports.',
+    );
+    _addDuplicateConflicts<Product>(
+      result,
+      _products.where((item) => !item.isDeleted && item.barcode.trim().isNotEmpty),
+      'Products',
+      'barcode',
+      (item) => item.barcode,
+      (item) => item.id,
+      blocking: true,
+      message: 'Barcode is ambiguous. Avoid barcode sales until one product barcode is changed.',
+    );
+    _addDuplicateConflicts<CatalogItem>(result, _categories.where((item) => !item.isDeleted), 'Categories', 'English name', (item) => item.nameEn, (item) => item.id);
+    _addDuplicateConflicts<CatalogItem>(result, _categories.where((item) => !item.isDeleted), 'Categories', 'Arabic name', (item) => item.nameAr, (item) => item.id);
+    _addDuplicateConflicts<CatalogItem>(result, _brands.where((item) => !item.isDeleted), 'Brands', 'English name', (item) => item.nameEn, (item) => item.id);
+    _addDuplicateConflicts<CatalogItem>(result, _brands.where((item) => !item.isDeleted), 'Brands', 'Arabic name', (item) => item.nameAr, (item) => item.id);
+    _addDuplicateConflicts<CatalogItem>(result, _units.where((item) => !item.isDeleted), 'Units', 'English name', (item) => item.nameEn, (item) => item.id);
+    _addDuplicateConflicts<CatalogItem>(result, _units.where((item) => !item.isDeleted), 'Units', 'Arabic name', (item) => item.nameAr, (item) => item.id);
+    _addDuplicateConflicts<AppUser>(
+      result,
+      _users,
+      'Users',
+      'username',
+      (item) => item.username,
+      (item) => item.id,
+      blocking: true,
+      message: 'Duplicate usernames are a security conflict. Rename or disable one user before relying on login.',
+    );
+    _addDuplicateConflicts<UserRole>(
+      result,
+      _roles,
+      'Roles',
+      'name',
+      (item) => item.name,
+      (item) => item.id,
+      blocking: true,
+      message: 'Duplicate role names can confuse permissions. Rename one role.',
+    );
+    _addDuplicateConflicts<Sale>(
+      result,
+      _sales.where((item) => !item.isDeleted),
+      'Sales',
+      'invoice number',
+      (item) => item.invoiceNo,
+      (item) => item.id,
+      blocking: true,
+      message: 'Duplicate invoice numbers must be reviewed before printing/exporting final reports.',
+    );
+    return result;
   }
 
   void _upsertByUpdatedAt<T>(List<T> list, T incoming, String Function(T item) idOf) {
