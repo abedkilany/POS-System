@@ -8,6 +8,7 @@ import 'core/services/lan_sync_service.dart';
 import 'core/services/cloud_sync_service.dart';
 import 'data/app_store.dart';
 import 'models/user_role.dart';
+import 'models/app_identity.dart';
 import 'features/customers/customers_page.dart';
 import 'features/dashboard/dashboard_page.dart';
 import 'features/expenses/expenses_page.dart';
@@ -141,12 +142,17 @@ class _MainShellState extends State<MainShell> {
         final isWide = constraints.maxWidth >= 1100;
         return Scaffold(
           appBar: AppBar(
-            title: Text('${widget.store.storeProfile.name} • ${items[selectedIndex].label}'),
+            title: Text(isWide ? '${widget.store.storeProfile.name} • ${items[selectedIndex].label}' : items[selectedIndex].label),
+            bottom: PreferredSize(
+              preferredSize: const Size.fromHeight(46),
+              child: ConnectionStatusBar(store: widget.store),
+            ),
             actions: [
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: Center(child: Text(widget.store.activeUser?.fullName ?? '')),
-              ),
+              if (isWide)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Center(child: Text(widget.store.activeUser?.fullName ?? '')),
+                ),
               IconButton(
                 tooltip: 'Logout',
                 onPressed: () async {
@@ -207,6 +213,100 @@ class _MainShellState extends State<MainShell> {
               : items[selectedIndex].page,
         );
       },
+    );
+  }
+}
+
+
+class ConnectionStatusBar extends StatelessWidget {
+  const ConnectionStatusBar({super.key, required this.store});
+
+  final AppStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    final status = _ConnectionStatus.fromStore(store);
+    final theme = Theme.of(context);
+    final isCompact = MediaQuery.sizeOf(context).width < 520;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 250),
+        padding: EdgeInsets.symmetric(horizontal: isCompact ? 10 : 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: status.color.withOpacity(0.13),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: status.color.withOpacity(0.45)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(status.icon, size: 18, color: status.color),
+            const SizedBox(width: 8),
+            Text(
+              status.label,
+              style: theme.textTheme.labelLarge?.copyWith(color: status.color, fontWeight: FontWeight.w800),
+            ),
+            if (!isCompact) ...[
+              const SizedBox(width: 10),
+              Flexible(
+                child: Text(
+                  status.description,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                ),
+              ),
+            ],
+            if (store.pendingSyncCount > 0) ...[
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(color: status.color.withOpacity(0.16), borderRadius: BorderRadius.circular(999)),
+                child: Text('${store.pendingSyncCount} pending', style: theme.textTheme.labelSmall?.copyWith(color: status.color, fontWeight: FontWeight.w700)),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ConnectionStatus {
+  const _ConnectionStatus({required this.label, required this.description, required this.color, required this.icon});
+
+  final String label;
+  final String description;
+  final Color color;
+  final IconData icon;
+
+  static _ConnectionStatus fromStore(AppStore store) {
+    final identity = store.appIdentity;
+    final cloudSettings = CloudSyncSettings.load();
+    final lanReady = !kIsWeb && LanSyncSettings.load().setupComplete;
+    if (identity.isCloudEnabled && cloudSettings.isConfigured) {
+      return const _ConnectionStatus(
+        label: 'Online',
+        description: 'Cloud sync is enabled',
+        color: Color(0xFF15803D),
+        icon: Icons.cloud_done_outlined,
+      );
+    }
+    if (identity.syncMode == SyncMode.lanOnly && lanReady) {
+      return _ConnectionStatus(
+        label: 'LAN',
+        description: identity.isHost ? 'Local network host' : 'Connected through local network',
+        color: const Color(0xFF2563EB),
+        icon: Icons.hub_outlined,
+      );
+    }
+    return const _ConnectionStatus(
+      label: 'Offline',
+      description: 'Local device only; changes will wait for sync',
+      color: Color(0xFFB45309),
+      icon: Icons.cloud_off_outlined,
     );
   }
 }

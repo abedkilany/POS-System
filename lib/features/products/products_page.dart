@@ -32,7 +32,7 @@ class _ProductsPageState extends State<ProductsPage> {
     final categories = <String>{'All', ...widget.store.products.map((p) => p.category).where((e) => e.trim().isNotEmpty)}.toList()..sort();
 
     return Padding(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.all(MediaQuery.sizeOf(context).width < 720 ? 8 : 16),
       child: Column(
         children: [
           AppSectionHeader(
@@ -62,25 +62,24 @@ class _ProductsPageState extends State<ProductsPage> {
             ),
           ),
           const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  decoration: InputDecoration(hintText: tr.text('search_products_pro'), prefixIcon: const Icon(Icons.search)),
-                  onChanged: (value) => setState(() => query = value),
-                ),
-              ),
-              const SizedBox(width: 12),
-              SizedBox(
-                width: 220,
-                child: DropdownButtonFormField<String>(
-                  value: categoryFilter,
-                  decoration: InputDecoration(labelText: tr.text('category')),
-                  items: categories.map((item) => DropdownMenuItem(value: item, child: Text(item == 'All' ? tr.text('all') : item))).toList(),
-                  onChanged: (value) => setState(() => categoryFilter = value ?? 'All'),
-                ),
-              ),
-            ],
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxWidth < 620;
+              final search = TextField(
+                decoration: InputDecoration(hintText: tr.text('search_products_pro'), prefixIcon: const Icon(Icons.search)),
+                onChanged: (value) => setState(() => query = value),
+              );
+              final filter = DropdownButtonFormField<String>(
+                value: categoryFilter,
+                decoration: InputDecoration(labelText: tr.text('category')),
+                items: categories.map((item) => DropdownMenuItem(value: item, child: Text(item == 'All' ? tr.text('all') : item))).toList(),
+                onChanged: (value) => setState(() => categoryFilter = value ?? 'All'),
+              );
+              if (compact) {
+                return Column(children: [search, const SizedBox(height: 10), filter]);
+              }
+              return Row(children: [Expanded(child: search), const SizedBox(width: 12), SizedBox(width: 220, child: filter)]);
+            },
           ),
           const SizedBox(height: 16),
           Expanded(
