@@ -89,6 +89,25 @@ class CloudSyncSettings {
   }
 }
 
+
+class HostHeartbeatStatus {
+  const HostHeartbeatStatus({
+    required this.cloudReachable,
+    required this.hostReachable,
+    this.lastSeenAt,
+    this.hostDeviceId = '',
+    this.hostDeviceName = '',
+    this.message = '',
+  });
+
+  final bool cloudReachable;
+  final bool hostReachable;
+  final DateTime? lastSeenAt;
+  final String hostDeviceId;
+  final String hostDeviceName;
+  final String message;
+}
+
 class CloudSyncResult {
   const CloudSyncResult({required this.ok, required this.message, this.pushed = 0, this.pulled = 0});
   final bool ok;
@@ -121,6 +140,76 @@ class CloudSyncService {
       );
     } catch (error) {
       return CloudSyncResult(ok: false, message: 'Cloud API connection failed: $error');
+    }
+  }
+
+  Future<CloudSyncResult> sendHostHeartbeat(CloudSyncSettings settings) async {
+    final identity = store.appIdentity;
+    if (!identity.isCloudEnabled || !identity.isHost) {
+      return const CloudSyncResult(ok: false, message: 'Heartbeat is only sent by a cloud-enabled Host device.');
+    }
+    if (!settings.isConfigured) {
+      return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
+    }
+    try {
+      final response = await _client
+          .post(
+            settings.endpoint('/api/sync/host-heartbeat'),
+            headers: _headers(settings),
+            body: jsonEncode({
+              'storeId': identity.storeId,
+              'branchId': identity.branchId,
+              'hostDeviceId': store.deviceId,
+              'hostDeviceName': identity.deviceName,
+              'platform': identity.platform.name,
+              'appVersion': 'store-manager-pro',
+              'syncMode': identity.syncMode.name,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
+      return CloudSyncResult(
+        ok: response.statusCode >= 200 && response.statusCode < 300,
+        message: response.statusCode >= 200 && response.statusCode < 300 ? 'Host heartbeat updated.' : 'Host heartbeat failed: ${response.statusCode} ${response.body}',
+      );
+    } catch (error) {
+      return CloudSyncResult(ok: false, message: 'Host heartbeat failed: $error');
+    }
+  }
+
+  Future<HostHeartbeatStatus> getHostHeartbeatStatus(CloudSyncSettings settings, {Duration staleAfter = const Duration(seconds: 90)}) async {
+    final identity = store.appIdentity;
+    if (!settings.isConfigured) {
+      return const HostHeartbeatStatus(cloudReachable: false, hostReachable: false, message: 'Cloud API URL and token are required.');
+    }
+    try {
+      final response = await _client
+          .get(
+            settings.endpoint('/api/sync/host-heartbeat', {
+              'store_id': identity.storeId,
+              'branch_id': identity.branchId,
+            }),
+            headers: _headers(settings),
+          )
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return HostHeartbeatStatus(cloudReachable: false, hostReachable: false, message: 'Cloud API returned ${response.statusCode}: ${response.body}');
+      }
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      final rawLastSeen = decoded['lastSeenAt'] ?? decoded['last_seen_at'];
+      final lastSeenAt = rawLastSeen == null ? null : DateTime.tryParse(rawLastSeen.toString());
+      final hostReachable = lastSeenAt != null && DateTime.now().toUtc().difference(lastSeenAt.toUtc()) <= staleAfter;
+      final hostDeviceId = (decoded['hostDeviceId'] ?? decoded['host_device_id'] ?? '').toString();
+      final hostDeviceName = (decoded['hostDeviceName'] ?? decoded['host_device_name'] ?? '').toString();
+      return HostHeartbeatStatus(
+        cloudReachable: true,
+        hostReachable: hostReachable,
+        lastSeenAt: lastSeenAt,
+        hostDeviceId: hostDeviceId,
+        hostDeviceName: hostDeviceName,
+        message: hostReachable ? 'Host heartbeat is fresh.' : (lastSeenAt == null ? 'No host heartbeat was found.' : 'Host heartbeat is stale.'),
+      );
+    } catch (error) {
+      return HostHeartbeatStatus(cloudReachable: false, hostReachable: false, message: 'Cloud API connection failed: $error');
     }
   }
 
@@ -208,6 +297,7 @@ class CloudSyncService {
 
       if (identity.isHost) {
         await store.ensureHostCloudBootstrapSnapshotQueued();
+        await sendHostHeartbeat(settings);
         acceptedRemoteRequests = await _hostPullRemoteRequests(settings);
         pushed += await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
         return CloudSyncResult(

@@ -276,8 +276,8 @@
   "host_device": "Host device",
   "checking_host": "Checking host…",
   "lan_off": "LAN off",
-  "cloud_connected": "Online host connected",
-  "cloud_offline": "Online host offline",
+  "cloud_connected": "Cloud online",
+  "cloud_offline": "Cloud offline",
   "checking_cloud": "Checking online host…",
   "cloud_off": "Cloud off",
   "last_ok": "last OK",
@@ -339,5 +339,9 @@
   "cloud_tenant": "Cloud tenant",
   "device_name": "Device name",
   "cloud_tenant_id": "Cloud tenant ID / future Neon tenant",
-  "system_foundation_updated": "System foundation updated."
+  "system_foundation_updated": "System foundation updated.",
+  "last_seen": "last seen",
+  "host_heartbeat_fresh": "Host heartbeat is fresh.",
+  "host_heartbeat_stale": "Host heartbeat is stale. The Host is probably offline.",
+  "no_host_heartbeat": "No Host heartbeat was found. Start the Host device once to publish its status."
 }

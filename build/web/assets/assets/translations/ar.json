@@ -276,8 +276,8 @@
   "host_device": "هذا الجهاز هو الهوست",
   "checking_host": "جارٍ فحص الهوست…",
   "lan_off": "LAN غير مفعّل",
-  "cloud_connected": "متصل بالهوست أونلاين",
-  "cloud_offline": "الهوست الأونلاين غير متصل",
+  "cloud_connected": "السحابة متصلة",
+  "cloud_offline": "السحابة غير متصلة",
   "checking_cloud": "جارٍ فحص الهوست أونلاين…",
   "cloud_off": "السحابة غير مفعّلة",
   "last_ok": "آخر اتصال ناجح",
@@ -339,5 +339,9 @@
   "cloud_tenant": "مستأجر السحابة",
   "device_name": "اسم الجهاز",
   "cloud_tenant_id": "معرّف مستأجر السحابة / Neon مستقبلاً",
-  "system_foundation_updated": "تم تحديث أساس النظام."
+  "system_foundation_updated": "تم تحديث أساس النظام.",
+  "last_seen": "آخر ظهور",
+  "host_heartbeat_fresh": "نبضة الهوست حديثة.",
+  "host_heartbeat_stale": "نبضة الهوست قديمة. غالباً جهاز الهوست غير متصل.",
+  "no_host_heartbeat": "لا توجد نبضة للهوست. شغّل جهاز الهوست مرة واحدة حتى ينشر حالته."
 }

@@ -216,7 +216,7 @@ class _MainShellState extends State<MainShell> {
 }
 
 
-enum _HostReachability { disabled, hostDevice, checking, connected, pending, disconnected }
+enum _HostReachability { disabled, hostDevice, checking, connected, pending, disconnected, cloudOffline }
 
 class HostConnectionIndicator extends StatefulWidget {
   const HostConnectionIndicator({super.key, required this.store});
@@ -256,17 +256,21 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
         return;
       }
       if (mounted) setState(() => _state = _HostReachability.checking);
-      final result = await CloudSyncService(widget.store).testConnection(settings);
+      final status = await CloudSyncService(widget.store).getHostHeartbeatStatus(settings);
       final pending = widget.store.pendingSyncCount;
       if (!mounted) return;
       setState(() {
-        if (result.ok) {
-          _lastOk = DateTime.now();
+        if (!status.cloudReachable) {
+          _state = _HostReachability.cloudOffline;
+          _message = status.message;
+        } else if (status.hostReachable) {
+          _lastOk = status.lastSeenAt ?? DateTime.now();
           _state = pending > 0 ? _HostReachability.pending : _HostReachability.connected;
-          _message = pending > 0 ? trText('pending_changes').replaceAll('{count}', '$pending') : result.message;
+          _message = pending > 0 ? trText('pending_changes').replaceAll('{count}', '$pending') : trText('host_heartbeat_fresh');
         } else {
+          _lastOk = status.lastSeenAt;
           _state = _HostReachability.disconnected;
-          _message = result.message;
+          _message = status.lastSeenAt == null ? trText('no_host_heartbeat') : trText('host_heartbeat_stale');
         }
       });
       return;
@@ -305,19 +309,21 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
       _HostReachability.connected => Colors.green,
       _HostReachability.pending => Colors.orange,
       _HostReachability.disconnected => theme.colorScheme.error,
+      _HostReachability.cloudOffline => theme.colorScheme.error,
       _HostReachability.hostDevice => Colors.blue,
       _HostReachability.checking => Colors.amber,
       _HostReachability.disabled => Colors.grey,
     };
     final label = switch (_state) {
-      _HostReachability.connected => kIsWeb ? tr.text('cloud_connected') : tr.text('host_connected'),
+      _HostReachability.connected => tr.text('host_connected'),
       _HostReachability.pending => tr.text('sync_pending'),
-      _HostReachability.disconnected => kIsWeb ? tr.text('cloud_offline') : tr.text('host_offline'),
+      _HostReachability.disconnected => tr.text('host_offline'),
+      _HostReachability.cloudOffline => tr.text('cloud_offline'),
       _HostReachability.hostDevice => tr.text('host_device'),
       _HostReachability.checking => kIsWeb ? tr.text('checking_cloud') : tr.text('checking_host'),
       _HostReachability.disabled => kIsWeb ? tr.text('cloud_off') : tr.text('lan_off'),
     };
-    final last = _lastOk == null ? '' : ' • ${tr.text('last_ok')} ${_lastOk!.hour.toString().padLeft(2, '0')}:${_lastOk!.minute.toString().padLeft(2, '0')}';
+    final last = _lastOk == null ? '' : ' • ${tr.text(kIsWeb ? 'last_seen' : 'last_ok')} ${_lastOk!.toLocal().hour.toString().padLeft(2, '0')}:${_lastOk!.toLocal().minute.toString().padLeft(2, '0')}';
     return Padding(
       padding: const EdgeInsetsDirectional.only(end: 8),
       child: Tooltip(

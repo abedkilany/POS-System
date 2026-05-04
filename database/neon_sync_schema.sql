@@ -59,3 +59,22 @@ create index if not exists idx_cloud_change_requests_pending
 
 -- Migration safety for databases created before branch-scoped snapshots.
 alter table entity_snapshots add column if not exists branch_id text not null default 'main';
+
+-- Accurate Host status for web/online clients.
+-- The Windows Host updates this table periodically through /api/sync/host-heartbeat.
+-- Web clients must use last_seen_at freshness, not API health, to decide whether the Host is online.
+create table if not exists store_host_heartbeats (
+  store_id text not null,
+  branch_id text not null default 'main',
+  host_device_id text not null,
+  host_device_name text default '',
+  platform text default '',
+  app_version text default '',
+  sync_mode text default '',
+  last_seen_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (store_id, branch_id, host_device_id)
+);
+
+create index if not exists idx_store_host_heartbeats_latest
+  on store_host_heartbeats (store_id, branch_id, last_seen_at desc);
