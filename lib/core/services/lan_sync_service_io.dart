@@ -233,9 +233,15 @@ class LanSyncService {
           return;
         }
         final latestResetAt = store.latestResetSyncAt;
-        final applicableChanges = latestResetAt == null
-            ? changes
-            : changes.where((item) => item.createdAt.isAfter(latestResetAt)).toList();
+        final hostReceivedAt = DateTime.now();
+        final applicableChanges = (latestResetAt == null
+                ? changes
+                : changes.where((item) => item.createdAt.isAfter(latestResetAt)).toList())
+            // Re-stamp accepted client changes on the Host timeline. Otherwise a
+            // second client whose cursor is already newer than the original
+            // offline client timestamp may never pull that change.
+            .map((item) => item.copyWith(createdAt: hostReceivedAt))
+            .toList();
         await store.applyRemoteSyncChanges(applicableChanges, markAppliedAsSynced: true, mirrorToCloud: store.appIdentity.isCloudEnabled && store.appIdentity.isHost);
         await _json(request, {
           'ok': true,
@@ -306,6 +312,8 @@ class LanSyncService {
         return LanSyncResult(ok: false, message: 'Initial clone failed: ${response.statusCode} $body');
       }
       await store.importSyncSnapshotJson(body);
+      final settings = LanSyncSettings.load();
+      await settings.copyWith(lastPullCursor: DateTime.now(), lastConnectionAt: DateTime.now(), lastSyncAt: DateTime.now()).save();
       return const LanSyncResult(ok: true, message: 'Initial clone completed.');
     } catch (error) {
       return LanSyncResult(ok: false, message: 'Initial clone failed: $error');
@@ -324,9 +332,32 @@ class LanSyncService {
         return LanSyncResult(ok: false, message: 'Pull failed: ${response.statusCode} $body');
       }
       await store.mergeBackupJson(body, markSynced: false);
+      final settings = LanSyncSettings.load();
+      await settings.copyWith(lastPullCursor: DateTime.now(), lastConnectionAt: DateTime.now(), lastSyncAt: DateTime.now()).save();
       return const LanSyncResult(ok: true, message: 'Pull completed.');
     } catch (error) {
       return LanSyncResult(ok: false, message: 'Pull failed: $error');
+    }
+  }
+
+
+  Future<LanSyncResult> repairFromHostSnapshot(String host, {int port = 8787, String token = ''}) async {
+    try {
+      final client = _client();
+      final request = await client.get(host.trim(), port, '/snapshot');
+      _attachToken(request, token);
+      final response = await request.close();
+      final body = await utf8.decoder.bind(response).join();
+      client.close(force: true);
+      if (response.statusCode != 200) {
+        return LanSyncResult(ok: false, message: 'Repair snapshot failed: ${response.statusCode} $body');
+      }
+      await store.mergeBackupJson(body, markSynced: false);
+      final settings = LanSyncSettings.load();
+      await settings.copyWith(lastPullCursor: DateTime.now(), lastConnectionAt: DateTime.now(), lastSyncAt: DateTime.now()).save();
+      return const LanSyncResult(ok: true, message: 'LAN repair completed from full Host snapshot.');
+    } catch (error) {
+      return LanSyncResult(ok: false, message: 'Repair snapshot failed: $error');
     }
   }
 
@@ -334,6 +365,7 @@ class LanSyncService {
     final settings = LanSyncSettings.load();
     final pending = store.pendingSyncChangesForTarget('host');
     final pendingIds = pending.map((item) => item.id).toList();
+    var pushCompleted = pending.isEmpty;
     try {
       final client = _client();
 
@@ -360,6 +392,7 @@ class LanSyncService {
         final decoded = jsonDecode(pushBody) as Map<String, dynamic>;
         final ackIds = (decoded['ackIds'] as List<dynamic>? ?? []).map((item) => '$item').toList();
         await store.markSyncChangesSyncedByIds(ackIds);
+        pushCompleted = true;
       }
 
       final path = settings.lastPullCursor == null
@@ -372,8 +405,10 @@ class LanSyncService {
       client.close(force: true);
       if (pullResponse.statusCode != 200) {
         final message = 'Pull changes failed: ${pullResponse.statusCode} $pullBody';
-        if (pendingIds.isNotEmpty) await store.markSyncQueueChangesFailed(pendingIds, message);
-        return LanSyncResult(ok: false, message: message);
+        final repair = pushCompleted ? await repairFromHostSnapshot(host, port: port, token: token) : null;
+        if (repair?.ok == true) return LanSyncResult(ok: true, message: '$message. ${repair!.message}');
+        if (pendingIds.isNotEmpty && !pushCompleted) await store.markSyncQueueChangesFailed(pendingIds, message);
+        return LanSyncResult(ok: false, message: repair == null ? message : '$message. ${repair.message}');
       }
       final decodedPull = jsonDecode(pullBody) as Map<String, dynamic>;
       final changes = (decodedPull['changes'] as List<dynamic>? ?? [])
@@ -388,7 +423,11 @@ class LanSyncService {
         message: 'Sync completed. Pushed ${pending.length} change(s), pulled ${changes.length} change(s).',
       );
     } catch (error) {
-      if (pendingIds.isNotEmpty) await store.markSyncQueueChangesFailed(pendingIds, error.toString());
+      if (pushCompleted) {
+        final repair = await repairFromHostSnapshot(host, port: port, token: token);
+        if (repair.ok) return LanSyncResult(ok: true, message: 'Incremental sync failed: $error. ${repair.message}');
+      }
+      if (pendingIds.isNotEmpty && !pushCompleted) await store.markSyncQueueChangesFailed(pendingIds, error.toString());
       return LanSyncResult(ok: false, message: 'Sync failed: $error');
     }
   }
@@ -404,10 +443,22 @@ class AutoLanSyncController {
   bool _running = false;
   bool _disposed = false;
   int _lastPendingCount = 0;
+  String _lastSettingsSignature = '';
+
+  String _settingsSignature(LanSyncSettings settings) => [
+        settings.setupComplete,
+        settings.mode.name,
+        settings.hostModeEnabled,
+        settings.host.trim(),
+        settings.port,
+        settings.autoSyncEnabled,
+        settings.secret.trim(),
+      ].join('|');
 
   Future<void> start() async {
     _disposed = false;
     final settings = LanSyncSettings.load();
+    _lastSettingsSignature = _settingsSignature(settings);
     _lastPendingCount = store.pendingSyncCount;
 
     if (settings.setupComplete && settings.isHost) {
@@ -437,6 +488,11 @@ class AutoLanSyncController {
   void _onStoreChanged() {
     if (_disposed) return;
     final settings = LanSyncSettings.load();
+    final signature = _settingsSignature(settings);
+    if (signature != _lastSettingsSignature) {
+      _lastSettingsSignature = signature;
+      unawaited(_applySettingsChange(settings));
+    }
     final pending = store.pendingSyncCount;
     final pendingIncreased = pending > _lastPendingCount;
     _lastPendingCount = pending;
@@ -448,15 +504,36 @@ class AutoLanSyncController {
 
   void _syncBecauseOfTimer() {
     final settings = LanSyncSettings.load();
+    final signature = _settingsSignature(settings);
+    if (signature != _lastSettingsSignature) {
+      _lastSettingsSignature = signature;
+      unawaited(_applySettingsChange(settings));
+    }
     if (!settings.setupComplete) return;
     if (settings.isHost) {
-      if (!_service.isHosting) {
+      if (!_service.isHosting || _service.port != settings.port) {
         unawaited(_service.startHost(port: settings.port));
       }
       return;
     }
     if (!settings.autoSyncEnabled) return;
+    // Keep LAN reconnects responsive: failed items are moved back to pending
+    // on the next auto tick instead of waiting for long backoff windows.
+    unawaited(store.retryFailedSyncQueue(target: 'host'));
     unawaited(_runClientSync());
+  }
+
+  Future<void> _applySettingsChange(LanSyncSettings settings) async {
+    if (_disposed) return;
+    if (!settings.setupComplete || !settings.isHost) {
+      await _service.stopHost();
+    } else if (!_service.isHosting || _service.port != settings.port) {
+      await _service.startHost(port: settings.port);
+    }
+    if (settings.setupComplete && settings.autoSyncEnabled && settings.isClient) {
+      await store.retryFailedSyncQueue(target: 'host');
+      await _runClientSync();
+    }
   }
 
   Future<void> _runClientSync() async {
@@ -466,6 +543,7 @@ class AutoLanSyncController {
 
     _running = true;
     try {
+      await store.retryFailedSyncQueue(target: 'host');
       final result = await _service.syncNow(settings.host, port: settings.port, token: settings.secret);
       if (result.ok) {
         _lastPendingCount = store.pendingSyncCount;

@@ -135,6 +135,8 @@ class LanSyncService {
       const LanSyncResult(ok: false, message: 'LAN initial clone is not available in the web build.');
   Future<LanSyncResult> pullNow(String host, {int port = 8787, String token = ''}) async =>
       const LanSyncResult(ok: false, message: 'LAN pull is not available in the web build.');
+  Future<LanSyncResult> repairFromHostSnapshot(String host, {int port = 8787, String token = ''}) async =>
+      const LanSyncResult(ok: false, message: 'LAN repair is not available in the web build. Use Cloud Sync/API instead.');
   Future<LanSyncResult> syncNow(String host, {int port = 8787, String token = ''}) async =>
       const LanSyncResult(ok: false, message: 'LAN sync is not available in the web build.');
 }

@@ -1276,6 +1276,23 @@ class _LanSyncCardState extends State<_LanSyncCard> {
                   label: const Text('Retry failed queue'),
                 ),
                 OutlinedButton.icon(
+                  onPressed: _busy || _hostModeEnabled
+                      ? null
+                      : () => _run(() async {
+                            await _saveSettings();
+                            await widget.store.retryFailedSyncQueue(target: 'host');
+                            final result = await _syncService.repairFromHostSnapshot(_hostController.text, port: _port, token: _tokenController.text.trim());
+                            if (result.ok) {
+                              _lastConnectionAt = DateTime.now();
+                              _lastSyncAt = DateTime.now();
+                              await _saveSettings(lastConnectionAt: _lastConnectionAt, lastSyncAt: _lastSyncAt);
+                            }
+                            setState(() => _status = result.message);
+                          }),
+                  icon: const Icon(Icons.healing_outlined),
+                  label: const Text('Repair LAN sync'),
+                ),
+                OutlinedButton.icon(
                   onPressed: _busy
                       ? null
                       : () => _run(() async {
