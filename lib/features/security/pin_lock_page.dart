@@ -62,7 +62,7 @@ class _PinLockPageState extends State<PinLockPage> {
                   const SizedBox(height: 16),
                   Text('User Login', style: Theme.of(context).textTheme.headlineSmall),
                   const SizedBox(height: 8),
-                  const Text('Sign in with your username and password. Default first login: admin / admin123', textAlign: TextAlign.center),
+                  Text(tr.text('signin_hint'), textAlign: TextAlign.center),
                   const SizedBox(height: 20),
                   TextField(
                     controller: _usernameController,
@@ -83,7 +83,7 @@ class _PinLockPageState extends State<PinLockPage> {
                     child: FilledButton.icon(
                       onPressed: _unlock,
                       icon: const Icon(Icons.login),
-                      label: const Text('Login'),
+                      label: Text(tr.text('login')),
                     ),
                   ),
                 ],

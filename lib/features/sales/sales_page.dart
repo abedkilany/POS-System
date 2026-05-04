@@ -94,11 +94,11 @@ class _SalesPageState extends State<SalesPage> {
                   Material(
                     color: Theme.of(context).colorScheme.surface,
                     borderRadius: BorderRadius.circular(16),
-                    child: const TabBar(
+                    child: TabBar(
                       tabs: [
-                        Tab(icon: Icon(Icons.shopping_cart_outlined), text: 'Cart'),
-                        Tab(icon: Icon(Icons.inventory_2_outlined), text: 'Products'),
-                        Tab(icon: Icon(Icons.receipt_long_outlined), text: 'Invoices'),
+                        Tab(icon: const Icon(Icons.shopping_cart_outlined), text: tr.text('cart')),
+                        Tab(icon: const Icon(Icons.inventory_2_outlined), text: tr.text('products')),
+                        Tab(icon: const Icon(Icons.receipt_long_outlined), text: tr.text('recent_invoices')),
                       ],
                     ),
                   ),
@@ -184,12 +184,12 @@ class _SalesPageState extends State<SalesPage> {
                   Expanded(
                     child: DropdownButtonFormField<String>(
                       value: _paymentMethod,
-                      decoration: const InputDecoration(labelText: 'Payment'),
-                      items: const [
-                        DropdownMenuItem(value: 'Cash', child: Text('Cash')),
-                        DropdownMenuItem(value: 'Card', child: Text('Card')),
-                        DropdownMenuItem(value: 'Transfer', child: Text('Transfer')),
-                        DropdownMenuItem(value: 'Mixed', child: Text('Mixed')),
+                      decoration: InputDecoration(labelText: tr.text('payment')),
+                      items: [
+                        DropdownMenuItem(value: 'Cash', child: Text(tr.text('cash'))),
+                        DropdownMenuItem(value: 'Card', child: Text(tr.text('card'))),
+                        DropdownMenuItem(value: 'Transfer', child: Text(tr.text('transfer'))),
+                        DropdownMenuItem(value: 'Mixed', child: Text(tr.text('mixed'))),
                       ],
                       onChanged: (value) => setState(() => _paymentMethod = value ?? 'Cash'),
                     ),
@@ -251,7 +251,7 @@ class _SalesPageState extends State<SalesPage> {
                   width: 180,
                   child: DropdownButtonFormField<String>(
                     value: _paymentMethod,
-                    decoration: const InputDecoration(labelText: 'Payment'),
+                    decoration: InputDecoration(labelText: tr.text('payment')),
                     items: const [
                       DropdownMenuItem(value: 'Cash', child: Text('Cash')),
                       DropdownMenuItem(value: 'Card', child: Text('Card')),
@@ -426,9 +426,9 @@ class _SalesPageState extends State<SalesPage> {
                 if (_cart.isNotEmpty)
                   TextButton.icon(onPressed: () => setState(() => _cart.clear()), icon: const Icon(Icons.delete_sweep_outlined), label: Text(tr.text('clear_cart'))),
                 if (_cart.isNotEmpty)
-                  TextButton.icon(onPressed: () => setState(() { _heldCart = List<_DraftSaleItem>.from(_cart); _cart.clear(); }), icon: const Icon(Icons.pause_circle_outline), label: const Text('Hold')),
+                  TextButton.icon(onPressed: () => setState(() { _heldCart = List<_DraftSaleItem>.from(_cart); _cart.clear(); }), icon: const Icon(Icons.pause_circle_outline), label: Text(tr.text('hold'))),
                 if (_heldCart != null && _cart.isEmpty)
-                  TextButton.icon(onPressed: () => setState(() { _cart.addAll(_heldCart!); _heldCart = null; }), icon: const Icon(Icons.play_circle_outline), label: const Text('Restore')),
+                  TextButton.icon(onPressed: () => setState(() { _cart.addAll(_heldCart!); _heldCart = null; }), icon: const Icon(Icons.play_circle_outline), label: Text(tr.text('restore'))),
               ],
             ),
             const SizedBox(height: 8),
@@ -564,7 +564,7 @@ class _SalesPageState extends State<SalesPage> {
                                   OutlinedButton.icon(
                                     onPressed: (!sale.isCancelled && widget.store.canDeleteOrCancel) ? () => _cancelSale(context, sale) : null,
                                     icon: const Icon(Icons.assignment_return_outlined),
-                                    label: const Text('Cancel / Return'),
+                                    label: Text(tr.text('cancel_return')),
                                   ),
                                 ],
                               ),
@@ -586,10 +586,10 @@ class _SalesPageState extends State<SalesPage> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: Text(tr.text('confirm_delete')),
-        content: Text('Cancel/return invoice ${sale.invoiceNo} and restore its stock?'),
+        content: Text(tr.text('cancel_return_confirm').replaceAll('{invoice}', sale.invoiceNo)),
         actions: [
           TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: Text(tr.text('cancel'))),
-          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Cancel invoice')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: Text(tr.text('cancel_invoice'))),
         ],
       ),
     );

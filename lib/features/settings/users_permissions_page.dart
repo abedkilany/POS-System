@@ -1,6 +1,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../../core/localization/app_localizations.dart';
 import '../../data/app_store.dart';
 import '../../models/app_user.dart';
 import '../../models/user_role.dart';
@@ -17,26 +18,27 @@ class UsersPermissionsPage extends StatefulWidget {
 class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     final store = widget.store;
     return Scaffold(
-      appBar: AppBar(title: const Text('Users & Permissions')),
+      appBar: AppBar(title: Text(tr.text('users_permissions'))),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           Card(
             child: ListTile(
               leading: const Icon(Icons.admin_panel_settings_outlined),
-              title: const Text('Built-in Admin'),
-              subtitle: const Text('The Admin role always has all permissions and cannot be edited or deleted. Default first login is admin / admin123. Change it immediately.'),
+              title: Text(tr.text('built_in_admin')),
+              subtitle: Text(tr.text('built_in_admin_desc')),
             ),
           ),
           const SizedBox(height: 12),
           _SectionHeader(
-            title: 'Roles',
+            title: tr.text('roles'),
             action: FilledButton.icon(
               onPressed: () => _editRole(),
               icon: const Icon(Icons.add),
-              label: const Text('Add role'),
+              label: Text(tr.text('add_role')),
             ),
           ),
           for (final role in store.roles)
@@ -44,25 +46,25 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
               child: ListTile(
                 leading: Icon(role.isSystem ? Icons.lock_outline : Icons.badge_outlined),
                 title: Text(role.name),
-                subtitle: Text(role.isAdmin ? 'All permissions' : '${role.permissions.length} permissions'),
+                subtitle: Text(role.isAdmin ? tr.text('all_permissions') : '${role.permissions.length} permissions'),
                 trailing: role.isSystem
                     ? null
                     : Wrap(
                         spacing: 8,
                         children: [
-                          IconButton(onPressed: () => _editRole(role: role), icon: const Icon(Icons.edit_outlined), tooltip: 'Edit'),
-                          IconButton(onPressed: () => _deleteRole(role), icon: const Icon(Icons.delete_outline), tooltip: 'Delete'),
+                          IconButton(onPressed: () => _editRole(role: role), icon: const Icon(Icons.edit_outlined), tooltip: tr.text('edit')),
+                          IconButton(onPressed: () => _deleteRole(role), icon: const Icon(Icons.delete_outline), tooltip: tr.text('delete')),
                         ],
                       ),
               ),
             ),
           const SizedBox(height: 20),
           _SectionHeader(
-            title: 'Users',
+            title: tr.text('users'),
             action: FilledButton.icon(
               onPressed: store.roles.isEmpty ? null : () => _editUser(),
               icon: const Icon(Icons.person_add_alt),
-              label: const Text('Add user'),
+              label: Text(tr.text('add_user')),
             ),
           ),
           for (final user in store.users)
@@ -70,13 +72,13 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
               child: ListTile(
                 leading: CircleAvatar(child: Text(user.fullName.isEmpty ? '?' : user.fullName.substring(0, 1).toUpperCase())),
                 title: Text('${user.fullName} (${user.username})'),
-                subtitle: Text('${store.roleById(user.roleId)?.name ?? user.roleId} • ${user.isActive ? 'Active' : 'Disabled'}'),
+                subtitle: Text('${store.roleById(user.roleId)?.name ?? user.roleId} • ${user.isActive ? tr.text('active') : tr.text('disabled')}'),
                 trailing: Wrap(
                   spacing: 8,
                   children: [
-                    IconButton(onPressed: () => _editUser(user: user), icon: const Icon(Icons.edit_outlined), tooltip: 'Edit'),
+                    IconButton(onPressed: () => _editUser(user: user), icon: const Icon(Icons.edit_outlined), tooltip: tr.text('edit')),
                     if (!user.isSystem)
-                      IconButton(onPressed: () => _deleteUser(user), icon: const Icon(Icons.delete_outline), tooltip: 'Delete'),
+                      IconButton(onPressed: () => _deleteUser(user), icon: const Icon(Icons.delete_outline), tooltip: tr.text('delete')),
                   ],
                 ),
               ),
@@ -87,6 +89,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
   }
 
   Future<void> _editRole({UserRole? role}) async {
+    final tr = AppLocalizations.of(context);
     final nameController = TextEditingController(text: role?.name ?? '');
     final permissions = Set<String>.from(role?.permissions ?? const <String>{});
 
@@ -122,7 +125,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: Text(tr.text('cancel'))),
             FilledButton(
               onPressed: () {
                 Navigator.pop(
@@ -136,7 +139,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                   ),
                 );
               },
-              child: const Text('Save'),
+              child: Text(tr.text('save')),
             ),
           ],
         ),
@@ -161,6 +164,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
   }
 
   Future<void> _editUser({AppUser? user}) async {
+    final tr = AppLocalizations.of(context);
     final nameController = TextEditingController(text: user?.fullName ?? '');
     final usernameController = TextEditingController(text: user?.username ?? '');
     final passwordController = TextEditingController();
@@ -199,7 +203,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                   ),
                   SwitchListTile(
                     value: isActive,
-                    title: const Text('Active'),
+                    title: Text(tr.text('active')),
                     onChanged: user?.isSystem == true ? null : (value) => setDialogState(() => isActive = value),
                   ),
                   const Divider(),
@@ -230,7 +234,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: Text(tr.text('cancel'))),
             FilledButton(
               onPressed: () {
                 Navigator.pop(
@@ -254,7 +258,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                   ),
                 );
               },
-              child: const Text('Save'),
+              child: Text(tr.text('save')),
             ),
           ],
         ),

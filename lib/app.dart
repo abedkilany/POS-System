@@ -145,14 +145,14 @@ class _MainShellState extends State<MainShell> {
           appBar: AppBar(
             title: Text('${widget.store.storeProfile.name} • ${items[selectedIndex].label}'),
             actions: [
-              if (!kIsWeb) HostConnectionIndicator(store: widget.store),
+              HostConnectionIndicator(store: widget.store),
               if (constraints.maxWidth >= 520)
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   child: Center(child: Text(widget.store.activeUser?.fullName ?? '')),
                 ),
               IconButton(
-                tooltip: 'Logout',
+                tooltip: tr.text('logout'),
                 onPressed: () async {
                   await widget.store.logout();
                   if (context.mounted) {
@@ -233,6 +233,8 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
   DateTime? _lastOk;
   String _message = '';
 
+  String trText(String key) => AppLocalizations.of(context).text(key);
+
   @override
   void initState() {
     super.initState();
@@ -247,13 +249,36 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
   }
 
   Future<void> _refresh() async {
+    if (kIsWeb) {
+      final settings = CloudSyncSettings.load();
+      if (!settings.isConfigured || !widget.store.appIdentity.isCloudEnabled) {
+        if (mounted) setState(() { _state = _HostReachability.disabled; _message = trText('cloud_off'); });
+        return;
+      }
+      if (mounted) setState(() => _state = _HostReachability.checking);
+      final result = await CloudSyncService(widget.store).testConnection(settings);
+      final pending = widget.store.pendingSyncCount;
+      if (!mounted) return;
+      setState(() {
+        if (result.ok) {
+          _lastOk = DateTime.now();
+          _state = pending > 0 ? _HostReachability.pending : _HostReachability.connected;
+          _message = pending > 0 ? trText('pending_changes').replaceAll('{count}', '$pending') : result.message;
+        } else {
+          _state = _HostReachability.disconnected;
+          _message = result.message;
+        }
+      });
+      return;
+    }
+
     final settings = LanSyncSettings.load();
     if (!settings.setupComplete) {
-      if (mounted) setState(() { _state = _HostReachability.disabled; _message = 'LAN not configured'; });
+      if (mounted) setState(() { _state = _HostReachability.disabled; _message = trText('lan_not_configured'); });
       return;
     }
     if (settings.isHost) {
-      if (mounted) setState(() { _state = _HostReachability.hostDevice; _message = 'This device is Host'; });
+      if (mounted) setState(() { _state = _HostReachability.hostDevice; _message = trText('this_device_is_host'); });
       return;
     }
     if (mounted) setState(() => _state = _HostReachability.checking);
@@ -264,7 +289,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
       if (result.ok) {
         _lastOk = DateTime.now();
         _state = pending > 0 ? _HostReachability.pending : _HostReachability.connected;
-        _message = pending > 0 ? '$pending pending change(s)' : 'Host reachable';
+        _message = pending > 0 ? trText('pending_changes').replaceAll('{count}', '$pending') : trText('host_reachable');
       } else {
         _state = _HostReachability.disconnected;
         _message = result.message;
@@ -274,6 +299,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     final theme = Theme.of(context);
     final color = switch (_state) {
       _HostReachability.connected => Colors.green,
@@ -284,18 +310,18 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
       _HostReachability.disabled => Colors.grey,
     };
     final label = switch (_state) {
-      _HostReachability.connected => 'Host connected',
-      _HostReachability.pending => 'Sync pending',
-      _HostReachability.disconnected => 'Host offline',
-      _HostReachability.hostDevice => 'Host device',
-      _HostReachability.checking => 'Checking host…',
-      _HostReachability.disabled => 'LAN off',
+      _HostReachability.connected => kIsWeb ? tr.text('cloud_connected') : tr.text('host_connected'),
+      _HostReachability.pending => tr.text('sync_pending'),
+      _HostReachability.disconnected => kIsWeb ? tr.text('cloud_offline') : tr.text('host_offline'),
+      _HostReachability.hostDevice => tr.text('host_device'),
+      _HostReachability.checking => kIsWeb ? tr.text('checking_cloud') : tr.text('checking_host'),
+      _HostReachability.disabled => kIsWeb ? tr.text('cloud_off') : tr.text('lan_off'),
     };
-    final last = _lastOk == null ? '' : ' • last OK ${_lastOk!.hour.toString().padLeft(2, '0')}:${_lastOk!.minute.toString().padLeft(2, '0')}';
+    final last = _lastOk == null ? '' : ' • ${tr.text('last_ok')} ${_lastOk!.hour.toString().padLeft(2, '0')}:${_lastOk!.minute.toString().padLeft(2, '0')}';
     return Padding(
       padding: const EdgeInsetsDirectional.only(end: 8),
       child: Tooltip(
-        message: 'Host status: $label$last\n$_message',
+        message: '${tr.text('host_status')}: $label$last\n$_message',
         child: InkWell(
           borderRadius: BorderRadius.circular(999),
           onTap: _refresh,

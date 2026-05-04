@@ -29,7 +29,7 @@ class SettingsPage extends StatelessWidget {
     final isCompact = MediaQuery.sizeOf(context).width < 720;
     final tabs = [
       Tab(icon: const Icon(Icons.store_outlined), text: tr.text('store_information')),
-      Tab(icon: const Icon(Icons.sync_outlined), text: 'Sync'),
+      Tab(icon: const Icon(Icons.sync_outlined), text: tr.text('sync')),
       Tab(icon: const Icon(Icons.backup_outlined), text: tr.text('backup_restore')),
       Tab(icon: const Icon(Icons.admin_panel_settings_outlined), text: tr.text('users_permissions')),
     ];
@@ -141,7 +141,7 @@ class SettingsPage extends StatelessWidget {
                 runSpacing: 12,
                 children: [
                   FilledButton.icon(onPressed: () => _downloadBackupFile(context), icon: const Icon(Icons.download_outlined), label: Text(tr.text('download_backup_file'))),
-                  FilledButton.icon(onPressed: () => _downloadEncryptedBackupFile(context), icon: const Icon(Icons.enhanced_encryption_outlined), label: const Text('Encrypted backup')),
+                  FilledButton.icon(onPressed: () => _downloadEncryptedBackupFile(context), icon: const Icon(Icons.enhanced_encryption_outlined), label: Text(tr.text('encrypted_backup'))),
                   OutlinedButton.icon(onPressed: () => _previewBackup(context), icon: const Icon(Icons.visibility_outlined), label: Text(tr.text('preview_backup_json'))),
                   OutlinedButton.icon(onPressed: () => _copyBackup(context), icon: const Icon(Icons.copy_all_outlined), label: Text(tr.text('copy_backup_json'))),
                   OutlinedButton.icon(onPressed: () => _importBackupFile(context), icon: const Icon(Icons.upload_file_outlined), label: Text(tr.text('import_backup_file'))),
@@ -178,7 +178,7 @@ class SettingsPage extends StatelessWidget {
           trailing: FilledButton.icon(
             onPressed: store.canManageUsers ? () => Navigator.push(context, MaterialPageRoute(builder: (_) => UsersPermissionsPage(store: store))) : null,
             icon: const Icon(Icons.manage_accounts_outlined),
-            label: const Text('Manage'),
+            label: Text(tr.text('manage')),
           ),
         ),
       ),
@@ -661,6 +661,7 @@ class _DataConflictsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     final conflicts = store.dataConflicts;
     final blockingCount = conflicts.where((item) => item.blocking).length;
     final color = conflicts.isEmpty
@@ -678,7 +679,7 @@ class _DataConflictsCard extends StatelessWidget {
             ListTile(
               contentPadding: EdgeInsets.zero,
               leading: Icon(conflicts.isEmpty ? Icons.verified_outlined : Icons.warning_amber_rounded, color: color),
-              title: const Text('Data conflicts'),
+              title: Text(tr.text('data_conflicts')),
               subtitle: Text(conflicts.isEmpty
                   ? 'No duplicate-name/code conflicts detected.'
                   : '$blockingCount blocking • ${conflicts.length} total. Records are not merged automatically.'),
@@ -785,6 +786,7 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     final identity = widget.store.appIdentity;
     final isHost = identity.isHost;
     final color = Theme.of(context).colorScheme;
@@ -798,7 +800,7 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
             ListTile(
               contentPadding: EdgeInsets.zero,
               leading: const Icon(Icons.cloud_sync_outlined),
-              title: const Text('Cloud sync settings / إعدادات المزامنة السحابية'),
+              title: Text(tr.text('cloud_sync_settings')),
               subtitle: Text(
                 isHost
                     ? 'This Windows device is the HOST. It will mirror authoritative data to Vercel/Neon and accept remote requests.'
@@ -844,8 +846,8 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
             ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('Auto cloud sync'),
-              subtitle: const Text('The HOST checks Vercel for remote requests and pushes official changes automatically.'),
+              title: Text(tr.text('auto_cloud_sync')),
+              subtitle: Text(tr.text('cloud_host_auto_desc')),
               value: _autoSyncEnabled,
               onChanged: _busy ? null : (value) => setState(() => _autoSyncEnabled = value),
             ),
@@ -876,7 +878,7 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
                             setState(() => _status = 'Cloud settings saved. This device is now the cloud HOST. Restart the app to start auto cloud sync immediately.');
                           }),
                   icon: const Icon(Icons.save_outlined),
-                  label: const Text('Save as HOST'),
+                  label: Text(tr.text('save_as_host')),
                 ),
                 OutlinedButton.icon(
                   onPressed: _busy
@@ -887,7 +889,7 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
                             setState(() => _status = result.message);
                           }),
                   icon: const Icon(Icons.network_check_outlined),
-                  label: const Text('Test API'),
+                  label: Text(tr.text('test_api')),
                 ),
                 FilledButton.icon(
                   onPressed: _busy
@@ -898,7 +900,7 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
                             setState(() => _status = result.message);
                           }),
                   icon: const Icon(Icons.cloud_sync_outlined),
-                  label: const Text('Sync now'),
+                  label: Text(tr.text('sync_now')),
                 ),
                 OutlinedButton.icon(
                   onPressed: _busy
@@ -908,7 +910,7 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
                             setState(() => _status = 'Failed cloud queue items are pending again.');
                           }),
                   icon: const Icon(Icons.replay_outlined),
-                  label: const Text('Retry cloud queue'),
+                  label: Text(tr.text('retry_cloud_queue')),
                 ),
               ],
             ),
@@ -1062,8 +1064,8 @@ class _LanSyncCardState extends State<_LanSyncCard> {
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.cloud_sync_outlined),
-                title: const Text('Cloud sync / مزامنة سحابية'),
-                subtitle: const Text('Web build uses Cloud API + Neon. LAN Host/Client is Desktop only.'),
+                title: Text(tr.text('cloud_sync')),
+                subtitle: Text(tr.text('web_cloud_lan_desc')),
                 trailing: const Chip(label: Text('Web mode')),
               ),
               const SizedBox(height: 8),
@@ -1101,8 +1103,8 @@ class _LanSyncCardState extends State<_LanSyncCard> {
               const SizedBox(height: 12),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
-                title: const Text('Auto cloud sync'),
-                subtitle: const Text('Automatically pushes local changes quickly and polls cloud using the interval below.'),
+                title: Text(tr.text('auto_cloud_sync')),
+                subtitle: Text(tr.text('auto_cloud_client_desc')),
                 value: _cloudAutoSyncEnabled,
                 onChanged: _busy ? null : (value) => setState(() => _cloudAutoSyncEnabled = value),
               ),
@@ -1129,7 +1131,7 @@ class _LanSyncCardState extends State<_LanSyncCard> {
                               setState(() => _status = 'Cloud settings saved.');
                             }),
                     icon: const Icon(Icons.save_outlined),
-                    label: const Text('Save cloud settings'),
+                    label: Text(tr.text('save_cloud_settings')),
                   ),
                   OutlinedButton.icon(
                     onPressed: _busy
@@ -1140,7 +1142,7 @@ class _LanSyncCardState extends State<_LanSyncCard> {
                               setState(() => _status = result.message);
                             }),
                     icon: const Icon(Icons.network_check_outlined),
-                    label: const Text('Test API'),
+                    label: Text(tr.text('test_api')),
                   ),
                   FilledButton.icon(
                     onPressed: _busy
@@ -1151,7 +1153,7 @@ class _LanSyncCardState extends State<_LanSyncCard> {
                               setState(() => _status = result.message);
                             }),
                     icon: const Icon(Icons.cloud_sync_outlined),
-                    label: const Text('Sync now'),
+                    label: Text(tr.text('sync_now')),
                   ),
                   OutlinedButton.icon(
                     onPressed: _busy
@@ -1161,7 +1163,7 @@ class _LanSyncCardState extends State<_LanSyncCard> {
                               setState(() => _status = 'Failed cloud queue items are pending again.');
                             }),
                     icon: const Icon(Icons.replay_outlined),
-                    label: const Text('Retry cloud queue'),
+                    label: Text(tr.text('retry_cloud_queue')),
                   ),
                 ],
               ),
@@ -1321,7 +1323,7 @@ class _LanSyncCardState extends State<_LanSyncCard> {
                             setState(() => _status = 'Failed queue items are pending again.');
                           }),
                   icon: const Icon(Icons.replay_outlined),
-                  label: const Text('Retry failed queue'),
+                  label: Text(tr.text('retry_failed_queue')),
                 ),
                 OutlinedButton.icon(
                   onPressed: _busy || _hostModeEnabled
@@ -1338,7 +1340,7 @@ class _LanSyncCardState extends State<_LanSyncCard> {
                             setState(() => _status = result.message);
                           }),
                   icon: const Icon(Icons.healing_outlined),
-                  label: const Text('Repair LAN sync'),
+                  label: Text(tr.text('repair_lan_sync')),
                 ),
                 OutlinedButton.icon(
                   onPressed: _busy
@@ -1347,11 +1349,11 @@ class _LanSyncCardState extends State<_LanSyncCard> {
                             final confirm = await showDialog<bool>(
                                   context: context,
                                   builder: (context) => AlertDialog(
-                                    title: const Text('Reset sync setup'),
-                                    content: const Text('This will only reset Host/Client sync setup. Business data will stay on this device. Restart the app to see the setup screen again.'),
+                                    title: Text(tr.text('reset_sync_setup')),
+                                    content: Text(tr.text('reset_sync_setup_confirm')),
                                     actions: [
-                                      TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-                                      FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Reset')),
+                                      TextButton(onPressed: () => Navigator.of(context).pop(false), child: Text(tr.text('cancel'))),
+                                      FilledButton(onPressed: () => Navigator.of(context).pop(true), child: Text(tr.text('reset'))),
                                     ],
                                   ),
                                 ) ??
@@ -1366,7 +1368,7 @@ class _LanSyncCardState extends State<_LanSyncCard> {
                             setState(() => _status = 'Sync setup was reset. Restart the app to choose Host or Client again.');
                           }),
                   icon: const Icon(Icons.restart_alt_outlined),
-                  label: const Text('Reset sync setup'),
+                  label: Text(tr.text('reset_sync_setup')),
                 ),
               ],
             ),
@@ -1418,6 +1420,7 @@ class _SystemIdentityCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     final identity = store.appIdentity;
     return Card(
       child: Padding(
@@ -1428,23 +1431,23 @@ class _SystemIdentityCard extends StatelessWidget {
             ListTile(
               contentPadding: EdgeInsets.zero,
               leading: const Icon(Icons.hub_outlined),
-              title: const Text('System foundation'),
-              subtitle: const Text('Store, branch, device role, app role, and sync mode.'),
+              title: Text(tr.text('system_foundation')),
+              subtitle: Text(tr.text('system_foundation_desc')),
               trailing: FilledButton.icon(
                 onPressed: store.hasPermission(AppPermission.settingsManage) ? () => _editIdentity(context, store) : null,
                 icon: const Icon(Icons.tune_outlined),
-                label: const Text('Configure'),
+                label: Text(tr.text('configure')),
               ),
             ),
             const Divider(height: 24),
-            _Line(title: 'Store ID', value: identity.storeId),
-            _Line(title: 'Branch ID', value: identity.branchId),
-            _Line(title: 'Device ID', value: identity.deviceId),
-            _Line(title: 'Platform', value: identity.platform.name),
-            _Line(title: 'Device role', value: identity.deviceRole.name),
-            _Line(title: 'App role', value: identity.appRole.name),
-            _Line(title: 'Sync mode', value: identity.syncMode.name),
-            _Line(title: 'Cloud tenant', value: identity.cloudTenantId.isEmpty ? '—' : identity.cloudTenantId),
+            _Line(title: tr.text('store_id'), value: identity.storeId),
+            _Line(title: tr.text('branch_id'), value: identity.branchId),
+            _Line(title: tr.text('device_id'), value: identity.deviceId),
+            _Line(title: tr.text('platform'), value: identity.platform.name),
+            _Line(title: tr.text('device_role'), value: identity.deviceRole.name),
+            _Line(title: tr.text('app_role'), value: identity.appRole.name),
+            _Line(title: tr.text('sync_mode'), value: identity.syncMode.name),
+            _Line(title: tr.text('cloud_tenant'), value: identity.cloudTenantId.isEmpty ? '—' : identity.cloudTenantId),
           ],
         ),
       ),
@@ -1452,6 +1455,7 @@ class _SystemIdentityCard extends StatelessWidget {
   }
 
   Future<void> _editIdentity(BuildContext context, AppStore store) async {
+    final tr = AppLocalizations.of(context);
     final current = store.appIdentity;
     final storeIdController = TextEditingController(text: current.storeId);
     final branchIdController = TextEditingController(text: current.branchId);
@@ -1465,33 +1469,33 @@ class _SystemIdentityCard extends StatelessWidget {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
-          title: const Text('Configure system foundation'),
+          title: Text(tr.text('configure_system_foundation')),
           content: SizedBox(
             width: 520,
             child: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  TextField(controller: storeIdController, decoration: const InputDecoration(labelText: 'Store ID')),
-                  TextField(controller: branchIdController, decoration: const InputDecoration(labelText: 'Branch ID')),
-                  TextField(controller: deviceNameController, decoration: const InputDecoration(labelText: 'Device name')),
-                  TextField(controller: cloudTenantController, decoration: const InputDecoration(labelText: 'Cloud tenant ID / future Neon tenant')),
+                  TextField(controller: storeIdController, decoration: InputDecoration(labelText: tr.text('store_id'))),
+                  TextField(controller: branchIdController, decoration: InputDecoration(labelText: tr.text('branch_id'))),
+                  TextField(controller: deviceNameController, decoration: InputDecoration(labelText: tr.text('device_name'))),
+                  TextField(controller: cloudTenantController, decoration: InputDecoration(labelText: tr.text('cloud_tenant_id'))),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<DeviceRole>(
                     value: deviceRole,
-                    decoration: const InputDecoration(labelText: 'Device role'),
+                    decoration: InputDecoration(labelText: tr.text('device_role')),
                     items: DeviceRole.values.map((item) => DropdownMenuItem(value: item, child: Text(item.name))).toList(),
                     onChanged: (value) => setState(() => deviceRole = value ?? deviceRole),
                   ),
                   DropdownButtonFormField<AppRole>(
                     value: appRole,
-                    decoration: const InputDecoration(labelText: 'App role'),
+                    decoration: InputDecoration(labelText: tr.text('app_role')),
                     items: AppRole.values.map((item) => DropdownMenuItem(value: item, child: Text(item.name))).toList(),
                     onChanged: (value) => setState(() => appRole = value ?? appRole),
                   ),
                   DropdownButtonFormField<SyncMode>(
                     value: syncMode,
-                    decoration: const InputDecoration(labelText: 'Sync mode'),
+                    decoration: InputDecoration(labelText: tr.text('sync_mode')),
                     items: SyncMode.values.map((item) => DropdownMenuItem(value: item, child: Text(item.name))).toList(),
                     onChanged: (value) => setState(() => syncMode = value ?? syncMode),
                   ),
@@ -1500,8 +1504,8 @@ class _SystemIdentityCard extends StatelessWidget {
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Save')),
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: Text(tr.text('cancel'))),
+            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: Text(tr.text('save'))),
           ],
         ),
       ),
@@ -1518,7 +1522,7 @@ class _SystemIdentityCard extends StatelessWidget {
       syncMode: syncMode,
     ));
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('System foundation updated.')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('system_foundation_updated'))));
     }
   }
 }

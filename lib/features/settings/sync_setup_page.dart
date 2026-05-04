@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/localization/app_localizations.dart';
 import '../../core/services/lan_sync_service.dart';
 import '../../data/app_store.dart';
 import '../../models/app_identity.dart';
@@ -35,7 +36,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
   Future<void> _setupHost() async {
     setState(() {
       _busy = true;
-      _status = 'Preparing host...';
+      _status = AppLocalizations.of(context).text('preparing_host');
     });
     try {
       final secret = _tokenController.text.trim().isEmpty ? LanSyncSettings.generateSecret() : _tokenController.text.trim();
@@ -66,7 +67,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
   Future<void> _setupClient() async {
     setState(() {
       _busy = true;
-      _status = 'Connecting to host and cloning data...';
+      _status = AppLocalizations.of(context).text('connecting_cloning');
     });
     try {
       final secret = _tokenController.text.trim();
@@ -103,6 +104,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     final color = Theme.of(context).colorScheme;
     return Scaffold(
       body: Center(
@@ -117,34 +119,34 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
                 children: [
                   Icon(Icons.sync_alt, size: 56, color: color.primary),
                   const SizedBox(height: 16),
-                  Text('Sync setup / إعداد المزامنة', style: Theme.of(context).textTheme.headlineSmall, textAlign: TextAlign.center),
+                  Text(tr.text('sync_setup'), style: Theme.of(context).textTheme.headlineSmall, textAlign: TextAlign.center),
                   const SizedBox(height: 8),
-                  const Text(
-                    'Choose Host for the main device with clean local data. Choose Client to copy the full database from the Host, then sync automatically online/offline.',
+                  Text(
+                    tr.text('sync_setup_desc'),
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 24),
                   TextField(
                     controller: _hostController,
-                    decoration: const InputDecoration(
-                      labelText: 'Host IP',
-                      helperText: 'On Host this can stay as 0.0.0.0 or your LAN IP. On Client enter the Host LAN IP.',
-                      border: OutlineInputBorder(),
+                    decoration: InputDecoration(
+                      labelText: tr.text('host_ip'),
+                      helperText: tr.text('host_ip_help'),
+                      border: const OutlineInputBorder(),
                     ),
                   ),
                   const SizedBox(height: 12),
                   TextField(
                     controller: _portController,
                     keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'Port', border: OutlineInputBorder()),
+                    decoration: InputDecoration(labelText: tr.text('port'), border: const OutlineInputBorder()),
                   ),
                   const SizedBox(height: 12),
                   TextField(
                     controller: _tokenController,
-                    decoration: const InputDecoration(
-                      labelText: 'Pairing token',
-                      helperText: 'Use the same token on Host and Client.',
-                      border: OutlineInputBorder(),
+                    decoration: InputDecoration(
+                      labelText: tr.text('pairing_token'),
+                      helperText: tr.text('pairing_token_help'),
+                      border: const OutlineInputBorder(),
                     ),
                   ),
                   const SizedBox(height: 20),
@@ -156,12 +158,12 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
                       FilledButton.icon(
                         onPressed: _busy ? null : _setupHost,
                         icon: const Icon(Icons.wifi_tethering),
-                        label: const Text('This device is Host'),
+                        label: Text(tr.text('this_device_host')),
                       ),
                       OutlinedButton.icon(
                         onPressed: _busy ? null : _setupClient,
                         icon: const Icon(Icons.devices_other),
-                        label: const Text('This device is Client'),
+                        label: Text(tr.text('this_device_client')),
                       ),
                     ],
                   ),

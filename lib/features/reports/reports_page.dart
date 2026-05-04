@@ -67,7 +67,7 @@ class ReportsPage extends StatelessWidget {
                   Text('Top selling products', style: Theme.of(context).textTheme.titleLarge),
                   const SizedBox(height: 8),
                   if (topProductLines.isEmpty)
-                    const Text('No product sales yet.')
+                    Text(tr.text('no_product_sales_yet'))
                   else
                     ...topProductLines.take(8).map((entry) => ListTile(
                           dense: true,
@@ -89,7 +89,7 @@ class ReportsPage extends StatelessWidget {
                   Text('Stock alerts', style: Theme.of(context).textTheme.titleLarge),
                   const SizedBox(height: 8),
                   if (lowStock.isEmpty)
-                    const Text('No low stock products.')
+                    Text(tr.text('no_low_stock_products'))
                   else
                     ...lowStock.map((product) => ListTile(
                           dense: true,
