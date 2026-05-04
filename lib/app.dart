@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -8,7 +10,6 @@ import 'core/services/lan_sync_service.dart';
 import 'core/services/cloud_sync_service.dart';
 import 'data/app_store.dart';
 import 'models/user_role.dart';
-import 'models/app_identity.dart';
 import 'features/customers/customers_page.dart';
 import 'features/dashboard/dashboard_page.dart';
 import 'features/expenses/expenses_page.dart';
@@ -142,13 +143,10 @@ class _MainShellState extends State<MainShell> {
         final isWide = constraints.maxWidth >= 1100;
         return Scaffold(
           appBar: AppBar(
-            title: Text(isWide ? '${widget.store.storeProfile.name} • ${items[selectedIndex].label}' : items[selectedIndex].label),
-            bottom: PreferredSize(
-              preferredSize: const Size.fromHeight(46),
-              child: ConnectionStatusBar(store: widget.store),
-            ),
+            title: Text('${widget.store.storeProfile.name} • ${items[selectedIndex].label}'),
             actions: [
-              if (isWide)
+              if (!kIsWeb) HostConnectionIndicator(store: widget.store),
+              if (constraints.maxWidth >= 520)
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   child: Center(child: Text(widget.store.activeUser?.fullName ?? '')),
@@ -218,95 +216,107 @@ class _MainShellState extends State<MainShell> {
 }
 
 
-class ConnectionStatusBar extends StatelessWidget {
-  const ConnectionStatusBar({super.key, required this.store});
+enum _HostReachability { disabled, hostDevice, checking, connected, pending, disconnected }
+
+class HostConnectionIndicator extends StatefulWidget {
+  const HostConnectionIndicator({super.key, required this.store});
 
   final AppStore store;
 
   @override
-  Widget build(BuildContext context) {
-    final status = _ConnectionStatus.fromStore(store);
-    final theme = Theme.of(context);
-    final isCompact = MediaQuery.sizeOf(context).width < 520;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 250),
-        padding: EdgeInsets.symmetric(horizontal: isCompact ? 10 : 14, vertical: 8),
-        decoration: BoxDecoration(
-          color: status.color.withOpacity(0.13),
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: status.color.withOpacity(0.45)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(status.icon, size: 18, color: status.color),
-            const SizedBox(width: 8),
-            Text(
-              status.label,
-              style: theme.textTheme.labelLarge?.copyWith(color: status.color, fontWeight: FontWeight.w800),
-            ),
-            if (!isCompact) ...[
-              const SizedBox(width: 10),
-              Flexible(
-                child: Text(
-                  status.description,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                ),
-              ),
-            ],
-            if (store.pendingSyncCount > 0) ...[
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(color: status.color.withOpacity(0.16), borderRadius: BorderRadius.circular(999)),
-                child: Text('${store.pendingSyncCount} pending', style: theme.textTheme.labelSmall?.copyWith(color: status.color, fontWeight: FontWeight.w700)),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
+  State<HostConnectionIndicator> createState() => _HostConnectionIndicatorState();
 }
 
-class _ConnectionStatus {
-  const _ConnectionStatus({required this.label, required this.description, required this.color, required this.icon});
+class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
+  Timer? _timer;
+  _HostReachability _state = _HostReachability.checking;
+  DateTime? _lastOk;
+  String _message = '';
 
-  final String label;
-  final String description;
-  final Color color;
-  final IconData icon;
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+    _timer = Timer.periodic(const Duration(seconds: 10), (_) => _refresh());
+  }
 
-  static _ConnectionStatus fromStore(AppStore store) {
-    final identity = store.appIdentity;
-    final cloudSettings = CloudSyncSettings.load();
-    final lanReady = !kIsWeb && LanSyncSettings.load().setupComplete;
-    if (identity.isCloudEnabled && cloudSettings.isConfigured) {
-      return const _ConnectionStatus(
-        label: 'Online',
-        description: 'Cloud sync is enabled',
-        color: Color(0xFF15803D),
-        icon: Icons.cloud_done_outlined,
-      );
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _refresh() async {
+    final settings = LanSyncSettings.load();
+    if (!settings.setupComplete) {
+      if (mounted) setState(() { _state = _HostReachability.disabled; _message = 'LAN not configured'; });
+      return;
     }
-    if (identity.syncMode == SyncMode.lanOnly && lanReady) {
-      return _ConnectionStatus(
-        label: 'LAN',
-        description: identity.isHost ? 'Local network host' : 'Connected through local network',
-        color: const Color(0xFF2563EB),
-        icon: Icons.hub_outlined,
-      );
+    if (settings.isHost) {
+      if (mounted) setState(() { _state = _HostReachability.hostDevice; _message = 'This device is Host'; });
+      return;
     }
-    return const _ConnectionStatus(
-      label: 'Offline',
-      description: 'Local device only; changes will wait for sync',
-      color: Color(0xFFB45309),
-      icon: Icons.cloud_off_outlined,
+    if (mounted) setState(() => _state = _HostReachability.checking);
+    final result = await LanSyncService(widget.store).testConnection(settings.host, port: settings.port, token: settings.secret);
+    final pending = widget.store.pendingSyncCount;
+    if (!mounted) return;
+    setState(() {
+      if (result.ok) {
+        _lastOk = DateTime.now();
+        _state = pending > 0 ? _HostReachability.pending : _HostReachability.connected;
+        _message = pending > 0 ? '$pending pending change(s)' : 'Host reachable';
+      } else {
+        _state = _HostReachability.disconnected;
+        _message = result.message;
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = switch (_state) {
+      _HostReachability.connected => Colors.green,
+      _HostReachability.pending => Colors.orange,
+      _HostReachability.disconnected => theme.colorScheme.error,
+      _HostReachability.hostDevice => Colors.blue,
+      _HostReachability.checking => Colors.amber,
+      _HostReachability.disabled => Colors.grey,
+    };
+    final label = switch (_state) {
+      _HostReachability.connected => 'Host connected',
+      _HostReachability.pending => 'Sync pending',
+      _HostReachability.disconnected => 'Host offline',
+      _HostReachability.hostDevice => 'Host device',
+      _HostReachability.checking => 'Checking host…',
+      _HostReachability.disabled => 'LAN off',
+    };
+    final last = _lastOk == null ? '' : ' • last OK ${_lastOk!.hour.toString().padLeft(2, '0')}:${_lastOk!.minute.toString().padLeft(2, '0')}';
+    return Padding(
+      padding: const EdgeInsetsDirectional.only(end: 8),
+      child: Tooltip(
+        message: 'Host status: $label$last\n$_message',
+        child: InkWell(
+          borderRadius: BorderRadius.circular(999),
+          onTap: _refresh,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.14),
+              border: Border.all(color: color.withOpacity(0.45)),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.circle, color: color, size: 10),
+                const SizedBox(width: 6),
+                Text(label, style: theme.textTheme.labelMedium),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

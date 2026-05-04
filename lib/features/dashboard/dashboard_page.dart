@@ -21,7 +21,7 @@ class DashboardPage extends StatelessWidget {
     final todayTotal = todaySales.fold<double>(0, (sum, sale) => sum + sale.total);
 
     return ListView(
-      padding: EdgeInsets.all(MediaQuery.sizeOf(context).width < 720 ? 8 : 16),
+      padding: const EdgeInsets.all(16),
       children: [
         Wrap(
           spacing: 16,

@@ -32,7 +32,7 @@ class _ProductsPageState extends State<ProductsPage> {
     final categories = <String>{'All', ...widget.store.products.map((p) => p.category).where((e) => e.trim().isNotEmpty)}.toList()..sort();
 
     return Padding(
-      padding: EdgeInsets.all(MediaQuery.sizeOf(context).width < 720 ? 8 : 16),
+      padding: const EdgeInsets.all(16),
       child: Column(
         children: [
           AppSectionHeader(
@@ -64,21 +64,20 @@ class _ProductsPageState extends State<ProductsPage> {
           const SizedBox(height: 16),
           LayoutBuilder(
             builder: (context, constraints) {
-              final compact = constraints.maxWidth < 620;
-              final search = TextField(
+              final searchField = TextField(
                 decoration: InputDecoration(hintText: tr.text('search_products_pro'), prefixIcon: const Icon(Icons.search)),
                 onChanged: (value) => setState(() => query = value),
               );
-              final filter = DropdownButtonFormField<String>(
+              final categoryField = DropdownButtonFormField<String>(
                 value: categoryFilter,
                 decoration: InputDecoration(labelText: tr.text('category')),
                 items: categories.map((item) => DropdownMenuItem(value: item, child: Text(item == 'All' ? tr.text('all') : item))).toList(),
                 onChanged: (value) => setState(() => categoryFilter = value ?? 'All'),
               );
-              if (compact) {
-                return Column(children: [search, const SizedBox(height: 10), filter]);
+              if (constraints.maxWidth < 620) {
+                return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [searchField, const SizedBox(height: 12), categoryField]);
               }
-              return Row(children: [Expanded(child: search), const SizedBox(width: 12), SizedBox(width: 220, child: filter)]);
+              return Row(children: [Expanded(child: searchField), const SizedBox(width: 12), SizedBox(width: 220, child: categoryField)]);
             },
           ),
           const SizedBox(height: 16),

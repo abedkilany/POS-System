@@ -26,188 +26,173 @@ class SettingsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final profile = store.storeProfile;
+    final isCompact = MediaQuery.sizeOf(context).width < 720;
+    final tabs = [
+      Tab(icon: const Icon(Icons.store_outlined), text: tr.text('store_information')),
+      Tab(icon: const Icon(Icons.sync_outlined), text: 'Sync'),
+      Tab(icon: const Icon(Icons.backup_outlined), text: tr.text('backup_restore')),
+      Tab(icon: const Icon(Icons.admin_panel_settings_outlined), text: tr.text('users_permissions')),
+    ];
 
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+    return DefaultTabController(
+      length: tabs.length,
+      child: Column(
+        children: [
+          Material(
+            color: Theme.of(context).colorScheme.surface,
+            child: TabBar(
+              isScrollable: isCompact,
+              tabs: tabs,
+            ),
+          ),
+          Expanded(
+            child: TabBarView(
               children: [
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.store),
-                  title: Text(tr.text('store_information')),
-                  subtitle: Text(tr.text('store_information_desc')),
-                  trailing: FilledButton.icon(
-                    onPressed: () => _editStoreProfile(context, profile),
-                    icon: const Icon(Icons.edit_outlined),
-                    label: Text(tr.text('edit')),
-                  ),
-                ),
-                const Divider(height: 24),
-                _Line(title: tr.text('store_name'), value: profile.name),
-                _Line(title: tr.text('phone'), value: profile.phone.isEmpty ? '—' : profile.phone),
-                _Line(title: tr.text('address'), value: profile.address.isEmpty ? '—' : profile.address),
-                _Line(title: tr.text('currency'), value: profile.currency),
-                _Line(title: tr.text('invoice_footer'), value: profile.footerNote),
+                _settingsList(context, _generalCards(context)),
+                _settingsList(context, _syncCards(context)),
+                _settingsList(context, _backupCards(context)),
+                _settingsList(context, _adminCards(context)),
               ],
             ),
           ),
-        ),
-        const SizedBox(height: 12),
-        _SystemIdentityCard(store: store),
-        const SizedBox(height: 12),
-        _DataConflictsCard(store: store),
-        const SizedBox(height: 12),
-        Card(
-          child: ListTile(
-            leading: const Icon(Icons.people),
-            title: Text(tr.text('users_permissions')),
-            subtitle: Text("Signed in as ${store.activeUser?.fullName ?? 'Unknown'} • Role: ${store.currentRole}"),
-            trailing: FilledButton.icon(
-              onPressed: store.canManageUsers
-                  ? () => Navigator.push(context, MaterialPageRoute(builder: (_) => UsersPermissionsPage(store: store)))
-                  : null,
-              icon: const Icon(Icons.manage_accounts_outlined),
-              label: const Text('Manage'),
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        Card(
-          child: ListTile(
-            leading: const Icon(Icons.lock_outline),
-            title: Text(tr.text('security_pin')),
-            subtitle: Text(store.isPinEnabled ? tr.text('security_pin_enabled') : tr.text('security_pin_disabled')),
-            trailing: FilledButton.icon(
-              onPressed: () => _manageSecurityPin(context),
-              icon: Icon(store.isPinEnabled ? Icons.lock_reset : Icons.password_outlined),
-              label: Text(store.isPinEnabled ? tr.text('change_pin') : tr.text('enable_pin')),
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        _LanSyncCard(store: store),
-        if (!kIsWeb) ...[
-          const SizedBox(height: 12),
-          _CloudHostSyncCard(store: store),
         ],
-        const SizedBox(height: 12),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.backup_outlined),
-                  title: Text(tr.text('backup_restore')),
-                  subtitle: Text(tr.text('backup_preview_desc')),
-                ),
-                const Align(
-                  alignment: Alignment.centerLeft,
-                  child: Padding(
-                    padding: EdgeInsets.only(bottom: 12),
-                    child: Chip(
-                      avatar: Icon(Icons.storage_outlined, size: 18),
-                      label: Text('Local DB: Hive'),
-                    ),
-                  ),
-                ),
-                _BackupSummaryCard(summary: store.currentBackupSummary),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
-                  children: [
-                    FilledButton.icon(
-                      onPressed: () => _downloadBackupFile(context),
-                      icon: const Icon(Icons.download_outlined),
-                      label: Text(tr.text('download_backup_file')),
-                    ),
-                    FilledButton.icon(
-                      onPressed: () => _downloadEncryptedBackupFile(context),
-                      icon: const Icon(Icons.enhanced_encryption_outlined),
-                      label: const Text('Encrypted backup'),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: () => _previewBackup(context),
-                      icon: const Icon(Icons.visibility_outlined),
-                      label: Text(tr.text('preview_backup_json')),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: () => _copyBackup(context),
-                      icon: const Icon(Icons.copy_all_outlined),
-                      label: Text(tr.text('copy_backup_json')),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: () => _importBackupFile(context),
-                      icon: const Icon(Icons.upload_file_outlined),
-                      label: Text(tr.text('import_backup_file')),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: () => _restoreBackup(context),
-                      icon: const Icon(Icons.settings_backup_restore_outlined),
-                      label: Text(tr.text('restore_backup')),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: Icon(Icons.warning_amber_outlined, color: Theme.of(context).colorScheme.error),
-                  title: Text(tr.text('data_management')),
-                  subtitle: Text(tr.text('data_management_desc')),
-                  trailing: FilledButton.icon(
-                    style: FilledButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.error),
-                    onPressed: () => _resetBusinessData(context),
-                    icon: const Icon(Icons.delete_forever_outlined),
-                    label: Text(tr.text('reset_all_data')),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(tr.text('language'), style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
-                  children: [
-                    OutlinedButton(onPressed: () => onLocaleChanged(const Locale('en')), child: const Text('English')),
-                    OutlinedButton(onPressed: () => onLocaleChanged(const Locale('ar')), child: const Text('العربية')),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
+      ),
     );
   }
+
+  Widget _settingsList(BuildContext context, List<Widget> children) {
+    final width = MediaQuery.sizeOf(context).width;
+    return ListView.separated(
+      padding: EdgeInsets.all(width < 520 ? 8 : 16),
+      itemCount: children.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 12),
+      itemBuilder: (context, index) => children[index],
+    );
+  }
+
+  List<Widget> _generalCards(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    final profile = store.storeProfile;
+    return [
+      Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.store),
+                title: Text(tr.text('store_information')),
+                subtitle: Text(tr.text('store_information_desc')),
+                trailing: FilledButton.icon(onPressed: () => _editStoreProfile(context, profile), icon: const Icon(Icons.edit_outlined), label: Text(tr.text('edit'))),
+              ),
+              const Divider(height: 24),
+              _Line(title: tr.text('store_name'), value: profile.name),
+              _Line(title: tr.text('phone'), value: profile.phone.isEmpty ? '—' : profile.phone),
+              _Line(title: tr.text('address'), value: profile.address.isEmpty ? '—' : profile.address),
+              _Line(title: tr.text('currency'), value: profile.currency),
+              _Line(title: tr.text('invoice_footer'), value: profile.footerNote),
+            ],
+          ),
+        ),
+      ),
+      _SystemIdentityCard(store: store),
+      Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(tr.text('language'), style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 12),
+              Wrap(spacing: 12, runSpacing: 12, children: [
+                OutlinedButton(onPressed: () => onLocaleChanged(const Locale('en')), child: const Text('English')),
+                OutlinedButton(onPressed: () => onLocaleChanged(const Locale('ar')), child: const Text('العربية')),
+              ]),
+            ],
+          ),
+        ),
+      ),
+    ];
+  }
+
+  List<Widget> _syncCards(BuildContext context) => [
+        _LanSyncCard(store: store),
+        if (!kIsWeb) _CloudHostSyncCard(store: store),
+        _DataConflictsCard(store: store),
+      ];
+
+  List<Widget> _backupCards(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    return [
+      Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.backup_outlined), title: Text(tr.text('backup_restore')), subtitle: Text(tr.text('backup_preview_desc'))),
+              const Align(alignment: Alignment.centerLeft, child: Padding(padding: EdgeInsets.only(bottom: 12), child: Chip(avatar: Icon(Icons.storage_outlined, size: 18), label: Text('Local DB: Hive')))),
+              _BackupSummaryCard(summary: store.currentBackupSummary),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  FilledButton.icon(onPressed: () => _downloadBackupFile(context), icon: const Icon(Icons.download_outlined), label: Text(tr.text('download_backup_file'))),
+                  FilledButton.icon(onPressed: () => _downloadEncryptedBackupFile(context), icon: const Icon(Icons.enhanced_encryption_outlined), label: const Text('Encrypted backup')),
+                  OutlinedButton.icon(onPressed: () => _previewBackup(context), icon: const Icon(Icons.visibility_outlined), label: Text(tr.text('preview_backup_json'))),
+                  OutlinedButton.icon(onPressed: () => _copyBackup(context), icon: const Icon(Icons.copy_all_outlined), label: Text(tr.text('copy_backup_json'))),
+                  OutlinedButton.icon(onPressed: () => _importBackupFile(context), icon: const Icon(Icons.upload_file_outlined), label: Text(tr.text('import_backup_file'))),
+                  OutlinedButton.icon(onPressed: () => _restoreBackup(context), icon: const Icon(Icons.settings_backup_restore_outlined), label: Text(tr.text('restore_backup'))),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+      Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.warning_amber_outlined, color: Theme.of(context).colorScheme.error),
+            title: Text(tr.text('data_management')),
+            subtitle: Text(tr.text('data_management_desc')),
+            trailing: FilledButton.icon(style: FilledButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.error), onPressed: () => _resetBusinessData(context), icon: const Icon(Icons.delete_forever_outlined), label: Text(tr.text('reset_all_data'))),
+          ),
+        ),
+      ),
+    ];
+  }
+
+  List<Widget> _adminCards(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    return [
+      Card(
+        child: ListTile(
+          leading: const Icon(Icons.people),
+          title: Text(tr.text('users_permissions')),
+          subtitle: Text("Signed in as ${store.activeUser?.fullName ?? 'Unknown'} • Role: ${store.currentRole}"),
+          trailing: FilledButton.icon(
+            onPressed: store.canManageUsers ? () => Navigator.push(context, MaterialPageRoute(builder: (_) => UsersPermissionsPage(store: store))) : null,
+            icon: const Icon(Icons.manage_accounts_outlined),
+            label: const Text('Manage'),
+          ),
+        ),
+      ),
+      Card(
+        child: ListTile(
+          leading: const Icon(Icons.lock_outline),
+          title: Text(tr.text('security_pin')),
+          subtitle: Text(store.isPinEnabled ? tr.text('security_pin_enabled') : tr.text('security_pin_disabled')),
+          trailing: FilledButton.icon(onPressed: () => _manageSecurityPin(context), icon: Icon(store.isPinEnabled ? Icons.lock_reset : Icons.password_outlined), label: Text(store.isPinEnabled ? tr.text('change_pin') : tr.text('enable_pin'))),
+        ),
+      ),
+    ];
+  }
+
 
 
   Future<void> _manageSecurityPin(BuildContext context) async {

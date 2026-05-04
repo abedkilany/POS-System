@@ -62,24 +62,31 @@ class _InventoryPageState extends State<InventoryPage> {
                   final isLow = item.stock <= 5;
                   return Column(
                     children: [
-                      ListTile(
-                        leading: CircleAvatar(child: Icon(isLow ? Icons.warning_amber_rounded : Icons.inventory_2_outlined)),
-                        title: Text(item.name),
-                        subtitle: Text('${item.code} • ${item.category}'),
-                        trailing: SizedBox(
-                          width: 260,
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.end,
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final meta = Wrap(
+                            spacing: 8,
+                            runSpacing: 6,
+                            crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
                               Text(formatCurrency(item.price, currency: widget.store.storeProfile.currency)),
-                              const SizedBox(width: 12),
-                              Chip(
-                                avatar: isLow ? const Icon(Icons.priority_high, size: 16) : null,
-                                label: Text('${tr.text('stock')}: ${item.stock}'),
-                              ),
+                              Chip(avatar: isLow ? const Icon(Icons.priority_high, size: 16) : null, label: Text('${tr.text('stock')}: ${item.stock}')),
                             ],
-                          ),
-                        ),
+                          );
+                          if (constraints.maxWidth < 560) {
+                            return ListTile(
+                              leading: CircleAvatar(child: Icon(isLow ? Icons.warning_amber_rounded : Icons.inventory_2_outlined)),
+                              title: Text(item.name),
+                              subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('${item.code} • ${item.category}'), const SizedBox(height: 6), meta]),
+                            );
+                          }
+                          return ListTile(
+                            leading: CircleAvatar(child: Icon(isLow ? Icons.warning_amber_rounded : Icons.inventory_2_outlined)),
+                            title: Text(item.name),
+                            subtitle: Text('${item.code} • ${item.category}'),
+                            trailing: SizedBox(width: 260, child: Align(alignment: Alignment.centerRight, child: meta)),
+                          );
+                        },
                       ),
                       const Divider(height: 1),
                     ],

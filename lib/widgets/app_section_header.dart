@@ -14,20 +14,36 @@ class AppSectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
+    final textBlock = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title, style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 4),
-              Text(subtitle),
-            ],
-          ),
-        ),
-        if (action != null) action!,
+        Text(title, style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
+        const SizedBox(height: 4),
+        Text(subtitle),
       ],
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 620) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              textBlock,
+              if (action != null) ...[
+                const SizedBox(height: 12),
+                Align(alignment: AlignmentDirectional.centerStart, child: action!),
+              ],
+            ],
+          );
+        }
+        return Row(
+          children: [
+            Expanded(child: textBlock),
+            if (action != null) action!,
+          ],
+        );
+      },
     );
   }
 }
