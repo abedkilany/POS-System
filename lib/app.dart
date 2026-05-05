@@ -79,7 +79,17 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
           ],
           home: _store.isReady
               ? (kIsWeb || LanSyncSettings.load().setupComplete
-                  ? PinLockPage(store: _store, child: MainShell(store: _store, onLocaleChanged: _changeLocale))
+                  ? PinLockPage(
+                      store: _store,
+                      child: MainShell(
+                        store: _store,
+                        onLocaleChanged: _changeLocale,
+                        onSyncSettingsChanged: () async {
+                          await _autoSyncController.start();
+                          await _autoCloudSyncController.start();
+                        },
+                      ),
+                    )
                   : SyncSetupPage(
                       store: _store,
                       onDone: () async {
@@ -105,10 +115,11 @@ class _ShellItem {
 }
 
 class MainShell extends StatefulWidget {
-  const MainShell({super.key, required this.onLocaleChanged, required this.store});
+  const MainShell({super.key, required this.onLocaleChanged, required this.store, this.onSyncSettingsChanged});
 
   final ValueChanged<Locale> onLocaleChanged;
   final AppStore store;
+  final Future<void> Function()? onSyncSettingsChanged;
 
   @override
   State<MainShell> createState() => _MainShellState();
@@ -137,7 +148,7 @@ class _MainShellState extends State<MainShell> {
       _ShellItem(label: tr.text('inventory'), icon: Icons.warehouse_outlined, selectedIcon: Icons.warehouse, page: InventoryPage(store: widget.store)),
       if (widget.store.hasPermission(AppPermission.reportsView))
         _ShellItem(label: tr.text('reports'), icon: Icons.bar_chart_outlined, selectedIcon: Icons.bar_chart, page: ReportsPage(store: widget.store)),
-      _ShellItem(label: tr.text('settings'), icon: Icons.settings_outlined, selectedIcon: Icons.settings, page: SettingsPage(store: widget.store, onLocaleChanged: widget.onLocaleChanged)),
+      _ShellItem(label: tr.text('settings'), icon: Icons.settings_outlined, selectedIcon: Icons.settings, page: SettingsPage(store: widget.store, onLocaleChanged: widget.onLocaleChanged, onSyncSettingsChanged: widget.onSyncSettingsChanged)),
     ];
     if (selectedIndex >= items.length) selectedIndex = items.length - 1;
 

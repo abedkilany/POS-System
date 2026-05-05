@@ -18,10 +18,11 @@ import '../../models/user_role.dart';
 import 'users_permissions_page.dart';
 
 class SettingsPage extends StatelessWidget {
-  const SettingsPage({super.key, required this.onLocaleChanged, required this.store});
+  const SettingsPage({super.key, required this.onLocaleChanged, required this.store, this.onSyncSettingsChanged});
 
   final ValueChanged<Locale> onLocaleChanged;
   final AppStore store;
+  final Future<void> Function()? onSyncSettingsChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -118,7 +119,7 @@ class SettingsPage extends StatelessWidget {
   }
 
   List<Widget> _syncCards(BuildContext context) => [
-        _LanSyncCard(store: store),
+        _LanSyncCard(store: store, onSyncSettingsChanged: onSyncSettingsChanged),
         if (!kIsWeb) _CloudHostSyncCard(store: store),
         _DataConflictsCard(store: store),
       ];
@@ -932,9 +933,10 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
 }
 
 class _LanSyncCard extends StatefulWidget {
-  const _LanSyncCard({required this.store});
+  const _LanSyncCard({required this.store, this.onSyncSettingsChanged});
 
   final AppStore store;
+  final Future<void> Function()? onSyncSettingsChanged;
 
   @override
   State<_LanSyncCard> createState() => _LanSyncCardState();
@@ -1014,6 +1016,12 @@ class _LanSyncCardState extends State<_LanSyncCard> {
     if (identity.syncMode != SyncMode.cloudConnected || identity.deviceRole != DeviceRole.client) {
       await widget.store.updateAppIdentity(identity.copyWith(syncMode: SyncMode.cloudConnected, deviceRole: DeviceRole.client));
     }
+
+    // In the web build the app can be opened before Cloud Sync is configured.
+    // The auto controller exits early in that case, so saving cloud settings must
+    // restart it immediately. This makes the first cloud pull run right after
+    // settings are saved instead of waiting for the user to press Sync Now.
+    await widget.onSyncSettingsChanged?.call();
   }
 
   Future<void> _saveSettings({DateTime? lastConnectionAt, DateTime? lastSyncAt}) async {
