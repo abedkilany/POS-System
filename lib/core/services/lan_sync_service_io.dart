@@ -364,6 +364,16 @@ class LanSyncService {
   Future<LanSyncResult> syncNow(String host, {int port = 8787, String token = ''}) async {
     final settings = LanSyncSettings.load();
     final pending = store.pendingSyncChangesForTarget('host');
+
+    // New Client bootstrap must use the Host snapshot, not the incremental
+    // event stream. A Host can have valid products/customers/sales that were
+    // created before LAN sync was enabled or imported from backup, so pulling
+    // only /changes/pull on a fresh cursor can legitimately return zero events
+    // and leave the Client empty.
+    if (settings.isClient && settings.lastPullCursor == null && pending.isEmpty) {
+      return initialClone(host, port: port, token: token);
+    }
+
     final pendingIds = pending.map((item) => item.id).toList();
     var pushCompleted = pending.isEmpty;
     try {

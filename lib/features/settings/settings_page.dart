@@ -1017,6 +1017,7 @@ class _LanSyncCardState extends State<_LanSyncCard> {
   }
 
   Future<void> _saveSettings({DateTime? lastConnectionAt, DateTime? lastSyncAt}) async {
+    final existingSettings = LanSyncSettings.load();
     final settings = LanSyncSettings(
       host: _hostController.text.trim().isEmpty ? '192.168.1.100' : _hostController.text.trim(),
       port: _port,
@@ -1025,8 +1026,12 @@ class _LanSyncCardState extends State<_LanSyncCard> {
       setupComplete: true,
       mode: _hostModeEnabled ? LanSyncDeviceMode.host : LanSyncDeviceMode.client,
       secret: _tokenController.text.trim(),
-      lastConnectionAt: lastConnectionAt ?? _lastConnectionAt,
-      lastSyncAt: lastSyncAt ?? _lastSyncAt,
+      // Preserve the pull cursor when the user only saves connection fields.
+      // Without this, every settings save turns the next sync into a first pull
+      // and can make new/edited clients miss the Host's full current state.
+      lastPullCursor: existingSettings.lastPullCursor,
+      lastConnectionAt: lastConnectionAt ?? _lastConnectionAt ?? existingSettings.lastConnectionAt,
+      lastSyncAt: lastSyncAt ?? _lastSyncAt ?? existingSettings.lastSyncAt,
     );
     await settings.save();
     final identity = widget.store.appIdentity;
