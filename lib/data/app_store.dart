@@ -12,6 +12,8 @@ import '../models/catalog_item.dart';
 import '../models/customer.dart';
 import '../models/expense.dart';
 import '../models/product.dart';
+import '../models/platform_store.dart';
+import '../models/online_order.dart';
 import '../models/purchase.dart';
 import '../models/purchase_item.dart';
 import '../models/stock_movement.dart';
@@ -109,6 +111,8 @@ class AppStore extends ChangeNotifier {
   static const _usersKey = 'users_v1';
   static const _activeUserKey = 'active_user_v1';
   static const _appIdentityKey = 'app_identity_v1';
+  static const _platformStoresKey = 'platform_stores_v1';
+  static const _onlineOrdersKey = 'online_orders_v1';
 
   final List<Product> _products = [];
   final List<Customer> _customers = [];
@@ -122,6 +126,8 @@ class AppStore extends ChangeNotifier {
   final List<StockMovement> _stockMovements = [];
   final List<SyncChange> _syncChanges = [];
   final List<SyncQueueItem> _syncQueue = [];
+  final List<PlatformStore> _platformStores = [];
+  final List<OnlineOrder> _onlineOrders = [];
   StoreProfile _storeProfile = StoreProfile.defaults;
   int _invoiceCounter = 0;
   int _purchaseCounter = 0;
@@ -158,6 +164,9 @@ class AppStore extends ChangeNotifier {
   List<StockMovement> get stockMovements => List.unmodifiable(_stockMovements.toList().reversed);
   List<SyncChange> get syncChanges => List.unmodifiable(_syncChanges);
   List<SyncQueueItem> get syncQueue => List.unmodifiable(_syncQueue);
+  List<PlatformStore> get platformStores => List.unmodifiable(_platformStores.where((item) => item.isActive));
+  List<OnlineOrder> get onlineOrders => List.unmodifiable(_onlineOrders.where((item) => !item.isDeleted).toList().reversed);
+  List<OnlineOrder> get pendingOnlineOrders => List.unmodifiable(onlineOrders.where((item) => item.status != OnlineOrderStatus.delivered && item.status != OnlineOrderStatus.cancelled));
   List<SyncQueueItem> get pendingSyncQueue => List.unmodifiable(_syncQueue.where((item) => item.isPending));
   List<SyncChange> get pendingSyncChanges => List.unmodifiable(_syncChanges.where((item) => !item.isSynced));
   List<SyncQueueItem> pendingSyncQueueForTarget(String target, {bool readyOnly = true}) {
@@ -195,6 +204,9 @@ class AppStore extends ChangeNotifier {
   bool get canManageProducts => hasPermission(AppPermission.productsCreate) || hasPermission(AppPermission.productsEdit);
   bool get canDeleteOrCancel => hasPermission(AppPermission.salesCancel);
   bool get canManageUsers => hasPermission(AppPermission.usersManage) && hasPermission(AppPermission.rolesManage);
+  bool get canManagePlatform => hasPermission(AppPermission.platformManage);
+  bool get canManageOnlineOrders => hasPermission(AppPermission.onlineOrdersManage);
+  bool get canManageDelivery => hasPermission(AppPermission.deliveryManage);
 
   UserRole? roleById(String id) {
     for (final role in _roles) {
@@ -267,6 +279,12 @@ class AppStore extends ChangeNotifier {
     _syncQueue
       ..clear()
       ..addAll(_loadSyncQueue());
+    _platformStores
+      ..clear()
+      ..addAll(_loadPlatformStores());
+    _onlineOrders
+      ..clear()
+      ..addAll(_loadOnlineOrders());
     _storeProfile = _loadStoreProfile();
     _invoiceCounter = _loadInvoiceCounter();
     _purchaseCounter = _loadPurchaseCounter();
@@ -450,6 +468,21 @@ class AppStore extends ChangeNotifier {
     return decoded.map((item) => SyncQueueItem.fromJson(Map<String, dynamic>.from(item as Map))).toList();
   }
 
+
+  List<PlatformStore> _loadPlatformStores() {
+    final raw = LocalDatabaseService.getString(_platformStoresKey);
+    if (raw == null || raw.isEmpty) return <PlatformStore>[];
+    final decoded = jsonDecode(raw) as List<dynamic>;
+    return decoded.map((item) => PlatformStore.fromJson(Map<String, dynamic>.from(item as Map))).toList();
+  }
+
+  List<OnlineOrder> _loadOnlineOrders() {
+    final raw = LocalDatabaseService.getString(_onlineOrdersKey);
+    if (raw == null || raw.isEmpty) return <OnlineOrder>[];
+    final decoded = jsonDecode(raw) as List<dynamic>;
+    return decoded.map((item) => OnlineOrder.fromJson(Map<String, dynamic>.from(item as Map))).toList();
+  }
+
   List<Expense> _loadExpenses() {
     final raw = LocalDatabaseService.getString(_expensesKey);
     if (raw == null) return <Expense>[];
@@ -470,7 +503,7 @@ class AppStore extends ChangeNotifier {
 
   Future<void> _runDataMigrationsIfNeeded() async {
     final current = int.tryParse(LocalDatabaseService.getString(_schemaVersionKey) ?? '') ?? 0;
-    if (current >= 11) return;
+    if (current >= 12) return;
 
     if (current < 7) {
       // Version 7 captures unit cost on every historical sale item when possible
@@ -512,9 +545,13 @@ class AppStore extends ChangeNotifier {
       _prepareExistingDataForSync();
     }
 
+    if (current < 12) {
+      _ensurePlatformFoundation();
+    }
+
     _appIdentity = _loadOrCreateAppIdentity();
 
-    await LocalDatabaseService.setString(_schemaVersionKey, '11');
+    await LocalDatabaseService.setString(_schemaVersionKey, '12');
     await LocalDatabaseService.setString(_invoiceCounterKey, _invoiceCounter.toString());
     await LocalDatabaseService.setString(_purchaseCounterKey, _purchaseCounter.toString());
     await _saveAll();
@@ -742,6 +779,27 @@ class AppStore extends ChangeNotifier {
     } else {
       _roles[existingAdminRole] = _roles[existingAdminRole].copyWith(name: 'Admin', permissions: Set<String>.from(AppPermission.all), isSystem: true, updatedAt: now);
     }
+    void upsertSystemRole(String id, String name, Set<String> permissions) {
+      final index = _roles.indexWhere((role) => role.id == id);
+      final role = UserRole(id: id, name: name, permissions: permissions, isSystem: true, createdAt: now, updatedAt: now);
+      if (index == -1) {
+        _roles.add(role);
+      } else {
+        _roles[index] = _roles[index].copyWith(name: name, permissions: permissions, isSystem: true, updatedAt: now);
+      }
+    }
+
+    upsertSystemRole('platform_admin', 'Platform Admin', Set<String>.from(AppPermission.all));
+    upsertSystemRole('store_owner', 'Store Owner', {
+      AppPermission.salesCreate, AppPermission.salesCancel, AppPermission.productsCreate, AppPermission.productsEdit, AppPermission.productsDelete,
+      AppPermission.catalogManage, AppPermission.customersManage, AppPermission.suppliersManage, AppPermission.expensesManage,
+      AppPermission.reportsView, AppPermission.backupExport, AppPermission.settingsManage, AppPermission.syncManage,
+      AppPermission.onlineOrdersManage, AppPermission.onlineOrdersView,
+    });
+    upsertSystemRole('store_staff', 'Store Staff', {AppPermission.salesCreate, AppPermission.productsEdit, AppPermission.customersManage, AppPermission.onlineOrdersView});
+    upsertSystemRole('customer', 'Customer', {AppPermission.onlineOrdersView});
+    upsertSystemRole('driver', 'Delivery Driver', {AppPermission.deliveryManage, AppPermission.onlineOrdersView});
+
     if (_users.isEmpty) {
       _users.add(AppUser(
         id: 'admin',
@@ -1055,11 +1113,13 @@ class AppStore extends ChangeNotifier {
     await LocalDatabaseService.setString(_stockMovementsKey, jsonEncode(_stockMovements.map((item) => item.toJson()).toList()));
     await LocalDatabaseService.setString(_syncChangesKey, jsonEncode(_syncChanges.map((item) => item.toJson()).toList()));
     await LocalDatabaseService.setString(_syncQueueKey, jsonEncode(_syncQueue.map((item) => item.toJson()).toList()));
+    await LocalDatabaseService.setString(_platformStoresKey, jsonEncode(_platformStores.map((item) => item.toJson()).toList()));
+    await LocalDatabaseService.setString(_onlineOrdersKey, jsonEncode(_onlineOrders.map((item) => item.toJson()).toList()));
     await LocalDatabaseService.setString(_deviceIdKey, _deviceId);
     await LocalDatabaseService.setString(_storeProfileKey, jsonEncode(_storeProfile.toJson()));
     await LocalDatabaseService.setString(_invoiceCounterKey, _invoiceCounter.toString());
     await LocalDatabaseService.setString(_purchaseCounterKey, _purchaseCounter.toString());
-    await LocalDatabaseService.setString(_schemaVersionKey, '11');
+    await LocalDatabaseService.setString(_schemaVersionKey, '12');
   }
 
 
@@ -1807,15 +1867,107 @@ class AppStore extends ChangeNotifier {
     await cancelSale(id, status: 'Cancelled', restoreStock: restoreStock);
   }
 
+
+  void _ensurePlatformFoundation() {
+    if (_platformStores.isNotEmpty) return;
+    final now = DateTime.now();
+    _platformStores.add(PlatformStore(
+      id: 'store_${appIdentity.storeId}',
+      name: _storeProfile.name,
+      ownerUserId: 'admin',
+      phone: _storeProfile.phone,
+      address: _storeProfile.address,
+      isOnlineEnabled: false,
+      subscriptionPlan: 'trial',
+      subscriptionStatus: 'trial',
+      createdAt: now,
+      updatedAt: now,
+    ));
+  }
+
+  Future<void> addOrUpdatePlatformStore(PlatformStore store) async {
+    requirePermission(AppPermission.platformManage);
+    if (store.name.trim().isEmpty) throw ArgumentError('Store name is required.');
+    final now = DateTime.now();
+    final id = store.id.trim().isEmpty ? 'store_${now.microsecondsSinceEpoch}' : store.id;
+    final saved = store.copyWith(name: store.name.trim(), updatedAt: now);
+    final finalStore = PlatformStore(
+      id: id,
+      name: saved.name,
+      ownerUserId: saved.ownerUserId,
+      phone: saved.phone,
+      address: saved.address,
+      description: saved.description,
+      isOnlineEnabled: saved.isOnlineEnabled,
+      subscriptionPlan: saved.subscriptionPlan,
+      subscriptionStatus: saved.subscriptionStatus,
+      commissionRate: saved.commissionRate,
+      isActive: saved.isActive,
+      createdAt: saved.createdAt,
+      updatedAt: saved.updatedAt,
+    );
+    final index = _platformStores.indexWhere((item) => item.id == id);
+    if (index == -1) {
+      _platformStores.add(finalStore);
+    } else {
+      _platformStores[index] = finalStore;
+    }
+    _recordSyncChange(entityType: 'platform_store', entityId: finalStore.id, operation: index == -1 ? 'create' : 'update', payload: finalStore.toJson());
+    await _saveAll();
+    notifyListeners();
+  }
+
+  Future<void> addOnlineOrder(OnlineOrder order) async {
+    if (!hasPermission(AppPermission.onlineOrdersManage) && !hasPermission(AppPermission.onlineOrdersView)) {
+      throw StateError('You do not have permission: ${AppPermission.onlineOrdersManage}');
+    }
+    final now = DateTime.now();
+    final id = order.id.trim().isEmpty ? 'order_${now.microsecondsSinceEpoch}' : order.id;
+    final saved = OnlineOrder(
+      id: id,
+      storeId: order.storeId,
+      customerUserId: order.customerUserId,
+      customerName: order.customerName,
+      customerPhone: order.customerPhone,
+      deliveryAddress: order.deliveryAddress,
+      notes: order.notes,
+      status: order.status,
+      items: order.items,
+      deliveryFee: order.deliveryFee,
+      discount: order.discount,
+      paymentMethod: order.paymentMethod,
+      paymentStatus: order.paymentStatus,
+      assignedDriverUserId: order.assignedDriverUserId,
+      createdAt: order.createdAt,
+      updatedAt: now,
+    );
+    _onlineOrders.add(saved);
+    _recordSyncChange(entityType: 'online_order', entityId: saved.id, operation: 'create', payload: saved.toJson());
+    await _saveAll();
+    notifyListeners();
+  }
+
+  Future<void> updateOnlineOrderStatus(String orderId, String status, {String? driverUserId}) async {
+    requirePermission(AppPermission.onlineOrdersManage);
+    if (!OnlineOrderStatus.all.contains(status)) throw ArgumentError('Unsupported online order status.');
+    final index = _onlineOrders.indexWhere((item) => item.id == orderId);
+    if (index == -1) throw ArgumentError('Online order not found.');
+    final updated = _onlineOrders[index].copyWith(status: status, assignedDriverUserId: driverUserId, updatedAt: DateTime.now());
+    _onlineOrders[index] = updated;
+    _recordSyncChange(entityType: 'online_order', entityId: updated.id, operation: 'update', payload: updated.toJson());
+    await _saveAll();
+    notifyListeners();
+  }
+
   double estimateProfit() {
     final grossProfit = sales.fold<double>(0, (sum, sale) => sum + sale.grossProfit);
     return grossProfit - totalExpensesAmount;
   }
 
   Map<String, dynamic> _backupPayload({List<SyncChange>? changes}) => {
-        'version': 11,
+        'version': 12,
         'generatedAt': DateTime.now().toIso8601String(),
-        'schemaVersion': 11,
+        'schemaVersion': 12,
         'invoiceCounter': _invoiceCounter,
         'purchaseCounter': _purchaseCounter,
         'storeProfile': _storeProfile.toJson(),
@@ -1835,6 +1987,8 @@ class AppStore extends ChangeNotifier {
         'roles': _roles.map((item) => item.toJson()).toList(),
         'users': _users.map((item) => item.toJson()).toList(),
         'appIdentity': appIdentity.toJson(),
+        'platformStores': _platformStores.map((item) => item.toJson()).toList(),
+        'onlineOrders': _onlineOrders.map((item) => item.toJson()).toList(),
       };
 
   String exportBackupJson() {
@@ -2000,6 +2154,12 @@ class AppStore extends ChangeNotifier {
     final users = (decoded['users'] as List<dynamic>? ?? [])
         .map((item) => AppUser.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
+    final platformStores = (decoded['platformStores'] as List<dynamic>? ?? [])
+        .map((item) => PlatformStore.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+    final onlineOrders = (decoded['onlineOrders'] as List<dynamic>? ?? [])
+        .map((item) => OnlineOrder.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
     final profile = decoded['storeProfile'] == null
         ? StoreProfile.defaults
         : StoreProfile.fromJson(Map<String, dynamic>.from(decoded['storeProfile'] as Map));
@@ -2035,6 +2195,12 @@ class AppStore extends ChangeNotifier {
     _stockMovements
       ..clear()
       ..addAll(stockMovements);
+    _platformStores
+      ..clear()
+      ..addAll(platformStores);
+    _onlineOrders
+      ..clear()
+      ..addAll(onlineOrders);
     _syncChanges.clear();
     _storeProfile = profile;
     if (decoded['appIdentity'] is Map) {
@@ -2154,6 +2320,12 @@ class AppStore extends ChangeNotifier {
     final users = (decoded['users'] as List<dynamic>? ?? [])
         .map((item) => AppUser.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
+    final platformStores = (decoded['platformStores'] as List<dynamic>? ?? [])
+        .map((item) => PlatformStore.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+    final onlineOrders = (decoded['onlineOrders'] as List<dynamic>? ?? [])
+        .map((item) => OnlineOrder.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
 
     _mergeByUpdatedAt<Product>(_products, products, (item) => item.id);
     _mergeByUpdatedAt<Customer>(_customers, customers, (item) => item.id);
@@ -2176,6 +2348,8 @@ class AppStore extends ChangeNotifier {
     await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(_appIdentity!.toJson()));
     _mergeByUpdatedAt<UserRole>(_roles, roles, (item) => item.id);
     _mergeByUpdatedAt<AppUser>(_users, users, (item) => item.id);
+    _mergeByUpdatedAt<PlatformStore>(_platformStores, platformStores, (item) => item.id);
+    _mergeByUpdatedAt<OnlineOrder>(_onlineOrders, onlineOrders, (item) => item.id);
     final nowForMergedRemoteChanges = DateTime.now();
     _mergeSyncChanges(markSynced
         ? syncChanges
@@ -2263,6 +2437,12 @@ class AppStore extends ChangeNotifier {
     final users = (decoded['users'] as List<dynamic>? ?? [])
         .map((item) => AppUser.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
+    final platformStores = (decoded['platformStores'] as List<dynamic>? ?? [])
+        .map((item) => PlatformStore.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+    final onlineOrders = (decoded['onlineOrders'] as List<dynamic>? ?? [])
+        .map((item) => OnlineOrder.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
     final profile = decoded['storeProfile'] == null
         ? StoreProfile.defaults
         : StoreProfile.fromJson(Map<String, dynamic>.from(decoded['storeProfile'] as Map));
@@ -2277,6 +2457,8 @@ class AppStore extends ChangeNotifier {
     _expenses..clear()..addAll(expenses);
     _purchases..clear()..addAll(purchases);
     _stockMovements..clear()..addAll(stockMovements);
+    _platformStores..clear()..addAll(platformStores);
+    _onlineOrders..clear()..addAll(onlineOrders);
     _syncChanges
       ..clear()
       ..addAll(preserveLocalIdentityForLanClient
@@ -2568,6 +2750,20 @@ class AppStore extends ChangeNotifier {
           final incoming = AppUser.fromJson(p);
           _upsertByUpdatedAt<AppUser>(_users, incoming, (item) => item.id);
           if (_activeUser?.id == incoming.id) _activeUser = incoming;
+        }
+        break;
+      case 'platform_store':
+        if (change.operation == 'delete' && p.isEmpty) {
+          _platformStores.removeWhere((item) => item.id == change.entityId);
+        } else {
+          _upsertByUpdatedAt<PlatformStore>(_platformStores, PlatformStore.fromJson(p), (item) => item.id);
+        }
+        break;
+      case 'online_order':
+        if (change.operation == 'delete' && p.isEmpty) {
+          _onlineOrders.removeWhere((item) => item.id == change.entityId);
+        } else {
+          _upsertByUpdatedAt<OnlineOrder>(_onlineOrders, OnlineOrder.fromJson(p), (item) => item.id);
         }
         break;
       case 'product':

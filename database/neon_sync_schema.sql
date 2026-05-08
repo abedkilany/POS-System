@@ -78,3 +78,44 @@ create table if not exists store_host_heartbeats (
 
 create index if not exists idx_store_host_heartbeats_latest
   on store_host_heartbeats (store_id, branch_id, last_seen_at desc);
+
+-- Platform foundation additions: marketplace/admin/customer/order/delivery-ready data.
+CREATE TABLE IF NOT EXISTS platform_stores (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  owner_user_id TEXT DEFAULT '',
+  phone TEXT DEFAULT '',
+  address TEXT DEFAULT '',
+  description TEXT DEFAULT '',
+  is_online_enabled BOOLEAN DEFAULT FALSE,
+  subscription_plan TEXT DEFAULT 'free',
+  subscription_status TEXT DEFAULT 'trial',
+  commission_rate NUMERIC DEFAULT 0,
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS online_orders (
+  id TEXT PRIMARY KEY,
+  store_id TEXT NOT NULL,
+  customer_user_id TEXT DEFAULT '',
+  customer_name TEXT DEFAULT '',
+  customer_phone TEXT DEFAULT '',
+  delivery_address TEXT DEFAULT '',
+  notes TEXT DEFAULT '',
+  status TEXT DEFAULT 'placed',
+  items JSONB DEFAULT '[]'::jsonb,
+  delivery_fee NUMERIC DEFAULT 0,
+  discount NUMERIC DEFAULT 0,
+  payment_method TEXT DEFAULT 'cash_on_delivery',
+  payment_status TEXT DEFAULT 'unpaid',
+  assigned_driver_user_id TEXT DEFAULT '',
+  is_deleted BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_online_orders_store_status ON online_orders(store_id, status);
+CREATE INDEX IF NOT EXISTS idx_online_orders_customer ON online_orders(customer_user_id);
+CREATE INDEX IF NOT EXISTS idx_online_orders_driver ON online_orders(assigned_driver_user_id);

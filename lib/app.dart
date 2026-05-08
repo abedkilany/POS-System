@@ -15,6 +15,7 @@ import 'features/dashboard/dashboard_page.dart';
 import 'features/expenses/expenses_page.dart';
 import 'features/inventory/inventory_page.dart';
 import 'features/products/products_page.dart';
+import 'features/platform/platform_page.dart';
 import 'features/purchases/purchases_page.dart';
 import 'features/reports/reports_page.dart';
 import 'features/sales/sales_page.dart';
@@ -148,6 +149,8 @@ class _MainShellState extends State<MainShell> {
       _ShellItem(label: tr.text('inventory'), icon: Icons.warehouse_outlined, selectedIcon: Icons.warehouse, page: InventoryPage(store: widget.store)),
       if (widget.store.hasPermission(AppPermission.reportsView))
         _ShellItem(label: tr.text('reports'), icon: Icons.bar_chart_outlined, selectedIcon: Icons.bar_chart, page: ReportsPage(store: widget.store)),
+      if (widget.store.hasPermission(AppPermission.platformManage) || widget.store.hasPermission(AppPermission.onlineOrdersView))
+        _ShellItem(label: 'Platform', icon: Icons.hub_outlined, selectedIcon: Icons.hub, page: PlatformPage(store: widget.store)),
       _ShellItem(label: tr.text('settings'), icon: Icons.settings_outlined, selectedIcon: Icons.settings, page: SettingsPage(store: widget.store, onLocaleChanged: widget.onLocaleChanged, onSyncSettingsChanged: widget.onSyncSettingsChanged)),
     ];
     if (selectedIndex >= items.length) selectedIndex = items.length - 1;
