@@ -23,7 +23,6 @@ import 'features/reports/reports_page.dart';
 import 'features/sales/sales_page.dart';
 import 'features/security/pin_lock_page.dart';
 import 'features/settings/settings_page.dart';
-import 'features/settings/sync_setup_page.dart';
 import 'features/suppliers/suppliers_page.dart';
 
 class StoreManagerApp extends StatefulWidget {
@@ -81,26 +80,22 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
             GlobalCupertinoLocalizations.delegate,
           ],
           home: _store.isReady
-              ? (kIsWeb || LanSyncSettings.load().setupComplete
-                  ? PinLockPage(
-                      store: _store,
-                      child: AccountRouter(
-                        store: _store,
-                        onLocaleChanged: _changeLocale,
-                        onSyncSettingsChanged: () async {
-                          await _autoSyncController.start();
-                          await _autoCloudSyncController.start();
-                        },
-                      ),
-                    )
-                  : SyncSetupPage(
-                      store: _store,
-                      onDone: () async {
-                        await _autoSyncController.start();
-                        await _autoCloudSyncController.start();
-                        if (mounted) setState(() {});
-                      },
-                    ))
+              ? PinLockPage(
+                  store: _store,
+                  onLocalConnectionDone: () async {
+                    await _autoSyncController.start();
+                    await _autoCloudSyncController.start();
+                    if (mounted) setState(() {});
+                  },
+                  child: AccountRouter(
+                    store: _store,
+                    onLocaleChanged: _changeLocale,
+                    onSyncSettingsChanged: () async {
+                      await _autoSyncController.start();
+                      await _autoCloudSyncController.start();
+                    },
+                  ),
+                )
               : const Scaffold(body: Center(child: CircularProgressIndicator())),
         );
       },

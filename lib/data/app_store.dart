@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/services/local_database_service.dart';
 import '../core/services/central_auth_service.dart';
+import '../core/services/lan_sync_service.dart';
 
 import '../models/catalog_item.dart';
 import '../models/customer.dart';
@@ -1010,6 +1011,102 @@ class AppStore extends ChangeNotifier {
       operation: isCreate ? 'create' : 'update',
       payload: saved.toJson(),
     );
+    await _saveRolesAndUsers();
+    await _saveAll();
+    notifyListeners();
+  }
+
+
+  Future<void> connectLocalStoreWithoutPlatformAccount({
+    required String hostIp,
+    required String storeId,
+    required String storeToken,
+    int port = 8787,
+    bool runInitialClone = true,
+  }) async {
+    final cleanHost = hostIp.trim();
+    final cleanStoreId = storeId.trim();
+    final cleanToken = storeToken.trim();
+    if (cleanHost.isEmpty) throw ArgumentError('Host IP is required.');
+    if (cleanStoreId.isEmpty) throw ArgumentError('Store ID is required.');
+    if (cleanToken.isEmpty) throw ArgumentError('Store Token is required.');
+
+    await updateDeviceStoreBinding(
+      storeId: cleanStoreId,
+      deviceRole: DeviceRole.client,
+      syncMode: SyncMode.lanOnly,
+    );
+
+    final settings = LanSyncSettings(
+      host: cleanHost,
+      port: port <= 0 ? 8787 : port,
+      autoSyncEnabled: true,
+      hostModeEnabled: false,
+      setupComplete: true,
+      mode: LanSyncDeviceMode.client,
+      secret: cleanToken,
+    );
+    await settings.save();
+
+    final now = DateTime.now();
+    final localUser = AppUser(
+      id: 'local_${cleanStoreId}_client',
+      fullName: 'Local Store Device',
+      username: 'local_$cleanStoreId',
+      passwordHash: _hashPinV2(cleanToken),
+      roleId: 'store_owner',
+      accountType: AccountType.merchant,
+      primaryStoreId: cleanStoreId,
+      isSystem: true,
+      createdAt: now,
+      updatedAt: now,
+    );
+    final existingUserIndex = _users.indexWhere((item) => item.id == localUser.id);
+    if (existingUserIndex == -1) {
+      _users.add(localUser);
+    } else {
+      _users[existingUserIndex] = localUser;
+    }
+    _activeUser = localUser;
+    await LocalDatabaseService.setString(_activeUserKey, localUser.id);
+
+    final existingStoreIndex = _platformStores.indexWhere((item) => item.id == cleanStoreId);
+    if (existingStoreIndex == -1) {
+      _platformStores.add(PlatformStore(
+        id: cleanStoreId,
+        name: _storeProfile.name.trim().isEmpty ? 'Linked Store' : _storeProfile.name,
+        description: 'Linked through internal LAN connection.',
+        subscriptionPlan: 'local',
+        subscriptionStatus: 'local',
+        isOnlineEnabled: false,
+        createdAt: now,
+        updatedAt: now,
+      ));
+    }
+
+    final memberId = 'member_${cleanStoreId}_${localUser.id}';
+    final member = StoreMember(
+      id: memberId,
+      storeId: cleanStoreId,
+      userId: localUser.id,
+      role: StoreMemberRole.owner,
+      permissions: Set<String>.from(AppPermission.all),
+      isActive: true,
+      createdAt: now,
+      updatedAt: now,
+    );
+    final memberIndex = _storeMembers.indexWhere((item) => item.id == memberId || (item.storeId == cleanStoreId && item.userId == localUser.id));
+    if (memberIndex == -1) {
+      _storeMembers.add(member);
+    } else {
+      _storeMembers[memberIndex] = member;
+    }
+
+    if (runInitialClone && !kIsWeb) {
+      final result = await LanSyncService(this).initialClone(cleanHost, port: settings.port, token: cleanToken);
+      if (!result.ok) throw StateError(result.message);
+    }
+
     await _saveRolesAndUsers();
     await _saveAll();
     notifyListeners();

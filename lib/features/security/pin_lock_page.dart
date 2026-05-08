@@ -5,10 +5,11 @@ import '../../data/app_store.dart';
 import '../../models/app_user.dart';
 
 class PinLockPage extends StatefulWidget {
-  const PinLockPage({super.key, required this.store, required this.child});
+  const PinLockPage({super.key, required this.store, required this.child, this.onLocalConnectionDone});
 
   final AppStore store;
   final Widget child;
+  final Future<void> Function()? onLocalConnectionDone;
 
   @override
   State<PinLockPage> createState() => _PinLockPageState();
@@ -22,8 +23,13 @@ class _PinLockPageState extends State<PinLockPage> {
   final TextEditingController _signupPasswordController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _localHostController = TextEditingController(text: '192.168.1.100');
+  final TextEditingController _localPortController = TextEditingController(text: '8787');
+  final TextEditingController _localStoreIdController = TextEditingController();
+  final TextEditingController _localTokenController = TextEditingController();
   bool _unlocked = false;
   bool _signupMode = false;
+  bool _localConnectMode = false;
   bool _busy = false;
 
   @override
@@ -41,6 +47,10 @@ class _PinLockPageState extends State<PinLockPage> {
     _signupPasswordController.dispose();
     _phoneController.dispose();
     _emailController.dispose();
+    _localHostController.dispose();
+    _localPortController.dispose();
+    _localStoreIdController.dispose();
+    _localTokenController.dispose();
     super.dispose();
   }
 
@@ -81,6 +91,30 @@ class _PinLockPageState extends State<PinLockPage> {
     }
   }
 
+
+  Future<void> _connectLocalStore() async {
+    setState(() => _busy = true);
+    try {
+      await widget.store.connectLocalStoreWithoutPlatformAccount(
+        hostIp: _localHostController.text,
+        storeId: _localStoreIdController.text,
+        storeToken: _localTokenController.text,
+        port: int.tryParse(_localPortController.text.trim()) ?? 8787,
+      );
+      await widget.onLocalConnectionDone?.call();
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _unlocked = true;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم الاتصال محلياً وربط الجهاز بالمتجر.')));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_unlocked || widget.store.activeUser != null) return widget.child;
@@ -95,7 +129,7 @@ class _PinLockPageState extends State<PinLockPage> {
               padding: const EdgeInsets.all(24),
               child: AnimatedSwitcher(
                 duration: const Duration(milliseconds: 180),
-                child: _signupMode ? _signupForm(context) : _loginForm(context),
+                child: _localConnectMode ? _localConnectionForm(context) : (_signupMode ? _signupForm(context) : _loginForm(context)),
               ),
             ),
           ),
@@ -121,7 +155,21 @@ class _PinLockPageState extends State<PinLockPage> {
         TextField(controller: _passwordController, obscureText: true, decoration: const InputDecoration(labelText: 'Password'), onSubmitted: (_) => _unlock()),
         const SizedBox(height: 16),
         SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: _busy ? null : _unlock, icon: const Icon(Icons.login), label: Text(_busy ? '...' : tr.text('login')))),
-        TextButton(onPressed: _busy ? null : () => setState(() => _signupMode = true), child: const Text('ليس لدي حساب، إنشاء حساب جديد')),
+        Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 8,
+          children: [
+            TextButton(
+              onPressed: _busy ? null : () => setState(() { _signupMode = true; _localConnectMode = false; }),
+              child: const Text('إنشاء حساب جديد'),
+            ),
+            TextButton.icon(
+              onPressed: _busy ? null : () => setState(() { _localConnectMode = true; _signupMode = false; }),
+              icon: const Icon(Icons.settings_ethernet, size: 18),
+              label: const Text('اتصال بإعدادات داخلية'),
+            ),
+          ],
+        ),
       ],
     );
   }
@@ -149,9 +197,47 @@ class _PinLockPageState extends State<PinLockPage> {
           TextField(controller: _signupPasswordController, obscureText: true, decoration: const InputDecoration(labelText: 'Password')),
           const SizedBox(height: 16),
           SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: _busy ? null : _signup, icon: const Icon(Icons.person_add_alt_1), label: Text(_busy ? '...' : 'إنشاء الحساب'))),
-          TextButton(onPressed: _busy ? null : () => setState(() => _signupMode = false), child: const Text('لدي حساب سابق')),
+          TextButton(onPressed: _busy ? null : () => setState(() { _signupMode = false; _localConnectMode = false; }), child: const Text('لدي حساب سابق')),
         ],
       ),
     );
   }
+
+  Widget _localConnectionForm(BuildContext context) {
+    return SingleChildScrollView(
+      key: const ValueKey('local_connection'),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const CircleAvatar(radius: 32, child: Icon(Icons.lan_outlined, size: 32)),
+          const SizedBox(height: 16),
+          Text('اتصال محلي بمتجر موجود', style: Theme.of(context).textTheme.headlineSmall),
+          const SizedBox(height: 8),
+          const Text('استخدم هذا الخيار للأجهزة الداخلية بدون إنشاء حساب أونلاين. أدخل IP الهوست و Store ID و Store Token ثم تتم المزامنة من الجهاز الرئيسي.', textAlign: TextAlign.center),
+          const SizedBox(height: 16),
+          TextField(controller: _localHostController, decoration: const InputDecoration(labelText: 'Host IP', hintText: '192.168.1.100')),
+          const SizedBox(height: 12),
+          TextField(controller: _localPortController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Port', hintText: '8787')),
+          const SizedBox(height: 12),
+          TextField(controller: _localStoreIdController, decoration: const InputDecoration(labelText: 'Store ID')),
+          const SizedBox(height: 12),
+          TextField(controller: _localTokenController, obscureText: true, decoration: const InputDecoration(labelText: 'Store Token')),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: _busy ? null : _connectLocalStore,
+              icon: const Icon(Icons.sync),
+              label: Text(_busy ? '...' : 'اتصال ومزامنة'),
+            ),
+          ),
+          TextButton(
+            onPressed: _busy ? null : () => setState(() { _localConnectMode = false; _signupMode = false; }),
+            child: const Text('رجوع لتسجيل الدخول'),
+          ),
+        ],
+      ),
+    );
+  }
+
 }
