@@ -32,6 +32,11 @@ const snapshotCollections = {
   units: 'unit',
   roles: 'role',
   users: 'user',
+  platformStores: 'platform_store',
+  onlineOrders: 'online_order',
+  storeMembers: 'store_member',
+  customerProfiles: 'customer_profile',
+  driverProfiles: 'driver_profile',
 };
 
 function idOf(item, fallback) {

@@ -28,6 +28,8 @@ class PlatformPage extends StatelessWidget {
                 _MetricCard(title: 'Stores', value: store.platformStores.length.toString(), icon: Icons.storefront),
                 _MetricCard(title: 'Online orders', value: store.onlineOrders.length.toString(), icon: Icons.shopping_bag),
                 _MetricCard(title: 'Pending orders', value: store.pendingOnlineOrders.length.toString(), icon: Icons.pending_actions),
+                _MetricCard(title: 'Users', value: store.users.length.toString(), icon: Icons.group),
+                _MetricCard(title: 'Store members', value: store.storeMembers.length.toString(), icon: Icons.badge),
                 _MetricCard(title: 'Delivery ready', value: store.roles.any((role) => role.id == 'driver') ? 'Yes' : 'No', icon: Icons.delivery_dining),
               ],
             ),
@@ -66,6 +68,30 @@ class PlatformPage extends StatelessWidget {
                             subtitle: Text('${item.subscriptionPlan} / ${item.subscriptionStatus} • Online: ${item.isOnlineEnabled ? 'enabled' : 'disabled'}'),
                           ),
                       ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            _SectionCard(
+              title: 'Users and store memberships',
+              child: Column(
+                children: [
+                  for (final user in store.users)
+                    ExpansionTile(
+                      leading: const Icon(Icons.person_outline),
+                      title: Text(user.fullName),
+                      subtitle: Text('${user.accountType} • ${user.roleId} • ${user.username}'),
+                      children: [
+                        for (final member in store.storeMembers.where((item) => item.userId == user.id))
+                          ListTile(
+                            leading: const Icon(Icons.badge_outlined),
+                            title: Text('Store role: ${member.role}'),
+                            subtitle: Text('Store: ${member.storeId}'),
+                          ),
+                        if (store.storeMembers.where((item) => item.userId == user.id).isEmpty)
+                          const ListTile(title: Text('No store membership.')),
+                      ],
+                    ),
+                ],
               ),
             ),
             const SizedBox(height: 16),

@@ -119,3 +119,65 @@ CREATE TABLE IF NOT EXISTS online_orders (
 CREATE INDEX IF NOT EXISTS idx_online_orders_store_status ON online_orders(store_id, status);
 CREATE INDEX IF NOT EXISTS idx_online_orders_customer ON online_orders(customer_user_id);
 CREATE INDEX IF NOT EXISTS idx_online_orders_driver ON online_orders(assigned_driver_user_id);
+
+-- Platform auth foundation v2: users, account types, store memberships and future delivery profiles.
+create table if not exists app_users (
+  id text primary key,
+  full_name text not null,
+  username text unique not null,
+  password_hash text not null,
+  account_type text not null check (account_type in ('app_admin','merchant','customer','driver')),
+  role_id text not null,
+  phone text default '',
+  email text default '',
+  primary_store_id text default '',
+  is_active boolean default true,
+  is_system boolean default false,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create table if not exists platform_stores (
+  id text primary key,
+  name text not null,
+  owner_user_id text references app_users(id),
+  phone text default '',
+  address text default '',
+  description text default '',
+  is_online_enabled boolean default false,
+  subscription_plan text default 'trial',
+  subscription_status text default 'pending_review',
+  commission_rate numeric default 0,
+  is_active boolean default true,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create table if not exists store_members (
+  id text primary key,
+  store_id text not null references platform_stores(id) on delete cascade,
+  user_id text not null references app_users(id) on delete cascade,
+  role text not null check (role in ('owner','manager','cashier','inventory_manager','accountant','orders_staff')),
+  permissions jsonb default '[]'::jsonb,
+  is_active boolean default true,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  unique(store_id, user_id)
+);
+
+create table if not exists customer_profiles (
+  user_id text primary key references app_users(id) on delete cascade,
+  default_address text default '',
+  phone text default '',
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create table if not exists driver_profiles (
+  user_id text primary key references app_users(id) on delete cascade,
+  phone text default '',
+  zone text default '',
+  is_available boolean default false,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);

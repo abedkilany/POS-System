@@ -10,6 +10,7 @@ import 'core/services/lan_sync_service.dart';
 import 'core/services/cloud_sync_service.dart';
 import 'data/app_store.dart';
 import 'models/user_role.dart';
+import 'models/app_user.dart';
 import 'features/customers/customers_page.dart';
 import 'features/dashboard/dashboard_page.dart';
 import 'features/expenses/expenses_page.dart';
@@ -82,7 +83,7 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
               ? (kIsWeb || LanSyncSettings.load().setupComplete
                   ? PinLockPage(
                       store: _store,
-                      child: MainShell(
+                      child: AccountRouter(
                         store: _store,
                         onLocaleChanged: _changeLocale,
                         onSyncSettingsChanged: () async {
@@ -113,6 +114,102 @@ class _ShellItem {
   final IconData icon;
   final IconData selectedIcon;
   final Widget page;
+}
+
+
+class AccountRouter extends StatelessWidget {
+  const AccountRouter({super.key, required this.store, required this.onLocaleChanged, this.onSyncSettingsChanged});
+
+  final AppStore store;
+  final ValueChanged<Locale> onLocaleChanged;
+  final Future<void> Function()? onSyncSettingsChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final user = store.activeUser;
+    if (user == null) return const SizedBox.shrink();
+    if (user.accountType == AccountType.customer) return CustomerHomePage(store: store);
+    if (user.accountType == AccountType.driver) return DriverHomePage(store: store);
+    return MainShell(store: store, onLocaleChanged: onLocaleChanged, onSyncSettingsChanged: onSyncSettingsChanged);
+  }
+}
+
+class CustomerHomePage extends StatelessWidget {
+  const CustomerHomePage({super.key, required this.store});
+  final AppStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Customer account'), actions: [_LogoutButton(store: store)]),
+      body: ListView(
+        padding: const EdgeInsets.all(24),
+        children: [
+          Text('مرحباً ${store.activeUser?.fullName ?? ''}', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          const Text('هذه واجهة الزبون الأساسية. الخطوة التالية ستكون تصفح المتاجر والمنتجات وإنشاء الطلبات أونلاين.'),
+          const SizedBox(height: 24),
+          Wrap(spacing: 12, runSpacing: 12, children: [
+            _CustomerCard(icon: Icons.storefront, title: 'المتاجر', value: store.platformStores.length.toString()),
+            _CustomerCard(icon: Icons.shopping_bag, title: 'طلباتي', value: store.onlineOrders.where((o) => o.customerUserId == store.activeUser?.id).length.toString()),
+          ]),
+          const SizedBox(height: 24),
+          Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('متاجر متاحة', style: Theme.of(context).textTheme.titleMedium),
+            const Divider(),
+            for (final item in store.platformStores)
+              ListTile(leading: const Icon(Icons.storefront), title: Text(item.name), subtitle: Text(item.isOnlineEnabled ? 'Online enabled' : 'Not online yet')),
+            if (store.platformStores.isEmpty) const ListTile(title: Text('لا يوجد متاجر بعد.')),
+          ]))),
+        ],
+      ),
+    );
+  }
+}
+
+class DriverHomePage extends StatelessWidget {
+  const DriverHomePage({super.key, required this.store});
+  final AppStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Delivery account'), actions: [_LogoutButton(store: store)]),
+      body: ListView(
+        padding: const EdgeInsets.all(24),
+        children: [
+          Text('مرحباً ${store.activeUser?.fullName ?? ''}', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          const Text('واجهة الدليفري محفوظة للمرحلة القادمة. حالياً الحساب يتسجل كدليفري ويستطيع النظام ربط الطلبات به لاحقاً.'),
+          const SizedBox(height: 24),
+          Card(child: ListTile(leading: const Icon(Icons.delivery_dining), title: const Text('طلبات جاهزة للتوصيل'), subtitle: Text('${store.pendingOnlineOrders.length} طلب بانتظار المعالجة/التوصيل'))),
+        ],
+      ),
+    );
+  }
+}
+
+class _CustomerCard extends StatelessWidget {
+  const _CustomerCard({required this.icon, required this.title, required this.value});
+  final IconData icon;
+  final String title;
+  final String value;
+  @override
+  Widget build(BuildContext context) => SizedBox(width: 200, child: Card(child: Padding(padding: const EdgeInsets.all(16), child: Row(children: [CircleAvatar(child: Icon(icon)), const SizedBox(width: 12), Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title), Text(value, style: Theme.of(context).textTheme.titleLarge)])]))));
+}
+
+class _LogoutButton extends StatelessWidget {
+  const _LogoutButton({required this.store});
+  final AppStore store;
+  @override
+  Widget build(BuildContext context) => IconButton(
+        tooltip: 'Logout',
+        icon: const Icon(Icons.logout),
+        onPressed: () async {
+          await store.logout();
+          if (context.mounted) Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => PinLockPage(store: store, child: AccountRouter(store: store, onLocaleChanged: (_) {}))));
+        },
+      );
 }
 
 class MainShell extends StatefulWidget {
@@ -173,7 +270,7 @@ class _MainShellState extends State<MainShell> {
                 onPressed: () async {
                   await widget.store.logout();
                   if (context.mounted) {
-                    Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => PinLockPage(store: widget.store, child: MainShell(store: widget.store, onLocaleChanged: widget.onLocaleChanged))));
+                    Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => PinLockPage(store: widget.store, child: AccountRouter(store: widget.store, onLocaleChanged: widget.onLocaleChanged, onSyncSettingsChanged: widget.onSyncSettingsChanged))));
                   }
                 },
                 icon: const Icon(Icons.logout),

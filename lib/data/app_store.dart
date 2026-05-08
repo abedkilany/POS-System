@@ -26,6 +26,8 @@ import '../models/sync_queue_item.dart';
 import '../models/user_role.dart';
 import '../models/app_user.dart';
 import '../models/app_identity.dart';
+import '../models/store_member.dart';
+import '../models/account_profile.dart';
 
 class BackupSummary {
   const BackupSummary({
@@ -113,6 +115,9 @@ class AppStore extends ChangeNotifier {
   static const _appIdentityKey = 'app_identity_v1';
   static const _platformStoresKey = 'platform_stores_v1';
   static const _onlineOrdersKey = 'online_orders_v1';
+  static const _storeMembersKey = 'store_members_v1';
+  static const _customerProfilesKey = 'customer_profiles_v1';
+  static const _driverProfilesKey = 'driver_profiles_v1';
 
   final List<Product> _products = [];
   final List<Customer> _customers = [];
@@ -128,6 +133,9 @@ class AppStore extends ChangeNotifier {
   final List<SyncQueueItem> _syncQueue = [];
   final List<PlatformStore> _platformStores = [];
   final List<OnlineOrder> _onlineOrders = [];
+  final List<StoreMember> _storeMembers = [];
+  final List<CustomerProfile> _customerProfiles = [];
+  final List<DriverProfile> _driverProfiles = [];
   StoreProfile _storeProfile = StoreProfile.defaults;
   int _invoiceCounter = 0;
   int _purchaseCounter = 0;
@@ -166,6 +174,11 @@ class AppStore extends ChangeNotifier {
   List<SyncQueueItem> get syncQueue => List.unmodifiable(_syncQueue);
   List<PlatformStore> get platformStores => List.unmodifiable(_platformStores.where((item) => item.isActive));
   List<OnlineOrder> get onlineOrders => List.unmodifiable(_onlineOrders.where((item) => !item.isDeleted).toList().reversed);
+  List<StoreMember> get storeMembers => List.unmodifiable(_storeMembers.where((item) => item.isActive));
+  List<CustomerProfile> get customerProfiles => List.unmodifiable(_customerProfiles);
+  List<DriverProfile> get driverProfiles => List.unmodifiable(_driverProfiles);
+  List<StoreMember> membershipsForActiveUser() => _activeUser == null ? const <StoreMember>[] : List.unmodifiable(_storeMembers.where((item) => item.userId == _activeUser!.id && item.isActive));
+  List<StoreMember> membersForStore(String storeId) => List.unmodifiable(_storeMembers.where((item) => item.storeId == storeId && item.isActive));
   List<OnlineOrder> get pendingOnlineOrders => List.unmodifiable(onlineOrders.where((item) => item.status != OnlineOrderStatus.delivered && item.status != OnlineOrderStatus.cancelled));
   List<SyncQueueItem> get pendingSyncQueue => List.unmodifiable(_syncQueue.where((item) => item.isPending));
   List<SyncChange> get pendingSyncChanges => List.unmodifiable(_syncChanges.where((item) => !item.isSynced));
@@ -207,6 +220,10 @@ class AppStore extends ChangeNotifier {
   bool get canManagePlatform => hasPermission(AppPermission.platformManage);
   bool get canManageOnlineOrders => hasPermission(AppPermission.onlineOrdersManage);
   bool get canManageDelivery => hasPermission(AppPermission.deliveryManage);
+  bool get isCustomerAccount => _activeUser?.accountType == AccountType.customer;
+  bool get isDriverAccount => _activeUser?.accountType == AccountType.driver;
+  bool get isMerchantAccount => _activeUser?.accountType == AccountType.merchant;
+  bool get isPlatformAdminAccount => _activeUser?.accountType == AccountType.appAdmin;
 
   UserRole? roleById(String id) {
     for (final role in _roles) {
@@ -285,6 +302,15 @@ class AppStore extends ChangeNotifier {
     _onlineOrders
       ..clear()
       ..addAll(_loadOnlineOrders());
+    _storeMembers
+      ..clear()
+      ..addAll(_loadStoreMembers());
+    _customerProfiles
+      ..clear()
+      ..addAll(_loadCustomerProfiles());
+    _driverProfiles
+      ..clear()
+      ..addAll(_loadDriverProfiles());
     _storeProfile = _loadStoreProfile();
     _invoiceCounter = _loadInvoiceCounter();
     _purchaseCounter = _loadPurchaseCounter();
@@ -483,6 +509,27 @@ class AppStore extends ChangeNotifier {
     return decoded.map((item) => OnlineOrder.fromJson(Map<String, dynamic>.from(item as Map))).toList();
   }
 
+  List<StoreMember> _loadStoreMembers() {
+    final raw = LocalDatabaseService.getString(_storeMembersKey);
+    if (raw == null || raw.isEmpty) return <StoreMember>[];
+    final decoded = jsonDecode(raw) as List<dynamic>;
+    return decoded.map((item) => StoreMember.fromJson(Map<String, dynamic>.from(item as Map))).toList();
+  }
+
+  List<CustomerProfile> _loadCustomerProfiles() {
+    final raw = LocalDatabaseService.getString(_customerProfilesKey);
+    if (raw == null || raw.isEmpty) return <CustomerProfile>[];
+    final decoded = jsonDecode(raw) as List<dynamic>;
+    return decoded.map((item) => CustomerProfile.fromJson(Map<String, dynamic>.from(item as Map))).toList();
+  }
+
+  List<DriverProfile> _loadDriverProfiles() {
+    final raw = LocalDatabaseService.getString(_driverProfilesKey);
+    if (raw == null || raw.isEmpty) return <DriverProfile>[];
+    final decoded = jsonDecode(raw) as List<dynamic>;
+    return decoded.map((item) => DriverProfile.fromJson(Map<String, dynamic>.from(item as Map))).toList();
+  }
+
   List<Expense> _loadExpenses() {
     final raw = LocalDatabaseService.getString(_expensesKey);
     if (raw == null) return <Expense>[];
@@ -503,7 +550,7 @@ class AppStore extends ChangeNotifier {
 
   Future<void> _runDataMigrationsIfNeeded() async {
     final current = int.tryParse(LocalDatabaseService.getString(_schemaVersionKey) ?? '') ?? 0;
-    if (current >= 12) return;
+    if (current >= 13) return;
 
     if (current < 7) {
       // Version 7 captures unit cost on every historical sale item when possible
@@ -551,7 +598,7 @@ class AppStore extends ChangeNotifier {
 
     _appIdentity = _loadOrCreateAppIdentity();
 
-    await LocalDatabaseService.setString(_schemaVersionKey, '12');
+    await LocalDatabaseService.setString(_schemaVersionKey, '13');
     await LocalDatabaseService.setString(_invoiceCounterKey, _invoiceCounter.toString());
     await LocalDatabaseService.setString(_purchaseCounterKey, _purchaseCounter.toString());
     await _saveAll();
@@ -807,6 +854,7 @@ class AppStore extends ChangeNotifier {
         username: 'admin',
         passwordHash: _hashPinV2('admin123'),
         roleId: 'admin',
+        accountType: AccountType.appAdmin,
         isSystem: true,
         createdAt: now,
         updatedAt: now,
@@ -922,6 +970,10 @@ class AppStore extends ChangeNotifier {
       username: normalizedUsername,
       passwordHash: password != null && password.trim().isNotEmpty ? _hashPinV2(password.trim()) : user.passwordHash,
       roleId: user.roleId,
+      accountType: user.accountType,
+      phone: user.phone.trim(),
+      email: user.email.trim(),
+      primaryStoreId: user.primaryStoreId,
       extraPermissions: user.extraPermissions.intersection(Set<String>.from(AppPermission.all)),
       deniedPermissions: user.deniedPermissions.intersection(Set<String>.from(AppPermission.all)),
       isActive: user.isActive,
@@ -945,6 +997,110 @@ class AppStore extends ChangeNotifier {
       payload: saved.toJson(),
     );
     await _saveRolesAndUsers();
+    await _saveAll();
+    notifyListeners();
+  }
+
+  Future<AppUser> registerAccount({
+    required String fullName,
+    required String username,
+    required String password,
+    required String accountType,
+    String phone = '',
+    String email = '',
+    String storeName = '',
+  }) async {
+    final now = DateTime.now();
+    final normalizedUsername = username.trim().toLowerCase();
+    if (fullName.trim().isEmpty || normalizedUsername.isEmpty) throw ArgumentError('Name and username are required.');
+    if (password.trim().length < 4) throw ArgumentError('Password must be at least 4 characters.');
+    if (!AccountType.publicSignupTypes.contains(accountType)) throw ArgumentError('This account type cannot self-register.');
+    if (_users.any((item) => item.username.trim().toLowerCase() == normalizedUsername)) throw ArgumentError('Username already exists.');
+
+    final roleId = switch (accountType) {
+      AccountType.customer => 'customer',
+      AccountType.driver => 'driver',
+      _ => 'store_owner',
+    };
+    final userId = 'user_${now.microsecondsSinceEpoch}';
+    String primaryStoreId = '';
+    if (accountType == AccountType.merchant) {
+      primaryStoreId = 'store_${now.microsecondsSinceEpoch}';
+      final newStore = PlatformStore(
+        id: primaryStoreId,
+        name: storeName.trim().isEmpty ? '${fullName.trim()} Store' : storeName.trim(),
+        ownerUserId: userId,
+        phone: phone.trim(),
+        subscriptionPlan: 'trial',
+        subscriptionStatus: 'pending_review',
+        isOnlineEnabled: false,
+        createdAt: now,
+        updatedAt: now,
+      );
+      _platformStores.add(newStore);
+      _storeMembers.add(StoreMember(
+        id: 'member_${now.microsecondsSinceEpoch}',
+        storeId: primaryStoreId,
+        userId: userId,
+        role: StoreMemberRole.owner,
+        permissions: Set<String>.from(AppPermission.all),
+        createdAt: now,
+        updatedAt: now,
+      ));
+      _recordSyncChange(entityType: 'platform_store', entityId: newStore.id, operation: 'create', payload: newStore.toJson());
+    }
+
+    final user = AppUser(
+      id: userId,
+      fullName: fullName.trim(),
+      username: normalizedUsername,
+      passwordHash: _hashPinV2(password.trim()),
+      roleId: roleId,
+      accountType: accountType,
+      phone: phone.trim(),
+      email: email.trim(),
+      primaryStoreId: primaryStoreId,
+      isActive: true,
+      createdAt: now,
+      updatedAt: now,
+    );
+    _users.add(user);
+    if (accountType == AccountType.customer) {
+      _customerProfiles.add(CustomerProfile(userId: user.id, phone: phone.trim(), createdAt: now, updatedAt: now));
+    } else if (accountType == AccountType.driver) {
+      _driverProfiles.add(DriverProfile(userId: user.id, phone: phone.trim(), createdAt: now, updatedAt: now));
+    }
+    _recordSyncChange(entityType: 'user', entityId: user.id, operation: 'create', payload: user.toJson());
+    await _saveRolesAndUsers();
+    await _saveAll();
+    notifyListeners();
+    return user;
+  }
+
+  Future<void> addOrUpdateStoreMember(StoreMember member) async {
+    requirePermission(AppPermission.usersManage);
+    if (member.storeId.trim().isEmpty || member.userId.trim().isEmpty) throw ArgumentError('Store and user are required.');
+    if (!StoreMemberRole.all.contains(member.role)) throw ArgumentError('Invalid store role.');
+    final now = DateTime.now();
+    final id = member.id.trim().isEmpty ? 'member_${now.microsecondsSinceEpoch}' : member.id;
+    final saved = member.copyWith(updatedAt: now);
+    final finalMember = StoreMember(
+      id: id,
+      storeId: saved.storeId,
+      userId: saved.userId,
+      role: saved.role,
+      permissions: saved.permissions.intersection(Set<String>.from(AppPermission.all)),
+      isActive: saved.isActive,
+      createdAt: saved.createdAt,
+      updatedAt: saved.updatedAt,
+    );
+    final index = _storeMembers.indexWhere((item) => item.id == id);
+    if (index == -1) {
+      _storeMembers.add(finalMember);
+    } else {
+      _storeMembers[index] = finalMember;
+    }
+    _recordSyncChange(entityType: 'store_member', entityId: finalMember.id, operation: index == -1 ? 'create' : 'update', payload: finalMember.toJson());
     await _saveAll();
     notifyListeners();
   }
@@ -1115,11 +1271,14 @@ class AppStore extends ChangeNotifier {
     await LocalDatabaseService.setString(_syncQueueKey, jsonEncode(_syncQueue.map((item) => item.toJson()).toList()));
     await LocalDatabaseService.setString(_platformStoresKey, jsonEncode(_platformStores.map((item) => item.toJson()).toList()));
     await LocalDatabaseService.setString(_onlineOrdersKey, jsonEncode(_onlineOrders.map((item) => item.toJson()).toList()));
+    await LocalDatabaseService.setString(_storeMembersKey, jsonEncode(_storeMembers.map((item) => item.toJson()).toList()));
+    await LocalDatabaseService.setString(_customerProfilesKey, jsonEncode(_customerProfiles.map((item) => item.toJson()).toList()));
+    await LocalDatabaseService.setString(_driverProfilesKey, jsonEncode(_driverProfiles.map((item) => item.toJson()).toList()));
     await LocalDatabaseService.setString(_deviceIdKey, _deviceId);
     await LocalDatabaseService.setString(_storeProfileKey, jsonEncode(_storeProfile.toJson()));
     await LocalDatabaseService.setString(_invoiceCounterKey, _invoiceCounter.toString());
     await LocalDatabaseService.setString(_purchaseCounterKey, _purchaseCounter.toString());
-    await LocalDatabaseService.setString(_schemaVersionKey, '12');
+    await LocalDatabaseService.setString(_schemaVersionKey, '13');
   }
 
 
@@ -1965,9 +2124,9 @@ class AppStore extends ChangeNotifier {
   }
 
   Map<String, dynamic> _backupPayload({List<SyncChange>? changes}) => {
-        'version': 12,
+        'version': 13,
         'generatedAt': DateTime.now().toIso8601String(),
-        'schemaVersion': 12,
+        'schemaVersion': 13,
         'invoiceCounter': _invoiceCounter,
         'purchaseCounter': _purchaseCounter,
         'storeProfile': _storeProfile.toJson(),
@@ -1989,6 +2148,9 @@ class AppStore extends ChangeNotifier {
         'appIdentity': appIdentity.toJson(),
         'platformStores': _platformStores.map((item) => item.toJson()).toList(),
         'onlineOrders': _onlineOrders.map((item) => item.toJson()).toList(),
+        'storeMembers': _storeMembers.map((item) => item.toJson()).toList(),
+        'customerProfiles': _customerProfiles.map((item) => item.toJson()).toList(),
+        'driverProfiles': _driverProfiles.map((item) => item.toJson()).toList(),
       };
 
   String exportBackupJson() {
@@ -2160,6 +2322,15 @@ class AppStore extends ChangeNotifier {
     final onlineOrders = (decoded['onlineOrders'] as List<dynamic>? ?? [])
         .map((item) => OnlineOrder.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
+    final storeMembers = (decoded['storeMembers'] as List<dynamic>? ?? [])
+        .map((item) => StoreMember.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+    final customerProfiles = (decoded['customerProfiles'] as List<dynamic>? ?? [])
+        .map((item) => CustomerProfile.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+    final driverProfiles = (decoded['driverProfiles'] as List<dynamic>? ?? [])
+        .map((item) => DriverProfile.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
     final profile = decoded['storeProfile'] == null
         ? StoreProfile.defaults
         : StoreProfile.fromJson(Map<String, dynamic>.from(decoded['storeProfile'] as Map));
@@ -2201,6 +2372,15 @@ class AppStore extends ChangeNotifier {
     _onlineOrders
       ..clear()
       ..addAll(onlineOrders);
+    _storeMembers
+      ..clear()
+      ..addAll(storeMembers);
+    _customerProfiles
+      ..clear()
+      ..addAll(customerProfiles);
+    _driverProfiles
+      ..clear()
+      ..addAll(driverProfiles);
     _syncChanges.clear();
     _storeProfile = profile;
     if (decoded['appIdentity'] is Map) {
@@ -2326,6 +2506,15 @@ class AppStore extends ChangeNotifier {
     final onlineOrders = (decoded['onlineOrders'] as List<dynamic>? ?? [])
         .map((item) => OnlineOrder.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
+    final storeMembers = (decoded['storeMembers'] as List<dynamic>? ?? [])
+        .map((item) => StoreMember.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+    final customerProfiles = (decoded['customerProfiles'] as List<dynamic>? ?? [])
+        .map((item) => CustomerProfile.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+    final driverProfiles = (decoded['driverProfiles'] as List<dynamic>? ?? [])
+        .map((item) => DriverProfile.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
 
     _mergeByUpdatedAt<Product>(_products, products, (item) => item.id);
     _mergeByUpdatedAt<Customer>(_customers, customers, (item) => item.id);
@@ -2350,6 +2539,9 @@ class AppStore extends ChangeNotifier {
     _mergeByUpdatedAt<AppUser>(_users, users, (item) => item.id);
     _mergeByUpdatedAt<PlatformStore>(_platformStores, platformStores, (item) => item.id);
     _mergeByUpdatedAt<OnlineOrder>(_onlineOrders, onlineOrders, (item) => item.id);
+    _mergeByUpdatedAt<StoreMember>(_storeMembers, storeMembers, (item) => item.id);
+    _mergeByUpdatedAt<CustomerProfile>(_customerProfiles, customerProfiles, (item) => item.userId);
+    _mergeByUpdatedAt<DriverProfile>(_driverProfiles, driverProfiles, (item) => item.userId);
     final nowForMergedRemoteChanges = DateTime.now();
     _mergeSyncChanges(markSynced
         ? syncChanges
@@ -2443,6 +2635,15 @@ class AppStore extends ChangeNotifier {
     final onlineOrders = (decoded['onlineOrders'] as List<dynamic>? ?? [])
         .map((item) => OnlineOrder.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
+    final storeMembers = (decoded['storeMembers'] as List<dynamic>? ?? [])
+        .map((item) => StoreMember.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+    final customerProfiles = (decoded['customerProfiles'] as List<dynamic>? ?? [])
+        .map((item) => CustomerProfile.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+    final driverProfiles = (decoded['driverProfiles'] as List<dynamic>? ?? [])
+        .map((item) => DriverProfile.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
     final profile = decoded['storeProfile'] == null
         ? StoreProfile.defaults
         : StoreProfile.fromJson(Map<String, dynamic>.from(decoded['storeProfile'] as Map));
@@ -2459,6 +2660,9 @@ class AppStore extends ChangeNotifier {
     _stockMovements..clear()..addAll(stockMovements);
     _platformStores..clear()..addAll(platformStores);
     _onlineOrders..clear()..addAll(onlineOrders);
+    _storeMembers..clear()..addAll(storeMembers);
+    _customerProfiles..clear()..addAll(customerProfiles);
+    _driverProfiles..clear()..addAll(driverProfiles);
     _syncChanges
       ..clear()
       ..addAll(preserveLocalIdentityForLanClient
@@ -2764,6 +2968,27 @@ class AppStore extends ChangeNotifier {
           _onlineOrders.removeWhere((item) => item.id == change.entityId);
         } else {
           _upsertByUpdatedAt<OnlineOrder>(_onlineOrders, OnlineOrder.fromJson(p), (item) => item.id);
+        }
+        break;
+      case 'store_member':
+        if (change.operation == 'delete' && p.isEmpty) {
+          _storeMembers.removeWhere((item) => item.id == change.entityId);
+        } else {
+          _upsertByUpdatedAt<StoreMember>(_storeMembers, StoreMember.fromJson(p), (item) => item.id);
+        }
+        break;
+      case 'customer_profile':
+        if (change.operation == 'delete' && p.isEmpty) {
+          _customerProfiles.removeWhere((item) => item.userId == change.entityId);
+        } else {
+          _upsertByUpdatedAt<CustomerProfile>(_customerProfiles, CustomerProfile.fromJson(p), (item) => item.userId);
+        }
+        break;
+      case 'driver_profile':
+        if (change.operation == 'delete' && p.isEmpty) {
+          _driverProfiles.removeWhere((item) => item.userId == change.entityId);
+        } else {
+          _upsertByUpdatedAt<DriverProfile>(_driverProfiles, DriverProfile.fromJson(p), (item) => item.userId);
         }
         break;
       case 'product':
