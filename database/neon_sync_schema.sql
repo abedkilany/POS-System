@@ -134,7 +134,8 @@ create table if not exists app_users (
   is_active boolean default true,
   is_system boolean default false,
   created_at timestamptz default now(),
-  updated_at timestamptz default now()
+  updated_at timestamptz default now(),
+  last_login_at timestamptz
 );
 
 create table if not exists platform_stores (
@@ -181,3 +182,8 @@ create table if not exists driver_profiles (
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
+
+
+-- Central auth safety migration: usernames are globally unique and login is cloud-first.
+alter table app_users add column if not exists last_login_at timestamptz;
+create unique index if not exists idx_app_users_username_unique on app_users (lower(username));

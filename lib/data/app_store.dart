@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/services/local_database_service.dart';
+import '../core/services/central_auth_service.dart';
 
 import '../models/catalog_item.dart';
 import '../models/customer.dart';
@@ -875,6 +876,13 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<bool> login(String username, String password) async {
+    final cloudResult = await CentralAuthService().login(username: username, password: password);
+    if (cloudResult.ok && cloudResult.user != null) {
+      await _applyCentralAuthResult(cloudResult);
+      notifyListeners();
+      return true;
+    }
+
     final normalized = username.trim().toLowerCase();
     final activeMatches = _users.where((user) => user.username.trim().toLowerCase() == normalized && user.isActive).toList();
     if (activeMatches.length > 1) {
@@ -899,6 +907,7 @@ class AppStore extends ChangeNotifier {
   Future<void> logout() async {
     _activeUser = null;
     await LocalDatabaseService.setString(_activeUserKey, '');
+    await CentralAuthService.clearSessionToken();
     notifyListeners();
   }
 
@@ -1010,71 +1019,77 @@ class AppStore extends ChangeNotifier {
     String email = '',
     String storeName = '',
   }) async {
-    final now = DateTime.now();
-    final normalizedUsername = username.trim().toLowerCase();
-    if (fullName.trim().isEmpty || normalizedUsername.isEmpty) throw ArgumentError('Name and username are required.');
-    if (password.trim().length < 4) throw ArgumentError('Password must be at least 4 characters.');
-    if (!AccountType.publicSignupTypes.contains(accountType)) throw ArgumentError('This account type cannot self-register.');
-    if (_users.any((item) => item.username.trim().toLowerCase() == normalizedUsername)) throw ArgumentError('Username already exists.');
-
-    final roleId = switch (accountType) {
-      AccountType.customer => 'customer',
-      AccountType.driver => 'driver',
-      _ => 'store_owner',
-    };
-    final userId = 'user_${now.microsecondsSinceEpoch}';
-    String primaryStoreId = '';
-    if (accountType == AccountType.merchant) {
-      primaryStoreId = 'store_${now.microsecondsSinceEpoch}';
-      final newStore = PlatformStore(
-        id: primaryStoreId,
-        name: storeName.trim().isEmpty ? '${fullName.trim()} Store' : storeName.trim(),
-        ownerUserId: userId,
-        phone: phone.trim(),
-        subscriptionPlan: 'trial',
-        subscriptionStatus: 'pending_review',
-        isOnlineEnabled: false,
-        createdAt: now,
-        updatedAt: now,
-      );
-      _platformStores.add(newStore);
-      _storeMembers.add(StoreMember(
-        id: 'member_${now.microsecondsSinceEpoch}',
-        storeId: primaryStoreId,
-        userId: userId,
-        role: StoreMemberRole.owner,
-        permissions: Set<String>.from(AppPermission.all),
-        createdAt: now,
-        updatedAt: now,
-      ));
-      _recordSyncChange(entityType: 'platform_store', entityId: newStore.id, operation: 'create', payload: newStore.toJson());
-    }
-
-    final user = AppUser(
-      id: userId,
-      fullName: fullName.trim(),
-      username: normalizedUsername,
-      passwordHash: _hashPinV2(password.trim()),
-      roleId: roleId,
+    final cloudResult = await CentralAuthService().register(
+      fullName: fullName,
+      username: username,
+      password: password,
       accountType: accountType,
-      phone: phone.trim(),
-      email: email.trim(),
-      primaryStoreId: primaryStoreId,
-      isActive: true,
-      createdAt: now,
-      updatedAt: now,
+      phone: phone,
+      email: email,
+      storeName: storeName,
     );
-    _users.add(user);
-    if (accountType == AccountType.customer) {
-      _customerProfiles.add(CustomerProfile(userId: user.id, phone: phone.trim(), createdAt: now, updatedAt: now));
-    } else if (accountType == AccountType.driver) {
-      _driverProfiles.add(DriverProfile(userId: user.id, phone: phone.trim(), createdAt: now, updatedAt: now));
+    if (cloudResult.ok && cloudResult.user != null) {
+      await _applyCentralAuthResult(cloudResult);
+      notifyListeners();
+      return cloudResult.user!;
     }
-    _recordSyncChange(entityType: 'user', entityId: user.id, operation: 'create', payload: user.toJson());
+
+    throw StateError('${cloudResult.message}\nAccounts must be created on the central server to avoid duplicate users across stores/customers. Configure the Cloud API URL/Token, then try again.');
+  }
+
+  Future<void> _applyCentralAuthResult(CentralAuthResult result) async {
+    final user = result.user;
+    if (user == null) throw StateError('Central auth did not return a user.');
+
+    final userIndex = _users.indexWhere((item) => item.id == user.id || item.username.trim().toLowerCase() == user.username.trim().toLowerCase());
+    if (userIndex == -1) {
+      _users.add(user);
+    } else {
+      _users[userIndex] = user;
+    }
+    _activeUser = user;
+    await LocalDatabaseService.setString(_activeUserKey, user.id);
+    if (result.sessionToken.trim().isNotEmpty) await CentralAuthService.saveSessionToken(result.sessionToken);
+
+    if (result.platformStore != null) {
+      final store = PlatformStore.fromJson(result.platformStore!);
+      final index = _platformStores.indexWhere((item) => item.id == store.id);
+      if (index == -1) {
+        _platformStores.add(store);
+      } else {
+        _platformStores[index] = store;
+      }
+    }
+    if (result.storeMember != null) {
+      final member = StoreMember.fromJson(result.storeMember!);
+      final index = _storeMembers.indexWhere((item) => item.id == member.id || (item.storeId == member.storeId && item.userId == member.userId));
+      if (index == -1) {
+        _storeMembers.add(member);
+      } else {
+        _storeMembers[index] = member;
+      }
+    }
+    if (result.customerProfile != null) {
+      final profile = CustomerProfile.fromJson(result.customerProfile!);
+      final index = _customerProfiles.indexWhere((item) => item.userId == profile.userId);
+      if (index == -1) {
+        _customerProfiles.add(profile);
+      } else {
+        _customerProfiles[index] = profile;
+      }
+    }
+    if (result.driverProfile != null) {
+      final profile = DriverProfile.fromJson(result.driverProfile!);
+      final index = _driverProfiles.indexWhere((item) => item.userId == profile.userId);
+      if (index == -1) {
+        _driverProfiles.add(profile);
+      } else {
+        _driverProfiles[index] = profile;
+      }
+    }
+
     await _saveRolesAndUsers();
     await _saveAll();
-    notifyListeners();
-    return user;
   }
 
   Future<void> addOrUpdateStoreMember(StoreMember member) async {
