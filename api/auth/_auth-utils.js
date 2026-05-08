@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 
-export const PUBLIC_ACCOUNT_TYPES = new Set(['merchant', 'customer', 'driver']);
+export const PUBLIC_ACCOUNT_TYPES = new Set(['platform_user']);
 
 export function normalizeUsername(value) {
   return String(value || '').trim().toLowerCase();
@@ -9,7 +9,9 @@ export function normalizeUsername(value) {
 export function roleForAccountType(accountType) {
   if (accountType === 'customer') return 'customer';
   if (accountType === 'driver') return 'driver';
-  return 'store_owner';
+  if (accountType === 'merchant') return 'store_owner';
+  if (accountType === 'app_admin') return 'platform_admin';
+  return 'platform_user';
 }
 
 export function hashPassword(password) {
@@ -64,4 +66,14 @@ export function issueSessionToken(userId) {
 
 export function sendAuthError(res, status, message) {
   res.status(status).json({ ok: false, error: message });
+}
+
+
+export function hashStoreToken(token) {
+  const secret = process.env.STORE_TOKEN_SECRET || process.env.AUTH_SESSION_SECRET || process.env.CLOUD_SYNC_TOKEN || 'dev-secret-change-me';
+  return crypto.createHmac('sha256', secret).update(String(token || '').trim()).digest('base64url');
+}
+
+export function issueStoreToken() {
+  return `st_${crypto.randomBytes(24).toString('base64url')}`;
 }

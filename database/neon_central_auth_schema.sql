@@ -6,7 +6,7 @@ create table if not exists app_users (
   full_name text not null,
   username text unique not null,
   password_hash text not null,
-  account_type text not null check (account_type in ('app_admin','merchant','customer','driver')),
+  account_type text not null check (account_type in ('app_admin','platform_user','merchant','customer','driver')),
   role_id text not null,
   phone text default '',
   email text default '',
@@ -32,6 +32,8 @@ create table if not exists platform_stores (
   subscription_status text default 'pending_review',
   commission_rate numeric default 0,
   is_active boolean default true,
+  store_token_hash text default '',
+  token_rotated_at timestamptz,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
@@ -43,6 +45,8 @@ create table if not exists store_members (
   role text not null check (role in ('owner','manager','cashier','inventory_manager','accountant','orders_staff')),
   permissions jsonb default '[]'::jsonb,
   is_active boolean default true,
+  store_token_hash text default '',
+  token_rotated_at timestamptz,
   created_at timestamptz default now(),
   updated_at timestamptz default now(),
   unique(store_id, user_id)
@@ -70,3 +74,11 @@ alter table platform_stores add column if not exists owner_user_id text;
 alter table platform_stores add column if not exists is_online_enabled boolean default false;
 alter table platform_stores add column if not exists subscription_plan text default 'trial';
 alter table platform_stores add column if not exists subscription_status text default 'pending_review';
+
+
+-- v4 platform account + store binding additions
+alter table app_users drop constraint if exists app_users_account_type_check;
+alter table app_users add constraint app_users_account_type_check check (account_type in ('app_admin','platform_user','merchant','customer','driver'));
+alter table platform_stores add column if not exists store_token_hash text default '';
+alter table platform_stores add column if not exists token_rotated_at timestamptz;
+create index if not exists idx_platform_stores_owner_user_id on platform_stores(owner_user_id);

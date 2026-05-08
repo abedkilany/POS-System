@@ -11,6 +11,7 @@ import 'core/services/cloud_sync_service.dart';
 import 'data/app_store.dart';
 import 'models/user_role.dart';
 import 'models/app_user.dart';
+import 'models/app_identity.dart';
 import 'features/customers/customers_page.dart';
 import 'features/dashboard/dashboard_page.dart';
 import 'features/expenses/expenses_page.dart';
@@ -128,10 +129,177 @@ class AccountRouter extends StatelessWidget {
   Widget build(BuildContext context) {
     final user = store.activeUser;
     if (user == null) return const SizedBox.shrink();
-    if (user.accountType == AccountType.customer) return CustomerHomePage(store: store);
-    if (user.accountType == AccountType.driver) return DriverHomePage(store: store);
+    final hasStoreMembership = store.membershipsForActiveUser().isNotEmpty || user.primaryStoreId.trim().isNotEmpty;
+    if (!hasStoreMembership && user.accountType != AccountType.appAdmin && user.accountType != AccountType.customer && user.accountType != AccountType.driver) {
+      return AccountSetupHome(store: store);
+    }
+    if (user.accountType == AccountType.customer && !hasStoreMembership) return CustomerHomePage(store: store);
+    if (user.accountType == AccountType.driver && !hasStoreMembership) return DriverHomePage(store: store);
     return MainShell(store: store, onLocaleChanged: onLocaleChanged, onSyncSettingsChanged: onSyncSettingsChanged);
   }
+}
+
+
+class AccountSetupHome extends StatefulWidget {
+  const AccountSetupHome({super.key, required this.store});
+  final AppStore store;
+
+  @override
+  State<AccountSetupHome> createState() => _AccountSetupHomeState();
+}
+
+class _AccountSetupHomeState extends State<AccountSetupHome> {
+  final _storeNameController = TextEditingController();
+  final _storePhoneController = TextEditingController();
+  final _storeAddressController = TextEditingController();
+  final _linkStoreIdController = TextEditingController();
+  final _linkTokenController = TextEditingController();
+  DeviceRole _deviceRole = DeviceRole.host;
+  SyncMode _syncMode = SyncMode.lanOnly;
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _storeNameController.dispose();
+    _storePhoneController.dispose();
+    _storeAddressController.dispose();
+    _linkStoreIdController.dispose();
+    _linkTokenController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _createStore() async {
+    setState(() => _busy = true);
+    try {
+      await widget.store.createStoreForActiveAccount(
+        storeName: _storeNameController.text,
+        phone: _storePhoneController.text,
+        address: _storeAddressController.text,
+        deviceRole: _deviceRole,
+        syncMode: _syncMode,
+      );
+      if (!mounted) return;
+      final token = widget.store.lastIssuedStoreToken;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(token.isEmpty ? 'تم إنشاء المتجر وربط هذا الجهاز.' : 'تم إنشاء المتجر. Store Token: $token')));
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _linkStore() async {
+    setState(() => _busy = true);
+    try {
+      await widget.store.linkStoreForActiveAccount(
+        storeId: _linkStoreIdController.text,
+        storeToken: _linkTokenController.text,
+        deviceRole: _deviceRole,
+        syncMode: _syncMode,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم ربط المتجر بهذا الجهاز.')));
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final user = widget.store.activeUser;
+    return Scaffold(
+      appBar: AppBar(title: const Text('إعداد حساب المنصة'), actions: [_LogoutButton(store: widget.store)]),
+      body: ListView(
+        padding: const EdgeInsets.all(24),
+        children: [
+          Text('مرحباً ${user?.fullName ?? ''}', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          const Text('حسابك على المنصة جاهز. الآن يمكنك إنشاء متجر جديد أو ربط هذا الجهاز بمتجر موجود باستخدام Store ID و Store Token.'),
+          const SizedBox(height: 20),
+          Wrap(
+            spacing: 16,
+            runSpacing: 16,
+            children: [
+              SizedBox(width: 420, child: _createStoreCard(context)),
+              SizedBox(width: 420, child: _linkStoreCard(context)),
+              SizedBox(width: 420, child: _deviceSyncCard(context)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _createStoreCard(BuildContext context) => Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('إنشاء متجر جديد', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 12),
+            TextField(controller: _storeNameController, decoration: const InputDecoration(labelText: 'اسم المتجر')),
+            const SizedBox(height: 12),
+            TextField(controller: _storePhoneController, decoration: const InputDecoration(labelText: 'هاتف المتجر اختياري')),
+            const SizedBox(height: 12),
+            TextField(controller: _storeAddressController, decoration: const InputDecoration(labelText: 'العنوان اختياري')),
+            const SizedBox(height: 16),
+            SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: _busy ? null : _createStore, icon: const Icon(Icons.add_business), label: Text(_busy ? '...' : 'إنشاء وربط'))),
+            if (widget.store.lastIssuedStoreToken.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              SelectableText('Store Token: ${widget.store.lastIssuedStoreToken}'),
+              const Text('احفظ هذا التوكن لأنه يستخدم لربط الأجهزة الأخرى. يمكن لاحقاً تجديده من إعدادات المتجر.'),
+            ],
+          ]),
+        ),
+      );
+
+  Widget _linkStoreCard(BuildContext context) => Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('ربط متجر موجود', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 12),
+            TextField(controller: _linkStoreIdController, decoration: const InputDecoration(labelText: 'Store ID')),
+            const SizedBox(height: 12),
+            TextField(controller: _linkTokenController, obscureText: true, decoration: const InputDecoration(labelText: 'Store Token')),
+            const SizedBox(height: 16),
+            SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: _busy ? null : _linkStore, icon: const Icon(Icons.link), label: Text(_busy ? '...' : 'ربط الجهاز'))),
+          ]),
+        ),
+      );
+
+  Widget _deviceSyncCard(BuildContext context) => Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('إعدادات الجهاز والمزامنة', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<DeviceRole>(
+              value: _deviceRole,
+              decoration: const InputDecoration(labelText: 'نوع الجهاز'),
+              items: const [
+                DropdownMenuItem(value: DeviceRole.host, child: Text('Host / الجهاز الرئيسي')),
+                DropdownMenuItem(value: DeviceRole.client, child: Text('Client / جهاز إضافي')),
+                DropdownMenuItem(value: DeviceRole.standalone, child: Text('Standalone / محلي فقط')),
+              ],
+              onChanged: (value) => setState(() => _deviceRole = value ?? DeviceRole.host),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<SyncMode>(
+              value: _syncMode,
+              decoration: const InputDecoration(labelText: 'نوع المزامنة'),
+              items: const [
+                DropdownMenuItem(value: SyncMode.localOnly, child: Text('Local only')),
+                DropdownMenuItem(value: SyncMode.lanOnly, child: Text('LAN')),
+                DropdownMenuItem(value: SyncMode.cloudConnected, child: Text('Online / Cloud')),
+                DropdownMenuItem(value: SyncMode.marketplaceEnabled, child: Text('Hybrid / Marketplace')),
+              ],
+              onChanged: (value) => setState(() => _syncMode = value ?? SyncMode.lanOnly),
+            ),
+          ]),
+        ),
+      );
 }
 
 class CustomerHomePage extends StatelessWidget {
@@ -301,22 +469,30 @@ class _MainShellState extends State<MainShell> {
           body: isWide
               ? Row(
                   children: [
-                    NavigationRail(
-                      selectedIndex: selectedIndex,
-                      onDestinationSelected: (value) => setState(() => selectedIndex = value),
-                      labelType: NavigationRailLabelType.all,
-                      leading: const Padding(
-                        padding: EdgeInsets.all(12),
-                        child: CircleAvatar(radius: 24, child: Icon(Icons.storefront)),
-                      ),
-                      destinations: [
-                        for (final item in items)
-                          NavigationRailDestination(
-                            icon: Icon(item.icon),
-                            selectedIcon: Icon(item.selectedIcon),
-                            label: Text(item.label),
+                    SizedBox(
+                      width: 104,
+                      child: Scrollbar(
+                        thumbVisibility: true,
+                        child: SingleChildScrollView(
+                          child: NavigationRail(
+                            selectedIndex: selectedIndex,
+                            onDestinationSelected: (value) => setState(() => selectedIndex = value),
+                            labelType: NavigationRailLabelType.all,
+                            leading: const Padding(
+                              padding: EdgeInsets.all(12),
+                              child: CircleAvatar(radius: 24, child: Icon(Icons.storefront)),
+                            ),
+                            destinations: [
+                              for (final item in items)
+                                NavigationRailDestination(
+                                  icon: Icon(item.icon),
+                                  selectedIcon: Icon(item.selectedIcon),
+                                  label: Text(item.label),
+                                ),
+                            ],
                           ),
-                      ],
+                        ),
+                      ),
                     ),
                     const VerticalDivider(width: 1),
                     Expanded(child: items[selectedIndex].page),

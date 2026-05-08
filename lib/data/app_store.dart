@@ -147,6 +147,7 @@ class AppStore extends ChangeNotifier {
   final List<AppUser> _users = [];
   AppUser? _activeUser;
   AppIdentity? _appIdentity;
+  String _lastIssuedStoreToken = '';
 
   Customer get walkInCustomer => Customer(
         id: walkInCustomerId,
@@ -224,7 +225,9 @@ class AppStore extends ChangeNotifier {
   bool get isCustomerAccount => _activeUser?.accountType == AccountType.customer;
   bool get isDriverAccount => _activeUser?.accountType == AccountType.driver;
   bool get isMerchantAccount => _activeUser?.accountType == AccountType.merchant;
+  bool get isPlatformUserAccount => _activeUser?.accountType == AccountType.platformUser;
   bool get isPlatformAdminAccount => _activeUser?.accountType == AccountType.appAdmin;
+  String get lastIssuedStoreToken => _lastIssuedStoreToken;
 
   UserRole? roleById(String id) {
     for (final role in _roles) {
@@ -235,6 +238,7 @@ class AppStore extends ChangeNotifier {
 
   bool hasPermission(String permission) {
     if (_activeUser == null) return true;
+    if (_activeUser!.accountType == AccountType.platformUser) return permission == AppPermission.platformManage;
     final role = roleById(_activeUser!.roleId);
     if (role?.isAdmin == true) return true;
     final effective = <String>{...?role?.permissions, ..._activeUser!.extraPermissions};
@@ -838,6 +842,7 @@ class AppStore extends ChangeNotifier {
     }
 
     upsertSystemRole('platform_admin', 'Platform Admin', Set<String>.from(AppPermission.all));
+    upsertSystemRole('platform_user', 'Platform User', {AppPermission.platformManage});
     upsertSystemRole('store_owner', 'Store Owner', {
       AppPermission.salesCreate, AppPermission.salesCancel, AppPermission.productsCreate, AppPermission.productsEdit, AppPermission.productsDelete,
       AppPermission.catalogManage, AppPermission.customersManage, AppPermission.suppliersManage, AppPermission.expensesManage,
@@ -1014,10 +1019,9 @@ class AppStore extends ChangeNotifier {
     required String fullName,
     required String username,
     required String password,
-    required String accountType,
+    String accountType = AccountType.platformUser,
     String phone = '',
     String email = '',
-    String storeName = '',
   }) async {
     final cloudResult = await CentralAuthService().register(
       fullName: fullName,
@@ -1026,7 +1030,6 @@ class AppStore extends ChangeNotifier {
       accountType: accountType,
       phone: phone,
       email: email,
-      storeName: storeName,
     );
     if (cloudResult.ok && cloudResult.user != null) {
       await _applyCentralAuthResult(cloudResult);
@@ -1088,7 +1091,59 @@ class AppStore extends ChangeNotifier {
       }
     }
 
+    _lastIssuedStoreToken = result.storeToken;
     await _saveRolesAndUsers();
+    await _saveAll();
+  }
+
+  Future<void> createStoreForActiveAccount({required String storeName, String phone = '', String address = '', DeviceRole deviceRole = DeviceRole.host, SyncMode syncMode = SyncMode.lanOnly}) async {
+    final user = _activeUser;
+    if (user == null) throw StateError('Login is required.');
+    final result = await CentralAuthService().createStore(userId: user.id, storeName: storeName, phone: phone, address: address);
+    if (!result.ok) throw StateError(result.message);
+    await _applyCentralAuthResult(result);
+    final storeId = result.user?.primaryStoreId ?? appIdentity.storeId;
+    await updateDeviceStoreBinding(storeId: storeId, deviceRole: deviceRole, syncMode: syncMode);
+    notifyListeners();
+  }
+
+  Future<void> linkStoreForActiveAccount({required String storeId, required String storeToken, DeviceRole deviceRole = DeviceRole.client, SyncMode syncMode = SyncMode.lanOnly}) async {
+    final user = _activeUser;
+    if (user == null) throw StateError('Login is required.');
+    final result = await CentralAuthService().linkStore(userId: user.id, storeId: storeId, storeToken: storeToken);
+    if (!result.ok) throw StateError(result.message);
+    await _applyCentralAuthResult(result);
+    await updateDeviceStoreBinding(storeId: storeId, deviceRole: deviceRole, syncMode: syncMode);
+    notifyListeners();
+  }
+
+  Future<void> updateDeviceStoreBinding({required String storeId, required DeviceRole deviceRole, required SyncMode syncMode, String branchId = 'main'}) async {
+    final now = DateTime.now();
+    final identity = appIdentity.copyWith(
+      storeId: storeId.trim(),
+      branchId: branchId.trim().isEmpty ? 'main' : branchId.trim(),
+      cloudTenantId: storeId.trim(),
+      appRole: AppRole.store,
+      deviceRole: deviceRole,
+      syncMode: syncMode,
+      deviceId: _deviceId,
+      platform: _detectPlatform(),
+      updatedAt: now,
+    );
+    _appIdentity = identity;
+    await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(identity.toJson()));
+
+    PlatformStore? linkedStore;
+    for (final item in _platformStores) {
+      if (item.id == storeId.trim()) {
+        linkedStore = item;
+        break;
+      }
+    }
+    if (linkedStore != null) {
+      _storeProfile = _storeProfile.copyWith(name: linkedStore.name, phone: linkedStore.phone, address: linkedStore.address);
+      await LocalDatabaseService.setString(_storeProfileKey, jsonEncode(_storeProfile.toJson()));
+    }
     await _saveAll();
   }
 

@@ -7,10 +7,9 @@ export default async function handler(req, res) {
     const fullName = String(req.body?.fullName || '').trim();
     const username = normalizeUsername(req.body?.username);
     const password = String(req.body?.password || '').trim();
-    const accountType = String(req.body?.accountType || '').trim();
+    const accountType = String(req.body?.accountType || 'platform_user').trim();
     const phone = String(req.body?.phone || '').trim();
     const email = String(req.body?.email || '').trim();
-    const storeName = String(req.body?.storeName || '').trim();
 
     if (!fullName || !username) return sendAuthError(res, 400, 'Name and username are required.');
     if (password.length < 4) return sendAuthError(res, 400, 'Password must be at least 4 characters.');
@@ -28,29 +27,13 @@ export default async function handler(req, res) {
     let customerProfile = null;
     let driverProfile = null;
 
-    if (accountType === 'merchant') primaryStoreId = `store_${Date.now()}_${cryptoRandom()}`;
-
     const inserted = await sql`
       insert into app_users (id, full_name, username, password_hash, account_type, role_id, phone, email, primary_store_id, is_active, is_system, created_at, updated_at)
       values (${userId}, ${fullName}, ${username}, ${hashPassword(password)}, ${accountType}, ${roleId}, ${phone}, ${email}, ${primaryStoreId}, true, false, ${now}, ${now})
       returning *
     `;
 
-    if (accountType === 'merchant') {
-      const storeRows = await sql`
-        insert into platform_stores (id, name, owner_user_id, phone, subscription_plan, subscription_status, is_online_enabled, is_active, created_at, updated_at)
-        values (${primaryStoreId}, ${storeName || `${fullName} Store`}, ${userId}, ${phone}, 'trial', 'pending_review', false, true, ${now}, ${now})
-        returning *
-      `;
-      platformStore = toPlatformStore(storeRows[0]);
-      const memberId = `member_${Date.now()}_${cryptoRandom()}`;
-      const memberRows = await sql`
-        insert into store_members (id, store_id, user_id, role, permissions, is_active, created_at, updated_at)
-        values (${memberId}, ${primaryStoreId}, ${userId}, 'owner', ${JSON.stringify([])}, true, ${now}, ${now})
-        returning *
-      `;
-      storeMember = toStoreMember(memberRows[0]);
-    } else if (accountType === 'customer') {
+    if (accountType === 'customer') {
       const rows = await sql`insert into customer_profiles (user_id, default_address, phone, created_at, updated_at) values (${userId}, '', ${phone}, ${now}, ${now}) returning *`;
       customerProfile = toCustomerProfile(rows[0]);
     } else if (accountType === 'driver') {

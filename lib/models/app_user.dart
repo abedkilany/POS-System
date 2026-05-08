@@ -1,14 +1,16 @@
 class AccountType {
   static const String appAdmin = 'app_admin';
+  static const String platformUser = 'platform_user';
   static const String merchant = 'merchant';
   static const String customer = 'customer';
   static const String driver = 'driver';
 
-  static const List<String> publicSignupTypes = [merchant, customer, driver];
-  static const List<String> all = [appAdmin, merchant, customer, driver];
+  static const List<String> publicSignupTypes = [platformUser];
+  static const List<String> all = [appAdmin, platformUser, merchant, customer, driver];
 
   static const Map<String, String> labels = {
     appAdmin: 'App administration',
+    platformUser: 'Platform account',
     merchant: 'Merchant / store',
     customer: 'Customer',
     driver: 'Delivery driver',
@@ -114,7 +116,8 @@ class AppUser {
       'admin' || 'platform_admin' => AccountType.appAdmin,
       'customer' => AccountType.customer,
       'driver' => AccountType.driver,
-      _ => AccountType.merchant,
+      'platform_user' => AccountType.platformUser,
+      _ => AccountType.platformUser,
     };
     return AppUser(
       id: json['id']?.toString() ?? '',

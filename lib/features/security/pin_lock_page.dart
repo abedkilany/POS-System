@@ -22,11 +22,9 @@ class _PinLockPageState extends State<PinLockPage> {
   final TextEditingController _signupPasswordController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
-  final TextEditingController _storeNameController = TextEditingController();
   bool _unlocked = false;
   bool _signupMode = false;
   bool _busy = false;
-  String _accountType = AccountType.customer;
 
   @override
   void initState() {
@@ -43,7 +41,6 @@ class _PinLockPageState extends State<PinLockPage> {
     _signupPasswordController.dispose();
     _phoneController.dispose();
     _emailController.dispose();
-    _storeNameController.dispose();
     super.dispose();
   }
 
@@ -68,10 +65,8 @@ class _PinLockPageState extends State<PinLockPage> {
         fullName: _nameController.text,
         username: _signupUsernameController.text,
         password: _signupPasswordController.text,
-        accountType: _accountType,
         phone: _phoneController.text,
         email: _emailController.text,
-        storeName: _storeNameController.text,
       );
       await widget.store.login(_signupUsernameController.text, _signupPasswordController.text);
       if (!mounted) return;
@@ -132,7 +127,6 @@ class _PinLockPageState extends State<PinLockPage> {
   }
 
   Widget _signupForm(BuildContext context) {
-    final isMerchant = _accountType == AccountType.merchant;
     return SingleChildScrollView(
       key: const ValueKey('signup'),
       child: Column(
@@ -140,33 +134,19 @@ class _PinLockPageState extends State<PinLockPage> {
         children: [
           const CircleAvatar(radius: 32, child: Icon(Icons.person_add_alt_1, size: 32)),
           const SizedBox(height: 16),
-          Text('إنشاء حساب جديد', style: Theme.of(context).textTheme.headlineSmall),
+          Text('إنشاء حساب منصة', style: Theme.of(context).textTheme.headlineSmall),
           const SizedBox(height: 8),
-          const Text('اختر نوع الاستخدام. حساب المشرف لا يتم إنشاؤه من التسجيل العام.', textAlign: TextAlign.center),
-          const SizedBox(height: 16),
-          SegmentedButton<String>(
-            segments: const [
-              ButtonSegment(value: AccountType.customer, label: Text('زبون'), icon: Icon(Icons.shopping_bag_outlined)),
-              ButtonSegment(value: AccountType.merchant, label: Text('تاجر'), icon: Icon(Icons.storefront)),
-              ButtonSegment(value: AccountType.driver, label: Text('دليفري'), icon: Icon(Icons.delivery_dining)),
-            ],
-            selected: {_accountType},
-            onSelectionChanged: (value) => setState(() => _accountType = value.first),
-          ),
+          const Text('الحساب المركزي يحتاج فقط الاسم، اسم المستخدم، الهاتف/الإيميل، وكلمة المرور. نوع الاستخدام وإعدادات المتجر تتم لاحقاً من داخل الحساب.', textAlign: TextAlign.center),
           const SizedBox(height: 16),
           TextField(controller: _nameController, decoration: const InputDecoration(labelText: 'الاسم الكامل')),
           const SizedBox(height: 12),
-          TextField(controller: _signupUsernameController, decoration: const InputDecoration(labelText: 'Username / phone')),
+          TextField(controller: _signupUsernameController, decoration: const InputDecoration(labelText: 'اسم المستخدم')),
+          const SizedBox(height: 12),
+          TextField(controller: _phoneController, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'رقم الهاتف')),
+          const SizedBox(height: 12),
+          TextField(controller: _emailController, keyboardType: TextInputType.emailAddress, decoration: const InputDecoration(labelText: 'Email اختياري')),
           const SizedBox(height: 12),
           TextField(controller: _signupPasswordController, obscureText: true, decoration: const InputDecoration(labelText: 'Password')),
-          const SizedBox(height: 12),
-          TextField(controller: _phoneController, decoration: const InputDecoration(labelText: 'رقم الهاتف')),
-          const SizedBox(height: 12),
-          TextField(controller: _emailController, decoration: const InputDecoration(labelText: 'Email اختياري')),
-          if (isMerchant) ...[
-            const SizedBox(height: 12),
-            TextField(controller: _storeNameController, decoration: const InputDecoration(labelText: 'اسم المتجر')),
-          ],
           const SizedBox(height: 16),
           SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: _busy ? null : _signup, icon: const Icon(Icons.person_add_alt_1), label: Text(_busy ? '...' : 'إنشاء الحساب'))),
           TextButton(onPressed: _busy ? null : () => setState(() => _signupMode = false), child: const Text('لدي حساب سابق')),

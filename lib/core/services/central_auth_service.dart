@@ -16,6 +16,7 @@ class CentralAuthResult {
     this.storeMember,
     this.customerProfile,
     this.driverProfile,
+    this.storeToken = '',
   });
 
   final bool ok;
@@ -26,7 +27,9 @@ class CentralAuthResult {
   final Map<String, dynamic>? storeMember;
   final Map<String, dynamic>? customerProfile;
   final Map<String, dynamic>? driverProfile;
+  final String storeToken;
 }
+
 
 class CentralAuthService {
   CentralAuthService({http.Client? client}) : _client = client ?? http.Client();
@@ -70,10 +73,9 @@ class CentralAuthService {
     required String fullName,
     required String username,
     required String password,
-    required String accountType,
+    String accountType = 'platform_user',
     String phone = '',
     String email = '',
-    String storeName = '',
   }) async {
     final settings = CloudSyncSettings.load();
     if (settings.apiBaseUrl.trim().isEmpty) {
@@ -91,13 +93,60 @@ class CentralAuthService {
               'accountType': accountType,
               'phone': phone.trim(),
               'email': email.trim(),
-              'storeName': storeName.trim(),
             }),
           )
           .timeout(const Duration(seconds: 15));
       return _parseAuthResponse(response);
     } catch (error) {
       return CentralAuthResult(ok: false, message: 'Central registration failed: $error');
+    }
+  }
+
+
+  Future<CentralAuthResult> createStore({
+    required String userId,
+    required String storeName,
+    String phone = '',
+    String address = '',
+  }) async {
+    final settings = CloudSyncSettings.load();
+    if (settings.apiBaseUrl.trim().isEmpty) {
+      return const CentralAuthResult(ok: false, message: 'Central auth API URL is not configured.');
+    }
+    try {
+      final response = await _client
+          .post(
+            settings.endpoint('/api/store/create'),
+            headers: _headers(settings),
+            body: jsonEncode({'userId': userId, 'storeName': storeName.trim(), 'phone': phone.trim(), 'address': address.trim()}),
+          )
+          .timeout(const Duration(seconds: 15));
+      return _parseAuthResponse(response);
+    } catch (error) {
+      return CentralAuthResult(ok: false, message: 'Central create store failed: $error');
+    }
+  }
+
+  Future<CentralAuthResult> linkStore({
+    required String userId,
+    required String storeId,
+    required String storeToken,
+  }) async {
+    final settings = CloudSyncSettings.load();
+    if (settings.apiBaseUrl.trim().isEmpty) {
+      return const CentralAuthResult(ok: false, message: 'Central auth API URL is not configured.');
+    }
+    try {
+      final response = await _client
+          .post(
+            settings.endpoint('/api/store/link'),
+            headers: _headers(settings),
+            body: jsonEncode({'userId': userId, 'storeId': storeId.trim(), 'storeToken': storeToken.trim()}),
+          )
+          .timeout(const Duration(seconds: 15));
+      return _parseAuthResponse(response);
+    } catch (error) {
+      return CentralAuthResult(ok: false, message: 'Central link store failed: $error');
     }
   }
 
@@ -122,6 +171,7 @@ class CentralAuthService {
       storeMember: decoded['storeMember'] is Map ? Map<String, dynamic>.from(decoded['storeMember'] as Map) : null,
       customerProfile: decoded['customerProfile'] is Map ? Map<String, dynamic>.from(decoded['customerProfile'] as Map) : null,
       driverProfile: decoded['driverProfile'] is Map ? Map<String, dynamic>.from(decoded['driverProfile'] as Map) : null,
+      storeToken: decoded['storeToken']?.toString() ?? '',
     );
   }
 }
