@@ -18,6 +18,7 @@ import 'features/expenses/expenses_page.dart';
 import 'features/inventory/inventory_page.dart';
 import 'features/products/products_page.dart';
 import 'features/platform/platform_page.dart';
+import 'features/marketplace/customer_marketplace_page.dart';
 import 'features/purchases/purchases_page.dart';
 import 'features/reports/reports_page.dart';
 import 'features/sales/sales_page.dart';
@@ -128,7 +129,7 @@ class AccountRouter extends StatelessWidget {
     if (!hasStoreMembership && user.accountType != AccountType.appAdmin && user.accountType != AccountType.customer && user.accountType != AccountType.driver) {
       return AccountSetupHome(store: store);
     }
-    if (user.accountType == AccountType.customer && !hasStoreMembership) return CustomerHomePage(store: store);
+    if (user.accountType == AccountType.customer && !hasStoreMembership) return CustomerMarketplacePage(store: store);
     if (user.accountType == AccountType.driver && !hasStoreMembership) return DriverHomePage(store: store);
     return MainShell(store: store, onLocaleChanged: onLocaleChanged, onSyncSettingsChanged: onSyncSettingsChanged);
   }

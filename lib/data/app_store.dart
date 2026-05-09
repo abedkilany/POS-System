@@ -2243,6 +2243,39 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> placeCustomerOnlineOrder(OnlineOrder order) async {
+    final active = _activeUser;
+    if (active == null) throw StateError('No active customer account.');
+    if (active.accountType != AccountType.customer && active.accountType != AccountType.appAdmin) {
+      throw StateError('Only customer accounts can place marketplace orders.');
+    }
+    if (order.items.isEmpty) throw ArgumentError('Cannot place an empty order.');
+    final now = DateTime.now();
+    final id = order.id.trim().isEmpty ? 'market_order_${now.microsecondsSinceEpoch}' : order.id;
+    final saved = OnlineOrder(
+      id: id,
+      storeId: order.storeId.trim().isEmpty ? 'local_store' : order.storeId,
+      customerUserId: active.id,
+      customerName: order.customerName.trim().isEmpty ? active.fullName : order.customerName,
+      customerPhone: order.customerPhone.trim().isEmpty ? active.phone : order.customerPhone,
+      deliveryAddress: order.deliveryAddress,
+      notes: order.notes,
+      status: OnlineOrderStatus.placed,
+      items: order.items,
+      deliveryFee: order.deliveryFee,
+      discount: order.discount,
+      paymentMethod: order.paymentMethod,
+      paymentStatus: order.paymentStatus,
+      assignedDriverUserId: order.assignedDriverUserId,
+      createdAt: order.createdAt,
+      updatedAt: now,
+    );
+    _onlineOrders.add(saved);
+    _recordSyncChange(entityType: 'online_order', entityId: saved.id, operation: 'create', payload: saved.toJson());
+    await _saveAll();
+    notifyListeners();
+  }
+
   Future<void> addOnlineOrder(OnlineOrder order) async {
     if (!hasPermission(AppPermission.onlineOrdersManage) && !hasPermission(AppPermission.onlineOrdersView)) {
       throw StateError('You do not have permission: ${AppPermission.onlineOrdersManage}');
