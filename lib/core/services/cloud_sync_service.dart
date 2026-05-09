@@ -66,9 +66,11 @@ class CloudSyncSettings {
     final autoRaw = LocalDatabaseService.getString(_autoSyncKey);
     final intervalRaw = LocalDatabaseService.getString(_intervalKey);
     final currentOrigin = kIsWeb ? Uri.base.origin : '';
+    const envBaseUrl = String.fromEnvironment('PLATFORM_API_BASE_URL');
+    final fallbackBaseUrl = envBaseUrl.trim().isNotEmpty ? envBaseUrl.trim() : currentOrigin;
     return CloudSyncSettings(
       enabled: true,
-      apiBaseUrl: (base == null || base.trim().isEmpty) ? currentOrigin : base.trim(),
+      apiBaseUrl: (base == null || base.trim().isEmpty) ? fallbackBaseUrl : base.trim(),
       apiToken: token,
       lastPullCursor: DateTime.tryParse(cursorRaw),
       autoSyncEnabled: autoRaw == null ? true : autoRaw == 'true',
