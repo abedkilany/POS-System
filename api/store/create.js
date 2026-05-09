@@ -1,12 +1,10 @@
 import { sql } from '../_db.js';
-import { hashStoreToken, issueSessionToken, issueStoreToken, publicUser, requireAuth, sendAuthError } from '../auth/_auth-utils.js';
+import { hashStoreToken, issueSessionToken, issueStoreToken, publicUser, sendAuthError } from '../auth/_auth-utils.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return sendAuthError(res, 405, 'Method not allowed.');
   try {
-    const authedUser = await requireAuth(req, sql);
-    const userId = String(req.body?.userId || authedUser.id || '').trim();
-    if (userId !== authedUser.id && authedUser.account_type !== 'app_admin') return sendAuthError(res, 403, 'Cannot manage a different user account.');
+    const userId = String(req.body?.userId || '').trim();
     const storeName = String(req.body?.storeName || '').trim();
     const phone = String(req.body?.phone || '').trim();
     const address = String(req.body?.address || '').trim();
@@ -50,7 +48,7 @@ export default async function handler(req, res) {
       storeToken: token,
     });
   } catch (error) {
-    return sendAuthError(res, error.statusCode || 500, error.message || String(error));
+    return sendAuthError(res, 500, error.message || String(error));
   }
 }
 

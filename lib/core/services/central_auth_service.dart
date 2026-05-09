@@ -52,8 +52,7 @@ class CentralAuthService {
   Map<String, String> _headers(CloudSyncSettings settings) => {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
-        if (sessionToken.trim().isNotEmpty) 'Authorization': 'Bearer ${sessionToken.trim()}',
-        if (sessionToken.trim().isEmpty && settings.apiToken.trim().isNotEmpty) 'Authorization': 'Bearer ${settings.apiToken.trim()}',
+        if (settings.apiToken.trim().isNotEmpty) 'Authorization': 'Bearer ${settings.apiToken.trim()}',
       };
 
   Future<CentralAuthResult> login({
