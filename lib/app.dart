@@ -18,7 +18,6 @@ import 'features/expenses/expenses_page.dart';
 import 'features/inventory/inventory_page.dart';
 import 'features/products/products_page.dart';
 import 'features/platform/platform_page.dart';
-import 'features/marketplace/customer_marketplace_page.dart';
 import 'features/purchases/purchases_page.dart';
 import 'features/reports/reports_page.dart';
 import 'features/sales/sales_page.dart';
@@ -129,7 +128,7 @@ class AccountRouter extends StatelessWidget {
     if (!hasStoreMembership && user.accountType != AccountType.appAdmin && user.accountType != AccountType.customer && user.accountType != AccountType.driver) {
       return AccountSetupHome(store: store);
     }
-    if (user.accountType == AccountType.customer && !hasStoreMembership) return CustomerMarketplacePage(store: store);
+    if (user.accountType == AccountType.customer && !hasStoreMembership) return CustomerHomePage(store: store);
     if (user.accountType == AccountType.driver && !hasStoreMembership) return DriverHomePage(store: store);
     return MainShell(store: store, onLocaleChanged: onLocaleChanged, onSyncSettingsChanged: onSyncSettingsChanged);
   }
@@ -298,33 +297,125 @@ class _AccountSetupHomeState extends State<AccountSetupHome> {
       );
 }
 
-class CustomerHomePage extends StatelessWidget {
+class CustomerHomePage extends StatefulWidget {
   const CustomerHomePage({super.key, required this.store});
   final AppStore store;
 
   @override
+  State<CustomerHomePage> createState() => _CustomerHomePageState();
+}
+
+class _CustomerHomePageState extends State<CustomerHomePage> {
+  final TextEditingController _searchController = TextEditingController();
+
+  @override
   Widget build(BuildContext context) {
+    final stores = widget.store.platformStores.where((s) {
+      final q = _searchController.text.trim().toLowerCase();
+      if (q.isEmpty) return true;
+      return s.name.toLowerCase().contains(q);
+    }).toList();
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Customer account'), actions: [_LogoutButton(store: store)]),
+      appBar: AppBar(
+        title: const Text('Marketplace'),
+        actions: [_LogoutButton(store: widget.store)],
+      ),
       body: ListView(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(16),
         children: [
-          Text('مرحباً ${store.activeUser?.fullName ?? ''}', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          const Text('هذه واجهة الزبون الأساسية. الخطوة التالية ستكون تصفح المتاجر والمنتجات وإنشاء الطلبات أونلاين.'),
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(20),
+              color: Theme.of(context).colorScheme.primaryContainer,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('مرحباً ${widget.store.activeUser?.fullName ?? ''}', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                const Text('اطلب من أقرب متجر بسهولة.'),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    hintText: 'ابحث عن متجر أو منتج',
+                    prefixIcon: const Icon(Icons.search),
+                    filled: true,
+                    fillColor: Colors.white,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+                  ),
+                  onChanged: (_) => setState(() {}),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: const [
+              _MarketplaceCategory(icon: Icons.local_grocery_store, title: 'بقالة'),
+              _MarketplaceCategory(icon: Icons.emoji_food_beverage, title: 'مشروبات'),
+              _MarketplaceCategory(icon: Icons.set_meal, title: 'خضار'),
+              _MarketplaceCategory(icon: Icons.home, title: 'منزلية'),
+            ],
+          ),
           const SizedBox(height: 24),
-          Wrap(spacing: 12, runSpacing: 12, children: [
-            _CustomerCard(icon: Icons.storefront, title: 'المتاجر', value: store.platformStores.length.toString()),
-            _CustomerCard(icon: Icons.shopping_bag, title: 'طلباتي', value: store.onlineOrders.where((o) => o.customerUserId == store.activeUser?.id).length.toString()),
-          ]),
+          Text('المتاجر القريبة', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 12),
+          if (stores.isEmpty)
+            const Card(child: Padding(padding: EdgeInsets.all(24), child: Text('لا يوجد متاجر مطابقة للبحث')))
+          else
+            ...stores.map((item) => Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        CircleAvatar(child: const Icon(Icons.storefront)),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(item.name, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                              const SizedBox(height: 4),
+                              Text(item.isOnlineEnabled ? 'متاح للطلبات أونلاين' : 'غير متاح حالياً'),
+                            ],
+                          ),
+                        ),
+                        FilledButton.icon(
+                          onPressed: () {},
+                          icon: const Icon(Icons.shopping_cart_checkout),
+                          label: const Text('اطلب الآن'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    Wrap(
+                      spacing: 8,
+                      children: const [
+                        Chip(label: Text('توصيل 20-30 دقيقة')),
+                        Chip(label: Text('⭐ 4.8')),
+                        Chip(label: Text('قريب منك')),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            )),
           const SizedBox(height: 24),
-          Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('متاجر متاحة', style: Theme.of(context).textTheme.titleMedium),
-            const Divider(),
-            for (final item in store.platformStores)
-              ListTile(leading: const Icon(Icons.storefront), title: Text(item.name), subtitle: Text(item.isOnlineEnabled ? 'Online enabled' : 'Not online yet')),
-            if (store.platformStores.isEmpty) const ListTile(title: Text('لا يوجد متاجر بعد.')),
-          ]))),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.receipt_long),
+              title: const Text('طلباتي الحالية'),
+              subtitle: Text('${widget.store.onlineOrders.where((o) => o.customerUserId == widget.store.activeUser?.id).length} طلب'),
+            ),
+          ),
         ],
       ),
     );
@@ -347,6 +438,33 @@ class DriverHomePage extends StatelessWidget {
           const Text('واجهة الدليفري محفوظة للمرحلة القادمة. حالياً الحساب يتسجل كدليفري ويستطيع النظام ربط الطلبات به لاحقاً.'),
           const SizedBox(height: 24),
           Card(child: ListTile(leading: const Icon(Icons.delivery_dining), title: const Text('طلبات جاهزة للتوصيل'), subtitle: Text('${store.pendingOnlineOrders.length} طلب بانتظار المعالجة/التوصيل'))),
+        ],
+      ),
+    );
+  }
+}
+
+
+class _MarketplaceCategory extends StatelessWidget {
+  const _MarketplaceCategory({required this.icon, required this.title});
+
+  final IconData icon;
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 120,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      ),
+      child: Column(
+        children: [
+          CircleAvatar(child: Icon(icon)),
+          const SizedBox(height: 10),
+          Text(title),
         ],
       ),
     );
