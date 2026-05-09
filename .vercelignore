@@ -1,0 +1,11 @@
+.flutter
+.dart_tool
+build
+.flutter-plugins
+.flutter-plugins-dependencies
+android
+linux
+macos
+windows
+ios
+*.zip
