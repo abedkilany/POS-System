@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 
-export const PUBLIC_ACCOUNT_TYPES = new Set(['platform_user']);
+export const PUBLIC_ACCOUNT_TYPES = new Set(['customer', 'platform_user']);
 
 export function normalizeUsername(value) {
   return String(value || '').trim().toLowerCase();

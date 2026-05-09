@@ -17,7 +17,7 @@ class PinLockPage extends StatefulWidget {
 }
 
 class _PinLockPageState extends State<PinLockPage> {
-  final TextEditingController _usernameController = TextEditingController(text: 'admin');
+  final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _signupUsernameController = TextEditingController();
@@ -76,6 +76,7 @@ class _PinLockPageState extends State<PinLockPage> {
         fullName: _nameController.text,
         username: _signupUsernameController.text,
         password: _signupPasswordController.text,
+        accountType: AccountType.customer,
         phone: _phoneController.text,
         email: _emailController.text,
       );
@@ -149,7 +150,7 @@ class _PinLockPageState extends State<PinLockPage> {
         const SizedBox(height: 16),
         Text('تسجيل الدخول', style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 8),
-        const Text('ادخل بحسابك للانتقال تلقائياً إلى لوحة حسابك حسب نوع المستخدم.', textAlign: TextAlign.center),
+        const Text('سجّل دخولك. إذا كان حسابك زبون ستدخل مباشرة إلى الـ Marketplace، وإذا كان مرتبطاً بمتجر ستنتقل للوحة المتجر.', textAlign: TextAlign.center),
         const SizedBox(height: 20),
         TextField(controller: _usernameController, autofocus: true, textInputAction: TextInputAction.next, decoration: const InputDecoration(labelText: 'Username / phone')),
         const SizedBox(height: 12),
@@ -184,9 +185,9 @@ class _PinLockPageState extends State<PinLockPage> {
         children: [
           const CircleAvatar(radius: 32, child: Icon(Icons.person_add_alt_1, size: 32)),
           const SizedBox(height: 16),
-          Text('إنشاء حساب منصة', style: Theme.of(context).textTheme.headlineSmall),
+          Text('إنشاء حساب جديد', style: Theme.of(context).textTheme.headlineSmall),
           const SizedBox(height: 8),
-          const Text('الحساب المركزي يحتاج فقط الاسم، اسم المستخدم، الهاتف/الإيميل، وكلمة المرور. نوع الاستخدام وإعدادات المتجر تتم لاحقاً من داخل الحساب.', textAlign: TextAlign.center),
+          const Text('سيتم إنشاء الحساب كزبون تلقائياً ثم الدخول مباشرة إلى الـ Marketplace. يمكنك لاحقاً تفعيل وضع المتجر أو غيره من الإعدادات.', textAlign: TextAlign.center),
           const SizedBox(height: 16),
           TextField(controller: _nameController, decoration: const InputDecoration(labelText: 'الاسم الكامل')),
           const SizedBox(height: 12),

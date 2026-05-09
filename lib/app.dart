@@ -297,129 +297,189 @@ class _AccountSetupHomeState extends State<AccountSetupHome> {
       );
 }
 
-class CustomerHomePage extends StatefulWidget {
+class CustomerHomePage extends StatelessWidget {
   const CustomerHomePage({super.key, required this.store});
   final AppStore store;
 
   @override
-  State<CustomerHomePage> createState() => _CustomerHomePageState();
-}
-
-class _CustomerHomePageState extends State<CustomerHomePage> {
-  final TextEditingController _searchController = TextEditingController();
-
-  @override
   Widget build(BuildContext context) {
-    final stores = widget.store.platformStores.where((s) {
-      final q = _searchController.text.trim().toLowerCase();
-      if (q.isEmpty) return true;
-      return s.name.toLowerCase().contains(q);
-    }).toList();
+    final user = store.activeUser;
+    final myOrders = store.onlineOrders.where((o) => o.customerUserId == user?.id).toList();
+    final onlineStores = store.platformStores.where((s) => s.isActive).toList();
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Marketplace'),
-        actions: [_LogoutButton(store: widget.store)],
+        actions: [
+          IconButton(
+            tooltip: 'الإعدادات',
+            icon: const Icon(Icons.settings_outlined),
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CustomerSettingsPage(store: store))),
+          ),
+          _LogoutButton(store: store),
+        ],
       ),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         children: [
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(20),
-              color: Theme.of(context).colorScheme.primaryContainer,
+              borderRadius: BorderRadius.circular(24),
+              gradient: LinearGradient(colors: [Theme.of(context).colorScheme.primaryContainer, Theme.of(context).colorScheme.surfaceContainerHighest]),
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('مرحباً ${widget.store.activeUser?.fullName ?? ''}', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-                const Text('اطلب من أقرب متجر بسهولة.'),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: _searchController,
-                  decoration: InputDecoration(
-                    hintText: 'ابحث عن متجر أو منتج',
-                    prefixIcon: const Icon(Icons.search),
-                    filled: true,
-                    fillColor: Colors.white,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
-                  ),
-                  onChanged: (_) => setState(() {}),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: const [
-              _MarketplaceCategory(icon: Icons.local_grocery_store, title: 'بقالة'),
-              _MarketplaceCategory(icon: Icons.emoji_food_beverage, title: 'مشروبات'),
-              _MarketplaceCategory(icon: Icons.set_meal, title: 'خضار'),
-              _MarketplaceCategory(icon: Icons.home, title: 'منزلية'),
-            ],
-          ),
-          const SizedBox(height: 24),
-          Text('المتاجر القريبة', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 12),
-          if (stores.isEmpty)
-            const Card(child: Padding(padding: EdgeInsets.all(24), child: Text('لا يوجد متاجر مطابقة للبحث')))
-          else
-            ...stores.map((item) => Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        CircleAvatar(child: const Icon(Icons.storefront)),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(item.name, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
-                              const SizedBox(height: 4),
-                              Text(item.isOnlineEnabled ? 'متاح للطلبات أونلاين' : 'غير متاح حالياً'),
-                            ],
-                          ),
-                        ),
-                        FilledButton.icon(
-                          onPressed: () {},
-                          icon: const Icon(Icons.shopping_cart_checkout),
-                          label: const Text('اطلب الآن'),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    Wrap(
-                      spacing: 8,
-                      children: const [
-                        Chip(label: Text('توصيل 20-30 دقيقة')),
-                        Chip(label: Text('⭐ 4.8')),
-                        Chip(label: Text('قريب منك')),
-                      ],
-                    ),
-                  ],
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('أهلاً ${user?.fullName ?? ''}', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              const Text('اطلب أغراضك من أقرب متجر. الحساب الجديد يدخل كزبون تلقائياً، ويمكن تفعيل وضع المتجر من الإعدادات.'),
+              const SizedBox(height: 16),
+              TextField(
+                decoration: InputDecoration(
+                  prefixIcon: const Icon(Icons.search),
+                  hintText: 'ابحث عن منتج أو متجر...',
+                  filled: true,
+                  fillColor: Theme.of(context).colorScheme.surface,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide.none),
                 ),
               ),
-            )),
+            ]),
+          ),
+          const SizedBox(height: 20),
+          Wrap(spacing: 12, runSpacing: 12, children: const [
+            _MarketplaceChip(icon: Icons.local_grocery_store_outlined, label: 'بقالة'),
+            _MarketplaceChip(icon: Icons.local_drink_outlined, label: 'مشروبات'),
+            _MarketplaceChip(icon: Icons.eco_outlined, label: 'خضار'),
+            _MarketplaceChip(icon: Icons.cleaning_services_outlined, label: 'منظفات'),
+            _MarketplaceChip(icon: Icons.local_offer_outlined, label: 'عروض'),
+          ]),
           const SizedBox(height: 24),
+          Row(children: [
+            Text('المتاجر المتاحة', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+            const Spacer(),
+            Text('${onlineStores.length} متجر'),
+          ]),
+          const SizedBox(height: 12),
+          if (onlineStores.isEmpty)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  const Icon(Icons.storefront_outlined, size: 36),
+                  const SizedBox(height: 12),
+                  Text('لا توجد متاجر ظاهرة بعد', style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 6),
+                  const Text('عند تفعيل المتاجر أونلاين ستظهر هنا للزبائن. يمكنك إنشاء متجر من الإعدادات.'),
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.add_business_outlined),
+                    label: const Text('تفعيل وضع المتجر'),
+                    onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => AccountSetupHome(store: store))),
+                  ),
+                ]),
+              ),
+            )
+          else
+            for (final item in onlineStores)
+              Card(
+                margin: const EdgeInsets.only(bottom: 12),
+                child: ListTile(
+                  leading: const CircleAvatar(child: Icon(Icons.storefront)),
+                  title: Text(item.name),
+                  subtitle: Text([item.address, item.phone].where((e) => e.trim().isNotEmpty).join(' • ')),
+                  trailing: FilledButton(onPressed: () {}, child: const Text('تصفح')),
+                ),
+              ),
+          const SizedBox(height: 24),
+          Row(children: [
+            Text('طلباتي', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+            const Spacer(),
+            Text('${myOrders.length} طلب'),
+          ]),
+          const SizedBox(height: 12),
+          if (myOrders.isEmpty)
+            const Card(child: ListTile(leading: Icon(Icons.shopping_bag_outlined), title: Text('لا توجد طلبات بعد'), subtitle: Text('أول طلب سيظهر هنا مع حالة المتجر والتوصيل.')))
+          else
+            for (final order in myOrders.take(5))
+              Card(child: ListTile(leading: const Icon(Icons.receipt_long_outlined), title: Text(order.customerName), subtitle: Text(order.status), trailing: Text(order.total.toStringAsFixed(2)))),
+        ],
+      ),
+    );
+  }
+}
+
+class _MarketplaceChip extends StatelessWidget {
+  const _MarketplaceChip({required this.icon, required this.label});
+  final IconData icon;
+  final String label;
+  @override
+  Widget build(BuildContext context) => ActionChip(avatar: Icon(icon, size: 18), label: Text(label), onPressed: () {});
+}
+
+class CustomerSettingsPage extends StatelessWidget {
+  const CustomerSettingsPage({super.key, required this.store});
+  final AppStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    final user = store.activeUser;
+    final hasStore = store.membershipsForActiveUser().isNotEmpty || (user?.primaryStoreId.trim().isNotEmpty ?? false);
+    return Scaffold(
+      appBar: AppBar(title: const Text('إعدادات الحساب')),
+      body: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('حسابي', style: Theme.of(context).textTheme.titleLarge),
+                const Divider(),
+                _CustomerInfoLine(title: 'الاسم', value: user?.fullName ?? '—'),
+                _CustomerInfoLine(title: 'اسم المستخدم', value: user?.username ?? '—'),
+                _CustomerInfoLine(title: 'الهاتف', value: (user?.phone ?? '').isEmpty ? '—' : user!.phone),
+                _CustomerInfoLine(title: 'الإيميل', value: (user?.email ?? '').isEmpty ? '—' : user!.email),
+                _CustomerInfoLine(title: 'الوضع الحالي', value: hasStore ? 'زبون + متجر' : 'زبون'),
+              ]),
+            ),
+          ),
+          const SizedBox(height: 12),
           Card(
             child: ListTile(
-              leading: const Icon(Icons.receipt_long),
-              title: const Text('طلباتي الحالية'),
-              subtitle: Text('${widget.store.onlineOrders.where((o) => o.customerUserId == widget.store.activeUser?.id).length} طلب'),
+              leading: const Icon(Icons.add_business_outlined),
+              title: Text(hasStore ? 'إدارة المتجر المرتبط' : 'تفعيل وضع المتجر'),
+              subtitle: const Text('أنشئ متجر جديد أو اربط حسابك بمتجر موجود. بعدها ستظهر لك لوحة إدارة المتجر.'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => AccountSetupHome(store: store))),
+            ),
+          ),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.delivery_dining_outlined),
+              title: const Text('طلب تفعيل مندوب توصيل'),
+              subtitle: const Text('محجوز للمرحلة التالية: حساب الزبون نفسه يمكن أن يطلب تفعيل وضع المندوب.'),
+              trailing: const Icon(Icons.hourglass_empty),
+              onTap: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('سيتم تفعيل هذا الخيار لاحقاً.'))),
             ),
           ),
         ],
       ),
     );
   }
+}
+
+
+class _CustomerInfoLine extends StatelessWidget {
+  const _CustomerInfoLine({required this.title, required this.value});
+  final String title;
+  final String value;
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(children: [
+          SizedBox(width: 120, child: Text(title, style: const TextStyle(fontWeight: FontWeight.w600))),
+          Expanded(child: Text(value, textAlign: TextAlign.end)),
+        ]),
+      );
 }
 
 class DriverHomePage extends StatelessWidget {
@@ -438,33 +498,6 @@ class DriverHomePage extends StatelessWidget {
           const Text('واجهة الدليفري محفوظة للمرحلة القادمة. حالياً الحساب يتسجل كدليفري ويستطيع النظام ربط الطلبات به لاحقاً.'),
           const SizedBox(height: 24),
           Card(child: ListTile(leading: const Icon(Icons.delivery_dining), title: const Text('طلبات جاهزة للتوصيل'), subtitle: Text('${store.pendingOnlineOrders.length} طلب بانتظار المعالجة/التوصيل'))),
-        ],
-      ),
-    );
-  }
-}
-
-
-class _MarketplaceCategory extends StatelessWidget {
-  const _MarketplaceCategory({required this.icon, required this.title});
-
-  final IconData icon;
-  final String title;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 120,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(18),
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-      ),
-      child: Column(
-        children: [
-          CircleAvatar(child: Icon(icon)),
-          const SizedBox(height: 10),
-          Text(title),
         ],
       ),
     );

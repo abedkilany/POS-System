@@ -5,7 +5,7 @@ class AccountType {
   static const String customer = 'customer';
   static const String driver = 'driver';
 
-  static const List<String> publicSignupTypes = [platformUser];
+  static const List<String> publicSignupTypes = [customer, platformUser];
   static const List<String> all = [appAdmin, platformUser, merchant, customer, driver];
 
   static const Map<String, String> labels = {
