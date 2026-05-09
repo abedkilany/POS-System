@@ -149,7 +149,6 @@ class AppStore extends ChangeNotifier {
   AppUser? _activeUser;
   AppIdentity? _appIdentity;
   String _lastIssuedStoreToken = '';
-  String _lastAuthError = '';
 
   Customer get walkInCustomer => Customer(
         id: walkInCustomerId,
@@ -230,7 +229,6 @@ class AppStore extends ChangeNotifier {
   bool get isPlatformUserAccount => _activeUser?.accountType == AccountType.platformUser;
   bool get isPlatformAdminAccount => _activeUser?.accountType == AccountType.appAdmin;
   String get lastIssuedStoreToken => _lastIssuedStoreToken;
-  String get lastAuthError => _lastAuthError;
 
   UserRole? roleById(String id) {
     for (final role in _roles) {
@@ -884,14 +882,12 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<bool> login(String username, String password) async {
-    _lastAuthError = '';
     final cloudResult = await CentralAuthService().login(username: username, password: password);
     if (cloudResult.ok && cloudResult.user != null) {
       await _applyCentralAuthResult(cloudResult);
       notifyListeners();
       return true;
     }
-    _lastAuthError = cloudResult.message;
 
     final normalized = username.trim().toLowerCase();
     final activeMatches = _users.where((user) => user.username.trim().toLowerCase() == normalized && user.isActive).toList();
@@ -902,10 +898,7 @@ class AppStore extends ChangeNotifier {
     for (var index = 0; index < _users.length; index++) {
       final user = _users[index];
       if (user.username.trim().toLowerCase() != normalized || !user.isActive) continue;
-      if (!_verifyPassword(password, user.passwordHash)) {
-        _lastAuthError = 'كلمة المرور غير صحيحة لهذا المستخدم المحلي.';
-        return false;
-      }
+      if (!_verifyPassword(password, user.passwordHash)) return false;
       final updated = user.copyWith(lastLoginAt: DateTime.now());
       _users[index] = updated;
       _activeUser = updated;
@@ -914,13 +907,11 @@ class AppStore extends ChangeNotifier {
       notifyListeners();
       return true;
     }
-    if (_lastAuthError.isEmpty) _lastAuthError = 'لم يتم العثور على الحساب محلياً ولم ينجح الاتصال بحساب المنصة.';
     return false;
   }
 
   Future<void> logout() async {
     _activeUser = null;
-    _lastAuthError = '';
     await LocalDatabaseService.setString(_activeUserKey, '');
     await CentralAuthService.clearSessionToken();
     notifyListeners();
@@ -1143,7 +1134,7 @@ class AppStore extends ChangeNotifier {
       return cloudResult.user!;
     }
 
-    throw StateError('${cloudResult.message}\nAccounts must be created on the central server to avoid duplicate users across stores/customers. Configure the Cloud API URL/Token, then try again.');
+    throw StateError('${cloudResult.message}\nAccounts must be created on the central server to avoid duplicate users across stores/customers. تأكد من اتصال الإنترنت ثم حاول مجدداً.');
   }
 
   Future<void> _applyCentralAuthResult(CentralAuthResult result) async {

@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
 import '../../data/app_store.dart';
-import '../../core/services/cloud_sync_service.dart';
+import '../../models/app_user.dart';
 
 class PinLockPage extends StatefulWidget {
   const PinLockPage({super.key, required this.store, required this.child, this.onLocalConnectionDone});
@@ -32,14 +32,11 @@ class _PinLockPageState extends State<PinLockPage> {
   bool _signupMode = false;
   bool _localConnectMode = false;
   bool _busy = false;
-  String _authMessage = '';
-  final TextEditingController _platformApiController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _unlocked = widget.store.activeUser != null;
-    _platformApiController.text = CloudSyncSettings.load().apiBaseUrl;
   }
 
   @override
@@ -55,20 +52,12 @@ class _PinLockPageState extends State<PinLockPage> {
     _localPortController.dispose();
     _localStoreIdController.dispose();
     _localTokenController.dispose();
-    _platformApiController.dispose();
     super.dispose();
   }
 
-  Future<void> _savePlatformApiIfProvided() async {
-    final value = _platformApiController.text.trim();
-    if (value.isEmpty) return;
-    final current = CloudSyncSettings.load();
-    await current.copyWith(apiBaseUrl: value).save();
-  }
-
   Future<void> _unlock() async {
-    setState(() { _busy = true; _authMessage = ''; });
-    await _savePlatformApiIfProvided();
+    final tr = AppLocalizations.of(context);
+    setState(() => _busy = true);
     final ok = await widget.store.login(_usernameController.text, _passwordController.text);
     if (!mounted) return;
     setState(() => _busy = false);
@@ -76,16 +65,13 @@ class _PinLockPageState extends State<PinLockPage> {
       setState(() => _unlocked = true);
     } else {
       _passwordController.clear();
-      final message = widget.store.lastAuthError.isNotEmpty ? widget.store.lastAuthError : 'تعذر تسجيل الدخول. تأكد من اسم المستخدم وكلمة المرور وإعدادات Platform API.';
-      setState(() => _authMessage = message);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('اسم المستخدم أو كلمة المرور غير صحيحة.')));
     }
   }
 
   Future<void> _signup() async {
-    setState(() { _busy = true; _authMessage = ''; });
+    setState(() => _busy = true);
     try {
-      await _savePlatformApiIfProvided();
       await widget.store.registerAccount(
         fullName: _nameController.text,
         username: _signupUsernameController.text,
@@ -108,10 +94,6 @@ class _PinLockPageState extends State<PinLockPage> {
 
 
   Future<void> _connectLocalStore() async {
-    if (kIsWeb) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('الاتصال المحلي الداخلي متاح على Windows/Desktop فقط، وليس نسخة الويب.')));
-      return;
-    }
     setState(() => _busy = true);
     try {
       await widget.store.connectLocalStoreWithoutPlatformAccount(
@@ -172,22 +154,6 @@ class _PinLockPageState extends State<PinLockPage> {
         TextField(controller: _usernameController, autofocus: true, textInputAction: TextInputAction.next, decoration: const InputDecoration(labelText: 'Username / phone')),
         const SizedBox(height: 12),
         TextField(controller: _passwordController, obscureText: true, decoration: const InputDecoration(labelText: 'Password'), onSubmitted: (_) => _unlock()),
-        if (!kIsWeb) ...[
-          const SizedBox(height: 12),
-          TextField(
-            controller: _platformApiController,
-            keyboardType: TextInputType.url,
-            decoration: const InputDecoration(
-              labelText: 'Platform API URL',
-              hintText: 'https://your-app.vercel.app',
-              helperText: 'مطلوب فقط على Windows/Desktop لتسجيل الدخول الأونلاين.',
-            ),
-          ),
-        ],
-        if (_authMessage.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          Text(_authMessage, textAlign: TextAlign.center, style: TextStyle(color: Theme.of(context).colorScheme.error)),
-        ],
         const SizedBox(height: 16),
         SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: _busy ? null : _unlock, icon: const Icon(Icons.login), label: Text(_busy ? '...' : tr.text('login')))),
         Wrap(
@@ -231,18 +197,6 @@ class _PinLockPageState extends State<PinLockPage> {
           TextField(controller: _emailController, keyboardType: TextInputType.emailAddress, decoration: const InputDecoration(labelText: 'Email اختياري')),
           const SizedBox(height: 12),
           TextField(controller: _signupPasswordController, obscureText: true, decoration: const InputDecoration(labelText: 'Password')),
-          if (!kIsWeb) ...[
-            const SizedBox(height: 12),
-            TextField(
-              controller: _platformApiController,
-              keyboardType: TextInputType.url,
-              decoration: const InputDecoration(
-                labelText: 'Platform API URL',
-                hintText: 'https://your-app.vercel.app',
-                helperText: 'يُستخدم لإنشاء الحساب على السيرفر المركزي.',
-              ),
-            ),
-          ],
           const SizedBox(height: 16),
           SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: _busy ? null : _signup, icon: const Icon(Icons.person_add_alt_1), label: Text(_busy ? '...' : 'إنشاء الحساب'))),
           TextButton(onPressed: _busy ? null : () => setState(() { _signupMode = false; _localConnectMode = false; }), child: const Text('لدي حساب سابق')),

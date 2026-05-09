@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 
 import '../../models/app_user.dart';
 import 'cloud_sync_service.dart';
+import '../app_config.dart';
 import 'local_database_service.dart';
 
 class CentralAuthResult {
@@ -41,6 +42,13 @@ class CentralAuthService {
   static Future<void> saveSessionToken(String token) async => LocalDatabaseService.setString(_authSessionTokenKey, token.trim());
   static Future<void> clearSessionToken() async => LocalDatabaseService.setString(_authSessionTokenKey, '');
 
+
+  CloudSyncSettings _platformSettings() {
+    final loaded = CloudSyncSettings.load();
+    final base = loaded.apiBaseUrl.trim().isEmpty ? AppConfig.platformBaseUrl : loaded.apiBaseUrl.trim();
+    return loaded.copyWith(apiBaseUrl: base);
+  }
+
   Map<String, String> _headers(CloudSyncSettings settings) => {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
@@ -51,10 +59,7 @@ class CentralAuthService {
     required String username,
     required String password,
   }) async {
-    final settings = CloudSyncSettings.load();
-    if (settings.apiBaseUrl.trim().isEmpty) {
-      return const CentralAuthResult(ok: false, message: 'Central auth API URL is not configured.');
-    }
+    final settings = _platformSettings();
     try {
       final response = await _client
           .post(
@@ -65,7 +70,7 @@ class CentralAuthService {
           .timeout(const Duration(seconds: 15));
       return _parseAuthResponse(response);
     } catch (error) {
-      return CentralAuthResult(ok: false, message: 'Central login failed: $error');
+      return CentralAuthResult(ok: false, message: 'تعذر تسجيل الدخول إلى المنصة: $error');
     }
   }
 
@@ -77,10 +82,7 @@ class CentralAuthService {
     String phone = '',
     String email = '',
   }) async {
-    final settings = CloudSyncSettings.load();
-    if (settings.apiBaseUrl.trim().isEmpty) {
-      return const CentralAuthResult(ok: false, message: 'Central auth API URL is not configured.');
-    }
+    final settings = _platformSettings();
     try {
       final response = await _client
           .post(
@@ -98,7 +100,7 @@ class CentralAuthService {
           .timeout(const Duration(seconds: 15));
       return _parseAuthResponse(response);
     } catch (error) {
-      return CentralAuthResult(ok: false, message: 'Central registration failed: $error');
+      return CentralAuthResult(ok: false, message: 'تعذر إنشاء الحساب على المنصة: $error');
     }
   }
 
@@ -109,10 +111,7 @@ class CentralAuthService {
     String phone = '',
     String address = '',
   }) async {
-    final settings = CloudSyncSettings.load();
-    if (settings.apiBaseUrl.trim().isEmpty) {
-      return const CentralAuthResult(ok: false, message: 'Central auth API URL is not configured.');
-    }
+    final settings = _platformSettings();
     try {
       final response = await _client
           .post(
@@ -132,10 +131,7 @@ class CentralAuthService {
     required String storeId,
     required String storeToken,
   }) async {
-    final settings = CloudSyncSettings.load();
-    if (settings.apiBaseUrl.trim().isEmpty) {
-      return const CentralAuthResult(ok: false, message: 'Central auth API URL is not configured.');
-    }
+    final settings = _platformSettings();
     try {
       final response = await _client
           .post(
