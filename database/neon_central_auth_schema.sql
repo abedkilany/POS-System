@@ -82,3 +82,30 @@ alter table app_users add constraint app_users_account_type_check check (account
 alter table platform_stores add column if not exists store_token_hash text default '';
 alter table platform_stores add column if not exists token_rotated_at timestamptz;
 create index if not exists idx_platform_stores_owner_user_id on platform_stores(owner_user_id);
+
+-- Marketplace MVP phase 1-3 additions: online ordering endpoints.
+create table if not exists online_orders (
+  id text primary key,
+  store_id text not null references platform_stores(id) on delete cascade,
+  customer_user_id text default '',
+  customer_name text default '',
+  customer_phone text default '',
+  delivery_address text default '',
+  notes text default '',
+  status text default 'placed' check (status in ('placed','accepted','preparing','ready_for_delivery','out_for_delivery','delivered','cancelled')),
+  items jsonb default '[]'::jsonb,
+  delivery_fee numeric default 0,
+  discount numeric default 0,
+  payment_method text default 'cash_on_delivery',
+  payment_status text default 'unpaid',
+  assigned_driver_user_id text default '',
+  is_deleted boolean default false,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+alter table online_orders add column if not exists customer_user_id text default '';
+alter table online_orders add column if not exists assigned_driver_user_id text default '';
+alter table online_orders add column if not exists is_deleted boolean default false;
+create index if not exists idx_online_orders_store_status on online_orders(store_id, status);
+create index if not exists idx_online_orders_customer on online_orders(customer_user_id);

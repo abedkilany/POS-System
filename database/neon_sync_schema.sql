@@ -126,7 +126,7 @@ create table if not exists app_users (
   full_name text not null,
   username text unique not null,
   password_hash text not null,
-  account_type text not null check (account_type in ('app_admin','merchant','customer','driver')),
+  account_type text not null check (account_type in ('app_admin','platform_user','merchant','customer','driver')),
   role_id text not null,
   phone text default '',
   email text default '',
