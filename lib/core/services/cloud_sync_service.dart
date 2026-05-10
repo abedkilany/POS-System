@@ -33,7 +33,7 @@ class CloudSyncSettings {
   final bool autoSyncEnabled;
   final int intervalSeconds;
 
-  bool get isConfigured => enabled && apiBaseUrl.trim().isNotEmpty && apiToken.trim().isNotEmpty;
+  bool get isConfigured => enabled && apiBaseUrl.trim().isNotEmpty;
 
   Uri endpoint(String path, [Map<String, String>? query]) {
     final base = apiBaseUrl.trim().replaceAll(RegExp(r'/+$'), '');
@@ -131,7 +131,7 @@ class CloudSyncService {
 
   Future<CloudSyncResult> testConnection(CloudSyncSettings settings) async {
     if (!settings.isConfigured) {
-      return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
+      return const CloudSyncResult(ok: false, message: 'Cloud/Marketplace API URL is required.');
     }
     try {
       final response = await _client.get(settings.endpoint('/api/health'), headers: _headers(settings)).timeout(const Duration(seconds: 10));
@@ -150,7 +150,7 @@ class CloudSyncService {
       return const CloudSyncResult(ok: false, message: 'Heartbeat is only sent by a cloud-enabled Host device.');
     }
     if (!settings.isConfigured) {
-      return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
+      return const CloudSyncResult(ok: false, message: 'Cloud/Marketplace API URL is required.');
     }
     try {
       final response = await _client
@@ -180,7 +180,7 @@ class CloudSyncService {
   Future<HostHeartbeatStatus> getHostHeartbeatStatus(CloudSyncSettings settings, {Duration staleAfter = const Duration(seconds: 90)}) async {
     final identity = store.appIdentity;
     if (!settings.isConfigured) {
-      return const HostHeartbeatStatus(cloudReachable: false, hostReachable: false, message: 'Cloud API URL and token are required.');
+      return const HostHeartbeatStatus(cloudReachable: false, hostReachable: false, message: 'Cloud/Marketplace API URL is required.');
     }
     try {
       final response = await _client
@@ -288,7 +288,7 @@ class CloudSyncService {
       return const CloudSyncResult(ok: false, message: 'Enable cloudConnected or marketplaceEnabled sync mode first.');
     }
     if (!settings.isConfigured) {
-      return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
+      return const CloudSyncResult(ok: false, message: 'Cloud/Marketplace API URL is required.');
     }
 
     try {

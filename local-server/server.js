@@ -27,7 +27,11 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'OPTIONS') return send(res, 204, null);
 
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-    const pathname = normalizePath(url.pathname);
+    let pathname = normalizePath(url.pathname);
+    // Compatibility: Flutter/Vercel code calls /api/*, while the local server
+    // exposes the same handlers without the /api prefix.
+    if (pathname === '/api') pathname = '/';
+    if (pathname.startsWith('/api/')) pathname = pathname.slice(4) || '/';
 
     if (req.method === 'GET' && pathname === '/health') {
       return send(res, 200, { ok: true, service: 'local-marketplace-server', database: DB_PATH, now: new Date().toISOString() });
@@ -514,18 +518,128 @@ function hostHeartbeat(res, body) {
 }
 
 async function handleMarketplace(req, res, pathname, url) {
-  if (req.method !== 'GET') return send(res, 405, { ok: false, error: 'Method not allowed.' });
-  if (pathname === '/marketplace/stores') {
+  if (req.method === 'GET' && pathname === '/marketplace/stores') {
+    const stores = new Map();
     const rows = db.prepare(`SELECT * FROM platform_stores WHERE is_active = 1 AND is_online_enabled = 1 ORDER BY updated_at DESC`).all();
-    return send(res, 200, { ok: true, stores: rows.map(toPlatformStore) });
+    for (const row of rows) stores.set(row.id, toPlatformStore(row));
+
+    // Also expose stores that were published through sync snapshots from POS hosts.
+    const snapshotRows = db.prepare(`SELECT * FROM entity_snapshots WHERE entity_type = 'store_profile' AND operation <> 'delete' ORDER BY updated_at DESC`).all();
+    for (const row of snapshotRows) {
+      if (stores.has(row.store_id)) continue;
+      const payload = parseJson(row.payload, {});
+      stores.set(row.store_id, {
+        id: row.store_id,
+        name: String(payload.name || payload.storeName || payload.title || `Store ${row.store_id}`),
+        ownerUserId: String(payload.ownerUserId || ''),
+        phone: String(payload.phone || payload.mobile || ''),
+        address: String(payload.address || ''),
+        description: String(payload.description || ''),
+        isOnlineEnabled: true,
+        subscriptionPlan: 'local',
+        subscriptionStatus: 'active',
+        commissionRate: 0,
+        isActive: true,
+        createdAt: payload.createdAt || row.updated_at,
+        updatedAt: payload.updatedAt || row.updated_at,
+      });
+    }
+
+    return send(res, 200, { ok: true, stores: Array.from(stores.values()) });
   }
-  const match = pathname.match(/^\/marketplace\/stores\/([^/]+)\/products$/);
-  if (match) {
-    const storeId = decodeURIComponent(match[1]);
+
+  const productsMatch = pathname.match(/^\/marketplace\/stores\/([^/]+)\/products$/);
+  if (req.method === 'GET' && productsMatch) {
+    const storeId = decodeURIComponent(productsMatch[1]);
     const branchId = String(url.searchParams.get('branch_id') || url.searchParams.get('branchId') || 'main');
     const rows = db.prepare(`SELECT * FROM entity_snapshots WHERE store_id = ? AND branch_id = ? AND entity_type = 'product' AND operation <> 'delete' ORDER BY updated_at DESC`).all(storeId, branchId);
-    const products = rows.map((r) => ({ ...parseJson(r.payload, {}), id: r.entity_id, storeId: r.store_id, branchId: r.branch_id })).filter((p) => p.isPublic !== false && p.isOnlineEnabled !== false && p.isAvailableOnline !== false);
+    const products = rows
+      .map((r) => ({ ...parseJson(r.payload, {}), id: r.entity_id, storeId: r.store_id, branchId: r.branch_id }))
+      .filter((p) => p.isActive !== false && p.isPublic !== false && p.isOnlineEnabled !== false && p.isAvailableOnline !== false)
+      .filter((p) => p.trackStock === false || Number(p.stock || 0) > 0);
     return send(res, 200, { ok: true, storeId, products });
   }
+
+  if (req.method === 'POST' && pathname === '/marketplace/orders') {
+    const body = await readBody(req);
+    const storeId = String(body.storeId || '').trim();
+    if (!storeId) return send(res, 400, { ok: false, error: 'storeId is required.' });
+    const items = Array.isArray(body.items) ? body.items : [];
+    if (!items.length) return send(res, 400, { ok: false, error: 'Order must contain at least one item.' });
+    const now = new Date().toISOString();
+    const id = String(body.id || randomId('order'));
+    db.prepare(`INSERT INTO online_orders (id, store_id, customer_user_id, customer_name, customer_phone, delivery_address, notes, status, items, delivery_fee, discount, payment_method, payment_status, assigned_driver_user_id, is_deleted, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'placed', ?, ?, ?, ?, 'unpaid', '', 0, ?, ?)`)
+      .run(
+        id,
+        storeId,
+        String(body.customerUserId || ''),
+        String(body.customerName || ''),
+        String(body.customerPhone || ''),
+        String(body.deliveryAddress || ''),
+        String(body.notes || ''),
+        JSON.stringify(items),
+        Number(body.deliveryFee || 0),
+        Number(body.discount || 0),
+        String(body.paymentMethod || 'cash_on_delivery'),
+        now,
+        now,
+      );
+    const order = db.prepare('SELECT * FROM online_orders WHERE id = ?').get(id);
+
+    // Mirror the order as a sync event so the target store can pull it.
+    const change = {
+      id: `order-event-${id}`,
+      storeId,
+      branchId: String(body.branchId || 'main'),
+      deviceId: 'marketplace-server',
+      entityType: 'online_order',
+      entityId: id,
+      operation: 'upsert',
+      payload: onlineOrderPayload(order),
+      createdAt: now,
+    };
+    db.prepare(`INSERT OR IGNORE INTO sync_events (id, store_id, branch_id, device_id, entity_type, entity_id, operation, payload, created_at, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(change.id, change.storeId, change.branchId, change.deviceId, change.entityType, change.entityId, change.operation, JSON.stringify(change.payload), change.createdAt, now);
+    upsertSnapshot({ storeId, branchId: change.branchId, entityType: 'online_order', entityId: id, operation: 'upsert', payload: change.payload, updatedAt: now });
+
+    return send(res, 200, { ok: true, order: change.payload });
+  }
+
+  if (req.method === 'GET' && pathname === '/marketplace/orders') {
+    const customerUserId = String(url.searchParams.get('customerUserId') || url.searchParams.get('customer_user_id') || '').trim();
+    const storeId = String(url.searchParams.get('storeId') || url.searchParams.get('store_id') || '').trim();
+    let rows;
+    if (customerUserId) {
+      rows = db.prepare(`SELECT * FROM online_orders WHERE customer_user_id = ? AND is_deleted = 0 ORDER BY created_at DESC LIMIT 100`).all(customerUserId);
+    } else if (storeId) {
+      rows = db.prepare(`SELECT * FROM online_orders WHERE store_id = ? AND is_deleted = 0 ORDER BY created_at DESC LIMIT 100`).all(storeId);
+    } else {
+      rows = db.prepare(`SELECT * FROM online_orders WHERE is_deleted = 0 ORDER BY created_at DESC LIMIT 100`).all();
+    }
+    return send(res, 200, { ok: true, orders: rows.map(onlineOrderPayload) });
+  }
+
   return send(res, 404, { ok: false, error: 'Marketplace endpoint not found.' });
+}
+
+function onlineOrderPayload(row) {
+  return {
+    id: row.id,
+    storeId: row.store_id,
+    customerUserId: row.customer_user_id || '',
+    customerName: row.customer_name || '',
+    customerPhone: row.customer_phone || '',
+    deliveryAddress: row.delivery_address || '',
+    notes: row.notes || '',
+    status: row.status || 'placed',
+    items: parseJson(row.items, []),
+    deliveryFee: Number(row.delivery_fee || 0),
+    discount: Number(row.discount || 0),
+    paymentMethod: row.payment_method || 'cash_on_delivery',
+    paymentStatus: row.payment_status || 'unpaid',
+    assignedDriverUserId: row.assigned_driver_user_id || '',
+    isDeleted: bool(row.is_deleted),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }

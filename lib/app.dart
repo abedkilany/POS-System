@@ -8,10 +8,15 @@ import 'core/localization/app_localizations.dart';
 import 'core/theme/app_theme.dart';
 import 'core/services/lan_sync_service.dart';
 import 'core/services/cloud_sync_service.dart';
+import 'core/app_config.dart';
 import 'data/app_store.dart';
 import 'models/user_role.dart';
 import 'models/app_user.dart';
 import 'models/app_identity.dart';
+import 'models/platform_store.dart';
+import 'models/product.dart';
+import 'models/online_order.dart';
+import 'core/services/marketplace_api_service.dart';
 import 'features/customers/customers_page.dart';
 import 'features/dashboard/dashboard_page.dart';
 import 'features/expenses/expenses_page.dart';
@@ -297,112 +302,361 @@ class _AccountSetupHomeState extends State<AccountSetupHome> {
       );
 }
 
-class CustomerHomePage extends StatelessWidget {
+class CustomerHomePage extends StatefulWidget {
   const CustomerHomePage({super.key, required this.store});
   final AppStore store;
 
   @override
-  Widget build(BuildContext context) {
-    final user = store.activeUser;
-    final myOrders = store.onlineOrders.where((o) => o.customerUserId == user?.id).toList();
-    final onlineStores = store.platformStores.where((s) => s.isActive).toList();
+  State<CustomerHomePage> createState() => _CustomerHomePageState();
+}
 
+class _CustomerHomePageState extends State<CustomerHomePage> {
+  final _api = MarketplaceApiService();
+  final _searchController = TextEditingController();
+  late Future<void> _loadFuture;
+  List<PlatformStore> _stores = const [];
+  List<OnlineOrder> _orders = const [];
+  String _error = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFuture = _load();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    try {
+      final userId = widget.store.activeUser?.id ?? '';
+      final results = await Future.wait<dynamic>([
+        _api.fetchStores(),
+        if (userId.isNotEmpty) _api.fetchCustomerOrders(userId) else Future.value(<OnlineOrder>[]),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _stores = results[0] as List<PlatformStore>;
+        _orders = results[1] as List<OnlineOrder>;
+        _error = '';
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = error.toString());
+    }
+  }
+
+  Future<void> _refresh() async {
+    setState(() => _loadFuture = _load());
+    await _loadFuture;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final user = widget.store.activeUser;
+    final settings = CloudSyncSettings.load();
+    final apiUrl = settings.apiBaseUrl.trim().isEmpty ? AppConfig.platformBaseUrl : settings.apiBaseUrl.trim();
     return Scaffold(
       appBar: AppBar(
         title: const Text('Marketplace'),
         actions: [
+          IconButton(tooltip: 'تحديث', icon: const Icon(Icons.refresh), onPressed: _refresh),
           IconButton(
             tooltip: 'الإعدادات',
             icon: const Icon(Icons.settings_outlined),
-            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CustomerSettingsPage(store: store))),
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CustomerSettingsPage(store: widget.store))),
           ),
-          _LogoutButton(store: store),
+          _LogoutButton(store: widget.store),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(24),
-              gradient: LinearGradient(colors: [Theme.of(context).colorScheme.primaryContainer, Theme.of(context).colorScheme.surfaceContainerHighest]),
-            ),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('أهلاً ${user?.fullName ?? ''}', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              const Text('اطلب أغراضك من أقرب متجر. الحساب الجديد يدخل كزبون تلقائياً، ويمكن تفعيل وضع المتجر من الإعدادات.'),
-              const SizedBox(height: 16),
-              TextField(
-                decoration: InputDecoration(
-                  prefixIcon: const Icon(Icons.search),
-                  hintText: 'ابحث عن منتج أو متجر...',
-                  filled: true,
-                  fillColor: Theme.of(context).colorScheme.surface,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide.none),
+      body: RefreshIndicator(
+        onRefresh: _refresh,
+        child: FutureBuilder<void>(
+          future: _loadFuture,
+          builder: (context, snapshot) {
+            return ListView(
+              padding: const EdgeInsets.all(20),
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(24),
+                    gradient: LinearGradient(colors: [Theme.of(context).colorScheme.primaryContainer, Theme.of(context).colorScheme.surfaceContainerHighest]),
+                  ),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text('أهلاً ${user?.fullName ?? ''}', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    const Text('تصفح المتاجر والمنتجات المنشورة من السيرفر المحلي للـ Marketplace.'),
+                    const SizedBox(height: 8),
+                    Text('API: $apiUrl', style: Theme.of(context).textTheme.bodySmall),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: _searchController,
+                      onChanged: (_) => setState(() {}),
+                      decoration: InputDecoration(
+                        prefixIcon: const Icon(Icons.search),
+                        hintText: 'ابحث عن متجر...',
+                        filled: true,
+                        fillColor: Theme.of(context).colorScheme.surface,
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide.none),
+                      ),
+                    ),
+                  ]),
                 ),
-              ),
-            ]),
-          ),
-          const SizedBox(height: 20),
-          Wrap(spacing: 12, runSpacing: 12, children: const [
-            _MarketplaceChip(icon: Icons.local_grocery_store_outlined, label: 'بقالة'),
-            _MarketplaceChip(icon: Icons.local_drink_outlined, label: 'مشروبات'),
-            _MarketplaceChip(icon: Icons.eco_outlined, label: 'خضار'),
-            _MarketplaceChip(icon: Icons.cleaning_services_outlined, label: 'منظفات'),
-            _MarketplaceChip(icon: Icons.local_offer_outlined, label: 'عروض'),
+                const SizedBox(height: 20),
+                Wrap(spacing: 12, runSpacing: 12, children: const [
+                  _MarketplaceChip(icon: Icons.local_grocery_store_outlined, label: 'بقالة'),
+                  _MarketplaceChip(icon: Icons.local_drink_outlined, label: 'مشروبات'),
+                  _MarketplaceChip(icon: Icons.eco_outlined, label: 'خضار'),
+                  _MarketplaceChip(icon: Icons.cleaning_services_outlined, label: 'منظفات'),
+                  _MarketplaceChip(icon: Icons.local_offer_outlined, label: 'عروض'),
+                ]),
+                const SizedBox(height: 24),
+                if (snapshot.connectionState == ConnectionState.waiting) const LinearProgressIndicator(),
+                if (_error.isNotEmpty)
+                  Card(
+                    color: Theme.of(context).colorScheme.errorContainer,
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text('تعذر الاتصال بالـ Marketplace Server', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 8),
+                        Text(_error),
+                        const SizedBox(height: 12),
+                        const Text('تأكد أن local-server شغال، وأن رابط Cloudflare محفوظ في إعدادات المزامنة.'),
+                      ]),
+                    ),
+                  ),
+                Row(children: [
+                  Text('المتاجر المتاحة', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+                  const Spacer(),
+                  Text('${_filteredStores.length} متجر'),
+                ]),
+                const SizedBox(height: 12),
+                if (_filteredStores.isEmpty)
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        const Icon(Icons.storefront_outlined, size: 36),
+                        const SizedBox(height: 12),
+                        Text('لا توجد متاجر منشورة بعد', style: Theme.of(context).textTheme.titleMedium),
+                        const SizedBox(height: 6),
+                        const Text('عند مزامنة جهاز المتجر مع هذا السيرفر ستظهر المتاجر والمنتجات هنا.'),
+                        const SizedBox(height: 12),
+                        OutlinedButton.icon(icon: const Icon(Icons.refresh), label: const Text('تحديث'), onPressed: _refresh),
+                      ]),
+                    ),
+                  )
+                else
+                  for (final item in _filteredStores)
+                    Card(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      child: ListTile(
+                        leading: const CircleAvatar(child: Icon(Icons.storefront)),
+                        title: Text(item.name),
+                        subtitle: Text([item.address, item.phone, item.description].where((e) => e.trim().isNotEmpty).join(' • ')),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => MarketplaceStorefrontPage(store: widget.store, marketplaceStore: item))).then((_) => _refresh()),
+                      ),
+                    ),
+                const SizedBox(height: 24),
+                Row(children: [
+                  Text('طلباتي', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+                  const Spacer(),
+                  Text('${_orders.length} طلب'),
+                ]),
+                const SizedBox(height: 12),
+                if (_orders.isEmpty)
+                  const Card(child: ListTile(leading: Icon(Icons.shopping_bag_outlined), title: Text('لا توجد طلبات بعد'), subtitle: Text('أول طلب من صفحة المتجر سيظهر هنا.')))
+                else
+                  for (final order in _orders.take(8))
+                    Card(child: ListTile(leading: const Icon(Icons.receipt_long_outlined), title: Text(order.customerName), subtitle: Text(order.status), trailing: Text(order.total.toStringAsFixed(2)))),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  List<PlatformStore> get _filteredStores {
+    final q = _searchController.text.trim().toLowerCase();
+    if (q.isEmpty) return _stores;
+    return _stores.where((s) => s.name.toLowerCase().contains(q) || s.address.toLowerCase().contains(q) || s.description.toLowerCase().contains(q)).toList();
+  }
+}
+
+class MarketplaceStorefrontPage extends StatefulWidget {
+  const MarketplaceStorefrontPage({super.key, required this.store, required this.marketplaceStore});
+  final AppStore store;
+  final PlatformStore marketplaceStore;
+
+  @override
+  State<MarketplaceStorefrontPage> createState() => _MarketplaceStorefrontPageState();
+}
+
+class _MarketplaceStorefrontPageState extends State<MarketplaceStorefrontPage> {
+  final _api = MarketplaceApiService();
+  final _addressController = TextEditingController();
+  final _notesController = TextEditingController();
+  late Future<void> _loadFuture;
+  List<Product> _products = const [];
+  final Map<String, int> _cart = <String, int>{};
+  String _error = '';
+  bool _placing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFuture = _load();
+  }
+
+  @override
+  void dispose() {
+    _addressController.dispose();
+    _notesController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    try {
+      final products = await _api.fetchStoreProducts(widget.marketplaceStore.id);
+      if (!mounted) return;
+      setState(() {
+        _products = products;
+        _error = '';
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = error.toString());
+    }
+  }
+
+  List<OnlineOrderItem> get _cartItems => _cart.entries.map((entry) {
+        final product = _products.firstWhere((p) => p.id == entry.key);
+        return OnlineOrderItem(productId: product.id, productName: product.name, unitPrice: product.price, quantity: entry.value);
+      }).toList();
+
+  double get _total => _cartItems.fold<double>(0, (sum, item) => sum + item.total);
+
+  void _add(Product product) {
+    setState(() => _cart[product.id] = (_cart[product.id] ?? 0) + 1);
+  }
+
+  void _remove(Product product) {
+    setState(() {
+      final next = (_cart[product.id] ?? 0) - 1;
+      if (next <= 0) {
+        _cart.remove(product.id);
+      } else {
+        _cart[product.id] = next;
+      }
+    });
+  }
+
+  Future<void> _placeOrder() async {
+    if (_cart.isEmpty) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('تأكيد الطلب'),
+        content: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(controller: _addressController, decoration: const InputDecoration(labelText: 'عنوان التوصيل')),
+            TextField(controller: _notesController, decoration: const InputDecoration(labelText: 'ملاحظات اختيارية')),
+            const SizedBox(height: 12),
+            Text('الإجمالي: ${_total.toStringAsFixed(2)}'),
           ]),
-          const SizedBox(height: 24),
-          Row(children: [
-            Text('المتاجر المتاحة', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
-            const Spacer(),
-            Text('${onlineStores.length} متجر'),
-          ]),
-          const SizedBox(height: 12),
-          if (onlineStores.isEmpty)
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إلغاء')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('إرسال الطلب')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    setState(() => _placing = true);
+    try {
+      final user = widget.store.activeUser;
+      await _api.createOrder(
+        storeId: widget.marketplaceStore.id,
+        customerUserId: user?.id ?? '',
+        customerName: user?.fullName ?? '',
+        customerPhone: user?.phone ?? '',
+        deliveryAddress: _addressController.text,
+        notes: _notesController.text,
+        items: _cartItems,
+      );
+      if (!mounted) return;
+      setState(() => _cart.clear());
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم إرسال الطلب إلى المتجر.')));
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+    } finally {
+      if (mounted) setState(() => _placing = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.marketplaceStore.name)),
+      body: FutureBuilder<void>(
+        future: _loadFuture,
+        builder: (context, snapshot) => ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
             Card(
               child: Padding(
-                padding: const EdgeInsets.all(20),
+                padding: const EdgeInsets.all(16),
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  const Icon(Icons.storefront_outlined, size: 36),
-                  const SizedBox(height: 12),
-                  Text('لا توجد متاجر ظاهرة بعد', style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(height: 6),
-                  const Text('عند تفعيل المتاجر أونلاين ستظهر هنا للزبائن. يمكنك إنشاء متجر من الإعدادات.'),
-                  const SizedBox(height: 12),
-                  OutlinedButton.icon(
-                    icon: const Icon(Icons.add_business_outlined),
-                    label: const Text('تفعيل وضع المتجر'),
-                    onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => AccountSetupHome(store: store))),
-                  ),
+                  Text(widget.marketplaceStore.name, style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
+                  if (widget.marketplaceStore.address.isNotEmpty) Text(widget.marketplaceStore.address),
+                  if (widget.marketplaceStore.phone.isNotEmpty) Text(widget.marketplaceStore.phone),
+                  if (widget.marketplaceStore.description.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 8), child: Text(widget.marketplaceStore.description)),
                 ]),
               ),
-            )
-          else
-            for (final item in onlineStores)
-              Card(
-                margin: const EdgeInsets.only(bottom: 12),
-                child: ListTile(
-                  leading: const CircleAvatar(child: Icon(Icons.storefront)),
-                  title: Text(item.name),
-                  subtitle: Text([item.address, item.phone].where((e) => e.trim().isNotEmpty).join(' • ')),
-                  trailing: FilledButton(onPressed: () {}, child: const Text('تصفح')),
+            ),
+            const SizedBox(height: 12),
+            if (snapshot.connectionState == ConnectionState.waiting) const LinearProgressIndicator(),
+            if (_error.isNotEmpty) Card(color: Theme.of(context).colorScheme.errorContainer, child: ListTile(leading: const Icon(Icons.error_outline), title: const Text('تعذر تحميل المنتجات'), subtitle: Text(_error))),
+            if (_products.isEmpty && _error.isEmpty && snapshot.connectionState != ConnectionState.waiting)
+              const Card(child: ListTile(leading: Icon(Icons.inventory_2_outlined), title: Text('لا توجد منتجات منشورة'), subtitle: Text('يجب أن يزامن جهاز المتجر منتجاته مع سيرفر الـ Marketplace.')))
+            else
+              for (final product in _products)
+                Card(
+                  child: ListTile(
+                    leading: const CircleAvatar(child: Icon(Icons.shopping_basket_outlined)),
+                    title: Text(product.name),
+                    subtitle: Text('${product.category} • المتوفر: ${product.stock}'),
+                    trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Text(product.price.toStringAsFixed(2)),
+                      IconButton(icon: const Icon(Icons.remove_circle_outline), onPressed: (_cart[product.id] ?? 0) > 0 ? () => _remove(product) : null),
+                      Text('${_cart[product.id] ?? 0}'),
+                      IconButton(icon: const Icon(Icons.add_circle_outline), onPressed: () => _add(product)),
+                    ]),
+                  ),
+                ),
+            const SizedBox(height: 90),
+          ],
+        ),
+      ),
+      bottomNavigationBar: _cart.isEmpty
+          ? null
+          : SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: FilledButton.icon(
+                  icon: _placing ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.shopping_cart_checkout),
+                  label: Text('إتمام الطلب • ${_total.toStringAsFixed(2)}'),
+                  onPressed: _placing ? null : _placeOrder,
                 ),
               ),
-          const SizedBox(height: 24),
-          Row(children: [
-            Text('طلباتي', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
-            const Spacer(),
-            Text('${myOrders.length} طلب'),
-          ]),
-          const SizedBox(height: 12),
-          if (myOrders.isEmpty)
-            const Card(child: ListTile(leading: Icon(Icons.shopping_bag_outlined), title: Text('لا توجد طلبات بعد'), subtitle: Text('أول طلب سيظهر هنا مع حالة المتجر والتوصيل.')))
-          else
-            for (final order in myOrders.take(5))
-              Card(child: ListTile(leading: const Icon(Icons.receipt_long_outlined), title: Text(order.customerName), subtitle: Text(order.status), trailing: Text(order.total.toStringAsFixed(2)))),
-        ],
-      ),
+            ),
     );
   }
 }
@@ -445,6 +699,16 @@ class CustomerSettingsPage extends StatelessWidget {
           const SizedBox(height: 12),
           Card(
             child: ListTile(
+              leading: const Icon(Icons.cloud_outlined),
+              title: const Text('رابط سيرفر الـ Marketplace'),
+              subtitle: Text(CloudSyncSettings.load().apiBaseUrl),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MarketplaceServerSettingsPage())),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Card(
+            child: ListTile(
               leading: const Icon(Icons.add_business_outlined),
               title: Text(hasStore ? 'إدارة المتجر المرتبط' : 'تفعيل وضع المتجر'),
               subtitle: const Text('أنشئ متجر جديد أو اربط حسابك بمتجر موجود. بعدها ستظهر لك لوحة إدارة المتجر.'),
@@ -461,6 +725,93 @@ class CustomerSettingsPage extends StatelessWidget {
               onTap: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('سيتم تفعيل هذا الخيار لاحقاً.'))),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+
+class MarketplaceServerSettingsPage extends StatefulWidget {
+  const MarketplaceServerSettingsPage({super.key});
+
+  @override
+  State<MarketplaceServerSettingsPage> createState() => _MarketplaceServerSettingsPageState();
+}
+
+class _MarketplaceServerSettingsPageState extends State<MarketplaceServerSettingsPage> {
+  final _urlController = TextEditingController();
+  final _tokenController = TextEditingController();
+  bool _testing = false;
+  String _status = '';
+
+  @override
+  void initState() {
+    super.initState();
+    final settings = CloudSyncSettings.load();
+    _urlController.text = settings.apiBaseUrl;
+    _tokenController.text = settings.apiToken;
+  }
+
+  @override
+  void dispose() {
+    _urlController.dispose();
+    _tokenController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final loaded = CloudSyncSettings.load();
+    await loaded.copyWith(apiBaseUrl: _urlController.text.trim(), apiToken: _tokenController.text.trim(), enabled: true).save();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حفظ رابط السيرفر.')));
+    setState(() => _status = 'تم الحفظ. ارجع للـ Marketplace واضغط تحديث.');
+  }
+
+  Future<void> _test() async {
+    setState(() {
+      _testing = true;
+      _status = '';
+    });
+    try {
+      final loaded = CloudSyncSettings.load();
+      final temp = loaded.copyWith(apiBaseUrl: _urlController.text.trim(), apiToken: _tokenController.text.trim(), enabled: true);
+      final result = await CloudSyncService(AppStore()).testConnection(temp);
+      if (!mounted) return;
+      setState(() => _status = result.message);
+    } catch (error) {
+      if (mounted) setState(() => _status = error.toString());
+    } finally {
+      if (mounted) setState(() => _testing = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Marketplace Server')),
+      body: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          const Text('ضع هنا رابط Cloudflare Tunnel أو السيرفر المحلي. مثال: https://xxxxx.trycloudflare.com'),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _urlController,
+            decoration: const InputDecoration(labelText: 'Marketplace API URL', border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _tokenController,
+            decoration: const InputDecoration(labelText: 'Token اختياري', border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 16),
+          Row(children: [
+            FilledButton.icon(onPressed: _save, icon: const Icon(Icons.save_outlined), label: const Text('حفظ')),
+            const SizedBox(width: 12),
+            OutlinedButton.icon(onPressed: _testing ? null : _test, icon: const Icon(Icons.wifi_tethering), label: const Text('اختبار /health')),
+          ]),
+          if (_testing) const Padding(padding: EdgeInsets.only(top: 16), child: LinearProgressIndicator()),
+          if (_status.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 16), child: Text(_status)),
         ],
       ),
     );
