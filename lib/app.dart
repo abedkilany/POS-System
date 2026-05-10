@@ -833,6 +833,175 @@ class _CustomerInfoLine extends StatelessWidget {
       );
 }
 
+
+class MarketplaceOrdersPage extends StatefulWidget {
+  const MarketplaceOrdersPage({super.key, required this.store});
+  final AppStore store;
+
+  @override
+  State<MarketplaceOrdersPage> createState() => _MarketplaceOrdersPageState();
+}
+
+class _MarketplaceOrdersPageState extends State<MarketplaceOrdersPage> {
+  final _api = MarketplaceApiService();
+  late Future<void> _loadFuture;
+  List<OnlineOrder> _orders = const [];
+  String _error = '';
+  bool _updating = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFuture = _load();
+  }
+
+  String get _storeId {
+    final identityStoreId = widget.store.appIdentity.storeId.trim();
+    return identityStoreId.isEmpty ? 'store_${widget.store.deviceId}' : identityStoreId;
+  }
+
+  Future<void> _load() async {
+    try {
+      final orders = await _api.fetchStoreOrders(_storeId);
+      if (!mounted) return;
+      setState(() {
+        _orders = orders;
+        _error = '';
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = error.toString());
+    }
+  }
+
+  Future<void> _refresh() async {
+    setState(() => _loadFuture = _load());
+    await _loadFuture;
+  }
+
+  Future<void> _setStatus(OnlineOrder order, String status) async {
+    if (_updating) return;
+    setState(() => _updating = true);
+    try {
+      await _api.updateOrderStatus(orderId: order.id, status: status);
+      await _refresh();
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تم تحديث حالة الطلب إلى $status')));
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('فشل تحديث الطلب: $error')));
+    } finally {
+      if (mounted) setState(() => _updating = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pending = _orders.where((o) => o.status == OnlineOrderStatus.placed).length;
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Marketplace Orders'),
+        actions: [IconButton(onPressed: _refresh, icon: const Icon(Icons.refresh), tooltip: 'تحديث')],
+      ),
+      body: RefreshIndicator(
+        onRefresh: _refresh,
+        child: FutureBuilder<void>(
+          future: _loadFuture,
+          builder: (context, snapshot) => ListView(
+            padding: const EdgeInsets.all(20),
+            children: [
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(children: [
+                    const CircleAvatar(child: Icon(Icons.shopping_bag_outlined)),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text('طلبات الـ Marketplace', style: Theme.of(context).textTheme.titleLarge),
+                        const SizedBox(height: 4),
+                        Text('Store ID: $_storeId'),
+                      ]),
+                    ),
+                    _CustomerCard(icon: Icons.pending_actions, title: 'Pending', value: '$pending'),
+                  ]),
+                ),
+              ),
+              const SizedBox(height: 12),
+              if (snapshot.connectionState == ConnectionState.waiting) const LinearProgressIndicator(),
+              if (_error.isNotEmpty)
+                Card(
+                  color: Theme.of(context).colorScheme.errorContainer,
+                  child: ListTile(
+                    leading: const Icon(Icons.error_outline),
+                    title: const Text('تعذر تحميل طلبات المتجر'),
+                    subtitle: Text(_error),
+                  ),
+                ),
+              if (_orders.isEmpty && _error.isEmpty && snapshot.connectionState != ConnectionState.waiting)
+                const Card(child: ListTile(leading: Icon(Icons.inbox_outlined), title: Text('لا توجد طلبات بعد'), subtitle: Text('عندما يطلب الزبون من هذا المتجر ستظهر الطلبات هنا.')))
+              else
+                for (final order in _orders)
+                  Card(
+                    child: ExpansionTile(
+                      leading: const Icon(Icons.receipt_long_outlined),
+                      title: Text('${order.customerName.isEmpty ? 'Customer' : order.customerName} • ${order.total.toStringAsFixed(2)}'),
+                      subtitle: Text('${_statusLabel(order.status)} • ${order.createdAt.toLocal().toString().split('.').first}'),
+                      trailing: _updating ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)) : null,
+                      childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                      children: [
+                        _CustomerInfoLine(title: 'الهاتف', value: order.customerPhone.isEmpty ? '—' : order.customerPhone),
+                        _CustomerInfoLine(title: 'العنوان', value: order.deliveryAddress.isEmpty ? '—' : order.deliveryAddress),
+                        if (order.notes.isNotEmpty) _CustomerInfoLine(title: 'ملاحظة', value: order.notes),
+                        const Divider(),
+                        for (final item in order.items)
+                          ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(item.productName),
+                            subtitle: Text('${item.quantity} × ${item.unitPrice.toStringAsFixed(2)}'),
+                            trailing: Text(item.total.toStringAsFixed(2)),
+                          ),
+                        const Divider(),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            FilledButton.icon(onPressed: order.status == OnlineOrderStatus.placed ? () => _setStatus(order, OnlineOrderStatus.accepted) : null, icon: const Icon(Icons.check), label: const Text('قبول')),
+                            OutlinedButton.icon(onPressed: order.status == OnlineOrderStatus.accepted ? () => _setStatus(order, OnlineOrderStatus.preparing) : null, icon: const Icon(Icons.restaurant), label: const Text('تحضير')),
+                            OutlinedButton.icon(onPressed: order.status == OnlineOrderStatus.preparing ? () => _setStatus(order, OnlineOrderStatus.readyForDelivery) : null, icon: const Icon(Icons.inventory), label: const Text('جاهز')),
+                            OutlinedButton.icon(onPressed: order.status == OnlineOrderStatus.readyForDelivery ? () => _setStatus(order, OnlineOrderStatus.delivered) : null, icon: const Icon(Icons.done_all), label: const Text('تم التسليم')),
+                            TextButton.icon(onPressed: order.status == OnlineOrderStatus.delivered || order.status == OnlineOrderStatus.cancelled ? null : () => _setStatus(order, OnlineOrderStatus.cancelled), icon: const Icon(Icons.cancel_outlined), label: const Text('إلغاء')),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _statusLabel(String status) {
+    switch (status) {
+      case OnlineOrderStatus.placed:
+        return 'جديد';
+      case OnlineOrderStatus.accepted:
+        return 'مقبول';
+      case OnlineOrderStatus.preparing:
+        return 'قيد التحضير';
+      case OnlineOrderStatus.readyForDelivery:
+        return 'جاهز للتوصيل';
+      case OnlineOrderStatus.delivered:
+        return 'تم التسليم';
+      case OnlineOrderStatus.cancelled:
+        return 'ملغى';
+      default:
+        return status;
+    }
+  }
+}
+
 class DriverHomePage extends StatelessWidget {
   const DriverHomePage({super.key, required this.store});
   final AppStore store;
@@ -966,6 +1135,8 @@ class _MainShellState extends State<MainShell> {
         _ShellItem(label: tr.text('reports'), icon: Icons.bar_chart_outlined, selectedIcon: Icons.bar_chart, page: ReportsPage(store: widget.store)),
       if (widget.store.hasPermission(AppPermission.platformManage) || widget.store.hasPermission(AppPermission.onlineOrdersView))
         _ShellItem(label: 'Platform', icon: Icons.hub_outlined, selectedIcon: Icons.hub, page: PlatformPage(store: widget.store)),
+      if (widget.store.hasPermission(AppPermission.onlineOrdersView) || widget.store.hasPermission(AppPermission.onlineOrdersManage))
+        _ShellItem(label: 'Marketplace Orders', icon: Icons.shopping_bag_outlined, selectedIcon: Icons.shopping_bag, page: MarketplaceOrdersPage(store: widget.store)),
       _ShellItem(label: tr.text('settings'), icon: Icons.settings_outlined, selectedIcon: Icons.settings, page: SettingsPage(store: widget.store, onLocaleChanged: widget.onLocaleChanged, onSyncSettingsChanged: widget.onSyncSettingsChanged)),
     ];
     if (selectedIndex >= items.length) selectedIndex = items.length - 1;

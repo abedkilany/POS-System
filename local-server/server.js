@@ -659,6 +659,28 @@ async function handleMarketplace(req, res, pathname, url) {
     return send(res, 200, { ok: true, order: change.payload });
   }
 
+
+  const statusMatch = pathname.match(/^\/marketplace\/orders\/([^/]+)\/status$/);
+  if (req.method === 'POST' && statusMatch) {
+    const orderId = decodeURIComponent(statusMatch[1]);
+    const body = await readBody(req);
+    const allowed = new Set(['placed', 'accepted', 'preparing', 'ready_for_delivery', 'assigned_to_driver', 'out_for_delivery', 'delivered', 'cancelled']);
+    const status = String(body.status || '').trim();
+    if (!allowed.has(status)) return send(res, 400, { ok: false, error: 'Invalid order status.' });
+    const existing = db.prepare('SELECT * FROM online_orders WHERE id = ? AND is_deleted = 0 LIMIT 1').get(orderId);
+    if (!existing) return send(res, 404, { ok: false, error: 'Order not found.' });
+    const now = new Date().toISOString();
+    db.prepare('UPDATE online_orders SET status = ?, updated_at = ? WHERE id = ?').run(status, now, orderId);
+    const fresh = db.prepare('SELECT * FROM online_orders WHERE id = ?').get(orderId);
+    const payload = onlineOrderPayload(fresh);
+    const branchId = String(body.branchId || body.branch_id || 'main');
+    const eventId = `order-status-${orderId}-${Date.now()}`;
+    db.prepare(`INSERT OR IGNORE INTO sync_events (id, store_id, branch_id, device_id, entity_type, entity_id, operation, payload, created_at, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(eventId, payload.storeId, branchId, 'marketplace-server', 'online_order', orderId, 'upsert', JSON.stringify(payload), now, now);
+    upsertSnapshot({ storeId: payload.storeId, branchId, entityType: 'online_order', entityId: orderId, operation: 'upsert', payload, updatedAt: now });
+    return send(res, 200, { ok: true, order: payload });
+  }
+
   if (req.method === 'GET' && pathname === '/marketplace/orders') {
     const customerUserId = String(url.searchParams.get('customerUserId') || url.searchParams.get('customer_user_id') || '').trim();
     const storeId = String(url.searchParams.get('storeId') || url.searchParams.get('store_id') || '').trim();

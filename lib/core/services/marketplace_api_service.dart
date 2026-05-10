@@ -106,6 +106,33 @@ class MarketplaceApiService {
     return OnlineOrder.fromJson(Map<String, dynamic>.from(raw));
   }
 
+
+
+  Future<List<OnlineOrder>> fetchStoreOrders(String storeId) async {
+    final response = await _client.get(_endpoint('/marketplace/orders', {'storeId': storeId})).timeout(const Duration(seconds: 15));
+    final decoded = _decode(response);
+    final list = decoded['orders'];
+    if (list is! List) return const <OnlineOrder>[];
+    return list.whereType<Map>().map((e) => OnlineOrder.fromJson(Map<String, dynamic>.from(e))).toList();
+  }
+
+  Future<OnlineOrder> updateOrderStatus({
+    required String orderId,
+    required String status,
+  }) async {
+    final response = await _client
+        .post(
+          _endpoint('/marketplace/orders/${Uri.encodeComponent(orderId)}/status'),
+          headers: const {'Content-Type': 'application/json', 'Accept': 'application/json'},
+          body: jsonEncode({'status': status}),
+        )
+        .timeout(const Duration(seconds: 15));
+    final decoded = _decode(response);
+    final raw = decoded['order'];
+    if (raw is! Map) throw const MarketplaceApiException('لم يرجع السيرفر تفاصيل الطلب.');
+    return OnlineOrder.fromJson(Map<String, dynamic>.from(raw));
+  }
+
   Future<List<OnlineOrder>> fetchCustomerOrders(String customerUserId) async {
     final response = await _client.get(_endpoint('/marketplace/orders', {'customerUserId': customerUserId})).timeout(const Duration(seconds: 15));
     final decoded = _decode(response);
