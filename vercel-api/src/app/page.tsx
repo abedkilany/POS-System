@@ -1,3 +1,3 @@
 export default function Page() {
-  return <main>Store Manager Pro API is running.</main>;
+  return <main>Ventio API is running.</main>;
 }

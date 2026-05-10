@@ -195,6 +195,42 @@ class AppStore extends ChangeNotifier {
   bool get canManageProducts => hasPermission(AppPermission.productsCreate) || hasPermission(AppPermission.productsEdit);
   bool get canDeleteOrCancel => hasPermission(AppPermission.salesCancel);
   bool get canManageUsers => hasPermission(AppPermission.usersManage) && hasPermission(AppPermission.rolesManage);
+  bool get needsInitialAdminSetup {
+    if (_users.length != 1) return false;
+    final user = _users.first;
+    return user.id == 'admin' &&
+        user.username.trim().toLowerCase() == 'admin' &&
+        _verifyPassword('admin123', user.passwordHash) &&
+        user.lastLoginAt == null;
+  }
+
+  Future<void> completeInitialAdminSetup({
+    required String fullName,
+    required String username,
+    required String password,
+  }) async {
+    final cleanName = fullName.trim().isEmpty ? 'Administrator' : fullName.trim();
+    final cleanUsername = username.trim().toLowerCase();
+    final cleanPassword = password.trim();
+    if (cleanUsername.length < 3) throw ArgumentError('Username must be at least 3 characters.');
+    if (cleanPassword.length < 6) throw ArgumentError('Password must be at least 6 characters.');
+    final index = _users.indexWhere((user) => user.id == 'admin');
+    if (index == -1) throw StateError('Admin user was not found.');
+    final updated = _users[index].copyWith(
+      fullName: cleanName,
+      username: cleanUsername,
+      passwordHash: _hashPinV2(cleanPassword),
+      updatedAt: DateTime.now(),
+      lastLoginAt: DateTime.now(),
+    );
+    _users[index] = updated;
+    _activeUser = updated;
+    await LocalDatabaseService.setString(_activeUserKey, updated.id);
+    await _saveRolesAndUsers();
+    await _saveAll();
+    notifyListeners();
+  }
+
 
   UserRole? roleById(String id) {
     for (final role in _roles) {
@@ -745,7 +781,7 @@ class AppStore extends ChangeNotifier {
     if (_users.isEmpty) {
       _users.add(AppUser(
         id: 'admin',
-        fullName: 'Administrator',
+        fullName: 'Ventio Administrator',
         username: 'admin',
         passwordHash: _hashPinV2('admin123'),
         roleId: 'admin',

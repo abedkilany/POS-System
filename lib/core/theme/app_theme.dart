@@ -4,8 +4,8 @@ class AppTheme {
   static ThemeData get lightTheme {
     return ThemeData(
       useMaterial3: true,
-      colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
-      scaffoldBackgroundColor: const Color(0xFFF7F7FB),
+      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF00B8FF)),
+      scaffoldBackgroundColor: const Color(0xFFF7FAFF),
       cardTheme: const CardThemeData(
         elevation: 0,
         margin: EdgeInsets.zero,

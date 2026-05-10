@@ -67,7 +67,7 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
       builder: (context, _) {
         return MaterialApp(
           debugShowCheckedModeBanner: false,
-          title: _store.storeProfile.name,
+          title: 'Ventio',
           theme: AppTheme.lightTheme,
           locale: _locale,
           supportedLocales: const [Locale('en'), Locale('ar')],

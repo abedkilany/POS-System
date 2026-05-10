@@ -1,4 +1,4 @@
-package com.kilany.store_manager_pro
+package com.kilany.ventio
 
 import io.flutter.embedding.android.FlutterActivity
 

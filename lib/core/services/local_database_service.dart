@@ -4,12 +4,15 @@ import 'dart:typed_data';
 
 import 'package:hive_ce_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class LocalDatabaseService {
   LocalDatabaseService._();
 
   static const String boxName = 'store_manager_local_db';
-  static const String _encryptionKeyPrefsKey = 'store_manager_local_db_key_v1';
+  static const String _encryptionKeyPrefsKey = 'ventio_local_db_key_v1';
+  static const String _legacyEncryptionKeyPrefsKey = 'store_manager_local_db_key_v1';
+  static const FlutterSecureStorage _secureStorage = FlutterSecureStorage();
   static Box<String>? _box;
 
   static Future<void> initialize() async {
@@ -25,15 +28,24 @@ class LocalDatabaseService {
   }
 
   static Future<Uint8List> _loadOrCreateEncryptionKey() async {
+    final secureExisting = await _secureStorage.read(key: _encryptionKeyPrefsKey);
+    if (secureExisting != null && secureExisting.isNotEmpty) {
+      return Uint8List.fromList(base64Url.decode(secureExisting));
+    }
+
+    // One-time migration from the older SharedPreferences key storage.
     final prefs = await SharedPreferences.getInstance();
-    final existing = prefs.getString(_encryptionKeyPrefsKey);
-    if (existing != null && existing.isNotEmpty) {
-      return Uint8List.fromList(base64Url.decode(existing));
+    final legacyExisting = prefs.getString(_legacyEncryptionKeyPrefsKey) ?? prefs.getString(_encryptionKeyPrefsKey);
+    if (legacyExisting != null && legacyExisting.isNotEmpty) {
+      await _secureStorage.write(key: _encryptionKeyPrefsKey, value: legacyExisting);
+      await prefs.remove(_legacyEncryptionKeyPrefsKey);
+      await prefs.remove(_encryptionKeyPrefsKey);
+      return Uint8List.fromList(base64Url.decode(legacyExisting));
     }
 
     final random = Random.secure();
     final key = Uint8List.fromList(List<int>.generate(32, (_) => random.nextInt(256)));
-    await prefs.setString(_encryptionKeyPrefsKey, base64UrlEncode(key));
+    await _secureStorage.write(key: _encryptionKeyPrefsKey, value: base64UrlEncode(key));
     return key;
   }
 

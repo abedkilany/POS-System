@@ -1,6 +1,6 @@
 {
-    "name": "store_manager_pro",
-    "short_name": "store_manager_pro",
+    "name": "ventio",
+    "short_name": "ventio",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
