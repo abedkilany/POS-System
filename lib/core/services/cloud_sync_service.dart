@@ -5,7 +5,6 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../../data/app_store.dart';
-import '../app_config.dart';
 import '../../models/app_identity.dart';
 import '../../models/sync_change.dart';
 import 'local_database_service.dart';
@@ -66,7 +65,7 @@ class CloudSyncSettings {
     final cursorRaw = LocalDatabaseService.getString(_lastPullCursorKey) ?? '';
     final autoRaw = LocalDatabaseService.getString(_autoSyncKey);
     final intervalRaw = LocalDatabaseService.getString(_intervalKey);
-    final currentOrigin = kIsWeb ? Uri.base.origin : AppConfig.platformBaseUrl;
+    final currentOrigin = kIsWeb ? Uri.base.origin : '';
     return CloudSyncSettings(
       enabled: true,
       apiBaseUrl: (base == null || base.trim().isEmpty) ? currentOrigin : base.trim(),

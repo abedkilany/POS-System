@@ -15,10 +15,6 @@ class AppPermission {
   static const String backupRestore = 'backup.restore';
   static const String settingsManage = 'settings.manage';
   static const String syncManage = 'sync.manage';
-  static const String platformManage = 'platform.manage';
-  static const String onlineOrdersManage = 'online_orders.manage';
-  static const String onlineOrdersView = 'online_orders.view';
-  static const String deliveryManage = 'delivery.manage';
 
   static const List<String> all = [
     usersManage,
@@ -37,10 +33,6 @@ class AppPermission {
     backupRestore,
     settingsManage,
     syncManage,
-    platformManage,
-    onlineOrdersManage,
-    onlineOrdersView,
-    deliveryManage,
   ];
 
   static const Map<String, String> labels = {
@@ -59,11 +51,7 @@ class AppPermission {
     backupExport: 'Export backups',
     backupRestore: 'Restore backups',
     settingsManage: 'Manage store settings',
-    syncManage: 'Manage LAN/cloud sync',
-    platformManage: 'Manage platform/admin area',
-    onlineOrdersManage: 'Manage online orders',
-    onlineOrdersView: 'View online orders',
-    deliveryManage: 'Manage delivery assignments',
+    syncManage: 'Manage LAN sync',
   };
 }
 

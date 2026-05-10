@@ -10,19 +10,17 @@ import 'core/services/lan_sync_service.dart';
 import 'core/services/cloud_sync_service.dart';
 import 'data/app_store.dart';
 import 'models/user_role.dart';
-import 'models/app_user.dart';
-import 'models/app_identity.dart';
 import 'features/customers/customers_page.dart';
 import 'features/dashboard/dashboard_page.dart';
 import 'features/expenses/expenses_page.dart';
 import 'features/inventory/inventory_page.dart';
 import 'features/products/products_page.dart';
-import 'features/platform/platform_page.dart';
 import 'features/purchases/purchases_page.dart';
 import 'features/reports/reports_page.dart';
 import 'features/sales/sales_page.dart';
 import 'features/security/pin_lock_page.dart';
 import 'features/settings/settings_page.dart';
+import 'features/settings/sync_setup_page.dart';
 import 'features/suppliers/suppliers_page.dart';
 
 class StoreManagerApp extends StatefulWidget {
@@ -80,22 +78,26 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
             GlobalCupertinoLocalizations.delegate,
           ],
           home: _store.isReady
-              ? PinLockPage(
-                  store: _store,
-                  onLocalConnectionDone: () async {
-                    await _autoSyncController.start();
-                    await _autoCloudSyncController.start();
-                    if (mounted) setState(() {});
-                  },
-                  child: AccountRouter(
-                    store: _store,
-                    onLocaleChanged: _changeLocale,
-                    onSyncSettingsChanged: () async {
-                      await _autoSyncController.start();
-                      await _autoCloudSyncController.start();
-                    },
-                  ),
-                )
+              ? (kIsWeb || LanSyncSettings.load().setupComplete
+                  ? PinLockPage(
+                      store: _store,
+                      child: MainShell(
+                        store: _store,
+                        onLocaleChanged: _changeLocale,
+                        onSyncSettingsChanged: () async {
+                          await _autoSyncController.start();
+                          await _autoCloudSyncController.start();
+                        },
+                      ),
+                    )
+                  : SyncSetupPage(
+                      store: _store,
+                      onDone: () async {
+                        await _autoSyncController.start();
+                        await _autoCloudSyncController.start();
+                        if (mounted) setState(() {});
+                      },
+                    ))
               : const Scaffold(body: Center(child: CircularProgressIndicator())),
         );
       },
@@ -110,421 +112,6 @@ class _ShellItem {
   final IconData icon;
   final IconData selectedIcon;
   final Widget page;
-}
-
-
-class AccountRouter extends StatelessWidget {
-  const AccountRouter({super.key, required this.store, required this.onLocaleChanged, this.onSyncSettingsChanged});
-
-  final AppStore store;
-  final ValueChanged<Locale> onLocaleChanged;
-  final Future<void> Function()? onSyncSettingsChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final user = store.activeUser;
-    if (user == null) return const SizedBox.shrink();
-    final hasStoreMembership = store.membershipsForActiveUser().isNotEmpty || user.primaryStoreId.trim().isNotEmpty;
-    if (!hasStoreMembership && user.accountType != AccountType.appAdmin && user.accountType != AccountType.customer && user.accountType != AccountType.driver) {
-      return AccountSetupHome(store: store);
-    }
-    if (user.accountType == AccountType.customer && !hasStoreMembership) return CustomerHomePage(store: store);
-    if (user.accountType == AccountType.driver && !hasStoreMembership) return DriverHomePage(store: store);
-    return MainShell(store: store, onLocaleChanged: onLocaleChanged, onSyncSettingsChanged: onSyncSettingsChanged);
-  }
-}
-
-
-class AccountSetupHome extends StatefulWidget {
-  const AccountSetupHome({super.key, required this.store});
-  final AppStore store;
-
-  @override
-  State<AccountSetupHome> createState() => _AccountSetupHomeState();
-}
-
-class _AccountSetupHomeState extends State<AccountSetupHome> {
-  final _storeNameController = TextEditingController();
-  final _storePhoneController = TextEditingController();
-  final _storeAddressController = TextEditingController();
-  final _linkStoreIdController = TextEditingController();
-  final _linkTokenController = TextEditingController();
-  DeviceRole _deviceRole = DeviceRole.host;
-  SyncMode _syncMode = SyncMode.lanOnly;
-  bool _busy = false;
-
-  @override
-  void dispose() {
-    _storeNameController.dispose();
-    _storePhoneController.dispose();
-    _storeAddressController.dispose();
-    _linkStoreIdController.dispose();
-    _linkTokenController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _createStore() async {
-    setState(() => _busy = true);
-    try {
-      await widget.store.createStoreForActiveAccount(
-        storeName: _storeNameController.text,
-        phone: _storePhoneController.text,
-        address: _storeAddressController.text,
-        deviceRole: _deviceRole,
-        syncMode: _syncMode,
-      );
-      if (!mounted) return;
-      final token = widget.store.lastIssuedStoreToken;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(token.isEmpty ? 'تم إنشاء المتجر وربط هذا الجهاز.' : 'تم إنشاء المتجر. Store Token: $token')));
-    } catch (error) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _linkStore() async {
-    setState(() => _busy = true);
-    try {
-      await widget.store.linkStoreForActiveAccount(
-        storeId: _linkStoreIdController.text,
-        storeToken: _linkTokenController.text,
-        deviceRole: _deviceRole,
-        syncMode: _syncMode,
-      );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم ربط المتجر بهذا الجهاز.')));
-    } catch (error) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final user = widget.store.activeUser;
-    return Scaffold(
-      appBar: AppBar(title: const Text('إعداد حساب المنصة'), actions: [_LogoutButton(store: widget.store)]),
-      body: ListView(
-        padding: const EdgeInsets.all(24),
-        children: [
-          Text('مرحباً ${user?.fullName ?? ''}', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          const Text('حسابك على المنصة جاهز. الآن يمكنك إنشاء متجر جديد أو ربط هذا الجهاز بمتجر موجود باستخدام Store ID و Store Token.'),
-          const SizedBox(height: 20),
-          Wrap(
-            spacing: 16,
-            runSpacing: 16,
-            children: [
-              SizedBox(width: 420, child: _createStoreCard(context)),
-              SizedBox(width: 420, child: _linkStoreCard(context)),
-              SizedBox(width: 420, child: _deviceSyncCard(context)),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _createStoreCard(BuildContext context) => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('إنشاء متجر جديد', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 12),
-            TextField(controller: _storeNameController, decoration: const InputDecoration(labelText: 'اسم المتجر')),
-            const SizedBox(height: 12),
-            TextField(controller: _storePhoneController, decoration: const InputDecoration(labelText: 'هاتف المتجر اختياري')),
-            const SizedBox(height: 12),
-            TextField(controller: _storeAddressController, decoration: const InputDecoration(labelText: 'العنوان اختياري')),
-            const SizedBox(height: 16),
-            SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: _busy ? null : _createStore, icon: const Icon(Icons.add_business), label: Text(_busy ? '...' : 'إنشاء وربط'))),
-            if (widget.store.lastIssuedStoreToken.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              SelectableText('Store Token: ${widget.store.lastIssuedStoreToken}'),
-              const Text('احفظ هذا التوكن لأنه يستخدم لربط الأجهزة الأخرى. يمكن لاحقاً تجديده من إعدادات المتجر.'),
-            ],
-          ]),
-        ),
-      );
-
-  Widget _linkStoreCard(BuildContext context) => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('ربط متجر موجود', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 12),
-            TextField(controller: _linkStoreIdController, decoration: const InputDecoration(labelText: 'Store ID')),
-            const SizedBox(height: 12),
-            TextField(controller: _linkTokenController, obscureText: true, decoration: const InputDecoration(labelText: 'Store Token')),
-            const SizedBox(height: 16),
-            SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: _busy ? null : _linkStore, icon: const Icon(Icons.link), label: Text(_busy ? '...' : 'ربط الجهاز'))),
-          ]),
-        ),
-      );
-
-  Widget _deviceSyncCard(BuildContext context) => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('إعدادات الجهاز والمزامنة', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<DeviceRole>(
-              value: _deviceRole,
-              decoration: const InputDecoration(labelText: 'نوع الجهاز'),
-              items: const [
-                DropdownMenuItem(value: DeviceRole.host, child: Text('Host / الجهاز الرئيسي')),
-                DropdownMenuItem(value: DeviceRole.client, child: Text('Client / جهاز إضافي')),
-                DropdownMenuItem(value: DeviceRole.standalone, child: Text('Standalone / محلي فقط')),
-              ],
-              onChanged: (value) => setState(() => _deviceRole = value ?? DeviceRole.host),
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<SyncMode>(
-              value: _syncMode,
-              decoration: const InputDecoration(labelText: 'نوع المزامنة'),
-              items: const [
-                DropdownMenuItem(value: SyncMode.localOnly, child: Text('Local only')),
-                DropdownMenuItem(value: SyncMode.lanOnly, child: Text('LAN')),
-                DropdownMenuItem(value: SyncMode.cloudConnected, child: Text('Online / Cloud')),
-                DropdownMenuItem(value: SyncMode.marketplaceEnabled, child: Text('Hybrid / Marketplace')),
-              ],
-              onChanged: (value) => setState(() => _syncMode = value ?? SyncMode.lanOnly),
-            ),
-          ]),
-        ),
-      );
-}
-
-class CustomerHomePage extends StatelessWidget {
-  const CustomerHomePage({super.key, required this.store});
-  final AppStore store;
-
-  @override
-  Widget build(BuildContext context) {
-    final user = store.activeUser;
-    final myOrders = store.onlineOrders.where((o) => o.customerUserId == user?.id).toList();
-    final onlineStores = store.platformStores.where((s) => s.isActive).toList();
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Marketplace'),
-        actions: [
-          IconButton(
-            tooltip: 'الإعدادات',
-            icon: const Icon(Icons.settings_outlined),
-            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => CustomerSettingsPage(store: store))),
-          ),
-          _LogoutButton(store: store),
-        ],
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(24),
-              gradient: LinearGradient(colors: [Theme.of(context).colorScheme.primaryContainer, Theme.of(context).colorScheme.surfaceContainerHighest]),
-            ),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('أهلاً ${user?.fullName ?? ''}', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              const Text('اطلب أغراضك من أقرب متجر. الحساب الجديد يدخل كزبون تلقائياً، ويمكن تفعيل وضع المتجر من الإعدادات.'),
-              const SizedBox(height: 16),
-              TextField(
-                decoration: InputDecoration(
-                  prefixIcon: const Icon(Icons.search),
-                  hintText: 'ابحث عن منتج أو متجر...',
-                  filled: true,
-                  fillColor: Theme.of(context).colorScheme.surface,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide.none),
-                ),
-              ),
-            ]),
-          ),
-          const SizedBox(height: 20),
-          Wrap(spacing: 12, runSpacing: 12, children: const [
-            _MarketplaceChip(icon: Icons.local_grocery_store_outlined, label: 'بقالة'),
-            _MarketplaceChip(icon: Icons.local_drink_outlined, label: 'مشروبات'),
-            _MarketplaceChip(icon: Icons.eco_outlined, label: 'خضار'),
-            _MarketplaceChip(icon: Icons.cleaning_services_outlined, label: 'منظفات'),
-            _MarketplaceChip(icon: Icons.local_offer_outlined, label: 'عروض'),
-          ]),
-          const SizedBox(height: 24),
-          Row(children: [
-            Text('المتاجر المتاحة', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
-            const Spacer(),
-            Text('${onlineStores.length} متجر'),
-          ]),
-          const SizedBox(height: 12),
-          if (onlineStores.isEmpty)
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  const Icon(Icons.storefront_outlined, size: 36),
-                  const SizedBox(height: 12),
-                  Text('لا توجد متاجر ظاهرة بعد', style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(height: 6),
-                  const Text('عند تفعيل المتاجر أونلاين ستظهر هنا للزبائن. يمكنك إنشاء متجر من الإعدادات.'),
-                  const SizedBox(height: 12),
-                  OutlinedButton.icon(
-                    icon: const Icon(Icons.add_business_outlined),
-                    label: const Text('تفعيل وضع المتجر'),
-                    onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => AccountSetupHome(store: store))),
-                  ),
-                ]),
-              ),
-            )
-          else
-            for (final item in onlineStores)
-              Card(
-                margin: const EdgeInsets.only(bottom: 12),
-                child: ListTile(
-                  leading: const CircleAvatar(child: Icon(Icons.storefront)),
-                  title: Text(item.name),
-                  subtitle: Text([item.address, item.phone].where((e) => e.trim().isNotEmpty).join(' • ')),
-                  trailing: FilledButton(onPressed: () {}, child: const Text('تصفح')),
-                ),
-              ),
-          const SizedBox(height: 24),
-          Row(children: [
-            Text('طلباتي', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
-            const Spacer(),
-            Text('${myOrders.length} طلب'),
-          ]),
-          const SizedBox(height: 12),
-          if (myOrders.isEmpty)
-            const Card(child: ListTile(leading: Icon(Icons.shopping_bag_outlined), title: Text('لا توجد طلبات بعد'), subtitle: Text('أول طلب سيظهر هنا مع حالة المتجر والتوصيل.')))
-          else
-            for (final order in myOrders.take(5))
-              Card(child: ListTile(leading: const Icon(Icons.receipt_long_outlined), title: Text(order.customerName), subtitle: Text(order.status), trailing: Text(order.total.toStringAsFixed(2)))),
-        ],
-      ),
-    );
-  }
-}
-
-class _MarketplaceChip extends StatelessWidget {
-  const _MarketplaceChip({required this.icon, required this.label});
-  final IconData icon;
-  final String label;
-  @override
-  Widget build(BuildContext context) => ActionChip(avatar: Icon(icon, size: 18), label: Text(label), onPressed: () {});
-}
-
-class CustomerSettingsPage extends StatelessWidget {
-  const CustomerSettingsPage({super.key, required this.store});
-  final AppStore store;
-
-  @override
-  Widget build(BuildContext context) {
-    final user = store.activeUser;
-    final hasStore = store.membershipsForActiveUser().isNotEmpty || (user?.primaryStoreId.trim().isNotEmpty ?? false);
-    return Scaffold(
-      appBar: AppBar(title: const Text('إعدادات الحساب')),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('حسابي', style: Theme.of(context).textTheme.titleLarge),
-                const Divider(),
-                _CustomerInfoLine(title: 'الاسم', value: user?.fullName ?? '—'),
-                _CustomerInfoLine(title: 'اسم المستخدم', value: user?.username ?? '—'),
-                _CustomerInfoLine(title: 'الهاتف', value: (user?.phone ?? '').isEmpty ? '—' : user!.phone),
-                _CustomerInfoLine(title: 'الإيميل', value: (user?.email ?? '').isEmpty ? '—' : user!.email),
-                _CustomerInfoLine(title: 'الوضع الحالي', value: hasStore ? 'زبون + متجر' : 'زبون'),
-              ]),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.add_business_outlined),
-              title: Text(hasStore ? 'إدارة المتجر المرتبط' : 'تفعيل وضع المتجر'),
-              subtitle: const Text('أنشئ متجر جديد أو اربط حسابك بمتجر موجود. بعدها ستظهر لك لوحة إدارة المتجر.'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => AccountSetupHome(store: store))),
-            ),
-          ),
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.delivery_dining_outlined),
-              title: const Text('طلب تفعيل مندوب توصيل'),
-              subtitle: const Text('محجوز للمرحلة التالية: حساب الزبون نفسه يمكن أن يطلب تفعيل وضع المندوب.'),
-              trailing: const Icon(Icons.hourglass_empty),
-              onTap: () => ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('سيتم تفعيل هذا الخيار لاحقاً.'))),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-
-class _CustomerInfoLine extends StatelessWidget {
-  const _CustomerInfoLine({required this.title, required this.value});
-  final String title;
-  final String value;
-  @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Row(children: [
-          SizedBox(width: 120, child: Text(title, style: const TextStyle(fontWeight: FontWeight.w600))),
-          Expanded(child: Text(value, textAlign: TextAlign.end)),
-        ]),
-      );
-}
-
-class DriverHomePage extends StatelessWidget {
-  const DriverHomePage({super.key, required this.store});
-  final AppStore store;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Delivery account'), actions: [_LogoutButton(store: store)]),
-      body: ListView(
-        padding: const EdgeInsets.all(24),
-        children: [
-          Text('مرحباً ${store.activeUser?.fullName ?? ''}', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          const Text('واجهة الدليفري محفوظة للمرحلة القادمة. حالياً الحساب يتسجل كدليفري ويستطيع النظام ربط الطلبات به لاحقاً.'),
-          const SizedBox(height: 24),
-          Card(child: ListTile(leading: const Icon(Icons.delivery_dining), title: const Text('طلبات جاهزة للتوصيل'), subtitle: Text('${store.pendingOnlineOrders.length} طلب بانتظار المعالجة/التوصيل'))),
-        ],
-      ),
-    );
-  }
-}
-
-class _CustomerCard extends StatelessWidget {
-  const _CustomerCard({required this.icon, required this.title, required this.value});
-  final IconData icon;
-  final String title;
-  final String value;
-  @override
-  Widget build(BuildContext context) => SizedBox(width: 200, child: Card(child: Padding(padding: const EdgeInsets.all(16), child: Row(children: [CircleAvatar(child: Icon(icon)), const SizedBox(width: 12), Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title), Text(value, style: Theme.of(context).textTheme.titleLarge)])]))));
-}
-
-class _LogoutButton extends StatelessWidget {
-  const _LogoutButton({required this.store});
-  final AppStore store;
-  @override
-  Widget build(BuildContext context) => IconButton(
-        tooltip: 'Logout',
-        icon: const Icon(Icons.logout),
-        onPressed: () async {
-          await store.logout();
-          if (context.mounted) Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => PinLockPage(store: store, child: AccountRouter(store: store, onLocaleChanged: (_) {}))));
-        },
-      );
 }
 
 class MainShell extends StatefulWidget {
@@ -561,8 +148,6 @@ class _MainShellState extends State<MainShell> {
       _ShellItem(label: tr.text('inventory'), icon: Icons.warehouse_outlined, selectedIcon: Icons.warehouse, page: InventoryPage(store: widget.store)),
       if (widget.store.hasPermission(AppPermission.reportsView))
         _ShellItem(label: tr.text('reports'), icon: Icons.bar_chart_outlined, selectedIcon: Icons.bar_chart, page: ReportsPage(store: widget.store)),
-      if (widget.store.hasPermission(AppPermission.platformManage) || widget.store.hasPermission(AppPermission.onlineOrdersView))
-        _ShellItem(label: 'Platform', icon: Icons.hub_outlined, selectedIcon: Icons.hub, page: PlatformPage(store: widget.store)),
       _ShellItem(label: tr.text('settings'), icon: Icons.settings_outlined, selectedIcon: Icons.settings, page: SettingsPage(store: widget.store, onLocaleChanged: widget.onLocaleChanged, onSyncSettingsChanged: widget.onSyncSettingsChanged)),
     ];
     if (selectedIndex >= items.length) selectedIndex = items.length - 1;
@@ -585,7 +170,7 @@ class _MainShellState extends State<MainShell> {
                 onPressed: () async {
                   await widget.store.logout();
                   if (context.mounted) {
-                    Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => PinLockPage(store: widget.store, child: AccountRouter(store: widget.store, onLocaleChanged: widget.onLocaleChanged, onSyncSettingsChanged: widget.onSyncSettingsChanged))));
+                    Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => PinLockPage(store: widget.store, child: MainShell(store: widget.store, onLocaleChanged: widget.onLocaleChanged))));
                   }
                 },
                 icon: const Icon(Icons.logout),
@@ -616,30 +201,22 @@ class _MainShellState extends State<MainShell> {
           body: isWide
               ? Row(
                   children: [
-                    SizedBox(
-                      width: 104,
-                      child: Scrollbar(
-                        thumbVisibility: true,
-                        child: SingleChildScrollView(
-                          child: NavigationRail(
-                            selectedIndex: selectedIndex,
-                            onDestinationSelected: (value) => setState(() => selectedIndex = value),
-                            labelType: NavigationRailLabelType.all,
-                            leading: const Padding(
-                              padding: EdgeInsets.all(12),
-                              child: CircleAvatar(radius: 24, child: Icon(Icons.storefront)),
-                            ),
-                            destinations: [
-                              for (final item in items)
-                                NavigationRailDestination(
-                                  icon: Icon(item.icon),
-                                  selectedIcon: Icon(item.selectedIcon),
-                                  label: Text(item.label),
-                                ),
-                            ],
-                          ),
-                        ),
+                    NavigationRail(
+                      selectedIndex: selectedIndex,
+                      onDestinationSelected: (value) => setState(() => selectedIndex = value),
+                      labelType: NavigationRailLabelType.all,
+                      leading: const Padding(
+                        padding: EdgeInsets.all(12),
+                        child: CircleAvatar(radius: 24, child: Icon(Icons.storefront)),
                       ),
+                      destinations: [
+                        for (final item in items)
+                          NavigationRailDestination(
+                            icon: Icon(item.icon),
+                            selectedIcon: Icon(item.selectedIcon),
+                            label: Text(item.label),
+                          ),
+                      ],
                     ),
                     const VerticalDivider(width: 1),
                     Expanded(child: items[selectedIndex].page),
