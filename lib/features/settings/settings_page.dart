@@ -9,6 +9,7 @@ import '../../core/services/backup_download_service.dart';
 import '../../core/services/cloud_sync_service.dart';
 import '../../core/services/lan_sync_service.dart';
 import '../../core/services/local_database_service.dart';
+import '../../core/services/marketplace_api_service.dart';
 
 import '../../core/localization/app_localizations.dart';
 import '../../data/app_store.dart';
@@ -119,6 +120,7 @@ class SettingsPage extends StatelessWidget {
   }
 
   List<Widget> _syncCards(BuildContext context) => [
+        _MarketplaceServerCard(store: store),
         _LanSyncCard(store: store, onSyncSettingsChanged: onSyncSettingsChanged),
         if (!kIsWeb) _CloudHostSyncCard(store: store),
         _DataConflictsCard(store: store),
@@ -192,6 +194,37 @@ class SettingsPage extends StatelessWidget {
         ),
       ),
     ];
+  }
+
+
+  Future<void> _publishStoreToMarketplace(BuildContext context) async {
+    final settings = CloudSyncSettings.load();
+    if (settings.apiBaseUrl.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('ضع رابط سيرفر الـ Marketplace أولاً.')));
+      return;
+    }
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final identity = store.appIdentity;
+      final storeId = identity.storeId.trim().isEmpty ? 'store_${store.deviceId}' : identity.storeId.trim();
+      final branchId = identity.branchId.trim().isEmpty ? 'main' : identity.branchId.trim();
+      final products = store.products.where((p) => p.isActive && !p.isDeleted).toList();
+      final result = await MarketplaceApiService().publishStore(
+        storeId: storeId,
+        branchId: branchId,
+        store: {
+          ...store.storeProfile.toJson(),
+          'id': storeId,
+          'storeId': storeId,
+          'branchId': branchId,
+          'description': store.storeProfile.footerNote,
+        },
+        products: products,
+      );
+      messenger.showSnackBar(SnackBar(content: Text('تم نشر المتجر: ${result['publishedProducts'] ?? products.length} منتج')));
+    } catch (error) {
+      messenger.showSnackBar(SnackBar(content: Text('فشل نشر المتجر: $error')));
+    }
   }
 
 
@@ -1537,5 +1570,154 @@ class _SystemIdentityCard extends StatelessWidget {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('system_foundation_updated'))));
     }
+  }
+}
+
+class _MarketplaceServerCard extends StatefulWidget {
+  const _MarketplaceServerCard({required this.store});
+  final AppStore store;
+
+  @override
+  State<_MarketplaceServerCard> createState() => _MarketplaceServerCardState();
+}
+
+class _MarketplaceServerCardState extends State<_MarketplaceServerCard> {
+  bool _busy = false;
+
+  Future<void> _editServerUrl() async {
+    final settings = CloudSyncSettings.load();
+    final urlController = TextEditingController(text: settings.apiBaseUrl);
+    final tokenController = TextEditingController(text: settings.apiToken);
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('رابط سيرفر الـ Marketplace'),
+        content: SizedBox(
+          width: 520,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('ضع رابط Cloudflare Tunnel أو السيرفر المحلي، مثل:'),
+              const SizedBox(height: 6),
+              const SelectableText('https://xxxxx.trycloudflare.com'),
+              const SizedBox(height: 16),
+              TextField(
+                controller: urlController,
+                decoration: const InputDecoration(labelText: 'Marketplace API URL', border: OutlineInputBorder()),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: tokenController,
+                decoration: const InputDecoration(labelText: 'API Token اختياري', border: OutlineInputBorder()),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إلغاء')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('حفظ')),
+        ],
+      ),
+    );
+    if (saved == true) {
+      await settings.copyWith(apiBaseUrl: urlController.text.trim(), apiToken: tokenController.text.trim(), enabled: true).save();
+      if (mounted) setState(() {});
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حفظ رابط السيرفر.')));
+    }
+    urlController.dispose();
+    tokenController.dispose();
+  }
+
+  Future<void> _testServer() async {
+    setState(() => _busy = true);
+    try {
+      final result = await CloudSyncService(widget.store).testConnection(CloudSyncSettings.load());
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result.message)));
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('فشل الاختبار: $error')));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _publishStore() async {
+    final settings = CloudSyncSettings.load();
+    if (settings.apiBaseUrl.trim().isEmpty) {
+      await _editServerUrl();
+      if (CloudSyncSettings.load().apiBaseUrl.trim().isEmpty) return;
+    }
+    setState(() => _busy = true);
+    try {
+      final identity = widget.store.appIdentity;
+      final storeId = identity.storeId.trim().isEmpty ? 'store_${widget.store.deviceId}' : identity.storeId.trim();
+      final branchId = identity.branchId.trim().isEmpty ? 'main' : identity.branchId.trim();
+      final products = widget.store.products.where((p) => p.isActive && !p.isDeleted).toList();
+      final result = await MarketplaceApiService().publishStore(
+        storeId: storeId,
+        branchId: branchId,
+        store: {
+          ...widget.store.storeProfile.toJson(),
+          'id': storeId,
+          'storeId': storeId,
+          'branchId': branchId,
+          'description': widget.store.storeProfile.footerNote,
+        },
+        products: products,
+      );
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تم نشر المتجر على الـ Marketplace: ${result['publishedProducts'] ?? products.length} منتج')));
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('فشل النشر: $error')));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final url = CloudSyncSettings.load().apiBaseUrl.trim();
+    final productsCount = widget.store.products.where((p) => p.isActive && !p.isDeleted).length;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.storefront_outlined),
+              title: const Text('Marketplace Server & Publish'),
+              subtitle: Text(url.isEmpty ? 'لم يتم إدخال رابط السيرفر بعد.' : url),
+              trailing: FilledButton.icon(
+                onPressed: _busy ? null : _editServerUrl,
+                icon: const Icon(Icons.link_outlined),
+                label: const Text('إدخال الرابط'),
+              ),
+            ),
+            const Divider(height: 24),
+            Text('المنتجات الجاهزة للنشر: $productsCount'),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                FilledButton.icon(
+                  onPressed: _busy ? null : _publishStore,
+                  icon: _busy ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.cloud_upload_outlined),
+                  label: const Text('نشر المتجر والمنتجات'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _testServer,
+                  icon: const Icon(Icons.wifi_tethering),
+                  label: const Text('اختبار الاتصال'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            const Text('بعد النشر، افتح حساب الزبون واضغط تحديث في Marketplace لرؤية المتجر والمنتجات.'),
+          ],
+        ),
+      ),
+    );
   }
 }
