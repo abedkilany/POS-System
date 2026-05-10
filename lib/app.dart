@@ -878,6 +878,58 @@ class _LogoutButton extends StatelessWidget {
       );
 }
 
+
+class _PublishMarketplaceButton extends StatefulWidget {
+  const _PublishMarketplaceButton({required this.store});
+  final AppStore store;
+
+  @override
+  State<_PublishMarketplaceButton> createState() => _PublishMarketplaceButtonState();
+}
+
+class _PublishMarketplaceButtonState extends State<_PublishMarketplaceButton> {
+  bool _busy = false;
+
+  Future<void> _publish() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      final identity = widget.store.appIdentity;
+      final storeId = identity.storeId.trim().isEmpty ? 'store_${widget.store.deviceId}' : identity.storeId.trim();
+      final branchId = identity.branchId.trim().isEmpty ? 'main' : identity.branchId.trim();
+      final products = widget.store.products.where((p) => p.isActive && !p.isDeleted).toList();
+      final api = MarketplaceApiService();
+      final result = await api.publishStore(
+        storeId: storeId,
+        branchId: branchId,
+        store: {
+          ...widget.store.storeProfile.toJson(),
+          'id': storeId,
+          'storeId': storeId,
+          'branchId': branchId,
+          'description': widget.store.storeProfile.footerNote,
+        },
+        products: products,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تم نشر المتجر على الـ Marketplace: ${result['publishedProducts'] ?? products.length} منتج')));
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('فشل النشر: $error')));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: 'نشر المتجر للـ Marketplace',
+      onPressed: _busy ? null : _publish,
+      icon: _busy ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.cloud_upload_outlined),
+    );
+  }
+}
+
 class MainShell extends StatefulWidget {
   const MainShell({super.key, required this.onLocaleChanged, required this.store, this.onSyncSettingsChanged});
 
@@ -926,6 +978,7 @@ class _MainShellState extends State<MainShell> {
             title: Text('${widget.store.storeProfile.name} • ${items[selectedIndex].label}'),
             actions: [
               HostConnectionIndicator(store: widget.store),
+              _PublishMarketplaceButton(store: widget.store),
               if (constraints.maxWidth >= 520)
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 8),

@@ -31,6 +31,34 @@ class MarketplaceApiService {
     return query == null ? uri : uri.replace(queryParameters: {...uri.queryParameters, ...query});
   }
 
+
+  Future<Map<String, dynamic>> publishStore({
+    required String storeId,
+    required String branchId,
+    required Map<String, dynamic> store,
+    required List<Product> products,
+  }) async {
+    final response = await _client
+        .post(
+          _endpoint('/marketplace/publish-store'),
+          headers: const {'Content-Type': 'application/json', 'Accept': 'application/json'},
+          body: jsonEncode({
+            'storeId': storeId,
+            'branchId': branchId,
+            'store': store,
+            'products': products.map((p) => {
+                  ...p.toJson(),
+                  'storeId': storeId,
+                  'branchId': branchId,
+                  'isPublic': true,
+                  'isAvailableOnline': p.isActive && !p.isDeleted,
+                }).toList(),
+          }),
+        )
+        .timeout(const Duration(seconds: 30));
+    return _decode(response);
+  }
+
   Future<List<PlatformStore>> fetchStores() async {
     final response = await _client.get(_endpoint('/marketplace/stores')).timeout(const Duration(seconds: 15));
     final decoded = _decode(response);

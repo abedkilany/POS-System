@@ -19,7 +19,8 @@ fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 const db = new DatabaseSync(DB_PATH);
 db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
 initSchema();
-seedDefaultStoreIfEmpty();
+// No demo store is seeded here. The Marketplace should show only stores
+// explicitly published by real store devices.
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -232,6 +233,23 @@ function initSchema() {
       updated_at TEXT DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS marketplace_products (
+      id TEXT NOT NULL,
+      store_id TEXT NOT NULL,
+      branch_id TEXT DEFAULT 'main',
+      name TEXT NOT NULL,
+      code TEXT DEFAULT '',
+      category TEXT DEFAULT 'General',
+      price REAL DEFAULT 0,
+      stock INTEGER DEFAULT 0,
+      payload TEXT DEFAULT '{}',
+      is_active INTEGER DEFAULT 1,
+      is_available_online INTEGER DEFAULT 1,
+      updated_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (store_id, branch_id, id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_marketplace_products_store ON marketplace_products (store_id, branch_id, is_active, is_available_online);
+
     CREATE TABLE IF NOT EXISTS online_orders (
       id TEXT PRIMARY KEY,
       store_id TEXT NOT NULL,
@@ -254,12 +272,6 @@ function initSchema() {
   `);
 }
 
-function seedDefaultStoreIfEmpty() {
-  const count = db.prepare('SELECT COUNT(*) AS c FROM platform_stores').get().c;
-  if (count > 0) return;
-  const now = new Date().toISOString();
-  db.prepare(`INSERT INTO platform_stores (id, name, description, is_online_enabled, is_active, created_at, updated_at) VALUES (?, ?, ?, 1, 1, ?, ?)`).run('default-store', 'My Store', 'Default marketplace store. Replace this by linking a real store.', now, now);
-}
 
 function normalizeUsername(value) { return String(value || '').trim().toLowerCase(); }
 function roleForAccountType(type) {
@@ -292,6 +304,17 @@ function issueStoreToken() { return `st_${crypto.randomBytes(24).toString('base6
 function hashStoreToken(token) { return crypto.createHmac('sha256', STORE_TOKEN_SECRET).update(String(token || '').trim()).digest('base64url'); }
 function parseJson(value, fallback) { try { return value ? JSON.parse(value) : fallback; } catch { return fallback; } }
 function bool(v) { return v === true || v === 1 || v === '1'; }
+function runTransaction(fn) {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const result = fn();
+    db.exec('COMMIT');
+    return result;
+  } catch (error) {
+    try { db.exec('ROLLBACK'); } catch (_) {}
+    throw error;
+  }
+}
 function publicUser(row) {
   if (!row) return null;
   return { id: row.id, fullName: row.full_name, username: row.username, passwordHash: row.password_hash, roleId: row.role_id, accountType: row.account_type, phone: row.phone || '', email: row.email || '', primaryStoreId: row.primary_store_id || '', extraPermissions: [], deniedPermissions: [], isActive: bool(row.is_active), isSystem: bool(row.is_system), createdAt: row.created_at, updatedAt: row.updated_at, lastLoginAt: row.last_login_at || null };
@@ -416,7 +439,7 @@ function syncPush(res, body) {
   const fallback = { storeId: body.storeId, branchId: body.branchId, deviceId: body.deviceId };
   const ackIds = [];
   const insert = db.prepare(`INSERT OR IGNORE INTO sync_events (id, store_id, branch_id, device_id, entity_type, entity_id, operation, payload, created_at, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-  const tx = db.transaction(() => {
+  runTransaction(() => {
     for (const raw of changes) {
       const c = normalizeChange(raw, fallback);
       const receivedAt = new Date().toISOString();
@@ -426,7 +449,6 @@ function syncPush(res, body) {
       ackIds.push(c.id);
     }
   });
-  tx();
   return send(res, 200, { ok: true, ackIds, serverTime: new Date().toISOString() });
 }
 function syncPull(res, url) {
@@ -481,14 +503,13 @@ function requestPush(res, body) {
   const fallback = { storeId: body.storeId, branchId: body.branchId, deviceId: body.deviceId };
   const ids = [];
   const stmt = db.prepare(`INSERT OR IGNORE INTO cloud_change_requests (id, store_id, branch_id, device_id, entity_type, entity_id, operation, payload, created_at, received_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`);
-  const tx = db.transaction(() => {
+  runTransaction(() => {
     for (const raw of changes) {
       const c = normalizeChange(raw, fallback);
       stmt.run(c.id, c.storeId, c.branchId, c.deviceId, c.entityType, c.entityId, c.operation, JSON.stringify(c.payload || {}), c.createdAt, new Date().toISOString());
       ids.push(c.id);
     }
   });
-  tx();
   return send(res, 200, { ok: true, ackIds: ids, serverTime: new Date().toISOString() });
 }
 function requestPull(res, url) {
@@ -504,8 +525,7 @@ function requestAck(res, body) {
   const hostDeviceId = String(body.hostDeviceId || body.host_device_id || '').trim();
   const now = new Date().toISOString();
   const stmt = db.prepare(`UPDATE cloud_change_requests SET status = 'accepted', accepted_at = ?, host_device_id = ? WHERE id = ?`);
-  const tx = db.transaction(() => ids.forEach((id) => stmt.run(now, hostDeviceId, String(id))));
-  tx();
+  runTransaction(() => ids.forEach((id) => stmt.run(now, hostDeviceId, String(id))));
   return send(res, 200, { ok: true, ackIds: ids, serverTime: now });
 }
 function hostHeartbeat(res, body) {
@@ -518,6 +538,36 @@ function hostHeartbeat(res, body) {
 }
 
 async function handleMarketplace(req, res, pathname, url) {
+  if (req.method === 'POST' && pathname === '/marketplace/publish-store') {
+    const body = await readBody(req);
+    const storeId = String(body.storeId || '').trim();
+    const branchId = String(body.branchId || 'main').trim() || 'main';
+    const store = body.store && typeof body.store === 'object' ? body.store : {};
+    const products = Array.isArray(body.products) ? body.products : [];
+    if (!storeId) return send(res, 400, { ok: false, error: 'storeId is required.' });
+    const now = new Date().toISOString();
+    const storeName = String(store.name || body.storeName || 'Store').trim() || 'Store';
+    db.prepare(`INSERT INTO platform_stores (id, name, owner_user_id, phone, address, description, is_online_enabled, subscription_plan, subscription_status, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, 'local', 'active', 1, ?, ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name, phone = excluded.phone, address = excluded.address, description = excluded.description, is_online_enabled = 1, is_active = 1, subscription_status = 'active', updated_at = excluded.updated_at`)
+      .run(storeId, storeName, String(store.ownerUserId || ''), String(store.phone || ''), String(store.address || ''), String(store.description || ''), now, now);
+    upsertSnapshot({ storeId, branchId, entityType: 'store_profile', entityId: 'store', operation: 'upsert', payload: { ...store, name: storeName, id: storeId, storeId, branchId, isMarketplacePublished: true, updatedAt: now }, updatedAt: now });
+
+    const clear = db.prepare(`DELETE FROM marketplace_products WHERE store_id = ? AND branch_id = ?`);
+    const insertProduct = db.prepare(`INSERT INTO marketplace_products (id, store_id, branch_id, name, code, category, price, stock, payload, is_active, is_available_online, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    runTransaction(() => {
+      clear.run(storeId, branchId);
+      for (const raw of products) {
+        if (!raw || typeof raw !== 'object') continue;
+        const id = String(raw.id || '').trim();
+        if (!id) continue;
+        const product = { ...raw, storeId, branchId, isPublic: raw.isPublic !== false, isAvailableOnline: raw.isAvailableOnline !== false, updatedAt: raw.updatedAt || now };
+        const active = product.isActive === false || product.deletedAt ? 0 : 1;
+        const available = product.isAvailableOnline === false || product.isPublic === false ? 0 : 1;
+        insertProduct.run(id, storeId, branchId, String(product.name || product.nameAr || product.nameEn || ''), String(product.code || ''), String(product.category || 'General'), Number(product.price || 0), Number(product.stock || 0), JSON.stringify(product), active, available, now);
+        upsertSnapshot({ storeId, branchId, entityType: 'product', entityId: id, operation: active ? 'upsert' : 'delete', payload: product, updatedAt: now });
+      }
+    });
+    return send(res, 200, { ok: true, storeId, branchId, publishedProducts: products.length, updatedAt: now });
+  }
   if (req.method === 'GET' && pathname === '/marketplace/stores') {
     const stores = new Map();
     const rows = db.prepare(`SELECT * FROM platform_stores WHERE is_active = 1 AND is_online_enabled = 1 ORDER BY updated_at DESC`).all();
@@ -552,11 +602,15 @@ async function handleMarketplace(req, res, pathname, url) {
   if (req.method === 'GET' && productsMatch) {
     const storeId = decodeURIComponent(productsMatch[1]);
     const branchId = String(url.searchParams.get('branch_id') || url.searchParams.get('branchId') || 'main');
-    const rows = db.prepare(`SELECT * FROM entity_snapshots WHERE store_id = ? AND branch_id = ? AND entity_type = 'product' AND operation <> 'delete' ORDER BY updated_at DESC`).all(storeId, branchId);
-    const products = rows
-      .map((r) => ({ ...parseJson(r.payload, {}), id: r.entity_id, storeId: r.store_id, branchId: r.branch_id }))
-      .filter((p) => p.isActive !== false && p.isPublic !== false && p.isOnlineEnabled !== false && p.isAvailableOnline !== false)
-      .filter((p) => p.trackStock === false || Number(p.stock || 0) > 0);
+    const publishedRows = db.prepare(`SELECT * FROM marketplace_products WHERE store_id = ? AND branch_id = ? AND is_active = 1 AND is_available_online = 1 ORDER BY updated_at DESC`).all(storeId, branchId);
+    let products = publishedRows.map((r) => ({ ...parseJson(r.payload, {}), id: r.id, storeId: r.store_id, branchId: r.branch_id }));
+    if (!products.length) {
+      const rows = db.prepare(`SELECT * FROM entity_snapshots WHERE store_id = ? AND branch_id = ? AND entity_type = 'product' AND operation <> 'delete' ORDER BY updated_at DESC`).all(storeId, branchId);
+      products = rows
+        .map((r) => ({ ...parseJson(r.payload, {}), id: r.entity_id, storeId: r.store_id, branchId: r.branch_id }))
+        .filter((p) => p.isActive !== false && p.isPublic !== false && p.isOnlineEnabled !== false && p.isAvailableOnline !== false);
+    }
+    products = products.filter((p) => p.trackStock === false || Number(p.stock || 0) > 0);
     return send(res, 200, { ok: true, storeId, products });
   }
 
