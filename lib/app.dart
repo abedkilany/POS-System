@@ -441,8 +441,8 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
-              color: color.withOpacity(0.14),
-              border: Border.all(color: color.withOpacity(0.45)),
+              color: color.withValues(alpha: 0.14),
+              border: Border.all(color: color.withValues(alpha: 0.45)),
               borderRadius: BorderRadius.circular(999),
             ),
             child: Row(

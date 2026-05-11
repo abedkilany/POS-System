@@ -79,10 +79,12 @@ class _PurchasesPageState extends State<PurchasesPage> {
   Future<void> _receivePurchase(BuildContext context, String id) async {
     try {
       await widget.store.receivePurchase(id);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('purchase_received'))));
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('purchase_received'))));
       setState(() {});
     } catch (error) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
     }
   }
 
@@ -101,10 +103,12 @@ class _PurchasesPageState extends State<PurchasesPage> {
     if (ok != true) return;
     try {
       await widget.store.cancelPurchase(id);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('purchase_cancelled'))));
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('purchase_cancelled'))));
       setState(() {});
     } catch (error) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
     }
   }
 
@@ -136,7 +140,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       DropdownButtonFormField<String>(
-                        value: supplierId.isEmpty ? null : supplierId,
+                        initialValue: supplierId.isEmpty ? null : supplierId,
                         decoration: InputDecoration(labelText: tr.text('supplier')),
                         items: widget.store.suppliers.map((supplier) => DropdownMenuItem(value: supplier.id, child: Text(supplier.name))).toList(),
                         onChanged: (value) {
@@ -156,7 +160,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                           SizedBox(
                             width: 260,
                             child: DropdownButtonFormField<String>(
-                              value: selectedProduct?.id,
+                              initialValue: selectedProduct?.id,
                               decoration: InputDecoration(labelText: tr.text('product')),
                               items: widget.store.products.map((product) => DropdownMenuItem(value: product.id, child: Text(product.name))).toList(),
                               onChanged: (value) {

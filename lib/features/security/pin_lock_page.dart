@@ -37,13 +37,15 @@ class _PinLockPageState extends State<PinLockPage> {
   }
 
   Future<void> _unlock() async {
-    final tr = AppLocalizations.of(context);
+    final wrongPinMessage = AppLocalizations.of(context).text('wrong_pin');
+    final messenger = ScaffoldMessenger.of(context);
     final ok = await widget.store.login(_usernameController.text, _passwordController.text);
+    if (!mounted) return;
     if (ok) {
       setState(() => _unlocked = true);
     } else {
       _passwordController.clear();
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('wrong_pin'))));
+      messenger.showSnackBar(SnackBar(content: Text(wrongPinMessage)));
     }
   }
 

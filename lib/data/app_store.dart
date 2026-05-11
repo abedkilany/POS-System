@@ -2065,12 +2065,6 @@ class AppStore extends ChangeNotifier {
     final stockMovements = (decoded['stockMovements'] as List<dynamic>? ?? [])
         .map((item) => StockMovement.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
-    final syncChanges = (decoded['syncChanges'] as List<dynamic>? ?? [])
-        .map((item) => SyncChange.fromJson(Map<String, dynamic>.from(item as Map)))
-        .toList();
-    final syncQueue = (decoded['syncQueue'] as List<dynamic>? ?? [])
-        .map((item) => SyncQueueItem.fromJson(Map<String, dynamic>.from(item as Map)))
-        .toList();
     final roles = (decoded['roles'] as List<dynamic>? ?? [])
         .map((item) => UserRole.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
@@ -2219,12 +2213,6 @@ class AppStore extends ChangeNotifier {
     final stockMovements = (decoded['stockMovements'] as List<dynamic>? ?? [])
         .map((item) => StockMovement.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
-    final syncChanges = (decoded['syncChanges'] as List<dynamic>? ?? [])
-        .map((item) => SyncChange.fromJson(Map<String, dynamic>.from(item as Map)))
-        .toList();
-    final syncQueue = (decoded['syncQueue'] as List<dynamic>? ?? [])
-        .map((item) => SyncQueueItem.fromJson(Map<String, dynamic>.from(item as Map)))
-        .toList();
     final roles = (decoded['roles'] as List<dynamic>? ?? [])
         .map((item) => UserRole.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
@@ -2327,12 +2315,6 @@ class AppStore extends ChangeNotifier {
         .toList();
     final stockMovements = (decoded['stockMovements'] as List<dynamic>? ?? [])
         .map((item) => StockMovement.fromJson(Map<String, dynamic>.from(item as Map)))
-        .toList();
-    final syncChanges = (decoded['syncChanges'] as List<dynamic>? ?? [])
-        .map((item) => SyncChange.fromJson(Map<String, dynamic>.from(item as Map)))
-        .toList();
-    final syncQueue = (decoded['syncQueue'] as List<dynamic>? ?? [])
-        .map((item) => SyncQueueItem.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
     final roles = (decoded['roles'] as List<dynamic>? ?? [])
         .map((item) => UserRole.fromJson(Map<String, dynamic>.from(item as Map)))
@@ -2885,7 +2867,7 @@ class AppStore extends ChangeNotifier {
         );
       }
 
-      final map = Map<String, dynamic>.from(decoded as Map);
+      final map = Map<String, dynamic>.from(decoded);
       if (!map.containsKey('products') || !map.containsKey('customers') || !map.containsKey('sales')) {
         return const BackupValidationResult(
           isValid: false,

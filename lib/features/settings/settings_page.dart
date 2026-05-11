@@ -8,7 +8,6 @@ import 'package:flutter/services.dart';
 import '../../core/services/backup_download_service.dart';
 import '../../core/services/cloud_sync_service.dart';
 import '../../core/services/lan_sync_service.dart';
-import '../../core/services/local_database_service.dart';
 
 import '../../core/localization/app_localizations.dart';
 import '../../data/app_store.dart';
@@ -297,7 +296,7 @@ class SettingsPage extends StatelessWidget {
                       TextField(controller: addressController, decoration: InputDecoration(labelText: tr.text('address'))),
                       const SizedBox(height: 12),
                       DropdownButtonFormField<String>(
-                        value: currency,
+                        initialValue: currency,
                         items: const [
                           DropdownMenuItem(value: 'USD', child: Text('USD')),
                           DropdownMenuItem(value: 'LBP', child: Text('LBP')),
@@ -452,8 +451,10 @@ class SettingsPage extends StatelessWidget {
 
       var raw = utf8.decode(bytes);
       if (raw.trim().startsWith('{') && raw.contains('store_manager_pro_encrypted_backup')) {
+        if (!context.mounted) return;
         final password = await _askPassword(context, title: 'Backup password');
         if (password == null) return;
+        if (!context.mounted) return;
         raw = store.decryptBackupJson(raw, password);
       }
       if (raw.trim().isEmpty) {
@@ -467,7 +468,7 @@ class SettingsPage extends StatelessWidget {
 
       if (!context.mounted) return;
       final confirmed = await _confirmBackupImport(context, validation.summary!);
-      if (confirmed != true) return;
+      if (!context.mounted || confirmed != true) return;
 
       await store.importBackupJson(raw);
       if (context.mounted) {
@@ -561,8 +562,9 @@ class SettingsPage extends StatelessWidget {
         throw Exception(validation.errorMessage ?? 'Invalid backup JSON');
       }
 
+      if (!context.mounted) return;
       final confirmed = await _confirmBackupImport(context, validation.summary!);
-      if (confirmed != true) return;
+      if (!context.mounted || confirmed != true) return;
 
       await store.importBackupJson(raw);
       if (context.mounted) {
@@ -611,7 +613,7 @@ class _BackupSummaryCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.35),
+        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
         borderRadius: BorderRadius.circular(12),
       ),
       child: _BackupSummaryDetails(summary: summary),
@@ -627,7 +629,7 @@ class _BackupSummaryDetails extends StatelessWidget {
   String _formatDate(DateTime? value) {
     if (value == null) return '—';
     final local = value.toLocal();
-    final two = (int n) => n.toString().padLeft(2, '0');
+    String two(int n) => n.toString().padLeft(2, '0');
     return '${local.year}-${two(local.month)}-${two(local.day)} ${two(local.hour)}:${two(local.minute)}';
   }
 
@@ -895,7 +897,6 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final identity = widget.store.appIdentity;
-    final isHost = identity.isHost;
     final color = Theme.of(context).colorScheme;
 
     return Card(
@@ -1430,7 +1431,7 @@ class _LanSyncCardState extends State<_LanSyncCard> {
                               await _syncService.startHost(port: _port);
                               _hostModeEnabled = true;
                               await _saveSettings();
-                              setState(() => _status = '${tr.text('host_started')} ${_port}');
+                              setState(() => _status = '${tr.text('host_started')} $_port');
                             }
                           }),
                   icon: Icon(_syncService.isHosting ? Icons.stop_circle_outlined : Icons.wifi_tethering),
@@ -1634,19 +1635,19 @@ class _SystemIdentityCard extends StatelessWidget {
                   TextField(controller: cloudTenantController, decoration: InputDecoration(labelText: tr.text('cloud_tenant_id'))),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<DeviceRole>(
-                    value: deviceRole,
+                    initialValue: deviceRole,
                     decoration: InputDecoration(labelText: tr.text('device_role')),
                     items: DeviceRole.values.map((item) => DropdownMenuItem(value: item, child: Text(item.name))).toList(),
                     onChanged: (value) => setState(() => deviceRole = value ?? deviceRole),
                   ),
                   DropdownButtonFormField<AppRole>(
-                    value: appRole,
+                    initialValue: appRole,
                     decoration: InputDecoration(labelText: tr.text('app_role')),
                     items: AppRole.values.map((item) => DropdownMenuItem(value: item, child: Text(item.name))).toList(),
                     onChanged: (value) => setState(() => appRole = value ?? appRole),
                   ),
                   DropdownButtonFormField<SyncMode>(
-                    value: syncMode,
+                    initialValue: syncMode,
                     decoration: InputDecoration(labelText: tr.text('sync_mode')),
                     items: SyncMode.values.map((item) => DropdownMenuItem(value: item, child: Text(item.name))).toList(),
                     onChanged: (value) => setState(() => syncMode = value ?? syncMode),

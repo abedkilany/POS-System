@@ -69,7 +69,7 @@ class _ProductsPageState extends State<ProductsPage> {
                 onChanged: (value) => setState(() => query = value),
               );
               final categoryField = DropdownButtonFormField<String>(
-                value: categoryFilter,
+                initialValue: categoryFilter,
                 decoration: InputDecoration(labelText: tr.text('category')),
                 items: categories.map((item) => DropdownMenuItem(value: item, child: Text(item == 'All' ? tr.text('all') : item))).toList(),
                 onChanged: (value) => setState(() => categoryFilter = value ?? 'All'),
@@ -505,7 +505,7 @@ class _CatalogDropdown extends StatelessWidget {
       children: [
         Expanded(
           child: DropdownButtonFormField<String>(
-            value: value.trim().isEmpty ? null : value,
+            initialValue: value.trim().isEmpty ? null : value,
             decoration: InputDecoration(labelText: label),
             items: values.map((raw) {
               CatalogItem? match;
@@ -538,12 +538,12 @@ class _SupplierDropdown extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final values = <String>{...suppliers.map((item) => item.name as String).where((e) => e.trim().isNotEmpty), if (value.trim().isNotEmpty) value}.toList();
+    final values = <String>{...suppliers.map((item) => item.name).where((e) => e.trim().isNotEmpty), if (value.trim().isNotEmpty) value}.toList();
     return Row(
       children: [
         Expanded(
           child: DropdownButtonFormField<String>(
-            value: value.trim().isEmpty ? null : value,
+            initialValue: value.trim().isEmpty ? null : value,
             decoration: InputDecoration(labelText: tr.text('supplier')),
             items: values.map((item) => DropdownMenuItem(value: item, child: Text(item))).toList(),
             onChanged: (newValue) => onChanged(newValue ?? ''),

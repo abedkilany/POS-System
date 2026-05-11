@@ -173,7 +173,7 @@ class _SalesPageState extends State<SalesPage> {
               _buildBarcodeStation(context, tr),
               const SizedBox(height: 10),
               DropdownButtonFormField<String>(
-                value: widget.store.sanitizeSelectedCustomerId(_selectedCustomerId),
+                initialValue: widget.store.sanitizeSelectedCustomerId(_selectedCustomerId),
                 items: widget.store.customers.map((customer) => DropdownMenuItem<String>(value: customer.id, child: Text(customer.name))).toList(),
                 decoration: InputDecoration(labelText: tr.text('customer')),
                 onChanged: (value) => setState(() => _selectedCustomerId = widget.store.sanitizeSelectedCustomerId(value)),
@@ -193,7 +193,7 @@ class _SalesPageState extends State<SalesPage> {
                   const SizedBox(width: 10),
                   Expanded(
                     child: DropdownButtonFormField<String>(
-                      value: _paymentMethod,
+                      initialValue: _paymentMethod,
                       decoration: InputDecoration(labelText: tr.text('payment')),
                       items: [
                         DropdownMenuItem(value: 'Cash', child: Text(tr.text('cash'))),
@@ -239,7 +239,7 @@ class _SalesPageState extends State<SalesPage> {
                 SizedBox(
                   width: 320,
                   child: DropdownButtonFormField<String>(
-                    value: widget.store.sanitizeSelectedCustomerId(_selectedCustomerId),
+                    initialValue: widget.store.sanitizeSelectedCustomerId(_selectedCustomerId),
                     items: widget.store.customers
                         .map((customer) => DropdownMenuItem<String>(value: customer.id, child: Text(customer.name)))
                         .toList(),
@@ -260,7 +260,7 @@ class _SalesPageState extends State<SalesPage> {
                 SizedBox(
                   width: 180,
                   child: DropdownButtonFormField<String>(
-                    value: _paymentMethod,
+                    initialValue: _paymentMethod,
                     decoration: InputDecoration(labelText: tr.text('payment')),
                     items: const [
                       DropdownMenuItem(value: 'Cash', child: Text('Cash')),
@@ -322,8 +322,8 @@ class _SalesPageState extends State<SalesPage> {
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(18),
-        color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.45),
-        border: Border.all(color: Theme.of(context).colorScheme.primary.withOpacity(0.25)),
+        color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.45),
+        border: Border.all(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.25)),
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -422,7 +422,7 @@ class _SalesPageState extends State<SalesPage> {
     return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
-        color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.35),
+        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),

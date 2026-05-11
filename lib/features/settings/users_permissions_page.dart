@@ -194,7 +194,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                   ),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
-                    value: roleId,
+                    initialValue: roleId,
                     decoration: const InputDecoration(labelText: 'Role'),
                     items: [
                       for (final role in widget.store.roles) DropdownMenuItem(value: role.id, child: Text(role.name)),
