@@ -7,6 +7,8 @@ function asIso(value) {
 export default async function handler(req, res) {
   try {
     assertSyncToken(req);
+    await sql`alter table cloud_change_requests add column if not exists store_epoch integer not null default 1`;
+    await sql`alter table cloud_change_requests add column if not exists sequence integer not null default 0`;
     if (req.method !== 'GET') return res.status(405).json({ ok: false, error: 'Method not allowed' });
 
     const storeId = String(req.query.store_id || req.query.storeId || 'default-store');
@@ -15,7 +17,7 @@ export default async function handler(req, res) {
     const limit = Math.min(Number(req.query.limit || 1000), 5000);
 
     const rows = await sql`
-      select id, store_id, branch_id, device_id, entity_type, entity_id, operation, payload, created_at, received_at
+      select id, store_id, branch_id, device_id, entity_type, entity_id, operation, payload, created_at, received_at, store_epoch, sequence
       from cloud_change_requests
       where store_id = ${storeId}
         and branch_id = ${branchId}
@@ -36,6 +38,8 @@ export default async function handler(req, res) {
       createdAt: asIso(row.created_at),
       isSynced: false,
       syncedAt: null,
+      storeEpoch: row.store_epoch || 1,
+      sequence: row.sequence || 0,
     }));
 
     res.status(200).json({ ok: true, changes, generatedAt: new Date().toISOString(), source: 'host_inbox' });

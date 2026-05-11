@@ -18,12 +18,16 @@ function normalizeChange(raw, fallback) {
     operation,
     payload: raw.payload && typeof raw.payload === 'object' ? raw.payload : {},
     createdAt: raw.createdAt ? new Date(raw.createdAt).toISOString() : new Date().toISOString(),
+    storeEpoch: Number(raw.storeEpoch || raw.store_epoch || 1),
+    sequence: Number(raw.sequence || 0),
   };
 }
 
 export default async function handler(req, res) {
   try {
     assertSyncToken(req);
+    await sql`alter table cloud_change_requests add column if not exists store_epoch integer not null default 1`;
+    await sql`alter table cloud_change_requests add column if not exists sequence integer not null default 0`;
     if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Method not allowed' });
 
     const body = req.body || {};
@@ -37,9 +41,9 @@ export default async function handler(req, res) {
       assertStoreAllowed(change.storeId);
       await sql`
         insert into cloud_change_requests (
-          id, store_id, branch_id, device_id, entity_type, entity_id, operation, payload, created_at, status
+          id, store_id, branch_id, device_id, entity_type, entity_id, operation, payload, created_at, store_epoch, sequence, status
         ) values (
-          ${change.id}, ${change.storeId}, ${change.branchId}, ${change.deviceId}, ${change.entityType}, ${change.entityId}, ${change.operation}, ${JSON.stringify(change.payload)}, ${change.createdAt}, 'pending'
+          ${change.id}, ${change.storeId}, ${change.branchId}, ${change.deviceId}, ${change.entityType}, ${change.entityId}, ${change.operation}, ${JSON.stringify(change.payload)}, ${change.createdAt}, ${change.storeEpoch}, ${change.sequence}, 'pending'
         )
         on conflict (id) do nothing
       `;

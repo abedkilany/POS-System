@@ -387,6 +387,25 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
         _message = result.message;
       }
     });
+    if (!result.ok && widget.store.appIdentity.isCloudEnabled) {
+      final cloudSettings = CloudSyncSettings.load();
+      if (cloudSettings.isConfigured) {
+        final status = await CloudSyncService(widget.store).getHostHeartbeatStatus(cloudSettings);
+        if (!mounted) return;
+        setState(() {
+          if (status.cloudReachable && status.hostReachable) {
+            _lastOk = status.lastSeenAt ?? DateTime.now();
+            _state = pending > 0 ? _HostReachability.pending : _HostReachability.connected;
+            _message = pending > 0
+                ? trText('pending_changes').replaceAll('{count}', '$pending')
+                : 'LAN offline, Host reachable through Cloud.';
+          } else if (status.cloudReachable) {
+            _state = _HostReachability.disconnected;
+            _message = 'LAN offline. Cloud reachable but Host heartbeat is stale.';
+          }
+        });
+      }
+    }
   }
 
   @override

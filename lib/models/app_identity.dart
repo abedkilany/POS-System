@@ -20,6 +20,7 @@ class AppIdentity {
     required this.updatedAt,
     this.hostDeviceId = '',
     this.cloudTenantId = '',
+    this.storeEpoch = 1,
   });
 
   final String storeId;
@@ -34,6 +35,7 @@ class AppIdentity {
   final DateTime updatedAt;
   final String hostDeviceId;
   final String cloudTenantId;
+  final int storeEpoch;
 
   bool get isHost => deviceRole == DeviceRole.host;
   bool get isClient => deviceRole == DeviceRole.client;
@@ -53,6 +55,7 @@ class AppIdentity {
     DateTime? updatedAt,
     String? hostDeviceId,
     String? cloudTenantId,
+    int? storeEpoch,
   }) {
     return AppIdentity(
       storeId: storeId ?? this.storeId,
@@ -67,6 +70,7 @@ class AppIdentity {
       updatedAt: updatedAt ?? this.updatedAt,
       hostDeviceId: hostDeviceId ?? this.hostDeviceId,
       cloudTenantId: cloudTenantId ?? this.cloudTenantId,
+      storeEpoch: storeEpoch ?? this.storeEpoch,
     );
   }
 
@@ -83,6 +87,7 @@ class AppIdentity {
         'updatedAt': updatedAt.toIso8601String(),
         'hostDeviceId': hostDeviceId,
         'cloudTenantId': cloudTenantId,
+        'storeEpoch': storeEpoch,
       };
 
   factory AppIdentity.fromJson(Map<String, dynamic> json) {
@@ -107,6 +112,7 @@ class AppIdentity {
       updatedAt: DateTime.tryParse(json['updatedAt']?.toString() ?? '') ?? now,
       hostDeviceId: json['hostDeviceId']?.toString() ?? '',
       cloudTenantId: json['cloudTenantId']?.toString() ?? '',
+      storeEpoch: (json['storeEpoch'] as num?)?.toInt() ?? 1,
     );
   }
 
@@ -123,6 +129,7 @@ class AppIdentity {
       syncMode: platform == AppPlatformType.web ? SyncMode.cloudConnected : SyncMode.lanOnly,
       createdAt: now,
       updatedAt: now,
+      storeEpoch: 1,
     );
   }
 }

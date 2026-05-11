@@ -18,6 +18,8 @@ function normalizeChange(raw, fallback) {
     operation,
     payload: raw.payload && typeof raw.payload === 'object' ? raw.payload : {},
     createdAt: raw.createdAt ? new Date(raw.createdAt).toISOString() : new Date().toISOString(),
+    storeEpoch: Number(raw.storeEpoch || raw.store_epoch || 1),
+    sequence: Number(raw.sequence || 0),
   };
 }
 
@@ -156,6 +158,8 @@ async function materializeChange(change) {
 export default async function handler(req, res) {
   try {
     assertSyncToken(req);
+    await sql`alter table sync_events add column if not exists store_epoch integer not null default 1`;
+    await sql`alter table sync_events add column if not exists sequence integer not null default 0`;
     if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Method not allowed' });
 
     const body = req.body || {};
@@ -174,9 +178,9 @@ export default async function handler(req, res) {
       assertStoreAllowed(change.storeId);
       const inserted = await sql`
         insert into sync_events (
-          id, store_id, branch_id, device_id, entity_type, entity_id, operation, payload, created_at
+          id, store_id, branch_id, device_id, entity_type, entity_id, operation, payload, created_at, store_epoch, sequence
         ) values (
-          ${change.id}, ${change.storeId}, ${change.branchId}, ${change.deviceId}, ${change.entityType}, ${change.entityId}, ${change.operation}, ${JSON.stringify(change.payload)}, ${change.createdAt}
+          ${change.id}, ${change.storeId}, ${change.branchId}, ${change.deviceId}, ${change.entityType}, ${change.entityId}, ${change.operation}, ${JSON.stringify(change.payload)}, ${change.createdAt}, ${change.storeEpoch}, ${change.sequence}
         )
         on conflict (id) do nothing
         returning id

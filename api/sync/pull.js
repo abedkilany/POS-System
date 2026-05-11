@@ -13,6 +13,8 @@ function safeIso(value) {
 export default async function handler(req, res) {
   try {
     assertSyncToken(req);
+    await sql`alter table sync_events add column if not exists store_epoch integer not null default 1`;
+    await sql`alter table sync_events add column if not exists sequence integer not null default 0`;
     if (req.method !== 'GET') return res.status(405).json({ ok: false, error: 'Method not allowed' });
 
     const storeId = String(req.query.store_id || req.query.storeId || 'default-store');
@@ -46,12 +48,14 @@ export default async function handler(req, res) {
         createdAt: asIso(row.updated_at),
         isSynced: true,
         syncedAt: new Date().toISOString(),
+        storeEpoch: 1,
+        sequence: 0,
       }));
       return res.status(200).json({ ok: true, changes, generatedAt: new Date().toISOString(), source: 'entity_snapshots' });
     }
 
     const rows = await sql`
-      select id, store_id, branch_id, device_id, entity_type, entity_id, operation, payload, created_at, received_at
+      select id, store_id, branch_id, device_id, entity_type, entity_id, operation, payload, created_at, received_at, store_epoch, sequence
       from sync_events
       where store_id = ${storeId}
         and branch_id = ${branchId}
@@ -72,6 +76,8 @@ export default async function handler(req, res) {
       createdAt: asIso(row.created_at),
       isSynced: true,
       syncedAt: new Date().toISOString(),
+      storeEpoch: row.store_epoch || 1,
+      sequence: row.sequence || 0,
     }));
 
     // Keep an empty pull cursor unchanged. Advancing it to "now" can skip

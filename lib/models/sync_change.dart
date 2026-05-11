@@ -11,6 +11,8 @@ class SyncChange {
     this.branchId = '',
     this.isSynced = false,
     this.syncedAt,
+    this.storeEpoch = 1,
+    this.sequence = 0,
   });
 
   final String id;
@@ -24,6 +26,8 @@ class SyncChange {
   final String branchId;
   final bool isSynced;
   final DateTime? syncedAt;
+  final int storeEpoch;
+  final int sequence;
 
   SyncChange copyWith({
     String? id,
@@ -37,6 +41,8 @@ class SyncChange {
     String? branchId,
     bool? isSynced,
     DateTime? syncedAt,
+    int? storeEpoch,
+    int? sequence,
   }) {
     return SyncChange(
       id: id ?? this.id,
@@ -50,6 +56,8 @@ class SyncChange {
       branchId: branchId ?? this.branchId,
       isSynced: isSynced ?? this.isSynced,
       syncedAt: syncedAt ?? this.syncedAt,
+      storeEpoch: storeEpoch ?? this.storeEpoch,
+      sequence: sequence ?? this.sequence,
     );
   }
 
@@ -65,6 +73,8 @@ class SyncChange {
         'branchId': branchId,
         'isSynced': isSynced,
         'syncedAt': syncedAt?.toIso8601String(),
+        'storeEpoch': storeEpoch,
+        'sequence': sequence,
       };
 
   factory SyncChange.fromJson(Map<String, dynamic> json) => SyncChange(
@@ -79,5 +89,7 @@ class SyncChange {
         branchId: json['branchId'] as String? ?? '',
         isSynced: json['isSynced'] as bool? ?? false,
         syncedAt: DateTime.tryParse(json['syncedAt'] as String? ?? ''),
+        storeEpoch: (json['storeEpoch'] as num?)?.toInt() ?? 1,
+        sequence: (json['sequence'] as num?)?.toInt() ?? 0,
       );
 }

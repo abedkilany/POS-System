@@ -108,6 +108,42 @@ class HostHeartbeatStatus {
   final String message;
 }
 
+
+class CloudDeviceStatus {
+  const CloudDeviceStatus({
+    required this.deviceId,
+    required this.deviceName,
+    required this.platform,
+    required this.role,
+    required this.transport,
+    required this.lastSeenAt,
+    required this.appVersion,
+    this.revoked = false,
+  });
+
+  final String deviceId;
+  final String deviceName;
+  final String platform;
+  final String role;
+  final String transport;
+  final DateTime? lastSeenAt;
+  final String appVersion;
+  final bool revoked;
+
+  bool get isOnline => lastSeenAt != null && DateTime.now().toUtc().difference(lastSeenAt!.toUtc()) <= const Duration(seconds: 90);
+
+  factory CloudDeviceStatus.fromJson(Map<String, dynamic> json) => CloudDeviceStatus(
+        deviceId: (json['deviceId'] ?? json['device_id'] ?? '').toString(),
+        deviceName: (json['deviceName'] ?? json['device_name'] ?? '').toString(),
+        platform: (json['platform'] ?? '').toString(),
+        role: (json['role'] ?? '').toString(),
+        transport: (json['transport'] ?? '').toString(),
+        lastSeenAt: DateTime.tryParse((json['lastSeenAt'] ?? json['last_seen_at'] ?? '').toString()),
+        appVersion: (json['appVersion'] ?? json['app_version'] ?? '').toString(),
+        revoked: json['revoked'] == true,
+      );
+}
+
 class CloudSyncResult {
   const CloudSyncResult({required this.ok, required this.message, this.pushed = 0, this.pulled = 0});
   final bool ok;
@@ -127,6 +163,56 @@ class CloudSyncService {
         'Accept': 'application/json',
         if (settings.apiToken.trim().isNotEmpty) 'Authorization': 'Bearer ${settings.apiToken.trim()}',
       };
+
+
+  Future<CloudSyncResult> registerCurrentDevice(CloudSyncSettings settings, {String transport = 'cloud'}) async {
+    final identity = store.appIdentity;
+    if (!settings.isConfigured) return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
+    try {
+      final response = await _client
+          .post(
+            settings.endpoint('/api/sync/devices'),
+            headers: _headers(settings),
+            body: jsonEncode({
+              'storeId': identity.storeId,
+              'branchId': identity.branchId,
+              'deviceId': store.deviceId,
+              'deviceName': identity.deviceName,
+              'platform': identity.platform.name,
+              'role': identity.deviceRole.name,
+              'transport': transport,
+              'appVersion': 'store-manager-pro',
+              'storeEpoch': identity.storeEpoch,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
+      return CloudSyncResult(
+        ok: response.statusCode >= 200 && response.statusCode < 300,
+        message: response.statusCode >= 200 && response.statusCode < 300 ? 'Device heartbeat updated.' : 'Device heartbeat failed: ${response.statusCode} ${response.body}',
+      );
+    } catch (error) {
+      return CloudSyncResult(ok: false, message: 'Device heartbeat failed: $error');
+    }
+  }
+
+  Future<List<CloudDeviceStatus>> listDevices(CloudSyncSettings settings) async {
+    final identity = store.appIdentity;
+    if (!settings.isConfigured) return const <CloudDeviceStatus>[];
+    final response = await _client
+        .get(
+          settings.endpoint('/api/sync/devices', {
+            'store_id': identity.storeId,
+            'branch_id': identity.branchId,
+          }),
+          headers: _headers(settings),
+        )
+        .timeout(const Duration(seconds: 10));
+    if (response.statusCode < 200 || response.statusCode >= 300) return const <CloudDeviceStatus>[];
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    return (decoded['devices'] as List<dynamic>? ?? [])
+        .map((item) => CloudDeviceStatus.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+  }
 
   Future<CloudSyncResult> testConnection(CloudSyncSettings settings) async {
     if (!settings.isConfigured) {
@@ -298,6 +384,7 @@ class CloudSyncService {
       if (identity.isHost) {
         await store.ensureHostCloudBootstrapSnapshotQueued();
         await sendHostHeartbeat(settings);
+        await registerCurrentDevice(settings, transport: 'cloud');
         acceptedRemoteRequests = await _hostPullRemoteRequests(settings);
         pushed += await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
         return CloudSyncResult(
@@ -311,6 +398,7 @@ class CloudSyncService {
         // them to the Host relay. LAN Clients normally queue to target "host",
         // so this only affects Web or remote desktop/mobile Clients whose
         // pending changes target "cloud_host".
+        await registerCurrentDevice(settings, transport: 'cloud');
         pushed += await _pushPendingToEndpoint(settings, 'cloud_host', '/api/sync/requests/push');
       }
 

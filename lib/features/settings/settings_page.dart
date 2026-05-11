@@ -121,6 +121,7 @@ class SettingsPage extends StatelessWidget {
   List<Widget> _syncCards(BuildContext context) => [
         _LanSyncCard(store: store, onSyncSettingsChanged: onSyncSettingsChanged),
         if (!kIsWeb) _CloudHostSyncCard(store: store, onSyncSettingsChanged: onSyncSettingsChanged),
+        _DeviceManagementCard(store: store),
         _DataConflictsCard(store: store),
       ];
 
@@ -654,6 +655,110 @@ class _BackupSummaryDetails extends StatelessWidget {
 
 
 
+
+
+class _DeviceManagementCard extends StatefulWidget {
+  const _DeviceManagementCard({required this.store});
+  final AppStore store;
+
+  @override
+  State<_DeviceManagementCard> createState() => _DeviceManagementCardState();
+}
+
+class _DeviceManagementCardState extends State<_DeviceManagementCard> {
+  bool _loading = false;
+  String _message = '';
+  List<CloudDeviceStatus> _devices = const [];
+
+  Future<void> _refresh() async {
+    setState(() { _loading = true; _message = ''; });
+    try {
+      final settings = CloudSyncSettings.load();
+      if (settings.isConfigured && widget.store.appIdentity.isCloudEnabled) {
+        await CloudSyncService(widget.store).registerCurrentDevice(settings, transport: 'cloud');
+        _devices = await CloudSyncService(widget.store).listDevices(settings);
+        _message = _devices.isEmpty ? 'No cloud devices reported yet.' : 'Loaded ${_devices.length} device(s).';
+      } else {
+        _devices = const [];
+        _message = 'Cloud is not configured. Local identity and queues are still shown.';
+      }
+    } catch (error) {
+      _message = 'Device refresh failed: $error';
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final identity = widget.store.appIdentity;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.devices_other_outlined),
+              title: const Text('Connected devices'),
+              subtitle: Text('This device: ${identity.deviceName} • ${identity.platform.name} • ${identity.deviceRole.name} • epoch ${identity.storeEpoch}'),
+              trailing: FilledButton.icon(
+                onPressed: _loading ? null : _refresh,
+                icon: _loading ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.refresh),
+                label: const Text('Refresh'),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(spacing: 8, runSpacing: 8, children: [
+              Chip(label: Text('Pending: ${widget.store.pendingSyncCount}')),
+              Chip(label: Text('All queues: ${widget.store.pendingSyncQueueCount}')),
+              Chip(label: Text('Store: ${identity.storeId}')),
+            ]),
+            const SizedBox(height: 12),
+            if (_message.isNotEmpty) Text(_message),
+            if (_devices.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: DataTable(
+                  columns: const [
+                    DataColumn(label: Text('Device')),
+                    DataColumn(label: Text('Status')),
+                    DataColumn(label: Text('Platform')),
+                    DataColumn(label: Text('Role')),
+                    DataColumn(label: Text('Transport')),
+                    DataColumn(label: Text('Last seen')),
+                  ],
+                  rows: _devices.map((device) {
+                    final last = device.lastSeenAt?.toLocal().toString().split('.').first ?? '—';
+                    return DataRow(cells: [
+                      DataCell(Text(device.deviceName.isEmpty ? device.deviceId : device.deviceName)),
+                      DataCell(Text(device.isOnline ? 'Online' : 'Offline')),
+                      DataCell(Text(device.platform)),
+                      DataCell(Text(device.role)),
+                      DataCell(Text(device.transport)),
+                      DataCell(Text(last)),
+                    ]);
+                  }).toList(),
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: _loading ? null : () async {
+                await widget.store.clearPendingSyncQueue();
+                if (mounted) setState(() => _message = 'Local pending sync queue cleared.');
+              },
+              icon: const Icon(Icons.cleaning_services_outlined),
+              label: const Text('Clear local pending queue'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 class _DataConflictsCard extends StatelessWidget {
   const _DataConflictsCard({required this.store});

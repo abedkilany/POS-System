@@ -100,6 +100,7 @@ class AppStore extends ChangeNotifier {
   static const _deviceIdKey = 'sync_device_id_v1';
   static const _syncChangesKey = 'sync_changes_v1';
   static const _syncQueueKey = 'sync_queue_v1';
+  static const _syncSequenceKey = 'sync_sequence_v1';
   static const _schemaVersionKey = 'schema_version_v1';
   static const _pinKey = 'security_pin_v1';
   static const _pinHashPrefix = 'sha256:';
@@ -132,6 +133,7 @@ class AppStore extends ChangeNotifier {
   final List<AppUser> _users = [];
   AppUser? _activeUser;
   AppIdentity? _appIdentity;
+  int _syncSequence = 0;
 
   Customer get walkInCustomer => Customer(
         id: walkInCustomerId,
@@ -317,6 +319,7 @@ class AppStore extends ChangeNotifier {
     await _ensureDefaultAdminUser();
     _restoreActiveUser();
     _appIdentity = _loadOrCreateAppIdentity();
+    _syncSequence = _loadSyncSequence();
     _normalizeCustomers();
     _ensureCatalogDefaults();
     await _runDataMigrationsIfNeeded();
@@ -479,6 +482,24 @@ class AppStore extends ChangeNotifier {
     return decoded.map((item) => SyncChange.fromJson(Map<String, dynamic>.from(item as Map))).toList();
   }
 
+
+  int _loadSyncSequence() {
+    final stored = int.tryParse(LocalDatabaseService.getString(_syncSequenceKey) ?? '') ?? 0;
+    final highest = _syncChanges.fold<int>(0, (value, change) => change.sequence > value ? change.sequence : value);
+    return stored > highest ? stored : highest;
+  }
+
+  int _nextSyncSequence() {
+    _syncSequence += 1;
+    return _syncSequence;
+  }
+
+  Future<void> clearPendingSyncQueue({bool notify = true}) async {
+    _syncQueue.clear();
+    await _saveAll();
+    if (notify) notifyListeners();
+  }
+
   List<SyncQueueItem> _loadSyncQueue() {
     final raw = LocalDatabaseService.getString(_syncQueueKey);
     if (raw == null) return <SyncQueueItem>[];
@@ -549,8 +570,10 @@ class AppStore extends ChangeNotifier {
     }
 
     _appIdentity = _loadOrCreateAppIdentity();
+    _syncSequence = _loadSyncSequence();
 
-    await LocalDatabaseService.setString(_schemaVersionKey, '11');
+    await LocalDatabaseService.setString(_syncSequenceKey, _syncSequence.toString());
+    await LocalDatabaseService.setString(_schemaVersionKey, '12');
     await LocalDatabaseService.setString(_invoiceCounterKey, _invoiceCounter.toString());
     await LocalDatabaseService.setString(_purchaseCounterKey, _purchaseCounter.toString());
     await _saveAll();
@@ -1095,7 +1118,8 @@ class AppStore extends ChangeNotifier {
     await LocalDatabaseService.setString(_storeProfileKey, jsonEncode(_storeProfile.toJson()));
     await LocalDatabaseService.setString(_invoiceCounterKey, _invoiceCounter.toString());
     await LocalDatabaseService.setString(_purchaseCounterKey, _purchaseCounter.toString());
-    await LocalDatabaseService.setString(_schemaVersionKey, '11');
+    await LocalDatabaseService.setString(_syncSequenceKey, _syncSequence.toString());
+    await LocalDatabaseService.setString(_schemaVersionKey, '12');
   }
 
 
@@ -1145,6 +1169,9 @@ class AppStore extends ChangeNotifier {
     // stale pre-reset operations.
     _syncChanges.clear();
     _syncQueue.clear();
+    final identity = appIdentity;
+    _appIdentity = identity.copyWith(storeEpoch: identity.storeEpoch + 1, updatedAt: DateTime.now());
+    await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(_appIdentity!.toJson()));
     _resetBusinessDataInMemory(keepStoreProfile: keepStoreProfile, keepSecurityPin: keepSecurityPin);
     if (!keepSecurityPin) {
       await LocalDatabaseService.setString(_pinKey, '');
@@ -1157,6 +1184,7 @@ class AppStore extends ChangeNotifier {
         'keepStoreProfile': keepStoreProfile,
         'keepSecurityPin': keepSecurityPin,
         'createdAt': DateTime.now().toIso8601String(),
+        'storeEpoch': appIdentity.storeEpoch,
       },
     );
     await _saveAll();
@@ -1242,6 +1270,8 @@ class AppStore extends ChangeNotifier {
       payload: payload,
       storeId: appIdentity.storeId,
       branchId: appIdentity.branchId,
+      storeEpoch: appIdentity.storeEpoch,
+      sequence: _nextSyncSequence(),
     ));
     _enqueueSyncChange(changeId, now);
   }
@@ -1871,6 +1901,7 @@ class AppStore extends ChangeNotifier {
         'roles': _roles.map((item) => item.toJson()).toList(),
         'users': _users.map((item) => item.toJson()).toList(),
         'appIdentity': appIdentity.toJson(),
+        'storeEpoch': appIdentity.storeEpoch,
       };
 
   String exportBackupJson() {
@@ -2360,6 +2391,8 @@ class AppStore extends ChangeNotifier {
       payload: _backupPayload(changes: const <SyncChange>[]),
       storeId: identity.storeId,
       branchId: identity.branchId,
+      storeEpoch: identity.storeEpoch,
+      sequence: _nextSyncSequence(),
     ));
     _enqueueSyncChangeForTarget(changeId, 'cloud', now);
     await LocalDatabaseService.setString(markerKey, 'true');
@@ -2394,10 +2427,21 @@ class AppStore extends ChangeNotifier {
     bool mirrorToCloud = false,
   }) async {
     final existingIds = _syncChanges.map((item) => item.id).toSet();
-    final sorted = [...incoming]..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    final currentEpoch = appIdentity.storeEpoch;
+    final sorted = [...incoming]
+      ..sort((a, b) {
+        final epochCompare = a.storeEpoch.compareTo(b.storeEpoch);
+        if (epochCompare != 0) return epochCompare;
+        if (a.sequence != 0 || b.sequence != 0) return a.sequence.compareTo(b.sequence);
+        return a.createdAt.compareTo(b.createdAt);
+      });
     var changed = false;
     for (final change in sorted) {
       if (existingIds.contains(change.id)) continue;
+      final incomingEpoch = change.storeEpoch;
+      if (incomingEpoch < currentEpoch && !(change.entityType == 'system' && change.operation == 'reset_store_data')) {
+        continue;
+      }
       await _applySyncChangePayload(change);
       final shouldMirrorToCloud = mirrorToCloud && _shouldMirrorRemoteChangeToCloud(change);
 
@@ -2415,6 +2459,8 @@ class AppStore extends ChangeNotifier {
               deviceId: _deviceId,
               storeId: appIdentity.storeId,
               branchId: appIdentity.branchId,
+              storeEpoch: appIdentity.storeEpoch,
+              sequence: _nextSyncSequence(),
             )
           : change;
       final storedChange = markAppliedAsSynced && !shouldMirrorToCloud
@@ -2567,6 +2613,10 @@ class AppStore extends ChangeNotifier {
       case 'system':
         if (change.operation == 'reset_store_data') {
           _syncChanges.clear();
+          _syncQueue.clear();
+          final nextEpoch = change.storeEpoch > appIdentity.storeEpoch ? change.storeEpoch : appIdentity.storeEpoch + 1;
+          _appIdentity = appIdentity.copyWith(storeEpoch: nextEpoch, updatedAt: DateTime.now());
+          await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(_appIdentity!.toJson()));
           _resetBusinessDataInMemory(
             keepStoreProfile: p['keepStoreProfile'] as bool? ?? true,
             keepSecurityPin: p['keepSecurityPin'] as bool? ?? true,
