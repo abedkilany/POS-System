@@ -41,27 +41,58 @@ function idOf(item, fallback) {
   return fallback;
 }
 
-async function upsertSnapshot({ storeId, branchId, entityType, entityId, operation, payload, updatedAt }) {
-  if (!storeId || !entityType || !entityId) return;
-  if (operation === 'delete') {
-    await sql`
-      insert into entity_snapshots (store_id, branch_id, entity_type, entity_id, payload, operation, updated_at)
-      values (${storeId}, ${branchId || 'main'}, ${entityType}, ${entityId}, ${JSON.stringify(payload || {})}, ${operation}, ${updatedAt})
-      on conflict (store_id, branch_id, entity_type, entity_id) do update set
-        payload = excluded.payload,
-        operation = excluded.operation,
-        updated_at = excluded.updated_at
-    `;
-    return;
+function payloadVersion(payload) {
+  const value = Number(payload && payload.version);
+  return Number.isFinite(value) ? value : 1;
+}
+
+function payloadUpdatedAt(payload, fallback) {
+  const raw = payload && (payload.updatedAt || payload.updated_at || payload.deletedAt || payload.deleted_at);
+  const date = new Date(raw || fallback || Date.now());
+  return Number.isNaN(date.getTime()) ? new Date(fallback || Date.now()) : date;
+}
+
+function incomingWins({ existingPayload, existingUpdatedAt, incomingPayload, incomingUpdatedAt }) {
+  const incomingVersion = payloadVersion(incomingPayload);
+  const existingVersion = payloadVersion(existingPayload);
+  if (incomingVersion !== existingVersion) return incomingVersion > existingVersion;
+  return payloadUpdatedAt(incomingPayload, incomingUpdatedAt).getTime() >= payloadUpdatedAt(existingPayload, existingUpdatedAt).getTime();
+}
+
+async function upsertSnapshot({ storeId, branchId, entityType, entityId, operation, payload, updatedAt, force = false }) {
+  if (!storeId || !entityType || !entityId) return false;
+
+  const existingRows = await sql`
+    select payload, operation, updated_at
+    from entity_snapshots
+    where store_id = ${storeId}
+      and branch_id = ${branchId || 'main'}
+      and entity_type = ${entityType}
+      and entity_id = ${entityId}
+    limit 1
+  `;
+
+  if (!force && existingRows.length) {
+    const existing = existingRows[0];
+    if (!incomingWins({
+      existingPayload: existing.payload || {},
+      existingUpdatedAt: existing.updated_at,
+      incomingPayload: payload || {},
+      incomingUpdatedAt: updatedAt,
+    })) {
+      return false;
+    }
   }
+
   await sql`
     insert into entity_snapshots (store_id, branch_id, entity_type, entity_id, payload, operation, updated_at)
-    values (${storeId}, ${branchId || 'main'}, ${entityType}, ${entityId}, ${JSON.stringify(payload || {})}, ${operation || 'upsert'}, ${updatedAt})
+    values (${storeId}, ${branchId || 'main'}, ${entityType}, ${entityId}, ${JSON.stringify(payload || {})}, ${operation === 'delete' ? 'delete' : (operation || 'upsert')}, ${updatedAt})
     on conflict (store_id, branch_id, entity_type, entity_id) do update set
       payload = excluded.payload,
       operation = excluded.operation,
       updated_at = excluded.updated_at
   `;
+  return true;
 }
 
 async function materializeChange(change) {
@@ -82,11 +113,12 @@ async function materializeChange(change) {
           operation: 'upsert',
           payload: item,
           updatedAt,
+          force: true,
         });
       }
     }
     if (p.storeProfile && typeof p.storeProfile === 'object') {
-      await upsertSnapshot({ storeId: change.storeId, branchId: change.branchId, entityType: 'store_profile', entityId: 'store', operation: 'upsert', payload: p.storeProfile, updatedAt });
+      await upsertSnapshot({ storeId: change.storeId, branchId: change.branchId, entityType: 'store_profile', entityId: 'store', operation: 'upsert', payload: p.storeProfile, updatedAt, force: true });
     }
     return;
   }
@@ -101,6 +133,17 @@ async function materializeChange(change) {
     const productId = String(p.productId || p.product_id || '').trim();
     const quantity = Number(p.quantity || 0);
     if (!productId || !Number.isFinite(quantity) || quantity === 0) return;
+
+    const movementRows = await sql`
+      select entity_id
+      from entity_snapshots
+      where store_id = ${change.storeId}
+        and branch_id = ${change.branchId || 'main'}
+        and entity_type = 'stock_movement'
+        and entity_id = ${change.entityId}
+      limit 1
+    `;
+    if (movementRows.length) return;
 
     const rows = await sql`
       select payload, operation, updated_at
@@ -131,6 +174,7 @@ async function materializeChange(change) {
       operation: 'upsert',
       payload: nextProduct,
       updatedAt,
+      force: true,
     });
     await upsertSnapshot({
       storeId: change.storeId,

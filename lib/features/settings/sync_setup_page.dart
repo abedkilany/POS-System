@@ -84,7 +84,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
         setupComplete: true,
         mode: LanSyncDeviceMode.client,
         secret: secret,
-        lastPullCursor: DateTime.now(),
+        lastPullCursor: LanSyncSettings.load().lastPullCursor,
         lastConnectionAt: DateTime.now(),
         lastSyncAt: DateTime.now(),
       );

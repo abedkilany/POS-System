@@ -167,8 +167,9 @@ class LanSyncService {
   }
 
   bool _authorized(HttpRequest request, LanSyncSettings settings) {
-    if (settings.secret.trim().isEmpty) return true;
-    return request.headers.value('x-sync-token') == settings.secret.trim();
+    final secret = settings.secret.trim();
+    if (secret.isEmpty) return false;
+    return request.headers.value('x-sync-token') == secret;
   }
 
   Future<void> _json(HttpRequest request, Object payload, {int status = HttpStatus.ok}) async {
@@ -312,8 +313,9 @@ class LanSyncService {
         return LanSyncResult(ok: false, message: 'Initial clone failed: ${response.statusCode} $body');
       }
       await store.importSyncSnapshotJson(body);
+      final hostCursor = store.syncSnapshotGeneratedAtFromJson(body);
       final settings = LanSyncSettings.load();
-      await settings.copyWith(lastPullCursor: DateTime.now(), lastConnectionAt: DateTime.now(), lastSyncAt: DateTime.now()).save();
+      await settings.copyWith(lastPullCursor: hostCursor, lastConnectionAt: DateTime.now(), lastSyncAt: DateTime.now()).save();
       return const LanSyncResult(ok: true, message: 'Initial clone completed.');
     } catch (error) {
       return LanSyncResult(ok: false, message: 'Initial clone failed: $error');
@@ -332,8 +334,9 @@ class LanSyncService {
         return LanSyncResult(ok: false, message: 'Pull failed: ${response.statusCode} $body');
       }
       await store.mergeBackupJson(body, markSynced: false);
+      final hostCursor = store.syncSnapshotGeneratedAtFromJson(body);
       final settings = LanSyncSettings.load();
-      await settings.copyWith(lastPullCursor: DateTime.now(), lastConnectionAt: DateTime.now(), lastSyncAt: DateTime.now()).save();
+      await settings.copyWith(lastPullCursor: hostCursor, lastConnectionAt: DateTime.now(), lastSyncAt: DateTime.now()).save();
       return const LanSyncResult(ok: true, message: 'Pull completed.');
     } catch (error) {
       return LanSyncResult(ok: false, message: 'Pull failed: $error');
@@ -353,8 +356,9 @@ class LanSyncService {
         return LanSyncResult(ok: false, message: 'Repair snapshot failed: ${response.statusCode} $body');
       }
       await store.mergeBackupJson(body, markSynced: false);
+      final hostCursor = store.syncSnapshotGeneratedAtFromJson(body);
       final settings = LanSyncSettings.load();
-      await settings.copyWith(lastPullCursor: DateTime.now(), lastConnectionAt: DateTime.now(), lastSyncAt: DateTime.now()).save();
+      await settings.copyWith(lastPullCursor: hostCursor, lastConnectionAt: DateTime.now(), lastSyncAt: DateTime.now()).save();
       return const LanSyncResult(ok: true, message: 'LAN repair completed from full Host snapshot.');
     } catch (error) {
       return LanSyncResult(ok: false, message: 'Repair snapshot failed: $error');

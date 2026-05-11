@@ -1902,6 +1902,7 @@ class AppStore extends ChangeNotifier {
         'users': _users.map((item) => item.toJson()).toList(),
         'appIdentity': appIdentity.toJson(),
         'storeEpoch': appIdentity.storeEpoch,
+        'syncGeneratedAt': DateTime.now().toIso8601String(),
       };
 
   String exportBackupJson() {
@@ -1910,6 +1911,15 @@ class AppStore extends ChangeNotifier {
   }
 
   String exportSyncSnapshotJson() => const JsonEncoder.withIndent('  ').convert(_backupPayload());
+
+  DateTime syncSnapshotGeneratedAtFromJson(String rawJson) {
+    try {
+      final decoded = jsonDecode(rawJson) as Map<String, dynamic>;
+      return DateTime.tryParse(decoded['syncGeneratedAt']?.toString() ?? '') ?? DateTime.now();
+    } catch (_) {
+      return DateTime.now();
+    }
+  }
 
   String exportSyncChangesJson({DateTime? since}) {
     final changes = since == null
@@ -2598,11 +2608,33 @@ class AppStore extends ChangeNotifier {
     return result;
   }
 
+  bool _remoteWins(dynamic incoming, dynamic local) {
+    final incomingVersion = _readVersion(incoming);
+    final localVersion = _readVersion(local);
+    if (incomingVersion != localVersion) return incomingVersion > localVersion;
+
+    final incomingUpdatedAt = _readUpdatedAt(incoming);
+    final localUpdatedAt = _readUpdatedAt(local);
+    if (incomingUpdatedAt.isAfter(localUpdatedAt)) return true;
+    if (incomingUpdatedAt.isBefore(localUpdatedAt)) return false;
+
+    // Deterministic tie-breaker for same-version/same-time writes. This avoids
+    // oscillation between devices while keeping the Host-authoritative event
+    // stream stable.
+    try {
+      final incomingDevice = (incoming.lastModifiedByDeviceId as String?) ?? (incoming.deviceId as String?) ?? '';
+      final localDevice = (local.lastModifiedByDeviceId as String?) ?? (local.deviceId as String?) ?? '';
+      return incomingDevice.compareTo(localDevice) >= 0;
+    } catch (_) {
+      return true;
+    }
+  }
+
   void _upsertByUpdatedAt<T>(List<T> list, T incoming, String Function(T item) idOf) {
     final index = list.indexWhere((item) => idOf(item) == idOf(incoming));
     if (index == -1) {
       list.add(incoming);
-    } else if (_readUpdatedAt(incoming).isAfter(_readUpdatedAt(list[index])) || _readUpdatedAt(incoming).isAtSameMomentAs(_readUpdatedAt(list[index]))) {
+    } else if (_remoteWins(incoming, list[index])) {
       list[index] = incoming;
     }
   }
