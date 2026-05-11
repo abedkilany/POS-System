@@ -177,22 +177,62 @@ class _ProductTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final subtitle = [product.code, product.barcode, product.category, product.brand, product.supplier].where((e) => e.trim().isNotEmpty).join(' • ');
+    final meta = '${product.stock} ${product.unit} • ${formatCurrency(product.price, currency: currency)}';
     return Card(
-      child: ListTile(
-        leading: CircleAvatar(child: Icon(product.isActive ? Icons.inventory_2_outlined : Icons.block_outlined)),
-        title: Text(product.name, style: const TextStyle(fontWeight: FontWeight.w700)),
-        subtitle: Text(subtitle),
-        trailing: Wrap(
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
-              child: Text('${product.stock} ${product.unit} • ${formatCurrency(product.price, currency: currency)}'),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth < 620) {
+            return Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  CircleAvatar(child: Icon(product.isActive ? Icons.inventory_2_outlined : Icons.block_outlined)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(product.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)),
+                        if (subtitle.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis),
+                        ],
+                        const SizedBox(height: 8),
+                        Text(meta, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.labelLarge),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 4,
+                          children: [
+                            IconButton(onPressed: onEdit, icon: const Icon(Icons.edit_outlined), tooltip: 'Edit'),
+                            IconButton(onPressed: onDelete, icon: const Icon(Icons.delete_outline), tooltip: 'Delete'),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }
+
+          return ListTile(
+            leading: CircleAvatar(child: Icon(product.isActive ? Icons.inventory_2_outlined : Icons.block_outlined)),
+            title: Text(product.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)),
+            subtitle: Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+            trailing: Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
+                  child: Text(meta),
+                ),
+                IconButton(onPressed: onEdit, icon: const Icon(Icons.edit_outlined)),
+                IconButton(onPressed: onDelete, icon: const Icon(Icons.delete_outline)),
+              ],
             ),
-            IconButton(onPressed: onEdit, icon: const Icon(Icons.edit_outlined)),
-            IconButton(onPressed: onDelete, icon: const Icon(Icons.delete_outline)),
-          ],
-        ),
+          );
+        },
       ),
     );
   }

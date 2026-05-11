@@ -38,7 +38,7 @@ class StoreProfile {
       };
 
   factory StoreProfile.fromJson(Map<String, dynamic> json) => StoreProfile(
-        name: json['name'] as String? ?? 'My Store',
+        name: json['name'] as String? ?? 'Ventio',
         phone: json['phone'] as String? ?? '',
         address: json['address'] as String? ?? '',
         currency: json['currency'] as String? ?? 'USD',
@@ -46,7 +46,7 @@ class StoreProfile {
       );
 
   static const defaults = StoreProfile(
-    name: 'My Store',
+    name: 'Ventio',
     phone: '',
     address: '',
     currency: 'USD',

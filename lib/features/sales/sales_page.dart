@@ -112,6 +112,16 @@ class _SalesPageState extends State<SalesPage> {
                       ],
                     ),
                   ),
+                  const SizedBox(height: 8),
+                  _MobileCheckoutBar(
+                    enabled: _cart.isNotEmpty,
+                    itemsCount: _itemsCount,
+                    total: formatCurrency(_total, currency: widget.store.storeProfile.currency),
+                    completeLabel: tr.text('complete_sale'),
+                    saveLabel: tr.text('save_only'),
+                    onComplete: () => _saveCurrentInvoice(printAfterSave: true),
+                    onSave: () => _saveCurrentInvoice(printAfterSave: false),
+                  ),
                 ],
               ),
             ),
@@ -358,14 +368,15 @@ class _SalesPageState extends State<SalesPage> {
         Expanded(
           child: LayoutBuilder(
             builder: (context, constraints) {
-              final crossAxisCount = constraints.maxWidth > 700 ? 3 : (constraints.maxWidth < 420 ? 1 : 2);
+              final crossAxisCount = constraints.maxWidth > 760 ? 3 : (constraints.maxWidth < 420 ? 1 : 2);
+              final cardHeight = constraints.maxWidth < 420 ? 172.0 : 188.0;
               return GridView.builder(
                 itemCount: products.length,
                 gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: crossAxisCount,
                   mainAxisSpacing: 12,
                   crossAxisSpacing: 12,
-                  childAspectRatio: constraints.maxWidth < 420 ? 2.45 : 1.55,
+                  mainAxisExtent: cardHeight,
                 ),
                 itemBuilder: (context, index) {
                   final product = products[index];
@@ -383,12 +394,14 @@ class _SalesPageState extends State<SalesPage> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(product.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.titleMedium),
-                            const Spacer(),
-                            Text(product.code, maxLines: 1, overflow: TextOverflow.ellipsis),
-                            Text('${tr.text('stock')}: ${product.stock}'),
                             const SizedBox(height: 8),
+                            Text(product.code, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall),
+                            Text('${tr.text('stock')}: ${product.stock}', maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall),
+                            const Spacer(),
                             Text(
                               formatCurrency(product.price, currency: widget.store.storeProfile.currency),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: Theme.of(context).textTheme.titleMedium,
                             ),
                           ],
@@ -695,6 +708,61 @@ class _SalesPageState extends State<SalesPage> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('pdf_action_failed'))));
     }
+  }
+}
+
+
+class _MobileCheckoutBar extends StatelessWidget {
+  const _MobileCheckoutBar({
+    required this.enabled,
+    required this.itemsCount,
+    required this.total,
+    required this.completeLabel,
+    required this.saveLabel,
+    required this.onComplete,
+    required this.onSave,
+  });
+
+  final bool enabled;
+  final int itemsCount;
+  final String total;
+  final String completeLabel;
+  final String saveLabel;
+  final VoidCallback onComplete;
+  final VoidCallback onSave;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Card(
+        elevation: 4,
+        margin: EdgeInsets.zero,
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Expanded(child: Text('$itemsCount items', maxLines: 1, overflow: TextOverflow.ellipsis)),
+                  Text(total, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(child: FilledButton.icon(onPressed: enabled ? onComplete : null, icon: const Icon(Icons.point_of_sale), label: Text(completeLabel, overflow: TextOverflow.ellipsis))),
+                  const SizedBox(width: 8),
+                  Expanded(child: OutlinedButton.icon(onPressed: enabled ? onSave : null, icon: const Icon(Icons.save_outlined), label: Text(saveLabel, overflow: TextOverflow.ellipsis))),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 

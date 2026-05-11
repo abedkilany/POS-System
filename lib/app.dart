@@ -131,6 +131,8 @@ class _MainShellState extends State<MainShell> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
+    final storeName = widget.store.storeProfile.name.trim();
+    final shellTitle = storeName.isEmpty || storeName == 'My Store' ? 'Ventio' : storeName;
     final items = [
       _ShellItem(label: tr.text('dashboard'), icon: Icons.dashboard_outlined, selectedIcon: Icons.dashboard, page: DashboardPage(store: widget.store)),
       if (widget.store.hasPermission(AppPermission.productsCreate) || widget.store.hasPermission(AppPermission.productsEdit) || widget.store.hasPermission(AppPermission.productsDelete))
@@ -157,7 +159,7 @@ class _MainShellState extends State<MainShell> {
         final isWide = constraints.maxWidth >= 1100;
         return Scaffold(
           appBar: AppBar(
-            title: Text('${widget.store.storeProfile.name} • ${items[selectedIndex].label}'),
+            title: Text('$shellTitle • ${items[selectedIndex].label}', overflow: TextOverflow.ellipsis),
             actions: [
               HostConnectionIndicator(store: widget.store),
               if (constraints.maxWidth >= 520)
@@ -201,22 +203,10 @@ class _MainShellState extends State<MainShell> {
           body: isWide
               ? Row(
                   children: [
-                    NavigationRail(
+                    _WideSideNavigation(
+                      items: items,
                       selectedIndex: selectedIndex,
-                      onDestinationSelected: (value) => setState(() => selectedIndex = value),
-                      labelType: NavigationRailLabelType.all,
-                      leading: const Padding(
-                        padding: EdgeInsets.all(12),
-                        child: CircleAvatar(radius: 24, child: Icon(Icons.storefront)),
-                      ),
-                      destinations: [
-                        for (final item in items)
-                          NavigationRailDestination(
-                            icon: Icon(item.icon),
-                            selectedIcon: Icon(item.selectedIcon),
-                            label: Text(item.label),
-                          ),
-                      ],
+                      onSelected: (value) => setState(() => selectedIndex = value),
                     ),
                     const VerticalDivider(width: 1),
                     Expanded(child: items[selectedIndex].page),
@@ -229,6 +219,90 @@ class _MainShellState extends State<MainShell> {
   }
 }
 
+
+
+class _WideSideNavigation extends StatelessWidget {
+  const _WideSideNavigation({required this.items, required this.selectedIndex, required this.onSelected});
+
+  final List<_ShellItem> items;
+  final int selectedIndex;
+  final ValueChanged<int> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return SizedBox(
+      width: 224,
+      child: SafeArea(
+        top: false,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 20,
+                    backgroundColor: colorScheme.primaryContainer,
+                    foregroundColor: colorScheme.onPrimaryContainer,
+                    child: const Icon(Icons.flash_on_rounded),
+                  ),
+                  const SizedBox(width: 10),
+                  Text('Ventio', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+                ],
+              ),
+            ),
+            Expanded(
+              child: ListView.builder(
+                padding: const EdgeInsets.fromLTRB(8, 8, 8, 16),
+                itemCount: items.length,
+                itemBuilder: (context, index) {
+                  final item = items[index];
+                  final selected = index == selectedIndex;
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: NavigationRailDestinationListTile(
+                      icon: selected ? item.selectedIcon : item.icon,
+                      label: item.label,
+                      selected: selected,
+                      onTap: () => onSelected(index),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class NavigationRailDestinationListTile extends StatelessWidget {
+  const NavigationRailDestinationListTile({super.key, required this.icon, required this.label, required this.selected, required this.onTap});
+
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Material(
+      color: selected ? colorScheme.primaryContainer : Colors.transparent,
+      borderRadius: BorderRadius.circular(14),
+      child: ListTile(
+        dense: true,
+        selected: selected,
+        leading: Icon(icon, color: selected ? colorScheme.onPrimaryContainer : null),
+        title: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        onTap: onTap,
+      ),
+    );
+  }
+}
 
 enum _HostReachability { disabled, hostDevice, checking, connected, pending, disconnected, cloudOffline }
 
