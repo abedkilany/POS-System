@@ -120,7 +120,7 @@ class SettingsPage extends StatelessWidget {
 
   List<Widget> _syncCards(BuildContext context) => [
         _LanSyncCard(store: store, onSyncSettingsChanged: onSyncSettingsChanged),
-        if (!kIsWeb) _CloudHostSyncCard(store: store),
+        if (!kIsWeb) _CloudHostSyncCard(store: store, onSyncSettingsChanged: onSyncSettingsChanged),
         _DataConflictsCard(store: store),
       ];
 
@@ -717,9 +717,10 @@ class _DataConflictsCard extends StatelessWidget {
 }
 
 class _CloudHostSyncCard extends StatefulWidget {
-  const _CloudHostSyncCard({required this.store});
+  const _CloudHostSyncCard({required this.store, this.onSyncSettingsChanged});
 
   final AppStore store;
+  final Future<void> Function()? onSyncSettingsChanged;
 
   @override
   State<_CloudHostSyncCard> createState() => _CloudHostSyncCardState();
@@ -730,6 +731,7 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
   final TextEditingController _tokenController = TextEditingController();
   final TextEditingController _intervalController = TextEditingController();
   bool _autoSyncEnabled = true;
+  DeviceRole _cloudRole = DeviceRole.host;
   bool _busy = false;
   String _status = 'Ready';
 
@@ -741,6 +743,8 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
     _tokenController.text = settings.apiToken;
     _autoSyncEnabled = settings.autoSyncEnabled;
     _intervalController.text = settings.intervalSeconds.toString();
+    final identity = widget.store.appIdentity;
+    _cloudRole = identity.isClient ? DeviceRole.client : DeviceRole.host;
   }
 
   @override
@@ -773,16 +777,13 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
     }
   }
 
-  Future<void> _save({bool makeThisDeviceHost = true}) async {
+  Future<void> _save() async {
     await _settings.save();
     final identity = widget.store.appIdentity;
-    if (makeThisDeviceHost) {
-      await widget.store.updateAppIdentity(
-        identity.copyWith(syncMode: SyncMode.cloudConnected, deviceRole: DeviceRole.host),
-      );
-    } else if (identity.syncMode != SyncMode.cloudConnected) {
-      await widget.store.updateAppIdentity(identity.copyWith(syncMode: SyncMode.cloudConnected));
-    }
+    await widget.store.updateAppIdentity(
+      identity.copyWith(syncMode: SyncMode.cloudConnected, deviceRole: _cloudRole),
+    );
+    await widget.onSyncSettingsChanged?.call();
   }
 
   @override
@@ -803,16 +804,42 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
               leading: const Icon(Icons.cloud_sync_outlined),
               title: Text(tr.text('cloud_sync_settings')),
               subtitle: Text(
-                isHost
-                    ? 'This Windows device is the HOST. It will mirror authoritative data to Vercel/Neon and accept remote requests.'
-                    : 'Cloud sync is available only for the HOST device. Save here to make this Windows device the cloud HOST.',
+                _cloudRole == DeviceRole.host
+                    ? 'HOST mode uploads the authoritative store data and accepts remote client requests through the cloud.'
+                    : 'CLIENT mode connects to the cloud and sends requests to the selected Host without becoming the owner.',
               ),
               trailing: Chip(
-                avatar: Icon(isHost ? Icons.verified_outlined : Icons.warning_amber_outlined, size: 18),
-                label: Text(isHost ? 'HOST cloud owner' : 'Not HOST'),
+                avatar: Icon(_cloudRole == DeviceRole.host ? Icons.cloud_upload_outlined : Icons.devices_other_outlined, size: 18),
+                label: Text(_cloudRole == DeviceRole.host ? 'HOST' : 'CLIENT'),
               ),
             ),
             const SizedBox(height: 8),
+            SegmentedButton<DeviceRole>(
+              segments: const [
+                ButtonSegment<DeviceRole>(
+                  value: DeviceRole.host,
+                  icon: Icon(Icons.cloud_upload_outlined),
+                  label: Text('This device is HOST'),
+                ),
+                ButtonSegment<DeviceRole>(
+                  value: DeviceRole.client,
+                  icon: Icon(Icons.devices_other_outlined),
+                  label: Text('This device is CLIENT'),
+                ),
+              ],
+              selected: {_cloudRole},
+              onSelectionChanged: _busy
+                  ? null
+                  : (selection) => setState(() => _cloudRole = selection.first),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _cloudRole == DeviceRole.host
+                  ? 'HOST: this device is the main source that uploads store data and accepts remote requests.'
+                  : 'CLIENT: this device connects to the cloud and syncs with the selected store without becoming the main owner.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 12),
             TextField(
               controller: _apiController,
               decoration: const InputDecoration(
@@ -875,17 +902,17 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
                   onPressed: _busy
                       ? null
                       : () => _run(() async {
-                            await _save(makeThisDeviceHost: true);
-                            setState(() => _status = 'Cloud settings saved. This device is now the cloud HOST. Restart the app to start auto cloud sync immediately.');
+                            await _save();
+                            setState(() => _status = _cloudRole == DeviceRole.host ? 'Cloud settings saved. This device is now the cloud HOST.' : 'Cloud settings saved. This device is now a cloud CLIENT.');
                           }),
                   icon: const Icon(Icons.save_outlined),
-                  label: Text(tr.text('save_as_host')),
+                  label: Text(tr.text('save_cloud_settings')),
                 ),
                 OutlinedButton.icon(
                   onPressed: _busy
                       ? null
                       : () => _run(() async {
-                            await _save(makeThisDeviceHost: true);
+                            await _save();
                             final result = await CloudSyncService(widget.store).testConnection(_settings);
                             setState(() => _status = result.message);
                           }),
@@ -896,7 +923,7 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
                   onPressed: _busy
                       ? null
                       : () => _run(() async {
-                            await _save(makeThisDeviceHost: true);
+                            await _save();
                             final result = await CloudSyncService(widget.store).syncNow(_settings);
                             setState(() => _status = result.message);
                           }),
