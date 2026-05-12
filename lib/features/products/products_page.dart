@@ -304,9 +304,9 @@ class _ProductDialogState extends State<_ProductDialog> {
   }
 
   bool get _canUseCameraScanner =>
-      !kIsWeb &&
-      (defaultTargetPlatform == TargetPlatform.android ||
-          defaultTargetPlatform == TargetPlatform.iOS);
+      kIsWeb ||
+      defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS;
 
   Future<void> _scanBarcodeWithCamera() async {
     final code = await Navigator.of(context).push<String>(
