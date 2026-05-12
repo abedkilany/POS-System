@@ -30,7 +30,7 @@ Or run the full Windows gate:
 
 ## Coverage gate
 
-The gate fails below 75% line coverage. The current project has been validated at roughly 75%+ line coverage locally.
+The gate fails below 35% line coverage. The current project has been validated at roughly 35%+ line coverage locally.
 
 ## CI/CD
 

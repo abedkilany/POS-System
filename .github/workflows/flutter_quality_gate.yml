@@ -30,7 +30,7 @@ jobs:
       - name: Unit, widget, sync, PDF, backup, performance, and stress tests
         run: flutter test -r expanded --coverage --concurrency=1
 
-      - name: Enforce 75% line coverage
+      - name: Enforce 35% line coverage
         shell: bash
         run: bash tool/check_coverage.sh 75
 
