@@ -260,7 +260,7 @@ class AppStore extends ChangeNotifier {
   double get totalExpensesAmount => expenses.fold<double>(0, (sum, expense) => sum + expense.amount);
   double get totalPurchasesAmount => purchases.where((item) => !item.isCancelled).fold<double>(0, (sum, purchase) => sum + purchase.subtotal);
   int get pendingPurchaseCount => purchases.where((item) => item.status.toLowerCase() == 'draft').length;
-  int get lowStockCount => products.where((item) => item.stock <= 5).length;
+  int get lowStockCount => products.where((product) => product.isLowStock).length;
   int get totalUnitsInStock => products.fold<int>(0, (sum, item) => sum + item.stock);
   double get inventoryRetailValue => products.fold<double>(0, (sum, item) => sum + (item.price * item.stock));
   double get inventoryCostValue => products.fold<double>(0, (sum, item) => sum + (item.cost * item.stock));
@@ -1868,8 +1868,9 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  @Deprecated('Use cancelSale instead. Invoices are cancelled, not physically deleted.')
   Future<void> deleteSale(String id, {bool restoreStock = true}) async {
-    // Kept for compatibility. Business flow now cancels invoices instead of deleting them.
+    // Compatibility wrapper for older call sites. Business flow cancels invoices instead of deleting them.
     await cancelSale(id, status: 'Cancelled', restoreStock: restoreStock);
   }
 

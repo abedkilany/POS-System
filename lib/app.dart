@@ -69,6 +69,8 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
           debugShowCheckedModeBanner: false,
           title: 'Ventio',
           theme: AppTheme.lightTheme,
+          darkTheme: AppTheme.darkTheme,
+          themeMode: ThemeMode.system,
           locale: _locale,
           supportedLocales: const [Locale('en'), Locale('ar')],
           localizationsDelegates: const [

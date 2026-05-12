@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:math';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -70,4 +70,22 @@ class LocalDatabaseService {
   }
 
   static bool get isEmpty => _requireBox.isEmpty;
+
+  /// Clears the cached box handle and removes the box from disk.
+  /// Used by widget tests between cases.
+  @visibleForTesting
+  static Future<void> resetForTesting() async {
+    final box = _box;
+    _box = null;
+    if (box != null) {
+      if (box.isOpen) {
+        await box.close();
+      }
+      try {
+        await Hive.deleteBoxFromDisk(boxName);
+      } catch (_) {
+        // Ignore cleanup failures in tests.
+      }
+    }
+  }
 }
