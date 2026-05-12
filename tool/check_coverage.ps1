@@ -1,5 +1,5 @@
 param(
-  [double]$Minimum = 35.0,
+  [double]$Minimum = 75.0,
   [string]$LcovPath = "coverage/lcov.info"
 )
 

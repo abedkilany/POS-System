@@ -80,7 +80,7 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
             GlobalCupertinoLocalizations.delegate,
           ],
           home: _store.isReady
-              ? (kIsWeb || LanSyncSettings.load().setupComplete
+              ? (_store.needsInitialAdminSetup
                   ? PinLockPage(
                       store: _store,
                       child: MainShell(
@@ -92,14 +92,26 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
                         },
                       ),
                     )
-                  : SyncSetupPage(
-                      store: _store,
-                      onDone: () async {
-                        await _autoSyncController.start();
-                        await _autoCloudSyncController.start();
-                        if (mounted) setState(() {});
-                      },
-                    ))
+                  : (kIsWeb || LanSyncSettings.load().setupComplete
+                      ? PinLockPage(
+                          store: _store,
+                          child: MainShell(
+                            store: _store,
+                            onLocaleChanged: _changeLocale,
+                            onSyncSettingsChanged: () async {
+                              await _autoSyncController.start();
+                              await _autoCloudSyncController.start();
+                            },
+                          ),
+                        )
+                      : SyncSetupPage(
+                          store: _store,
+                          onDone: () async {
+                            await _autoSyncController.start();
+                            await _autoCloudSyncController.start();
+                            if (mounted) setState(() {});
+                          },
+                        )))
               : const Scaffold(body: Center(child: CircularProgressIndicator())),
         );
       },

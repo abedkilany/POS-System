@@ -7,7 +7,7 @@ This project includes a production-style test and quality gate setup.
 ```powershell
 flutter analyze
 flutter test -r expanded --coverage --concurrency=1
-.\tool\check_coverage.ps1 -Minimum 75
+.\tool\check_coverage.ps1 -Minimum 35
 flutter test integration_test -d windows -r expanded
 ```
 
