@@ -16,7 +16,7 @@ class CloudSyncSettings {
     required this.apiToken,
     this.lastPullCursor,
     this.autoSyncEnabled = true,
-    this.intervalSeconds = 5,
+    this.intervalSeconds = 30,
   });
 
   static const _apiBaseUrlKey = 'cloud_api_base_url';
@@ -72,7 +72,7 @@ class CloudSyncSettings {
       apiToken: token,
       lastPullCursor: DateTime.tryParse(cursorRaw),
       autoSyncEnabled: autoRaw == null ? true : autoRaw == 'true',
-      intervalSeconds: int.tryParse(intervalRaw ?? '')?.clamp(5, 3600).toInt() ?? 5,
+      intervalSeconds: int.tryParse(intervalRaw ?? '')?.clamp(30, 3600).toInt() ?? 30,
     );
   }
 
@@ -402,27 +402,54 @@ class CloudSyncService {
         pushed += await _pushPendingToEndpoint(settings, 'cloud_host', '/api/sync/requests/push');
       }
 
-      final query = <String, String>{
-        'store_id': identity.storeId,
-        'branch_id': identity.branchId,
-      };
-      final cursor = settings.lastPullCursor;
-      if (cursor != null) query['since'] = cursor.toIso8601String();
-      final pull = await _client.get(settings.endpoint('/api/sync/pull', query), headers: _headers(settings)).timeout(const Duration(seconds: 20));
-      if (pull.statusCode < 200 || pull.statusCode >= 300) {
-        final message = 'Cloud pull failed: ${pull.statusCode} ${pull.body}';
-        return CloudSyncResult(ok: false, message: message);
+      final initialCursor = settings.lastPullCursor;
+      var pageCursor = '';
+      DateTime? finalPullCursor;
+      var pageCount = 0;
+      const maxPagesPerRun = 200;
+
+      while (true) {
+        pageCount += 1;
+        if (pageCount > maxPagesPerRun) {
+          return CloudSyncResult(ok: false, message: 'Cloud pull stopped after $maxPagesPerRun pages to avoid an endless loop. Please retry sync.');
+        }
+
+        final query = <String, String>{
+          'store_id': identity.storeId,
+          'branch_id': identity.branchId,
+          'limit': '1000',
+        };
+        if (initialCursor != null) query['since'] = initialCursor.toIso8601String();
+        if (pageCursor.isNotEmpty) query['cursor'] = pageCursor;
+
+        final pull = await _client.get(settings.endpoint('/api/sync/pull', query), headers: _headers(settings)).timeout(const Duration(seconds: 20));
+        if (pull.statusCode < 200 || pull.statusCode >= 300) {
+          final message = 'Cloud pull failed: ${pull.statusCode} ${pull.body}';
+          return CloudSyncResult(ok: false, message: message);
+        }
+
+        final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
+        final changes = (decodedPull['changes'] as List<dynamic>? ?? [])
+            .map((item) => SyncChange.fromJson(Map<String, dynamic>.from(item as Map)))
+            .where((item) => item.deviceId != store.deviceId)
+            .toList();
+        await store.applyRemoteSyncChanges(changes, markAppliedAsSynced: true);
+        pulled += changes.length;
+
+        final hasMore = decodedPull['hasMore'] == true;
+        pageCursor = (decodedPull['nextCursor'] ?? '').toString();
+        if (!hasMore) {
+          finalPullCursor = DateTime.tryParse(decodedPull['generatedAt']?.toString() ?? '');
+          break;
+        }
+        if (pageCursor.isEmpty) {
+          return const CloudSyncResult(ok: false, message: 'Cloud pull pagination failed: missing next cursor.');
+        }
       }
 
-      final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
-      final generatedAt = DateTime.tryParse(decodedPull['generatedAt']?.toString() ?? '') ?? DateTime.now();
-      final changes = (decodedPull['changes'] as List<dynamic>? ?? [])
-          .map((item) => SyncChange.fromJson(Map<String, dynamic>.from(item as Map)))
-          .where((item) => item.deviceId != store.deviceId)
-          .toList();
-      await store.applyRemoteSyncChanges(changes, markAppliedAsSynced: true);
-      await settings.copyWith(lastPullCursor: generatedAt).save();
-      pulled += changes.length;
+      if (finalPullCursor != null) {
+        await settings.copyWith(lastPullCursor: finalPullCursor).save();
+      }
 
       return CloudSyncResult(
         ok: true,
@@ -459,7 +486,7 @@ class AutoCloudSyncController {
     store.removeListener(_onStoreChanged);
     store.addListener(_onStoreChanged);
 
-    final interval = Duration(seconds: settings.intervalSeconds.clamp(5, 3600).toInt());
+    final interval = Duration(seconds: settings.intervalSeconds.clamp(30, 3600).toInt());
     _timer = Timer.periodic(interval, (_) => _tick());
     await _tick();
   }

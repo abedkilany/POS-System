@@ -325,11 +325,20 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
 
   String trText(String key) => AppLocalizations.of(context).text(key);
 
+  bool _didStartRefreshLoop = false;
+
   @override
   void initState() {
     super.initState();
-    _refresh();
     _timer = Timer.periodic(const Duration(seconds: 10), (_) => _refresh());
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_didStartRefreshLoop) return;
+    _didStartRefreshLoop = true;
+    _refresh();
   }
 
   @override

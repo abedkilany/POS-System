@@ -56,12 +56,21 @@ android {
                     signingConfigs.getByName("debug")
                 }
 
-            isMinifyEnabled = false
-            isShrinkResources = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 }
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    // Required for Flutter Android embedding references to Play Core split/deferred component classes during R8 minification.
+    implementation("com.google.android.play:core:1.10.3")
 }

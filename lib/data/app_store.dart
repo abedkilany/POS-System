@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
-
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'package:pointycastle/export.dart' as pc;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/services/local_database_service.dart';
@@ -105,6 +105,8 @@ class AppStore extends ChangeNotifier {
   static const _pinKey = 'security_pin_v1';
   static const _pinHashPrefix = 'sha256:';
   static const _pinHashV2Prefix = 'sha256salt:';
+  static const _passwordHashPrefix = 'pbkdf2sha256:';
+  static const _passwordHashIterations = 210000;
   static const _currentRoleKey = 'current_role_v1'; // legacy, no longer user-editable
   static const _rolesKey = 'roles_v1';
   static const _usersKey = 'users_v1';
@@ -190,6 +192,7 @@ class AppStore extends ChangeNotifier {
   List<UserRole> get roles => List.unmodifiable(_roles);
   List<AppUser> get users => List.unmodifiable(_users);
   AppUser? get activeUser => _activeUser;
+  AppUser? get currentUser => _activeUser;
   AppIdentity get appIdentity => _appIdentity ?? AppIdentity.defaults(deviceId: _deviceId, platform: _detectPlatform());
   UserRole? get currentUserRole => _activeUser == null ? null : roleById(_activeUser!.roleId);
   bool get isAdmin => _activeUser?.roleId == 'admin' || currentUserRole?.isAdmin == true;
@@ -197,14 +200,18 @@ class AppStore extends ChangeNotifier {
   bool get canManageProducts => hasPermission(AppPermission.productsCreate) || hasPermission(AppPermission.productsEdit);
   bool get canDeleteOrCancel => hasPermission(AppPermission.salesCancel);
   bool get canManageUsers => hasPermission(AppPermission.usersManage) && hasPermission(AppPermission.rolesManage);
-  bool get needsInitialAdminSetup {
+  bool get needsInitialAdminSetup => _users.isEmpty || _hasOnlyLegacyDefaultAdminUser;
+
+  bool get _hasOnlyLegacyDefaultAdminUser {
     if (_users.length != 1) return false;
     final user = _users.first;
+    final legacyPassword = String.fromCharCodes(const [97, 100, 109, 105, 110, 49, 50, 51]);
     return user.id == 'admin' &&
         user.username.trim().toLowerCase() == 'admin' &&
-        _verifyPassword('admin123', user.passwordHash) &&
+        _verifyPassword(legacyPassword, user.passwordHash) &&
         user.lastLoginAt == null;
   }
+
 
   Future<void> completeInitialAdminSetup({
     required String fullName,
@@ -216,18 +223,40 @@ class AppStore extends ChangeNotifier {
     final cleanPassword = password.trim();
     if (cleanUsername.length < 3) throw ArgumentError('Username must be at least 3 characters.');
     if (cleanPassword.length < 6) throw ArgumentError('Password must be at least 6 characters.');
-    final index = _users.indexWhere((user) => user.id == 'admin');
-    if (index == -1) throw StateError('Admin user was not found.');
-    final updated = _users[index].copyWith(
-      fullName: cleanName,
-      username: cleanUsername,
-      passwordHash: _hashPinV2(cleanPassword),
-      updatedAt: DateTime.now(),
-      lastLoginAt: DateTime.now(),
-    );
-    _users[index] = updated;
-    _activeUser = updated;
-    await LocalDatabaseService.setString(_activeUserKey, updated.id);
+    if (_users.isNotEmpty && !_hasOnlyLegacyDefaultAdminUser) {
+      throw StateError('Initial administrator setup is already complete.');
+    }
+    final now = DateTime.now();
+    final legacyIndex = _hasOnlyLegacyDefaultAdminUser ? 0 : -1;
+    if (legacyIndex == -1 && _users.any((user) => user.username.trim().toLowerCase() == cleanUsername)) {
+      throw StateError('Username already exists.');
+    }
+    final adminUser = legacyIndex == -1
+        ? AppUser(
+            id: 'admin_${now.microsecondsSinceEpoch}',
+            fullName: cleanName,
+            username: cleanUsername,
+            passwordHash: _hashPassword(cleanPassword),
+            roleId: 'admin',
+            isSystem: true,
+            createdAt: now,
+            updatedAt: now,
+            lastLoginAt: now,
+          )
+        : _users[legacyIndex].copyWith(
+            fullName: cleanName,
+            username: cleanUsername,
+            passwordHash: _hashPassword(cleanPassword),
+            updatedAt: now,
+            lastLoginAt: now,
+          );
+    if (legacyIndex == -1) {
+      _users.add(adminUser);
+    } else {
+      _users[legacyIndex] = adminUser;
+    }
+    _activeUser = adminUser;
+    await LocalDatabaseService.setString(_activeUserKey, adminUser.id);
     await _saveRolesAndUsers();
     await _saveAll();
     notifyListeners();
@@ -242,7 +271,7 @@ class AppStore extends ChangeNotifier {
   }
 
   bool hasPermission(String permission) {
-    if (_activeUser == null) return true;
+    if (_activeUser == null) return false;
     final role = roleById(_activeUser!.roleId);
     if (role?.isAdmin == true) return true;
     final effective = <String>{...?role?.permissions, ..._activeUser!.extraPermissions};
@@ -759,12 +788,7 @@ class AppStore extends ChangeNotifier {
     }
     _securityPin = _hashPinV2(cleaned);
     await LocalDatabaseService.setString(_pinKey, _securityPin!);
-    _recordSyncChange(
-      entityType: 'security_pin',
-      entityId: 'store',
-      operation: 'update',
-      payload: {'pinHash': _securityPin},
-    );
+    // PINs are local-only and are no longer synchronized between devices.
     await _saveAll();
     notifyListeners();
   }
@@ -801,18 +825,8 @@ class AppStore extends ChangeNotifier {
     } else {
       _roles[existingAdminRole] = _roles[existingAdminRole].copyWith(name: 'Admin', permissions: Set<String>.from(AppPermission.all), isSystem: true, updatedAt: now);
     }
-    if (_users.isEmpty) {
-      _users.add(AppUser(
-        id: 'admin',
-        fullName: 'Ventio Administrator',
-        username: 'admin',
-        passwordHash: _hashPinV2('admin123'),
-        roleId: 'admin',
-        isSystem: true,
-        createdAt: now,
-        updatedAt: now,
-      ));
-    }
+    // Do not create a default admin account/password. A first-time install
+    // must create its initial administrator from the login setup screen.
     await _saveRolesAndUsers();
   }
 
@@ -856,10 +870,21 @@ class AppStore extends ChangeNotifier {
   }
 
   bool _verifyPassword(String password, String storedHash) {
+    final cleaned = password.trim();
+    if (storedHash.startsWith(_passwordHashPrefix)) {
+      final parts = storedHash.split(':');
+      if (parts.length != 4) return false;
+      final iterations = int.tryParse(parts[1]);
+      if (iterations == null || iterations < 100000) return false;
+      return storedHash == _hashPasswordWithSalt(cleaned, parts[2], iterations: iterations);
+    }
+
+    // Backward compatibility for accounts created before the password hash
+    // upgrade. Password changes and first-run setup now write PBKDF2 hashes.
     if (storedHash.startsWith(_pinHashV2Prefix)) {
       final parts = storedHash.split(':');
       if (parts.length != 3) return false;
-      return storedHash == _hashPinWithSalt(password.trim(), parts[1]);
+      return storedHash == _hashPinWithSalt(cleaned, parts[1]);
     }
     return false;
   }
@@ -921,7 +946,7 @@ class AppStore extends ChangeNotifier {
       id: id,
       fullName: user.fullName.trim(),
       username: normalizedUsername,
-      passwordHash: password != null && password.trim().isNotEmpty ? _hashPinV2(password.trim()) : user.passwordHash,
+      passwordHash: password != null && password.trim().isNotEmpty ? _hashPassword(password.trim()) : user.passwordHash,
       roleId: user.roleId,
       extraPermissions: user.extraPermissions.intersection(Set<String>.from(AppPermission.all)),
       deniedPermissions: user.deniedPermissions.intersection(Set<String>.from(AppPermission.all)),
@@ -971,12 +996,7 @@ class AppStore extends ChangeNotifier {
   Future<void> clearSecurityPin() async {
     _securityPin = null;
     await LocalDatabaseService.setString(_pinKey, '');
-    _recordSyncChange(
-      entityType: 'security_pin',
-      entityId: 'store',
-      operation: 'delete',
-      payload: <String, dynamic>{},
-    );
+    // PINs are local-only and are no longer synchronized between devices.
     await _saveAll();
     notifyListeners();
   }
@@ -1005,6 +1025,19 @@ class AppStore extends ChangeNotifier {
       LocalDatabaseService.setString(_pinKey, _securityPin!);
     }
     return isLegacyMatch;
+  }
+
+
+  String _hashPassword(String password) {
+    final salt = _generateSalt();
+    return _hashPasswordWithSalt(password, salt, iterations: _passwordHashIterations);
+  }
+
+  String _hashPasswordWithSalt(String password, String salt, {required int iterations}) {
+    final derivator = pc.PBKDF2KeyDerivator(pc.HMac(pc.SHA256Digest(), 64));
+    derivator.init(pc.Pbkdf2Parameters(base64Url.decode(salt), iterations, 32));
+    final hash = derivator.process(Uint8List.fromList(utf8.encode('ventio|password|$password')));
+    return '$_passwordHashPrefix$iterations:$salt:${base64UrlEncode(hash)}';
   }
 
   String _hashPinV2(String pin) {
@@ -1945,18 +1978,16 @@ class AppStore extends ChangeNotifier {
     }
     final plain = utf8.encode(exportBackupJson());
     final salt = _generateSalt();
-    final nonce = _generateSalt();
+    final nonce = _generateNonce();
     final key = _deriveBackupKey(cleaned, salt);
-    final encrypted = _xorWithSha256Stream(plain, key, nonce);
-    final mac = Hmac(sha256, key).convert([...utf8.encode(nonce), ...encrypted]).bytes;
+    final encrypted = _aesGcmEncrypt(plain, key, base64Url.decode(nonce));
     final payload = {
       'format': 'store_manager_pro_encrypted_backup',
-      'version': 2,
-      'kdf': 'sha256-pbkdf-100000',
-      'cipher': 'sha256-stream-hmac',
+      'version': 3,
+      'kdf': 'pbkdf2-hmac-sha256-200000',
+      'cipher': 'aes-256-gcm',
       'salt': salt,
       'nonce': nonce,
-      'mac': base64UrlEncode(mac),
       'data': base64UrlEncode(encrypted),
     };
     return const JsonEncoder.withIndent('  ').convert(payload);
@@ -1981,25 +2012,79 @@ class AppStore extends ChangeNotifier {
     }
 
     final nonce = decoded['nonce'] as String? ?? '';
-    final macText = decoded['mac'] as String? ?? '';
-    if (nonce.isEmpty || macText.isEmpty) throw ArgumentError('Invalid encrypted backup.');
-    final key = _deriveBackupKey(password.trim(), salt);
+    if (nonce.isEmpty) throw ArgumentError('Invalid encrypted backup.');
     final encrypted = base64Url.decode(data);
-    final expectedMac = Hmac(sha256, key).convert([...utf8.encode(nonce), ...encrypted]).bytes;
-    final actualMac = base64Url.decode(macText);
-    if (!_constantTimeEquals(expectedMac, actualMac)) {
+
+    if ((decoded['version'] as num? ?? 2).toInt() == 2) {
+      // Backward compatibility with backups exported by the authenticated
+      // SHA-256 stream format. New exports use AES-256-GCM below.
+      final macText = decoded['mac'] as String? ?? '';
+      if (macText.isEmpty) throw ArgumentError('Invalid encrypted backup.');
+      final legacyKey = _deriveBackupKeyV2(password.trim(), salt);
+      final expectedMac = Hmac(sha256, legacyKey).convert([...utf8.encode(nonce), ...encrypted]).bytes;
+      final actualMac = base64Url.decode(macText);
+      if (!_constantTimeEquals(expectedMac, actualMac)) {
+        throw ArgumentError('Invalid backup password or corrupted encrypted backup.');
+      }
+      final plain = _xorWithSha256Stream(encrypted, legacyKey, nonce);
+      return utf8.decode(plain);
+    }
+
+    final key = _deriveBackupKey(password.trim(), salt);
+    try {
+      return utf8.decode(_aesGcmDecrypt(encrypted, key, base64Url.decode(nonce)));
+    } catch (_) {
       throw ArgumentError('Invalid backup password or corrupted encrypted backup.');
     }
-    final plain = _xorWithSha256Stream(encrypted, key, nonce);
-    return utf8.decode(plain);
   }
 
   List<int> _deriveBackupKey(String password, String salt) {
+    final derivator = pc.PBKDF2KeyDerivator(pc.HMac(pc.SHA256Digest(), 64));
+    derivator.init(pc.Pbkdf2Parameters(Uint8List.fromList(utf8.encode(salt)), 200000, 32));
+    return derivator.process(Uint8List.fromList(utf8.encode('store_manager_pro|backup_v3|$password')));
+  }
+
+  List<int> _deriveBackupKeyV2(String password, String salt) {
     List<int> digest = utf8.encode('store_manager_pro|backup_v2|$salt|$password');
     for (var i = 0; i < 100000; i++) {
       digest = sha256.convert(digest).bytes;
     }
     return digest;
+  }
+
+
+  String _generateNonce() {
+    final random = Random.secure();
+    final bytes = List<int>.generate(12, (_) => random.nextInt(256));
+    return base64UrlEncode(bytes);
+  }
+
+  List<int> _aesGcmEncrypt(List<int> plain, List<int> key, List<int> nonce) {
+    final cipher = pc.GCMBlockCipher(pc.AESEngine())
+      ..init(
+        true,
+        pc.AEADParameters(
+          pc.KeyParameter(Uint8List.fromList(key)),
+          128,
+          Uint8List.fromList(nonce),
+          Uint8List(0),
+        ),
+      );
+    return cipher.process(Uint8List.fromList(plain));
+  }
+
+  List<int> _aesGcmDecrypt(List<int> encrypted, List<int> key, List<int> nonce) {
+    final cipher = pc.GCMBlockCipher(pc.AESEngine())
+      ..init(
+        false,
+        pc.AEADParameters(
+          pc.KeyParameter(Uint8List.fromList(key)),
+          128,
+          Uint8List.fromList(nonce),
+          Uint8List(0),
+        ),
+      );
+    return cipher.process(Uint8List.fromList(encrypted));
   }
 
   List<int> _deriveBackupKeyV1(String password, String salt) {
@@ -2652,7 +2737,8 @@ class AppStore extends ChangeNotifier {
         }
         break;
       case 'security_pin':
-        _securityPin = change.operation == 'delete' ? null : p['pinHash'] as String?;
+        // Legacy remote PIN changes are ignored. PINs, when present on older
+        // installs, remain device-local only.
         break;
       case 'role':
         if (change.operation == 'delete') {

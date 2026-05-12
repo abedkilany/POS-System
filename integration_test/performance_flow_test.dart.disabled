@@ -1,0 +1,42 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:integration_test/integration_test.dart';
+import 'package:ventio/app.dart';
+import 'package:ventio/core/localization/app_localizations.dart';
+import 'package:ventio/core/theme/app_theme.dart';
+import 'package:ventio/core/services/local_database_service.dart';
+import 'package:ventio/data/app_store.dart';
+
+void main() {
+  final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+
+  testWidgets('navigation remains responsive across core sections', (tester) async {
+    await binding.setSurfaceSize(const Size(1280, 900));
+    await binding.traceAction(() async {
+      await tester.pumpWidget(
+        MaterialApp(
+          debugShowCheckedModeBanner: false,
+          theme: AppTheme.lightTheme,
+          locale: const Locale('en'),
+          supportedLocales: const [Locale('en'), Locale('ar')],
+          localizationsDelegates: const [
+            AppLocalizations.delegate,
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          home: MainShell(store: await (() async { LocalDatabaseService.useInMemoryStoreForTesting(); final store = AppStore(); await store.initialize(); return store; })(), onLocaleChanged: (_) {}),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      for (final label in <String>['Products', 'Sales', 'Inventory', 'Reports', 'Settings', 'Dashboard']) {
+        await tester.tap(find.text(label).first);
+        await tester.pumpAndSettle();
+      }
+    }, reportKey: 'core_navigation_performance');
+
+    expect(find.textContaining('Ventio • Dashboard'), findsOneWidget);
+  });
+}

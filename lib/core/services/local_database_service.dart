@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:math';
-
 import 'package:flutter/foundation.dart';
 import 'package:hive_ce_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -14,8 +13,21 @@ class LocalDatabaseService {
   static const String _legacyEncryptionKeyPrefsKey = 'store_manager_local_db_key_v1';
   static const FlutterSecureStorage _secureStorage = FlutterSecureStorage();
   static Box<String>? _box;
+  static Map<String, String>? _memoryStoreForTesting;
+
+  @visibleForTesting
+  static void useInMemoryStoreForTesting([Map<String, String>? seed]) {
+    _memoryStoreForTesting = Map<String, String>.from(seed ?? const <String, String>{});
+    _box = null;
+  }
+
+  @visibleForTesting
+  static void clearInMemoryStoreForTesting() {
+    _memoryStoreForTesting = null;
+  }
 
   static Future<void> initialize() async {
+    if (_memoryStoreForTesting != null) return;
     if (_box != null && _box!.isOpen) return;
 
     // Web-safe initialization. Hive.initFlutter() works on Flutter Web and
@@ -49,6 +61,8 @@ class LocalDatabaseService {
     return key;
   }
 
+  static Map<String, String>? get _memoryStore => _memoryStoreForTesting;
+
   static Box<String> get _requireBox {
     final box = _box;
     if (box == null || !box.isOpen) {
@@ -57,35 +71,39 @@ class LocalDatabaseService {
     return box;
   }
 
-  static String? getString(String key) => _requireBox.get(key);
+  static String? getString(String key) {
+    final memory = _memoryStore;
+    if (memory != null) return memory[key];
+    return _requireBox.get(key);
+  }
 
   static Future<void> setString(String key, String value) async {
+    final memory = _memoryStore;
+    if (memory != null) {
+      memory[key] = value;
+      return;
+    }
     await _requireBox.put(key, value);
   }
 
-  static bool containsKey(String key) => _requireBox.containsKey(key);
+  static bool containsKey(String key) {
+    final memory = _memoryStore;
+    if (memory != null) return memory.containsKey(key);
+    return _requireBox.containsKey(key);
+  }
 
   static Future<void> deleteString(String key) async {
+    final memory = _memoryStore;
+    if (memory != null) {
+      memory.remove(key);
+      return;
+    }
     await _requireBox.delete(key);
   }
 
-  static bool get isEmpty => _requireBox.isEmpty;
-
-  /// Clears the cached box handle and removes the box from disk.
-  /// Used by widget tests between cases.
-  @visibleForTesting
-  static Future<void> resetForTesting() async {
-    final box = _box;
-    _box = null;
-    if (box != null) {
-      if (box.isOpen) {
-        await box.close();
-      }
-      try {
-        await Hive.deleteBoxFromDisk(boxName);
-      } catch (_) {
-        // Ignore cleanup failures in tests.
-      }
-    }
+  static bool get isEmpty {
+    final memory = _memoryStore;
+    if (memory != null) return memory.isEmpty;
+    return _requireBox.isEmpty;
   }
 }

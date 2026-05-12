@@ -183,90 +183,10 @@ class SettingsPage extends StatelessWidget {
           ),
         ),
       ),
-      Card(
-        child: ListTile(
-          leading: const Icon(Icons.lock_outline),
-          title: Text(tr.text('security_pin')),
-          subtitle: Text(store.isPinEnabled ? tr.text('security_pin_enabled') : tr.text('security_pin_disabled')),
-          trailing: FilledButton.icon(onPressed: () => _manageSecurityPin(context), icon: Icon(store.isPinEnabled ? Icons.lock_reset : Icons.password_outlined), label: Text(store.isPinEnabled ? tr.text('change_pin') : tr.text('enable_pin'))),
-        ),
-      ),
     ];
   }
 
 
-
-  Future<void> _manageSecurityPin(BuildContext context) async {
-    final tr = AppLocalizations.of(context);
-    final controller = TextEditingController();
-    final confirmController = TextEditingController();
-
-    final action = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(tr.text('security_pin')),
-        content: SizedBox(
-          width: 420,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(tr.text('pin_help')),
-              const SizedBox(height: 12),
-              TextField(
-                controller: controller,
-                obscureText: true,
-                maxLength: 8,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(labelText: tr.text('new_pin'), counterText: ''),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: confirmController,
-                obscureText: true,
-                maxLength: 8,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(labelText: tr.text('confirm_pin'), counterText: ''),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          if (store.isPinEnabled)
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, 'clear'),
-              child: Text(tr.text('disable_pin')),
-            ),
-          TextButton(onPressed: () => Navigator.pop(dialogContext), child: Text(tr.text('cancel'))),
-          FilledButton(onPressed: () => Navigator.pop(dialogContext, 'save'), child: Text(tr.text('save'))),
-        ],
-      ),
-    );
-
-    if (action == null) return;
-
-    try {
-      if (action == 'clear') {
-        await store.clearSecurityPin();
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('pin_disabled'))));
-        }
-        return;
-      }
-
-      final pin = controller.text.trim();
-      if (pin != confirmController.text.trim()) {
-        throw ArgumentError('PIN mismatch');
-      }
-      await store.setSecurityPin(pin);
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('pin_enabled'))));
-      }
-    } catch (_) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('pin_invalid'))));
-      }
-    }
-  }
 
   Future<void> _editStoreProfile(BuildContext context, StoreProfile profile) async {
     final nameController = TextEditingController(text: profile.name);
@@ -864,7 +784,7 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
 
   CloudSyncSettings get _settings {
     final loaded = CloudSyncSettings.load();
-    final interval = int.tryParse(_intervalController.text.trim())?.clamp(5, 3600).toInt() ?? 5;
+    final interval = int.tryParse(_intervalController.text.trim())?.clamp(30, 3600).toInt() ?? 30;
     return loaded.copyWith(
       enabled: true,
       apiBaseUrl: _apiController.text.trim(),
@@ -972,7 +892,7 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
                 controller: _intervalController,
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(
-                  labelText: 'Auto sync interval seconds',
+                  labelText: 'Auto sync interval seconds (minimum 30)',
                   helperText: 'Minimum 5 seconds.',
                   border: OutlineInputBorder(),
                 ),
@@ -1133,7 +1053,7 @@ class _LanSyncCardState extends State<_LanSyncCard> {
 
   CloudSyncSettings get _cloudSettings {
     final loaded = CloudSyncSettings.load();
-    final interval = int.tryParse(_cloudIntervalController.text.trim())?.clamp(5, 3600).toInt() ?? 5;
+    final interval = int.tryParse(_cloudIntervalController.text.trim())?.clamp(30, 3600).toInt() ?? 30;
     return loaded.copyWith(
       enabled: true,
       apiBaseUrl: _cloudApiController.text.trim().isEmpty ? (kIsWeb ? Uri.base.origin : '') : _cloudApiController.text.trim(),
@@ -1247,7 +1167,7 @@ class _LanSyncCardState extends State<_LanSyncCard> {
                   controller: _cloudIntervalController,
                   keyboardType: TextInputType.number,
                   decoration: const InputDecoration(
-                    labelText: 'Auto sync interval seconds',
+                    labelText: 'Auto sync interval seconds (minimum 30)',
                     helperText: 'Minimum 5 seconds.',
                     border: OutlineInputBorder(),
                   ),

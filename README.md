@@ -5,12 +5,12 @@ This build keeps the Flutter offline/LAN POS app and adds a cleaner Vercel + Neo
 ## What changed
 
 - Vercel deployment builds Flutter Web with `npm run build` and serves `build/web`.
-- `/api` is the active production API. The older `vercel-api/` folder is kept only as reference and is not used by the root Vercel deployment.
-- Cloud sync now requires `CLOUD_SYNC_TOKEN`; the API no longer accepts unauthenticated sync when the token is missing.
+- `/api` is the active production API. The older Vercel API sample was moved to `docs/archive/vercel-api-reference/` to avoid deployment confusion.
+- Cloud sync now requires `CLOUD_SYNC_TOKEN`; the API no longer accepts unauthenticated sync when the token is missing. Use a long per-store secret and rotate it when sharing access with new devices.
 - Optional `CLOUD_SYNC_STORE_ID` can restrict a deployed API/token to one store ID.
 - Stock movements now update `entity_snapshots`, so new browsers/devices pull current inventory instead of stale product snapshots.
 - Sync architecture v2 makes the Host the only source of truth. Web/remote clients submit changes to a Cloud relay inbox; the Host accepts them and republishes authoritative events.
-- Flutter Web saves the cloud pull cursor and supports automatic cloud sync after the API URL/token are configured.
+- Flutter Web saves the cloud pull cursor and supports automatic cloud sync after the API URL/token are configured. The minimum auto-sync interval is 30 seconds to reduce API/database pressure.
 
 ## Vercel environment variables
 

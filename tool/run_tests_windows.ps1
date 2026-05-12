@@ -13,3 +13,6 @@ flutter clean
 flutter pub get
 flutter analyze
 flutter test -r expanded --concurrency=1
+
+Write-Host 'Running integration tests...' -ForegroundColor Cyan
+flutter test integration_test -r expanded

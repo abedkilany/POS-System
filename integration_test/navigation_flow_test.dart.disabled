@@ -1,0 +1,55 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:integration_test/integration_test.dart';
+import 'package:ventio/app.dart';
+import 'package:ventio/core/localization/app_localizations.dart';
+import 'package:ventio/core/theme/app_theme.dart';
+import 'package:ventio/core/services/local_database_service.dart';
+import 'package:ventio/data/app_store.dart';
+
+void main() {
+  final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+
+  group('Navigation flow tests', () {
+    testWidgets('wide layout navigates between primary sections', (tester) async {
+      await binding.setSurfaceSize(const Size(1280, 900));
+      LocalDatabaseService.useInMemoryStoreForTesting();
+      final store = AppStore();
+      await store.initialize();
+      await tester.pumpWidget(
+        MaterialApp(
+          debugShowCheckedModeBanner: false,
+          theme: AppTheme.lightTheme,
+          locale: const Locale('en'),
+          supportedLocales: const [Locale('en'), Locale('ar')],
+          localizationsDelegates: const [
+            AppLocalizations.delegate,
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          home: MainShell(store: store, onLocaleChanged: (_) {}),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Ventio • Dashboard'), findsOneWidget);
+      expect(find.text('Today\'s Sales'), findsOneWidget);
+
+      await tester.tap(find.text('Products').first);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Ventio • Products'), findsOneWidget);
+      expect(find.text('Add Product'), findsOneWidget);
+
+      await tester.tap(find.text('Sales').first);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Ventio • Sales'), findsOneWidget);
+      expect(find.text('Save Invoice'), findsOneWidget);
+
+      await tester.tap(find.text('Reports').first);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Ventio • Reports'), findsOneWidget);
+    });
+  });
+}
