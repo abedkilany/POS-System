@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -10,6 +11,7 @@ import '../../models/sale.dart';
 import '../../models/sale_item.dart';
 import '../../widgets/app_section_header.dart';
 import '../../widgets/empty_state_card.dart';
+import '../barcode/barcode_scanner_page.dart';
 
 class SalesPage extends StatefulWidget {
   const SalesPage({super.key, required this.store});
@@ -317,6 +319,21 @@ class _SalesPageState extends State<SalesPage> {
     );
   }
 
+  bool get _canUseCameraScanner =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS);
+
+  Future<void> _scanBarcodeWithCamera() async {
+    final code = await Navigator.of(context).push<String>(
+      MaterialPageRoute(builder: (_) => const BarcodeScannerPage()),
+    );
+    if (!mounted || code == null || code.trim().isEmpty) return;
+    final value = code.trim();
+    _barcodeController.text = value;
+    _addByCode(value);
+  }
+
   Widget _buildBarcodeStation(BuildContext context, AppLocalizations tr) {
     return Container(
       padding: const EdgeInsets.all(12),
@@ -336,7 +353,25 @@ class _SalesPageState extends State<SalesPage> {
               labelText: tr.text('scan_barcode'),
               hintText: tr.text('scan_barcode_hint'),
               prefixIcon: const Icon(Icons.qr_code_2),
-              suffixIcon: IconButton(onPressed: () { _barcodeController.clear(); _barcodeFocusNode.requestFocus(); }, icon: const Icon(Icons.clear)),
+              suffixIcon: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_canUseCameraScanner)
+                    IconButton(
+                      tooltip: 'Scan with camera',
+                      onPressed: _scanBarcodeWithCamera,
+                      icon: const Icon(Icons.camera_alt_outlined),
+                    ),
+                  IconButton(
+                    tooltip: 'Clear',
+                    onPressed: () {
+                      _barcodeController.clear();
+                      _barcodeFocusNode.requestFocus();
+                    },
+                    icon: const Icon(Icons.clear),
+                  ),
+                ],
+              ),
             ),
             onSubmitted: _addByCode,
           );

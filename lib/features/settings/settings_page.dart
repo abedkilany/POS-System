@@ -141,12 +141,16 @@ class SettingsPage extends StatelessWidget {
                 spacing: 12,
                 runSpacing: 12,
                 children: [
-                  FilledButton.icon(onPressed: () => _downloadBackupFile(context), icon: const Icon(Icons.download_outlined), label: Text(tr.text('download_backup_file'))),
-                  FilledButton.icon(onPressed: () => _downloadEncryptedBackupFile(context), icon: const Icon(Icons.enhanced_encryption_outlined), label: Text(tr.text('encrypted_backup'))),
-                  OutlinedButton.icon(onPressed: () => _previewBackup(context), icon: const Icon(Icons.visibility_outlined), label: Text(tr.text('preview_backup_json'))),
-                  OutlinedButton.icon(onPressed: () => _copyBackup(context), icon: const Icon(Icons.copy_all_outlined), label: Text(tr.text('copy_backup_json'))),
-                  OutlinedButton.icon(onPressed: () => _importBackupFile(context), icon: const Icon(Icons.upload_file_outlined), label: Text(tr.text('import_backup_file'))),
-                  OutlinedButton.icon(onPressed: () => _restoreBackup(context), icon: const Icon(Icons.settings_backup_restore_outlined), label: Text(tr.text('restore_backup'))),
+                  FilledButton.icon(
+                    onPressed: () => _downloadBackupFile(context),
+                    icon: const Icon(Icons.download_outlined),
+                    label: const Text('Export'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => _importBackupFile(context),
+                    icon: const Icon(Icons.upload_file_outlined),
+                    label: const Text('Import'),
+                  ),
                 ],
               ),
             ],

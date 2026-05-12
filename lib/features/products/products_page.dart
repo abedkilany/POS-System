@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
@@ -10,6 +11,7 @@ import '../../models/product.dart';
 import '../../models/supplier.dart';
 import '../../widgets/app_section_header.dart';
 import '../../widgets/empty_state_card.dart';
+import '../barcode/barcode_scanner_page.dart';
 
 class ProductsPage extends StatefulWidget {
   const ProductsPage({super.key, required this.store});
@@ -301,6 +303,19 @@ class _ProductDialogState extends State<_ProductDialog> {
     super.dispose();
   }
 
+  bool get _canUseCameraScanner =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS);
+
+  Future<void> _scanBarcodeWithCamera() async {
+    final code = await Navigator.of(context).push<String>(
+      MaterialPageRoute(builder: (_) => const BarcodeScannerPage()),
+    );
+    if (!mounted || code == null || code.trim().isEmpty) return;
+    setState(() => barcodeController.text = code.trim());
+  }
+
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
@@ -316,7 +331,19 @@ class _ProductDialogState extends State<_ProductDialog> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 _ResponsiveFields(children: [
-                  TextFormField(controller: barcodeController, decoration: InputDecoration(labelText: tr.text('barcode'))),
+                  TextFormField(
+                    controller: barcodeController,
+                    decoration: InputDecoration(
+                      labelText: tr.text('barcode'),
+                      suffixIcon: _canUseCameraScanner
+                          ? IconButton(
+                              tooltip: 'Scan with camera',
+                              onPressed: _scanBarcodeWithCamera,
+                              icon: const Icon(Icons.camera_alt_outlined),
+                            )
+                          : null,
+                    ),
+                  ),
                   TextFormField(controller: codeController, decoration: InputDecoration(labelText: tr.text('sku_code')), validator: _uniqueSku),
                   TextFormField(controller: nameEnController, decoration: InputDecoration(labelText: tr.text('product_name_en')), validator: _nameRequired),
                   TextFormField(controller: nameArController, decoration: InputDecoration(labelText: tr.text('product_name_ar'))),
@@ -707,3 +734,4 @@ class _QuickSupplierDialogState extends State<_QuickSupplierDialog> {
     );
   }
 }
+
