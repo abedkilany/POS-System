@@ -18,7 +18,11 @@ class SyncSetupPage extends StatefulWidget {
 class _SyncSetupPageState extends State<SyncSetupPage> {
   final _hostController = TextEditingController(text: '192.168.1.100');
   final _portController = TextEditingController(text: '8787');
-  final _tokenController = TextEditingController(text: LanSyncSettings.generateSecret());
+  final _tokenController = TextEditingController(
+    text: LanSyncSettings.load().secret.trim().isNotEmpty
+        ? LanSyncSettings.load().secret.trim()
+        : LanSyncSettings.generateSecret(),
+  );
   late final LanSyncService _syncService = LanSyncService(widget.store);
   bool _busy = false;
   String _status = '';
@@ -39,9 +43,15 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       _status = AppLocalizations.of(context).text('preparing_host');
     });
     try {
-      final secret = _tokenController.text.trim().isEmpty ? LanSyncSettings.generateSecret() : _tokenController.text.trim();
+      final existingSettings = LanSyncSettings.load();
+      final secret = _tokenController.text.trim().isEmpty
+          ? (existingSettings.secret.trim().isNotEmpty ? existingSettings.secret.trim() : LanSyncSettings.generateSecret())
+          : _tokenController.text.trim();
+      _tokenController.text = secret;
       final settings = LanSyncSettings(
-        host: _hostController.text.trim().isEmpty ? '0.0.0.0' : _hostController.text.trim(),
+        // The Host listens on all network interfaces. Clients must use the real LAN IP,
+        // but the Host device itself should store 0.0.0.0 so it never binds/saves a stale IP.
+        host: '0.0.0.0',
         port: _port,
         autoSyncEnabled: true,
         hostModeEnabled: true,

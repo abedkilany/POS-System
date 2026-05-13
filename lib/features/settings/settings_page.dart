@@ -1088,7 +1088,7 @@ class _LanSyncCardState extends State<_LanSyncCard> {
         ? requestedSecret
         : (existingSettings.secret.trim().isNotEmpty ? existingSettings.secret.trim() : (_hostModeEnabled ? LanSyncSettings.generateSecret() : ''));
     final settings = LanSyncSettings(
-      host: _hostController.text.trim().isEmpty ? '192.168.1.100' : _hostController.text.trim(),
+      host: _hostModeEnabled ? '0.0.0.0' : (_hostController.text.trim().isEmpty ? '192.168.1.100' : _hostController.text.trim()),
       port: _port,
       autoSyncEnabled: _autoSyncEnabled,
       hostModeEnabled: _hostModeEnabled,

@@ -172,6 +172,13 @@ class LanSyncService {
     return request.headers.value('x-sync-token') == secret;
   }
 
+  String _maskedToken(String? token) {
+    final value = (token ?? '').trim();
+    if (value.isEmpty) return '<empty>';
+    if (value.length <= 4) return '****';
+    return '${value.substring(0, 2)}****${value.substring(value.length - 2)}';
+  }
+
   Future<void> _json(HttpRequest request, Object payload, {int status = HttpStatus.ok}) async {
     request.response.statusCode = status;
     request.response.headers.contentType = ContentType.json;
@@ -193,7 +200,21 @@ class LanSyncService {
 
       final settings = LanSyncSettings.load();
       if (!_authorized(request, settings)) {
-        await _json(request, {'ok': false, 'error': 'Unauthorized sync token.'}, status: HttpStatus.unauthorized);
+        final receivedToken = request.headers.value('x-sync-token');
+        // Keep a safe log for troubleshooting LAN/Host pairing problems without printing the full secret.
+        print(
+          'LAN SYNC AUTH FAILED: path=${request.uri.path} '
+          "from=${request.connectionInfo?.remoteAddress.address ?? 'unknown'} "
+          'received=${_maskedToken(receivedToken)} expected=${_maskedToken(settings.secret)}',
+        );
+        await _json(
+          request,
+          {
+            'ok': false,
+            'error': 'Unauthorized sync token. Please re-pair this Client with the Host token.',
+          },
+          status: HttpStatus.unauthorized,
+        );
         return;
       }
 
@@ -281,7 +302,7 @@ class LanSyncService {
     }
   }
 
-  HttpClient _client() => HttpClient()..connectionTimeout = const Duration(seconds: 5);
+  HttpClient _client() => HttpClient()..connectionTimeout = const Duration(seconds: 15);
 
   void _attachToken(HttpClientRequest request, String token) {
     if (token.trim().isNotEmpty) request.headers.add('X-Sync-Token', token.trim());
