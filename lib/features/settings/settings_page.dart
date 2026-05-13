@@ -16,9 +16,11 @@ import '../../models/user_role.dart';
 import 'users_permissions_page.dart';
 
 class SettingsPage extends StatelessWidget {
-  const SettingsPage({super.key, required this.onLocaleChanged, required this.store, this.onSyncSettingsChanged});
+  const SettingsPage({super.key, required this.onLocaleChanged, required this.onThemeModeChanged, required this.themeMode, required this.store, this.onSyncSettingsChanged});
 
   final ValueChanged<Locale> onLocaleChanged;
+  final ValueChanged<ThemeMode> onThemeModeChanged;
+  final ThemeMode themeMode;
   final AppStore store;
   final Future<void> Function()? onSyncSettingsChanged;
 
@@ -97,6 +99,28 @@ class SettingsPage extends StatelessWidget {
         ),
       ),
       _SystemIdentityCard(store: store),
+
+      Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Theme', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 12),
+              SegmentedButton<ThemeMode>(
+                segments: const [
+                  ButtonSegment<ThemeMode>(value: ThemeMode.system, icon: Icon(Icons.settings_suggest_outlined), label: Text('System')),
+                  ButtonSegment<ThemeMode>(value: ThemeMode.light, icon: Icon(Icons.light_mode_outlined), label: Text('Light')),
+                  ButtonSegment<ThemeMode>(value: ThemeMode.dark, icon: Icon(Icons.dark_mode_outlined), label: Text('Dark')),
+                ],
+                selected: {themeMode},
+                onSelectionChanged: (selection) => onThemeModeChanged(selection.first),
+              ),
+            ],
+          ),
+        ),
+      ),
       Card(
         child: Padding(
           padding: const EdgeInsets.all(16),
@@ -1003,7 +1027,7 @@ class _LanSyncCardState extends State<_LanSyncCard> {
         ? requestedSecret
         : (existingSettings.secret.trim().isNotEmpty ? existingSettings.secret.trim() : (_hostModeEnabled ? LanSyncSettings.generateSecret() : ''));
     final settings = LanSyncSettings(
-      host: _hostModeEnabled ? '0.0.0.0' : (_hostController.text.trim().isEmpty ? '192.168.1.100' : _hostController.text.trim()),
+      host: _hostController.text.trim().isEmpty ? existingSettings.host : _hostController.text.trim(),
       port: _port,
       autoSyncEnabled: _autoSyncEnabled,
       hostModeEnabled: _hostModeEnabled,
@@ -1242,7 +1266,20 @@ class _LanSyncCardState extends State<_LanSyncCard> {
               title: Text(tr.text('host_mode')),
               subtitle: Text(tr.text('host_mode_desc')),
               value: _hostModeEnabled,
-              onChanged: (value) => setState(() => _hostModeEnabled = value),
+              onChanged: (value) async {
+                setState(() => _hostModeEnabled = value);
+                await _run(() async {
+                  await _saveSettings();
+                  if (_hostModeEnabled) {
+                    await _syncService.startHost(port: _port);
+                    if (mounted) setState(() => _status = 'Host settings saved and Host started.');
+                  } else {
+                    await _syncService.stopHost();
+                    if (mounted) setState(() => _status = 'Client settings saved.');
+                  }
+                  await widget.onSyncSettingsChanged?.call();
+                });
+              },
             ),
             const SizedBox(height: 8),
             Wrap(

@@ -20,7 +20,7 @@ Widget _testApp({required AppStore store, Locale locale = const Locale('en')}) {
       GlobalWidgetsLocalizations.delegate,
       GlobalCupertinoLocalizations.delegate,
     ],
-    home: MainShell(store: store, onLocaleChanged: (_) {}),
+    home: MainShell(store: store, onLocaleChanged: (_) {}, onThemeModeChanged: (_) {}, themeMode: ThemeMode.system),
   );
 }
 

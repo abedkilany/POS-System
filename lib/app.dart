@@ -32,6 +32,7 @@ class StoreManagerApp extends StatefulWidget {
 
 class _StoreManagerAppState extends State<StoreManagerApp> {
   Locale _locale = const Locale('en');
+  ThemeMode _themeMode = ThemeMode.system;
   final AppStore _store = AppStore();
   late final AutoLanSyncController _autoSyncController = AutoLanSyncController(_store);
   late final AutoCloudSyncController _autoCloudSyncController = AutoCloudSyncController(_store);
@@ -44,6 +45,8 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
 
   Future<void> _initializeApp() async {
     await _store.initialize();
+    final savedTheme = await _store.loadThemeMode();
+    if (mounted) setState(() => _themeMode = savedTheme);
     await _autoSyncController.start();
     await _autoCloudSyncController.start();
   }
@@ -60,6 +63,11 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
     setState(() => _locale = locale);
   }
 
+  Future<void> _changeThemeMode(ThemeMode mode) async {
+    await _store.saveThemeMode(mode);
+    if (mounted) setState(() => _themeMode = mode);
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
@@ -70,7 +78,7 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
           title: 'Ventio',
           theme: AppTheme.lightTheme,
           darkTheme: AppTheme.darkTheme,
-          themeMode: ThemeMode.system,
+          themeMode: _themeMode,
           locale: _locale,
           supportedLocales: const [Locale('en'), Locale('ar')],
           localizationsDelegates: const [
@@ -80,38 +88,28 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
             GlobalCupertinoLocalizations.delegate,
           ],
           home: _store.isReady
-              ? (_store.needsInitialAdminSetup
-                  ? PinLockPage(
+              ? (!kIsWeb && !LanSyncSettings.load().setupComplete
+                  ? SyncSetupPage(
+                      store: _store,
+                      onDone: () async {
+                        await _autoSyncController.start();
+                        await _autoCloudSyncController.start();
+                        if (mounted) setState(() {});
+                      },
+                    )
+                  : PinLockPage(
                       store: _store,
                       child: MainShell(
                         store: _store,
                         onLocaleChanged: _changeLocale,
+                        onThemeModeChanged: _changeThemeMode,
+                        themeMode: _themeMode,
                         onSyncSettingsChanged: () async {
                           await _autoSyncController.start();
                           await _autoCloudSyncController.start();
                         },
                       ),
-                    )
-                  : (kIsWeb || LanSyncSettings.load().setupComplete
-                      ? PinLockPage(
-                          store: _store,
-                          child: MainShell(
-                            store: _store,
-                            onLocaleChanged: _changeLocale,
-                            onSyncSettingsChanged: () async {
-                              await _autoSyncController.start();
-                              await _autoCloudSyncController.start();
-                            },
-                          ),
-                        )
-                      : SyncSetupPage(
-                          store: _store,
-                          onDone: () async {
-                            await _autoSyncController.start();
-                            await _autoCloudSyncController.start();
-                            if (mounted) setState(() {});
-                          },
-                        )))
+                    ))
               : const Scaffold(body: Center(child: CircularProgressIndicator())),
         );
       },
@@ -129,9 +127,11 @@ class _ShellItem {
 }
 
 class MainShell extends StatefulWidget {
-  const MainShell({super.key, required this.onLocaleChanged, required this.store, this.onSyncSettingsChanged});
+  const MainShell({super.key, required this.onLocaleChanged, required this.onThemeModeChanged, required this.themeMode, required this.store, this.onSyncSettingsChanged});
 
   final ValueChanged<Locale> onLocaleChanged;
+  final ValueChanged<ThemeMode> onThemeModeChanged;
+  final ThemeMode themeMode;
   final AppStore store;
   final Future<void> Function()? onSyncSettingsChanged;
 
@@ -164,7 +164,7 @@ class _MainShellState extends State<MainShell> {
       _ShellItem(label: tr.text('inventory'), icon: Icons.warehouse_outlined, selectedIcon: Icons.warehouse, page: InventoryPage(store: widget.store)),
       if (widget.store.hasPermission(AppPermission.reportsView))
         _ShellItem(label: tr.text('reports'), icon: Icons.bar_chart_outlined, selectedIcon: Icons.bar_chart, page: ReportsPage(store: widget.store)),
-      _ShellItem(label: tr.text('settings'), icon: Icons.settings_outlined, selectedIcon: Icons.settings, page: SettingsPage(store: widget.store, onLocaleChanged: widget.onLocaleChanged, onSyncSettingsChanged: widget.onSyncSettingsChanged)),
+      _ShellItem(label: tr.text('settings'), icon: Icons.settings_outlined, selectedIcon: Icons.settings, page: SettingsPage(store: widget.store, onLocaleChanged: widget.onLocaleChanged, onThemeModeChanged: widget.onThemeModeChanged, themeMode: widget.themeMode, onSyncSettingsChanged: widget.onSyncSettingsChanged)),
     ];
     if (selectedIndex >= items.length) selectedIndex = items.length - 1;
 
@@ -186,7 +186,7 @@ class _MainShellState extends State<MainShell> {
                 onPressed: () async {
                   await widget.store.logout();
                   if (context.mounted) {
-                    Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => PinLockPage(store: widget.store, child: MainShell(store: widget.store, onLocaleChanged: widget.onLocaleChanged))));
+                    Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => PinLockPage(store: widget.store, child: MainShell(store: widget.store, onLocaleChanged: widget.onLocaleChanged, onThemeModeChanged: widget.onThemeModeChanged, themeMode: widget.themeMode))));
                   }
                 },
                 icon: const Icon(Icons.logout),

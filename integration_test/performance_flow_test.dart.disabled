@@ -26,7 +26,7 @@ void main() {
             GlobalWidgetsLocalizations.delegate,
             GlobalCupertinoLocalizations.delegate,
           ],
-          home: MainShell(store: await (() async { LocalDatabaseService.useInMemoryStoreForTesting(); final store = AppStore(); await store.initialize(); return store; })(), onLocaleChanged: (_) {}),
+          home: MainShell(store: await (() async { LocalDatabaseService.useInMemoryStoreForTesting(); final store = AppStore(); await store.initialize(); return store; })(), onLocaleChanged: (_) {}, onThemeModeChanged: (_) {}, themeMode: ThemeMode.system),
         ),
       );
       await tester.pumpAndSettle();

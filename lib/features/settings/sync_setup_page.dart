@@ -49,9 +49,9 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
           : _tokenController.text.trim();
       _tokenController.text = secret;
       final settings = LanSyncSettings(
-        // The Host listens on all network interfaces. Clients must use the real LAN IP,
-        // but the Host device itself should store 0.0.0.0 so it never binds/saves a stale IP.
-        host: '0.0.0.0',
+        // Keep the visible/shareable IP saved. The server can still bind internally
+        // without erasing the user's Host address.
+        host: _hostController.text.trim().isEmpty ? existingSettings.host : _hostController.text.trim(),
         port: _port,
         autoSyncEnabled: true,
         hostModeEnabled: true,
@@ -61,7 +61,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       );
       await settings.save();
       final identity = widget.store.appIdentity;
-      await widget.store.updateAppIdentity(identity.copyWith(
+      await widget.store.updateAppIdentityDuringSetup(identity.copyWith(
         deviceRole: DeviceRole.host,
         syncMode: identity.syncMode == SyncMode.localOnly ? SyncMode.lanOnly : identity.syncMode,
       ));
@@ -100,7 +100,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       );
       await settings.save();
       final identity = widget.store.appIdentity;
-      await widget.store.updateAppIdentity(identity.copyWith(
+      await widget.store.updateAppIdentityDuringSetup(identity.copyWith(
         deviceRole: DeviceRole.client,
         syncMode: identity.syncMode == SyncMode.localOnly ? SyncMode.lanOnly : identity.syncMode,
       ));

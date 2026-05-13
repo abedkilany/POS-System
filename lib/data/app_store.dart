@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:pointycastle/export.dart' as pc;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -112,6 +113,7 @@ class AppStore extends ChangeNotifier {
   static const _usersKey = 'users_v1';
   static const _activeUserKey = 'active_user_v1';
   static const _appIdentityKey = 'app_identity_v1';
+  static const _themeModeKey = 'theme_mode_v1';
 
   final List<Product> _products = [];
   final List<Customer> _customers = [];
@@ -201,6 +203,16 @@ class AppStore extends ChangeNotifier {
   bool get canDeleteOrCancel => hasPermission(AppPermission.salesCancel);
   bool get canManageUsers => hasPermission(AppPermission.usersManage) && hasPermission(AppPermission.rolesManage);
   bool get needsInitialAdminSetup => _users.isEmpty || _hasOnlyLegacyDefaultAdminUser;
+
+  Future<ThemeMode> loadThemeMode() async {
+    final raw = LocalDatabaseService.getString(_themeModeKey) ?? 'system';
+    return ThemeMode.values.firstWhere((mode) => mode.name == raw, orElse: () => ThemeMode.system);
+  }
+
+  Future<void> saveThemeMode(ThemeMode mode) async {
+    await LocalDatabaseService.setString(_themeModeKey, mode.name);
+  }
+
 
   bool get _hasOnlyLegacyDefaultAdminUser {
     if (_users.length != 1) return false;
@@ -762,6 +774,18 @@ class AppStore extends ChangeNotifier {
     );
   }
 
+
+  Future<void> updateAppIdentityDuringSetup(AppIdentity identity) async {
+    final normalized = identity.copyWith(
+      deviceId: _deviceId,
+      platform: _detectPlatform(),
+      updatedAt: DateTime.now(),
+    );
+    _appIdentity = normalized;
+    await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(normalized.toJson()));
+    notifyListeners();
+  }
+
   Future<void> updateAppIdentity(AppIdentity identity) async {
     requirePermission(AppPermission.settingsManage);
     final normalized = identity.copyWith(
@@ -1133,8 +1157,22 @@ class AppStore extends ChangeNotifier {
     return exists ? normalized : walkInCustomerId;
   }
 
+
+  void _compactSyncedHistory() {
+    const keepSynced = 200;
+    final synced = _syncChanges.where((item) => item.isSynced).toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    if (synced.length <= keepSynced) return;
+    final keepIds = synced.take(keepSynced).map((item) => item.id).toSet();
+    _syncChanges.removeWhere((item) => item.isSynced && !keepIds.contains(item.id));
+    final validChangeIds = _syncChanges.map((item) => item.id).toSet();
+    _syncQueue.removeWhere((item) => !item.isPending && !validChangeIds.contains(item.changeId));
+  }
+
   Future<void> _saveAll() async {
     _normalizeCustomers();
+    _replaceUsersWithoutDuplicates(List<AppUser>.from(_users));
+    _compactSyncedHistory();
     await Future.wait([
       LocalDatabaseService.setString(_productsKey, jsonEncode(_products.map((item) => item.toJson()).toList())),
       LocalDatabaseService.setString(_customersKey, jsonEncode(_customers.map((item) => item.toJson()).toList())),
@@ -1175,6 +1213,7 @@ class AppStore extends ChangeNotifier {
   }) async {
     final writes = <Future<void>>[];
     if (customers) _normalizeCustomers();
+    if (sync) _compactSyncedHistory();
     if (products) writes.add(LocalDatabaseService.setString(_productsKey, jsonEncode(_products.map((item) => item.toJson()).toList())));
     if (customers) writes.add(LocalDatabaseService.setString(_customersKey, jsonEncode(_customers.map((item) => item.toJson()).toList())));
     if (sales) writes.add(LocalDatabaseService.setString(_salesKey, jsonEncode(_sales.map((item) => item.toJson()).toList())));
@@ -2249,9 +2288,7 @@ class AppStore extends ChangeNotifier {
         ..addAll(roles);
     }
     if (users.isNotEmpty) {
-      _users
-        ..clear()
-        ..addAll(users);
+      _replaceUsersWithoutDuplicates(users);
     }
     await _ensureDefaultAdminUser();
     final importedCounter = (decoded['invoiceCounter'] as num?)?.toInt() ?? 0;
@@ -2287,6 +2324,48 @@ class AppStore extends ChangeNotifier {
     } catch (_) {
       return DateTime.fromMillisecondsSinceEpoch(0);
     }
+  }
+
+
+  List<AppUser> _dedupeUsersByUsername(List<AppUser> input) {
+    final byUsername = <String, AppUser>{};
+    for (final user in input) {
+      final key = user.username.trim().toLowerCase();
+      if (key.isEmpty) continue;
+      final current = byUsername[key];
+      if (current == null || (user.updatedAt ?? user.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0)).isAfter(current.updatedAt ?? current.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0))) {
+        byUsername[key] = user.copyWith(username: key);
+      }
+    }
+    return byUsername.values.toList();
+  }
+
+  void _replaceUsersWithoutDuplicates(List<AppUser> incoming) {
+    _users
+      ..clear()
+      ..addAll(_dedupeUsersByUsername(incoming));
+    if (_activeUser != null && !_users.any((user) => user.id == _activeUser!.id && user.isActive)) {
+      _activeUser = null;
+      unawaited(LocalDatabaseService.setString(_activeUserKey, ''));
+    }
+  }
+
+  void _mergeUsersWithoutUsernameDuplicates(List<AppUser> incoming) {
+    final merged = <AppUser>[..._users];
+    for (final remote in incoming) {
+      final remoteName = remote.username.trim().toLowerCase();
+      if (remoteName.isEmpty) continue;
+      final sameIdIndex = merged.indexWhere((user) => user.id == remote.id);
+      final sameNameIndex = merged.indexWhere((user) => user.username.trim().toLowerCase() == remoteName);
+      final index = sameIdIndex != -1 ? sameIdIndex : sameNameIndex;
+      final normalizedRemote = remote.copyWith(username: remoteName);
+      if (index == -1) {
+        merged.add(normalizedRemote);
+      } else if ((normalizedRemote.updatedAt ?? normalizedRemote.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0)).isAfter(merged[index].updatedAt ?? merged[index].createdAt ?? DateTime.fromMillisecondsSinceEpoch(0))) {
+        merged[index] = normalizedRemote;
+      }
+    }
+    _replaceUsersWithoutDuplicates(merged);
   }
 
   void _mergeByUpdatedAt<T>(List<T> local, List<T> incoming, String Function(T item) idOf) {
@@ -2371,7 +2450,7 @@ class AppStore extends ChangeNotifier {
     _appIdentity = appIdentity.copyWith(deviceId: _deviceId, platform: _detectPlatform());
     await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(_appIdentity!.toJson()));
     _mergeByUpdatedAt<UserRole>(_roles, roles, (item) => item.id);
-    _mergeByUpdatedAt<AppUser>(_users, users, (item) => item.id);
+    _mergeUsersWithoutUsernameDuplicates(users);
     final nowForMergedRemoteChanges = DateTime.now();
     _mergeSyncChanges(markSynced
         ? syncChanges
@@ -2486,7 +2565,7 @@ class AppStore extends ChangeNotifier {
       await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(_appIdentity!.toJson()));
     }
     if (roles.isNotEmpty) _roles..clear()..addAll(roles);
-    if (users.isNotEmpty) _users..clear()..addAll(users);
+    if (users.isNotEmpty) _replaceUsersWithoutDuplicates(users);
     await _ensureDefaultAdminUser();
     _invoiceCounter = (decoded['invoiceCounter'] as num?)?.toInt() ?? _invoiceCounter;
     _purchaseCounter = (decoded['purchaseCounter'] as num?)?.toInt() ?? _purchaseCounter;

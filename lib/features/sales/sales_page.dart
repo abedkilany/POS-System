@@ -71,7 +71,7 @@ class _SalesPageState extends State<SalesPage> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final isWide = constraints.maxWidth > 1120;
+        final isWide = constraints.maxWidth > 980;
         final pagePadding = constraints.maxWidth < 520 ? 8.0 : 16.0;
 
         if (!isWide) {
@@ -81,16 +81,18 @@ class _SalesPageState extends State<SalesPage> {
               padding: EdgeInsets.all(pagePadding),
               child: Column(
                 children: [
-                  AppSectionHeader(
-                    title: tr.text('pos_terminal'),
-                    subtitle: '${tr.text('items')}: $_itemsCount • ${tr.text('total')}: ${formatCurrency(_total, currency: widget.store.storeProfile.currency)}',
-                    action: FilledButton.icon(
-                      onPressed: _cart.isEmpty ? null : () => _saveCurrentInvoice(printAfterSave: true),
-                      icon: const Icon(Icons.point_of_sale),
-                      label: Text(tr.text('complete_sale')),
+                  if (constraints.maxWidth >= 420) ...[
+                    AppSectionHeader(
+                      title: tr.text('pos_terminal'),
+                      subtitle: '${tr.text('items')}: $_itemsCount • ${tr.text('total')}: ${formatCurrency(_total, currency: widget.store.storeProfile.currency)}',
+                      action: FilledButton.icon(
+                        onPressed: _cart.isEmpty ? null : () => _saveCurrentInvoice(printAfterSave: true),
+                        icon: const Icon(Icons.point_of_sale),
+                        label: Text(tr.text('complete_sale')),
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 8),
+                    const SizedBox(height: 8),
+                  ],
                   _buildMobileSaleControls(context, tr),
                   const SizedBox(height: 8),
                   Material(
@@ -488,13 +490,10 @@ class _SalesPageState extends State<SalesPage> {
                       separatorBuilder: (_, __) => const Divider(height: 1),
                       itemBuilder: (context, index) {
                         final item = _cart[index];
-                        return ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(item.product.name),
-                          subtitle: Text('${item.product.code} • ${formatCurrency(item.product.price, currency: widget.store.storeProfile.currency)} • ${tr.text('stock')}: ${item.product.stock}'),
-                          trailing: SizedBox(
-                            width: 178,
-                            child: Row(
+                        return LayoutBuilder(
+                          builder: (context, constraints) {
+                            final actions = Row(
+                              mainAxisSize: MainAxisSize.min,
                               mainAxisAlignment: MainAxisAlignment.end,
                               children: [
                                 IconButton(
@@ -514,8 +513,28 @@ class _SalesPageState extends State<SalesPage> {
                                   icon: const Icon(Icons.delete_outline),
                                 ),
                               ],
-                            ),
-                          ),
+                            );
+                            if (constraints.maxWidth < 430) {
+                              return Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 8),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(item.product.name, style: Theme.of(context).textTheme.titleSmall),
+                                    const SizedBox(height: 4),
+                                    Text('${item.product.code} • ${formatCurrency(item.product.price, currency: widget.store.storeProfile.currency)} • ${tr.text('stock')}: ${item.product.stock}'),
+                                    Align(alignment: Alignment.centerRight, child: actions),
+                                  ],
+                                ),
+                              );
+                            }
+                            return ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              title: Text(item.product.name),
+                              subtitle: Text('${item.product.code} • ${formatCurrency(item.product.price, currency: widget.store.storeProfile.currency)} • ${tr.text('stock')}: ${item.product.stock}'),
+                              trailing: SizedBox(width: 178, child: actions),
+                            );
+                          },
                         );
                       },
                     ),
@@ -574,7 +593,7 @@ class _SalesPageState extends State<SalesPage> {
               child: sales.isEmpty
                   ? EmptyStateCard(icon: Icons.receipt_long_outlined, title: tr.text('no_sales'), subtitle: tr.text('no_sales_desc'))
                   : ListView.separated(
-                      itemCount: sales.length,
+                      itemCount: sales.length > 50 ? 50 : sales.length,
                       separatorBuilder: (_, __) => const Divider(height: 1),
                       itemBuilder: (context, index) {
                         final sale = sales[index];

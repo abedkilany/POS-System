@@ -29,7 +29,7 @@ void main() {
             GlobalWidgetsLocalizations.delegate,
             GlobalCupertinoLocalizations.delegate,
           ],
-          home: MainShell(store: store, onLocaleChanged: (_) {}),
+          home: MainShell(store: store, onLocaleChanged: (_) {}, onThemeModeChanged: (_) {}, themeMode: ThemeMode.system),
         ),
       );
       await tester.pumpAndSettle();
