@@ -225,7 +225,7 @@ void main() {
       final decrypted = store.decryptBackupJson(encrypted, 'secret-pass');
       expect(decrypted, contains('"products"'));
       expect(decrypted, contains('Coffee'));
-      expect(decrypted, contains('"syncChanges"'));
+      expect(decrypted, isNot(contains('"syncChanges"')));
       expect(() => store.decryptBackupJson(encrypted, 'wrong-pass'), throwsA(isA<ArgumentError>()));
 
       await store.resetBusinessData();

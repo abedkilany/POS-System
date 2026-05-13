@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../core/services/backup_download_service.dart';
 import '../../core/services/cloud_sync_service.dart';
@@ -276,24 +275,6 @@ class SettingsPage extends StatelessWidget {
 
 
 
-  Future<void> _downloadEncryptedBackupFile(BuildContext context) async {
-    final tr = AppLocalizations.of(context);
-    final password = await _askPassword(context, title: 'Backup password');
-    if (password == null) return;
-    final filename = 'store_backup_encrypted_${DateTime.now().millisecondsSinceEpoch}.json';
-
-    try {
-      await downloadTextFile(filename: filename, content: store.exportEncryptedBackupJson(password));
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Encrypted backup file downloaded')));
-      }
-    } catch (_) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('backup_download_not_supported'))));
-      }
-    }
-  }
-
   Future<String?> _askPassword(BuildContext context, {required String title}) async {
     final controller = TextEditingController();
     return showDialog<String>(
@@ -308,27 +289,6 @@ class SettingsPage extends StatelessWidget {
         actions: [
           TextButton(onPressed: () => Navigator.pop(dialogContext), child: Text(AppLocalizations.of(context).text('cancel'))),
           FilledButton(onPressed: () => Navigator.pop(dialogContext, controller.text), child: Text(AppLocalizations.of(context).text('save'))),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _previewBackup(BuildContext context) async {
-    final tr = AppLocalizations.of(context);
-    final prettyJson = const JsonEncoder.withIndent('  ').convert(jsonDecode(store.exportBackupJson()));
-
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(tr.text('backup_json_preview')),
-        content: SizedBox(
-          width: 720,
-          child: SingleChildScrollView(
-            child: SelectableText(prettyJson),
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext), child: Text(tr.text('close'))),
         ],
       ),
     );
@@ -405,13 +365,6 @@ class SettingsPage extends StatelessWidget {
     }
   }
 
-  Future<void> _copyBackup(BuildContext context) async {
-    await Clipboard.setData(ClipboardData(text: store.exportBackupJson()));
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('backup_copied'))));
-    }
-  }
-
   Future<void> _resetBusinessData(BuildContext context) async {
     final tr = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
@@ -448,56 +401,6 @@ class SettingsPage extends StatelessWidget {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Data reset on Host. Clients will reset automatically when they sync.')),
       );
-    }
-  }
-
-  Future<void> _restoreBackup(BuildContext context) async {
-    final controller = TextEditingController();
-    final tr = AppLocalizations.of(context);
-    final raw = await showDialog<String>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(tr.text('restore_backup')),
-        content: SizedBox(
-          width: 620,
-          child: TextField(
-            controller: controller,
-            minLines: 12,
-            maxLines: 20,
-            decoration: InputDecoration(
-              hintText: tr.text('paste_backup_here'),
-              border: const OutlineInputBorder(),
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext), child: Text(tr.text('cancel'))),
-          FilledButton(onPressed: () => Navigator.pop(dialogContext, controller.text), child: Text(tr.text('restore'))),
-        ],
-      ),
-    );
-
-    if (raw == null || raw.trim().isEmpty) return;
-
-    try {
-      final validation = store.validateBackupJson(raw);
-      if (!validation.isValid || validation.summary == null) {
-        throw Exception(validation.errorMessage ?? 'Invalid backup JSON');
-      }
-
-      if (!context.mounted) return;
-      final confirmed = await _confirmBackupImport(context, validation.summary!);
-      if (!context.mounted || confirmed != true) return;
-
-      await store.importBackupJson(raw);
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('backup_restored'))));
-      }
-    } catch (_) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('backup_restore_failed'))));
-      }
     }
   }
 
@@ -809,7 +712,12 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
   }
 
   Future<void> _save() async {
-    await _settings.save();
+    final settings = _settings;
+    if (_cloudRole == DeviceRole.host) {
+      final validation = await CloudSyncService(widget.store).validateSingleHost(settings);
+      if (!validation.ok) throw StateError(validation.message);
+    }
+    await settings.copyWith(clearLastPullCursor: widget.store.appIdentity.deviceRole != _cloudRole).save();
     final identity = widget.store.appIdentity;
     await widget.store.updateAppIdentity(
       identity.copyWith(syncMode: SyncMode.cloudConnected, deviceRole: _cloudRole),
@@ -1012,6 +920,7 @@ class _LanSyncCardState extends State<_LanSyncCard> {
   bool _autoSyncEnabled = false;
   bool _hostModeEnabled = false;
   bool _cloudAutoSyncEnabled = true;
+  DeviceRole _webCloudRole = DeviceRole.client;
   DateTime? _lastConnectionAt;
   DateTime? _lastSyncAt;
 
@@ -1028,6 +937,7 @@ class _LanSyncCardState extends State<_LanSyncCard> {
     _cloudTokenController.text = cloudSettings.apiToken;
     _cloudIntervalController.text = cloudSettings.intervalSeconds.toString();
     _cloudAutoSyncEnabled = cloudSettings.autoSyncEnabled;
+    _webCloudRole = widget.store.appIdentity.isHost ? DeviceRole.host : DeviceRole.client;
     _autoSyncEnabled = settings.autoSyncEnabled;
     _hostModeEnabled = settings.hostModeEnabled;
     _lastConnectionAt = settings.lastConnectionAt;
@@ -1068,10 +978,15 @@ class _LanSyncCardState extends State<_LanSyncCard> {
   }
 
   Future<void> _saveCloudSettings() async {
-    await _cloudSettings.save();
+    final settings = _cloudSettings;
+    if (_webCloudRole == DeviceRole.host) {
+      final validation = await CloudSyncService(widget.store).validateSingleHost(settings);
+      if (!validation.ok) throw StateError(validation.message);
+    }
     final identity = widget.store.appIdentity;
-    if (identity.syncMode != SyncMode.cloudConnected || identity.deviceRole != DeviceRole.client) {
-      await widget.store.updateAppIdentity(identity.copyWith(syncMode: SyncMode.cloudConnected, deviceRole: DeviceRole.client));
+    await settings.copyWith(clearLastPullCursor: identity.deviceRole != _webCloudRole).save();
+    if (identity.syncMode != SyncMode.cloudConnected || identity.deviceRole != _webCloudRole) {
+      await widget.store.updateAppIdentity(identity.copyWith(syncMode: SyncMode.cloudConnected, deviceRole: _webCloudRole));
     }
 
     // In the web build the app can be opened before Cloud Sync is configured.
@@ -1178,6 +1093,30 @@ class _LanSyncCardState extends State<_LanSyncCard> {
                 ),
               ),
               const SizedBox(height: 12),
+              SegmentedButton<DeviceRole>(
+                segments: const [
+                  ButtonSegment<DeviceRole>(
+                    value: DeviceRole.host,
+                    icon: Icon(Icons.cloud_upload_outlined),
+                    label: Text('HOST'),
+                  ),
+                  ButtonSegment<DeviceRole>(
+                    value: DeviceRole.client,
+                    icon: Icon(Icons.devices_other_outlined),
+                    label: Text('CLIENT'),
+                  ),
+                ],
+                selected: {_webCloudRole},
+                onSelectionChanged: _busy ? null : (selection) => setState(() => _webCloudRole = selection.first),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _webCloudRole == DeviceRole.host
+                    ? 'HOST: this web device becomes the main cloud owner. Use only one Host per store.'
+                    : 'CLIENT: recommended for iPhone/web. Sends changes to the Host and pulls approved data.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 12),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 title: Text(tr.text('auto_cloud_sync')),
@@ -1192,6 +1131,7 @@ class _LanSyncCardState extends State<_LanSyncCard> {
                   Chip(label: Text("Cloud queue: ${widget.store.pendingSyncQueueForTarget('cloud', readyOnly: false).length}")),
                   Chip(label: Text('Device: ${widget.store.deviceId}')),
                   Chip(label: Text('Store: ${widget.store.appIdentity.storeId}')),
+                  Chip(label: Text('Role: ${widget.store.appIdentity.deviceRole.name}')),
                   Chip(label: Text("Cursor: ${CloudSyncSettings.load().lastPullCursor?.toLocal().toString().split('.').first ?? 'first pull'}")),
                 ],
               ),

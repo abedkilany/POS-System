@@ -20,7 +20,7 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
       BarcodeFormat.dataMatrix,
       BarcodeFormat.ean13,
       BarcodeFormat.ean8,
-      BarcodeFormat.itf,
+      BarcodeFormat.itf14,
       BarcodeFormat.pdf417,
       BarcodeFormat.qrCode,
       BarcodeFormat.upcA,

@@ -45,6 +45,28 @@ export default async function handler(req, res) {
       const appVersion = String(body.appVersion || body.app_version || '').trim();
       const syncMode = String(body.syncMode || body.sync_mode || '').trim();
 
+      // Safety: only one fresh Host is allowed per store/branch.
+      // A second Host creates split-brain sync where devices see different sales.
+      const activeRows = await sql`
+        select host_device_id, host_device_name, last_seen_at
+        from store_host_heartbeats
+        where store_id = ${storeId}
+          and branch_id = ${branchId}
+          and host_device_id <> ${hostDeviceId}
+          and last_seen_at > now() - interval '2 minutes'
+        order by last_seen_at desc
+        limit 1
+      `;
+      if (activeRows.length) {
+        return res.status(409).json({
+          ok: false,
+          error: 'Another active Host is already connected for this store. Change this device to CLIENT or turn off the old Host first.',
+          activeHostDeviceId: activeRows[0].host_device_id,
+          activeHostDeviceName: activeRows[0].host_device_name || '',
+          activeHostLastSeenAt: asIso(activeRows[0].last_seen_at),
+        });
+      }
+
       const rows = await sql`
         insert into store_host_heartbeats (
           store_id, branch_id, host_device_id, host_device_name, platform, app_version, sync_mode, last_seen_at, updated_at

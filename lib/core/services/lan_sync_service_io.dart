@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:developer' as developer;
 import 'dart:math';
 
 import '../../data/app_store.dart';
@@ -202,10 +203,11 @@ class LanSyncService {
       if (!_authorized(request, settings)) {
         final receivedToken = request.headers.value('x-sync-token');
         // Keep a safe log for troubleshooting LAN/Host pairing problems without printing the full secret.
-        print(
+        developer.log(
           'LAN SYNC AUTH FAILED: path=${request.uri.path} '
           "from=${request.connectionInfo?.remoteAddress.address ?? 'unknown'} "
           'received=${_maskedToken(receivedToken)} expected=${_maskedToken(settings.secret)}',
+          name: 'ventio.lan_sync',
         );
         await _json(
           request,

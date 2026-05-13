@@ -175,7 +175,7 @@ class AppStore extends ChangeNotifier {
     return List.unmodifiable(_syncChanges.where((change) => ids.contains(change.id) && !change.isSynced));
   }
   String get deviceId => _deviceId;
-  int get pendingSyncCount => pendingSyncChanges.length;
+  int get pendingSyncCount => pendingSyncQueue.length;
   int get pendingSyncQueueCount => pendingSyncQueue.length;
   DateTime? get latestResetSyncAt {
     DateTime? latest;
@@ -1135,24 +1135,67 @@ class AppStore extends ChangeNotifier {
 
   Future<void> _saveAll() async {
     _normalizeCustomers();
-    await LocalDatabaseService.setString(_productsKey, jsonEncode(_products.map((item) => item.toJson()).toList()));
-    await LocalDatabaseService.setString(_customersKey, jsonEncode(_customers.map((item) => item.toJson()).toList()));
-    await LocalDatabaseService.setString(_salesKey, jsonEncode(_sales.map((item) => item.toJson()).toList()));
-    await LocalDatabaseService.setString(_suppliersKey, jsonEncode(_suppliers.map((item) => item.toJson()).toList()));
-    await LocalDatabaseService.setString(_categoriesKey, jsonEncode(_categories.map((item) => item.toJson()).toList()));
-    await LocalDatabaseService.setString(_brandsKey, jsonEncode(_brands.map((item) => item.toJson()).toList()));
-    await LocalDatabaseService.setString(_unitsKey, jsonEncode(_units.map((item) => item.toJson()).toList()));
-    await LocalDatabaseService.setString(_expensesKey, jsonEncode(_expenses.map((item) => item.toJson()).toList()));
-    await LocalDatabaseService.setString(_purchasesKey, jsonEncode(_purchases.map((item) => item.toJson()).toList()));
-    await LocalDatabaseService.setString(_stockMovementsKey, jsonEncode(_stockMovements.map((item) => item.toJson()).toList()));
-    await LocalDatabaseService.setString(_syncChangesKey, jsonEncode(_syncChanges.map((item) => item.toJson()).toList()));
-    await LocalDatabaseService.setString(_syncQueueKey, jsonEncode(_syncQueue.map((item) => item.toJson()).toList()));
-    await LocalDatabaseService.setString(_deviceIdKey, _deviceId);
-    await LocalDatabaseService.setString(_storeProfileKey, jsonEncode(_storeProfile.toJson()));
-    await LocalDatabaseService.setString(_invoiceCounterKey, _invoiceCounter.toString());
-    await LocalDatabaseService.setString(_purchaseCounterKey, _purchaseCounter.toString());
-    await LocalDatabaseService.setString(_syncSequenceKey, _syncSequence.toString());
-    await LocalDatabaseService.setString(_schemaVersionKey, '12');
+    await Future.wait([
+      LocalDatabaseService.setString(_productsKey, jsonEncode(_products.map((item) => item.toJson()).toList())),
+      LocalDatabaseService.setString(_customersKey, jsonEncode(_customers.map((item) => item.toJson()).toList())),
+      LocalDatabaseService.setString(_salesKey, jsonEncode(_sales.map((item) => item.toJson()).toList())),
+      LocalDatabaseService.setString(_suppliersKey, jsonEncode(_suppliers.map((item) => item.toJson()).toList())),
+      LocalDatabaseService.setString(_categoriesKey, jsonEncode(_categories.map((item) => item.toJson()).toList())),
+      LocalDatabaseService.setString(_brandsKey, jsonEncode(_brands.map((item) => item.toJson()).toList())),
+      LocalDatabaseService.setString(_unitsKey, jsonEncode(_units.map((item) => item.toJson()).toList())),
+      LocalDatabaseService.setString(_expensesKey, jsonEncode(_expenses.map((item) => item.toJson()).toList())),
+      LocalDatabaseService.setString(_purchasesKey, jsonEncode(_purchases.map((item) => item.toJson()).toList())),
+      LocalDatabaseService.setString(_stockMovementsKey, jsonEncode(_stockMovements.map((item) => item.toJson()).toList())),
+      LocalDatabaseService.setString(_syncChangesKey, jsonEncode(_syncChanges.map((item) => item.toJson()).toList())),
+      LocalDatabaseService.setString(_syncQueueKey, jsonEncode(_syncQueue.map((item) => item.toJson()).toList())),
+      LocalDatabaseService.setString(_deviceIdKey, _deviceId),
+      LocalDatabaseService.setString(_storeProfileKey, jsonEncode(_storeProfile.toJson())),
+      LocalDatabaseService.setString(_invoiceCounterKey, _invoiceCounter.toString()),
+      LocalDatabaseService.setString(_purchaseCounterKey, _purchaseCounter.toString()),
+      LocalDatabaseService.setString(_syncSequenceKey, _syncSequence.toString()),
+      LocalDatabaseService.setString(_schemaVersionKey, '12'),
+    ]);
+  }
+
+  Future<void> _saveDirty({
+    bool products = false,
+    bool customers = false,
+    bool sales = false,
+    bool suppliers = false,
+    bool categories = false,
+    bool brands = false,
+    bool units = false,
+    bool expenses = false,
+    bool purchases = false,
+    bool stockMovements = false,
+    bool storeProfile = false,
+    bool invoiceCounter = false,
+    bool purchaseCounter = false,
+    bool sync = false,
+  }) async {
+    final writes = <Future<void>>[];
+    if (customers) _normalizeCustomers();
+    if (products) writes.add(LocalDatabaseService.setString(_productsKey, jsonEncode(_products.map((item) => item.toJson()).toList())));
+    if (customers) writes.add(LocalDatabaseService.setString(_customersKey, jsonEncode(_customers.map((item) => item.toJson()).toList())));
+    if (sales) writes.add(LocalDatabaseService.setString(_salesKey, jsonEncode(_sales.map((item) => item.toJson()).toList())));
+    if (suppliers) writes.add(LocalDatabaseService.setString(_suppliersKey, jsonEncode(_suppliers.map((item) => item.toJson()).toList())));
+    if (categories) writes.add(LocalDatabaseService.setString(_categoriesKey, jsonEncode(_categories.map((item) => item.toJson()).toList())));
+    if (brands) writes.add(LocalDatabaseService.setString(_brandsKey, jsonEncode(_brands.map((item) => item.toJson()).toList())));
+    if (units) writes.add(LocalDatabaseService.setString(_unitsKey, jsonEncode(_units.map((item) => item.toJson()).toList())));
+    if (expenses) writes.add(LocalDatabaseService.setString(_expensesKey, jsonEncode(_expenses.map((item) => item.toJson()).toList())));
+    if (purchases) writes.add(LocalDatabaseService.setString(_purchasesKey, jsonEncode(_purchases.map((item) => item.toJson()).toList())));
+    if (stockMovements) writes.add(LocalDatabaseService.setString(_stockMovementsKey, jsonEncode(_stockMovements.map((item) => item.toJson()).toList())));
+    if (storeProfile) writes.add(LocalDatabaseService.setString(_storeProfileKey, jsonEncode(_storeProfile.toJson())));
+    if (invoiceCounter) writes.add(LocalDatabaseService.setString(_invoiceCounterKey, _invoiceCounter.toString()));
+    if (purchaseCounter) writes.add(LocalDatabaseService.setString(_purchaseCounterKey, _purchaseCounter.toString()));
+    if (sync) {
+      writes
+        ..add(LocalDatabaseService.setString(_syncChangesKey, jsonEncode(_syncChanges.map((item) => item.toJson()).toList())))
+        ..add(LocalDatabaseService.setString(_syncQueueKey, jsonEncode(_syncQueue.map((item) => item.toJson()).toList())))
+        ..add(LocalDatabaseService.setString(_syncSequenceKey, _syncSequence.toString()));
+    }
+    if (writes.isEmpty) return;
+    await Future.wait(writes);
   }
 
 
@@ -1233,7 +1276,7 @@ class AppStore extends ChangeNotifier {
       operation: 'update',
       payload: profile.toJson(),
     );
-    await _saveAll();
+    await _saveDirty(storeProfile: true, sync: true);
     notifyListeners();
   }
 
@@ -1408,7 +1451,7 @@ class AppStore extends ChangeNotifier {
       operation: isCreate ? 'create' : 'update',
       payload: syncedProduct.toJson(),
     );
-    await _saveAll();
+    await _saveDirty(products: true, sync: true);
     notifyListeners();
   }
 
@@ -1419,7 +1462,7 @@ class AppStore extends ChangeNotifier {
     final now = DateTime.now();
     _products[index] = _withSyncMeta<Product>(_products[index].copyWith(deletedAt: now), now, clearDeletedAt: false);
     _recordSyncChange(entityType: 'product', entityId: id, operation: 'delete', payload: _products[index].toJson());
-    await _saveAll();
+    await _saveDirty(products: true, sync: true);
     notifyListeners();
   }
 
@@ -1454,7 +1497,7 @@ class AppStore extends ChangeNotifier {
     }
     _recordSyncChange(entityType: 'customer', entityId: syncedCustomer.id, operation: isCreate ? 'create' : 'update', payload: syncedCustomer.toJson());
     _normalizeCustomers();
-    await _saveAll();
+    await _saveDirty(customers: true, sync: true);
     notifyListeners();
   }
 
@@ -1467,7 +1510,7 @@ class AppStore extends ChangeNotifier {
     _customers[index] = _withSyncMeta<Customer>(_customers[index].copyWith(deletedAt: now), now, clearDeletedAt: false);
     _recordSyncChange(entityType: 'customer', entityId: id, operation: 'delete', payload: _customers[index].toJson());
     _normalizeCustomers();
-    await _saveAll();
+    await _saveDirty(customers: true, sync: true);
     notifyListeners();
   }
 
@@ -1490,7 +1533,7 @@ class AppStore extends ChangeNotifier {
       _suppliers[index] = syncedSupplier;
     }
     _recordSyncChange(entityType: 'supplier', entityId: syncedSupplier.id, operation: isCreate ? 'create' : 'update', payload: syncedSupplier.toJson());
-    await _saveAll();
+    await _saveDirty(suppliers: true, sync: true);
     notifyListeners();
   }
 
@@ -1501,7 +1544,7 @@ class AppStore extends ChangeNotifier {
     final now = DateTime.now();
     _suppliers[index] = _withSyncMeta<Supplier>(_suppliers[index].copyWith(deletedAt: now), now, clearDeletedAt: false);
     _recordSyncChange(entityType: 'supplier', entityId: id, operation: 'delete', payload: _suppliers[index].toJson());
-    await _saveAll();
+    await _saveDirty(suppliers: true, sync: true);
     notifyListeners();
   }
 
@@ -1510,7 +1553,7 @@ class AppStore extends ChangeNotifier {
     requirePermission(AppPermission.catalogManage);
     final syncedItem = _addOrUpdateCatalogItem(_categories, item);
     _recordSyncChange(entityType: 'category', entityId: syncedItem.id, operation: _categories.where((existing) => existing.id == syncedItem.id).length == 1 && syncedItem.createdAt == syncedItem.updatedAt ? 'create' : 'update', payload: syncedItem.toJson());
-    await _saveAll();
+    await _saveDirty(categories: true, sync: true);
     notifyListeners();
   }
 
@@ -1518,7 +1561,7 @@ class AppStore extends ChangeNotifier {
     requirePermission(AppPermission.catalogManage);
     final syncedItem = _addOrUpdateCatalogItem(_brands, item);
     _recordSyncChange(entityType: 'brand', entityId: syncedItem.id, operation: syncedItem.createdAt == syncedItem.updatedAt ? 'create' : 'update', payload: syncedItem.toJson());
-    await _saveAll();
+    await _saveDirty(brands: true, sync: true);
     notifyListeners();
   }
 
@@ -1526,7 +1569,7 @@ class AppStore extends ChangeNotifier {
     requirePermission(AppPermission.catalogManage);
     final syncedItem = _addOrUpdateCatalogItem(_units, item);
     _recordSyncChange(entityType: 'unit', entityId: syncedItem.id, operation: syncedItem.createdAt == syncedItem.updatedAt ? 'create' : 'update', payload: syncedItem.toJson());
-    await _saveAll();
+    await _saveDirty(units: true, sync: true);
     notifyListeners();
   }
 
@@ -1569,7 +1612,7 @@ class AppStore extends ChangeNotifier {
       _expenses[index] = syncedExpense;
     }
     _recordSyncChange(entityType: 'expense', entityId: syncedExpense.id, operation: isCreate ? 'create' : 'update', payload: syncedExpense.toJson());
-    await _saveAll();
+    await _saveDirty(expenses: true, sync: true);
     notifyListeners();
   }
 
@@ -1580,7 +1623,7 @@ class AppStore extends ChangeNotifier {
     final now = DateTime.now();
     _expenses[index] = _withSyncMeta<Expense>(_expenses[index].copyWith(deletedAt: now), now, clearDeletedAt: false);
     _recordSyncChange(entityType: 'expense', entityId: id, operation: 'delete', payload: _expenses[index].toJson());
-    await _saveAll();
+    await _saveDirty(expenses: true, sync: true);
     notifyListeners();
   }
 
@@ -1630,7 +1673,7 @@ class AppStore extends ChangeNotifier {
     if (receiveNow) {
       _applyPurchaseStock(purchase, now);
     }
-    await _saveAll();
+    await _saveDirty(purchases: true, products: receiveNow, stockMovements: receiveNow, purchaseCounter: true, sync: true);
     notifyListeners();
     return purchase;
   }
@@ -1646,7 +1689,7 @@ class AppStore extends ChangeNotifier {
     _purchases[index] = received;
     _recordSyncChange(entityType: 'purchase', entityId: received.id, operation: 'receive', payload: received.toJson());
     _applyPurchaseStock(received, now);
-    await _saveAll();
+    await _saveDirty(purchases: true, products: true, stockMovements: true, sync: true);
     notifyListeners();
   }
 
@@ -1686,7 +1729,7 @@ class AppStore extends ChangeNotifier {
     }
     _purchases[index] = _withSyncMeta<Purchase>(purchase.copyWith(status: 'Cancelled'), now);
     _recordSyncChange(entityType: 'purchase', entityId: id, operation: 'cancel', payload: _purchases[index].toJson());
-    await _saveAll();
+    await _saveDirty(purchases: true, products: reverseStock && purchase.isReceived, stockMovements: reverseStock && purchase.isReceived, sync: true);
     notifyListeners();
   }
 
@@ -1716,7 +1759,7 @@ class AppStore extends ChangeNotifier {
       branchId: appIdentity.branchId,
       lastModifiedByDeviceId: _deviceId,
     ), recordSync: true);
-    await _saveAll();
+    await _saveDirty(products: true, stockMovements: true, sync: true);
     notifyListeners();
   }
 
@@ -1849,7 +1892,7 @@ class AppStore extends ChangeNotifier {
       ), recordSync: true);
     }
 
-    await _saveAll();
+    await _saveDirty(products: true, sales: true, stockMovements: true, invoiceCounter: true, sync: true);
     notifyListeners();
     return sale;
   }
@@ -1897,7 +1940,7 @@ class AppStore extends ChangeNotifier {
     final now = DateTime.now();
     _sales[index] = _withSyncMeta<Sale>(sale.copyWith(status: status, note: 'Stock restored on ${now.toIso8601String()}'), now);
     _recordSyncChange(entityType: 'sale', entityId: id, operation: 'cancel', payload: _sales[index].toJson());
-    await _saveAll();
+    await _saveDirty(products: restoreStock, sales: true, stockMovements: restoreStock, sync: true);
     notifyListeners();
   }
 
@@ -1912,8 +1955,8 @@ class AppStore extends ChangeNotifier {
     return grossProfit - totalExpensesAmount;
   }
 
-  Map<String, dynamic> _backupPayload({List<SyncChange>? changes}) => {
-        'version': 11,
+  Map<String, dynamic> _backupPayload({List<SyncChange>? changes, bool includeDeviceAndSyncState = true}) => {
+        'version': 12,
         'generatedAt': DateTime.now().toIso8601String(),
         'schemaVersion': 11,
         'invoiceCounter': _invoiceCounter,
@@ -1929,19 +1972,19 @@ class AppStore extends ChangeNotifier {
         'expenses': _expenses.map((item) => item.toJson()).toList(),
         'purchases': _purchases.map((item) => item.toJson()).toList(),
         'stockMovements': _stockMovements.map((item) => item.toJson()).toList(),
-        'deviceId': _deviceId,
-        'syncChanges': (changes ?? _syncChanges).map((item) => item.toJson()).toList(),
-        'syncQueue': _syncQueue.map((item) => item.toJson()).toList(),
+        if (includeDeviceAndSyncState) 'deviceId': _deviceId,
+        if (includeDeviceAndSyncState) 'syncChanges': (changes ?? _syncChanges).map((item) => item.toJson()).toList(),
+        if (includeDeviceAndSyncState) 'syncQueue': _syncQueue.map((item) => item.toJson()).toList(),
         'roles': _roles.map((item) => item.toJson()).toList(),
         'users': _users.map((item) => item.toJson()).toList(),
-        'appIdentity': appIdentity.toJson(),
-        'storeEpoch': appIdentity.storeEpoch,
+        if (includeDeviceAndSyncState) 'appIdentity': appIdentity.toJson(),
+        if (includeDeviceAndSyncState) 'storeEpoch': appIdentity.storeEpoch,
         'syncGeneratedAt': DateTime.now().toIso8601String(),
       };
 
   String exportBackupJson() {
     requirePermission(AppPermission.backupExport);
-    return const JsonEncoder.withIndent('  ').convert(_backupPayload());
+    return const JsonEncoder.withIndent('  ').convert(_backupPayload(includeDeviceAndSyncState: false));
   }
 
   String exportSyncSnapshotJson() => const JsonEncoder.withIndent('  ').convert(_backupPayload());
@@ -2194,10 +2237,12 @@ class AppStore extends ChangeNotifier {
       ..addAll(stockMovements);
     _syncChanges.clear();
     _storeProfile = profile;
-    if (decoded['appIdentity'] is Map) {
-      _appIdentity = AppIdentity.fromJson(Map<String, dynamic>.from(decoded['appIdentity'] as Map));
-      await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(_appIdentity!.toJson()));
-    }
+    // Manual Import/Export restores business data only. Never let a backup
+    // replace this device identity, Store ID, role, cloud token, or sync cursors.
+    // This prevents accidental Host/Client split-brain after importing old data.
+    _appIdentity = appIdentity.copyWith(deviceId: _deviceId, platform: _detectPlatform(), updatedAt: DateTime.now());
+    await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(_appIdentity!.toJson()));
+    await LocalDatabaseService.deleteString('cloud_last_pull_cursor');
     if (roles.isNotEmpty) {
       _roles
         ..clear()

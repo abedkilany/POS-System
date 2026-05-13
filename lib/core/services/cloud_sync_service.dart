@@ -22,6 +22,10 @@ class CloudSyncSettings {
   static const _apiBaseUrlKey = 'cloud_api_base_url';
   static const _apiTokenKey = 'cloud_api_token';
   static const _lastPullCursorKey = 'cloud_last_pull_cursor';
+
+  static Future<void> clearSavedPullCursor() async {
+    await LocalDatabaseService.deleteString(_lastPullCursorKey);
+  }
   static const _autoSyncKey = 'cloud_auto_sync_enabled';
   static const _intervalKey = 'cloud_auto_sync_interval_seconds';
 
@@ -229,6 +233,21 @@ class CloudSyncService {
     }
   }
 
+  Future<CloudSyncResult> validateSingleHost(CloudSyncSettings settings) async {
+    final identity = store.appIdentity;
+    if (!settings.isConfigured) {
+      return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
+    }
+    final status = await getHostHeartbeatStatus(settings);
+    if (status.cloudReachable && status.hostReachable && status.hostDeviceId.isNotEmpty && status.hostDeviceId != store.deviceId) {
+      return CloudSyncResult(
+        ok: false,
+        message: 'Another active Host is already connected for store ${identity.storeId}: ${status.hostDeviceName.isEmpty ? status.hostDeviceId : status.hostDeviceName}. Change this device to CLIENT or turn off the old Host first.',
+      );
+    }
+    return const CloudSyncResult(ok: true, message: 'No other active Host was found.');
+  }
+
   Future<CloudSyncResult> sendHostHeartbeat(CloudSyncSettings settings) async {
     final identity = store.appIdentity;
     if (!identity.isCloudEnabled || !identity.isHost) {
@@ -361,7 +380,7 @@ class CloudSyncService {
         .post(
           settings.endpoint('/api/sync/requests/ack'),
           headers: _headers(settings),
-          body: jsonEncode({'storeId': identity.storeId, 'hostDeviceId': store.deviceId, 'ackIds': ackIds}),
+          body: jsonEncode({'storeId': identity.storeId, 'branchId': identity.branchId, 'hostDeviceId': store.deviceId, 'ackIds': ackIds}),
         )
         .timeout(const Duration(seconds: 20));
     return changes.length;
@@ -515,7 +534,7 @@ class AutoCloudSyncController {
     // Do not wait for the next polling interval after a local edit. This is why
     // some devices appeared to sync at 30 seconds even when polling was set to 5.
     _debounceTimer?.cancel();
-    _debounceTimer = Timer(const Duration(seconds: 1), () => _tick());
+    _debounceTimer = Timer(const Duration(seconds: 3), () => _tick());
   }
 
   Future<void> _tick() async {
