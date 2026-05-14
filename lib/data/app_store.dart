@@ -942,6 +942,7 @@ class AppStore extends ChangeNotifier {
     _rememberLogin = false;
     await LocalDatabaseService.setString(_activeUserKey, '');
     await LocalDatabaseService.setString(_rememberLoginKey, 'false');
+    notifyListeners();
   }
 
 

@@ -8,18 +8,25 @@ export const sql = neon(process.env.DATABASE_URL);
 
 export function assertSyncToken(req) {
   const expected = process.env.CLOUD_SYNC_TOKEN || '';
+  const header = req.headers.authorization || req.headers.Authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+  if (expected && token === expected) return;
+
+  // Sync V2: after devices are paired, clients should not need the deployment
+  // token. Endpoints that accept device credentials call assertDeviceAllowed()
+  // after parsing store/branch and will enforce role + transport + revoked.
+  const deviceId = String(req.headers['x-device-id'] || req.headers['X-Device-Id'] || '').trim();
+  const deviceToken = String(req.headers['x-device-token'] || req.headers['X-Device-Token'] || '').trim();
+  if ((process.env.REQUIRE_DEVICE_TOKEN_AUTH || '').toLowerCase() === 'true' && deviceId && deviceToken) return;
+
   if (!expected) {
     const err = new Error('CLOUD_SYNC_TOKEN is not configured. Refusing unauthenticated cloud sync.');
     err.statusCode = 500;
     throw err;
   }
-  const header = req.headers.authorization || req.headers.Authorization || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
-  if (token !== expected) {
-    const err = new Error('Invalid or missing cloud sync token.');
-    err.statusCode = 401;
-    throw err;
-  }
+  const err = new Error('Invalid or missing cloud sync token.');
+  err.statusCode = 401;
+  throw err;
 }
 
 export function assertStoreAllowed(storeId) {

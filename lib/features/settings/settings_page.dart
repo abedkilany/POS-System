@@ -772,10 +772,13 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
   final TextEditingController _apiController = TextEditingController();
   final TextEditingController _tokenController = TextEditingController();
   final TextEditingController _intervalController = TextEditingController();
+  final TextEditingController _joinCodeController = TextEditingController();
   bool _autoSyncEnabled = true;
-  DeviceRole _cloudRole = DeviceRole.host;
+  String _pairingTransport = 'cloud';
   bool _busy = false;
   String _status = 'Ready';
+  String _latestPairingCode = '';
+  DateTime? _latestPairingExpiresAt;
 
   @override
   void initState() {
@@ -785,8 +788,6 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
     _tokenController.text = settings.apiToken;
     _autoSyncEnabled = settings.autoSyncEnabled;
     _intervalController.text = settings.intervalSeconds.toString();
-    final identity = widget.store.appIdentity;
-    _cloudRole = identity.isClient ? DeviceRole.client : DeviceRole.host;
   }
 
   @override
@@ -794,6 +795,7 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
     _apiController.dispose();
     _tokenController.dispose();
     _intervalController.dispose();
+    _joinCodeController.dispose();
     super.dispose();
   }
 
@@ -803,7 +805,7 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
     return loaded.copyWith(
       enabled: true,
       apiBaseUrl: _apiController.text.trim(),
-      apiToken: _tokenController.text.trim(),
+      apiToken: widget.store.appIdentity.isHost ? _tokenController.text.trim() : loaded.apiToken,
       autoSyncEnabled: _autoSyncEnabled,
       intervalSeconds: interval,
     );
@@ -819,18 +821,43 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
     }
   }
 
-  Future<void> _save() async {
-    final settings = _settings;
-    if (_cloudRole == DeviceRole.host) {
-      final validation = await CloudSyncService(widget.store).validateSingleHost(settings);
-      if (!validation.ok) throw StateError(validation.message);
-    }
-    await settings.copyWith(clearLastPullCursor: widget.store.appIdentity.deviceRole != _cloudRole).save();
-    final identity = widget.store.appIdentity;
-    await widget.store.updateAppIdentity(
-      identity.copyWith(syncMode: SyncMode.cloudConnected, deviceRole: _cloudRole),
-    );
+  Future<void> _saveCloudBasics() async {
+    final loaded = CloudSyncSettings.load();
+    final interval = int.tryParse(_intervalController.text.trim())?.clamp(30, 3600).toInt() ?? 30;
+    await loaded.copyWith(
+      enabled: true,
+      apiBaseUrl: _apiController.text.trim(),
+      apiToken: widget.store.appIdentity.isHost ? _tokenController.text.trim() : loaded.apiToken,
+      autoSyncEnabled: _autoSyncEnabled,
+      intervalSeconds: interval,
+    ).save();
     await widget.onSyncSettingsChanged?.call();
+  }
+
+  Future<void> _createPairingCode() async {
+    await _saveCloudBasics();
+    final result = await CloudSyncService(widget.store).createPairingCode(_settings, transport: _pairingTransport);
+    setState(() {
+      _status = result.message;
+      if (result.ok) {
+        _latestPairingCode = result.code;
+        _latestPairingExpiresAt = result.expiresAt;
+      }
+    });
+  }
+
+  Future<void> _joinByPairingCode() async {
+    await _saveCloudBasics();
+    final result = await CloudSyncService(widget.store).claimPairingCode(_settings, _joinCodeController.text);
+    if (result.ok) {
+      await CloudSyncSettings.load().copyWith(enabled: true, apiBaseUrl: _apiController.text.trim(), clearLastPullCursor: true).save();
+      await widget.onSyncSettingsChanged?.call();
+      if (mounted) {
+        setState(() => _status = 'Paired successfully. Store ID and device token were assigned by the Host. Sync once, then sign in using Host users.');
+      }
+      return;
+    }
+    setState(() => _status = result.message);
   }
 
   @override
@@ -838,6 +865,7 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
     final tr = AppLocalizations.of(context);
     final identity = widget.store.appIdentity;
     final color = Theme.of(context).colorScheme;
+    final isHost = identity.isHost;
 
     return Card(
       child: Padding(
@@ -847,43 +875,14 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
           children: [
             ListTile(
               contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.cloud_sync_outlined),
-              title: Text(tr.text('cloud_sync_settings')),
+              leading: Icon(isHost ? Icons.cloud_upload_outlined : Icons.link_outlined),
+              title: const Text('Cloud pairing and sync'),
               subtitle: Text(
-                _cloudRole == DeviceRole.host
-                    ? 'HOST mode uploads the authoritative store data and accepts remote client requests through the cloud.'
-                    : 'CLIENT mode connects to the cloud and sends requests to the selected Host without becoming the owner.',
+                isHost
+                    ? 'Host creates one-time pairing codes. Each Client receives its own device token.'
+                    : 'Client joins a Host with a pairing code. No shared Cloud token is required on Client devices.',
               ),
-              trailing: Chip(
-                avatar: Icon(_cloudRole == DeviceRole.host ? Icons.cloud_upload_outlined : Icons.devices_other_outlined, size: 18),
-                label: Text(_cloudRole == DeviceRole.host ? 'HOST' : 'CLIENT'),
-              ),
-            ),
-            const SizedBox(height: 8),
-            SegmentedButton<DeviceRole>(
-              segments: const [
-                ButtonSegment<DeviceRole>(
-                  value: DeviceRole.host,
-                  icon: Icon(Icons.cloud_upload_outlined),
-                  label: Text('This device is HOST'),
-                ),
-                ButtonSegment<DeviceRole>(
-                  value: DeviceRole.client,
-                  icon: Icon(Icons.devices_other_outlined),
-                  label: Text('This device is CLIENT'),
-                ),
-              ],
-              selected: {_cloudRole},
-              onSelectionChanged: _busy
-                  ? null
-                  : (selection) => setState(() => _cloudRole = selection.first),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              _cloudRole == DeviceRole.host
-                  ? 'HOST: this device is the main source that uploads store data and accepts remote requests.'
-                  : 'CLIENT: this device connects to the cloud and syncs with the selected store without becoming the main owner.',
-              style: Theme.of(context).textTheme.bodySmall,
+              trailing: Chip(label: Text(isHost ? 'HOST' : 'CLIENT')),
             ),
             const SizedBox(height: 12),
             TextField(
@@ -891,29 +890,31 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
               decoration: const InputDecoration(
                 labelText: 'Cloud API URL',
                 hintText: 'https://your-project.vercel.app',
-                helperText: 'Use your Vercel project URL. Do not add /api at the end.',
+                helperText: 'Clients only need the Cloud API URL and a pairing code from the Host.',
                 border: OutlineInputBorder(),
               ),
             ),
             const SizedBox(height: 12),
-            TextField(
-              controller: _tokenController,
-              obscureText: true,
-              decoration: const InputDecoration(
-                labelText: 'Cloud sync token',
-                helperText: 'Must match CLOUD_SYNC_TOKEN in Vercel Environment Variables.',
-                border: OutlineInputBorder(),
+            if (isHost) ...[
+              TextField(
+                controller: _tokenController,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Host deployment token',
+                  helperText: 'Host only. Must match CLOUD_SYNC_TOKEN in Vercel. Do not enter this on Client devices.',
+                  border: OutlineInputBorder(),
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
+              const SizedBox(height: 12),
+            ],
             SizedBox(
               width: 220,
               child: TextField(
                 controller: _intervalController,
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(
-                  labelText: 'Auto sync interval seconds (minimum 30)',
-                  helperText: 'Minimum 5 seconds.',
+                  labelText: 'Auto sync interval seconds',
+                  helperText: 'Minimum 30 seconds.',
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -921,7 +922,7 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: Text(tr.text('auto_cloud_sync')),
-              subtitle: Text(tr.text('cloud_host_auto_desc')),
+              subtitle: Text(isHost ? 'Host publishes approved data and receives Client requests.' : 'Client sends DraftCommands and pulls Host-approved data.'),
               value: _autoSyncEnabled,
               onChanged: _busy ? null : (value) => setState(() => _autoSyncEnabled = value),
             ),
@@ -930,16 +931,85 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
               runSpacing: 12,
               children: [
                 Chip(label: Text('Store: ${identity.storeId}')),
-                Chip(label: Text('Branch: ${identity.branchId}')),
                 Chip(label: Text('Device: ${widget.store.deviceId}')),
                 Chip(label: Text('Role: ${identity.deviceRole.name}')),
-                Chip(label: Text('Mode: ${identity.syncMode.name}')),
-                Chip(label: Text("Cloud queue: ${widget.store.pendingSyncQueueForTarget('cloud', readyOnly: false).length}")),
-                Chip(label: Text("Remote relay queue: ${widget.store.pendingSyncQueueForTarget('cloud_host', readyOnly: false).length}")),
-                Chip(label: Text("Cursor: ${CloudSyncSettings.load().lastPullCursor?.toLocal().toString().split('.').first ?? 'first pull'}")),
+                Chip(label: Text('Transport: ${identity.transportType}')),
+                Chip(label: Text(identity.deviceToken.isEmpty ? 'Device token: not paired' : 'Device token: paired')),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
+            if (isHost) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  border: Border.all(color: color.outlineVariant),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Add a new Client', style: TextStyle(fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 8),
+                    SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(value: 'cloud', icon: Icon(Icons.cloud_outlined), label: Text('Cloud Client')),
+                        ButtonSegment(value: 'lan', icon: Icon(Icons.wifi_outlined), label: Text('LAN Client')),
+                      ],
+                      selected: {_pairingTransport},
+                      onSelectionChanged: _busy ? null : (value) => setState(() => _pairingTransport = value.first),
+                    ),
+                    const SizedBox(height: 12),
+                    FilledButton.icon(
+                      onPressed: _busy ? null : () => _run(_createPairingCode),
+                      icon: const Icon(Icons.qr_code_2_outlined),
+                      label: const Text('Create Pairing Code'),
+                    ),
+                    if (_latestPairingCode.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      SelectableText(
+                        _latestPairingCode,
+                        style: Theme.of(context).textTheme.displaySmall?.copyWith(fontWeight: FontWeight.bold),
+                      ),
+                      Text('Expires: ${_latestPairingExpiresAt?.toLocal().toString().split('.').first ?? 'soon'}'),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+            ] else ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  border: Border.all(color: color.outlineVariant),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Join a Host store', style: TextStyle(fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: _joinCodeController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Pairing Code',
+                        helperText: 'Enter the code shown on the Host. The Host will assign Store ID and a unique device token.',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    FilledButton.icon(
+                      onPressed: _busy ? null : () => _run(_joinByPairingCode),
+                      icon: const Icon(Icons.link_outlined),
+                      label: const Text('Join Store'),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
             Wrap(
               spacing: 12,
               runSpacing: 12,
@@ -948,8 +1018,8 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
                   onPressed: _busy
                       ? null
                       : () => _run(() async {
-                            await _save();
-                            setState(() => _status = _cloudRole == DeviceRole.host ? 'Cloud settings saved. This device is now the cloud HOST.' : 'Cloud settings saved. This device is now a cloud CLIENT.');
+                            await _saveCloudBasics();
+                            setState(() => _status = 'Cloud settings saved.');
                           }),
                   icon: const Icon(Icons.save_outlined),
                   label: Text(tr.text('save_cloud_settings')),
@@ -958,7 +1028,7 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
                   onPressed: _busy
                       ? null
                       : () => _run(() async {
-                            await _save();
+                            await _saveCloudBasics();
                             final result = await CloudSyncService(widget.store).testConnection(_settings);
                             setState(() => _status = result.message);
                           }),
@@ -969,22 +1039,12 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
                   onPressed: _busy
                       ? null
                       : () => _run(() async {
-                            await _save();
+                            await _saveCloudBasics();
                             final result = await CloudSyncService(widget.store).syncNow(_settings);
                             setState(() => _status = result.message);
                           }),
                   icon: const Icon(Icons.cloud_sync_outlined),
                   label: Text(tr.text('sync_now')),
-                ),
-                OutlinedButton.icon(
-                  onPressed: _busy
-                      ? null
-                      : () => _run(() async {
-                            await widget.store.retryFailedSyncQueue(target: 'cloud');
-                            setState(() => _status = 'Failed cloud queue items are pending again.');
-                          }),
-                  icon: const Icon(Icons.replay_outlined),
-                  label: Text(tr.text('retry_cloud_queue')),
                 ),
               ],
             ),
@@ -1023,6 +1083,7 @@ class _LanSyncCardState extends State<_LanSyncCard> {
   final TextEditingController _cloudApiController = TextEditingController();
   final TextEditingController _cloudTokenController = TextEditingController();
   final TextEditingController _cloudIntervalController = TextEditingController();
+  final TextEditingController _webJoinCodeController = TextEditingController();
   String _status = 'Ready';
   bool _busy = false;
   bool _autoSyncEnabled = false;
@@ -1067,6 +1128,7 @@ class _LanSyncCardState extends State<_LanSyncCard> {
     _cloudApiController.dispose();
     _cloudTokenController.dispose();
     _cloudIntervalController.dispose();
+    _webJoinCodeController.dispose();
     super.dispose();
   }
 
@@ -1102,6 +1164,22 @@ class _LanSyncCardState extends State<_LanSyncCard> {
     // restart it immediately. This makes the first cloud pull run right after
     // settings are saved instead of waiting for the user to press Sync Now.
     await widget.onSyncSettingsChanged?.call();
+  }
+
+  Future<void> _joinCloudStoreFromWeb() async {
+    await _saveCloudSettings();
+    final result = await CloudSyncService(widget.store).claimPairingCode(_cloudSettings, _webJoinCodeController.text);
+    if (result.ok) {
+      await CloudSyncSettings.load().copyWith(
+        enabled: true,
+        apiBaseUrl: _cloudApiController.text.trim().isEmpty ? (kIsWeb ? Uri.base.origin : '') : _cloudApiController.text.trim(),
+        clearLastPullCursor: true,
+      ).save();
+      await widget.onSyncSettingsChanged?.call();
+      if (mounted) setState(() => _status = 'Paired successfully. Store ID and device token were assigned by the Host.');
+      return;
+    }
+    if (mounted) setState(() => _status = result.message);
   }
 
   Future<void> _saveSettings({DateTime? lastConnectionAt, DateTime? lastSyncAt}) async {
@@ -1178,16 +1256,29 @@ class _LanSyncCardState extends State<_LanSyncCard> {
                 ),
               ),
               const SizedBox(height: 12),
-              TextField(
-                controller: _cloudTokenController,
-                obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'Cloud sync token',
-                  helperText: 'Use the same value as CLOUD_SYNC_TOKEN in Vercel. Required for cloud sync.',
-                  border: OutlineInputBorder(),
+              if (_webCloudRole == DeviceRole.host) ...[
+                TextField(
+                  controller: _cloudTokenController,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Host deployment token',
+                    helperText: 'Host only. Must match CLOUD_SYNC_TOKEN in Vercel. Do not enter this on Client devices.',
+                    border: OutlineInputBorder(),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
+                const SizedBox(height: 12),
+              ] else ...[
+                TextField(
+                  controller: _webJoinCodeController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Pairing Code',
+                    helperText: 'Enter the code from the Host. Store ID and device token will be assigned automatically.',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
               SizedBox(
                 width: 220,
                 child: TextField(
@@ -1258,6 +1349,12 @@ class _LanSyncCardState extends State<_LanSyncCard> {
                     icon: const Icon(Icons.save_outlined),
                     label: Text(tr.text('save_cloud_settings')),
                   ),
+                  if (_webCloudRole == DeviceRole.client)
+                    FilledButton.icon(
+                      onPressed: _busy ? null : () => _run(_joinCloudStoreFromWeb),
+                      icon: const Icon(Icons.link_outlined),
+                      label: const Text('Join Store'),
+                    ),
                   OutlinedButton.icon(
                     onPressed: _busy
                         ? null
@@ -1386,13 +1483,18 @@ class _LanSyncCardState extends State<_LanSyncCard> {
                     decoration: InputDecoration(labelText: tr.text('port'), border: const OutlineInputBorder()),
                   ),
                 ),
-                SizedBox(
-                  width: 220,
-                  child: TextField(
-                    controller: _tokenController,
-                    decoration: const InputDecoration(labelText: 'Pairing token', border: OutlineInputBorder()),
+                if (_hostModeEnabled)
+                  SizedBox(
+                    width: 260,
+                    child: TextField(
+                      controller: _tokenController,
+                      decoration: const InputDecoration(
+                        labelText: 'Legacy LAN host secret (advanced)',
+                        helperText: 'For fallback only. New Clients should use Host pairing/device token flow.',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
                   ),
-                ),
                 FilledButton.icon(
                   onPressed: _busy
                       ? null

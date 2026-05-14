@@ -36,7 +36,8 @@ class CloudSyncSettings {
   final bool autoSyncEnabled;
   final int intervalSeconds;
 
-  bool get isConfigured => enabled && apiBaseUrl.trim().isNotEmpty && apiToken.trim().isNotEmpty;
+  bool get isConfigured => enabled && apiBaseUrl.trim().isNotEmpty;
+  bool get hasDeploymentToken => apiToken.trim().isNotEmpty;
 
   Uri endpoint(String path, [Map<String, String>? query]) {
     final base = apiBaseUrl.trim().replaceAll(RegExp(r'/+$'), '');
@@ -182,7 +183,7 @@ class CloudSyncService {
   Future<CloudPairingCodeResult> createPairingCode(CloudSyncSettings settings, {String transport = 'cloud', int ttlMinutes = 5}) async {
     final identity = store.appIdentity;
     if (!identity.isHost) return const CloudPairingCodeResult(ok: false, message: 'Only the Host can create pairing codes.');
-    if (!settings.isConfigured) return const CloudPairingCodeResult(ok: false, message: 'Cloud API URL and token are required.');
+    if (!settings.isConfigured || !settings.hasDeploymentToken) return const CloudPairingCodeResult(ok: false, message: 'Cloud API URL and Host deployment token are required to create pairing codes.');
     try {
       final response = await _client
           .post(
@@ -215,7 +216,7 @@ class CloudSyncService {
 
   Future<CloudPairingClaimResult> claimPairingCode(CloudSyncSettings settings, String code) async {
     final current = store.appIdentity;
-    if (!settings.isConfigured) return const CloudPairingClaimResult(ok: false, message: 'Cloud API URL and token are required.');
+    if (!settings.isConfigured) return const CloudPairingClaimResult(ok: false, message: 'Cloud API URL is required.');
     try {
       final response = await _client
           .post(
@@ -257,7 +258,7 @@ class CloudSyncService {
   Future<CloudSyncResult> revokeDevice(CloudSyncSettings settings, String deviceId) async {
     final identity = store.appIdentity;
     if (!identity.isHost) return const CloudSyncResult(ok: false, message: 'Only the Host can revoke devices.');
-    if (!settings.isConfigured) return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
+    if (!settings.isConfigured) return const CloudSyncResult(ok: false, message: 'Cloud API URL is required.');
     try {
       final response = await _client
           .post(
@@ -295,7 +296,7 @@ class CloudSyncService {
 
   Future<CloudSyncResult> registerCurrentDevice(CloudSyncSettings settings, {String transport = 'cloud'}) async {
     final identity = store.appIdentity;
-    if (!settings.isConfigured) return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
+    if (!settings.isConfigured) return const CloudSyncResult(ok: false, message: 'Cloud API URL is required. Pair Clients with a Host device token; Host still needs the deployment token for admin actions.');
     try {
       final response = await _client
           .post(
@@ -345,7 +346,7 @@ class CloudSyncService {
 
   Future<CloudSyncResult> testConnection(CloudSyncSettings settings) async {
     if (!settings.isConfigured) {
-      return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
+      return const CloudSyncResult(ok: false, message: 'Cloud API URL is required. Pair Clients with a Host device token; Host still needs the deployment token for admin actions.');
     }
     try {
       final response = await _client.get(settings.endpoint('/api/health'), headers: _headers(settings)).timeout(const Duration(seconds: 10));
@@ -361,7 +362,7 @@ class CloudSyncService {
   Future<CloudSyncResult> validateSingleHost(CloudSyncSettings settings) async {
     final identity = store.appIdentity;
     if (!settings.isConfigured) {
-      return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
+      return const CloudSyncResult(ok: false, message: 'Cloud API URL is required. Pair Clients with a Host device token; Host still needs the deployment token for admin actions.');
     }
     final status = await getHostHeartbeatStatus(settings);
     if (status.cloudReachable && status.hostReachable && status.hostDeviceId.isNotEmpty && status.hostDeviceId != store.deviceId) {
@@ -379,7 +380,7 @@ class CloudSyncService {
       return const CloudSyncResult(ok: false, message: 'Heartbeat is only sent by a cloud-enabled Host device.');
     }
     if (!settings.isConfigured) {
-      return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
+      return const CloudSyncResult(ok: false, message: 'Cloud API URL is required. Pair Clients with a Host device token; Host still needs the deployment token for admin actions.');
     }
     try {
       final response = await _client
@@ -409,7 +410,7 @@ class CloudSyncService {
   Future<HostHeartbeatStatus> getHostHeartbeatStatus(CloudSyncSettings settings, {Duration staleAfter = const Duration(seconds: 90)}) async {
     final identity = store.appIdentity;
     if (!settings.isConfigured) {
-      return const HostHeartbeatStatus(cloudReachable: false, hostReachable: false, message: 'Cloud API URL and token are required.');
+      return const HostHeartbeatStatus(cloudReachable: false, hostReachable: false, message: 'Cloud API URL is required. Pair Clients with a Host device token; Host still needs the deployment token for admin actions.');
     }
     try {
       final response = await _client
@@ -517,7 +518,7 @@ class CloudSyncService {
       return const CloudSyncResult(ok: false, message: 'Enable cloudConnected or marketplaceEnabled sync mode first.');
     }
     if (!settings.isConfigured) {
-      return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
+      return const CloudSyncResult(ok: false, message: 'Cloud API URL is required. Pair Clients with a Host device token; Host still needs the deployment token for admin actions.');
     }
 
     try {

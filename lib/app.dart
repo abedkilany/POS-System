@@ -208,8 +208,8 @@ class _MainShellState extends State<MainShell> {
               IconButton(
                 tooltip: tr.text('logout'),
                 onPressed: () async {
-                  await widget.onLogout?.call();
                   await widget.store.logout();
+                  await widget.onLogout?.call();
                 },
                 icon: const Icon(Icons.logout),
               ),
