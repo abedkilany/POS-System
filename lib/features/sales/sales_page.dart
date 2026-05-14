@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../core/localization/app_localizations.dart';
 import '../../core/services/invoice_pdf_service.dart';
@@ -11,7 +14,6 @@ import '../../models/sale.dart';
 import '../../models/sale_item.dart';
 import '../../widgets/app_section_header.dart';
 import '../../widgets/empty_state_card.dart';
-import '../barcode/barcode_scanner_page.dart';
 
 class SalesPage extends StatefulWidget {
   const SalesPage({super.key, required this.store});
@@ -33,6 +35,10 @@ class _SalesPageState extends State<SalesPage> {
   String _paymentMethod = 'Cash';
   String _search = '';
   List<_DraftSaleItem>? _heldCart;
+  final MobileScannerController _scannerController = MobileScannerController(detectionSpeed: DetectionSpeed.noDuplicates);
+  bool _scannerActive = false;
+  String? _lastScannedCode;
+  DateTime? _lastScannedAt;
 
   @override
   void initState() {
@@ -47,6 +53,7 @@ class _SalesPageState extends State<SalesPage> {
     _barcodeController.dispose();
     _discountController.dispose();
     _barcodeFocusNode.dispose();
+    _scannerController.dispose();
     super.dispose();
   }
 
@@ -75,61 +82,7 @@ class _SalesPageState extends State<SalesPage> {
         final pagePadding = constraints.maxWidth < 520 ? 8.0 : 16.0;
 
         if (!isWide) {
-          return DefaultTabController(
-            length: 3,
-            child: Padding(
-              padding: EdgeInsets.all(pagePadding),
-              child: Column(
-                children: [
-                  if (constraints.maxWidth >= 420) ...[
-                    AppSectionHeader(
-                      title: tr.text('pos_terminal'),
-                      subtitle: '${tr.text('items')}: $_itemsCount • ${tr.text('total')}: ${formatCurrency(_total, currency: widget.store.storeProfile.currency)}',
-                      action: FilledButton.icon(
-                        onPressed: _cart.isEmpty ? null : () => _saveCurrentInvoice(printAfterSave: true),
-                        icon: const Icon(Icons.point_of_sale),
-                        label: Text(tr.text('complete_sale')),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                  ],
-                  _buildMobileSaleControls(context, tr),
-                  const SizedBox(height: 8),
-                  Material(
-                    color: Theme.of(context).colorScheme.surface,
-                    borderRadius: BorderRadius.circular(16),
-                    child: TabBar(
-                      tabs: [
-                        Tab(icon: const Icon(Icons.shopping_cart_outlined), text: tr.text('cart')),
-                        Tab(icon: const Icon(Icons.inventory_2_outlined), text: tr.text('products')),
-                        Tab(icon: const Icon(Icons.receipt_long_outlined), text: tr.text('recent_invoices')),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Expanded(
-                    child: TabBarView(
-                      children: [
-                        _buildCart(context, tr),
-                        Card(child: Padding(padding: const EdgeInsets.all(12), child: _buildProductPicker(context, tr, products))),
-                        _buildInvoicesPanel(context, tr, sales),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  _MobileCheckoutBar(
-                    enabled: _cart.isNotEmpty,
-                    itemsCount: _itemsCount,
-                    total: formatCurrency(_total, currency: widget.store.storeProfile.currency),
-                    completeLabel: tr.text('complete_sale'),
-                    saveLabel: tr.text('save_only'),
-                    onComplete: () => _saveCurrentInvoice(printAfterSave: true),
-                    onSave: () => _saveCurrentInvoice(printAfterSave: false),
-                  ),
-                ],
-              ),
-            ),
-          );
+          return _buildMobileSalesLayout(context, tr, products, pagePadding);
         }
 
         final posPanel = _buildPosPanel(context, tr, products, isWide: isWide);
@@ -165,64 +118,87 @@ class _SalesPageState extends State<SalesPage> {
     );
   }
 
+  Widget _buildMobileSalesLayout(BuildContext context, AppLocalizations tr, List<Product> products, double pagePadding) {
+    return Padding(
+      padding: EdgeInsets.all(pagePadding),
+      child: Column(
+        children: [
+          _buildMobileSaleControls(context, tr),
+          const SizedBox(height: 8),
+          Expanded(child: _buildMobileProductList(context, tr, products)),
+          const SizedBox(height: 8),
+          _MobileCheckoutBar(
+            enabled: _cart.isNotEmpty,
+            itemsCount: _itemsCount,
+            total: formatCurrency(_total, currency: widget.store.storeProfile.currency),
+            completeLabel: tr.text('complete_sale'),
+            saveLabel: tr.text('cart'),
+            onComplete: _showCheckoutSheet,
+            onSave: _showCartSheet,
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildMobileSaleControls(BuildContext context, AppLocalizations tr) {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(12),
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildBarcodeStation(context, tr),
-              const SizedBox(height: 10),
-              DropdownButtonFormField<String>(
-                initialValue: widget.store.sanitizeSelectedCustomerId(_selectedCustomerId),
-                items: widget.store.customers.map((customer) => DropdownMenuItem<String>(value: customer.id, child: Text(customer.name))).toList(),
-                decoration: InputDecoration(labelText: tr.text('customer')),
-                onChanged: (value) => setState(() => _selectedCustomerId = widget.store.sanitizeSelectedCustomerId(value)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildBarcodeStation(context, tr, embedded: true),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                labelText: tr.text('search_product'),
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: _search.isEmpty ? null : IconButton(onPressed: () => setState(() { _search = ''; _searchController.clear(); }), icon: const Icon(Icons.clear)),
               ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextFormField(
-                      controller: _discountController,
-                      decoration: InputDecoration(labelText: tr.text('discount')),
-                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
-                      keyboardType: TextInputType.number,
-                      onChanged: (_) => setState(() {}),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      initialValue: _paymentMethod,
-                      decoration: InputDecoration(labelText: tr.text('payment')),
-                      items: [
-                        DropdownMenuItem(value: 'Cash', child: Text(tr.text('cash'))),
-                        DropdownMenuItem(value: 'Card', child: Text(tr.text('card'))),
-                        DropdownMenuItem(value: 'Transfer', child: Text(tr.text('transfer'))),
-                        DropdownMenuItem(value: 'Mixed', child: Text(tr.text('mixed'))),
-                      ],
-                      onChanged: (value) => setState(() => _paymentMethod = value ?? 'Cash'),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: _searchController,
-                decoration: InputDecoration(
-                  labelText: tr.text('search_product'),
-                  prefixIcon: const Icon(Icons.search),
-                  suffixIcon: _search.isEmpty ? null : IconButton(onPressed: () => setState(() { _search = ''; _searchController.clear(); }), icon: const Icon(Icons.clear)),
-                ),
-                onChanged: (value) => setState(() => _search = value),
-              ),
-            ],
-          ),
+              onChanged: (value) => setState(() => _search = value),
+            ),
+          ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildMobileProductList(BuildContext context, AppLocalizations tr, List<Product> products) {
+    if (products.isEmpty) {
+      return EmptyStateCard(icon: Icons.inventory_2_outlined, title: tr.text('no_products'), subtitle: tr.text('no_products_desc'));
+    }
+    return Card(
+      margin: EdgeInsets.zero,
+      child: ListView.separated(
+        padding: const EdgeInsets.all(8),
+        physics: const BouncingScrollPhysics(),
+        itemCount: products.length,
+        separatorBuilder: (_, __) => const Divider(height: 1),
+        itemBuilder: (context, index) {
+          final product = products[index];
+          return ListTile(
+            dense: true,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            title: Text(product.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+            subtitle: Text('${product.code} • ${tr.text('stock')}: ${product.stock}', maxLines: 1, overflow: TextOverflow.ellipsis),
+            trailing: Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 8,
+              children: [
+                Text(formatCurrency(product.price, currency: widget.store.storeProfile.currency)),
+                IconButton.filledTonal(
+                  tooltip: tr.text('add_to_cart'),
+                  onPressed: () => _addProduct(product),
+                  icon: const Icon(Icons.add),
+                ),
+              ],
+            ),
+            onTap: () => _addProduct(product),
+          );
+        },
       ),
     );
   }
@@ -327,16 +303,59 @@ class _SalesPageState extends State<SalesPage> {
       defaultTargetPlatform == TargetPlatform.iOS;
 
   Future<void> _scanBarcodeWithCamera() async {
-    final code = await Navigator.of(context).push<String>(
-      MaterialPageRoute(builder: (_) => const BarcodeScannerPage()),
-    );
-    if (!mounted || code == null || code.trim().isEmpty) return;
-    final value = code.trim();
-    _barcodeController.text = value;
-    _addByCode(value);
+    setState(() => _scannerActive = !_scannerActive);
   }
 
-  Widget _buildBarcodeStation(BuildContext context, AppLocalizations tr) {
+  void _handleEmbeddedBarcode(BarcodeCapture capture) {
+    for (final barcode in capture.barcodes) {
+      final code = barcode.rawValue?.trim();
+      if (code == null || code.isEmpty) continue;
+      final now = DateTime.now();
+      if (_lastScannedCode == code && _lastScannedAt != null && now.difference(_lastScannedAt!) < const Duration(milliseconds: 1500)) {
+        return;
+      }
+      _lastScannedCode = code;
+      _lastScannedAt = now;
+      unawaited(SystemSound.play(SystemSoundType.click));
+      unawaited(HapticFeedback.mediumImpact());
+      _barcodeController.text = code;
+      _addByCode(code);
+      return;
+    }
+  }
+
+  Widget _buildEmbeddedScannerPreview() {
+    if (!_canUseCameraScanner || !_scannerActive) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: SizedBox(
+          height: 150,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              MobileScanner(controller: _scannerController, onDetect: _handleEmbeddedBarcode),
+              IgnorePointer(
+                child: Center(
+                  child: Container(
+                    width: 220,
+                    height: 88,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.white, width: 2),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBarcodeStation(BuildContext context, AppLocalizations tr, {bool embedded = false}) {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -360,9 +379,9 @@ class _SalesPageState extends State<SalesPage> {
                 children: [
                   if (_canUseCameraScanner)
                     IconButton(
-                      tooltip: 'Scan with camera',
+                      tooltip: _scannerActive ? 'Stop camera scanner' : 'Start camera scanner',
                       onPressed: _scanBarcodeWithCamera,
-                      icon: const Icon(Icons.camera_alt_outlined),
+                      icon: Icon(_scannerActive ? Icons.videocam_off_outlined : Icons.camera_alt_outlined),
                     ),
                   IconButton(
                     tooltip: 'Clear',
@@ -379,9 +398,14 @@ class _SalesPageState extends State<SalesPage> {
           );
           final button = FilledButton.icon(onPressed: () => _addByCode(_barcodeController.text), icon: const Icon(Icons.add_shopping_cart), label: Text(tr.text('add_to_cart')));
           if (constraints.maxWidth < 460) {
-            return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [field, const SizedBox(height: 8), button]);
+            return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [field, const SizedBox(height: 8), button, if (_scannerActive) _buildEmbeddedScannerPreview()]);
           }
-          return Row(children: [const Icon(Icons.qr_code_scanner, size: 32), const SizedBox(width: 12), Expanded(child: field), const SizedBox(width: 12), button]);
+          return Column(
+            children: [
+              Row(children: [const Icon(Icons.qr_code_scanner, size: 32), const SizedBox(width: 12), Expanded(child: field), const SizedBox(width: 12), button]),
+              if (_scannerActive) _buildEmbeddedScannerPreview(),
+            ],
+          );
         },
       ),
     );
@@ -642,6 +666,109 @@ class _SalesPageState extends State<SalesPage> {
                     ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  void _showCartSheet() {
+    final tr = AppLocalizations.of(context);
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: EdgeInsets.only(
+            left: 12,
+            right: 12,
+            top: 12,
+            bottom: MediaQuery.viewInsetsOf(sheetContext).bottom + 12,
+          ),
+          child: SizedBox(
+            height: MediaQuery.sizeOf(sheetContext).height * 0.72,
+            child: _buildCart(sheetContext, tr),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showCheckoutSheet() {
+    final tr = AppLocalizations.of(context);
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setModalState) => SafeArea(
+          child: Padding(
+            padding: EdgeInsets.only(
+              left: 16,
+              right: 16,
+              top: 16,
+              bottom: MediaQuery.viewInsetsOf(sheetContext).bottom + 16,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(tr.text('complete_sale'), style: Theme.of(context).textTheme.titleLarge),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: widget.store.sanitizeSelectedCustomerId(_selectedCustomerId),
+                    items: widget.store.customers.map((customer) => DropdownMenuItem<String>(value: customer.id, child: Text(customer.name))).toList(),
+                    decoration: InputDecoration(labelText: tr.text('customer')),
+                    onChanged: (value) => setState(() => _selectedCustomerId = widget.store.sanitizeSelectedCustomerId(value)),
+                  ),
+                  const SizedBox(height: 10),
+                  TextFormField(
+                    controller: _discountController,
+                    decoration: InputDecoration(labelText: tr.text('discount')),
+                    inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
+                    keyboardType: TextInputType.number,
+                    onChanged: (_) {
+                      setState(() {});
+                      setModalState(() {});
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  DropdownButtonFormField<String>(
+                    initialValue: _paymentMethod,
+                    decoration: InputDecoration(labelText: tr.text('payment')),
+                    items: [
+                      DropdownMenuItem(value: 'Cash', child: Text(tr.text('cash'))),
+                      DropdownMenuItem(value: 'Card', child: Text(tr.text('card'))),
+                      DropdownMenuItem(value: 'Transfer', child: Text(tr.text('transfer'))),
+                      DropdownMenuItem(value: 'Mixed', child: Text(tr.text('mixed'))),
+                    ],
+                    onChanged: (value) => setState(() => _paymentMethod = value ?? 'Cash'),
+                  ),
+                  const SizedBox(height: 14),
+                  _totalLine(tr.text('subtotal'), formatCurrency(_subtotal, currency: widget.store.storeProfile.currency)),
+                  _totalLine(tr.text('discount'), formatCurrency(_discount, currency: widget.store.storeProfile.currency)),
+                  _totalLine(tr.text('total'), formatCurrency(_total, currency: widget.store.storeProfile.currency), isBold: true),
+                  const SizedBox(height: 14),
+                  FilledButton.icon(
+                    onPressed: _cart.isEmpty ? null : () {
+                      Navigator.pop(sheetContext);
+                      _saveCurrentInvoice(printAfterSave: true);
+                    },
+                    icon: const Icon(Icons.point_of_sale),
+                    label: Text(tr.text('complete_sale_print')),
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: _cart.isEmpty ? null : () {
+                      Navigator.pop(sheetContext);
+                      _saveCurrentInvoice(printAfterSave: false);
+                    },
+                    icon: const Icon(Icons.save_outlined),
+                    label: Text(tr.text('save_only')),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
       ),
     );

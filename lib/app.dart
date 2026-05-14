@@ -36,6 +36,7 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
   final AppStore _store = AppStore();
   late final AutoLanSyncController _autoSyncController = AutoLanSyncController(_store);
   late final AutoCloudSyncController _autoCloudSyncController = AutoCloudSyncController(_store);
+  bool _syncStarted = false;
 
   @override
   void initState() {
@@ -47,8 +48,25 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
     await _store.initialize();
     final savedTheme = await _store.loadThemeMode();
     if (mounted) setState(() => _themeMode = savedTheme);
+    if (_store.activeUser != null) {
+      await _startSyncAfterLogin();
+    }
+  }
+
+
+  Future<void> _startSyncAfterLogin() async {
+    if (_syncStarted || _store.activeUser == null) return;
+    _syncStarted = true;
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    if (!mounted || _store.activeUser == null) return;
     await _autoSyncController.start();
     await _autoCloudSyncController.start();
+  }
+
+  Future<void> _stopSyncForLogout() async {
+    _syncStarted = false;
+    _autoSyncController.stop();
+    _autoCloudSyncController.stop();
   }
 
   @override
@@ -73,6 +91,9 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
     return AnimatedBuilder(
       animation: _store,
       builder: (context, _) {
+        if (_store.activeUser != null && !_syncStarted) {
+          WidgetsBinding.instance.addPostFrameCallback((_) => _startSyncAfterLogin());
+        }
         return MaterialApp(
           debugShowCheckedModeBanner: false,
           title: 'Ventio',
@@ -92,8 +113,9 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
                   ? SyncSetupPage(
                       store: _store,
                       onDone: () async {
-                        await _autoSyncController.start();
-                        await _autoCloudSyncController.start();
+                        if (_store.activeUser != null) {
+                          await _startSyncAfterLogin();
+                        }
                         if (mounted) setState(() {});
                       },
                     )
@@ -101,12 +123,13 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
                       store: _store,
                       child: MainShell(
                         store: _store,
+                        onLogout: _stopSyncForLogout,
                         onLocaleChanged: _changeLocale,
                         onThemeModeChanged: _changeThemeMode,
                         themeMode: _themeMode,
                         onSyncSettingsChanged: () async {
-                          await _autoSyncController.start();
-                          await _autoCloudSyncController.start();
+                          _syncStarted = false;
+                          await _startSyncAfterLogin();
                         },
                       ),
                     ))
@@ -127,13 +150,14 @@ class _ShellItem {
 }
 
 class MainShell extends StatefulWidget {
-  const MainShell({super.key, required this.onLocaleChanged, required this.onThemeModeChanged, required this.themeMode, required this.store, this.onSyncSettingsChanged});
+  const MainShell({super.key, required this.onLocaleChanged, required this.onThemeModeChanged, required this.themeMode, required this.store, this.onSyncSettingsChanged, this.onLogout});
 
   final ValueChanged<Locale> onLocaleChanged;
   final ValueChanged<ThemeMode> onThemeModeChanged;
   final ThemeMode themeMode;
   final AppStore store;
   final Future<void> Function()? onSyncSettingsChanged;
+  final Future<void> Function()? onLogout;
 
   @override
   State<MainShell> createState() => _MainShellState();
@@ -184,10 +208,8 @@ class _MainShellState extends State<MainShell> {
               IconButton(
                 tooltip: tr.text('logout'),
                 onPressed: () async {
+                  await widget.onLogout?.call();
                   await widget.store.logout();
-                  if (context.mounted) {
-                    Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => PinLockPage(store: widget.store, child: MainShell(store: widget.store, onLocaleChanged: widget.onLocaleChanged, onThemeModeChanged: widget.onThemeModeChanged, themeMode: widget.themeMode))));
-                  }
                 },
                 icon: const Icon(Icons.logout),
               ),

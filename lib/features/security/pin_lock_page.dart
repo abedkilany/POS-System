@@ -23,6 +23,8 @@ class _PinLockPageState extends State<PinLockPage> {
 
   bool _unlocked = false;
   bool _savingSetup = false;
+  bool _loggingIn = false;
+  bool _rememberLogin = false;
 
   @override
   void initState() {
@@ -43,12 +45,16 @@ class _PinLockPageState extends State<PinLockPage> {
     final wrongPinMessage = AppLocalizations.of(context).text('wrong_pin');
     final messenger = ScaffoldMessenger.of(context);
 
+    setState(() => _loggingIn = true);
     final ok = await widget.store.login(
       _usernameController.text,
       _passwordController.text,
+      remember: _rememberLogin,
     );
 
     if (!mounted) return;
+
+    setState(() => _loggingIn = false);
 
     if (ok) {
       setState(() => _unlocked = true);
@@ -147,12 +153,21 @@ class _PinLockPageState extends State<PinLockPage> {
                             const InputDecoration(labelText: 'Password'),
                         onSubmitted: (_) => _unlock(),
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 8),
+                      CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        value: _rememberLogin,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        title: const Text('Keep me signed in'),
+                        subtitle: const Text('Skip login next time this app opens.'),
+                        onChanged: (value) => setState(() => _rememberLogin = value ?? false),
+                      ),
+                      const SizedBox(height: 8),
                       SizedBox(
                         width: double.infinity,
                         child: FilledButton.icon(
-                          onPressed: _unlock,
-                          icon: const Icon(Icons.login),
+                          onPressed: _loggingIn ? null : _unlock,
+                          icon: _loggingIn ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.login),
                           label: Text(tr.text('login')),
                         ),
                       ),

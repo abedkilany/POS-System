@@ -101,6 +101,15 @@ class LocalDatabaseService {
     await _requireBox.delete(key);
   }
 
+  static Future<void> clearAll() async {
+    final memory = _memoryStore;
+    if (memory != null) {
+      memory.clear();
+      return;
+    }
+    await _requireBox.clear();
+  }
+
   static bool get isEmpty {
     final memory = _memoryStore;
     if (memory != null) return memory.isEmpty;

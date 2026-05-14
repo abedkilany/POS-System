@@ -26,6 +26,22 @@ import '../models/user_role.dart';
 import '../models/app_user.dart';
 import '../models/app_identity.dart';
 
+
+bool _verifyPasswordInBackground(Map<String, String> request) {
+  const prefix = 'pbkdf2sha256:';
+  final password = request['password'] ?? '';
+  final storedHash = request['storedHash'] ?? '';
+  if (!storedHash.startsWith(prefix)) return false;
+  final parts = storedHash.split(':');
+  if (parts.length != 4) return false;
+  final iterations = int.tryParse(parts[1]);
+  if (iterations == null || iterations < 100000) return false;
+  final derivator = pc.PBKDF2KeyDerivator(pc.HMac(pc.SHA256Digest(), 64));
+  derivator.init(pc.Pbkdf2Parameters(base64Url.decode(parts[2]), iterations, 32));
+  final hash = derivator.process(Uint8List.fromList(utf8.encode('ventio|password|$password')));
+  return storedHash == '$prefix$iterations:${parts[2]}:${base64UrlEncode(hash)}';
+}
+
 class BackupSummary {
   const BackupSummary({
     required this.version,
@@ -112,6 +128,7 @@ class AppStore extends ChangeNotifier {
   static const _rolesKey = 'roles_v1';
   static const _usersKey = 'users_v1';
   static const _activeUserKey = 'active_user_v1';
+  static const _rememberLoginKey = 'remember_login_v1';
   static const _appIdentityKey = 'app_identity_v1';
   static const _themeModeKey = 'theme_mode_v1';
 
@@ -136,6 +153,7 @@ class AppStore extends ChangeNotifier {
   final List<UserRole> _roles = [];
   final List<AppUser> _users = [];
   AppUser? _activeUser;
+  bool _rememberLogin = false;
   AppIdentity? _appIdentity;
   int _syncSequence = 0;
 
@@ -194,6 +212,7 @@ class AppStore extends ChangeNotifier {
   List<UserRole> get roles => List.unmodifiable(_roles);
   List<AppUser> get users => List.unmodifiable(_users);
   AppUser? get activeUser => _activeUser;
+  bool get rememberLogin => _rememberLogin;
   AppUser? get currentUser => _activeUser;
   AppIdentity get appIdentity => _appIdentity ?? AppIdentity.defaults(deviceId: _deviceId, platform: _detectPlatform());
   UserRole? get currentUserRole => _activeUser == null ? null : roleById(_activeUser!.roleId);
@@ -358,6 +377,7 @@ class AppStore extends ChangeNotifier {
       ..clear()
       ..addAll(_loadUsers());
     await _ensureDefaultAdminUser();
+    _rememberLogin = LocalDatabaseService.getString(_rememberLoginKey) == 'true';
     _restoreActiveUser();
     _appIdentity = _loadOrCreateAppIdentity();
     _syncSequence = _loadSyncSequence();
@@ -855,6 +875,10 @@ class AppStore extends ChangeNotifier {
   }
 
   void _restoreActiveUser() {
+    if (!_rememberLogin) {
+      _activeUser = null;
+      return;
+    }
     final activeId = LocalDatabaseService.getString(_activeUserKey);
     if (activeId == null || activeId.isEmpty) return;
     for (final user in _users) {
@@ -865,7 +889,7 @@ class AppStore extends ChangeNotifier {
     }
   }
 
-  Future<bool> login(String username, String password) async {
+  Future<bool> login(String username, String password, {bool remember = false}) async {
     final normalized = username.trim().toLowerCase();
     final activeMatches = _users.where((user) => user.username.trim().toLowerCase() == normalized && user.isActive).toList();
     if (activeMatches.length > 1) {
@@ -875,11 +899,13 @@ class AppStore extends ChangeNotifier {
     for (var index = 0; index < _users.length; index++) {
       final user = _users[index];
       if (user.username.trim().toLowerCase() != normalized || !user.isActive) continue;
-      if (!_verifyPassword(password, user.passwordHash)) return false;
+      if (!await _verifyPasswordAsync(password, user.passwordHash)) return false;
       final updated = user.copyWith(lastLoginAt: DateTime.now());
       _users[index] = updated;
       _activeUser = updated;
-      await LocalDatabaseService.setString(_activeUserKey, updated.id);
+      _rememberLogin = remember;
+      await LocalDatabaseService.setString(_rememberLoginKey, remember ? 'true' : 'false');
+      await LocalDatabaseService.setString(_activeUserKey, remember ? updated.id : '');
       await _saveRolesAndUsers();
       notifyListeners();
       return true;
@@ -889,8 +915,18 @@ class AppStore extends ChangeNotifier {
 
   Future<void> logout() async {
     _activeUser = null;
+    _rememberLogin = false;
     await LocalDatabaseService.setString(_activeUserKey, '');
+    await LocalDatabaseService.setString(_rememberLoginKey, 'false');
     notifyListeners();
+  }
+
+
+  Future<bool> _verifyPasswordAsync(String password, String storedHash) async {
+    if (storedHash.startsWith(_passwordHashPrefix)) {
+      return compute(_verifyPasswordInBackground, <String, String>{'password': password.trim(), 'storedHash': storedHash});
+    }
+    return _verifyPassword(password, storedHash);
   }
 
   bool _verifyPassword(String password, String storedHash) {
@@ -1302,6 +1338,17 @@ class AppStore extends ChangeNotifier {
         'storeEpoch': appIdentity.storeEpoch,
       },
     );
+    await _saveAll();
+    notifyListeners();
+  }
+
+  Future<void> clearLocalDeviceBusinessData({bool keepStoreProfile = true, bool keepSecurityPin = true}) async {
+    _syncChanges.clear();
+    _syncQueue.clear();
+    _resetBusinessDataInMemory(keepStoreProfile: keepStoreProfile, keepSecurityPin: keepSecurityPin);
+    if (!keepSecurityPin) {
+      await LocalDatabaseService.setString(_pinKey, '');
+    }
     await _saveAll();
     notifyListeners();
   }

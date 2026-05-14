@@ -183,16 +183,48 @@ class SettingsPage extends StatelessWidget {
       Card(
         child: Padding(
           padding: const EdgeInsets.all(16),
-          child: ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: Icon(Icons.warning_amber_outlined, color: Theme.of(context).colorScheme.error),
-            title: Text(tr.text('data_management')),
-            subtitle: Text(tr.text('data_management_desc')),
-            trailing: FilledButton.icon(style: FilledButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.error), onPressed: () => _resetBusinessData(context), icon: const Icon(Icons.delete_forever_outlined), label: Text(tr.text('reset_all_data'))),
-          ),
+          child: _dataManagementTile(context),
         ),
       ),
     ];
+  }
+
+
+  Widget _dataManagementTile(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    final isHost = store.appIdentity.isHost || LanSyncSettings.load().isHost;
+    final isClient = store.appIdentity.isClient || LanSyncSettings.load().isClient;
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(Icons.warning_amber_outlined, color: Theme.of(context).colorScheme.error),
+      title: Text(tr.text('data_management')),
+      subtitle: Text(isHost ? tr.text('data_management_desc') : 'Client maintenance affects only this device and is never synced to other devices.'),
+      trailing: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          if (isHost && !isClient)
+            FilledButton.icon(
+              style: FilledButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.error),
+              onPressed: () => _resetBusinessData(context),
+              icon: const Icon(Icons.delete_forever_outlined),
+              label: Text(tr.text('reset_all_data')),
+            ),
+          if (!isHost || isClient) ...[
+            OutlinedButton.icon(
+              onPressed: () => _clearLocalData(context),
+              icon: const Icon(Icons.cleaning_services_outlined),
+              label: const Text('Clear Local Data'),
+            ),
+            FilledButton.icon(
+              onPressed: () => _rebuildFromHost(context),
+              icon: const Icon(Icons.restore_page_outlined),
+              label: const Text('Rebuild From Host'),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   List<Widget> _adminCards(BuildContext context) {
@@ -386,6 +418,58 @@ class SettingsPage extends StatelessWidget {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('backup_file_import_failed'))));
       }
+    }
+  }
+
+
+  Future<void> _clearLocalData(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Clear Local Data'),
+        content: const Text('This deletes only this Client device business data. Host data and other devices will not be affected.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Clear this device')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await store.clearLocalDeviceBusinessData();
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Local Client data cleared. Rebuild from Host to restore current data.')));
+    }
+  }
+
+  Future<void> _rebuildFromHost(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Rebuild From Host'),
+        content: const Text('This clears this Client device and downloads a fresh Host snapshot/events. Host data will not be changed.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Rebuild')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    await store.clearLocalDeviceBusinessData();
+    final identity = store.appIdentity;
+    String message;
+    if (identity.syncMode == SyncMode.cloudConnected || identity.syncMode == SyncMode.marketplaceEnabled) {
+      final result = await CloudSyncService(store).syncNow(CloudSyncSettings.load());
+      message = result.message;
+    } else {
+      final settings = LanSyncSettings.load();
+      final result = await LanSyncService(store).repairFromHostSnapshot(settings.host, port: settings.port, token: settings.secret);
+      message = result.message;
+    }
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
     }
   }
 
