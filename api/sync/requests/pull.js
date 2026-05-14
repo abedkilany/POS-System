@@ -1,4 +1,4 @@
-import { sql, assertSyncToken, assertStoreAllowed, sendError } from '../../_db.js';
+import { sql, assertSyncToken, assertStoreAllowed, assertDeviceAllowed, sendError } from '../../_db.js';
 
 function asIso(value) {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
@@ -14,6 +14,7 @@ export default async function handler(req, res) {
     const storeId = String(req.query.store_id || req.query.storeId || 'default-store');
     const branchId = String(req.query.branch_id || req.query.branchId || 'main');
     assertStoreAllowed(storeId);
+    await assertDeviceAllowed(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['cloud'] });
     const limit = Math.min(Number(req.query.limit || 1000), 5000);
 
     const rows = await sql`

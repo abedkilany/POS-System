@@ -162,11 +162,22 @@ class CloudSyncService {
   final AppStore store;
   final http.Client _client;
 
-  Map<String, String> _headers(CloudSyncSettings settings) => {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        if (settings.apiToken.trim().isNotEmpty) 'Authorization': 'Bearer ${settings.apiToken.trim()}',
-      };
+  Map<String, String> _headers(CloudSyncSettings settings) {
+    final identity = store.appIdentity;
+    return {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      // The deployment token keeps backward compatibility with the current API,
+      // while the device headers prepare the server for per-device auth.
+      if (settings.apiToken.trim().isNotEmpty) 'Authorization': 'Bearer ${settings.apiToken.trim()}',
+      'X-Device-Id': store.deviceId,
+      'X-Device-Token': identity.deviceToken,
+      'X-Device-Role': identity.deviceRole.name,
+      'X-Sync-Transport': identity.transportType,
+      'X-Store-Id': identity.storeId,
+      'X-Branch-Id': identity.branchId,
+    };
+  }
 
 
   Future<CloudSyncResult> registerCurrentDevice(CloudSyncSettings settings, {String transport = 'cloud'}) async {
@@ -185,6 +196,7 @@ class CloudSyncService {
               'platform': identity.platform.name,
               'role': identity.deviceRole.name,
               'transport': transport,
+              'deviceToken': identity.deviceToken,
               'appVersion': 'store-manager-pro',
               'storeEpoch': identity.storeEpoch,
             }),

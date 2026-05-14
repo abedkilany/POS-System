@@ -1,4 +1,4 @@
-import { sql, assertSyncToken, assertStoreAllowed, sendError } from '../_db.js';
+import { sql, assertSyncToken, assertStoreAllowed, ensureDeviceAuthColumns, sendError } from '../_db.js';
 
 function asIso(value) {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
@@ -17,11 +17,13 @@ async function ensureDeviceTable() {
       app_version text default '',
       store_epoch integer not null default 1,
       revoked boolean not null default false,
+      device_token text default '',
       last_seen_at timestamptz not null default now(),
       updated_at timestamptz not null default now(),
       primary key (store_id, branch_id, device_id)
     )
   `;
+  await ensureDeviceAuthColumns();
   await sql`
     create index if not exists idx_store_devices_latest
     on store_devices (store_id, branch_id, last_seen_at desc)
@@ -47,13 +49,14 @@ export default async function handler(req, res) {
       const role = String(body.role || '').trim();
       const transport = String(body.transport || '').trim();
       const appVersion = String(body.appVersion || body.app_version || '').trim();
+      const deviceToken = String(body.deviceToken || body.device_token || req.headers['x-device-token'] || '').trim();
       const storeEpoch = Number(body.storeEpoch || body.store_epoch || 1);
 
       const rows = await sql`
         insert into store_devices (
-          store_id, branch_id, device_id, device_name, platform, role, transport, app_version, store_epoch, last_seen_at, updated_at
+          store_id, branch_id, device_id, device_name, platform, role, transport, app_version, store_epoch, device_token, last_seen_at, updated_at
         ) values (
-          ${storeId}, ${branchId}, ${deviceId}, ${deviceName}, ${platform}, ${role}, ${transport}, ${appVersion}, ${storeEpoch}, now(), now()
+          ${storeId}, ${branchId}, ${deviceId}, ${deviceName}, ${platform}, ${role}, ${transport}, ${appVersion}, ${storeEpoch}, ${deviceToken}, now(), now()
         )
         on conflict (store_id, branch_id, device_id) do update set
           device_name = excluded.device_name,
@@ -62,6 +65,7 @@ export default async function handler(req, res) {
           transport = excluded.transport,
           app_version = excluded.app_version,
           store_epoch = greatest(store_devices.store_epoch, excluded.store_epoch),
+          device_token = case when excluded.device_token <> '' then excluded.device_token else store_devices.device_token end,
           last_seen_at = now(),
           updated_at = now()
         returning store_id, branch_id, device_id, device_name, platform, role, transport, app_version, store_epoch, revoked, last_seen_at

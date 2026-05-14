@@ -30,6 +30,7 @@ class _PinLockPageState extends State<PinLockPage> {
   void initState() {
     super.initState();
     _unlocked = widget.store.activeUser != null;
+    _rememberLogin = widget.store.rememberLogin;
   }
 
   @override

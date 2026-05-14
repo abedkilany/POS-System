@@ -20,6 +20,7 @@ class AppIdentity {
     required this.updatedAt,
     this.hostDeviceId = '',
     this.cloudTenantId = '',
+    this.deviceToken = '',
     this.storeEpoch = 1,
   });
 
@@ -35,12 +36,16 @@ class AppIdentity {
   final DateTime updatedAt;
   final String hostDeviceId;
   final String cloudTenantId;
+  /// Per-device token assigned during pairing. It is intentionally device-scoped
+  /// so Clients no longer share a single master sync token.
+  final String deviceToken;
   final int storeEpoch;
 
   bool get isHost => deviceRole == DeviceRole.host;
   bool get isClient => deviceRole == DeviceRole.client;
   bool get isCloudEnabled => syncMode == SyncMode.cloudConnected || syncMode == SyncMode.marketplaceEnabled;
   bool get isMarketplaceEnabled => syncMode == SyncMode.marketplaceEnabled;
+  String get transportType => syncMode == SyncMode.lanOnly ? 'lan' : (isCloudEnabled ? 'cloud' : 'local');
 
   AppIdentity copyWith({
     String? storeId,
@@ -55,6 +60,7 @@ class AppIdentity {
     DateTime? updatedAt,
     String? hostDeviceId,
     String? cloudTenantId,
+    String? deviceToken,
     int? storeEpoch,
   }) {
     return AppIdentity(
@@ -70,6 +76,7 @@ class AppIdentity {
       updatedAt: updatedAt ?? this.updatedAt,
       hostDeviceId: hostDeviceId ?? this.hostDeviceId,
       cloudTenantId: cloudTenantId ?? this.cloudTenantId,
+      deviceToken: deviceToken ?? this.deviceToken,
       storeEpoch: storeEpoch ?? this.storeEpoch,
     );
   }
@@ -87,6 +94,8 @@ class AppIdentity {
         'updatedAt': updatedAt.toIso8601String(),
         'hostDeviceId': hostDeviceId,
         'cloudTenantId': cloudTenantId,
+        'deviceToken': deviceToken,
+        'transportType': transportType,
         'storeEpoch': storeEpoch,
       };
 
@@ -112,6 +121,7 @@ class AppIdentity {
       updatedAt: DateTime.tryParse(json['updatedAt']?.toString() ?? '') ?? now,
       hostDeviceId: json['hostDeviceId']?.toString() ?? '',
       cloudTenantId: json['cloudTenantId']?.toString() ?? '',
+      deviceToken: json['deviceToken']?.toString() ?? json['device_token']?.toString() ?? '',
       storeEpoch: (json['storeEpoch'] as num?)?.toInt() ?? 1,
     );
   }
@@ -129,6 +139,7 @@ class AppIdentity {
       syncMode: platform == AppPlatformType.web ? SyncMode.cloudConnected : SyncMode.lanOnly,
       createdAt: now,
       updatedAt: now,
+      deviceToken: 'device_${now.microsecondsSinceEpoch}_${deviceId.hashCode.abs()}',
       storeEpoch: 1,
     );
   }

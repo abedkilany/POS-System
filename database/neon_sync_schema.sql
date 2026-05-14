@@ -78,3 +78,28 @@ create table if not exists store_host_heartbeats (
 
 create index if not exists idx_store_host_heartbeats_latest
   on store_host_heartbeats (store_id, branch_id, last_seen_at desc);
+
+-- Device-scoped authorization for Host-authoritative sync v2.
+-- Keep REQUIRE_DEVICE_TOKEN_AUTH=false until all devices are re-paired.
+create table if not exists store_devices (
+  store_id text not null,
+  branch_id text not null default 'main',
+  device_id text not null,
+  device_name text default '',
+  platform text default '',
+  role text default '',
+  transport text default '',
+  app_version text default '',
+  device_token text default '',
+  store_epoch integer not null default 1,
+  revoked boolean not null default false,
+  last_seen_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (store_id, branch_id, device_id)
+);
+
+alter table store_devices add column if not exists device_token text default '';
+alter table store_devices add column if not exists revoked boolean not null default false;
+
+create index if not exists idx_store_devices_latest
+  on store_devices (store_id, branch_id, last_seen_at desc);

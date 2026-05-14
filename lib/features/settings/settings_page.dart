@@ -1595,6 +1595,7 @@ class _SystemIdentityCard extends StatelessWidget {
   Future<void> _editIdentity(BuildContext context, AppStore store) async {
     final tr = AppLocalizations.of(context);
     final current = store.appIdentity;
+    final canEditStoreId = current.isHost || current.deviceRole == DeviceRole.standalone;
     final storeIdController = TextEditingController(text: current.storeId);
     final branchIdController = TextEditingController(text: current.branchId);
     final deviceNameController = TextEditingController(text: current.deviceName);
@@ -1614,8 +1615,19 @@ class _SystemIdentityCard extends StatelessWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  TextField(controller: storeIdController, decoration: InputDecoration(labelText: tr.text('store_id'))),
-                  TextField(controller: branchIdController, decoration: InputDecoration(labelText: tr.text('branch_id'))),
+                  TextField(
+                    controller: storeIdController,
+                    readOnly: !canEditStoreId,
+                    decoration: InputDecoration(
+                      labelText: tr.text('store_id'),
+                      helperText: canEditStoreId ? null : 'Store ID is assigned by the Host during pairing.',
+                    ),
+                  ),
+                  TextField(
+                    controller: branchIdController,
+                    readOnly: !canEditStoreId,
+                    decoration: InputDecoration(labelText: tr.text('branch_id')),
+                  ),
                   TextField(controller: deviceNameController, decoration: InputDecoration(labelText: tr.text('device_name'))),
                   TextField(controller: cloudTenantController, decoration: InputDecoration(labelText: tr.text('cloud_tenant_id'))),
                   const SizedBox(height: 12),
@@ -1651,8 +1663,8 @@ class _SystemIdentityCard extends StatelessWidget {
 
     if (saved != true || !context.mounted) return;
     await store.updateAppIdentity(current.copyWith(
-      storeId: storeIdController.text.trim().isEmpty ? current.storeId : storeIdController.text.trim(),
-      branchId: branchIdController.text.trim().isEmpty ? 'main' : branchIdController.text.trim(),
+      storeId: canEditStoreId && storeIdController.text.trim().isNotEmpty ? storeIdController.text.trim() : current.storeId,
+      branchId: canEditStoreId && branchIdController.text.trim().isNotEmpty ? branchIdController.text.trim() : current.branchId,
       deviceName: deviceNameController.text.trim(),
       cloudTenantId: cloudTenantController.text.trim(),
       deviceRole: deviceRole,

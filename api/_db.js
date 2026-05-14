@@ -31,6 +31,50 @@ export function assertStoreAllowed(storeId) {
   }
 }
 
+export async function ensureDeviceAuthColumns() {
+  await sql`alter table store_devices add column if not exists device_token text default ''`;
+  await sql`alter table store_devices add column if not exists revoked boolean not null default false`;
+}
+
+export async function assertDeviceAllowed(req, { storeId, branchId = 'main', allowedRoles = [], allowedTransports = [] } = {}) {
+  // Backward-compatible by default. Set REQUIRE_DEVICE_TOKEN_AUTH=true after all
+  // deployed devices have paired and have a device-scoped token.
+  if ((process.env.REQUIRE_DEVICE_TOKEN_AUTH || '').toLowerCase() !== 'true') return;
+  const deviceId = String(req.headers['x-device-id'] || req.headers['X-Device-Id'] || '').trim();
+  const deviceToken = String(req.headers['x-device-token'] || req.headers['X-Device-Token'] || '').trim();
+  if (!deviceId || !deviceToken) {
+    const err = new Error('Missing device credentials. Pair this device again.');
+    err.statusCode = 401;
+    throw err;
+  }
+  await ensureDeviceAuthColumns();
+  const rows = await sql`
+    select device_id, role, transport, revoked, device_token
+    from store_devices
+    where store_id = ${storeId}
+      and branch_id = ${branchId}
+      and device_id = ${deviceId}
+    limit 1
+  `;
+  if (!rows.length || rows[0].revoked === true || String(rows[0].device_token || '') !== deviceToken) {
+    const err = new Error('Device is not authorized or has been revoked.');
+    err.statusCode = 403;
+    throw err;
+  }
+  const role = String(rows[0].role || '');
+  const transport = String(rows[0].transport || '');
+  if (allowedRoles.length && !allowedRoles.includes(role)) {
+    const err = new Error(`This endpoint requires role: ${allowedRoles.join(', ')}.`);
+    err.statusCode = 403;
+    throw err;
+  }
+  if (allowedTransports.length && !allowedTransports.includes(transport)) {
+    const err = new Error(`This endpoint requires transport: ${allowedTransports.join(', ')}.`);
+    err.statusCode = 403;
+    throw err;
+  }
+}
+
 export function sendError(res, error) {
   const status = error.statusCode || 500;
   res.status(status).json({ ok: false, error: error.message || String(error) });

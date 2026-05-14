@@ -763,9 +763,13 @@ class AppStore extends ChangeNotifier {
     if (raw != null && raw.trim().isNotEmpty) {
       try {
         final parsed = AppIdentity.fromJson(Map<String, dynamic>.from(jsonDecode(raw) as Map));
+        final token = parsed.deviceToken.trim().isNotEmpty
+            ? parsed.deviceToken.trim()
+            : 'device_${DateTime.now().microsecondsSinceEpoch}_${_deviceId.hashCode.abs()}';
         final normalized = parsed.copyWith(
           deviceId: _deviceId,
           platform: _detectPlatform(),
+          deviceToken: token,
         );
         unawaited(LocalDatabaseService.setString(_appIdentityKey, jsonEncode(normalized.toJson())));
         return normalized;
@@ -790,15 +794,20 @@ class AppStore extends ChangeNotifier {
       syncMode: local.syncMode == SyncMode.localOnly ? SyncMode.lanOnly : local.syncMode,
       hostDeviceId: remote.deviceId.isNotEmpty ? remote.deviceId : local.hostDeviceId,
       cloudTenantId: remote.cloudTenantId.isNotEmpty ? remote.cloudTenantId : local.cloudTenantId,
+      deviceToken: local.deviceToken.trim().isNotEmpty ? local.deviceToken : 'device_${DateTime.now().microsecondsSinceEpoch}_${_deviceId.hashCode.abs()}',
       updatedAt: DateTime.now(),
     );
   }
 
 
   Future<void> updateAppIdentityDuringSetup(AppIdentity identity) async {
+    final token = identity.deviceToken.trim().isNotEmpty
+        ? identity.deviceToken.trim()
+        : 'device_${DateTime.now().microsecondsSinceEpoch}_${_deviceId.hashCode.abs()}';
     final normalized = identity.copyWith(
       deviceId: _deviceId,
       platform: _detectPlatform(),
+      deviceToken: token,
       updatedAt: DateTime.now(),
     );
     _appIdentity = normalized;
@@ -808,9 +817,13 @@ class AppStore extends ChangeNotifier {
 
   Future<void> updateAppIdentity(AppIdentity identity) async {
     requirePermission(AppPermission.settingsManage);
+    final token = identity.deviceToken.trim().isNotEmpty
+        ? identity.deviceToken.trim()
+        : 'device_${DateTime.now().microsecondsSinceEpoch}_${_deviceId.hashCode.abs()}';
     final normalized = identity.copyWith(
       deviceId: _deviceId,
       platform: _detectPlatform(),
+      deviceToken: token,
       updatedAt: DateTime.now(),
     );
     _appIdentity = normalized;

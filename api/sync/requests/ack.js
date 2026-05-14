@@ -1,4 +1,4 @@
-import { sql, assertSyncToken, assertStoreAllowed, sendError } from '../../_db.js';
+import { sql, assertSyncToken, assertStoreAllowed, assertDeviceAllowed, sendError } from '../../_db.js';
 
 export default async function handler(req, res) {
   try {
@@ -9,6 +9,7 @@ export default async function handler(req, res) {
     const branchId = String(body.branchId || body.branch_id || 'main').trim();
     if (!storeId) return res.status(400).json({ ok: false, error: 'storeId is required.' });
     assertStoreAllowed(storeId);
+    await assertDeviceAllowed(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['cloud'] });
     const ackIds = Array.isArray(body.ackIds) ? body.ackIds.map((id) => String(id)).filter(Boolean) : [];
     let acceptedIds = [];
     if (ackIds.length) {
