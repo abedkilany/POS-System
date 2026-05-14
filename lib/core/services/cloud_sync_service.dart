@@ -156,11 +156,124 @@ class CloudSyncResult {
   final int pulled;
 }
 
+
+class CloudPairingCodeResult {
+  const CloudPairingCodeResult({required this.ok, required this.message, this.code = '', this.expiresAt});
+  final bool ok;
+  final String message;
+  final String code;
+  final DateTime? expiresAt;
+}
+
+class CloudPairingClaimResult {
+  const CloudPairingClaimResult({required this.ok, required this.message, this.identity});
+  final bool ok;
+  final String message;
+  final AppIdentity? identity;
+}
+
 class CloudSyncService {
   CloudSyncService(this.store, {http.Client? client}) : _client = client ?? http.Client();
 
   final AppStore store;
   final http.Client _client;
+
+
+  Future<CloudPairingCodeResult> createPairingCode(CloudSyncSettings settings, {String transport = 'cloud', int ttlMinutes = 5}) async {
+    final identity = store.appIdentity;
+    if (!identity.isHost) return const CloudPairingCodeResult(ok: false, message: 'Only the Host can create pairing codes.');
+    if (!settings.isConfigured) return const CloudPairingCodeResult(ok: false, message: 'Cloud API URL and token are required.');
+    try {
+      final response = await _client
+          .post(
+            settings.endpoint('/api/sync/pairing/create'),
+            headers: _headers(settings),
+            body: jsonEncode({
+              'storeId': identity.storeId,
+              'branchId': identity.branchId,
+              'hostDeviceId': store.deviceId,
+              'hostDeviceName': identity.deviceName,
+              'transport': transport,
+              'ttlMinutes': ttlMinutes,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return CloudPairingCodeResult(ok: false, message: 'Pairing code failed: ${response.statusCode} ${response.body}');
+      }
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      return CloudPairingCodeResult(
+        ok: decoded['ok'] == true,
+        message: decoded['ok'] == true ? 'Pairing code created.' : (decoded['error']?.toString() ?? 'Pairing code failed.'),
+        code: decoded['code']?.toString() ?? '',
+        expiresAt: DateTime.tryParse(decoded['expiresAt']?.toString() ?? ''),
+      );
+    } catch (error) {
+      return CloudPairingCodeResult(ok: false, message: 'Pairing code failed: $error');
+    }
+  }
+
+  Future<CloudPairingClaimResult> claimPairingCode(CloudSyncSettings settings, String code) async {
+    final current = store.appIdentity;
+    if (!settings.isConfigured) return const CloudPairingClaimResult(ok: false, message: 'Cloud API URL and token are required.');
+    try {
+      final response = await _client
+          .post(
+            settings.endpoint('/api/sync/pairing/claim'),
+            headers: _headers(settings),
+            body: jsonEncode({
+              'code': code.trim(),
+              'deviceId': store.deviceId,
+              'deviceName': current.deviceName,
+              'platform': current.platform.name,
+              'appVersion': 'store-manager-pro',
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return CloudPairingClaimResult(ok: false, message: 'Pairing failed: ${response.statusCode} ${response.body}');
+      }
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      if (decoded['ok'] != true) {
+        return CloudPairingClaimResult(ok: false, message: decoded['error']?.toString() ?? 'Pairing failed.');
+      }
+      final transport = decoded['transport']?.toString() == 'lan' ? SyncMode.lanOnly : SyncMode.cloudConnected;
+      final identity = current.copyWith(
+        storeId: decoded['storeId']?.toString() ?? current.storeId,
+        branchId: decoded['branchId']?.toString() ?? current.branchId,
+        hostDeviceId: decoded['hostDeviceId']?.toString() ?? current.hostDeviceId,
+        deviceRole: DeviceRole.client,
+        syncMode: transport,
+        deviceToken: decoded['deviceToken']?.toString() ?? current.deviceToken,
+        updatedAt: DateTime.now(),
+      );
+      await store.updateAppIdentityDuringSetup(identity);
+      return CloudPairingClaimResult(ok: true, message: 'Device paired successfully.', identity: identity);
+    } catch (error) {
+      return CloudPairingClaimResult(ok: false, message: 'Pairing failed: $error');
+    }
+  }
+
+  Future<CloudSyncResult> revokeDevice(CloudSyncSettings settings, String deviceId) async {
+    final identity = store.appIdentity;
+    if (!identity.isHost) return const CloudSyncResult(ok: false, message: 'Only the Host can revoke devices.');
+    if (!settings.isConfigured) return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
+    try {
+      final response = await _client
+          .post(
+            settings.endpoint('/api/sync/device-revoke'),
+            headers: _headers(settings),
+            body: jsonEncode({'storeId': identity.storeId, 'branchId': identity.branchId, 'deviceId': deviceId}),
+          )
+          .timeout(const Duration(seconds: 10));
+      return CloudSyncResult(
+        ok: response.statusCode >= 200 && response.statusCode < 300,
+        message: response.statusCode >= 200 && response.statusCode < 300 ? 'Device revoked.' : 'Device revoke failed: ${response.statusCode} ${response.body}',
+      );
+    } catch (error) {
+      return CloudSyncResult(ok: false, message: 'Device revoke failed: $error');
+    }
+  }
 
   Map<String, String> _headers(CloudSyncSettings settings) {
     final identity = store.appIdentity;

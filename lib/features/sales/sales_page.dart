@@ -150,6 +150,10 @@ class _SalesPageState extends State<SalesPage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             _buildBarcodeStation(context, tr, embedded: true),
+            if (_scannerActive) ...[
+              const SizedBox(height: 10),
+              _buildEmbeddedScannerPreview(),
+            ],
             const SizedBox(height: 10),
             TextField(
               controller: _searchController,
@@ -326,31 +330,56 @@ class _SalesPageState extends State<SalesPage> {
 
   Widget _buildEmbeddedScannerPreview() {
     if (!_canUseCameraScanner || !_scannerActive) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.only(top: 10),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(14),
-        child: SizedBox(
-          height: 150,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              MobileScanner(controller: _scannerController, onDetect: _handleEmbeddedBarcode),
-              IgnorePointer(
-                child: Center(
-                  child: Container(
-                    width: 220,
-                    height: 88,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.white, width: 2),
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      margin: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+              children: [
+                const Icon(Icons.center_focus_strong_outlined, size: 18),
+                const SizedBox(width: 8),
+                const Expanded(child: Text('Inline barcode scanner')),
+                IconButton(
+                  tooltip: 'Stop camera scanner',
+                  onPressed: _scanBarcodeWithCamera,
+                  icon: const Icon(Icons.close),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            height: 170,
+            decoration: BoxDecoration(color: scheme.surfaceContainerHighest),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                MobileScanner(
+                  controller: _scannerController,
+                  fit: BoxFit.cover,
+                  onDetect: _handleEmbeddedBarcode,
+                ),
+                IgnorePointer(
+                  child: Center(
+                    child: Container(
+                      width: 220,
+                      height: 90,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.white, width: 2),
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -397,13 +426,22 @@ class _SalesPageState extends State<SalesPage> {
             onSubmitted: _addByCode,
           );
           final button = FilledButton.icon(onPressed: () => _addByCode(_barcodeController.text), icon: const Icon(Icons.add_shopping_cart), label: Text(tr.text('add_to_cart')));
+          final preview = embedded ? const SizedBox.shrink() : _buildEmbeddedScannerPreview();
           if (constraints.maxWidth < 460) {
-            return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [field, const SizedBox(height: 8), button, if (_scannerActive) _buildEmbeddedScannerPreview()]);
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                field,
+                const SizedBox(height: 8),
+                button,
+                if (!embedded && _scannerActive) preview,
+              ],
+            );
           }
           return Column(
             children: [
               Row(children: [const Icon(Icons.qr_code_scanner, size: 32), const SizedBox(width: 12), Expanded(child: field), const SizedBox(width: 12), button]),
-              if (_scannerActive) _buildEmbeddedScannerPreview(),
+              if (!embedded && _scannerActive) preview,
             ],
           );
         },

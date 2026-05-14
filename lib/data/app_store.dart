@@ -934,6 +934,16 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> _forceLogoutAfterRemoteAuthSync() async {
+    // When a Client receives users/roles from the Host, the currently signed-in
+    // local user may no longer exist or may have different permissions. Force a
+    // fresh login so the Login page is rebuilt from the authoritative Host users.
+    _activeUser = null;
+    _rememberLogin = false;
+    await LocalDatabaseService.setString(_activeUserKey, '');
+    await LocalDatabaseService.setString(_rememberLoginKey, 'false');
+  }
+
 
   Future<bool> _verifyPasswordAsync(String password, String storedHash) async {
     if (storedHash.startsWith(_passwordHashPrefix)) {
@@ -1356,12 +1366,31 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> clearLocalDeviceBusinessData({bool keepStoreProfile = true, bool keepSecurityPin = true}) async {
+    // Client-only maintenance operation. This must never create a SyncChange or
+    // deletion event because the Host remains the source of truth. It also
+    // clears pull cursors so the next sync can rebuild from a full Host
+    // snapshot instead of resuming after stale local leftovers.
+    final identity = appIdentity;
     _syncChanges.clear();
     _syncQueue.clear();
     _resetBusinessDataInMemory(keepStoreProfile: keepStoreProfile, keepSecurityPin: keepSecurityPin);
     if (!keepSecurityPin) {
       await LocalDatabaseService.setString(_pinKey, '');
     }
+    await LocalDatabaseService.deleteString('cloud_last_pull_cursor');
+    final lanRaw = LocalDatabaseService.getString('lan_sync_settings_v2');
+    if (lanRaw != null && lanRaw.trim().isNotEmpty) {
+      try {
+        final decoded = Map<String, dynamic>.from(jsonDecode(lanRaw) as Map);
+        decoded.remove('lastPullCursor');
+        decoded['lastSyncAt'] = null;
+        await LocalDatabaseService.setString('lan_sync_settings_v2', jsonEncode(decoded));
+      } catch (_) {
+        // Keep the data clear even if old LAN settings are malformed.
+      }
+    }
+    _appIdentity = identity.copyWith(deviceId: _deviceId, platform: _detectPlatform());
+    await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(_appIdentity!.toJson()));
     await _saveAll();
     notifyListeners();
   }
@@ -1434,7 +1463,29 @@ class AppStore extends ChangeNotifier {
     required Map<String, dynamic> payload,
   }) {
     final now = DateTime.now();
+    final identity = appIdentity;
     final changeId = '${now.microsecondsSinceEpoch}-${_syncChanges.length}';
+
+    // Sync V2 bridge:
+    // The existing SyncChange envelope is still kept for compatibility with
+    // tests, LAN endpoints, and old installations, but every new local change
+    // is explicitly tagged as either a Client DraftCommand or a Host
+    // AuthoritativeEvent. Cloud/LAN transports can therefore enforce the new
+    // Host-authoritative contract without guessing from endpoint names.
+    final mutationId = '${_deviceId}_${now.microsecondsSinceEpoch}_${entityType}_${entityId}_$operation';
+    final syncV2Meta = <String, dynamic>{
+      'kind': identity.isHost ? 'authoritativeEvent' : 'draftCommand',
+      'clientMutationId': mutationId,
+      'sourceDeviceId': _deviceId,
+      'sourceRole': identity.deviceRole.name,
+      'transport': identity.transportType,
+      'recordedAt': now.toIso8601String(),
+    };
+    final wrappedPayload = <String, dynamic>{
+      ...payload,
+      '_syncV2': syncV2Meta,
+    };
+
     _syncChanges.add(SyncChange(
       id: changeId,
       entityType: entityType,
@@ -1442,10 +1493,10 @@ class AppStore extends ChangeNotifier {
       operation: operation,
       deviceId: _deviceId,
       createdAt: now,
-      payload: payload,
-      storeId: appIdentity.storeId,
-      branchId: appIdentity.branchId,
-      storeEpoch: appIdentity.storeEpoch,
+      payload: wrappedPayload,
+      storeId: identity.storeId,
+      branchId: identity.branchId,
+      storeEpoch: identity.storeEpoch,
       sequence: _nextSyncSequence(),
     ));
     _enqueueSyncChange(changeId, now);
@@ -2698,13 +2749,23 @@ class AppStore extends ChangeNotifier {
         return a.createdAt.compareTo(b.createdAt);
       });
     var changed = false;
+    var shouldForceLoginAfterAuthSync = false;
     for (final change in sorted) {
       if (existingIds.contains(change.id)) continue;
       final incomingEpoch = change.storeEpoch;
       if (incomingEpoch < currentEpoch && !(change.entityType == 'system' && change.operation == 'reset_store_data')) {
         continue;
       }
+      final remoteAuthPayload = change.deviceId != _deviceId &&
+          (change.entityType == 'user' ||
+              change.entityType == 'role' ||
+              (change.entityType == 'system' && change.operation == 'restore_snapshot' &&
+                  ((change.payload['users'] is List && (change.payload['users'] as List).isNotEmpty) ||
+                      (change.payload['roles'] is List && (change.payload['roles'] as List).isNotEmpty))));
       await _applySyncChangePayload(change);
+      if (!appIdentity.isHost && remoteAuthPayload) {
+        shouldForceLoginAfterAuthSync = true;
+      }
       final shouldMirrorToCloud = mirrorToCloud && _shouldMirrorRemoteChangeToCloud(change);
 
       // Host-authority sync note:
@@ -2715,12 +2776,25 @@ class AppStore extends ChangeNotifier {
       // Restamping on every Host acceptance makes Local sync timing stable.
       final acceptedAt = DateTime.now();
       final shouldRestampAsHostAuthority = appIdentity.isHost && change.deviceId != _deviceId;
+      final authoritativePayload = shouldRestampAsHostAuthority
+          ? <String, dynamic>{
+              ...change.payload,
+              '_syncV2': <String, dynamic>{
+                ...Map<String, dynamic>.from(change.payload['_syncV2'] as Map? ?? const {}),
+                'kind': 'authoritativeEvent',
+                'acceptedByHostDeviceId': _deviceId,
+                'acceptedAt': acceptedAt.toIso8601String(),
+                'sourceCommandId': change.id,
+              },
+            }
+          : change.payload;
       final authoritativeChange = shouldRestampAsHostAuthority
           ? change.copyWith(
               createdAt: acceptedAt,
               deviceId: _deviceId,
               storeId: appIdentity.storeId,
               branchId: appIdentity.branchId,
+              payload: authoritativePayload,
               storeEpoch: appIdentity.storeEpoch,
               sequence: _nextSyncSequence(),
             )
@@ -2740,6 +2814,9 @@ class AppStore extends ChangeNotifier {
       _normalizeCustomers();
       await _saveRolesAndUsers();
       await LocalDatabaseService.setString(_pinKey, _securityPin ?? '');
+      if (shouldForceLoginAfterAuthSync) {
+        await _forceLogoutAfterRemoteAuthSync();
+      }
       await _saveAll();
       notifyListeners();
     }

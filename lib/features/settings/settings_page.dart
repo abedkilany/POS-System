@@ -192,8 +192,8 @@ class SettingsPage extends StatelessWidget {
 
   Widget _dataManagementTile(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final isHost = store.appIdentity.isHost || LanSyncSettings.load().isHost;
-    final isClient = store.appIdentity.isClient || LanSyncSettings.load().isClient;
+    final isHost = store.appIdentity.isHost;
+    final isClient = store.appIdentity.isClient;
     return ListTile(
       contentPadding: EdgeInsets.zero,
       leading: Icon(Icons.warning_amber_outlined, color: Theme.of(context).colorScheme.error),
@@ -203,14 +203,14 @@ class SettingsPage extends StatelessWidget {
         spacing: 8,
         runSpacing: 8,
         children: [
-          if (isHost && !isClient)
+          if (isHost)
             FilledButton.icon(
               style: FilledButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.error),
               onPressed: () => _resetBusinessData(context),
               icon: const Icon(Icons.delete_forever_outlined),
               label: Text(tr.text('reset_all_data')),
             ),
-          if (!isHost || isClient) ...[
+          if (isClient) ...[
             OutlinedButton.icon(
               onPressed: () => _clearLocalData(context),
               icon: const Icon(Icons.cleaning_services_outlined),

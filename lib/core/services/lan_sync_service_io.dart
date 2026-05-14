@@ -378,11 +378,12 @@ class LanSyncService {
       if (response.statusCode != 200) {
         return LanSyncResult(ok: false, message: 'Repair snapshot failed: ${response.statusCode} $body');
       }
-      await store.mergeBackupJson(body, markSynced: false);
+      await store.importSyncSnapshotJson(body);
+      await store.markAllSyncChangesSynced();
       final hostCursor = store.syncSnapshotGeneratedAtFromJson(body);
       final settings = LanSyncSettings.load();
       await settings.copyWith(lastPullCursor: hostCursor, lastConnectionAt: DateTime.now(), lastSyncAt: DateTime.now()).save();
-      return const LanSyncResult(ok: true, message: 'LAN repair completed from full Host snapshot.');
+      return const LanSyncResult(ok: true, message: 'LAN rebuild completed from full Host snapshot.');
     } catch (error) {
       return LanSyncResult(ok: false, message: 'Repair snapshot failed: $error');
     }

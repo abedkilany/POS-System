@@ -225,6 +225,10 @@ export default async function handler(req, res) {
     for (const raw of changes) {
       const change = normalizeChange(raw, fallback);
       assertStoreAllowed(change.storeId);
+      const syncV2Kind = change.payload && change.payload._syncV2 && String(change.payload._syncV2.kind || '');
+      if (syncV2Kind === 'draftCommand') {
+        return res.status(403).json({ ok: false, error: 'Draft commands must be sent to the Host relay, not the authoritative event stream.' });
+      }
       const inserted = await sql`
         insert into sync_events (
           id, store_id, branch_id, device_id, entity_type, entity_id, operation, payload, created_at, store_epoch, sequence
