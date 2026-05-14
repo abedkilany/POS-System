@@ -6,25 +6,32 @@ if (!process.env.DATABASE_URL) {
 
 export const sql = neon(process.env.DATABASE_URL);
 
-export function assertSyncToken(req) {
+function hasValidDeploymentToken(req) {
   const expected = process.env.CLOUD_SYNC_TOKEN || '';
   const header = req.headers.authorization || req.headers.Authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
-  if (expected && token === expected) return;
+  return Boolean(expected && token === expected);
+}
 
-  // Sync V2: after devices are paired, clients should not need the deployment
-  // token. Endpoints that accept device credentials call assertDeviceAllowed()
-  // after parsing store/branch and will enforce role + transport + revoked.
+export function assertSyncToken(req) {
+  if (hasValidDeploymentToken(req)) return;
+
+  // Sync V2: paired Clients authenticate with their device-scoped token.
+  // The concrete role/transport/revoked check happens in assertDeviceAllowed()
+  // after the endpoint knows storeId/branchId. This must work even when
+  // REQUIRE_DEVICE_TOKEN_AUTH is not set, otherwise Clients can pair but then
+  // remain Cloud offline because they do not have the deployment token.
   const deviceId = String(req.headers['x-device-id'] || req.headers['X-Device-Id'] || '').trim();
   const deviceToken = String(req.headers['x-device-token'] || req.headers['X-Device-Token'] || '').trim();
-  if ((process.env.REQUIRE_DEVICE_TOKEN_AUTH || '').toLowerCase() === 'true' && deviceId && deviceToken) return;
+  if (deviceId && deviceToken) return;
 
+  const expected = process.env.CLOUD_SYNC_TOKEN || '';
   if (!expected) {
     const err = new Error('CLOUD_SYNC_TOKEN is not configured. Refusing unauthenticated cloud sync.');
     err.statusCode = 500;
     throw err;
   }
-  const err = new Error('Invalid or missing cloud sync token.');
+  const err = new Error('Invalid or missing cloud sync token. Pair this device with the Host or use the Host deployment token.');
   err.statusCode = 401;
   throw err;
 }
@@ -44,11 +51,18 @@ export async function ensureDeviceAuthColumns() {
 }
 
 export async function assertDeviceAllowed(req, { storeId, branchId = 'main', allowedRoles = [], allowedTransports = [] } = {}) {
-  // Backward-compatible by default. Set REQUIRE_DEVICE_TOKEN_AUTH=true after all
-  // deployed devices have paired and have a device-scoped token.
-  if ((process.env.REQUIRE_DEVICE_TOKEN_AUTH || '').toLowerCase() !== 'true') return;
   const deviceId = String(req.headers['x-device-id'] || req.headers['X-Device-Id'] || '').trim();
   const deviceToken = String(req.headers['x-device-token'] || req.headers['X-Device-Token'] || '').trim();
+
+  // Deployment-token Host calls remain backward compatible unless strict mode is
+  // enabled. Device-token calls are always validated so paired Clients can sync
+  // without the shared Cloud token.
+  const strictDeviceAuth = (process.env.REQUIRE_DEVICE_TOKEN_AUTH || '').toLowerCase() === 'true';
+  const usingDeploymentToken = hasValidDeploymentToken(req);
+  const usingDeviceToken = Boolean(deviceId && deviceToken);
+  if (!strictDeviceAuth && usingDeploymentToken) return;
+  if (!strictDeviceAuth && !usingDeviceToken) return;
+
   if (!deviceId || !deviceToken) {
     const err = new Error('Missing device credentials. Pair this device again.');
     err.statusCode = 401;

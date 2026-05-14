@@ -836,9 +836,19 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
 
   Future<void> _createPairingCode() async {
     await _saveCloudBasics();
-    final result = await CloudSyncService(widget.store).createPairingCode(_settings, transport: _pairingTransport);
+    final service = CloudSyncService(widget.store);
+    final result = await service.createPairingCode(_settings, transport: _pairingTransport);
+    var syncMessage = '';
+    if (result.ok) {
+      // A new Client expects data immediately after joining. Make sure the Host
+      // has published its heartbeat and bootstrap snapshot to the Cloud mirror
+      // before the pairing code is handed to the Client.
+      await widget.store.ensureHostCloudBootstrapSnapshotQueued();
+      final syncResult = await service.syncNow(_settings);
+      syncMessage = syncResult.ok ? ' Host data is ready in Cloud.' : ' Host data publish failed: ${syncResult.message}';
+    }
     setState(() {
-      _status = result.message;
+      _status = '${result.message}$syncMessage';
       if (result.ok) {
         _latestPairingCode = result.code;
         _latestPairingExpiresAt = result.expiresAt;
@@ -848,12 +858,22 @@ class _CloudHostSyncCardState extends State<_CloudHostSyncCard> {
 
   Future<void> _joinByPairingCode() async {
     await _saveCloudBasics();
-    final result = await CloudSyncService(widget.store).claimPairingCode(_settings, _joinCodeController.text);
+    final service = CloudSyncService(widget.store);
+    final result = await service.claimPairingCode(_settings, _joinCodeController.text);
     if (result.ok) {
-      await CloudSyncSettings.load().copyWith(enabled: true, apiBaseUrl: _apiController.text.trim(), clearLastPullCursor: true).save();
+      final pairedSettings = CloudSyncSettings.load().copyWith(
+        enabled: true,
+        apiBaseUrl: _apiController.text.trim(),
+        clearLastPullCursor: true,
+        autoSyncEnabled: true,
+      );
+      await pairedSettings.save();
+      final syncResult = await service.syncNow(pairedSettings);
       await widget.onSyncSettingsChanged?.call();
       if (mounted) {
-        setState(() => _status = 'Paired successfully. Store ID and device token were assigned by the Host. Sync once, then sign in using Host users.');
+        setState(() => _status = syncResult.ok
+            ? 'Paired and synced successfully. Sign in again using Host users.'
+            : 'Paired, but initial sync failed: ${syncResult.message}');
       }
       return;
     }
