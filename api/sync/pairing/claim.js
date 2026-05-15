@@ -1,5 +1,5 @@
 import { randomBytes } from 'crypto';
-import { sql, assertSyncToken, assertStoreAllowed, ensureDeviceAuthColumns, sendError } from '../../_db.js';
+import { sql, assertStoreAllowed, ensureDeviceAuthColumns, sendError } from '../../_db.js';
 
 async function ensurePairingTable() {
   await sql`
@@ -46,7 +46,8 @@ function makeDeviceToken() {
 
 export default async function handler(req, res) {
   try {
-    assertSyncToken(req);
+    // Claiming a pairing code must not require the Host deployment token.
+    // The single-use pairing code is the Client's bootstrap secret.
     if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Method not allowed' });
     await ensurePairingTable();
     await ensureDeviceTable();
@@ -59,16 +60,27 @@ export default async function handler(req, res) {
     if (!code) return res.status(400).json({ ok: false, error: 'Pairing code is required.' });
     if (!deviceId) return res.status(400).json({ ok: false, error: 'deviceId is required.' });
 
-    const rows = await sql`
+    const lookup = await sql`
       select code, store_id, branch_id, host_device_id, host_device_name, transport, expires_at, claimed_at
       from device_pairing_codes
       where code = ${code}
       limit 1
     `;
-    if (!rows.length) return res.status(404).json({ ok: false, error: 'Pairing code was not found.' });
-    const pairing = rows[0];
-    if (pairing.claimed_at) return res.status(409).json({ ok: false, error: 'Pairing code was already used.' });
-    if (new Date(pairing.expires_at).getTime() < Date.now()) return res.status(410).json({ ok: false, error: 'Pairing code expired.' });
+    if (!lookup.length) return res.status(404).json({ ok: false, error: 'Pairing code was not found.' });
+    if (new Date(lookup[0].expires_at).getTime() < Date.now()) return res.status(410).json({ ok: false, error: 'Pairing code expired.' });
+    if (lookup[0].claimed_at) return res.status(409).json({ ok: false, error: 'Pairing code was already used.' });
+
+    // Atomic single-use claim: if two devices submit the same code, only the
+    // oldest request that reaches the server updates claimed_at. Later requests
+    // get no returned row and are rejected.
+    const claimed = await sql`
+      update device_pairing_codes
+      set claimed_by_device_id = ${deviceId}, claimed_at = now()
+      where code = ${code} and claimed_at is null and expires_at > now()
+      returning code, store_id, branch_id, host_device_id, host_device_name, transport, expires_at, claimed_at
+    `;
+    if (!claimed.length) return res.status(409).json({ ok: false, error: 'Pairing code was already claimed by an older request.' });
+    const pairing = claimed[0];
     assertStoreAllowed(pairing.store_id);
 
     const deviceToken = makeDeviceToken();
@@ -86,8 +98,6 @@ export default async function handler(req, res) {
         last_seen_at = now(),
         updated_at = now()
     `;
-    await sql`update device_pairing_codes set claimed_by_device_id = ${deviceId}, claimed_at = now() where code = ${code}`;
-
     return res.status(200).json({
       ok: true,
       storeId: pairing.store_id,

@@ -7,6 +7,8 @@ import 'package:ventio/models/sale_item.dart';
 import 'package:ventio/models/store_profile.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   group('Invoice PDF generation', () {
     test('builds a non-empty PDF document with a valid header', () async {
       final bytes = await InvoicePdfService.buildInvoicePdf(

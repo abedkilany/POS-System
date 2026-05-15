@@ -1,3 +1,5 @@
+import 'dart:math';
+
 enum AppPlatformType { windows, android, web, unknown }
 
 enum DeviceRole { standalone, host, client }
@@ -129,9 +131,9 @@ class AppIdentity {
   static AppIdentity defaults({required String deviceId, required AppPlatformType platform}) {
     final now = DateTime.now();
     return AppIdentity(
-      storeId: 'store_${deviceId.isEmpty ? now.microsecondsSinceEpoch : deviceId}',
-      branchId: 'main',
-      deviceId: deviceId,
+      storeId: _withPrefix('Str'),
+      branchId: _withPrefix('Brn'),
+      deviceId: deviceId.isEmpty ? _withPrefix('Dev') : deviceId,
       deviceName: 'Main device',
       platform: platform,
       deviceRole: platform == AppPlatformType.windows ? DeviceRole.host : DeviceRole.client,
@@ -142,5 +144,12 @@ class AppIdentity {
       deviceToken: 'device_${now.microsecondsSinceEpoch}_${deviceId.hashCode.abs()}',
       storeEpoch: 1,
     );
+  }
+
+  static String _withPrefix(String prefix) {
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    final random = Random.secure();
+    final body = List<String>.generate(7, (_) => alphabet[random.nextInt(alphabet.length)]).join();
+    return '$prefix-$body';
   }
 }

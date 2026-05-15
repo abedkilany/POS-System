@@ -7,6 +7,7 @@ environment:
   sdk: '>=3.3.0 <4.0.0'
 
 dependencies:
+  audioplayers: ^6.0.0
   flutter:
     sdk: flutter
   flutter_localizations:
@@ -38,4 +39,6 @@ flutter:
   uses-material-design: true
   assets:
     - assets/translations/
+    - assets/sounds/
+    - assets/fonts/
     - assets/branding/

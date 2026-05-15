@@ -5,6 +5,8 @@ import 'dart:math';
 import '../../data/app_store.dart';
 import 'local_database_service.dart';
 
+typedef LanSyncProgressCallback = void Function(double value, String label);
+
 enum LanSyncDeviceMode { unconfigured, host, client }
 
 class LanSyncSettings {
@@ -19,6 +21,7 @@ class LanSyncSettings {
     this.lastPullCursor,
     this.lastConnectionAt,
     this.lastSyncAt,
+    this.pairedDevices = const <String, String>{},
   });
 
   static const String storageKey = 'lan_sync_settings_v2';
@@ -33,6 +36,7 @@ class LanSyncSettings {
   final DateTime? lastPullCursor;
   final DateTime? lastConnectionAt;
   final DateTime? lastSyncAt;
+  final Map<String, String> pairedDevices;
 
   bool get isHost => mode == LanSyncDeviceMode.host || hostModeEnabled;
   bool get isClient => mode == LanSyncDeviceMode.client || (!hostModeEnabled && setupComplete);
@@ -48,6 +52,7 @@ class LanSyncSettings {
     DateTime? lastPullCursor,
     DateTime? lastConnectionAt,
     DateTime? lastSyncAt,
+    Map<String, String>? pairedDevices,
     bool clearLastPullCursor = false,
     bool clearLastConnectionAt = false,
     bool clearLastSyncAt = false,
@@ -62,6 +67,7 @@ class LanSyncSettings {
         lastPullCursor: clearLastPullCursor ? null : (lastPullCursor ?? this.lastPullCursor),
         lastConnectionAt: clearLastConnectionAt ? null : (lastConnectionAt ?? this.lastConnectionAt),
         lastSyncAt: clearLastSyncAt ? null : (lastSyncAt ?? this.lastSyncAt),
+        pairedDevices: pairedDevices ?? this.pairedDevices,
       );
 
   Map<String, dynamic> toJson() => {
@@ -75,6 +81,7 @@ class LanSyncSettings {
         'lastPullCursor': lastPullCursor?.toIso8601String(),
         'lastConnectionAt': lastConnectionAt?.toIso8601String(),
         'lastSyncAt': lastSyncAt?.toIso8601String(),
+        'pairedDevices': pairedDevices,
       };
 
   factory LanSyncSettings.fromJson(Map<String, dynamic> json) {
@@ -94,6 +101,9 @@ class LanSyncSettings {
       lastPullCursor: DateTime.tryParse(json['lastPullCursor'] as String? ?? ''),
       lastConnectionAt: DateTime.tryParse(json['lastConnectionAt'] as String? ?? ''),
       lastSyncAt: DateTime.tryParse(json['lastSyncAt'] as String? ?? ''),
+      pairedDevices: (json['pairedDevices'] is Map)
+          ? Map<String, String>.from((json['pairedDevices'] as Map).map((key, value) => MapEntry('$key', '$value')))
+          : const <String, String>{},
     );
   }
 
@@ -115,6 +125,9 @@ class LanSyncSettings {
     return List.generate(16, (_) => alphabet[random.nextInt(alphabet.length)]).join();
   }
 
+  static String generatePairingCode() => generateSecret().substring(0, 8);
+  static String generateDeviceToken() => 'lan_${DateTime.now().microsecondsSinceEpoch}';
+
   static Future<List<String>> localIpv4Addresses() async => const <String>[];
 }
 
@@ -133,13 +146,15 @@ class LanSyncService {
   Future<void> stopHost() async {}
   Future<LanSyncResult> testConnection(String host, {int port = 8787, String token = ''}) async =>
       const LanSyncResult(ok: false, message: 'LAN sync is not available in the web build. Use Cloud Sync/API instead.');
-  Future<LanSyncResult> initialClone(String host, {int port = 8787, String token = ''}) async =>
+  Future<LanSyncResult> claimPairingCode(String host, {int port = 8787, required String code}) async =>
+      const LanSyncResult(ok: false, message: 'LAN pairing is not available in the web build.');
+  Future<LanSyncResult> initialClone(String host, {int port = 8787, String token = '', LanSyncProgressCallback? onProgress}) async =>
       const LanSyncResult(ok: false, message: 'LAN initial clone is not available in the web build.');
-  Future<LanSyncResult> pullNow(String host, {int port = 8787, String token = ''}) async =>
+  Future<LanSyncResult> pullNow(String host, {int port = 8787, String token = '', LanSyncProgressCallback? onProgress}) async =>
       const LanSyncResult(ok: false, message: 'LAN pull is not available in the web build.');
-  Future<LanSyncResult> repairFromHostSnapshot(String host, {int port = 8787, String token = ''}) async =>
+  Future<LanSyncResult> repairFromHostSnapshot(String host, {int port = 8787, String token = '', LanSyncProgressCallback? onProgress}) async =>
       const LanSyncResult(ok: false, message: 'LAN repair is not available in the web build. Use Cloud Sync/API instead.');
-  Future<LanSyncResult> syncNow(String host, {int port = 8787, String token = ''}) async =>
+  Future<LanSyncResult> syncNow(String host, {int port = 8787, String token = '', LanSyncProgressCallback? onProgress}) async =>
       const LanSyncResult(ok: false, message: 'LAN sync is not available in the web build.');
 }
 

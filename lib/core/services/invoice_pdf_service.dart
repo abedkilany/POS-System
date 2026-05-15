@@ -1,8 +1,11 @@
-import 'dart:typed_data';
+import 'package:flutter/services.dart';
+
 
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+
+
 
 import '../../models/sale.dart';
 import '../../models/store_profile.dart';
@@ -12,7 +15,13 @@ class InvoicePdfService {
     required Sale sale,
     required StoreProfile profile,
   }) async {
-    final pdf = pw.Document();
+    final baseFont = pw.Font.ttf(
+      await rootBundle.load('assets/fonts/DejaVuSans.ttf'),
+    );
+    final boldFont = pw.Font.ttf(
+      await rootBundle.load('assets/fonts/DejaVuSans-Bold.ttf'),
+    );
+    final pdf = pw.Document(theme: pw.ThemeData.withFont(base: baseFont, bold: boldFont));
 
     pdf.addPage(
       pw.MultiPage(

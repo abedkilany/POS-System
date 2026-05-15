@@ -1,4 +1,4 @@
-import { sql, assertSyncToken, assertStoreAllowed, assertDeviceAllowed, sendError } from '../_db.js';
+import { sql, assertSyncTokenOrDevice, assertStoreAllowed, sendError } from '../_db.js';
 
 function asIso(value) {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
@@ -25,7 +25,6 @@ function decodeCursor(value) {
 
 export default async function handler(req, res) {
   try {
-    assertSyncToken(req);
     await sql`alter table sync_events add column if not exists store_epoch integer not null default 1`;
     await sql`alter table sync_events add column if not exists sequence integer not null default 0`;
     if (req.method !== 'GET') return res.status(405).json({ ok: false, error: 'Method not allowed' });
@@ -33,7 +32,7 @@ export default async function handler(req, res) {
     const storeId = String(req.query.store_id || req.query.storeId || 'default-store');
     const branchId = String(req.query.branch_id || req.query.branchId || 'main');
     assertStoreAllowed(storeId);
-    await assertDeviceAllowed(req, { storeId, branchId, allowedRoles: ['host', 'client'], allowedTransports: ['cloud'] });
+    await assertSyncTokenOrDevice(req, { storeId, branchId, allowedRoles: ['host', 'client'], allowedTransports: ['cloud'] });
     const since = req.query.since ? safeIso(String(req.query.since)) : null;
     const limit = Math.min(Math.max(Number(req.query.limit || 1000), 1), 5000);
     const cursor = decodeCursor(req.query.cursor);

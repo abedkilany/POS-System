@@ -36,7 +36,17 @@ class CloudSyncSettings {
   final bool autoSyncEnabled;
   final int intervalSeconds;
 
-  bool get isConfigured => enabled && apiBaseUrl.trim().isNotEmpty && apiToken.trim().isNotEmpty;
+  bool get hasDeploymentToken => apiToken.trim().isNotEmpty;
+  bool get hasDeviceCredentials {
+    final raw = LocalDatabaseService.getString('app_identity_v1') ?? '';
+    try {
+      final identity = AppIdentity.fromJson(Map<String, dynamic>.from(jsonDecode(raw) as Map));
+      return identity.deviceId.trim().isNotEmpty && identity.deviceToken.trim().isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+  bool get isConfigured => enabled && apiBaseUrl.trim().isNotEmpty && (hasDeploymentToken || hasDeviceCredentials);
 
   Uri endpoint(String path, [Map<String, String>? query]) {
     final base = apiBaseUrl.trim().replaceAll(RegExp(r'/+$'), '');
@@ -148,6 +158,8 @@ class CloudDeviceStatus {
       );
 }
 
+typedef CloudSyncProgressCallback = void Function(double value, String label);
+
 class CloudSyncResult {
   const CloudSyncResult({required this.ok, required this.message, this.pushed = 0, this.pulled = 0, this.restoredSnapshot = false});
   final bool ok;
@@ -183,7 +195,7 @@ class CloudSyncService {
   Future<CloudPairingCodeResult> createPairingCode(CloudSyncSettings settings, {String transport = 'cloud', int ttlMinutes = 5}) async {
     final identity = store.appIdentity;
     if (!identity.isHost) return const CloudPairingCodeResult(ok: false, message: 'Only the Host can create pairing codes.');
-    if (!settings.isConfigured) return const CloudPairingCodeResult(ok: false, message: 'Cloud API URL and token are required.');
+    if (!settings.hasDeploymentToken || settings.apiBaseUrl.trim().isEmpty) return const CloudPairingCodeResult(ok: false, message: 'Cloud API URL and Host deployment token are required.');
     try {
       if (transport == 'cloud') {
         await store.ensureHostCloudBootstrapSnapshotQueued(force: true);
@@ -220,7 +232,11 @@ class CloudSyncService {
 
   Future<CloudPairingClaimResult> claimPairingCode(CloudSyncSettings settings, String code) async {
     final current = store.appIdentity;
-    if (!settings.isConfigured) return const CloudPairingClaimResult(ok: false, message: 'Cloud API URL and token are required.');
+    // Client bootstrap pairing intentionally requires only the Cloud API URL and
+    // a single-use pairing code. The Host deployment token must stay on Host devices.
+    if (!settings.enabled || settings.apiBaseUrl.trim().isEmpty) {
+      return const CloudPairingClaimResult(ok: false, message: 'Cloud API URL is required.');
+    }
     try {
       final response = await _client
           .post(
@@ -317,19 +333,21 @@ class CloudSyncService {
     }
   }
 
-  Future<CloudSyncResult> rebuildFromCloudHostSnapshot(CloudSyncSettings settings) async {
+  Future<CloudSyncResult> rebuildFromCloudHostSnapshot(CloudSyncSettings settings, {CloudSyncProgressCallback? onProgress}) async {
     final identity = store.appIdentity;
     if (identity.isHost) {
       return const CloudSyncResult(ok: false, message: 'Rebuild from Host is only for Client devices.');
     }
     if (!settings.isConfigured) {
-      return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
+      return const CloudSyncResult(ok: false, message: 'Cloud API URL and paired device token are required.');
     }
 
+    onProgress?.call(0.08, 'Requesting a fresh Host snapshot...');
     final snapshotRequestedAt = DateTime.now().toUtc();
     final request = await requestFreshHostSnapshot(settings, requestedAt: snapshotRequestedAt);
     if (!request.ok) return request;
 
+    onProgress?.call(0.18, 'Clearing local Client data...');
     await store.clearLocalDeviceBusinessData();
     await CloudSyncSettings.clearSavedPullCursor();
 
@@ -343,13 +361,21 @@ class CloudSyncService {
     // when the Host comes online.
     for (var attempt = 0; attempt < 6; attempt += 1) {
       if (attempt > 0) await Future<void>.delayed(const Duration(seconds: 3));
-      lastResult = await syncNow(freshSettings, minSnapshotUpdatedAt: snapshotRequestedAt);
+      final attemptProgress = (0.28 + attempt * 0.09).clamp(0.28, 0.73).toDouble();
+      onProgress?.call(attemptProgress, 'Waiting for Host snapshot and pulling updates (attempt ${attempt + 1}/6)...');
+      lastResult = await syncNow(freshSettings, minSnapshotUpdatedAt: snapshotRequestedAt, onProgress: (value, label) {
+        final scaled = attemptProgress + (value * 0.08);
+        onProgress?.call(scaled.clamp(0.0, 0.82).toDouble(), label);
+      });
       if (!lastResult.ok) break;
       totalPulled += lastResult.pulled;
       freshSettings = CloudSyncSettings.load().copyWith(clearLastPullCursor: attempt == 0 ? true : false);
       if (lastResult.restoredSnapshot) {
+        onProgress?.call(0.88, 'Verifying rebuilt local data...');
         final repaired = await store.verifyLocalBusinessDataIntegrity();
+        onProgress?.call(0.94, 'Cleaning up local records...');
         await store.cleanupSoftDeletedRecords();
+        onProgress?.call(1.0, 'Cloud rebuild completed.');
         return CloudSyncResult(
           ok: repaired.ok,
           pushed: lastResult.pushed,
@@ -636,7 +662,7 @@ class CloudSyncService {
     return changes.length;
   }
 
-  Future<CloudSyncResult> syncNow(CloudSyncSettings settings, {DateTime? minSnapshotUpdatedAt}) async {
+  Future<CloudSyncResult> syncNow(CloudSyncSettings settings, {DateTime? minSnapshotUpdatedAt, CloudSyncProgressCallback? onProgress}) async {
     final identity = store.appIdentity;
     if (identity.syncMode == SyncMode.localOnly || identity.syncMode == SyncMode.lanOnly) {
       return const CloudSyncResult(ok: false, message: 'Enable cloudConnected or marketplaceEnabled sync mode first.');
@@ -651,11 +677,17 @@ class CloudSyncService {
       var acceptedRemoteRequests = 0;
 
       if (identity.isHost) {
+        onProgress?.call(0.10, 'Preparing Host cloud snapshot queue...');
         await store.ensureHostCloudBootstrapSnapshotQueued();
+        onProgress?.call(0.25, 'Sending Host heartbeat...');
         await sendHostHeartbeat(settings);
+        onProgress?.call(0.40, 'Registering Host device...');
         await registerCurrentDevice(settings, transport: 'cloud');
+        onProgress?.call(0.55, 'Checking Client requests...');
         acceptedRemoteRequests = await _hostPullRemoteRequests(settings);
+        onProgress?.call(0.75, 'Uploading authoritative Host changes...');
         pushed += await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
+        onProgress?.call(1.0, 'Host cloud sync completed.');
         return CloudSyncResult(
           ok: true,
           pushed: pushed,
@@ -667,7 +699,9 @@ class CloudSyncService {
         // them to the Host relay. LAN Clients normally queue to target "host",
         // so this only affects Web or remote desktop/mobile Clients whose
         // pending changes target "cloud_host".
+        onProgress?.call(0.12, 'Registering Client device...');
         await registerCurrentDevice(settings, transport: 'cloud');
+        onProgress?.call(0.28, 'Sending Client requests to Host relay...');
         pushed += await _pushPendingToEndpoint(settings, 'cloud_host', '/api/sync/requests/push');
       }
 
@@ -695,6 +729,8 @@ class CloudSyncService {
         }
         if (pageCursor.isNotEmpty) query['cursor'] = pageCursor;
 
+        final pullProgress = (0.35 + (pageCount - 1) * 0.08).clamp(0.35, 0.82).toDouble();
+        onProgress?.call(pullProgress, 'Pulling Cloud changes page $pageCount...');
         final pull = await _client.get(settings.endpoint('/api/sync/pull', query), headers: _headers(settings)).timeout(const Duration(seconds: 20));
         if (pull.statusCode < 200 || pull.statusCode >= 300) {
           final message = 'Cloud pull failed: ${pull.statusCode} ${pull.body}';
@@ -707,6 +743,7 @@ class CloudSyncService {
             .where((item) => item.deviceId != store.deviceId)
             .toList();
         restoredSnapshot = restoredSnapshot || changes.any((item) => item.operation == 'restore_snapshot');
+        onProgress?.call((0.42 + (pageCount - 1) * 0.08).clamp(0.42, 0.86).toDouble(), 'Applying ${changes.length} Cloud change(s) from page $pageCount...');
         await store.applyRemoteSyncChanges(changes, markAppliedAsSynced: true);
         pulled += changes.length;
 
@@ -721,13 +758,16 @@ class CloudSyncService {
         }
       }
 
+      onProgress?.call(0.90, 'Saving Cloud sync cursor...');
       if (finalPullCursor != null) {
         await settings.copyWith(lastPullCursor: finalPullCursor).save();
       }
 
       if (pulled > 0) {
+        onProgress?.call(0.96, 'Cleaning up after Cloud sync...');
         await store.cleanupSoftDeletedRecords();
       }
+      onProgress?.call(1.0, 'Cloud sync completed.');
       return CloudSyncResult(
         ok: true,
         pushed: pushed,

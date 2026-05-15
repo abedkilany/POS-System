@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:audioplayers/audioplayers.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../core/localization/app_localizations.dart';
@@ -119,24 +120,27 @@ class _SalesPageState extends State<SalesPage> {
   }
 
   Widget _buildMobileSalesLayout(BuildContext context, AppLocalizations tr, List<Product> products, double pagePadding) {
-    return Padding(
-      padding: EdgeInsets.all(pagePadding),
-      child: Column(
-        children: [
-          _buildMobileSaleControls(context, tr),
-          const SizedBox(height: 8),
-          Expanded(child: _buildMobileProductList(context, tr, products)),
-          const SizedBox(height: 8),
-          _MobileCheckoutBar(
-            enabled: _cart.isNotEmpty,
-            itemsCount: _itemsCount,
-            total: formatCurrency(_total, currency: widget.store.storeProfile.currency),
-            completeLabel: tr.text('complete_sale'),
-            saveLabel: tr.text('cart'),
-            onComplete: _showCheckoutSheet,
-            onSave: _showCartSheet,
-          ),
-        ],
+    return SafeArea(
+      child: SingleChildScrollView(
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        padding: EdgeInsets.all(pagePadding),
+        child: Column(
+          children: [
+            _buildMobileSaleControls(context, tr),
+            const SizedBox(height: 8),
+            _buildMobileProductList(context, tr, products),
+            const SizedBox(height: 8),
+            _MobileCheckoutBar(
+              enabled: _cart.isNotEmpty,
+              itemsCount: _itemsCount,
+              total: formatCurrency(_total, currency: widget.store.storeProfile.currency),
+              completeLabel: tr.text('complete_sale'),
+              saveLabel: tr.text('cart'),
+              onComplete: _showCheckoutSheet,
+              onSave: _showCartSheet,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -178,7 +182,8 @@ class _SalesPageState extends State<SalesPage> {
       margin: EdgeInsets.zero,
       child: ListView.separated(
         padding: const EdgeInsets.all(8),
-        physics: const BouncingScrollPhysics(),
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
         itemCount: products.length,
         separatorBuilder: (_, __) => const Divider(height: 1),
         itemBuilder: (context, index) {
@@ -320,7 +325,7 @@ class _SalesPageState extends State<SalesPage> {
       }
       _lastScannedCode = code;
       _lastScannedAt = now;
-      unawaited(SystemSound.play(SystemSoundType.click));
+      unawaited(AudioPlayer().play(AssetSource('sounds/beep.wav')));
       unawaited(HapticFeedback.mediumImpact());
       _barcodeController.text = code;
       _addByCode(code);

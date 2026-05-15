@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:audioplayers/audioplayers.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 class BarcodeScannerPage extends StatefulWidget {
@@ -58,7 +58,7 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
       final code = barcode.rawValue?.trim();
       if (code == null || code.isEmpty) continue;
       _handled = true;
-      SystemSound.play(SystemSoundType.click);
+      AudioPlayer().play(AssetSource('sounds/beep.wav'));
       Navigator.of(context).pop(code);
       return;
     }

@@ -36,10 +36,10 @@ export async function ensureDeviceAuthColumns() {
   await sql`alter table store_devices add column if not exists revoked boolean not null default false`;
 }
 
-export async function assertDeviceAllowed(req, { storeId, branchId = 'main', allowedRoles = [], allowedTransports = [] } = {}) {
+export async function assertDeviceAllowed(req, { storeId, branchId = 'main', allowedRoles = [], allowedTransports = [], force = false } = {}) {
   // Backward-compatible by default. Set REQUIRE_DEVICE_TOKEN_AUTH=true after all
   // deployed devices have paired and have a device-scoped token.
-  if ((process.env.REQUIRE_DEVICE_TOKEN_AUTH || '').toLowerCase() !== 'true') return;
+  if (!force && (process.env.REQUIRE_DEVICE_TOKEN_AUTH || '').toLowerCase() !== 'true') return;
   const deviceId = String(req.headers['x-device-id'] || req.headers['X-Device-Id'] || '').trim();
   const deviceToken = String(req.headers['x-device-token'] || req.headers['X-Device-Token'] || '').trim();
   if (!deviceId || !deviceToken) {
@@ -72,6 +72,16 @@ export async function assertDeviceAllowed(req, { storeId, branchId = 'main', all
     const err = new Error(`This endpoint requires transport: ${allowedTransports.join(', ')}.`);
     err.statusCode = 403;
     throw err;
+  }
+}
+
+
+export async function assertSyncTokenOrDevice(req, options = {}) {
+  try {
+    assertSyncToken(req);
+    return;
+  } catch (authError) {
+    await assertDeviceAllowed(req, { ...options, force: true });
   }
 }
 

@@ -435,6 +435,7 @@ class SettingsPage extends StatelessWidget {
       await store.importBackupJson(raw);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('backup_file_imported'))));
+        await _pushHostCriticalEventToCloud(context, 'Import Backup');
       }
     } catch (_) {
       if (context.mounted) {
@@ -510,6 +511,39 @@ class SettingsPage extends StatelessWidget {
     }
   }
 
+  Future<void> _pushHostCriticalEventToCloud(BuildContext context, String actionName) async {
+    final identity = store.appIdentity;
+    final cloud = CloudSyncSettings.load();
+    if (!identity.isHost || !identity.isCloudEnabled || !cloud.isConfigured) return;
+
+    if (context.mounted) {
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => AlertDialog(
+          title: Text('$actionName • Cloud Push'),
+          content: const Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('Uploading critical Host event to Cloud... 70%'),
+              SizedBox(height: 12),
+              LinearProgressIndicator(value: 0.70),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final result = await CloudSyncService(store).syncNow(cloud);
+    if (context.mounted) {
+      Navigator.of(context, rootNavigator: true).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result.ok ? '$actionName pushed to Cloud. Clients can rebuild/sync now.' : '$actionName was saved locally, but Cloud push failed: ${result.message}')),
+      );
+    }
+  }
+
   Future<void> _rebuildFromHost(BuildContext context) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -525,43 +559,67 @@ class SettingsPage extends StatelessWidget {
     );
     if (confirmed != true) return;
 
+    final progress = ValueNotifier<_OperationProgress>(
+      const _OperationProgress(0.05, 'Preparing rebuild... 5%'),
+    );
     if (context.mounted) {
       showDialog(
         context: context,
         barrierDismissible: false,
-        builder: (_) => const AlertDialog(
-          content: Row(
-            children: [
-              CircularProgressIndicator(),
-              SizedBox(width: 16),
-              Expanded(
-                child: Text('Rebuilding from Host... Please wait.'),
-              ),
-            ],
+        builder: (_) => AlertDialog(
+          title: const Text('Rebuild From Host'),
+          content: ValueListenableBuilder<_OperationProgress>(
+            valueListenable: progress,
+            builder: (_, value, __) => Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(value.label),
+                const SizedBox(height: 10),
+                LinearProgressIndicator(value: value.value),
+                const SizedBox(height: 12),
+                const Text('Keep this screen open while the Client clears local data, downloads the Host snapshot, and verifies it.'),
+              ],
+            ),
           ),
         ),
       );
     }
 
     final identity = store.appIdentity;
-    String message;
+    String message = '';
     bool success = false;
 
     try {
+      progress.value = const _OperationProgress(0.20, 'Resetting local Client state... 20%');
+      await Future<void>.delayed(const Duration(milliseconds: 80));
       if (identity.syncMode == SyncMode.cloudConnected || identity.syncMode == SyncMode.marketplaceEnabled) {
-        final result = await CloudSyncService(store).rebuildFromCloudHostSnapshot(CloudSyncSettings.load());
+        progress.value = const _OperationProgress(0.40, 'Contacting Cloud Host snapshot... 40%');
+        final result = await CloudSyncService(store).rebuildFromCloudHostSnapshot(
+          CloudSyncSettings.load(),
+          onProgress: (value, label) => progress.value = _OperationProgress(value, '$label ${(value * 100).round()}%'),
+        );
+        progress.value = _OperationProgress(result.ok ? 1.0 : 0.90, result.ok ? 'Cloud rebuild completed... 100%' : 'Cloud rebuild failed while verifying... 90%');
         message = result.message;
         success = result.ok;
       } else {
         final settings = LanSyncSettings.load();
-        final result = await LanSyncService(store).repairFromHostSnapshot(settings.host, port: settings.port, token: settings.secret);
+        progress.value = const _OperationProgress(0.40, 'Contacting LAN Host... 40%');
+        final result = await LanSyncService(store).repairFromHostSnapshot(
+          settings.host,
+          port: settings.port,
+          onProgress: (value, label) => progress.value = _OperationProgress(value, '$label ${(value * 100).round()}%'),
+        );
+        progress.value = _OperationProgress(result.ok ? 1.0 : 0.90, result.ok ? 'LAN rebuild completed... 100%' : 'LAN rebuild failed while verifying... 90%');
         message = result.message;
         success = result.ok;
       }
+      await Future<void>.delayed(const Duration(milliseconds: 150));
     } finally {
       if (context.mounted) {
         Navigator.of(context, rootNavigator: true).pop();
       }
+      progress.dispose();
     }
 
     if (context.mounted) {
@@ -607,8 +665,9 @@ class SettingsPage extends StatelessWidget {
     await store.resetBusinessData();
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Data reset on Host. Clients will reset automatically when they sync.')),
+        const SnackBar(content: Text('Data reset on Host. Uploading reset event to Cloud if configured...')),
       );
+      await _pushHostCriticalEventToCloud(context, 'Reset all Data');
     }
   }
 
@@ -722,6 +781,13 @@ class _BackupSummaryDetails extends StatelessWidget {
 
 
 
+class _OperationProgress {
+  const _OperationProgress(this.value, this.label);
+
+  final double value;
+  final String label;
+}
+
 class _UnifiedSyncSettingsCard extends StatefulWidget {
   const _UnifiedSyncSettingsCard({required this.store, this.onSyncSettingsChanged});
 
@@ -746,6 +812,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   bool _cloudEnabled = false;
   bool _busy = false;
   String _status = '';
+  double? _statusProgress;
   String _latestCloudPairingCode = '';
   DateTime? _latestCloudPairingExpiresAt;
   List<String> _hostIpAddresses = const <String>[];
@@ -763,7 +830,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     _cloudEnabled = identity.isCloudEnabled && cloud.isConfigured;
     _lanHostController.text = lan.host;
     _lanPortController.text = lan.port.toString();
-    _lanTokenController.text = lan.secret.trim().isNotEmpty ? lan.secret : LanSyncSettings.generateSecret();
+    _lanTokenController.text = lan.secret.trim().isNotEmpty ? lan.secret : LanSyncSettings.generatePairingCode();
     _cloudApiController.text = cloud.apiBaseUrl;
     _cloudTokenController.text = cloud.apiToken;
     _cloudIntervalController.text = cloud.intervalSeconds.toString();
@@ -790,15 +857,26 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     setState(() {
       _busy = true;
       _status = 'Working...';
+      _statusProgress = null;
     });
     try {
       await action();
       await widget.onSyncSettingsChanged?.call();
     } catch (error) {
-      if (mounted) setState(() => _status = 'Failed: $error');
+      if (mounted) {
+        setState(() {
+          _status = 'Failed: $error';
+          _statusProgress = null;
+        });
+      }
       return;
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _statusProgress = null;
+        });
+      }
     }
   }
 
@@ -829,8 +907,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
 
   void _generateLanToken() {
     setState(() {
-      _lanTokenController.text = LanSyncSettings.generateSecret();
-      _status = 'New LAN pairing token generated. Save Host Settings to apply it.';
+      _lanTokenController.text = LanSyncSettings.generatePairingCode();
+      _status = 'New one-time LAN pairing code generated. Save Host Settings to apply it.';
     });
   }
 
@@ -864,7 +942,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
 
   Future<void> _saveHostMode() => _run(() async {
         final identity = widget.store.appIdentity;
-        final lanSecret = _lanTokenController.text.trim().isEmpty ? LanSyncSettings.generateSecret() : _lanTokenController.text.trim();
+        final existingLan = LanSyncSettings.load();
+        final lanSecret = _lanTokenController.text.trim().isEmpty ? LanSyncSettings.generatePairingCode() : _lanTokenController.text.trim();
         await widget.store.updateAppIdentity(identity.copyWith(
           deviceRole: DeviceRole.host,
           syncMode: _cloudEnabled ? SyncMode.cloudConnected : (_lanEnabledForHost ? SyncMode.lanOnly : SyncMode.localOnly),
@@ -877,29 +956,18 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           setupComplete: _lanEnabledForHost,
           mode: _lanEnabledForHost ? LanSyncDeviceMode.host : LanSyncDeviceMode.unconfigured,
           secret: lanSecret,
+          pairedDevices: existingLan.pairedDevices,
         ).save();
         await _cloudSettings(enabled: _cloudEnabled).save();
         setState(() => _status = 'Host sync settings saved.');
       });
 
   Future<void> _saveLanClient() => _run(() async {
-        final identity = widget.store.appIdentity;
         final secret = _lanTokenController.text.trim();
-        final result = await LanSyncService(widget.store).initialClone(_lanHostController.text.trim(), port: _lanPort, token: secret);
+        if (secret.isEmpty) throw StateError('LAN pairing code is required.');
+        final result = await LanSyncService(widget.store).claimPairingCode(_lanHostController.text.trim(), port: _lanPort, code: secret);
         if (!result.ok) throw StateError(result.message);
-        await LanSyncSettings(
-          host: _lanHostController.text.trim(),
-          port: _lanPort,
-          autoSyncEnabled: true,
-          hostModeEnabled: false,
-          setupComplete: true,
-          mode: LanSyncDeviceMode.client,
-          secret: secret,
-          lastConnectionAt: DateTime.now(),
-          lastSyncAt: DateTime.now(),
-        ).save();
         await CloudSyncSettings.load().copyWith(autoSyncEnabled: false, clearLastPullCursor: true).save();
-        await widget.store.updateAppIdentity(identity.copyWith(deviceRole: DeviceRole.client, syncMode: SyncMode.lanOnly));
         setState(() => _status = 'LAN Client connected and cloned from Host.');
       });
 
@@ -914,17 +982,44 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   Future<void> _syncNow() => _run(() async {
         final identity = widget.store.appIdentity;
         if (identity.isCloudEnabled) {
-          final result = await CloudSyncService(widget.store).syncNow(_cloudSettings(enabled: true));
+          final result = await CloudSyncService(widget.store).syncNow(
+            _cloudSettings(enabled: true),
+            onProgress: (value, label) {
+              if (mounted) setState(() { _status = 'Cloud sync: $label ${(value * 100).round()}%'; _statusProgress = value; });
+            },
+          );
           if (!result.ok) throw StateError(result.message);
-          setState(() => _status = result.message);
+          setState(() { _status = 'Cloud sync complete... 100% • ${result.message}'; _statusProgress = 1.0; });
         } else if (identity.syncMode == SyncMode.lanOnly) {
           final lan = LanSyncSettings.load();
-          final result = await LanSyncService(widget.store).syncNow(lan.host, port: lan.port, token: lan.secret);
+          final result = await LanSyncService(widget.store).syncNow(
+            lan.host,
+            port: lan.port,
+            onProgress: (value, label) {
+              if (mounted) setState(() { _status = 'LAN sync: $label ${(value * 100).round()}%'; _statusProgress = value; });
+            },
+          );
           if (!result.ok) throw StateError(result.message);
-          setState(() => _status = result.message);
+          setState(() { _status = 'LAN sync complete... 100% • ${result.message}'; _statusProgress = 1.0; });
         } else {
           setState(() => _status = 'No sync mode is enabled.');
         }
+      });
+
+  Future<void> _testCloudConnection() => _run(() async {
+        setState(() { _status = 'Testing Cloud connection... 25%'; _statusProgress = 0.25; });
+        final result = await CloudSyncService(widget.store).syncNow(_cloudSettings(enabled: true));
+        if (!result.ok) throw StateError(result.message);
+        setState(() { _status = 'Cloud connection OK. ${result.message}'; _statusProgress = 1.0; });
+      });
+
+  Future<void> _testHostConnection() => _run(() async {
+        final lan = LanSyncSettings.load();
+        final host = _lanHostController.text.trim().isEmpty ? lan.host : _lanHostController.text.trim();
+        setState(() { _status = 'Testing LAN Host connection... 25%'; _statusProgress = 0.25; });
+        final result = await LanSyncService(widget.store).testConnection(host, port: _lanPort);
+        if (!result.ok) throw StateError(result.message);
+        setState(() { _status = 'LAN Host connection OK. ${result.message}'; _statusProgress = 1.0; });
       });
 
   @override
@@ -965,6 +1060,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
               if (_lanEnabledForHost) ...[
                 _hostIpInfoCard(),
                 ..._lanFields(showHostIp: false),
+                _lanPairingCodeCard(),
               ],
               const Divider(height: 28),
               SwitchListTile(
@@ -1004,12 +1100,28 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
             ],
             const SizedBox(height: 12),
             OutlinedButton.icon(onPressed: _busy ? null : _syncNow, icon: const Icon(Icons.sync_outlined), label: const Text('Sync Now')),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(onPressed: _busy ? null : _testCloudConnection, icon: const Icon(Icons.cloud_done_outlined), label: const Text('Test Cloud Connection')),
+            if (!isHost) ...[
+              const SizedBox(height: 8),
+              OutlinedButton.icon(onPressed: _busy ? null : _testHostConnection, icon: const Icon(Icons.lan_outlined), label: const Text('Test Host Connection')),
+            ],
             const SizedBox(height: 12),
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(color: color.surfaceContainerHighest, borderRadius: BorderRadius.circular(12)),
-              child: Text(_busy ? 'Working...' : (_status.isEmpty ? _humanStatus : _status)),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(_busy ? (_status.isEmpty ? 'Working...' : _status) : (_status.isEmpty ? _humanStatus : _status)),
+                  if (_busy) ...[
+                    const SizedBox(height: 8),
+                    LinearProgressIndicator(value: _statusProgress),
+                  ],
+                ],
+              ),
             ),
           ],
         ),
@@ -1060,6 +1172,75 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
             tooltip: 'Refresh IP',
             onPressed: _busy || _detectingHostIp ? null : _refreshHostIpAddresses,
             icon: const Icon(Icons.refresh_outlined),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _lanPairingCodeCard() {
+    final code = _lanTokenController.text.trim();
+    if (code.isEmpty) return const SizedBox.shrink();
+    final host = _lanHostController.text.trim().isNotEmpty ? _lanHostController.text.trim() : LanSyncSettings.load().host;
+    final payload = jsonEncode({
+      'transport': 'lan',
+      'host': host,
+      'port': _lanPort,
+      'pairingCode': code,
+    });
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Theme.of(context).dividerColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.qr_code_2_outlined),
+              const SizedBox(width: 8),
+              Expanded(child: Text('LAN One-Time Pairing Code', style: Theme.of(context).textTheme.titleMedium)),
+              IconButton(
+                tooltip: 'Copy code',
+                onPressed: () async {
+                  await Clipboard.setData(ClipboardData(text: code));
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('LAN pairing code copied.')));
+                },
+                icon: const Icon(Icons.copy_outlined),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Center(
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surface,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: QrImageView(
+                data: payload,
+                version: QrVersions.auto,
+                size: 180,
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          InputDecorator(
+            decoration: const InputDecoration(
+              labelText: 'Code',
+              helperText: 'Single-use. The Host clears it after the first successful Client claim.',
+              border: OutlineInputBorder(),
+            ),
+            child: SelectableText(
+              code,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(letterSpacing: 1.2),
+            ),
           ),
         ],
       ),
@@ -1142,10 +1323,10 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         TextField(
           controller: _lanTokenController,
           decoration: InputDecoration(
-            labelText: 'Pairing Token',
+            labelText: 'LAN Pairing Code',
             border: const OutlineInputBorder(),
             suffixIcon: IconButton(
-              tooltip: 'Generate token',
+              tooltip: 'Generate one-time code',
               onPressed: _busy ? null : _generateLanToken,
               icon: const Icon(Icons.refresh_outlined),
             ),
@@ -1172,37 +1353,34 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
             ),
           ),
         if (showPairingCode) const SizedBox(height: 12),
-        ExpansionTile(
-          tilePadding: EdgeInsets.zero,
-          leading: const Icon(Icons.tune_outlined),
-          title: const Text('Advanced Cloud Settings'),
-          subtitle: Text(
-            showPairingCode
-                ? 'Technical fields are hidden from normal Client pairing.'
-                : 'Deployment token and background sync timing.',
+        if (!showPairingCode)
+          ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            leading: const Icon(Icons.tune_outlined),
+            title: const Text('Advanced Cloud Settings'),
+            subtitle: const Text('Host-only deployment token and background sync timing.'),
+            childrenPadding: const EdgeInsets.only(top: 8, bottom: 8),
+            children: [
+              TextField(
+                controller: _cloudTokenController,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Cloud deployment token',
+                  helperText: 'Host only. Clients pair with a one-time code and never need this token.',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _cloudIntervalController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Auto sync interval seconds',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
           ),
-          childrenPadding: const EdgeInsets.only(top: 8, bottom: 8),
-          children: [
-            TextField(
-              controller: _cloudTokenController,
-              obscureText: true,
-              decoration: const InputDecoration(
-                labelText: 'Cloud deployment token',
-                helperText: 'Advanced only. Most users should use the pairing code or QR code.',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _cloudIntervalController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: 'Auto sync interval seconds',
-                border: OutlineInputBorder(),
-              ),
-            ),
-          ],
-        ),
         const SizedBox(height: 12),
       ];
 }

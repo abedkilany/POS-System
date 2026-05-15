@@ -7,7 +7,6 @@ import '../../core/localization/app_localizations.dart';
 import '../../core/services/cloud_sync_service.dart';
 import '../../core/services/lan_sync_service.dart';
 import '../../data/app_store.dart';
-import '../../models/app_identity.dart';
 import '../barcode/barcode_scanner_page.dart';
 
 enum _ConnectMode { lan, cloud }
@@ -28,7 +27,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
   final _lanTokenController = TextEditingController(
     text: LanSyncSettings.load().secret.trim().isNotEmpty
         ? LanSyncSettings.load().secret.trim()
-        : LanSyncSettings.generateSecret(),
+        : LanSyncSettings.generatePairingCode(),
   );
 
   final _cloudApiController = TextEditingController(text: CloudSyncSettings.load().apiBaseUrl);
@@ -84,7 +83,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
 
         final host = (decoded['host'] ?? decoded['hostIp'] ?? decoded['ip'] ?? '').toString();
         final port = (decoded['port'] ?? '').toString();
-        final token = (decoded['token'] ?? decoded['pairingToken'] ?? decoded['pairing_code'] ?? decoded['pairingCode'] ?? decoded['code'] ?? '').toString();
+        final token = (decoded['pairingCode'] ?? decoded['pairing_code'] ?? decoded['code'] ?? decoded['token'] ?? decoded['pairingToken'] ?? '').toString();
         final apiBaseUrl = (decoded['apiBaseUrl'] ?? decoded['apiUrl'] ?? decoded['cloudApiUrl'] ?? '').toString();
 
         if (host.trim().isNotEmpty) _hostController.text = host.trim();
@@ -103,14 +102,22 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       } else {
         _cloudPairingCodeController.text = code;
       }
-      _status = 'Pairing QR loaded. Review the details, then connect.';
+      _status = 'QR detected. Connecting automatically...';
+    });
+    Future.microtask(() async {
+      if (!mounted || _busy) return;
+      if (_mode == _ConnectMode.cloud && _cloudPairingCodeController.text.trim().isNotEmpty) {
+        await _connectCloud();
+      } else if (_mode == _ConnectMode.lan && _lanTokenController.text.trim().isNotEmpty) {
+        await _connectLan();
+      }
     });
   }
 
   Future<void> _connectLan() async {
     setState(() {
       _busy = true;
-      _status = AppLocalizations.of(context).text('connecting_cloning');
+      _status = 'Connecting to LAN Host... 10%';
     });
     try {
       final secret = _lanTokenController.text.trim();
@@ -120,37 +127,18 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
         return;
       }
       if (secret.isEmpty) {
-        setState(() => _status = 'Pairing token is required.');
+        setState(() => _status = 'LAN pairing code is required.');
         return;
       }
 
-      final result = await _lanSyncService.initialClone(host, port: _port, token: secret);
+      if (mounted) setState(() => _status = 'Claiming LAN pairing code and creating device token... 35%');
+      final result = await _lanSyncService.claimPairingCode(host, port: _port, code: secret);
       if (!result.ok) {
         setState(() => _status = result.message);
         return;
       }
 
-      final settings = LanSyncSettings(
-        host: host,
-        port: _port,
-        autoSyncEnabled: true,
-        hostModeEnabled: false,
-        setupComplete: true,
-        mode: LanSyncDeviceMode.client,
-        secret: secret,
-        lastPullCursor: LanSyncSettings.load().lastPullCursor,
-        lastConnectionAt: DateTime.now(),
-        lastSyncAt: DateTime.now(),
-      );
-      await settings.save();
-
-      final identity = widget.store.appIdentity;
-      await widget.store.updateAppIdentityDuringSetup(
-        identity.copyWith(
-          deviceRole: DeviceRole.client,
-          syncMode: SyncMode.lanOnly,
-        ),
-      );
+      if (mounted) setState(() => _status = 'LAN device credentials saved and Host snapshot downloaded... 100%');
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -167,7 +155,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
   Future<void> _connectCloud() async {
     setState(() {
       _busy = true;
-      _status = 'Connecting to Cloud Host and downloading data...';
+      _status = 'Claiming Cloud pairing code... 15%';
     });
     try {
       final code = _cloudPairingCodeController.text.trim();
@@ -176,14 +164,19 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
         return;
       }
 
+      final existing = CloudSyncSettings.load();
       final settings = CloudSyncSettings(
         enabled: true,
         apiBaseUrl: _cloudApiController.text.trim(),
-        apiToken: _cloudTokenController.text.trim(),
+        // Clients must not need the Host deployment token. Preserve an existing
+        // token only for upgraded Host/advanced setups; normal client pairing
+        // works with API URL + single-use code only.
+        apiToken: _cloudTokenController.text.trim().isNotEmpty ? _cloudTokenController.text.trim() : existing.apiToken,
         autoSyncEnabled: true,
       );
       await settings.save();
 
+      if (mounted) setState(() => _status = 'Verifying pairing code and creating device token... 35%');
       final result = await _cloudSyncService.claimPairingCode(settings, code);
       if (!result.ok) {
         setState(() => _status = result.message);
@@ -191,6 +184,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       }
 
       if (!mounted) return;
+      if (mounted) setState(() => _status = 'Cloud pairing and rebuild complete... 100%');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(result.message.isEmpty ? 'Connected to Store. Please sign in.' : result.message)),
       );
@@ -284,10 +278,10 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
                     padding: const EdgeInsets.all(24),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
-                      children: const [
-                        CircularProgressIndicator(),
-                        SizedBox(height: 16),
-                        Text('Connecting and downloading Store data...'),
+                      children: [
+                        const CircularProgressIndicator(),
+                        const SizedBox(height: 16),
+                        Text(_status.isEmpty ? 'Connecting and downloading Store data...' : _status, textAlign: TextAlign.center),
                       ],
                     ),
                   ),
@@ -321,8 +315,8 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
           controller: _lanTokenController,
           enabled: !_busy,
           decoration: InputDecoration(
-            labelText: tr.text('pairing_token'),
-            helperText: 'Paste the LAN pairing token or scan the QR code.',
+            labelText: 'LAN Pairing Code',
+            helperText: 'Paste the one-time LAN pairing code or scan the Host QR code.',
             border: const OutlineInputBorder(),
           ),
         ),

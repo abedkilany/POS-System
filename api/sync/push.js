@@ -1,4 +1,4 @@
-import { sql, assertSyncToken, assertStoreAllowed, assertDeviceAllowed, sendError } from '../_db.js';
+import { sql, assertSyncTokenOrDevice, assertStoreAllowed, sendError } from '../_db.js';
 
 function normalizeChange(raw, fallback) {
   if (!raw || typeof raw !== 'object') throw new Error('Invalid sync change.');
@@ -226,7 +226,6 @@ async function materializeChange(change) {
 
 export default async function handler(req, res) {
   try {
-    assertSyncToken(req);
     await sql`alter table sync_events add column if not exists store_epoch integer not null default 1`;
     await sql`alter table sync_events add column if not exists sequence integer not null default 0`;
     if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Method not allowed' });
@@ -243,7 +242,7 @@ export default async function handler(req, res) {
       const storeId = String(fallback.storeId);
       const branchId = String(fallback.branchId || 'main');
       assertStoreAllowed(storeId);
-      await assertDeviceAllowed(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['cloud'] });
+      await assertSyncTokenOrDevice(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['cloud'] });
     }
 
     const ackIds = [];

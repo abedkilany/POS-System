@@ -454,8 +454,15 @@ class AppStore extends ChangeNotifier {
       _deviceId = existing.trim();
       return;
     }
-    _deviceId = 'DEV-${DateTime.now().microsecondsSinceEpoch}-${Random.secure().nextInt(999999).toString().padLeft(6, '0')}';
+    _deviceId = _generatePrefixedId('Dev');
     await LocalDatabaseService.setString(_deviceIdKey, _deviceId);
+  }
+
+  String _generatePrefixedId(String prefix) {
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    final random = Random.secure();
+    final body = List<String>.generate(7, (_) => alphabet[random.nextInt(alphabet.length)]).join();
+    return '$prefix-$body';
   }
 
   List<Product> _loadProducts() {
