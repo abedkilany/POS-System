@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../core/services/backup_download_service.dart';
 import '../../core/services/cloud_sync_service.dart';
@@ -443,17 +445,63 @@ class SettingsPage extends StatelessWidget {
 
 
   Future<void> _clearLocalData(BuildContext context) async {
+    const confirmationWord = 'DELETE';
     final confirmed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Clear Local Data'),
-        content: const Text('This deletes only this Client device business data. Host data and other devices will not be affected.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Clear this device')),
-        ],
-      ),
+      builder: (dialogContext) {
+        final controller = TextEditingController();
+        var canDelete = false;
+        return StatefulBuilder(
+          builder: (context, setState) => AlertDialog(
+            title: const Text('Clear Local Data'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'This deletes only this Client device business data. Host data and other devices will not be affected.',
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Type $confirmationWord to confirm.',
+                  style: Theme.of(context).textTheme.labelLarge,
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  textCapitalization: TextCapitalization.characters,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    labelText: 'Confirmation word',
+                    hintText: confirmationWord,
+                  ),
+                  onChanged: (value) {
+                    final next = value.trim() == confirmationWord;
+                    if (next != canDelete) {
+                      setState(() => canDelete = next);
+                    }
+                  },
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: Theme.of(context).colorScheme.error,
+                ),
+                onPressed: canDelete ? () => Navigator.pop(dialogContext, true) : null,
+                child: const Text('Clear this device'),
+              ),
+            ],
+          ),
+        );
+      },
     );
     if (confirmed != true) return;
     await store.clearLocalDeviceBusinessData();
@@ -477,18 +525,51 @@ class SettingsPage extends StatelessWidget {
     );
     if (confirmed != true) return;
 
+    if (context.mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const AlertDialog(
+          content: Row(
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(width: 16),
+              Expanded(
+                child: Text('Rebuilding from Host... Please wait.'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     final identity = store.appIdentity;
     String message;
-    if (identity.syncMode == SyncMode.cloudConnected || identity.syncMode == SyncMode.marketplaceEnabled) {
-      final result = await CloudSyncService(store).rebuildFromCloudHostSnapshot(CloudSyncSettings.load());
-      message = result.message;
-    } else {
-      final settings = LanSyncSettings.load();
-      final result = await LanSyncService(store).repairFromHostSnapshot(settings.host, port: settings.port, token: settings.secret);
-      message = result.message;
+    bool success = false;
+
+    try {
+      if (identity.syncMode == SyncMode.cloudConnected || identity.syncMode == SyncMode.marketplaceEnabled) {
+        final result = await CloudSyncService(store).rebuildFromCloudHostSnapshot(CloudSyncSettings.load());
+        message = result.message;
+        success = result.ok;
+      } else {
+        final settings = LanSyncSettings.load();
+        final result = await LanSyncService(store).repairFromHostSnapshot(settings.host, port: settings.port, token: settings.secret);
+        message = result.message;
+        success = result.ok;
+      }
+    } finally {
+      if (context.mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
     }
+
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(success ? 'Rebuild completed successfully.' : message),
+        ),
+      );
     }
   }
 
@@ -665,6 +746,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   bool _cloudEnabled = false;
   bool _busy = false;
   String _status = '';
+  String _latestCloudPairingCode = '';
+  DateTime? _latestCloudPairingExpiresAt;
   List<String> _hostIpAddresses = const <String>[];
   bool _detectingHostIp = false;
 
@@ -755,9 +838,20 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         await _saveCloudSettingsForPairing();
         final result = await CloudSyncService(widget.store).createPairingCode(_cloudSettings(enabled: true));
         if (!result.ok) throw StateError(result.message);
-        final expiry = result.expiresAt == null ? '' : ' • Expires: ${result.expiresAt!.toLocal()}';
-        setState(() => _status = 'Cloud pairing code: ${result.code}$expiry');
+        setState(() {
+          _latestCloudPairingCode = result.code;
+          _latestCloudPairingExpiresAt = result.expiresAt;
+          _status = 'Cloud pairing code created.';
+        });
       });
+
+  Future<void> _copyCloudPairingCode() async {
+    final code = _latestCloudPairingCode.trim();
+    if (code.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: code));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Cloud pairing code copied.')));
+  }
 
   Future<void> _saveCloudSettingsForPairing() async {
     final identity = widget.store.appIdentity;
@@ -884,6 +978,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                 ..._cloudFields(showPairingCode: false),
                 SizedBox(width: double.infinity, child: OutlinedButton.icon(onPressed: _busy ? null : _createCloudPairingCode, icon: const Icon(Icons.qr_code_2_outlined), label: const Text('Generate Cloud Pairing Code'))),
                 const SizedBox(height: 12),
+                _cloudPairingCodeCard(),
               ],
               const SizedBox(height: 12),
               SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: _busy ? null : _saveHostMode, icon: const Icon(Icons.save_outlined), label: const Text('Save Host Settings'))),
@@ -971,6 +1066,73 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     );
   }
 
+  Widget _cloudPairingCodeCard() {
+    final code = _latestCloudPairingCode.trim();
+    if (code.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final expires = _latestCloudPairingExpiresAt;
+    final expiresText = expires == null ? 'Expires soon' : 'Expires: ${MaterialLocalizations.of(context).formatFullDate(expires.toLocal())} ${TimeOfDay.fromDateTime(expires.toLocal()).format(context)}';
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Theme.of(context).dividerColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.qr_code_2_outlined),
+              const SizedBox(width: 8),
+              Expanded(child: Text('Cloud Pairing Code', style: Theme.of(context).textTheme.titleMedium)),
+              IconButton(
+                tooltip: 'Copy code',
+                onPressed: _copyCloudPairingCode,
+                icon: const Icon(Icons.copy_outlined),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Center(
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surface,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: QrImageView(
+                data: code,
+                version: QrVersions.auto,
+                size: 180,
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          InputDecorator(
+            decoration: InputDecoration(
+              labelText: 'Code',
+              helperText: expiresText,
+              border: const OutlineInputBorder(),
+              suffixIcon: IconButton(
+                tooltip: 'Copy code',
+                onPressed: _copyCloudPairingCode,
+                icon: const Icon(Icons.copy_outlined),
+              ),
+            ),
+            child: SelectableText(
+              code,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(letterSpacing: 1.2),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   List<Widget> _lanFields({required bool showHostIp}) => [
         if (showHostIp)
           TextField(controller: _lanHostController, decoration: const InputDecoration(labelText: 'Manual Host IP (optional)', border: OutlineInputBorder())),
@@ -993,14 +1155,55 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       ];
 
   List<Widget> _cloudFields({required bool showPairingCode}) => [
-        TextField(controller: _cloudApiController, decoration: const InputDecoration(labelText: 'Cloud API URL', border: OutlineInputBorder())),
+        TextField(
+          controller: _cloudApiController,
+          decoration: const InputDecoration(
+            labelText: 'Cloud API URL',
+            border: OutlineInputBorder(),
+          ),
+        ),
         const SizedBox(height: 12),
-        TextField(controller: _cloudTokenController, obscureText: true, decoration: const InputDecoration(labelText: 'Cloud sync token', border: OutlineInputBorder())),
-        const SizedBox(height: 12),
-        TextField(controller: _cloudIntervalController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Auto sync interval seconds', border: OutlineInputBorder())),
-        const SizedBox(height: 12),
-        if (showPairingCode) TextField(controller: _cloudPairingCodeController, decoration: const InputDecoration(labelText: 'Pairing code from Host', border: OutlineInputBorder())),
+        if (showPairingCode)
+          TextField(
+            controller: _cloudPairingCodeController,
+            decoration: const InputDecoration(
+              labelText: 'Pairing code from Host',
+              border: OutlineInputBorder(),
+            ),
+          ),
         if (showPairingCode) const SizedBox(height: 12),
+        ExpansionTile(
+          tilePadding: EdgeInsets.zero,
+          leading: const Icon(Icons.tune_outlined),
+          title: const Text('Advanced Cloud Settings'),
+          subtitle: Text(
+            showPairingCode
+                ? 'Technical fields are hidden from normal Client pairing.'
+                : 'Deployment token and background sync timing.',
+          ),
+          childrenPadding: const EdgeInsets.only(top: 8, bottom: 8),
+          children: [
+            TextField(
+              controller: _cloudTokenController,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Cloud deployment token',
+                helperText: 'Advanced only. Most users should use the pairing code or QR code.',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _cloudIntervalController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Auto sync interval seconds',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
       ];
 }
 

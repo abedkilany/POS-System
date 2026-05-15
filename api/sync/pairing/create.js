@@ -20,7 +20,13 @@ async function ensurePairingTable() {
 }
 
 function makeCode() {
-  return String(Number.parseInt(randomBytes(4).toString('hex'), 16) % 1000000).padStart(6, '0');
+  // Mixed-case alphanumeric pairing code. Ambiguous characters are omitted
+  // to reduce copy/scan mistakes while keeping much higher entropy than 6 digits.
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+  const bytes = randomBytes(14);
+  let raw = '';
+  for (const byte of bytes) raw += alphabet[byte % alphabet.length];
+  return `${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}-${raw.slice(12, 14)}`;
 }
 
 export default async function handler(req, res) {

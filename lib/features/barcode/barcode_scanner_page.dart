@@ -1,34 +1,50 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 class BarcodeScannerPage extends StatefulWidget {
-  const BarcodeScannerPage({super.key});
+  const BarcodeScannerPage({
+    super.key,
+    this.title = 'Scan barcode',
+    this.helpText = 'Point the camera at the product barcode. The code will be filled automatically.',
+    this.formats,
+  });
+
+  final String title;
+  final String helpText;
+  final List<BarcodeFormat>? formats;
 
   @override
   State<BarcodeScannerPage> createState() => _BarcodeScannerPageState();
 }
 
 class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
-  final MobileScannerController _controller = MobileScannerController(
-    detectionSpeed: DetectionSpeed.noDuplicates,
-    formats: const [
-      BarcodeFormat.aztec,
-      BarcodeFormat.codabar,
-      BarcodeFormat.code128,
-      BarcodeFormat.code39,
-      BarcodeFormat.code93,
-      BarcodeFormat.dataMatrix,
-      BarcodeFormat.ean13,
-      BarcodeFormat.ean8,
-      BarcodeFormat.itf14,
-      BarcodeFormat.pdf417,
-      BarcodeFormat.qrCode,
-      BarcodeFormat.upcA,
-      BarcodeFormat.upcE,
-    ],
-  );
+  late final MobileScannerController _controller;
 
   bool _handled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = MobileScannerController(
+      detectionSpeed: DetectionSpeed.noDuplicates,
+      formats: widget.formats ?? const [
+        BarcodeFormat.aztec,
+        BarcodeFormat.codabar,
+        BarcodeFormat.code128,
+        BarcodeFormat.code39,
+        BarcodeFormat.code93,
+        BarcodeFormat.dataMatrix,
+        BarcodeFormat.ean13,
+        BarcodeFormat.ean8,
+        BarcodeFormat.itf14,
+        BarcodeFormat.pdf417,
+        BarcodeFormat.qrCode,
+        BarcodeFormat.upcA,
+        BarcodeFormat.upcE,
+      ],
+    );
+  }
 
   @override
   void dispose() {
@@ -42,6 +58,7 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
       final code = barcode.rawValue?.trim();
       if (code == null || code.isEmpty) continue;
       _handled = true;
+      SystemSound.play(SystemSoundType.click);
       Navigator.of(context).pop(code);
       return;
     }
@@ -51,7 +68,7 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Scan barcode'),
+        title: Text(widget.title),
         actions: [
           IconButton(
             tooltip: 'Flash',
@@ -87,10 +104,10 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
             bottom: 24,
             child: Card(
               color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.90),
-              child: const Padding(
-                padding: EdgeInsets.all(14),
+              child: Padding(
+                padding: const EdgeInsets.all(14),
                 child: Text(
-                  'Point the camera at the product barcode. The code will be filled automatically.',
+                  widget.helpText,
                   textAlign: TextAlign.center,
                 ),
               ),

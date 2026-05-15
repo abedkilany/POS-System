@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
 import '../../data/app_store.dart';
+import '../settings/sync_setup_page.dart';
 
 class PinLockPage extends StatefulWidget {
   const PinLockPage({super.key, required this.store, required this.child});
@@ -21,15 +22,14 @@ class _PinLockPageState extends State<PinLockPage> {
   final TextEditingController _confirmPasswordController =
       TextEditingController();
 
-  bool _unlocked = false;
   bool _savingSetup = false;
   bool _loggingIn = false;
   bool _rememberLogin = false;
+  bool _showRegister = false;
 
   @override
   void initState() {
     super.initState();
-    _unlocked = widget.store.activeUser != null;
     _rememberLogin = widget.store.rememberLogin;
   }
 
@@ -58,7 +58,7 @@ class _PinLockPageState extends State<PinLockPage> {
     setState(() => _loggingIn = false);
 
     if (ok) {
-      setState(() => _unlocked = true);
+      setState(() {});
     } else {
       _passwordController.clear();
       messenger.showSnackBar(SnackBar(content: Text(wrongPinMessage)));
@@ -84,7 +84,17 @@ class _PinLockPageState extends State<PinLockPage> {
         password: password,
       );
 
-      if (mounted) setState(() => _unlocked = true);
+      await widget.store.logout();
+      if (mounted) {
+        setState(() {
+          _showRegister = false;
+          _passwordController.clear();
+          _confirmPasswordController.clear();
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Admin account created. Please sign in.')),
+        );
+      }
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -100,7 +110,7 @@ class _PinLockPageState extends State<PinLockPage> {
   Widget build(BuildContext context) {
     if (widget.store.activeUser != null) return widget.child;
 
-    if (widget.store.needsInitialAdminSetup) {
+    if (_showRegister) {
       return _InitialAdminSetupCard(
         fullNameController: _fullNameController,
         usernameController: _usernameController,
@@ -108,6 +118,7 @@ class _PinLockPageState extends State<PinLockPage> {
         confirmPasswordController: _confirmPasswordController,
         saving: _savingSetup,
         onSubmit: _completeInitialSetup,
+        onCancel: () => setState(() => _showRegister = false),
       );
     }
 
@@ -172,6 +183,54 @@ class _PinLockPageState extends State<PinLockPage> {
                           label: Text(tr.text('login')),
                         ),
                       ),
+                      const SizedBox(height: 12),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton(
+                          onPressed: () {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Password recovery is not configured yet.')),
+                            );
+                          },
+                          child: const Text('Forget Password?'),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: widget.store.needsInitialAdminSetup
+                                  ? () => setState(() => _showRegister = true)
+                                  : null,
+                              icon: const Icon(Icons.person_add_alt_1),
+                              label: const Text('Register'),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () async {
+                                await Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (_) => SyncSetupPage(
+                                      store: widget.store,
+                                      onDone: () async {
+                                        if (Navigator.of(context).canPop()) {
+                                          Navigator.of(context).pop();
+                                        }
+                                      },
+                                    ),
+                                  ),
+                                );
+                                if (mounted) setState(() {});
+                              },
+                              icon: const Icon(Icons.link),
+                              label: const Text('Connect to Store'),
+                            ),
+                          ),
+                        ],
+                      ),
                     ],
                   ),
                 ),
@@ -192,6 +251,7 @@ class _InitialAdminSetupCard extends StatelessWidget {
     required this.confirmPasswordController,
     required this.saving,
     required this.onSubmit,
+    required this.onCancel,
   });
 
   final TextEditingController fullNameController;
@@ -200,6 +260,7 @@ class _InitialAdminSetupCard extends StatelessWidget {
   final TextEditingController confirmPasswordController;
   final bool saving;
   final VoidCallback onSubmit;
+  final VoidCallback onCancel;
 
   @override
   Widget build(BuildContext context) {
@@ -264,21 +325,31 @@ class _InitialAdminSetupCard extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 16),
-                      SizedBox(
-                        width: double.infinity,
-                        child: FilledButton.icon(
-                          onPressed: saving ? null : onSubmit,
-                          icon: saving
-                              ? const SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.check_circle_outline),
-                          label: const Text('Start using Ventio'),
-                        ),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: saving ? null : onCancel,
+                              child: const Text('Back to Login'),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: FilledButton.icon(
+                              onPressed: saving ? null : onSubmit,
+                              icon: saving
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(Icons.check_circle_outline),
+                              label: const Text('Register Admin'),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),

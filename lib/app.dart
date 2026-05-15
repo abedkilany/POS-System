@@ -20,7 +20,6 @@ import 'features/reports/reports_page.dart';
 import 'features/sales/sales_page.dart';
 import 'features/security/pin_lock_page.dart';
 import 'features/settings/settings_page.dart';
-import 'features/settings/sync_setup_page.dart';
 import 'features/suppliers/suppliers_page.dart';
 
 class StoreManagerApp extends StatefulWidget {
@@ -109,30 +108,20 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
             GlobalCupertinoLocalizations.delegate,
           ],
           home: _store.isReady
-              ? (!kIsWeb && !LanSyncSettings.load().setupComplete
-                  ? SyncSetupPage(
-                      store: _store,
-                      onDone: () async {
-                        if (_store.activeUser != null) {
-                          unawaited(_startSyncAfterLogin());
-                        }
-                        if (mounted) setState(() {});
-                      },
-                    )
-                  : PinLockPage(
-                      store: _store,
-                      child: MainShell(
-                        store: _store,
-                        onLogout: _stopSyncForLogout,
-                        onLocaleChanged: _changeLocale,
-                        onThemeModeChanged: _changeThemeMode,
-                        themeMode: _themeMode,
-                        onSyncSettingsChanged: () async {
-                          _syncStarted = false;
-                          unawaited(_startSyncAfterLogin());
-                        },
-                      ),
-                    ))
+              ? PinLockPage(
+                  store: _store,
+                  child: MainShell(
+                    store: _store,
+                    onLogout: _stopSyncForLogout,
+                    onLocaleChanged: _changeLocale,
+                    onThemeModeChanged: _changeThemeMode,
+                    themeMode: _themeMode,
+                    onSyncSettingsChanged: () async {
+                      _syncStarted = false;
+                      unawaited(_startSyncAfterLogin());
+                    },
+                  ),
+                )
               : const Scaffold(body: Center(child: CircularProgressIndicator())),
         );
       },
