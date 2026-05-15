@@ -49,7 +49,7 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
     final savedTheme = await _store.loadThemeMode();
     if (mounted) setState(() => _themeMode = savedTheme);
     if (_store.activeUser != null) {
-      await _startSyncAfterLogin();
+      unawaited(_startSyncAfterLogin());
     }
   }
 
@@ -59,8 +59,8 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
     _syncStarted = true;
     await Future<void>.delayed(const Duration(milliseconds: 500));
     if (!mounted || _store.activeUser == null) return;
-    await _autoSyncController.start();
-    await _autoCloudSyncController.start();
+    unawaited(_autoSyncController.start());
+    unawaited(_autoCloudSyncController.start());
   }
 
   Future<void> _stopSyncForLogout() async {
@@ -114,7 +114,7 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
                       store: _store,
                       onDone: () async {
                         if (_store.activeUser != null) {
-                          await _startSyncAfterLogin();
+                          unawaited(_startSyncAfterLogin());
                         }
                         if (mounted) setState(() {});
                       },
@@ -129,7 +129,7 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
                         themeMode: _themeMode,
                         onSyncSettingsChanged: () async {
                           _syncStarted = false;
-                          await _startSyncAfterLogin();
+                          unawaited(_startSyncAfterLogin());
                         },
                       ),
                     ))
@@ -208,8 +208,8 @@ class _MainShellState extends State<MainShell> {
               IconButton(
                 tooltip: tr.text('logout'),
                 onPressed: () async {
-                  await widget.store.logout();
                   await widget.onLogout?.call();
+                  await widget.store.logout();
                 },
                 icon: const Icon(Icons.logout),
               ),

@@ -5,6 +5,7 @@ import 'dart:developer' as developer;
 import 'dart:math';
 
 import '../../data/app_store.dart';
+import '../../models/app_identity.dart';
 import '../../models/sync_change.dart';
 import 'local_database_service.dart';
 
@@ -493,13 +494,30 @@ class AutoLanSyncController {
         settings.secret.trim(),
       ].join('|');
 
+  bool _lanAllowedForCurrentRole(LanSyncSettings settings) {
+    final identity = store.appIdentity;
+    if (identity.isHost) return settings.setupComplete && settings.isHost;
+    if (identity.isClient) {
+      return identity.syncMode == SyncMode.lanOnly && settings.setupComplete && settings.isClient;
+    }
+    return false;
+  }
+
   Future<void> start() async {
     _disposed = false;
     final settings = LanSyncSettings.load();
     _lastSettingsSignature = _settingsSignature(settings);
     _lastPendingCount = store.pendingSyncCount;
 
-    if (settings.setupComplete && settings.isHost) {
+    if (!_lanAllowedForCurrentRole(settings)) {
+      await _service.stopHost();
+      store.removeListener(_onStoreChanged);
+      _periodicTimer?.cancel();
+      _debounceTimer?.cancel();
+      return;
+    }
+
+    if (store.appIdentity.isHost && settings.isHost) {
       try {
         await _service.startHost(port: settings.port);
       } catch (_) {}
@@ -510,7 +528,7 @@ class AutoLanSyncController {
     _periodicTimer?.cancel();
     _periodicTimer = Timer.periodic(const Duration(seconds: 30), (_) => _syncBecauseOfTimer());
 
-    if (settings.setupComplete && settings.autoSyncEnabled && settings.isClient) {
+    if (store.appIdentity.isClient && settings.autoSyncEnabled && settings.isClient) {
       unawaited(_runClientSync());
     }
   }
@@ -520,7 +538,7 @@ class AutoLanSyncController {
     store.removeListener(_onStoreChanged);
     _periodicTimer?.cancel();
     _debounceTimer?.cancel();
-    await _service.stopHost();
+    unawaited(_service.stopHost());
   }
 
   void _onStoreChanged() {
@@ -534,7 +552,7 @@ class AutoLanSyncController {
     final pending = store.pendingSyncCount;
     final pendingIncreased = pending > _lastPendingCount;
     _lastPendingCount = pending;
-    if (!settings.setupComplete || !settings.autoSyncEnabled || !settings.isClient || !pendingIncreased) return;
+    if (!_lanAllowedForCurrentRole(settings) || !settings.autoSyncEnabled || !settings.isClient || !pendingIncreased) return;
 
     _debounceTimer?.cancel();
     _debounceTimer = Timer(const Duration(seconds: 1), () => _runClientSync());
@@ -547,8 +565,11 @@ class AutoLanSyncController {
       _lastSettingsSignature = signature;
       unawaited(_applySettingsChange(settings));
     }
-    if (!settings.setupComplete) return;
-    if (settings.isHost) {
+    if (!_lanAllowedForCurrentRole(settings)) {
+      unawaited(_service.stopHost());
+      return;
+    }
+    if (store.appIdentity.isHost && settings.isHost) {
       if (!_service.isHosting || _service.port != settings.port) {
         unawaited(_service.startHost(port: settings.port));
       }
@@ -563,12 +584,12 @@ class AutoLanSyncController {
 
   Future<void> _applySettingsChange(LanSyncSettings settings) async {
     if (_disposed) return;
-    if (!settings.setupComplete || !settings.isHost) {
-      await _service.stopHost();
+    if (!_lanAllowedForCurrentRole(settings) || !settings.isHost) {
+      unawaited(_service.stopHost());
     } else if (!_service.isHosting || _service.port != settings.port) {
       await _service.startHost(port: settings.port);
     }
-    if (settings.setupComplete && settings.autoSyncEnabled && settings.isClient) {
+    if (store.appIdentity.isClient && _lanAllowedForCurrentRole(settings) && settings.autoSyncEnabled && settings.isClient) {
       await store.retryFailedSyncQueue(target: 'host');
       await _runClientSync();
     }
@@ -577,7 +598,7 @@ class AutoLanSyncController {
   Future<void> _runClientSync() async {
     if (_running || _disposed) return;
     final settings = LanSyncSettings.load();
-    if (!settings.setupComplete || !settings.autoSyncEnabled || !settings.isClient || settings.host.trim().isEmpty) return;
+    if (!_lanAllowedForCurrentRole(settings) || !settings.autoSyncEnabled || !settings.isClient || settings.host.trim().isEmpty) return;
 
     _running = true;
     try {

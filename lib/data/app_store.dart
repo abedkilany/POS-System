@@ -934,17 +934,6 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _forceLogoutAfterRemoteAuthSync() async {
-    // When a Client receives users/roles from the Host, the currently signed-in
-    // local user may no longer exist or may have different permissions. Force a
-    // fresh login so the Login page is rebuilt from the authoritative Host users.
-    _activeUser = null;
-    _rememberLogin = false;
-    await LocalDatabaseService.setString(_activeUserKey, '');
-    await LocalDatabaseService.setString(_rememberLoginKey, 'false');
-    notifyListeners();
-  }
-
 
   Future<bool> _verifyPasswordAsync(String password, String storedHash) async {
     if (storedHash.startsWith(_passwordHashPrefix)) {
@@ -1394,6 +1383,59 @@ class AppStore extends ChangeNotifier {
     await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(_appIdentity!.toJson()));
     await _saveAll();
     notifyListeners();
+  }
+
+
+  bool _hasPendingSyncFor(String entityType, String entityId) {
+    final pendingChangeIds = _syncQueue
+        .where((item) => item.status != 'synced')
+        .map((item) => item.changeId)
+        .toSet();
+    return _syncChanges.any((change) =>
+        pendingChangeIds.contains(change.id) &&
+        change.entityType == entityType &&
+        change.entityId == entityId);
+  }
+
+  Future<int> cleanupSoftDeletedRecords({Duration retention = const Duration(days: 30)}) async {
+    final cutoff = DateTime.now().subtract(retention);
+    var removed = 0;
+
+    bool expired(DateTime? deletedAt) => deletedAt != null && deletedAt.isBefore(cutoff);
+
+    final beforeProducts = _products.length;
+    _products.removeWhere((item) => expired(item.deletedAt) && !_hasPendingSyncFor('product', item.id));
+    removed += beforeProducts - _products.length;
+
+    final beforeCustomers = _customers.length;
+    _customers.removeWhere((item) => expired(item.deletedAt) && item.id != 'walk_in' && !_hasPendingSyncFor('customer', item.id));
+    removed += beforeCustomers - _customers.length;
+
+    final beforeSuppliers = _suppliers.length;
+    _suppliers.removeWhere((item) => expired(item.deletedAt) && !_hasPendingSyncFor('supplier', item.id));
+    removed += beforeSuppliers - _suppliers.length;
+
+    final beforeExpenses = _expenses.length;
+    _expenses.removeWhere((item) => expired(item.deletedAt) && !_hasPendingSyncFor('expense', item.id));
+    removed += beforeExpenses - _expenses.length;
+
+    final beforeCategories = _categories.length;
+    _categories.removeWhere((item) => expired(item.deletedAt) && !_hasPendingSyncFor('category', item.id));
+    removed += beforeCategories - _categories.length;
+
+    final beforeBrands = _brands.length;
+    _brands.removeWhere((item) => expired(item.deletedAt) && !_hasPendingSyncFor('brand', item.id));
+    removed += beforeBrands - _brands.length;
+
+    final beforeUnits = _units.length;
+    _units.removeWhere((item) => expired(item.deletedAt) && !_hasPendingSyncFor('unit', item.id));
+    removed += beforeUnits - _units.length;
+
+    if (removed > 0) {
+      await _saveAll();
+      notifyListeners();
+    }
+    return removed;
   }
 
   Future<void> updateStoreProfile(StoreProfile profile) async {
@@ -2687,11 +2729,11 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> ensureHostCloudBootstrapSnapshotQueued() async {
+  Future<void> ensureHostCloudBootstrapSnapshotQueued({bool force = false}) async {
     final identity = appIdentity;
     if (!identity.isHost || !identity.isCloudEnabled) return;
     final markerKey = 'cloud_host_bootstrap_snapshot_v2_${identity.storeId}';
-    if (LocalDatabaseService.getString(markerKey) == 'true') return;
+    if (!force && LocalDatabaseService.getString(markerKey) == 'true') return;
 
     final now = DateTime.now();
     final changeId = '${now.microsecondsSinceEpoch}-host-bootstrap';
@@ -2750,23 +2792,13 @@ class AppStore extends ChangeNotifier {
         return a.createdAt.compareTo(b.createdAt);
       });
     var changed = false;
-    var shouldForceLoginAfterAuthSync = false;
     for (final change in sorted) {
       if (existingIds.contains(change.id)) continue;
       final incomingEpoch = change.storeEpoch;
       if (incomingEpoch < currentEpoch && !(change.entityType == 'system' && change.operation == 'reset_store_data')) {
         continue;
       }
-      final remoteAuthPayload = change.deviceId != _deviceId &&
-          (change.entityType == 'user' ||
-              change.entityType == 'role' ||
-              (change.entityType == 'system' && change.operation == 'restore_snapshot' &&
-                  ((change.payload['users'] is List && (change.payload['users'] as List).isNotEmpty) ||
-                      (change.payload['roles'] is List && (change.payload['roles'] as List).isNotEmpty))));
       await _applySyncChangePayload(change);
-      if (!appIdentity.isHost && remoteAuthPayload) {
-        shouldForceLoginAfterAuthSync = true;
-      }
       final shouldMirrorToCloud = mirrorToCloud && _shouldMirrorRemoteChangeToCloud(change);
 
       // Host-authority sync note:
@@ -2815,9 +2847,6 @@ class AppStore extends ChangeNotifier {
       _normalizeCustomers();
       await _saveRolesAndUsers();
       await LocalDatabaseService.setString(_pinKey, _securityPin ?? '');
-      if (shouldForceLoginAfterAuthSync) {
-        await _forceLogoutAfterRemoteAuthSync();
-      }
       await _saveAll();
       notifyListeners();
     }
@@ -2987,6 +3016,16 @@ class AppStore extends ChangeNotifier {
           // A cloud/LAN bootstrap snapshot contains the Host identity. Never let
           // a Client import that identity or it may start behaving as the Host.
           await _replaceFromBackupMap(p, preserveLocalIdentityForLanClient: true);
+        } else if (change.operation == 'request_snapshot') {
+          // Cloud Clients cannot contact the Host directly. They place a
+          // request in the Cloud relay; when the Host sees it, it immediately
+          // queues a fresh full restore_snapshot event for the authoritative
+          // Cloud stream. This makes Cloud Rebuild generate a fresh Host
+          // snapshot instead of relying only on whatever snapshot already
+          // exists in entity_snapshots.
+          if (appIdentity.isHost && appIdentity.isCloudEnabled) {
+            await ensureHostCloudBootstrapSnapshotQueued(force: true);
+          }
         }
         break;
       case 'store_profile':
@@ -3102,6 +3141,60 @@ class AppStore extends ChangeNotifier {
         break;
     }
   }
+
+
+
+  String? _remoteSyncChangeApplyProblem(SyncChange change) {
+    if (change.entityType == 'system') return null;
+
+    bool exists<T>(Iterable<T> items, String Function(T item) idOf) => items.any((item) => idOf(item) == change.entityId);
+    final deleteWithEmptyPayload = change.operation == 'delete' && change.payload.isEmpty;
+
+    switch (change.entityType) {
+      case 'store_profile':
+        return null;
+      case 'app_identity':
+      case 'security_pin':
+        return null;
+      case 'role':
+        return deleteWithEmptyPayload || exists<UserRole>(_roles, (item) => item.id) ? null : 'role ${change.entityId} was not stored locally';
+      case 'user':
+        return deleteWithEmptyPayload || exists<AppUser>(_users, (item) => item.id) ? null : 'user ${change.entityId} was not stored locally';
+      case 'product':
+        return deleteWithEmptyPayload || exists<Product>(_products, (item) => item.id) ? null : 'product ${change.entityId} was not stored locally';
+      case 'customer':
+        return deleteWithEmptyPayload || exists<Customer>(_customers, (item) => item.id) ? null : 'customer ${change.entityId} was not stored locally';
+      case 'supplier':
+        return deleteWithEmptyPayload || exists<Supplier>(_suppliers, (item) => item.id) ? null : 'supplier ${change.entityId} was not stored locally';
+      case 'expense':
+        return deleteWithEmptyPayload || exists<Expense>(_expenses, (item) => item.id) ? null : 'expense ${change.entityId} was not stored locally';
+      case 'category':
+        return deleteWithEmptyPayload || exists<CatalogItem>(_categories, (item) => item.id) ? null : 'category ${change.entityId} was not stored locally';
+      case 'brand':
+        return deleteWithEmptyPayload || exists<CatalogItem>(_brands, (item) => item.id) ? null : 'brand ${change.entityId} was not stored locally';
+      case 'unit':
+        return deleteWithEmptyPayload || exists<CatalogItem>(_units, (item) => item.id) ? null : 'unit ${change.entityId} was not stored locally';
+      case 'sale':
+        return deleteWithEmptyPayload || exists<Sale>(_sales, (item) => item.id) ? null : 'sale ${change.entityId} was not stored locally';
+      case 'purchase':
+        return deleteWithEmptyPayload || exists<Purchase>(_purchases, (item) => item.id) ? null : 'purchase ${change.entityId} was not stored locally';
+      case 'stock_movement':
+        return exists<StockMovement>(_stockMovements, (item) => item.id) ? null : 'stock movement ${change.entityId} was not stored locally';
+    }
+    return null;
+  }
+
+  Future<void> assertRemoteSyncChangesApplied(List<SyncChange> changes) async {
+    final problems = <String>[];
+    for (final change in changes) {
+      final problem = _remoteSyncChangeApplyProblem(change);
+      if (problem != null) problems.add('${change.id}: $problem');
+    }
+    if (problems.isNotEmpty) {
+      throw StateError('Remote sync apply verification failed: ${problems.take(5).join('; ')}');
+    }
+  }
+
 
   Future<void> markSyncChangesSyncedByIds(Iterable<String> ids) async {
     final idSet = ids.toSet();

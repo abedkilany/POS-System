@@ -36,8 +36,7 @@ class CloudSyncSettings {
   final bool autoSyncEnabled;
   final int intervalSeconds;
 
-  bool get isConfigured => enabled && apiBaseUrl.trim().isNotEmpty;
-  bool get hasDeploymentToken => apiToken.trim().isNotEmpty;
+  bool get isConfigured => enabled && apiBaseUrl.trim().isNotEmpty && apiToken.trim().isNotEmpty;
 
   Uri endpoint(String path, [Map<String, String>? query]) {
     final base = apiBaseUrl.trim().replaceAll(RegExp(r'/+$'), '');
@@ -183,8 +182,12 @@ class CloudSyncService {
   Future<CloudPairingCodeResult> createPairingCode(CloudSyncSettings settings, {String transport = 'cloud', int ttlMinutes = 5}) async {
     final identity = store.appIdentity;
     if (!identity.isHost) return const CloudPairingCodeResult(ok: false, message: 'Only the Host can create pairing codes.');
-    if (!settings.isConfigured || !settings.hasDeploymentToken) return const CloudPairingCodeResult(ok: false, message: 'Cloud API URL and Host deployment token are required to create pairing codes.');
+    if (!settings.isConfigured) return const CloudPairingCodeResult(ok: false, message: 'Cloud API URL and token are required.');
     try {
+      if (transport == 'cloud') {
+        await store.ensureHostCloudBootstrapSnapshotQueued(force: true);
+        await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
+      }
       final response = await _client
           .post(
             settings.endpoint('/api/sync/pairing/create'),
@@ -216,7 +219,7 @@ class CloudSyncService {
 
   Future<CloudPairingClaimResult> claimPairingCode(CloudSyncSettings settings, String code) async {
     final current = store.appIdentity;
-    if (!settings.isConfigured) return const CloudPairingClaimResult(ok: false, message: 'Cloud API URL is required.');
+    if (!settings.isConfigured) return const CloudPairingClaimResult(ok: false, message: 'Cloud API URL and token are required.');
     try {
       final response = await _client
           .post(
@@ -249,16 +252,122 @@ class CloudSyncService {
         updatedAt: DateTime.now(),
       );
       await store.updateAppIdentityDuringSetup(identity);
-      return CloudPairingClaimResult(ok: true, message: 'Device paired successfully.', identity: identity);
+      if (identity.syncMode == SyncMode.cloudConnected || identity.syncMode == SyncMode.marketplaceEnabled) {
+        final rebuild = await rebuildFromCloudHostSnapshot(settings);
+        if (!rebuild.ok) {
+          return CloudPairingClaimResult(ok: false, message: 'Pairing succeeded, but Host snapshot rebuild failed: ${rebuild.message}', identity: identity);
+        }
+      }
+      return CloudPairingClaimResult(ok: true, message: 'Device paired successfully. Full Host snapshot was applied.', identity: identity);
     } catch (error) {
       return CloudPairingClaimResult(ok: false, message: 'Pairing failed: $error');
     }
   }
 
+  Future<CloudSyncResult> requestFreshHostSnapshot(CloudSyncSettings settings) async {
+    final identity = store.appIdentity;
+    if (identity.isHost) return const CloudSyncResult(ok: true, message: 'Host can publish its own snapshot directly.');
+    if (!settings.isConfigured) return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
+    final now = DateTime.now();
+    final request = SyncChange(
+      id: '${now.microsecondsSinceEpoch}-${store.deviceId}-snapshot-request',
+      entityType: 'system',
+      entityId: 'store',
+      operation: 'request_snapshot',
+      deviceId: store.deviceId,
+      createdAt: now,
+      payload: <String, dynamic>{
+        '_syncV2': <String, dynamic>{
+          'kind': 'draftCommand',
+          'transport': 'cloud',
+          'recordedAt': now.toIso8601String(),
+          'sourceRole': 'client',
+          'sourceDeviceId': store.deviceId,
+          'clientMutationId': '${store.deviceId}_${now.microsecondsSinceEpoch}_system_store_request_snapshot',
+        },
+        'reason': 'cloud_rebuild_from_host',
+        'requestedAt': now.toIso8601String(),
+        'storeId': identity.storeId,
+        'branchId': identity.branchId,
+      },
+      storeId: identity.storeId,
+      branchId: identity.branchId,
+      storeEpoch: identity.storeEpoch,
+    );
+    try {
+      final response = await _client
+          .post(
+            settings.endpoint('/api/sync/requests/push'),
+            headers: _headers(settings),
+            body: jsonEncode({
+              'storeId': identity.storeId,
+              'branchId': identity.branchId,
+              'deviceId': store.deviceId,
+              'changes': [request.toJson()],
+            }),
+          )
+          .timeout(const Duration(seconds: 20));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return CloudSyncResult(ok: false, message: 'Fresh Host snapshot request failed: ${response.statusCode} ${response.body}');
+      }
+      return const CloudSyncResult(ok: true, message: 'Fresh Host snapshot requested. The Host will publish a new full snapshot on its next Cloud sync.');
+    } catch (error) {
+      return CloudSyncResult(ok: false, message: 'Fresh Host snapshot request failed: $error');
+    }
+  }
+
+  Future<CloudSyncResult> rebuildFromCloudHostSnapshot(CloudSyncSettings settings) async {
+    final identity = store.appIdentity;
+    if (identity.isHost) {
+      return const CloudSyncResult(ok: false, message: 'Rebuild from Host is only for Client devices.');
+    }
+    if (!settings.isConfigured) {
+      return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
+    }
+
+    final request = await requestFreshHostSnapshot(settings);
+    if (!request.ok) return request;
+
+    await store.clearLocalDeviceBusinessData();
+    await CloudSyncSettings.clearSavedPullCursor();
+
+    var freshSettings = settings.copyWith(clearLastPullCursor: true);
+    var totalPulled = 0;
+    CloudSyncResult? lastResult;
+
+    // Give the Host a few Cloud sync ticks to consume the rebuild request and
+    // publish a fresh restore_snapshot. If the Host is currently offline, the
+    // request remains pending in cloud_change_requests and the user can retry
+    // when the Host comes online.
+    for (var attempt = 0; attempt < 6; attempt += 1) {
+      if (attempt > 0) await Future<void>.delayed(const Duration(seconds: 3));
+      lastResult = await syncNow(freshSettings);
+      if (!lastResult.ok) break;
+      totalPulled += lastResult.pulled;
+      freshSettings = CloudSyncSettings.load().copyWith(clearLastPullCursor: attempt == 0 ? true : false);
+      if (lastResult.pulled > 0) {
+        await store.cleanupSoftDeletedRecords();
+        return CloudSyncResult(
+          ok: true,
+          pushed: lastResult.pushed,
+          pulled: totalPulled,
+          message: 'Cloud rebuild completed from a requested fresh Host snapshot. ${lastResult.message}',
+        );
+      }
+    }
+
+    return CloudSyncResult(
+      ok: false,
+      pushed: lastResult?.pushed ?? 0,
+      pulled: totalPulled,
+      message: 'Cloud rebuild requested a fresh Host snapshot, but no snapshot was pulled yet. Keep the Host online and retry. ${lastResult?.message ?? ''}',
+    );
+  }
+
   Future<CloudSyncResult> revokeDevice(CloudSyncSettings settings, String deviceId) async {
     final identity = store.appIdentity;
     if (!identity.isHost) return const CloudSyncResult(ok: false, message: 'Only the Host can revoke devices.');
-    if (!settings.isConfigured) return const CloudSyncResult(ok: false, message: 'Cloud API URL is required.');
+    if (!settings.isConfigured) return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
     try {
       final response = await _client
           .post(
@@ -296,7 +405,7 @@ class CloudSyncService {
 
   Future<CloudSyncResult> registerCurrentDevice(CloudSyncSettings settings, {String transport = 'cloud'}) async {
     final identity = store.appIdentity;
-    if (!settings.isConfigured) return const CloudSyncResult(ok: false, message: 'Cloud API URL is required. Pair Clients with a Host device token; Host still needs the deployment token for admin actions.');
+    if (!settings.isConfigured) return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
     try {
       final response = await _client
           .post(
@@ -346,7 +455,7 @@ class CloudSyncService {
 
   Future<CloudSyncResult> testConnection(CloudSyncSettings settings) async {
     if (!settings.isConfigured) {
-      return const CloudSyncResult(ok: false, message: 'Cloud API URL is required. Pair Clients with a Host device token; Host still needs the deployment token for admin actions.');
+      return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
     }
     try {
       final response = await _client.get(settings.endpoint('/api/health'), headers: _headers(settings)).timeout(const Duration(seconds: 10));
@@ -362,7 +471,7 @@ class CloudSyncService {
   Future<CloudSyncResult> validateSingleHost(CloudSyncSettings settings) async {
     final identity = store.appIdentity;
     if (!settings.isConfigured) {
-      return const CloudSyncResult(ok: false, message: 'Cloud API URL is required. Pair Clients with a Host device token; Host still needs the deployment token for admin actions.');
+      return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
     }
     final status = await getHostHeartbeatStatus(settings);
     if (status.cloudReachable && status.hostReachable && status.hostDeviceId.isNotEmpty && status.hostDeviceId != store.deviceId) {
@@ -380,7 +489,7 @@ class CloudSyncService {
       return const CloudSyncResult(ok: false, message: 'Heartbeat is only sent by a cloud-enabled Host device.');
     }
     if (!settings.isConfigured) {
-      return const CloudSyncResult(ok: false, message: 'Cloud API URL is required. Pair Clients with a Host device token; Host still needs the deployment token for admin actions.');
+      return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
     }
     try {
       final response = await _client
@@ -410,7 +519,7 @@ class CloudSyncService {
   Future<HostHeartbeatStatus> getHostHeartbeatStatus(CloudSyncSettings settings, {Duration staleAfter = const Duration(seconds: 90)}) async {
     final identity = store.appIdentity;
     if (!settings.isConfigured) {
-      return const HostHeartbeatStatus(cloudReachable: false, hostReachable: false, message: 'Cloud API URL is required. Pair Clients with a Host device token; Host still needs the deployment token for admin actions.');
+      return const HostHeartbeatStatus(cloudReachable: false, hostReachable: false, message: 'Cloud API URL and token are required.');
     }
     try {
       final response = await _client
@@ -497,18 +606,27 @@ class CloudSyncService {
         .toList();
     if (changes.isEmpty) return 0;
 
-    // Host accepts remote drafts here, applies them locally, and queues them to
-    // Cloud as authoritative events. This keeps Cloud as a relay/mirror only.
+    // Safety-critical ordering:
+    // 1) apply the client drafts locally on the Host,
+    // 2) verify the entities now exist in the Host's local database,
+    // 3) publish the re-stamped authoritative Host events to Cloud,
+    // 4) only then ACK the relay requests as accepted.
+    // If any step fails, the relay rows stay pending/failed and will retry.
     await store.applyRemoteSyncChanges(changes, markAppliedAsSynced: true, mirrorToCloud: true);
+    await store.assertRemoteSyncChangesApplied(changes);
+    await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
 
     final ackIds = changes.map((item) => item.id).toList();
-    await _client
+    final ack = await _client
         .post(
           settings.endpoint('/api/sync/requests/ack'),
           headers: _headers(settings),
           body: jsonEncode({'storeId': identity.storeId, 'branchId': identity.branchId, 'hostDeviceId': store.deviceId, 'ackIds': ackIds}),
         )
         .timeout(const Duration(seconds: 20));
+    if (ack.statusCode < 200 || ack.statusCode >= 300) {
+      throw StateError('Cloud request ACK failed: ${ack.statusCode} ${ack.body}');
+    }
     return changes.length;
   }
 
@@ -518,7 +636,7 @@ class CloudSyncService {
       return const CloudSyncResult(ok: false, message: 'Enable cloudConnected or marketplaceEnabled sync mode first.');
     }
     if (!settings.isConfigured) {
-      return const CloudSyncResult(ok: false, message: 'Cloud API URL is required. Pair Clients with a Host device token; Host still needs the deployment token for admin actions.');
+      return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
     }
 
     try {
@@ -596,6 +714,9 @@ class CloudSyncService {
         await settings.copyWith(lastPullCursor: finalPullCursor).save();
       }
 
+      if (pulled > 0) {
+        await store.cleanupSoftDeletedRecords();
+      }
       return CloudSyncResult(
         ok: true,
         pushed: pushed,
@@ -667,8 +788,26 @@ class AutoCloudSyncController {
     if (_running || _disposed) return;
     _running = true;
     try {
-      final settings = CloudSyncSettings.load();
+      var settings = CloudSyncSettings.load();
       if (settings.autoSyncEnabled && settings.isConfigured && store.appIdentity.isCloudEnabled) {
+        final hasOutgoingWork = store.pendingSyncQueueForTarget('cloud', readyOnly: false).isNotEmpty ||
+            store.pendingSyncQueueForTarget('cloud_host', readyOnly: false).isNotEmpty;
+        final cursor = settings.lastPullCursor;
+        final staleClient = store.appIdentity.isClient &&
+            cursor != null &&
+            DateTime.now().toUtc().difference(cursor.toUtc()) > const Duration(days: 7);
+        if (staleClient && !hasOutgoingWork) {
+          final repair = await CloudSyncService(store).rebuildFromCloudHostSnapshot(settings);
+          if (!repair.ok) {
+            // Fall back to a cursor reset only if a full repair could not be
+            // completed yet, for example when the Host is offline. The pending
+            // snapshot request remains in the relay for the Host to process.
+            await CloudSyncSettings.clearSavedPullCursor();
+            settings = settings.copyWith(clearLastPullCursor: true);
+          } else {
+            settings = CloudSyncSettings.load();
+          }
+        }
         await CloudSyncService(store).syncNow(settings);
         _lastCloudQueueCount = store.pendingSyncQueueForTarget('cloud', readyOnly: false).length;
         _lastRelayQueueCount = store.pendingSyncQueueForTarget('cloud_host', readyOnly: false).length;

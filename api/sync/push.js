@@ -95,11 +95,36 @@ async function upsertSnapshot({ storeId, branchId, entityType, entityId, operati
   return true;
 }
 
+
+async function cleanupExpiredSoftDeletes(storeId, branchId, retentionDays = 30) {
+  // Keep tombstones long enough for offline Clients to learn about deletions,
+  // then prune them from the materialized snapshot so fresh devices do not
+  // accumulate old deleted rows forever. Authoritative sync_events remain as
+  // the audit trail; only the read-optimized entity_snapshots table is pruned.
+  await sql`
+    delete from entity_snapshots
+    where store_id = ${storeId}
+      and branch_id = ${branchId || 'main'}
+      and operation = 'delete'
+      and updated_at < now() - (${retentionDays}::text || ' days')::interval
+  `;
+  await sql`
+    delete from entity_snapshots
+    where store_id = ${storeId}
+      and branch_id = ${branchId || 'main'}
+      and payload->>'deletedAt' is not null
+      and nullif(payload->>'deletedAt', '')::timestamptz < now() - (${retentionDays}::text || ' days')::interval
+  `;
+}
+
 async function materializeChange(change) {
   const updatedAt = change.createdAt || new Date().toISOString();
 
   if (change.entityType === 'system' && change.operation === 'restore_snapshot') {
     const p = change.payload || {};
+    // A restore_snapshot is a full clean Host snapshot. Remove stale rows first
+    // so deleted/missing entities do not remain visible to new Cloud clients.
+    await sql`delete from entity_snapshots where store_id = ${change.storeId} and branch_id = ${change.branchId || 'main'}`;
     for (const [key, entityType] of Object.entries(snapshotCollections)) {
       const list = Array.isArray(p[key]) ? p[key] : [];
       for (let i = 0; i < list.length; i += 1) {
@@ -240,6 +265,7 @@ export default async function handler(req, res) {
       `;
       if (inserted.length > 0) {
         await materializeChange(change);
+        await cleanupExpiredSoftDeletes(change.storeId, change.branchId);
       }
       ackIds.push(change.id);
     }

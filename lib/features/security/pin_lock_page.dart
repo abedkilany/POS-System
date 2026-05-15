@@ -98,15 +98,7 @@ class _PinLockPageState extends State<PinLockPage> {
 
   @override
   Widget build(BuildContext context) {
-    // Keep the shell accessible only while there is an authenticated user.
-    // After logout AppStore.activeUser becomes null; reset the local unlocked
-    // flag immediately so the user is returned to the login screen instead of
-    // staying in MainShell with no permissions.
-    if (widget.store.activeUser == null && _unlocked) {
-      _unlocked = false;
-      _passwordController.clear();
-    }
-    if (widget.store.activeUser != null) return widget.child;
+    if (_unlocked || widget.store.activeUser != null) return widget.child;
 
     if (widget.store.needsInitialAdminSetup) {
       return _InitialAdminSetupCard(

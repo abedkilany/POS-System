@@ -1,5 +1,5 @@
 import { randomBytes } from 'crypto';
-import { sql, assertStoreAllowed, ensureDeviceAuthColumns, sendError } from '../../_db.js';
+import { sql, assertSyncToken, assertStoreAllowed, ensureDeviceAuthColumns, sendError } from '../../_db.js';
 
 async function ensurePairingTable() {
   await sql`
@@ -46,6 +46,7 @@ function makeDeviceToken() {
 
 export default async function handler(req, res) {
   try {
+    assertSyncToken(req);
     if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Method not allowed' });
     await ensurePairingTable();
     await ensureDeviceTable();
