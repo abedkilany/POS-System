@@ -97,6 +97,13 @@ class BackupValidationResult {
   final String? errorMessage;
 }
 
+class BusinessDataIntegrityResult {
+  const BusinessDataIntegrityResult({required this.ok, required this.message, this.problemCount = 0});
+  final bool ok;
+  final String message;
+  final int problemCount;
+}
+
 class AppStore extends ChangeNotifier {
   static const String walkInCustomerId = 'walk_in';
   static const String walkInCustomerName = 'Walk-in Customer';
@@ -1431,11 +1438,54 @@ class AppStore extends ChangeNotifier {
     _units.removeWhere((item) => expired(item.deletedAt) && !_hasPendingSyncFor('unit', item.id));
     removed += beforeUnits - _units.length;
 
+    final beforeSales = _sales.length;
+    _sales.removeWhere((item) => expired(item.deletedAt) && !_hasPendingSyncFor('sale', item.id));
+    removed += beforeSales - _sales.length;
+
+    final beforePurchases = _purchases.length;
+    _purchases.removeWhere((item) => expired(item.deletedAt) && !_hasPendingSyncFor('purchase', item.id));
+    removed += beforePurchases - _purchases.length;
+
     if (removed > 0) {
       await _saveAll();
       notifyListeners();
     }
     return removed;
+  }
+
+
+  Future<BusinessDataIntegrityResult> verifyLocalBusinessDataIntegrity() async {
+    final problems = <String>[];
+    final productIds = _products.where((item) => !item.isDeleted).map((item) => item.id).toSet();
+
+    for (final sale in _sales.where((item) => !item.isDeleted)) {
+      if (sale.invoiceNo.trim().isEmpty) problems.add('Sale ${sale.id} has no invoice number');
+      if (sale.items.isEmpty) problems.add('Sale ${sale.invoiceNo} has no line items');
+      for (final item in sale.items) {
+        if (!productIds.contains(item.productId)) {
+          problems.add('Sale ${sale.invoiceNo} references missing product ${item.productId}');
+        }
+      }
+      final movements = _stockMovements.where((movement) => movement.referenceId == sale.id && movement.type == 'sale').toList();
+      if (sale.status != 'Cancelled' && movements.length < sale.items.length) {
+        problems.add('Sale ${sale.invoiceNo} is missing stock movement(s)');
+      }
+    }
+
+    for (final purchase in _purchases.where((item) => !item.isDeleted)) {
+      if (purchase.items.isEmpty) problems.add('Purchase ${purchase.id} has no line items');
+      for (final item in purchase.items) {
+        if (!productIds.contains(item.productId)) {
+          problems.add('Purchase ${purchase.id} references missing product ${item.productId}');
+        }
+      }
+    }
+
+    return BusinessDataIntegrityResult(
+      ok: problems.isEmpty,
+      message: problems.isEmpty ? 'Business data integrity check passed.' : problems.take(8).join('; '),
+      problemCount: problems.length,
+    );
   }
 
   Future<void> updateStoreProfile(StoreProfile profile) async {

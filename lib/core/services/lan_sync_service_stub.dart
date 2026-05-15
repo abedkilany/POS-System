@@ -114,6 +114,8 @@ class LanSyncSettings {
     final random = Random.secure();
     return List.generate(16, (_) => alphabet[random.nextInt(alphabet.length)]).join();
   }
+
+  static Future<List<String>> localIpv4Addresses() async => const <String>[];
 }
 
 class LanSyncResult {

@@ -665,6 +665,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   bool _cloudEnabled = false;
   bool _busy = false;
   String _status = '';
+  List<String> _hostIpAddresses = const <String>[];
+  bool _detectingHostIp = false;
 
   @override
   void initState() {
@@ -682,6 +684,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     _cloudApiController.text = cloud.apiBaseUrl;
     _cloudTokenController.text = cloud.apiToken;
     _cloudIntervalController.text = cloud.intervalSeconds.toString();
+    _refreshHostIpAddresses();
   }
 
   @override
@@ -723,6 +726,47 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         autoSyncEnabled: enabled,
         intervalSeconds: _cloudInterval,
       );
+
+  Future<void> _refreshHostIpAddresses() async {
+    if (_detectingHostIp) return;
+    if (mounted) setState(() => _detectingHostIp = true);
+    try {
+      final addresses = await LanSyncSettings.localIpv4Addresses();
+      if (!mounted) return;
+      setState(() {
+        _hostIpAddresses = addresses;
+        if (_deviceRole == DeviceRole.host && addresses.isNotEmpty) {
+          _lanHostController.text = addresses.first;
+        }
+      });
+    } finally {
+      if (mounted) setState(() => _detectingHostIp = false);
+    }
+  }
+
+  void _generateLanToken() {
+    setState(() {
+      _lanTokenController.text = LanSyncSettings.generateSecret();
+      _status = 'New LAN pairing token generated. Save Host Settings to apply it.';
+    });
+  }
+
+  Future<void> _createCloudPairingCode() => _run(() async {
+        await _saveCloudSettingsForPairing();
+        final result = await CloudSyncService(widget.store).createPairingCode(_cloudSettings(enabled: true));
+        if (!result.ok) throw StateError(result.message);
+        final expiry = result.expiresAt == null ? '' : ' • Expires: ${result.expiresAt!.toLocal()}';
+        setState(() => _status = 'Cloud pairing code: ${result.code}$expiry');
+      });
+
+  Future<void> _saveCloudSettingsForPairing() async {
+    final identity = widget.store.appIdentity;
+    await widget.store.updateAppIdentity(identity.copyWith(
+      deviceRole: DeviceRole.host,
+      syncMode: SyncMode.cloudConnected,
+    ));
+    await _cloudSettings(enabled: true).save();
+  }
 
   Future<void> _saveHostMode() => _run(() async {
         final identity = widget.store.appIdentity;
@@ -824,7 +868,10 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                 value: _lanEnabledForHost,
                 onChanged: _busy ? null : (value) => setState(() => _lanEnabledForHost = value),
               ),
-              if (_lanEnabledForHost) ..._lanFields(showHostIp: false),
+              if (_lanEnabledForHost) ...[
+                _hostIpInfoCard(),
+                ..._lanFields(showHostIp: false),
+              ],
               const Divider(height: 28),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
@@ -833,7 +880,11 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                 value: _cloudEnabled,
                 onChanged: _busy ? null : (value) => setState(() => _cloudEnabled = value),
               ),
-              if (_cloudEnabled) ..._cloudFields(showPairingCode: false),
+              if (_cloudEnabled) ...[
+                ..._cloudFields(showPairingCode: false),
+                SizedBox(width: double.infinity, child: OutlinedButton.icon(onPressed: _busy ? null : _createCloudPairingCode, icon: const Icon(Icons.qr_code_2_outlined), label: const Text('Generate Cloud Pairing Code'))),
+                const SizedBox(height: 12),
+              ],
               const SizedBox(height: 12),
               SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: _busy ? null : _saveHostMode, icon: const Icon(Icons.save_outlined), label: const Text('Save Host Settings'))),
             ] else ...[
@@ -881,13 +932,63 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     return 'Client • ${identity.syncMode == SyncMode.cloudConnected ? 'Cloud' : identity.syncMode == SyncMode.lanOnly ? 'LAN' : 'Local'}';
   }
 
+  Widget _hostIpInfoCard() {
+    final ipText = _detectingHostIp
+        ? 'Detecting local IP...'
+        : (_hostIpAddresses.isEmpty ? 'No local IPv4 address detected yet.' : _hostIpAddresses.join('  •  '));
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Theme.of(context).dividerColor),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.lan_outlined),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Host IP Address', style: TextStyle(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 4),
+                Text(ipText),
+                const SizedBox(height: 4),
+                const Text('Use this IP from LAN Clients if automatic discovery does not find the Host.'),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Refresh IP',
+            onPressed: _busy || _detectingHostIp ? null : _refreshHostIpAddresses,
+            icon: const Icon(Icons.refresh_outlined),
+          ),
+        ],
+      ),
+    );
+  }
+
   List<Widget> _lanFields({required bool showHostIp}) => [
         if (showHostIp)
-          TextField(controller: _lanHostController, decoration: const InputDecoration(labelText: 'Host IP', border: OutlineInputBorder())),
+          TextField(controller: _lanHostController, decoration: const InputDecoration(labelText: 'Manual Host IP (optional)', border: OutlineInputBorder())),
         if (showHostIp) const SizedBox(height: 12),
         TextField(controller: _lanPortController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Port', border: OutlineInputBorder())),
         const SizedBox(height: 12),
-        TextField(controller: _lanTokenController, decoration: const InputDecoration(labelText: 'Pairing Token', border: OutlineInputBorder())),
+        TextField(
+          controller: _lanTokenController,
+          decoration: InputDecoration(
+            labelText: 'Pairing Token',
+            border: const OutlineInputBorder(),
+            suffixIcon: IconButton(
+              tooltip: 'Generate token',
+              onPressed: _busy ? null : _generateLanToken,
+              icon: const Icon(Icons.refresh_outlined),
+            ),
+          ),
+        ),
         const SizedBox(height: 12),
       ];
 

@@ -98,7 +98,7 @@ class _PinLockPageState extends State<PinLockPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (_unlocked || widget.store.activeUser != null) return widget.child;
+    if (widget.store.activeUser != null) return widget.child;
 
     if (widget.store.needsInitialAdminSetup) {
       return _InitialAdminSetupCard(

@@ -149,11 +149,12 @@ class CloudDeviceStatus {
 }
 
 class CloudSyncResult {
-  const CloudSyncResult({required this.ok, required this.message, this.pushed = 0, this.pulled = 0});
+  const CloudSyncResult({required this.ok, required this.message, this.pushed = 0, this.pulled = 0, this.restoredSnapshot = false});
   final bool ok;
   final String message;
   final int pushed;
   final int pulled;
+  final bool restoredSnapshot;
 }
 
 
@@ -264,11 +265,11 @@ class CloudSyncService {
     }
   }
 
-  Future<CloudSyncResult> requestFreshHostSnapshot(CloudSyncSettings settings) async {
+  Future<CloudSyncResult> requestFreshHostSnapshot(CloudSyncSettings settings, {DateTime? requestedAt}) async {
     final identity = store.appIdentity;
     if (identity.isHost) return const CloudSyncResult(ok: true, message: 'Host can publish its own snapshot directly.');
     if (!settings.isConfigured) return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
-    final now = DateTime.now();
+    final now = requestedAt ?? DateTime.now().toUtc();
     final request = SyncChange(
       id: '${now.microsecondsSinceEpoch}-${store.deviceId}-snapshot-request',
       entityType: 'system',
@@ -325,7 +326,8 @@ class CloudSyncService {
       return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
     }
 
-    final request = await requestFreshHostSnapshot(settings);
+    final snapshotRequestedAt = DateTime.now().toUtc();
+    final request = await requestFreshHostSnapshot(settings, requestedAt: snapshotRequestedAt);
     if (!request.ok) return request;
 
     await store.clearLocalDeviceBusinessData();
@@ -341,17 +343,21 @@ class CloudSyncService {
     // when the Host comes online.
     for (var attempt = 0; attempt < 6; attempt += 1) {
       if (attempt > 0) await Future<void>.delayed(const Duration(seconds: 3));
-      lastResult = await syncNow(freshSettings);
+      lastResult = await syncNow(freshSettings, minSnapshotUpdatedAt: snapshotRequestedAt);
       if (!lastResult.ok) break;
       totalPulled += lastResult.pulled;
       freshSettings = CloudSyncSettings.load().copyWith(clearLastPullCursor: attempt == 0 ? true : false);
-      if (lastResult.pulled > 0) {
+      if (lastResult.restoredSnapshot) {
+        final repaired = await store.verifyLocalBusinessDataIntegrity();
         await store.cleanupSoftDeletedRecords();
         return CloudSyncResult(
-          ok: true,
+          ok: repaired.ok,
           pushed: lastResult.pushed,
           pulled: totalPulled,
-          message: 'Cloud rebuild completed from a requested fresh Host snapshot. ${lastResult.message}',
+          restoredSnapshot: true,
+          message: repaired.ok
+              ? 'Cloud rebuild completed from a requested fresh Host snapshot. ${lastResult.message}'
+              : 'Cloud rebuild pulled a fresh Host snapshot, but local verification found problems: ${repaired.message}',
         );
       }
     }
@@ -630,7 +636,7 @@ class CloudSyncService {
     return changes.length;
   }
 
-  Future<CloudSyncResult> syncNow(CloudSyncSettings settings) async {
+  Future<CloudSyncResult> syncNow(CloudSyncSettings settings, {DateTime? minSnapshotUpdatedAt}) async {
     final identity = store.appIdentity;
     if (identity.syncMode == SyncMode.localOnly || identity.syncMode == SyncMode.lanOnly) {
       return const CloudSyncResult(ok: false, message: 'Enable cloudConnected or marketplaceEnabled sync mode first.');
@@ -669,6 +675,7 @@ class CloudSyncService {
       var pageCursor = '';
       DateTime? finalPullCursor;
       var pageCount = 0;
+      var restoredSnapshot = false;
       const maxPagesPerRun = 200;
 
       while (true) {
@@ -683,6 +690,9 @@ class CloudSyncService {
           'limit': '1000',
         };
         if (initialCursor != null) query['since'] = initialCursor.toIso8601String();
+        if (initialCursor == null && minSnapshotUpdatedAt != null) {
+          query['min_snapshot_updated_at'] = minSnapshotUpdatedAt.toIso8601String();
+        }
         if (pageCursor.isNotEmpty) query['cursor'] = pageCursor;
 
         final pull = await _client.get(settings.endpoint('/api/sync/pull', query), headers: _headers(settings)).timeout(const Duration(seconds: 20));
@@ -696,6 +706,7 @@ class CloudSyncService {
             .map((item) => SyncChange.fromJson(Map<String, dynamic>.from(item as Map)))
             .where((item) => item.deviceId != store.deviceId)
             .toList();
+        restoredSnapshot = restoredSnapshot || changes.any((item) => item.operation == 'restore_snapshot');
         await store.applyRemoteSyncChanges(changes, markAppliedAsSynced: true);
         pulled += changes.length;
 
@@ -721,6 +732,7 @@ class CloudSyncService {
         ok: true,
         pushed: pushed,
         pulled: pulled,
+        restoredSnapshot: restoredSnapshot,
         message: 'Cloud sync completed. Sent $pushed request(s) to Host relay, pulled $pulled authoritative change(s).',
       );
     } catch (error) {

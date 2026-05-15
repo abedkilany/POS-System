@@ -136,6 +136,22 @@ class LanSyncSettings {
     final random = Random.secure();
     return List.generate(16, (_) => alphabet[random.nextInt(alphabet.length)]).join();
   }
+
+  static Future<List<String>> localIpv4Addresses() async {
+    final interfaces = await NetworkInterface.list(
+      type: InternetAddressType.IPv4,
+      includeLinkLocal: false,
+    );
+    final addresses = <String>[];
+    for (final interface in interfaces) {
+      for (final address in interface.addresses) {
+        if (!address.isLoopback && address.address.trim().isNotEmpty) {
+          addresses.add(address.address.trim());
+        }
+      }
+    }
+    return addresses.toSet().toList();
+  }
 }
 
 class LanSyncResult {
