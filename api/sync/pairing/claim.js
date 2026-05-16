@@ -67,8 +67,8 @@ export default async function handler(req, res) {
       limit 1
     `;
     if (!lookup.length) return res.status(404).json({ ok: false, error: 'Pairing code was not found.' });
-    if (new Date(lookup[0].expires_at).getTime() < Date.now()) return res.status(410).json({ ok: false, error: 'Pairing code expired.' });
-    if (lookup[0].claimed_at) return res.status(409).json({ ok: false, error: 'Pairing code was already used.' });
+    if (new Date(lookup[0].expires_at).getTime() < Date.now()) return res.status(410).json({ ok: false, error: 'Pairing code expired or already used. Ask the Host device for a new code.' });
+    if (lookup[0].claimed_at) return res.status(409).json({ ok: false, error: 'Pairing code expired or already used. Ask the Host device for a new code.' });
 
     // Atomic single-use claim: if two devices submit the same code, only the
     // oldest request that reaches the server updates claimed_at. Later requests
@@ -79,7 +79,7 @@ export default async function handler(req, res) {
       where code = ${code} and claimed_at is null and expires_at > now()
       returning code, store_id, branch_id, host_device_id, host_device_name, transport, expires_at, claimed_at
     `;
-    if (!claimed.length) return res.status(409).json({ ok: false, error: 'Pairing code was already claimed by an older request.' });
+    if (!claimed.length) return res.status(409).json({ ok: false, error: 'Pairing code expired or already used. Ask the Host device for a new code.' });
     const pairing = claimed[0];
     assertStoreAllowed(pairing.store_id);
 

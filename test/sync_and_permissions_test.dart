@@ -102,8 +102,8 @@ void main() {
       final identity = AppIdentity.defaults(deviceId: 'win-1', platform: AppPlatformType.windows);
       expect(identity.isHost, isTrue);
       expect(identity.syncMode, SyncMode.lanOnly);
-      expect(identity.storeId, startsWith('Str-'));
-      expect(identity.storeId.length, greaterThan('Str-'.length));
+      expect(identity.storeId, startsWith('ST-'));
+      expect(identity.storeId.length, greaterThan('ST-'.length));
     });
 
     test('web default is cloud-connected client', () {

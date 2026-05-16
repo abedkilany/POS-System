@@ -185,6 +185,15 @@ class CloudPairingClaimResult {
   final AppIdentity? identity;
 }
 
+class CloudStoreRecoveryResult {
+  const CloudStoreRecoveryResult({required this.ok, required this.message, this.identity, this.restoredSnapshot = false, this.pulled = 0});
+  final bool ok;
+  final String message;
+  final AppIdentity? identity;
+  final bool restoredSnapshot;
+  final int pulled;
+}
+
 class CloudSyncService {
   CloudSyncService(this.store, {http.Client? client}) : _client = client ?? http.Client();
 
@@ -212,6 +221,7 @@ class CloudSyncService {
               'hostDeviceName': identity.deviceName,
               'transport': transport,
               'ttlMinutes': ttlMinutes,
+              'recoveryKey': identity.recoveryKey,
             }),
           )
           .timeout(const Duration(seconds: 10));
@@ -232,6 +242,13 @@ class CloudSyncService {
 
   Future<CloudPairingClaimResult> claimPairingCode(CloudSyncSettings settings, String code) async {
     final current = store.appIdentity;
+    final previousIdentity = current;
+    if (current.isHost) {
+      return const CloudPairingClaimResult(ok: false, message: 'Host devices cannot pair as Cloud Clients. Use Transfer Host instead.');
+    }
+    if (current.isClient && current.syncMode == SyncMode.lanOnly) {
+      return const CloudPairingClaimResult(ok: false, message: 'This device is already a LAN Client. Clear local data or connect to a new Host before using Cloud pairing.');
+    }
     // Client bootstrap pairing intentionally requires only the Cloud API URL and
     // a single-use pairing code. The Host deployment token must stay on Host devices.
     if (!settings.enabled || settings.apiBaseUrl.trim().isEmpty) {
@@ -252,11 +269,11 @@ class CloudSyncService {
           )
           .timeout(const Duration(seconds: 10));
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        return CloudPairingClaimResult(ok: false, message: 'Pairing failed: ${response.statusCode} ${response.body}');
+        return const CloudPairingClaimResult(ok: false, message: 'Pairing code expired or already used. Ask the Host device for a new code.');
       }
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
       if (decoded['ok'] != true) {
-        return CloudPairingClaimResult(ok: false, message: decoded['error']?.toString() ?? 'Pairing failed.');
+        return const CloudPairingClaimResult(ok: false, message: 'Pairing code expired or already used. Ask the Host device for a new code.');
       }
       final transport = decoded['transport']?.toString() == 'lan' ? SyncMode.lanOnly : SyncMode.cloudConnected;
       final identity = current.copyWith(
@@ -272,12 +289,124 @@ class CloudSyncService {
       if (identity.syncMode == SyncMode.cloudConnected || identity.syncMode == SyncMode.marketplaceEnabled) {
         final rebuild = await rebuildFromCloudHostSnapshot(settings);
         if (!rebuild.ok) {
-          return CloudPairingClaimResult(ok: false, message: 'Pairing succeeded, but Host snapshot rebuild failed: ${rebuild.message}', identity: identity);
+          await store.updateAppIdentityDuringSetup(previousIdentity);
+          return const CloudPairingClaimResult(ok: false, message: 'Store connected successfully. Initial store data is still being prepared by the Host device.');
         }
       }
       return CloudPairingClaimResult(ok: true, message: 'Device paired successfully. Full Host snapshot was applied.', identity: identity);
     } catch (error) {
       return CloudPairingClaimResult(ok: false, message: 'Pairing failed: $error');
+    }
+  }
+
+  Future<CloudStoreRecoveryResult> recoverExistingStoreFromCloud(
+    CloudSyncSettings settings, {
+    required String storeId,
+    required String recoveryKey,
+    String? branchId,
+    CloudSyncProgressCallback? onProgress,
+  }) async {
+    final cleanStoreId = storeId.trim().toUpperCase();
+    final cleanBranchId = (branchId == null || branchId.trim().isEmpty) ? '' : branchId.trim().toUpperCase();
+    final cleanRecoveryKey = recoveryKey.trim().toUpperCase();
+    if (settings.apiBaseUrl.trim().isEmpty) {
+      return const CloudStoreRecoveryResult(ok: false, message: 'Cloud API URL is required.');
+    }
+    if (!cleanStoreId.startsWith('ST-') || cleanRecoveryKey.isEmpty) {
+      return const CloudStoreRecoveryResult(ok: false, message: 'A valid Store ID and Recovery Key are required.');
+    }
+
+    try {
+      onProgress?.call(0.10, 'Verifying Store ID and Recovery Key...');
+      final claimResponse = await _client.post(
+        settings.endpoint('/api/sync/recovery/claim'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          if (settings.apiToken.trim().isNotEmpty) 'Authorization': 'Bearer ${settings.apiToken.trim()}',
+        },
+        body: jsonEncode({
+          'storeId': cleanStoreId,
+          'branchId': cleanBranchId,
+          'recoveryKey': cleanRecoveryKey,
+          'deviceId': store.deviceId,
+          'deviceName': store.appIdentity.deviceName,
+          'platform': store.appIdentity.platform.name,
+          'appVersion': 'store-manager-pro',
+        }),
+      ).timeout(const Duration(seconds: 15));
+
+      if (claimResponse.statusCode < 200 || claimResponse.statusCode >= 300) {
+        return CloudStoreRecoveryResult(ok: false, message: 'Store recovery failed: ${claimResponse.statusCode} ${claimResponse.body}');
+      }
+      final claim = jsonDecode(claimResponse.body) as Map<String, dynamic>;
+      if (claim['ok'] != true) {
+        return CloudStoreRecoveryResult(ok: false, message: claim['error']?.toString() ?? 'Store recovery failed.');
+      }
+
+      final recoveredBranchId = (claim['branchId'] ?? claim['branch_id'] ?? cleanBranchId).toString().trim().isEmpty ? 'BR-MAIN1' : (claim['branchId'] ?? claim['branch_id'] ?? cleanBranchId).toString().trim().toUpperCase();
+      final deviceToken = (claim['deviceToken'] ?? claim['device_token'] ?? '').toString();
+      final hostDeviceId = (claim['hostDeviceId'] ?? claim['host_device_id'] ?? store.deviceId).toString();
+      final cloudTenantId = (claim['cloudTenantId'] ?? claim['cloud_tenant_id'] ?? '').toString();
+
+      onProgress?.call(0.25, 'Restoring permanent store identity...');
+      await store.recoverExistingStoreIdentity(
+        storeId: cleanStoreId,
+        branchId: recoveredBranchId,
+        recoveryKey: cleanRecoveryKey,
+        hostDeviceId: hostDeviceId.isEmpty ? store.deviceId : hostDeviceId,
+        deviceToken: deviceToken,
+        cloudTenantId: cloudTenantId,
+        deviceRole: DeviceRole.host,
+        syncMode: SyncMode.cloudConnected,
+      );
+      await settings.copyWith(enabled: true, clearLastPullCursor: true).save();
+      await CloudSyncSettings.clearSavedPullCursor();
+
+      onProgress?.call(0.45, 'Downloading latest Cloud snapshot...');
+      var pageCursor = '';
+      var pulled = 0;
+      var restoredSnapshot = false;
+      const maxPages = 200;
+      for (var page = 0; page < maxPages; page += 1) {
+        final query = <String, String>{
+          'store_id': cleanStoreId,
+          'branch_id': recoveredBranchId,
+          'limit': '1000',
+        };
+        if (pageCursor.isNotEmpty) query['cursor'] = pageCursor;
+        final pull = await _client.get(settings.endpoint('/api/sync/pull', query), headers: _headers(settings)).timeout(const Duration(seconds: 20));
+        if (pull.statusCode < 200 || pull.statusCode >= 300) {
+          return CloudStoreRecoveryResult(ok: false, message: 'Store identity recovered, but snapshot download failed: ${pull.statusCode} ${pull.body}', identity: store.appIdentity);
+        }
+        final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
+        final changes = (decodedPull['changes'] as List<dynamic>? ?? [])
+            .map((item) => SyncChange.fromJson(Map<String, dynamic>.from(item as Map)))
+            .where((item) => item.deviceId != store.deviceId)
+            .toList();
+        restoredSnapshot = restoredSnapshot || changes.isNotEmpty || decodedPull['source'] == 'entity_snapshots';
+        await store.applyRemoteSyncChanges(changes, markAppliedAsSynced: true);
+        pulled += changes.length;
+        onProgress?.call((0.45 + (page + 1) * 0.04).clamp(0.45, 0.88).toDouble(), 'Applied $pulled recovered record(s)...');
+        if (decodedPull['hasMore'] != true) {
+          final generatedAt = DateTime.tryParse(decodedPull['generatedAt']?.toString() ?? '');
+          if (generatedAt != null) await settings.copyWith(lastPullCursor: generatedAt).save();
+          break;
+        }
+        pageCursor = (decodedPull['nextCursor'] ?? '').toString();
+        if (pageCursor.isEmpty) {
+          return CloudStoreRecoveryResult(ok: false, message: 'Store recovery pagination failed.', identity: store.appIdentity, pulled: pulled);
+        }
+      }
+
+      onProgress?.call(0.95, 'Publishing recovered Host snapshot...');
+      await store.ensureHostCloudBootstrapSnapshotQueued(force: true);
+      await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
+      await sendHostHeartbeat(settings);
+      onProgress?.call(1.0, 'Store recovered.');
+      return CloudStoreRecoveryResult(ok: true, message: 'Existing store recovered successfully.', identity: store.appIdentity, restoredSnapshot: restoredSnapshot, pulled: pulled);
+    } catch (error) {
+      return CloudStoreRecoveryResult(ok: false, message: 'Store recovery failed: $error');
     }
   }
 
@@ -347,8 +476,10 @@ class CloudSyncService {
     final request = await requestFreshHostSnapshot(settings, requestedAt: snapshotRequestedAt);
     if (!request.ok) return request;
 
-    onProgress?.call(0.18, 'Clearing local Client data...');
-    await store.clearLocalDeviceBusinessData();
+    onProgress?.call(0.18, 'Checking for fresh Host snapshot before changing local data...');
+    // Do not wipe current Client data until a fresh restore_snapshot is actually
+    // received and applied. This keeps Connect to New Host safe: failed pairing
+    // or unavailable Host data must not erase anything locally.
     await CloudSyncSettings.clearSavedPullCursor();
 
     var freshSettings = settings.copyWith(clearLastPullCursor: true);
@@ -466,6 +597,77 @@ class CloudSyncService {
     }
   }
 
+  Future<CloudSyncResult> requestHostTransfer(CloudSyncSettings settings, {String reason = ''}) async {
+    final identity = store.appIdentity;
+    if (!identity.isClient) return const CloudSyncResult(ok: false, message: 'Only Clients can request Host transfer.');
+    if (settings.apiBaseUrl.trim().isEmpty) return const CloudSyncResult(ok: false, message: 'Cloud API URL is required.');
+    try {
+      final response = await _client.post(
+        settings.endpoint('/api/sync/host-transfer/request'),
+        headers: _headers(settings),
+        body: jsonEncode({
+          'storeId': identity.storeId,
+          'branchId': identity.branchId,
+          'requestingDeviceId': store.deviceId,
+          'currentHostDeviceId': identity.hostDeviceId,
+          'reason': reason,
+        }),
+      ).timeout(const Duration(seconds: 10));
+      return CloudSyncResult(
+        ok: response.statusCode >= 200 && response.statusCode < 300,
+        message: response.statusCode >= 200 && response.statusCode < 300 ? 'Host transfer request sent.' : 'Host transfer request failed: ${response.statusCode} ${response.body}',
+      );
+    } catch (error) {
+      return CloudSyncResult(ok: false, message: 'Host transfer request failed: $error');
+    }
+  }
+
+  Future<CloudSyncResult> approveHostTransfer(CloudSyncSettings settings, String requestingDeviceId) async {
+    final identity = store.appIdentity;
+    if (!identity.isHost) return const CloudSyncResult(ok: false, message: 'Only Hosts can approve Host transfer.');
+    if (!settings.isConfigured) return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
+    try {
+      final response = await _client.post(
+        settings.endpoint('/api/sync/host-transfer/approve'),
+        headers: _headers(settings),
+        body: jsonEncode({
+          'storeId': identity.storeId,
+          'branchId': identity.branchId,
+          'requestingDeviceId': requestingDeviceId,
+          'approvedByHostDeviceId': store.deviceId,
+        }),
+      ).timeout(const Duration(seconds: 10));
+      return CloudSyncResult(
+        ok: response.statusCode >= 200 && response.statusCode < 300,
+        message: response.statusCode >= 200 && response.statusCode < 300 ? 'Host transfer approved in Cloud.' : 'Host transfer approval failed: ${response.statusCode} ${response.body}',
+      );
+    } catch (error) {
+      return CloudSyncResult(ok: false, message: 'Host transfer approval failed: $error');
+    }
+  }
+
+  Future<CloudSyncResult> activateHostTransfer(CloudSyncSettings settings) async {
+    final identity = store.appIdentity;
+    if (!settings.isConfigured && settings.apiBaseUrl.trim().isEmpty) return const CloudSyncResult(ok: false, message: 'Cloud API URL is required.');
+    try {
+      final response = await _client.post(
+        settings.endpoint('/api/sync/host-transfer/activate'),
+        headers: _headers(settings),
+        body: jsonEncode({
+          'storeId': identity.storeId,
+          'branchId': identity.branchId,
+          'newHostDeviceId': store.deviceId,
+        }),
+      ).timeout(const Duration(seconds: 10));
+      return CloudSyncResult(
+        ok: response.statusCode >= 200 && response.statusCode < 300,
+        message: response.statusCode >= 200 && response.statusCode < 300 ? 'Host transfer activated in Cloud.' : 'Host transfer activation failed: ${response.statusCode} ${response.body}',
+      );
+    } catch (error) {
+      return CloudSyncResult(ok: false, message: 'Host transfer activation failed: $error');
+    }
+  }
+
   Future<List<CloudDeviceStatus>> listDevices(CloudSyncSettings settings) async {
     final identity = store.appIdentity;
     if (!settings.isConfigured) return const <CloudDeviceStatus>[];
@@ -536,6 +738,7 @@ class CloudSyncService {
               'platform': identity.platform.name,
               'appVersion': 'store-manager-pro',
               'syncMode': identity.syncMode.name,
+              'recoveryKey': identity.recoveryKey,
             }),
           )
           .timeout(const Duration(seconds: 10));

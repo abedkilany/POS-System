@@ -1,4 +1,4 @@
-import { randomBytes } from 'crypto';
+import { randomBytes, createHash } from 'crypto';
 import { sql, assertSyncToken, assertStoreAllowed, assertDeviceAllowed, sendError } from '../../_db.js';
 
 async function ensurePairingTable() {
@@ -19,6 +19,29 @@ async function ensurePairingTable() {
   await sql`create index if not exists idx_device_pairing_codes_store on device_pairing_codes (store_id, branch_id, expires_at desc)`;
 }
 
+function normalizeRecoveryKey(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function hashRecoveryKey(value) {
+  return createHash('sha256').update(normalizeRecoveryKey(value), 'utf8').digest('hex');
+}
+
+async function ensureRecoveryTable() {
+  await sql`
+    create table if not exists store_recovery_keys (
+      store_id text not null,
+      branch_id text not null default 'main',
+      recovery_key_hash text not null,
+      latest_host_device_id text default '',
+      cloud_tenant_id text default '',
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      primary key (store_id, branch_id)
+    )
+  `;
+}
+
 function makeCode() {
   // Mixed-case alphanumeric pairing code. Ambiguous characters are omitted
   // to reduce copy/scan mistakes while keeping much higher entropy than 6 digits.
@@ -34,6 +57,7 @@ export default async function handler(req, res) {
     assertSyncToken(req);
     if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Method not allowed' });
     await ensurePairingTable();
+    await ensureRecoveryTable();
     const body = req.body || {};
     const storeId = String(body.storeId || body.store_id || '').trim();
     const branchId = String(body.branchId || body.branch_id || 'main').trim() || 'main';
@@ -41,6 +65,7 @@ export default async function handler(req, res) {
     const hostDeviceName = String(body.hostDeviceName || body.host_device_name || '').trim();
     const transport = String(body.transport || 'cloud').trim() === 'lan' ? 'lan' : 'cloud';
     const ttlMinutes = Math.min(Math.max(Number(body.ttlMinutes || body.ttl_minutes || 5), 1), 30);
+    const recoveryKey = normalizeRecoveryKey(body.recoveryKey || body.recovery_key);
     if (!storeId) return res.status(400).json({ ok: false, error: 'storeId is required.' });
     if (!hostDeviceId) return res.status(400).json({ ok: false, error: 'hostDeviceId is required.' });
     assertStoreAllowed(storeId);
@@ -52,6 +77,17 @@ export default async function handler(req, res) {
       const existing = await sql`select code from device_pairing_codes where code = ${code} limit 1`;
       if (!existing.length) break;
       code = makeCode();
+    }
+
+    if (recoveryKey) {
+      await sql`
+        insert into store_recovery_keys (store_id, branch_id, recovery_key_hash, latest_host_device_id, updated_at)
+        values (${storeId}, ${branchId}, ${hashRecoveryKey(recoveryKey)}, ${hostDeviceId}, now())
+        on conflict (store_id, branch_id) do update set
+          recovery_key_hash = excluded.recovery_key_hash,
+          latest_host_device_id = excluded.latest_host_device_id,
+          updated_at = now()
+      `;
     }
 
     const rows = await sql`

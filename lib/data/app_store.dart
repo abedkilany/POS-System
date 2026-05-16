@@ -138,6 +138,9 @@ class AppStore extends ChangeNotifier {
   static const _rememberLoginKey = 'remember_login_v1';
   static const _appIdentityKey = 'app_identity_v1';
   static const _themeModeKey = 'theme_mode_v1';
+  static const _hostTransferApprovedDeviceKey = 'host_transfer_approved_device_v1';
+  static const _hostTransferRequestKey = 'host_transfer_request_v1';
+  static const _hostTransferNotificationKey = 'host_transfer_notification_v1';
 
   final List<Product> _products = [];
   final List<Customer> _customers = [];
@@ -451,18 +454,34 @@ class AppStore extends ChangeNotifier {
   Future<void> _ensureDeviceId() async {
     final existing = LocalDatabaseService.getString(_deviceIdKey);
     if (existing != null && existing.trim().isNotEmpty) {
-      _deviceId = existing.trim();
+      _deviceId = _normalizeGeneratedId(existing.trim(), fallbackPrefix: 'DV');
+      if (_deviceId != existing.trim()) {
+        await LocalDatabaseService.setString(_deviceIdKey, _deviceId);
+      }
       return;
     }
-    _deviceId = _generatePrefixedId('Dev');
+    _deviceId = _generatePrefixedId('DV');
     await LocalDatabaseService.setString(_deviceIdKey, _deviceId);
   }
 
   String _generatePrefixedId(String prefix) {
     const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     final random = Random.secure();
-    final body = List<String>.generate(7, (_) => alphabet[random.nextInt(alphabet.length)]).join();
-    return '$prefix-$body';
+    final body = List<String>.generate(6, (_) => alphabet[random.nextInt(alphabet.length)]).join();
+    return '${prefix.toUpperCase()}-$body';
+  }
+
+  String _normalizeGeneratedId(String value, {required String fallbackPrefix}) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return _generatePrefixedId(fallbackPrefix);
+    final parts = trimmed.split('-');
+    if (parts.length == 2) {
+      final rawPrefix = parts.first.toUpperCase();
+      final prefix = rawPrefix == 'DEV' || rawPrefix == 'Dev'.toUpperCase() ? 'DV' : rawPrefix;
+      final body = parts.last.toUpperCase();
+      return '$prefix-$body';
+    }
+    return trimmed.toUpperCase();
   }
 
   List<Product> _loadProducts() {
@@ -794,8 +813,46 @@ class AppStore extends ChangeNotifier {
     return created;
   }
 
+
+  Future<void> recoverExistingStoreIdentity({
+    required String storeId,
+    required String recoveryKey,
+    String? branchId,
+    String? hostDeviceId,
+    String? deviceToken,
+    String? cloudTenantId,
+    DeviceRole? deviceRole,
+    SyncMode? syncMode,
+  }) async {
+    final cleanStoreId = storeId.trim().toUpperCase();
+    final cleanRecoveryKey = recoveryKey.trim().toUpperCase();
+    if (!cleanStoreId.startsWith('ST-') || cleanRecoveryKey.isEmpty) {
+      throw ArgumentError('A valid Store ID and Recovery Key are required.');
+    }
+    final cleanBranchId = (branchId == null || branchId.trim().isEmpty) ? appIdentity.branchId : branchId.trim().toUpperCase();
+    final nextRole = deviceRole ?? appIdentity.deviceRole;
+    final recoveredIdentity = appIdentity.copyWith(
+      storeId: cleanStoreId,
+      branchId: cleanBranchId,
+      recoveryKey: cleanRecoveryKey,
+      hostDeviceId: hostDeviceId ?? (nextRole == DeviceRole.host ? _deviceId : appIdentity.hostDeviceId),
+      deviceToken: (deviceToken == null || deviceToken.trim().isEmpty) ? appIdentity.deviceToken : deviceToken.trim(),
+      cloudTenantId: (cloudTenantId == null || cloudTenantId.trim().isEmpty) ? appIdentity.cloudTenantId : cloudTenantId.trim(),
+      deviceRole: nextRole,
+      syncMode: syncMode ?? appIdentity.syncMode,
+      deviceId: _deviceId,
+      platform: _detectPlatform(),
+      updatedAt: DateTime.now(),
+    );
+    _assertLanCloudRoleRules(recoveredIdentity, source: 'store recovery');
+    _appIdentity = recoveredIdentity;
+    await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(_appIdentity!.toJson()));
+    notifyListeners();
+  }
+
   AppIdentity _identityForLanSnapshotImport(Map<String, dynamic> decoded) {
     final local = appIdentity;
+    if (local.isHost) return local.copyWith(deviceId: _deviceId, platform: _detectPlatform(), updatedAt: DateTime.now());
     if (decoded['appIdentity'] is! Map) return local.copyWith(deviceId: _deviceId, platform: _detectPlatform());
     final remote = AppIdentity.fromJson(Map<String, dynamic>.from(decoded['appIdentity'] as Map));
     return local.copyWith(
@@ -814,16 +871,130 @@ class AppStore extends ChangeNotifier {
   }
 
 
-  Future<void> updateAppIdentityDuringSetup(AppIdentity identity) async {
+
+  AppIdentity _normalizedLocalIdentity(AppIdentity identity) {
     final token = identity.deviceToken.trim().isNotEmpty
         ? identity.deviceToken.trim()
         : 'device_${DateTime.now().microsecondsSinceEpoch}_${_deviceId.hashCode.abs()}';
-    final normalized = identity.copyWith(
+    return identity.copyWith(
       deviceId: _deviceId,
       platform: _detectPlatform(),
       deviceToken: token,
       updatedAt: DateTime.now(),
     );
+  }
+
+  bool _isApprovedHostTransferTarget() {
+    final approvedDeviceId = LocalDatabaseService.getString(_hostTransferApprovedDeviceKey)?.trim() ?? '';
+    return approvedDeviceId.isNotEmpty && approvedDeviceId == _deviceId;
+  }
+
+  String get approvedHostTransferDeviceId => LocalDatabaseService.getString(_hostTransferApprovedDeviceKey)?.trim() ?? '';
+
+  Map<String, dynamic>? get pendingHostTransferRequest {
+    final raw = LocalDatabaseService.getString(_hostTransferRequestKey)?.trim() ?? '';
+    if (raw.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) return decoded;
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+    } catch (_) {}
+    return null;
+  }
+
+  Map<String, dynamic>? get latestHostTransferNotification {
+    final raw = LocalDatabaseService.getString(_hostTransferNotificationKey)?.trim() ?? '';
+    if (raw.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) return decoded;
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+    } catch (_) {}
+    return null;
+  }
+
+  Future<void> clearHostTransferNotification() async {
+    await LocalDatabaseService.setString(_hostTransferNotificationKey, '');
+    notifyListeners();
+  }
+
+  Future<void> _storeHostTransferNotification(Map<String, dynamic> payload) async {
+    await LocalDatabaseService.setString(_hostTransferNotificationKey, jsonEncode(payload));
+  }
+
+  Future<void> clearLocalHostTransferRequest() async {
+    await LocalDatabaseService.setString(_hostTransferRequestKey, '');
+    notifyListeners();
+  }
+
+  Future<void> _forceApplyRoleFromTransfer(AppIdentity next) async {
+    final normalized = _normalizedLocalIdentity(next);
+    _appIdentity = normalized;
+    await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(normalized.toJson()));
+  }
+
+  void _assertSafeRoleTransition(AppIdentity next, {required String source, bool allowApprovedTransfer = false}) {
+    final current = _appIdentity;
+    if (current == null) return;
+    if (current.deviceRole == next.deviceRole) return;
+
+    // Fix #4: backup, restore, pairing, rebuild, and snapshot import flows must
+    // never silently convert a Host into a Client. Host role changes are only
+    // allowed through the official Transfer Host flow.
+    if (current.isHost && next.isClient) {
+      throw StateError('Host devices cannot be converted to Clients by $source. Use Transfer Host instead.');
+    }
+
+    // A Client can become Host only after an explicit Host transfer approval.
+    if (current.isClient && next.isHost && !(allowApprovedTransfer && _isApprovedHostTransferTarget())) {
+      throw StateError('Client devices cannot become Host by $source. Request and approve Transfer Host first.');
+    }
+  }
+
+  void _assertLanCloudRoleRules(AppIdentity next, {required String source}) {
+    final platform = next.platform == AppPlatformType.unknown ? _detectPlatform() : next.platform;
+
+    // Fix #9: Web devices must never be authoritative Hosts because browsers
+    // cannot reliably run the local Host API/server and should not own Host
+    // authority for Cloud either.
+    if (platform == AppPlatformType.web && next.isHost) {
+      throw StateError('Web devices cannot operate as Host. Use a desktop or native mobile Host device.');
+    }
+
+    final lanHost = _isLanHostConfigured;
+    final lanClient = _isLanClientConfigured;
+    final cloudHost = next.isHost && (next.syncMode == SyncMode.cloudConnected || next.syncMode == SyncMode.marketplaceEnabled);
+    final cloudClient = next.isClient && (next.syncMode == SyncMode.cloudConnected || next.syncMode == SyncMode.marketplaceEnabled);
+    final lanIdentityClient = next.isClient && next.syncMode == SyncMode.lanOnly;
+
+    // A Host may be LAN Host, Cloud Host, or both. It must not simultaneously
+    // carry LAN Client state from an old pairing.
+    if (next.isHost && lanClient) {
+      throw StateError('A Host device cannot keep LAN Client state. Clear local data or use Transfer Host before changing sync role.');
+    }
+
+    // A Client must choose one transport only: LAN Client or Cloud Client.
+    if (next.isClient && lanClient && cloudClient) {
+      throw StateError('A Client device cannot be both LAN Client and Cloud Client. Connect to one Host type only.');
+    }
+    if (lanIdentityClient && cloudClient) {
+      throw StateError('A Client device cannot be both LAN Client and Cloud Client.');
+    }
+
+    // Prevent cross-authority conflicts: Host in one system, Client in another.
+    if (lanHost && cloudClient) {
+      throw StateError('LAN Host + Cloud Client is not allowed by $source. Host devices cannot be Clients in another sync system.');
+    }
+    if (cloudHost && lanClient) {
+      throw StateError('Cloud Host + LAN Client is not allowed by $source. Host devices cannot be Clients in another sync system.');
+    }
+  }
+
+
+  Future<void> updateAppIdentityDuringSetup(AppIdentity identity) async {
+    final normalized = _normalizedLocalIdentity(identity);
+    _assertSafeRoleTransition(normalized, source: 'setup/pairing/rebuild');
+    _assertLanCloudRoleRules(normalized, source: 'setup/pairing/rebuild');
     _appIdentity = normalized;
     await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(normalized.toJson()));
     notifyListeners();
@@ -831,15 +1002,9 @@ class AppStore extends ChangeNotifier {
 
   Future<void> updateAppIdentity(AppIdentity identity) async {
     requirePermission(AppPermission.settingsManage);
-    final token = identity.deviceToken.trim().isNotEmpty
-        ? identity.deviceToken.trim()
-        : 'device_${DateTime.now().microsecondsSinceEpoch}_${_deviceId.hashCode.abs()}';
-    final normalized = identity.copyWith(
-      deviceId: _deviceId,
-      platform: _detectPlatform(),
-      deviceToken: token,
-      updatedAt: DateTime.now(),
-    );
+    final normalized = _normalizedLocalIdentity(identity);
+    _assertSafeRoleTransition(normalized, source: 'settings update');
+    _assertLanCloudRoleRules(normalized, source: 'settings update');
     _appIdentity = normalized;
     await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(normalized.toJson()));
     _recordSyncChange(
@@ -851,6 +1016,121 @@ class AppStore extends ChangeNotifier {
     await _saveAll();
     notifyListeners();
   }
+
+
+  Future<void> requestHostTransfer({String reason = ''}) async {
+    if (!appIdentity.isClient) {
+      throw StateError('Only a Client device can request Host transfer.');
+    }
+    final payload = <String, dynamic>{
+      'requestingDeviceId': _deviceId,
+      'storeId': appIdentity.storeId,
+      'branchId': appIdentity.branchId,
+      'hostDeviceId': appIdentity.hostDeviceId,
+      'reason': reason.trim(),
+      'requestedAt': DateTime.now().toIso8601String(),
+      'status': 'pending',
+    };
+    await LocalDatabaseService.setString(_hostTransferRequestKey, jsonEncode(payload));
+    _recordSyncChange(
+      entityType: 'host_transfer',
+      entityId: _deviceId,
+      operation: 'request',
+      payload: payload,
+    );
+    await _saveAll();
+    notifyListeners();
+  }
+
+  Future<void> approveHostTransfer(String requestingDeviceId) async {
+    requirePermission(AppPermission.syncManage);
+    final cleanDeviceId = requestingDeviceId.trim();
+    if (!appIdentity.isHost) {
+      throw StateError('Only the current Host can approve Host transfer.');
+    }
+    if (cleanDeviceId.isEmpty || cleanDeviceId == _deviceId) {
+      throw ArgumentError('A valid requesting Client Device ID is required.');
+    }
+    await LocalDatabaseService.setString(_hostTransferApprovedDeviceKey, cleanDeviceId);
+    final transferPayload = <String, dynamic>{
+      'approvedDeviceId': cleanDeviceId,
+      'approvedByHostDeviceId': _deviceId,
+      'storeId': appIdentity.storeId,
+      'branchId': appIdentity.branchId,
+      'approvedAt': DateTime.now().toIso8601String(),
+    };
+    _recordSyncChange(
+      entityType: 'host_transfer',
+      entityId: cleanDeviceId,
+      operation: 'approve',
+      payload: transferPayload,
+    );
+    _recordSyncChange(
+      entityType: 'host_transfer',
+      entityId: cleanDeviceId,
+      operation: 'host_changed_pending',
+      payload: transferPayload,
+    );
+
+    // Fix #4: once the current Host approves the transfer, this device must
+    // immediately stop being authoritative. This is intentionally not routed
+    // through updateAppIdentity(), because normal Host->Client transitions are
+    // blocked everywhere except this official Transfer Host flow.
+    await _forceApplyRoleFromTransfer(appIdentity.copyWith(
+      deviceRole: DeviceRole.client,
+      hostDeviceId: cleanDeviceId,
+      updatedAt: DateTime.now(),
+    ));
+    await _saveAll();
+    notifyListeners();
+  }
+
+  Future<void> activateApprovedHostTransfer() async {
+    if (!appIdentity.isClient) {
+      throw StateError('Only a Client device can activate an approved Host transfer.');
+    }
+    if (!_isApprovedHostTransferTarget()) {
+      throw StateError('No approved Host transfer was found for this device.');
+    }
+    final next = _normalizedLocalIdentity(appIdentity.copyWith(
+      deviceRole: DeviceRole.host,
+      hostDeviceId: '',
+      updatedAt: DateTime.now(),
+    ));
+    _assertSafeRoleTransition(next, source: 'approved Host transfer', allowApprovedTransfer: true);
+    _assertLanCloudRoleRules(next, source: 'approved Host transfer');
+    _appIdentity = next;
+    await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(next.toJson()));
+    await LocalDatabaseService.setString(_hostTransferApprovedDeviceKey, '');
+    await ensureHostCloudBootstrapSnapshotQueued(force: true);
+    final activationPayload = <String, dynamic>{
+      'newHostDeviceId': _deviceId,
+      'storeId': next.storeId,
+      'branchId': next.branchId,
+      'activatedAt': DateTime.now().toIso8601String(),
+    };
+    _recordSyncChange(
+      entityType: 'host_transfer',
+      entityId: _deviceId,
+      operation: 'activate',
+      payload: activationPayload,
+    );
+    _recordSyncChange(
+      entityType: 'host_transfer',
+      entityId: _deviceId,
+      operation: 'new_host_activated',
+      payload: activationPayload,
+    );
+    _recordSyncChange(
+      entityType: 'host_transfer',
+      entityId: _deviceId,
+      operation: 'notify_clients_host_changed',
+      payload: activationPayload,
+    );
+    await _saveAll();
+    notifyListeners();
+  }
+
 
   Future<void> setSecurityPin(String pin) async {
     final cleaned = pin.trim();
@@ -931,10 +1211,10 @@ class AppStore extends ChangeNotifier {
       _users[index] = updated;
       _activeUser = updated;
       _rememberLogin = remember;
-      await LocalDatabaseService.setString(_rememberLoginKey, remember ? 'true' : 'false');
-      await LocalDatabaseService.setString(_activeUserKey, remember ? updated.id : '');
-      await _saveRolesAndUsers();
       notifyListeners();
+      unawaited(LocalDatabaseService.setString(_rememberLoginKey, remember ? 'true' : 'false'));
+      unawaited(LocalDatabaseService.setString(_activeUserKey, remember ? updated.id : ''));
+      unawaited(_saveRolesAndUsers());
       return true;
     }
     return false;
@@ -948,6 +1228,13 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
+
+
+  Future<bool> verifyAdminPassword(String password) async {
+    final user = _activeUser;
+    if (user == null || !isAdmin) return false;
+    return _verifyPasswordAsync(password, user.passwordHash);
+  }
 
   Future<bool> _verifyPasswordAsync(String password, String storedHash) async {
     if (storedHash.startsWith(_passwordHashPrefix)) {
@@ -1342,29 +1629,15 @@ class AppStore extends ChangeNotifier {
   Future<void> resetBusinessData({bool keepStoreProfile = true, bool keepSecurityPin = true}) async {
     requirePermission(AppPermission.backupRestore);
 
-    // A business-data reset is a central sync event. Clear the old change log so
-    // clients that come back online receive the reset marker without replaying
-    // stale pre-reset operations.
+    // Local-only reset. This must never create a SyncChange or propagate delete
+    // operations to Clients. Host factory reset is handled by factoryResetLocalDevice().
     _syncChanges.clear();
     _syncQueue.clear();
-    final identity = appIdentity;
-    _appIdentity = identity.copyWith(storeEpoch: identity.storeEpoch + 1, updatedAt: DateTime.now());
-    await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(_appIdentity!.toJson()));
     _resetBusinessDataInMemory(keepStoreProfile: keepStoreProfile, keepSecurityPin: keepSecurityPin);
     if (!keepSecurityPin) {
       await LocalDatabaseService.setString(_pinKey, '');
     }
-    _recordSyncChange(
-      entityType: 'system',
-      entityId: 'store',
-      operation: 'reset_store_data',
-      payload: {
-        'keepStoreProfile': keepStoreProfile,
-        'keepSecurityPin': keepSecurityPin,
-        'createdAt': DateTime.now().toIso8601String(),
-        'storeEpoch': appIdentity.storeEpoch,
-      },
-    );
+    await LocalDatabaseService.deleteString('cloud_last_pull_cursor');
     await _saveAll();
     notifyListeners();
   }
@@ -1395,6 +1668,45 @@ class AppStore extends ChangeNotifier {
     }
     _appIdentity = identity.copyWith(deviceId: _deviceId, platform: _detectPlatform());
     await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(_appIdentity!.toJson()));
+    await _saveAll();
+    notifyListeners();
+  }
+
+  Future<void> factoryResetLocalDevice({bool preserveAdminUsers = false}) async {
+    _products.clear();
+    _customers
+      ..clear()
+      ..add(walkInCustomer);
+    _sales.clear();
+    _suppliers.clear();
+    _expenses.clear();
+    _purchases.clear();
+    _stockMovements.clear();
+    _categories.clear();
+    _brands.clear();
+    _units.clear();
+    _syncChanges.clear();
+    _syncQueue.clear();
+    _invoiceCounter = 0;
+    _purchaseCounter = 0;
+    _storeProfile = StoreProfile.defaults;
+    _securityPin = null;
+    _activeUser = null;
+    _rememberLogin = false;
+    if (!preserveAdminUsers) {
+      _users.clear();
+      _roles.clear();
+      await _ensureDefaultAdminUser();
+    }
+    _deviceId = _generatePrefixedId('DV');
+    _appIdentity = AppIdentity.defaults(deviceId: _deviceId, platform: _detectPlatform()).copyWith(deviceRole: DeviceRole.standalone, syncMode: SyncMode.localOnly);
+    await LocalDatabaseService.setString(_deviceIdKey, _deviceId);
+    await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(_appIdentity!.toJson()));
+    await LocalDatabaseService.setString(_pinKey, '');
+    await LocalDatabaseService.setString(_activeUserKey, '');
+    await LocalDatabaseService.setString(_rememberLoginKey, 'false');
+    await LocalDatabaseService.deleteString('cloud_last_pull_cursor');
+    await LocalDatabaseService.deleteString('lan_sync_settings_v2');
     await _saveAll();
     notifyListeners();
   }
@@ -1616,9 +1928,23 @@ class AppStore extends ChangeNotifier {
     }
   }
 
+  bool get _isLanHostConfigured {
+    final raw = LocalDatabaseService.getString('lan_sync_settings_v2');
+    if (raw == null || raw.trim().isEmpty) return false;
+    try {
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      final mode = decoded['mode']?.toString() ?? '';
+      final hostModeEnabled = decoded['hostModeEnabled'] as bool? ?? false;
+      return mode == 'host' || hostModeEnabled;
+    } catch (_) {
+      return false;
+    }
+  }
+
   void _enqueueSyncChange(String changeId, DateTime now) {
     final identity = appIdentity;
-    final isLanClient = _isLanClientConfigured || (identity.isClient && identity.syncMode == SyncMode.lanOnly);
+    final isLanClient = _isLanClientConfigured ||
+        (identity.isClient && identity.syncMode == SyncMode.lanOnly);
 
     // Sync architecture v2: the Host is the only source of truth.
     // - Host devices publish accepted/authoritative changes to Cloud.
@@ -1626,15 +1952,20 @@ class AppStore extends ChangeNotifier {
     // - Web/remote desktop clients cannot reach LAN directly, so they send drafts
     //   to a Cloud relay inbox. The Host later pulls that inbox, applies the
     //   changes, and republishes them as authoritative sync_events.
+    final isLanHost = _isLanHostConfigured ||
+        (identity.isHost && identity.syncMode == SyncMode.lanOnly);
     final target = identity.isHost && identity.isCloudEnabled
         ? 'cloud'
-        : isLanClient
+        : isLanHost
             ? 'host'
-            : (identity.isCloudEnabled && identity.isClient)
-                ? 'cloud_host'
-                : (identity.platform == AppPlatformType.web && identity.isCloudEnabled)
+            : isLanClient
+                ? 'host'
+                : (identity.isCloudEnabled && identity.isClient)
                     ? 'cloud_host'
-                    : 'local';
+                    : (identity.platform == AppPlatformType.web &&
+                            identity.isCloudEnabled)
+                        ? 'cloud_host'
+                        : 'local';
     if (target == 'local') return;
     _syncQueue.add(SyncQueueItem(
       id: '$changeId-$target',
@@ -2205,23 +2536,79 @@ class AppStore extends ChangeNotifier {
     return grossProfit - totalExpensesAmount;
   }
 
+
+  static const Set<String> _businessBackupBlockedKeys = {
+    'deviceId',
+    'syncStatus',
+    'lastModifiedByDeviceId',
+    'syncChanges',
+    'syncQueue',
+    'cloud_last_pull_cursor',
+    'cloudCursor',
+    'pairingCode',
+    'pairingData',
+    'deviceToken',
+    'cloudToken',
+    'lanSession',
+    'hostDeviceId',
+    'activeUser',
+    'rememberLogin',
+    'autoLoginSession',
+    'debugLogs',
+    'relayState',
+    'runtimeCache',
+    'pendingSyncOperations',
+    'appIdentity',
+    'storeEpoch',
+    'transportType',
+  };
+
+  dynamic _businessBackupValue(dynamic value) {
+    if (value is Map) {
+      final cleaned = <String, dynamic>{};
+      value.forEach((key, item) {
+        final textKey = key.toString();
+        if (_businessBackupBlockedKeys.contains(textKey)) return;
+        cleaned[textKey] = _businessBackupValue(item);
+      });
+      return cleaned;
+    }
+    if (value is List) {
+      return value.map(_businessBackupValue).toList();
+    }
+    return value;
+  }
+
+  Map<String, dynamic> _businessBackupJson(dynamic item) {
+    final raw = item.toJson() as Map<String, dynamic>;
+    return Map<String, dynamic>.from(_businessBackupValue(raw) as Map);
+  }
+
   Map<String, dynamic> _backupPayload({List<SyncChange>? changes, bool includeDeviceAndSyncState = true}) => {
         'version': 12,
         'generatedAt': DateTime.now().toIso8601String(),
         'schemaVersion': 11,
+        if (!includeDeviceAndSyncState) 'backupType': 'business_backup',
+        if (!includeDeviceAndSyncState) 'storeId': appIdentity.storeId,
+        if (!includeDeviceAndSyncState) 'branchId': appIdentity.branchId,
+        if (!includeDeviceAndSyncState) 'recoveryKey': appIdentity.recoveryKey,
+        if (!includeDeviceAndSyncState) 'appVersion': 'stage2',
+        if (!includeDeviceAndSyncState) 'platform': appIdentity.platform.name,
+        if (!includeDeviceAndSyncState) 'securityPin': _securityPin,
+        if (!includeDeviceAndSyncState) 'themeMode': LocalDatabaseService.getString(_themeModeKey) ?? 'system',
         'invoiceCounter': _invoiceCounter,
         'purchaseCounter': _purchaseCounter,
         'storeProfile': _storeProfile.toJson(),
-        'products': _products.map((item) => item.toJson()).toList(),
-        'customers': _customers.map((item) => item.toJson()).toList(),
-        'sales': _sales.map((item) => item.toJson()).toList(),
-        'suppliers': _suppliers.map((item) => item.toJson()).toList(),
-        'categories': _categories.map((item) => item.toJson()).toList(),
-        'brands': _brands.map((item) => item.toJson()).toList(),
-        'units': _units.map((item) => item.toJson()).toList(),
-        'expenses': _expenses.map((item) => item.toJson()).toList(),
-        'purchases': _purchases.map((item) => item.toJson()).toList(),
-        'stockMovements': _stockMovements.map((item) => item.toJson()).toList(),
+        'products': _products.map((item) => includeDeviceAndSyncState ? item.toJson() : _businessBackupJson(item)).toList(),
+        'customers': _customers.map((item) => includeDeviceAndSyncState ? item.toJson() : _businessBackupJson(item)).toList(),
+        'sales': _sales.map((item) => includeDeviceAndSyncState ? item.toJson() : _businessBackupJson(item)).toList(),
+        'suppliers': _suppliers.map((item) => includeDeviceAndSyncState ? item.toJson() : _businessBackupJson(item)).toList(),
+        'categories': _categories.map((item) => includeDeviceAndSyncState ? item.toJson() : _businessBackupJson(item)).toList(),
+        'brands': _brands.map((item) => includeDeviceAndSyncState ? item.toJson() : _businessBackupJson(item)).toList(),
+        'units': _units.map((item) => includeDeviceAndSyncState ? item.toJson() : _businessBackupJson(item)).toList(),
+        'expenses': _expenses.map((item) => includeDeviceAndSyncState ? item.toJson() : _businessBackupJson(item)).toList(),
+        'purchases': _purchases.map((item) => includeDeviceAndSyncState ? item.toJson() : _businessBackupJson(item)).toList(),
+        'stockMovements': _stockMovements.map((item) => includeDeviceAndSyncState ? item.toJson() : _businessBackupJson(item)).toList(),
         if (includeDeviceAndSyncState) 'deviceId': _deviceId,
         if (includeDeviceAndSyncState) 'syncChanges': (changes ?? _syncChanges).map((item) => item.toJson()).toList(),
         if (includeDeviceAndSyncState) 'syncQueue': _syncQueue.map((item) => item.toJson()).toList(),
@@ -2413,6 +2800,9 @@ class AppStore extends ChangeNotifier {
 
   Future<void> importBackupJson(String rawJson) async {
     requirePermission(AppPermission.backupRestore);
+    if (appIdentity.isClient) {
+      throw StateError('Import Backup is only available on the Host device.');
+    }
     final decoded = jsonDecode(rawJson) as Map<String, dynamic>;
     final products = (decoded['products'] as List<dynamic>? ?? [])
         .map((item) => Product.fromJson(Map<String, dynamic>.from(item as Map)))
@@ -2487,11 +2877,31 @@ class AppStore extends ChangeNotifier {
       ..addAll(stockMovements);
     _syncChanges.clear();
     _storeProfile = profile;
-    // Manual Import/Export restores business data only. Never let a backup
-    // replace this device identity, Store ID, role, cloud token, or sync cursors.
-    // This prevents accidental Host/Client split-brain after importing old data.
-    _appIdentity = appIdentity.copyWith(deviceId: _deviceId, platform: _detectPlatform(), updatedAt: DateTime.now());
+    // Business Backup may restore the permanent Store/Branch identity and Recovery Key,
+    // but it must never replace this device identity, role, tokens, pairing data, or cursors.
+    final importedStoreId = decoded['storeId']?.toString().trim() ?? '';
+    final importedBranchId = decoded['branchId']?.toString().trim() ?? '';
+    final importedRecoveryKey = decoded['recoveryKey']?.toString().trim() ?? '';
+    _appIdentity = appIdentity.copyWith(
+      storeId: importedStoreId.isNotEmpty ? importedStoreId.toUpperCase() : appIdentity.storeId,
+      branchId: importedBranchId.isNotEmpty ? importedBranchId.toUpperCase() : appIdentity.branchId,
+      recoveryKey: importedRecoveryKey.isNotEmpty ? importedRecoveryKey.toUpperCase() : appIdentity.recoveryKey,
+      deviceId: _deviceId,
+      platform: _detectPlatform(),
+      updatedAt: DateTime.now(),
+    );
     await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(_appIdentity!.toJson()));
+    if (decoded['securityPin'] is String) {
+      _securityPin = decoded['securityPin'] as String?;
+      if ((_securityPin ?? '').isEmpty) {
+        await LocalDatabaseService.deleteString(_pinKey);
+      } else {
+        await LocalDatabaseService.setString(_pinKey, _securityPin!);
+      }
+    }
+    if (decoded['themeMode'] is String) {
+      await LocalDatabaseService.setString(_themeModeKey, decoded['themeMode'].toString());
+    }
     await LocalDatabaseService.deleteString('cloud_last_pull_cursor');
     if (roles.isNotEmpty) {
       _roles
@@ -2507,12 +2917,8 @@ class AppStore extends ChangeNotifier {
     final importedPurchaseCounter = (decoded['purchaseCounter'] as num?)?.toInt() ?? 0;
     _purchaseCounter = importedPurchaseCounter > 0 ? importedPurchaseCounter : _loadPurchaseCounter();
     _normalizeCustomers();
-    _recordSyncChange(
-      entityType: 'system',
-      entityId: 'store',
-      operation: 'restore_snapshot',
-      payload: _backupPayload(changes: const <SyncChange>[]),
-    );
+    // Manual Business Backup import is local business-data restore only.
+    // It does not create sync events; Host snapshots are managed by the sync engine.
 
     await _saveAll();
     notifyListeners();
@@ -2699,6 +3105,9 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> importSyncSnapshotJson(String rawJson) async {
+    if (appIdentity.isHost) {
+      throw StateError('Host devices cannot be converted to Clients by importing a sync snapshot.');
+    }
     final decoded = jsonDecode(rawJson) as Map<String, dynamic>;
     await _replaceFromBackupMap(decoded, preserveLocalIdentityForLanClient: true);
   }
@@ -3085,12 +3494,43 @@ class AppStore extends ChangeNotifier {
           }
         }
         break;
+      case 'host_transfer':
+        if (change.operation == 'request') {
+          // Keep the latest transfer request visible to the current Host UI.
+          if (appIdentity.isHost) {
+            await LocalDatabaseService.setString(_hostTransferRequestKey, jsonEncode(p));
+          }
+        } else if (change.operation == 'approve') {
+          final approvedDeviceId = p['approvedDeviceId']?.toString().trim() ?? '';
+          if (approvedDeviceId == _deviceId) {
+            await LocalDatabaseService.setString(_hostTransferApprovedDeviceKey, approvedDeviceId);
+          }
+        } else if (change.operation == 'new_host_activated' || change.operation == 'notify_clients_host_changed') {
+          final newHostDeviceId = p['newHostDeviceId']?.toString().trim() ?? '';
+          if (newHostDeviceId.isNotEmpty && newHostDeviceId != _deviceId && appIdentity.isClient) {
+            await _forceApplyRoleFromTransfer(appIdentity.copyWith(
+              deviceRole: DeviceRole.client,
+              hostDeviceId: newHostDeviceId,
+              updatedAt: DateTime.now(),
+            ));
+            await _storeHostTransferNotification({
+              'type': 'host_changed',
+              'newHostDeviceId': newHostDeviceId,
+              'storeId': p['storeId']?.toString() ?? appIdentity.storeId,
+              'branchId': p['branchId']?.toString() ?? appIdentity.branchId,
+              'receivedAt': DateTime.now().toIso8601String(),
+            });
+          }
+        }
+        break;
       case 'store_profile':
         _storeProfile = StoreProfile.fromJson(p);
         break;
       case 'app_identity':
         if (change.entityId == _deviceId) {
-          _appIdentity = AppIdentity.fromJson(p);
+          final incomingIdentity = _normalizedLocalIdentity(AppIdentity.fromJson(p));
+          _assertSafeRoleTransition(incomingIdentity, source: 'remote app identity change');
+          _appIdentity = incomingIdentity;
           await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(_appIdentity!.toJson()));
         }
         break;

@@ -6,8 +6,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'core/localization/app_localizations.dart';
 import 'core/theme/app_theme.dart';
-import 'core/services/lan_sync_service.dart';
-import 'core/services/cloud_sync_service.dart';
+import 'core/sync_unified/sync_unified.dart';
 import 'data/app_store.dart';
 import 'models/user_role.dart';
 import 'features/customers/customers_page.dart';
@@ -33,8 +32,8 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
   Locale _locale = const Locale('en');
   ThemeMode _themeMode = ThemeMode.system;
   final AppStore _store = AppStore();
-  late final AutoLanSyncController _autoSyncController = AutoLanSyncController(_store);
-  late final AutoCloudSyncController _autoCloudSyncController = AutoCloudSyncController(_store);
+  late final UnifiedAutoLanSyncController _autoSyncController = UnifiedAutoLanSyncController(_store);
+  late final UnifiedAutoCloudSyncController _autoCloudSyncController = UnifiedAutoCloudSyncController(_store);
   bool _syncStarted = false;
 
   @override
@@ -56,7 +55,7 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
   Future<void> _startSyncAfterLogin() async {
     if (_syncStarted || _store.activeUser == null) return;
     _syncStarted = true;
-    await Future<void>.delayed(const Duration(milliseconds: 500));
+    await Future<void>.delayed(const Duration(seconds: 2));
     if (!mounted || _store.activeUser == null) return;
     unawaited(_autoSyncController.start());
     unawaited(_autoCloudSyncController.start());
@@ -64,13 +63,13 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
 
   Future<void> _stopSyncForLogout() async {
     _syncStarted = false;
-    _autoSyncController.stop();
+    await _autoSyncController.stop();
     _autoCloudSyncController.stop();
   }
 
   @override
   void dispose() {
-    _autoSyncController.stop();
+    unawaited(_autoSyncController.stop());
     _autoCloudSyncController.stop();
     _store.dispose();
     super.dispose();
@@ -372,13 +371,12 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
 
   Future<void> _refresh() async {
     if (kIsWeb) {
-      final settings = CloudSyncSettings.load();
-      if (!settings.isConfigured || !widget.store.appIdentity.isCloudEnabled) {
+      if (!UnifiedSyncFactory.cloudCanCheck(widget.store)) {
         if (mounted) setState(() { _state = _HostReachability.disabled; _message = trText('cloud_off'); });
         return;
       }
       if (mounted) setState(() => _state = _HostReachability.checking);
-      final status = await CloudSyncService(widget.store).getHostHeartbeatStatus(settings);
+      final status = await UnifiedSyncFactory.cloudEngine(widget.store).getHostStatus();
       final pending = widget.store.pendingSyncCount;
       if (!mounted) return;
       setState(() {
@@ -398,47 +396,43 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
       return;
     }
 
-    final settings = LanSyncSettings.load();
-    if (!settings.setupComplete) {
+    if (!UnifiedSyncFactory.isLanSetupComplete) {
       if (mounted) setState(() { _state = _HostReachability.disabled; _message = trText('lan_not_configured'); });
       return;
     }
-    if (settings.isHost) {
+    if (UnifiedSyncFactory.isLanHost) {
       if (mounted) setState(() { _state = _HostReachability.hostDevice; _message = trText('this_device_is_host'); });
       return;
     }
     if (mounted) setState(() => _state = _HostReachability.checking);
-    final result = await LanSyncService(widget.store).testConnection(settings.host, port: settings.port, token: settings.secret);
+    final status = await UnifiedSyncFactory.lanEngine(widget.store).getHostStatus();
     final pending = widget.store.pendingSyncCount;
     if (!mounted) return;
     setState(() {
-      if (result.ok) {
-        _lastOk = DateTime.now();
+      if (status.hostReachable) {
+        _lastOk = status.lastSeenAt ?? DateTime.now();
         _state = pending > 0 ? _HostReachability.pending : _HostReachability.connected;
         _message = pending > 0 ? trText('pending_changes').replaceAll('{count}', '$pending') : trText('host_reachable');
       } else {
         _state = _HostReachability.disconnected;
-        _message = result.message;
+        _message = status.message;
       }
     });
-    if (!result.ok && widget.store.appIdentity.isCloudEnabled) {
-      final cloudSettings = CloudSyncSettings.load();
-      if (cloudSettings.isConfigured) {
-        final status = await CloudSyncService(widget.store).getHostHeartbeatStatus(cloudSettings);
-        if (!mounted) return;
-        setState(() {
-          if (status.cloudReachable && status.hostReachable) {
-            _lastOk = status.lastSeenAt ?? DateTime.now();
-            _state = pending > 0 ? _HostReachability.pending : _HostReachability.connected;
-            _message = pending > 0
-                ? trText('pending_changes').replaceAll('{count}', '$pending')
-                : 'LAN offline, Host reachable through Cloud.';
-          } else if (status.cloudReachable) {
-            _state = _HostReachability.disconnected;
-            _message = 'LAN offline. Cloud reachable but Host heartbeat is stale.';
-          }
-        });
-      }
+    if (!status.hostReachable && UnifiedSyncFactory.cloudCanCheck(widget.store)) {
+      final cloudStatus = await UnifiedSyncFactory.cloudEngine(widget.store).getHostStatus();
+      if (!mounted) return;
+      setState(() {
+        if (cloudStatus.cloudReachable && cloudStatus.hostReachable) {
+          _lastOk = cloudStatus.lastSeenAt ?? DateTime.now();
+          _state = pending > 0 ? _HostReachability.pending : _HostReachability.connected;
+          _message = pending > 0
+              ? trText('pending_changes').replaceAll('{count}', '$pending')
+              : 'LAN offline, Host reachable through Cloud.';
+        } else if (cloudStatus.cloudReachable) {
+          _state = _HostReachability.disconnected;
+          _message = 'LAN offline. Cloud reachable but Host heartbeat is stale.';
+        }
+      });
     }
   }
 

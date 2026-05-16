@@ -170,7 +170,7 @@ class _PinLockPageState extends State<PinLockPage> {
                         contentPadding: EdgeInsets.zero,
                         value: _rememberLogin,
                         controlAffinity: ListTileControlAffinity.leading,
-                        title: const Text('Keep me signed in'),
+                        title: const Text('Remember me'),
                         subtitle: const Text('Skip login next time this app opens.'),
                         onChanged: (value) => setState(() => _rememberLogin = value ?? false),
                       ),

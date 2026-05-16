@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ventio/core/services/local_database_service.dart';
@@ -17,10 +19,33 @@ Product _product(int index) {
   );
 }
 
+Map<String, String> _hostIdentitySeed() {
+  final now = DateTime(2026, 1, 1).toIso8601String();
+  return <String, String>{
+    'app_identity_v1': jsonEncode(<String, dynamic>{
+      'storeId': 'ST-STRESS',
+      'branchId': 'BR-STRESS',
+      'deviceId': 'DV-STRESS',
+      'deviceName': 'Stress Test Host',
+      'platform': 'windows',
+      'deviceRole': 'host',
+      'appRole': 'store',
+      'syncMode': 'lanOnly',
+      'createdAt': now,
+      'updatedAt': now,
+      'hostDeviceId': '',
+      'cloudTenantId': '',
+      'deviceToken': 'device_stress_host',
+      'storeEpoch': 1,
+      'recoveryKey': 'RK-STRE-TEST-HOST',
+    }),
+  };
+}
+
 Future<AppStore> _readyStore() async {
   TestWidgetsFlutterBinding.ensureInitialized();
   SharedPreferences.setMockInitialValues(const <String, Object>{});
-  LocalDatabaseService.useInMemoryStoreForTesting(const <String, String>{});
+  LocalDatabaseService.useInMemoryStoreForTesting(_hostIdentitySeed());
   final store = AppStore();
   await store.initialize();
   await store.completeInitialAdminSetup(fullName: 'Admin', username: 'admin', password: 'AdminPass123');

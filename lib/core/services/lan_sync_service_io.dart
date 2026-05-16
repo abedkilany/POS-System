@@ -395,6 +395,13 @@ class LanSyncService {
   }
 
   Future<LanSyncResult> claimPairingCode(String host, {int port = 8787, required String code}) async {
+    final identity = store.appIdentity;
+    if (identity.isHost) {
+      return const LanSyncResult(ok: false, message: 'Host devices cannot pair as LAN Clients. Use Transfer Host instead.');
+    }
+    if (identity.isClient && (identity.syncMode == SyncMode.cloudConnected || identity.syncMode == SyncMode.marketplaceEnabled)) {
+      return const LanSyncResult(ok: false, message: 'This device is already a Cloud Client. Clear local data or connect to a new Host before using LAN pairing.');
+    }
     try {
       final client = _client();
       final request = await client.post(host.trim(), port, '/pairing/claim');
@@ -409,7 +416,7 @@ class LanSyncService {
       final body = await utf8.decoder.bind(response).join();
       client.close(force: true);
       if (response.statusCode != 200) {
-        return LanSyncResult(ok: false, message: 'LAN pairing failed: ${response.statusCode} $body');
+        return const LanSyncResult(ok: false, message: 'Pairing code expired or already used. Ask the Host device for a new code.');
       }
       final decoded = jsonDecode(body) as Map<String, dynamic>;
       if (decoded['ok'] != true) {
@@ -510,6 +517,9 @@ class LanSyncService {
 
 
   Future<LanSyncResult> repairFromHostSnapshot(String host, {int port = 8787, String token = '', LanSyncProgressCallback? onProgress}) async {
+    if (store.appIdentity.isHost) {
+      return const LanSyncResult(ok: false, message: 'Host devices cannot rebuild from LAN Host snapshots. Use Transfer Host instead.');
+    }
     try {
       onProgress?.call(0.20, 'Connecting to LAN Host snapshot...');
       final client = _client();

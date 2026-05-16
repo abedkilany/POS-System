@@ -6,6 +6,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../core/localization/app_localizations.dart';
 import '../../core/services/cloud_sync_service.dart';
 import '../../core/services/lan_sync_service.dart';
+import '../../core/sync_unified/sync_unified.dart';
 import '../../data/app_store.dart';
 import '../barcode/barcode_scanner_page.dart';
 
@@ -36,6 +37,27 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
 
   late final LanSyncService _lanSyncService = LanSyncService(widget.store);
   late final CloudSyncService _cloudSyncService = CloudSyncService(widget.store);
+
+  UnifiedSyncEngine _lanEngine() => UnifiedSyncEngine(
+        LanSyncTransportAdapter(
+          service: _lanSyncService,
+          settings: LanSyncSettings.load().copyWith(
+            host: _hostController.text.trim(),
+            port: _port,
+            secret: _lanTokenController.text.trim(),
+            mode: LanSyncDeviceMode.client,
+            setupComplete: true,
+            hostModeEnabled: false,
+          ),
+        ),
+      );
+
+  UnifiedSyncEngine _cloudEngine(CloudSyncSettings settings) => UnifiedSyncEngine(
+        CloudSyncTransportAdapter(
+          service: _cloudSyncService,
+          settings: settings,
+        ),
+      );
 
   _ConnectMode _mode = _ConnectMode.cloud;
   bool _busy = false;
@@ -132,7 +154,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       }
 
       if (mounted) setState(() => _status = 'Claiming LAN pairing code and creating device token... 35%');
-      final result = await _lanSyncService.claimPairingCode(host, port: _port, code: secret);
+      final result = await _lanEngine().claimPairingCode(secret);
       if (!result.ok) {
         setState(() => _status = result.message);
         return;
@@ -177,7 +199,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       await settings.save();
 
       if (mounted) setState(() => _status = 'Verifying pairing code and creating device token... 35%');
-      final result = await _cloudSyncService.claimPairingCode(settings, code);
+      final result = await _cloudEngine(settings).claimPairingCode(code);
       if (!result.ok) {
         setState(() => _status = result.message);
         return;

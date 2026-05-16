@@ -21,10 +21,34 @@ Product product({String id = 'p1', String code = 'P001', String name = 'Coffee',
   return Product(id: id, name: name, code: code, price: price, cost: cost, stock: stock, category: 'Drinks');
 }
 
+Map<String, String> hostIdentitySeed([Map<String, String>? seed]) {
+  final now = DateTime(2026, 1, 1).toIso8601String();
+  return <String, String>{
+    ...?seed,
+    'app_identity_v1': jsonEncode(<String, dynamic>{
+      'storeId': 'ST-TEST01',
+      'branchId': 'BR-TEST01',
+      'deviceId': 'DV-TEST01',
+      'deviceName': 'Test Host',
+      'platform': 'windows',
+      'deviceRole': 'host',
+      'appRole': 'store',
+      'syncMode': 'lanOnly',
+      'createdAt': now,
+      'updatedAt': now,
+      'hostDeviceId': '',
+      'cloudTenantId': '',
+      'deviceToken': 'device_test_host',
+      'storeEpoch': 1,
+      'recoveryKey': 'RK-TEST-TEST-TEST',
+    }),
+  };
+}
+
 Future<AppStore> readyStore([Map<String, String>? seed]) async {
   TestWidgetsFlutterBinding.ensureInitialized();
   SharedPreferences.setMockInitialValues(const <String, Object>{});
-  LocalDatabaseService.useInMemoryStoreForTesting(seed ?? const <String, String>{});
+  LocalDatabaseService.useInMemoryStoreForTesting(hostIdentitySeed(seed));
   final store = AppStore();
   await store.initialize();
   await store.completeInitialAdminSetup(fullName: 'Admin', username: 'admin', password: 'AdminPass123');

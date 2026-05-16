@@ -24,6 +24,7 @@ class AppIdentity {
     this.cloudTenantId = '',
     this.deviceToken = '',
     this.storeEpoch = 1,
+    this.recoveryKey = '',
   });
 
   final String storeId;
@@ -42,6 +43,7 @@ class AppIdentity {
   /// so Clients no longer share a single master sync token.
   final String deviceToken;
   final int storeEpoch;
+  final String recoveryKey;
 
   bool get isHost => deviceRole == DeviceRole.host;
   bool get isClient => deviceRole == DeviceRole.client;
@@ -64,6 +66,7 @@ class AppIdentity {
     String? cloudTenantId,
     String? deviceToken,
     int? storeEpoch,
+    String? recoveryKey,
   }) {
     return AppIdentity(
       storeId: storeId ?? this.storeId,
@@ -80,6 +83,7 @@ class AppIdentity {
       cloudTenantId: cloudTenantId ?? this.cloudTenantId,
       deviceToken: deviceToken ?? this.deviceToken,
       storeEpoch: storeEpoch ?? this.storeEpoch,
+      recoveryKey: recoveryKey ?? this.recoveryKey,
     );
   }
 
@@ -99,6 +103,7 @@ class AppIdentity {
         'deviceToken': deviceToken,
         'transportType': transportType,
         'storeEpoch': storeEpoch,
+        'recoveryKey': recoveryKey,
       };
 
   factory AppIdentity.fromJson(Map<String, dynamic> json) {
@@ -125,15 +130,18 @@ class AppIdentity {
       cloudTenantId: json['cloudTenantId']?.toString() ?? '',
       deviceToken: json['deviceToken']?.toString() ?? json['device_token']?.toString() ?? '',
       storeEpoch: (json['storeEpoch'] as num?)?.toInt() ?? 1,
+      recoveryKey: (json['recoveryKey']?.toString().trim().isNotEmpty ?? false)
+          ? json['recoveryKey'].toString().trim().toUpperCase()
+          : _recoveryKey(),
     );
   }
 
   static AppIdentity defaults({required String deviceId, required AppPlatformType platform}) {
     final now = DateTime.now();
     return AppIdentity(
-      storeId: _withPrefix('Str'),
-      branchId: _withPrefix('Brn'),
-      deviceId: deviceId.isEmpty ? _withPrefix('Dev') : deviceId,
+      storeId: _withPrefix('ST'),
+      branchId: _withPrefix('BR'),
+      deviceId: deviceId.isEmpty ? _withPrefix('DV') : _normalizeDeviceId(deviceId),
       deviceName: 'Main device',
       platform: platform,
       deviceRole: platform == AppPlatformType.windows ? DeviceRole.host : DeviceRole.client,
@@ -143,13 +151,33 @@ class AppIdentity {
       updatedAt: now,
       deviceToken: 'device_${now.microsecondsSinceEpoch}_${deviceId.hashCode.abs()}',
       storeEpoch: 1,
+      recoveryKey: _recoveryKey(),
     );
+  }
+
+
+  static String _recoveryKey() {
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    final random = Random.secure();
+    String block() => List<String>.generate(4, (_) => alphabet[random.nextInt(alphabet.length)]).join();
+    return 'RK-${block()}-${block()}-${block()}';
+  }
+
+  static String _normalizeDeviceId(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return _withPrefix('DV');
+    final parts = trimmed.split('-');
+    if (parts.length == 2) {
+      final prefix = parts.first.toUpperCase() == 'DEV' ? 'DV' : parts.first.toUpperCase();
+      return '$prefix-${parts.last.toUpperCase()}';
+    }
+    return trimmed.toUpperCase();
   }
 
   static String _withPrefix(String prefix) {
     const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     final random = Random.secure();
-    final body = List<String>.generate(7, (_) => alphabet[random.nextInt(alphabet.length)]).join();
-    return '$prefix-$body';
+    final body = List<String>.generate(6, (_) => alphabet[random.nextInt(alphabet.length)]).join();
+    return '${prefix.toUpperCase()}-$body';
   }
 }
