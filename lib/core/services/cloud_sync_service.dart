@@ -158,6 +158,48 @@ class CloudDeviceStatus {
       );
 }
 
+
+class CloudProvisioningStatus {
+  const CloudProvisioningStatus._();
+
+  static const _stateKey = 'cloud_initial_provisioning_state_v1';
+  static const _messageKey = 'cloud_initial_provisioning_message_v1';
+  static const _requestedAtKey = 'cloud_initial_provisioning_requested_at_v1';
+  static const _lastAttemptAtKey = 'cloud_initial_provisioning_last_attempt_at_v1';
+
+  static bool get isPending => LocalDatabaseService.getString(_stateKey) == 'pending';
+
+  static String get message => LocalDatabaseService.getString(_messageKey) ?? 'Initial Store data is downloading from the Host.';
+
+  static DateTime? get requestedAt => DateTime.tryParse(LocalDatabaseService.getString(_requestedAtKey) ?? '');
+
+  static DateTime? get lastAttemptAt => DateTime.tryParse(LocalDatabaseService.getString(_lastAttemptAtKey) ?? '');
+
+  static Future<void> markPending({String message = 'Initial Store data is downloading from the Host.', DateTime? requestedAt}) async {
+    final now = DateTime.now().toUtc();
+    await LocalDatabaseService.setString(_stateKey, 'pending');
+    await LocalDatabaseService.setString(_messageKey, message);
+    await LocalDatabaseService.setString(_requestedAtKey, (requestedAt ?? now).toIso8601String());
+  }
+
+  static Future<void> markAttempted([DateTime? value]) async {
+    await LocalDatabaseService.setString(_lastAttemptAtKey, (value ?? DateTime.now().toUtc()).toIso8601String());
+  }
+
+  static Future<void> markComplete({String message = 'Initial Store data downloaded.'}) async {
+    await LocalDatabaseService.setString(_stateKey, 'complete');
+    await LocalDatabaseService.setString(_messageKey, message);
+    await LocalDatabaseService.deleteString(_lastAttemptAtKey);
+  }
+
+  static Future<void> clear() async {
+    await LocalDatabaseService.deleteString(_stateKey);
+    await LocalDatabaseService.deleteString(_messageKey);
+    await LocalDatabaseService.deleteString(_requestedAtKey);
+    await LocalDatabaseService.deleteString(_lastAttemptAtKey);
+  }
+}
+
 typedef CloudSyncProgressCallback = void Function(double value, String label);
 
 class CloudSyncResult {
@@ -292,17 +334,26 @@ class CloudSyncService {
         // Host has not published the initial snapshot yet. The background Cloud
         // sync controller can continue retrying the provisioning/download step
         // after the user returns to Login.
-        final request = await requestFreshHostSnapshot(settings);
+        final requestedAt = DateTime.now().toUtc();
+        await CloudProvisioningStatus.markPending(
+          requestedAt: requestedAt,
+          message: 'Device paired. Initial Store data is being prepared by the Host.',
+        );
+
+        final request = await requestFreshHostSnapshot(settings, requestedAt: requestedAt);
         if (!request.ok) {
           return CloudPairingClaimResult(
             ok: true,
-            message: 'Device paired successfully. Initial Store data will download when the Host is online.',
+            message: 'Device paired successfully. Initial Store data will download automatically when the Host is online.',
             identity: identity,
           );
         }
 
-        final initialPull = await syncNow(settings.copyWith(clearLastPullCursor: true));
+        final initialPull = await syncNow(settings.copyWith(clearLastPullCursor: true), minSnapshotUpdatedAt: requestedAt);
         final appliedInitialData = initialPull.ok && (initialPull.pulled > 0 || initialPull.restoredSnapshot);
+        if (appliedInitialData) {
+          await CloudProvisioningStatus.markComplete(message: 'Initial Store data downloaded.');
+        }
         return CloudPairingClaimResult(
           ok: true,
           message: appliedInitialData
@@ -524,6 +575,7 @@ class CloudSyncService {
         final repaired = await store.verifyLocalBusinessDataIntegrity();
         onProgress?.call(0.94, 'Cleaning up local records...');
         await store.cleanupSoftDeletedRecords();
+        await CloudProvisioningStatus.markComplete(message: 'Initial Store data downloaded.');
         onProgress?.call(1.0, 'Cloud rebuild completed.');
         return CloudSyncResult(
           ok: repaired.ok,
@@ -991,6 +1043,9 @@ class CloudSyncService {
         onProgress?.call(0.96, 'Cleaning up after Cloud sync...');
         await store.cleanupSoftDeletedRecords();
       }
+      if (store.appIdentity.isClient && (restoredSnapshot || pulled > 0)) {
+        await CloudProvisioningStatus.markComplete(message: 'Initial Store data downloaded.');
+      }
       onProgress?.call(1.0, 'Cloud sync completed.');
       return CloudSyncResult(
         ok: true,
@@ -1068,10 +1123,23 @@ class AutoCloudSyncController {
       if (settings.autoSyncEnabled && settings.isConfigured && store.appIdentity.isCloudEnabled) {
         final hasOutgoingWork = store.pendingSyncQueueForTarget('cloud', readyOnly: false).isNotEmpty ||
             store.pendingSyncQueueForTarget('cloud_host', readyOnly: false).isNotEmpty;
+        final now = DateTime.now().toUtc();
+        final pendingProvisioning = store.appIdentity.isClient && CloudProvisioningStatus.isPending;
+        if (pendingProvisioning) {
+          final lastAttempt = CloudProvisioningStatus.lastAttemptAt;
+          final shouldRequest = lastAttempt == null || now.difference(lastAttempt) > const Duration(minutes: 1);
+          if (shouldRequest) {
+            await CloudProvisioningStatus.markAttempted(now);
+            final requestedAt = CloudProvisioningStatus.requestedAt ?? now;
+            await CloudSyncService(store).requestFreshHostSnapshot(settings, requestedAt: requestedAt);
+            settings = settings.copyWith(clearLastPullCursor: true);
+          }
+        }
+
         final cursor = settings.lastPullCursor;
         final staleClient = store.appIdentity.isClient &&
             cursor != null &&
-            DateTime.now().toUtc().difference(cursor.toUtc()) > const Duration(days: 7);
+            now.difference(cursor.toUtc()) > const Duration(days: 7);
         if (staleClient && !hasOutgoingWork) {
           final repair = await CloudSyncService(store).rebuildFromCloudHostSnapshot(settings);
           if (!repair.ok) {

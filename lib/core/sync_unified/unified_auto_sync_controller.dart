@@ -234,10 +234,23 @@ class UnifiedAutoCloudSyncController {
       if (settings.autoSyncEnabled && settings.isConfigured && store.appIdentity.isCloudEnabled) {
         final hasOutgoingWork = store.pendingSyncQueueForTarget('cloud', readyOnly: false).isNotEmpty ||
             store.pendingSyncQueueForTarget('cloud_host', readyOnly: false).isNotEmpty;
+        final now = DateTime.now().toUtc();
+        final pendingProvisioning = store.appIdentity.isClient && CloudProvisioningStatus.isPending;
+        if (pendingProvisioning) {
+          final lastAttempt = CloudProvisioningStatus.lastAttemptAt;
+          final shouldRequest = lastAttempt == null || now.difference(lastAttempt) > const Duration(minutes: 1);
+          if (shouldRequest) {
+            await CloudProvisioningStatus.markAttempted(now);
+            final requestedAt = CloudProvisioningStatus.requestedAt ?? now;
+            await CloudSyncService(store).requestFreshHostSnapshot(settings, requestedAt: requestedAt);
+            settings = settings.copyWith(clearLastPullCursor: true);
+          }
+        }
+
         final cursor = settings.lastPullCursor;
         final staleClient = store.appIdentity.isClient &&
             cursor != null &&
-            DateTime.now().toUtc().difference(cursor.toUtc()) > const Duration(days: 7);
+            now.difference(cursor.toUtc()) > const Duration(days: 7);
         final engine = UnifiedSyncFactory.cloudEngine(store, settings: settings);
         if (staleClient && !hasOutgoingWork) {
           final repair = await engine.rebuildFromHostSnapshot();

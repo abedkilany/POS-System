@@ -7,6 +7,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'core/localization/app_localizations.dart';
 import 'core/theme/app_theme.dart';
 import 'core/sync_unified/sync_unified.dart';
+import 'core/services/cloud_sync_service.dart';
 import 'data/app_store.dart';
 import 'models/user_role.dart';
 import 'features/customers/customers_page.dart';
@@ -328,7 +329,7 @@ class NavigationRailDestinationListTile extends StatelessWidget {
   }
 }
 
-enum _HostReachability { disabled, hostDevice, checking, connected, pending, disconnected, cloudOffline }
+enum _HostReachability { disabled, hostDevice, checking, connected, provisioning, pending, disconnected, cloudOffline }
 
 class HostConnectionIndicator extends StatefulWidget {
   const HostConnectionIndicator({super.key, required this.store});
@@ -378,9 +379,14 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
       if (mounted) setState(() => _state = _HostReachability.checking);
       final status = await UnifiedSyncFactory.cloudEngine(widget.store).getHostStatus();
       final pending = widget.store.pendingSyncCount;
+      final provisioning = widget.store.appIdentity.isClient && CloudProvisioningStatus.isPending;
       if (!mounted) return;
       setState(() {
-        if (!status.cloudReachable) {
+        if (provisioning) {
+          _lastOk = status.lastSeenAt;
+          _state = _HostReachability.provisioning;
+          _message = '${CloudProvisioningStatus.message} ${status.message}'.trim();
+        } else if (!status.cloudReachable) {
           _state = _HostReachability.cloudOffline;
           _message = status.message;
         } else if (status.hostReachable) {
@@ -442,6 +448,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     final theme = Theme.of(context);
     final color = switch (_state) {
       _HostReachability.connected => Colors.green,
+      _HostReachability.provisioning => Colors.orange,
       _HostReachability.pending => Colors.orange,
       _HostReachability.disconnected => theme.colorScheme.error,
       _HostReachability.cloudOffline => theme.colorScheme.error,
@@ -451,6 +458,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     };
     final label = switch (_state) {
       _HostReachability.connected => tr.text('host_connected'),
+      _HostReachability.provisioning => 'Provisioning',
       _HostReachability.pending => tr.text('sync_pending'),
       _HostReachability.disconnected => tr.text('host_offline'),
       _HostReachability.cloudOffline => tr.text('cloud_offline'),
