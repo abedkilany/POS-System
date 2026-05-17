@@ -14,6 +14,7 @@ import recoveryClaim from '../server_api/sync/recovery/claim.js';
 import requestsAck from '../server_api/sync/requests/ack.js';
 import requestsPull from '../server_api/sync/requests/pull.js';
 import requestsPush from '../server_api/sync/requests/push.js';
+import { handleCorsPreflight } from './_cors.js';
 
 const routes = new Map([
   ['health', health],
@@ -45,6 +46,7 @@ function normalizePath(req) {
 }
 
 export default async function handler(req, res) {
+  if (handleCorsPreflight(req, res)) return;
   const path = normalizePath(req);
   const route = routes.get(path);
   if (!route) {
