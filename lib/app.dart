@@ -329,7 +329,35 @@ class NavigationRailDestinationListTile extends StatelessWidget {
   }
 }
 
-enum _HostReachability { disabled, hostDevice, checking, connected, provisioning, pending, disconnected, cloudOffline }
+enum _TransportState { checking, active, online, pending, provisioning, offline, error, disabled, notConfigured }
+
+class _TransportSnapshot {
+  const _TransportSnapshot({
+    required this.label,
+    required this.state,
+    required this.message,
+    this.lastSeenAt,
+  });
+
+  final String label;
+  final _TransportState state;
+  final String message;
+  final DateTime? lastSeenAt;
+}
+
+class _ConnectionStatusSnapshot {
+  const _ConnectionStatusSnapshot({
+    required this.roleLabel,
+    required this.roleMessage,
+    required this.lan,
+    required this.cloud,
+  });
+
+  final String roleLabel;
+  final String roleMessage;
+  final _TransportSnapshot lan;
+  final _TransportSnapshot cloud;
+}
 
 class HostConnectionIndicator extends StatefulWidget {
   const HostConnectionIndicator({super.key, required this.store});
@@ -342,13 +370,13 @@ class HostConnectionIndicator extends StatefulWidget {
 
 class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
   Timer? _timer;
-  _HostReachability _state = _HostReachability.checking;
-  DateTime? _lastOk;
-  String _message = '';
-
-  String trText(String key) => AppLocalizations.of(context).text(key);
-
   bool _didStartRefreshLoop = false;
+  _ConnectionStatusSnapshot _snapshot = const _ConnectionStatusSnapshot(
+    roleLabel: 'Device',
+    roleMessage: 'Checking device role...',
+    lan: _TransportSnapshot(label: 'LAN', state: _TransportState.checking, message: 'Checking LAN status...'),
+    cloud: _TransportSnapshot(label: 'Cloud', state: _TransportState.checking, message: 'Checking Cloud status...'),
+  );
 
   @override
   void initState() {
@@ -370,125 +398,253 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     super.dispose();
   }
 
-  Future<void> _refresh() async {
+  String _roleLabel() {
+    final identity = widget.store.appIdentity;
+    if (identity.isHost) return 'Host Device';
+    if (identity.isClient) return 'Client Device';
+    return 'Local Device';
+  }
+
+  String _roleMessage() {
+    final identity = widget.store.appIdentity;
+    if (identity.isHost) return 'This device is the main store Host. LAN and Cloud are shown separately.';
+    if (identity.isClient) return 'This device is connected as a Client. Host reachability is shown by transport.';
+    return 'This device is running locally without a paired Host.';
+  }
+
+  Future<_TransportSnapshot> _readLanStatus() async {
     if (kIsWeb) {
-      if (!UnifiedSyncFactory.cloudCanCheck(widget.store)) {
-        if (mounted) setState(() { _state = _HostReachability.disabled; _message = trText('cloud_off'); });
-        return;
-      }
-      if (mounted) setState(() => _state = _HostReachability.checking);
-      final status = await UnifiedSyncFactory.cloudEngine(widget.store).getHostStatus();
-      final pending = widget.store.pendingSyncCount;
-      final provisioning = widget.store.appIdentity.isClient && CloudProvisioningStatus.isPending;
-      if (!mounted) return;
-      setState(() {
-        if (provisioning) {
-          _lastOk = status.lastSeenAt;
-          _state = _HostReachability.provisioning;
-          _message = '${CloudProvisioningStatus.message} ${status.message}'.trim();
-        } else if (!status.cloudReachable) {
-          _state = _HostReachability.cloudOffline;
-          _message = status.message;
-        } else if (status.hostReachable) {
-          _lastOk = status.lastSeenAt ?? DateTime.now();
-          _state = pending > 0 ? _HostReachability.pending : _HostReachability.connected;
-          _message = pending > 0 ? trText('pending_changes').replaceAll('{count}', '$pending') : trText('host_heartbeat_fresh');
-        } else {
-          _lastOk = status.lastSeenAt;
-          _state = _HostReachability.disconnected;
-          _message = status.lastSeenAt == null ? trText('no_host_heartbeat') : trText('host_heartbeat_stale');
-        }
-      });
-      return;
+      return const _TransportSnapshot(
+        label: 'LAN',
+        state: _TransportState.disabled,
+        message: 'LAN is not available in the web build.',
+      );
     }
 
     if (!UnifiedSyncFactory.isLanSetupComplete) {
-      if (mounted) setState(() { _state = _HostReachability.disabled; _message = trText('lan_not_configured'); });
-      return;
+      return const _TransportSnapshot(
+        label: 'LAN',
+        state: _TransportState.disabled,
+        message: 'LAN is not configured on this device.',
+      );
     }
-    if (UnifiedSyncFactory.isLanHost) {
-      if (mounted) setState(() { _state = _HostReachability.hostDevice; _message = trText('this_device_is_host'); });
-      return;
+
+    if (UnifiedSyncFactory.isLanHost || widget.store.appIdentity.isHost) {
+      return const _TransportSnapshot(
+        label: 'LAN',
+        state: _TransportState.active,
+        message: 'LAN Host is active on this device.',
+      );
     }
-    if (mounted) setState(() => _state = _HostReachability.checking);
-    final status = await UnifiedSyncFactory.lanEngine(widget.store).getHostStatus();
+
+    try {
+      final status = await UnifiedSyncFactory.lanEngine(widget.store).getHostStatus();
+      if (status.hostReachable) {
+        return _TransportSnapshot(
+          label: 'LAN',
+          state: _TransportState.online,
+          message: status.message.isEmpty ? 'LAN Host is reachable.' : status.message,
+          lastSeenAt: status.lastSeenAt ?? DateTime.now(),
+        );
+      }
+      return _TransportSnapshot(
+        label: 'LAN',
+        state: _TransportState.offline,
+        message: status.message.isEmpty ? 'LAN Host is offline.' : status.message,
+        lastSeenAt: status.lastSeenAt,
+      );
+    } catch (error) {
+      return _TransportSnapshot(
+        label: 'LAN',
+        state: _TransportState.error,
+        message: 'LAN status check failed: $error',
+      );
+    }
+  }
+
+  Future<_TransportSnapshot> _readCloudStatus() async {
     final pending = widget.store.pendingSyncCount;
+    final provisioning = widget.store.appIdentity.isClient && CloudProvisioningStatus.isPending;
+
+    if (!UnifiedSyncFactory.cloudCanCheck(widget.store)) {
+      return const _TransportSnapshot(
+        label: 'Cloud',
+        state: _TransportState.notConfigured,
+        message: 'Cloud is not configured on this device.',
+      );
+    }
+
+    try {
+      final status = await UnifiedSyncFactory.cloudEngine(widget.store).getHostStatus();
+
+      if (provisioning) {
+        return _TransportSnapshot(
+          label: 'Cloud',
+          state: _TransportState.provisioning,
+          message: '${CloudProvisioningStatus.message} ${status.message}'.trim(),
+          lastSeenAt: status.lastSeenAt,
+        );
+      }
+
+      if (!status.cloudReachable) {
+        return _TransportSnapshot(
+          label: 'Cloud',
+          state: _TransportState.offline,
+          message: status.message.isEmpty ? 'Cloud is unreachable.' : status.message,
+          lastSeenAt: status.lastSeenAt,
+        );
+      }
+
+      if (pending > 0) {
+        return _TransportSnapshot(
+          label: 'Cloud',
+          state: _TransportState.pending,
+          message: '$pending pending change(s) waiting for sync.',
+          lastSeenAt: status.lastSeenAt ?? DateTime.now(),
+        );
+      }
+
+      if (widget.store.appIdentity.isHost) {
+        return _TransportSnapshot(
+          label: 'Cloud',
+          state: status.hostReachable ? _TransportState.online : _TransportState.pending,
+          message: status.hostReachable
+              ? 'Cloud heartbeat is active for this Host.'
+              : 'Cloud is reachable. Waiting for this Host heartbeat to publish.',
+          lastSeenAt: status.lastSeenAt,
+        );
+      }
+
+      if (status.hostReachable) {
+        return _TransportSnapshot(
+          label: 'Cloud',
+          state: _TransportState.online,
+          message: status.message.isEmpty ? 'Cloud Host is reachable.' : status.message,
+          lastSeenAt: status.lastSeenAt ?? DateTime.now(),
+        );
+      }
+
+      return _TransportSnapshot(
+        label: 'Cloud',
+        state: _TransportState.offline,
+        message: status.lastSeenAt == null ? 'No Host heartbeat has been published yet.' : 'Host heartbeat is stale.',
+        lastSeenAt: status.lastSeenAt,
+      );
+    } catch (error) {
+      return _TransportSnapshot(
+        label: 'Cloud',
+        state: _TransportState.error,
+        message: 'Cloud status check failed: $error',
+      );
+    }
+  }
+
+  Future<void> _refresh() async {
+    final checking = _ConnectionStatusSnapshot(
+      roleLabel: _roleLabel(),
+      roleMessage: _roleMessage(),
+      lan: const _TransportSnapshot(label: 'LAN', state: _TransportState.checking, message: 'Checking LAN status...'),
+      cloud: const _TransportSnapshot(label: 'Cloud', state: _TransportState.checking, message: 'Checking Cloud status...'),
+    );
+    if (mounted) setState(() => _snapshot = checking);
+
+    final lan = await _readLanStatus();
+    final cloud = await _readCloudStatus();
     if (!mounted) return;
     setState(() {
-      if (status.hostReachable) {
-        _lastOk = status.lastSeenAt ?? DateTime.now();
-        _state = pending > 0 ? _HostReachability.pending : _HostReachability.connected;
-        _message = pending > 0 ? trText('pending_changes').replaceAll('{count}', '$pending') : trText('host_reachable');
-      } else {
-        _state = _HostReachability.disconnected;
-        _message = status.message;
-      }
+      _snapshot = _ConnectionStatusSnapshot(
+        roleLabel: _roleLabel(),
+        roleMessage: _roleMessage(),
+        lan: lan,
+        cloud: cloud,
+      );
     });
-    if (!status.hostReachable && UnifiedSyncFactory.cloudCanCheck(widget.store)) {
-      final cloudStatus = await UnifiedSyncFactory.cloudEngine(widget.store).getHostStatus();
-      if (!mounted) return;
-      setState(() {
-        if (cloudStatus.cloudReachable && cloudStatus.hostReachable) {
-          _lastOk = cloudStatus.lastSeenAt ?? DateTime.now();
-          _state = pending > 0 ? _HostReachability.pending : _HostReachability.connected;
-          _message = pending > 0
-              ? trText('pending_changes').replaceAll('{count}', '$pending')
-              : 'LAN offline, Host reachable through Cloud.';
-        } else if (cloudStatus.cloudReachable) {
-          _state = _HostReachability.disconnected;
-          _message = 'LAN offline. Cloud reachable but Host heartbeat is stale.';
-        }
-      });
-    }
+  }
+
+  Color _stateColor(BuildContext context, _TransportState state) {
+    final theme = Theme.of(context);
+    return switch (state) {
+      _TransportState.active => Colors.green,
+      _TransportState.online => Colors.green,
+      _TransportState.pending => Colors.orange,
+      _TransportState.provisioning => Colors.blue,
+      _TransportState.offline => theme.colorScheme.error,
+      _TransportState.error => theme.colorScheme.error,
+      _TransportState.checking => Colors.amber,
+      _TransportState.disabled => Colors.grey,
+      _TransportState.notConfigured => Colors.grey,
+    };
+  }
+
+  String _stateText(_TransportState state) {
+    return switch (state) {
+      _TransportState.active => 'Active',
+      _TransportState.online => 'Online',
+      _TransportState.pending => 'Pending',
+      _TransportState.provisioning => 'Provisioning',
+      _TransportState.offline => 'Offline',
+      _TransportState.error => 'Error',
+      _TransportState.checking => 'Checking',
+      _TransportState.disabled => 'Disabled',
+      _TransportState.notConfigured => 'Not Configured',
+    };
+  }
+
+  String _lastSeenText(DateTime? value) {
+    if (value == null) return '';
+    final local = value.toLocal();
+    return ' • ${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+  }
+
+  Widget _chip(BuildContext context, String label, _TransportState state, {bool role = false}) {
+    final theme = Theme.of(context);
+    final color = role ? Colors.blue : _stateColor(context, state);
+    final text = role ? label : '$label ${_stateText(state)}';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.13),
+        border: Border.all(color: color.withValues(alpha: 0.42)),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.circle, color: color, size: 8),
+          const SizedBox(width: 5),
+          Text(text, style: theme.textTheme.labelSmall),
+        ],
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final tr = AppLocalizations.of(context);
-    final theme = Theme.of(context);
-    final color = switch (_state) {
-      _HostReachability.connected => Colors.green,
-      _HostReachability.provisioning => Colors.orange,
-      _HostReachability.pending => Colors.orange,
-      _HostReachability.disconnected => theme.colorScheme.error,
-      _HostReachability.cloudOffline => theme.colorScheme.error,
-      _HostReachability.hostDevice => Colors.blue,
-      _HostReachability.checking => Colors.amber,
-      _HostReachability.disabled => Colors.grey,
-    };
-    final label = switch (_state) {
-      _HostReachability.connected => tr.text('host_connected'),
-      _HostReachability.provisioning => 'Provisioning',
-      _HostReachability.pending => tr.text('sync_pending'),
-      _HostReachability.disconnected => tr.text('host_offline'),
-      _HostReachability.cloudOffline => tr.text('cloud_offline'),
-      _HostReachability.hostDevice => tr.text('host_device'),
-      _HostReachability.checking => kIsWeb ? tr.text('checking_cloud') : tr.text('checking_host'),
-      _HostReachability.disabled => kIsWeb ? tr.text('cloud_off') : tr.text('lan_off'),
-    };
-    final last = _lastOk == null ? '' : ' • ${tr.text(kIsWeb ? 'last_seen' : 'last_ok')} ${_lastOk!.toLocal().hour.toString().padLeft(2, '0')}:${_lastOk!.toLocal().minute.toString().padLeft(2, '0')}';
+    final lan = _snapshot.lan;
+    final cloud = _snapshot.cloud;
+    final tooltip = [
+      _snapshot.roleLabel,
+      _snapshot.roleMessage,
+      'LAN: ${_stateText(lan.state)}${_lastSeenText(lan.lastSeenAt)} — ${lan.message}',
+      'Cloud: ${_stateText(cloud.state)}${_lastSeenText(cloud.lastSeenAt)} — ${cloud.message}',
+    ].join('\n');
+
     return Padding(
       padding: const EdgeInsetsDirectional.only(end: 8),
       child: Tooltip(
-        message: '${tr.text('host_status')}: $label$last\n$_message',
+        message: tooltip,
         child: InkWell(
           borderRadius: BorderRadius.circular(999),
           onTap: _refresh,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.14),
-              border: Border.all(color: color.withValues(alpha: 0.45)),
-              borderRadius: BorderRadius.circular(999),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.circle, color: color, size: 10),
-                const SizedBox(width: 6),
-                Text(label, style: theme.textTheme.labelMedium),
-              ],
-            ),
+          child: Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              _chip(context, _snapshot.roleLabel, _TransportState.online, role: true),
+              _chip(context, 'LAN', lan.state),
+              _chip(context, 'Cloud', cloud.state),
+            ],
           ),
         ),
       ),
