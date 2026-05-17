@@ -14,7 +14,6 @@ import recoveryClaim from '../server_api/sync/recovery/claim.js';
 import requestsAck from '../server_api/sync/requests/ack.js';
 import requestsPull from '../server_api/sync/requests/pull.js';
 import requestsPush from '../server_api/sync/requests/push.js';
-import { handleCorsPreflight } from './_cors.js';
 
 const routes = new Map([
   ['health', health],
@@ -46,7 +45,17 @@ function normalizePath(req) {
 }
 
 export default async function handler(req, res) {
-  if (handleCorsPreflight(req, res)) return;
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'Content-Type, Accept, Authorization, X-Device-Id, X-Device-Token, X-Device-Role, X-Sync-Transport, X-Store-Id, X-Branch-Id',
+  );
+
+  if (req.method === 'OPTIONS') {
+    return res.status(204).end();
+  }
+
   const path = normalizePath(req);
   const route = routes.get(path);
   if (!route) {
