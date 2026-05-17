@@ -206,7 +206,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       }
 
       if (!mounted) return;
-      if (mounted) setState(() => _status = 'Cloud pairing and rebuild complete... 100%');
+      if (mounted) setState(() => _status = 'Cloud pairing complete. Initial data may continue in background... 100%');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(result.message.isEmpty ? 'Connected to Store. Please sign in.' : result.message)),
       );

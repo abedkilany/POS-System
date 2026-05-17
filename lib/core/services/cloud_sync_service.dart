@@ -242,7 +242,6 @@ class CloudSyncService {
 
   Future<CloudPairingClaimResult> claimPairingCode(CloudSyncSettings settings, String code) async {
     final current = store.appIdentity;
-    final previousIdentity = current;
     if (current.isHost) {
       return const CloudPairingClaimResult(ok: false, message: 'Host devices cannot pair as Cloud Clients. Use Transfer Host instead.');
     }
@@ -286,14 +285,33 @@ class CloudSyncService {
         updatedAt: DateTime.now(),
       );
       await store.updateAppIdentityDuringSetup(identity);
+
       if (identity.syncMode == SyncMode.cloudConnected || identity.syncMode == SyncMode.marketplaceEnabled) {
-        final rebuild = await rebuildFromCloudHostSnapshot(settings);
-        if (!rebuild.ok) {
-          await store.updateAppIdentityDuringSetup(previousIdentity);
-          return const CloudPairingClaimResult(ok: false, message: 'Store connected successfully. Initial store data is still being prepared by the Host device.');
+        // Pairing and provisioning are separate lifecycle steps. A valid pairing
+        // code must permanently register this device as a Client even when the
+        // Host has not published the initial snapshot yet. The background Cloud
+        // sync controller can continue retrying the provisioning/download step
+        // after the user returns to Login.
+        final request = await requestFreshHostSnapshot(settings);
+        if (!request.ok) {
+          return CloudPairingClaimResult(
+            ok: true,
+            message: 'Device paired successfully. Initial Store data will download when the Host is online.',
+            identity: identity,
+          );
         }
+
+        final initialPull = await syncNow(settings.copyWith(clearLastPullCursor: true));
+        final appliedInitialData = initialPull.ok && (initialPull.pulled > 0 || initialPull.restoredSnapshot);
+        return CloudPairingClaimResult(
+          ok: true,
+          message: appliedInitialData
+              ? 'Device paired successfully. Initial Store data was downloaded. Please sign in.'
+              : 'Device paired successfully. Initial Store data is being prepared by the Host and will download automatically.',
+          identity: identity,
+        );
       }
-      return CloudPairingClaimResult(ok: true, message: 'Device paired successfully. Full Host snapshot was applied.', identity: identity);
+      return CloudPairingClaimResult(ok: true, message: 'Device paired successfully. Please sign in.', identity: identity);
     } catch (error) {
       return CloudPairingClaimResult(ok: false, message: 'Pairing failed: $error');
     }
@@ -945,7 +963,10 @@ class CloudSyncService {
             .map((item) => SyncChange.fromJson(Map<String, dynamic>.from(item as Map)))
             .where((item) => item.deviceId != store.deviceId)
             .toList();
-        restoredSnapshot = restoredSnapshot || changes.any((item) => item.operation == 'restore_snapshot');
+        final source = (decodedPull['source'] ?? '').toString();
+        restoredSnapshot = restoredSnapshot ||
+            changes.any((item) => item.operation == 'restore_snapshot') ||
+            (initialCursor == null && source == 'entity_snapshots' && changes.isNotEmpty);
         onProgress?.call((0.42 + (pageCount - 1) * 0.08).clamp(0.42, 0.86).toDouble(), 'Applying ${changes.length} Cloud change(s) from page $pageCount...');
         await store.applyRemoteSyncChanges(changes, markAppliedAsSynced: true);
         pulled += changes.length;

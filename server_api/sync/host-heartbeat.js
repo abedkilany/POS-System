@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { sql, assertSyncToken, assertStoreAllowed, assertDeviceAllowed, sendError } from '../_db.js';
+import { sql, assertSyncToken, assertSyncTokenOrDevice, assertStoreAllowed, assertDeviceAllowed, sendError } from '../_db.js';
 
 function asIso(value) {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
@@ -48,11 +48,10 @@ async function ensureHeartbeatTable() {
 
 export default async function handler(req, res) {
   try {
-    assertSyncToken(req);
-
     await ensureHeartbeatTable();
 
     if (req.method === 'POST') {
+      assertSyncToken(req);
       const body = req.body || {};
       const storeId = String(body.storeId || body.store_id || '').trim();
       const branchId = String(body.branchId || body.branch_id || 'main').trim() || 'main';
@@ -136,6 +135,7 @@ export default async function handler(req, res) {
       const branchId = String(req.query.branch_id || req.query.branchId || 'main').trim() || 'main';
       if (!storeId) return res.status(400).json({ ok: false, error: 'store_id is required.' });
       assertStoreAllowed(storeId);
+      await assertSyncTokenOrDevice(req, { storeId, branchId, allowedRoles: ['host', 'client'], allowedTransports: ['cloud', 'lan'] });
 
       const rows = await sql`
         select store_id, branch_id, host_device_id, host_device_name, platform, app_version, sync_mode, last_seen_at
