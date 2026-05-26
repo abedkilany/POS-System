@@ -42,7 +42,8 @@ class BarcodeFeedbackService {
   static const String _vibrationEnabledKey = 'barcode_feedback_vibration_enabled_v1';
   static const String _volumeKey = 'barcode_feedback_volume_v1';
   static const Duration cooldown = Duration(milliseconds: 650);
-  static const String _soundAsset = 'sounds/beep.wav';
+  static const String _successSoundAsset = 'sounds/beep.wav';
+  static const String _errorSoundAsset = 'sounds/error.wav';
 
   static final AudioPlayer _player = AudioPlayer(playerId: 'ventio_barcode_feedback');
   static DateTime? _lastFeedbackAt;
@@ -71,7 +72,11 @@ class BarcodeFeedbackService {
     return last == null || DateTime.now().difference(last) >= cooldown;
   }
 
-  static Future<bool> play({bool force = false}) async {
+  static Future<bool> play({bool force = false}) => _playAsset(_successSoundAsset, force: force);
+
+  static Future<bool> playError({bool force = false}) => _playAsset(_errorSoundAsset, force: force, errorFeedback: true);
+
+  static Future<bool> _playAsset(String asset, {bool force = false, bool errorFeedback = false}) async {
     if (!force && !canPlayNow) return false;
     _lastFeedbackAt = DateTime.now();
 
@@ -83,7 +88,7 @@ class BarcodeFeedbackService {
         await _activePlayback;
         await _player.stop();
         await _player.setVolume(settings.volume);
-        _activePlayback = _player.play(AssetSource(_soundAsset));
+        _activePlayback = _player.play(AssetSource(asset));
         await _activePlayback;
         soundPlayed = true;
       } catch (_) {
@@ -92,14 +97,18 @@ class BarcodeFeedbackService {
     }
 
     if (settings.vibrationEnabled || !soundPlayed) {
-      await _vibrateFallback();
+      await _vibrateFallback(errorFeedback: errorFeedback);
     }
 
     return soundPlayed;
   }
 
-  static Future<void> _vibrateFallback() async {
+  static Future<void> _vibrateFallback({bool errorFeedback = false}) async {
     try {
+      if (errorFeedback) {
+        await HapticFeedback.heavyImpact();
+        return;
+      }
       await HapticFeedback.mediumImpact();
     } catch (_) {
       try {

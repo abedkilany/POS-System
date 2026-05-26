@@ -19,6 +19,16 @@ import '../../models/sale_item.dart';
 import '../../widgets/app_section_header.dart';
 import '../../widgets/empty_state_card.dart';
 
+
+enum _BarcodeAddResult {
+  added,
+  empty,
+  notAllowed,
+  notFound,
+  outOfStock,
+  stockLimitReached,
+}
+
 class SalesPage extends StatefulWidget {
   const SalesPage({super.key, required this.store});
 
@@ -125,7 +135,7 @@ class _SalesPageState extends State<SalesPage> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Expanded(flex: 6, child: _buildCurrentSalePanel(context, tr)),
+                Expanded(flex: 6, child: _buildCurrentSalePanel(context, tr, products)),
                 const SizedBox(width: 12),
                 Expanded(flex: 4, child: _buildQuickProductGridPanel(context, tr, products)),
               ],
@@ -138,14 +148,14 @@ class _SalesPageState extends State<SalesPage> {
     );
   }
 
-  Widget _buildCurrentSalePanel(BuildContext context, AppLocalizations tr) {
+  Widget _buildCurrentSalePanel(BuildContext context, AppLocalizations tr, List<Product> products) {
     return Card(
       child: Padding(
         padding: VentioResponsive.pageInsets(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _buildBarcodeStation(context, tr),
+            _buildBarcodeStation(context, tr, products: products),
             const SizedBox(height: 12),
             Expanded(child: _buildCart(context, tr, showTotals: false, showActions: false)),
           ],
@@ -178,7 +188,7 @@ class _SalesPageState extends State<SalesPage> {
               child: TextFormField(
                 controller: _discountController,
                 decoration: InputDecoration(labelText: tr.text('discount'), isDense: true),
-                inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
+                inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}$'))],
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
                 onChanged: (_) => setState(() {}),
               ),
@@ -230,7 +240,7 @@ class _SalesPageState extends State<SalesPage> {
   }
 
   Widget _buildQuickProductGridPanel(BuildContext context, AppLocalizations tr, List<Product> products) {
-    _ensureQuickPages(products);
+    _ensureQuickPages(products, tr);
     final page = _quickPages[_selectedQuickPageIndex.clamp(0, _quickPages.length - 1).toInt()];
     return Card(
       child: Padding(
@@ -240,11 +250,11 @@ class _SalesPageState extends State<SalesPage> {
           children: [
             Row(
               children: [
-                Expanded(child: Text('Quick Product Grid', style: Theme.of(context).textTheme.titleLarge)),
+                Expanded(child: Text(tr.text('quick_product_grid'), style: Theme.of(context).textTheme.titleLarge)),
                 TextButton.icon(
                   onPressed: () => setState(() => _quickGridEditMode = !_quickGridEditMode),
                   icon: Icon(_quickGridEditMode ? Icons.check : Icons.edit_outlined),
-                  label: Text(_quickGridEditMode ? tr.text('save') : 'Edit Layout'),
+                  label: Text(_quickGridEditMode ? tr.text('save') : tr.text('edit_layout')),
                 ),
               ],
             ),
@@ -310,7 +320,7 @@ class _SalesPageState extends State<SalesPage> {
                   const SizedBox(width: 8),
                   ActionChip(
                     avatar: const Icon(Icons.add, size: 18),
-                    label: const Text('Page'),
+                    label: Text(tr.text('page')),
                     onPressed: _addQuickPage,
                   ),
                 ],
@@ -439,11 +449,11 @@ class _SalesPageState extends State<SalesPage> {
     }
   }
 
-  void _ensureQuickPages(List<Product> products) {
+  void _ensureQuickPages(List<Product> products, AppLocalizations tr) {
     if (_quickPages.isEmpty) {
       _quickPages.add(
         _QuickProductPage(
-          name: 'Favorites',
+          name: tr.text('favorites'),
           slots: List.generate(12, (index) {
             if (index < products.length && index < 6) {
               final product = products[index];
@@ -479,7 +489,7 @@ class _SalesPageState extends State<SalesPage> {
 
   void _addQuickPage() {
     setState(() {
-      _quickPages.add(_QuickProductPage(name: 'Page ${_quickPages.length + 1}', slots: List.generate(12, (_) => const _QuickProductSlot())));
+      _quickPages.add(_QuickProductPage(name: '${AppLocalizations.of(context).text('page')} ${_quickPages.length + 1}', slots: List.generate(12, (_) => const _QuickProductSlot())));
       _selectedQuickPageIndex = _quickPages.length - 1;
       _quickGridEditMode = true;
     });
@@ -502,12 +512,12 @@ class _SalesPageState extends State<SalesPage> {
     final result = await showDialog<String>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Rename quick page'),
+        title: Text(tr.text('rename_quick_page')),
         content: TextField(
           controller: controller,
           autofocus: true,
           textInputAction: TextInputAction.done,
-          decoration: const InputDecoration(labelText: 'Page name'),
+          decoration: InputDecoration(labelText: tr.text('page_name')),
           onSubmitted: (value) => Navigator.pop(dialogContext, value.trim()),
         ),
         actions: [
@@ -574,7 +584,7 @@ class _SalesPageState extends State<SalesPage> {
             return product.name.toLowerCase().contains(q) || product.code.toLowerCase().contains(q) || product.category.toLowerCase().contains(q);
           }).toList();
           return AlertDialog(
-            title: const Text('Quick Product Shortcut'),
+            title: Text(tr.text('quick_product_shortcut')),
             content: SizedBox(
               width: 520,
               height: 520,
@@ -588,7 +598,7 @@ class _SalesPageState extends State<SalesPage> {
                   const SizedBox(height: 10),
                   TextField(
                     controller: nameController,
-                    decoration: const InputDecoration(labelText: 'Short name'),
+                    decoration: InputDecoration(labelText: tr.text('short_name')),
                   ),
                   const SizedBox(height: 10),
                   Expanded(
@@ -640,15 +650,17 @@ class _SalesPageState extends State<SalesPage> {
 
   Widget _buildMobileSalesLayout(BuildContext context, AppLocalizations tr, List<Product> products, double pagePadding) {
     return SafeArea(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: EdgeInsets.all(pagePadding),
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _buildMobileSaleControls(context, tr, products),
             const SizedBox(height: 8),
             _buildMobileInvoiceSummary(context, tr),
             const SizedBox(height: 8),
-            Expanded(child: _buildCart(context, tr, compactActions: true)),
+            _buildCart(context, tr, compactActions: true, expandCartList: false),
           ],
         ),
       ),
@@ -664,16 +676,20 @@ class _SalesPageState extends State<SalesPage> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
-            _buildBarcodeStation(context, tr, embedded: true),
+            _buildBarcodeStation(context, tr, products: products, embedded: true),
             if (_scannerActive) ...[
               const SizedBox(height: 10),
               _buildEmbeddedScannerPreview(),
             ],
             const SizedBox(height: 10),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            Wrap(
+              alignment: WrapAlignment.spaceEvenly,
+              runAlignment: WrapAlignment.center,
+              spacing: 8,
+              runSpacing: 8,
               children: [
                 _MobileSaleAction(icon: Icons.search, label: tr.text('search'), onTap: () => _showProductSearchSheet(products)),
+                _MobileSaleAction(icon: Icons.grid_view_rounded, label: tr.text('quick_products'), onTap: () => _showQuickProductsSheet(products)),
                 _MobileSaleAction(icon: Icons.person_outline, label: tr.text('customer'), onTap: _showCustomerSheet),
                 _MobileSaleAction(icon: Icons.percent, label: tr.text('discount'), onTap: _showDiscountSheet),
                 _MobileSaleAction(icon: Icons.receipt_long_outlined, label: tr.text('recent_invoices'), onTap: _showInvoicesSheet),
@@ -762,7 +778,6 @@ class _SalesPageState extends State<SalesPage> {
       }
       _lastScannedCode = code;
       _lastScannedAt = now;
-      unawaited(BarcodeFeedbackService.play());
       _barcodeController.text = code;
       _addByCode(code);
       return;
@@ -842,7 +857,7 @@ class _SalesPageState extends State<SalesPage> {
     );
   }
 
-  Widget _buildBarcodeStation(BuildContext context, AppLocalizations tr, {bool embedded = false}) {
+  Widget _buildBarcodeStation(BuildContext context, AppLocalizations tr, {required List<Product> products, bool embedded = false}) {
     return Container(
       padding: VentioResponsive.cardInsets(context),
       decoration: BoxDecoration(
@@ -877,6 +892,11 @@ class _SalesPageState extends State<SalesPage> {
                     tooltip: _manualBarcodeInput ? tr.text('hide_keyboard') : tr.text('manual_input'),
                     onPressed: _toggleManualBarcodeInput,
                     icon: Icon(_manualBarcodeInput ? Icons.keyboard_hide_outlined : Icons.keyboard_outlined),
+                  ),
+                  IconButton(
+                    tooltip: tr.text('search_product'),
+                    onPressed: () => _showProductSearchSheet(products),
+                    icon: const Icon(Icons.search),
                   ),
                   if (_canUseCameraScanner)
                     IconButton(
@@ -925,7 +945,95 @@ class _SalesPageState extends State<SalesPage> {
     );
   }
 
-  Widget _buildCart(BuildContext context, AppLocalizations tr, {bool compactActions = false, bool showTotals = true, bool showActions = true}) {
+  Widget _buildCart(
+    BuildContext context,
+    AppLocalizations tr, {
+    bool compactActions = false,
+    bool showTotals = true,
+    bool showActions = true,
+    bool expandCartList = true,
+  }) {
+    Widget cartList({required bool shrinkWrap, required ScrollPhysics? physics}) {
+      return ListView.separated(
+        shrinkWrap: shrinkWrap,
+        primary: false,
+        physics: physics,
+        itemCount: _cart.length,
+        separatorBuilder: (_, __) => const Divider(height: 1),
+        itemBuilder: (context, index) {
+          final item = _cart[index];
+          return LayoutBuilder(
+            builder: (context, constraints) {
+              final actions = Row(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  IconButton(
+                    tooltip: tr.text('decrease_qty'),
+                    onPressed: item.quantity > 1 ? () => _changeCartQuantity(index, item.quantity - 1) : null,
+                    icon: const Icon(Icons.remove_circle_outline),
+                  ),
+                  SizedBox(width: 28, child: Text('${item.quantity}', textAlign: TextAlign.center)),
+                  IconButton(
+                    tooltip: tr.text('increase_qty'),
+                    onPressed: item.quantity < item.product.stock ? () => _changeCartQuantity(index, item.quantity + 1) : null,
+                    icon: const Icon(Icons.add_circle_outline),
+                  ),
+                  IconButton(
+                    tooltip: tr.text('delete'),
+                    onPressed: () => setState(() => _cart.removeAt(index)),
+                    icon: const Icon(Icons.delete_outline),
+                  ),
+                ],
+              );
+              if (constraints.maxWidth < 520) {
+                return InkWell(
+                  onTap: () => _showQuantitySheet(index),
+                  borderRadius: BorderRadius.circular(12),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(item.product.name, style: Theme.of(context).textTheme.titleSmall),
+                        const SizedBox(height: 4),
+                        Text('${item.product.code} • ${formatCurrency(item.product.price, currency: widget.store.storeProfile.currency)} • ${tr.text('stock')}: ${item.product.stock}'),
+                        Align(alignment: Alignment.centerRight, child: actions),
+                      ],
+                    ),
+                  ),
+                );
+              }
+              return ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(item.product.name),
+                subtitle: Text('${item.product.code} • ${formatCurrency(item.product.price, currency: widget.store.storeProfile.currency)} • ${tr.text('stock')}: ${item.product.stock}'),
+                onTap: () => _showQuantitySheet(index),
+                trailing: ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: VentioResponsive.adaptiveWidth(context, mobile: 144, tablet: 164, desktop: 178)),
+                  child: actions,
+                ),
+              );
+            },
+          );
+        },
+      );
+    }
+
+    final Widget cartContent;
+    if (_cart.isEmpty) {
+      final emptyState = Center(child: Text(tr.text('invoice_empty')));
+      cartContent = expandCartList
+          ? Expanded(child: emptyState)
+          : SizedBox(height: 140, child: emptyState);
+    } else {
+      final list = cartList(
+        shrinkWrap: !expandCartList,
+        physics: expandCartList ? null : const NeverScrollableScrollPhysics(),
+      );
+      cartContent = expandCartList ? Expanded(child: list) : list;
+    }
+
     return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
@@ -952,68 +1060,7 @@ class _SalesPageState extends State<SalesPage> {
               ],
             ),
             const SizedBox(height: 8),
-            Expanded(
-              child: _cart.isEmpty
-                  ? Center(child: Text(tr.text('invoice_empty')))
-                  : ListView.separated(
-                      itemCount: _cart.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
-                      itemBuilder: (context, index) {
-                        final item = _cart[index];
-                        return LayoutBuilder(
-                          builder: (context, constraints) {
-                            final actions = Row(
-                              mainAxisSize: MainAxisSize.min,
-                              mainAxisAlignment: MainAxisAlignment.end,
-                              children: [
-                                IconButton(
-                                  tooltip: tr.text('decrease_qty'),
-                                  onPressed: item.quantity > 1 ? () => _changeCartQuantity(index, item.quantity - 1) : null,
-                                  icon: const Icon(Icons.remove_circle_outline),
-                                ),
-                                SizedBox(width: 28, child: Text('${item.quantity}', textAlign: TextAlign.center)),
-                                IconButton(
-                                  tooltip: tr.text('increase_qty'),
-                                  onPressed: item.quantity < item.product.stock ? () => _changeCartQuantity(index, item.quantity + 1) : null,
-                                  icon: const Icon(Icons.add_circle_outline),
-                                ),
-                                IconButton(
-                                  tooltip: tr.text('delete'),
-                                  onPressed: () => setState(() => _cart.removeAt(index)),
-                                  icon: const Icon(Icons.delete_outline),
-                                ),
-                              ],
-                            );
-                            if (constraints.maxWidth < 520) {
-                              return InkWell(
-                                onTap: () => _showQuantitySheet(index),
-                                borderRadius: BorderRadius.circular(12),
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(vertical: 8),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(item.product.name, style: Theme.of(context).textTheme.titleSmall),
-                                      const SizedBox(height: 4),
-                                      Text('${item.product.code} • ${formatCurrency(item.product.price, currency: widget.store.storeProfile.currency)} • ${tr.text('stock')}: ${item.product.stock}'),
-                                      Align(alignment: Alignment.centerRight, child: actions),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            }
-                            return ListTile(
-                              contentPadding: EdgeInsets.zero,
-                              title: Text(item.product.name),
-                              subtitle: Text('${item.product.code} • ${formatCurrency(item.product.price, currency: widget.store.storeProfile.currency)} • ${tr.text('stock')}: ${item.product.stock}'),
-                              onTap: () => _showQuantitySheet(index),
-                              trailing: ConstrainedBox(constraints: BoxConstraints(maxWidth: VentioResponsive.adaptiveWidth(context, mobile: 144, tablet: 164, desktop: 178)), child: actions),
-                            );
-                          },
-                        );
-                      },
-                    ),
-            ),
+            cartContent,
             if (showTotals) ...[
               const Divider(height: 24),
               _totalLine(tr.text('subtotal'), formatCurrency(_subtotal, currency: widget.store.storeProfile.currency)),
@@ -1131,9 +1178,7 @@ class _SalesPageState extends State<SalesPage> {
     final item = _cart[index];
     final cleanQuantity = quantity.clamp(1, item.product.stock).toInt();
     setState(() {
-      final updatedItem = item.copyWith(quantity: cleanQuantity);
-      _cart.removeAt(index);
-      _cart.insert(0, updatedItem);
+      _cart[index] = item.copyWith(quantity: cleanQuantity);
     });
   }
 
@@ -1208,6 +1253,91 @@ class _SalesPageState extends State<SalesPage> {
       ),
     );
     controller.dispose();
+  }
+
+  void _showQuickProductsSheet(List<Product> products) {
+    final tr = AppLocalizations.of(context);
+    _ensureQuickPages(products, tr);
+    var sheetSelectedPageIndex = _selectedQuickPageIndex.clamp(0, _quickPages.length - 1).toInt();
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setModalState) {
+          _ensureQuickPages(products, tr);
+          sheetSelectedPageIndex = sheetSelectedPageIndex.clamp(0, _quickPages.length - 1).toInt();
+          final page = _quickPages[sheetSelectedPageIndex];
+
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+              child: SizedBox(
+                height: MediaQuery.sizeOf(sheetContext).height * 0.82,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(child: Text(tr.text('quick_product_grid'), style: Theme.of(context).textTheme.titleLarge)),
+                        IconButton(
+                          tooltip: tr.text('close'),
+                          onPressed: () => Navigator.pop(sheetContext),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      height: 42,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: _quickPages.length,
+                        separatorBuilder: (_, __) => const SizedBox(width: 8),
+                        itemBuilder: (context, index) {
+                          final selected = index == sheetSelectedPageIndex;
+                          return InputChip(
+                            label: Text(_quickPages[index].name),
+                            selected: selected,
+                            onSelected: (_) {
+                              setState(() => _selectedQuickPageIndex = index);
+                              setModalState(() => sheetSelectedPageIndex = index);
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Expanded(
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final crossAxisCount = constraints.maxWidth > 520 ? 3 : 2;
+                          return GridView.builder(
+                            itemCount: page.slots.length,
+                            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: crossAxisCount,
+                              mainAxisSpacing: 10,
+                              crossAxisSpacing: 10,
+                              childAspectRatio: 1.18,
+                            ),
+                            itemBuilder: (context, index) {
+                              final slot = page.slots[index];
+                              final product = slot.productId == null ? null : _productById(slot.productId!);
+                              final isEmpty = product == null;
+                              return _buildQuickProductTile(context, tr, page, index, slot, product, isEmpty);
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   void _showProductSearchSheet(List<Product> products) {
@@ -1320,7 +1450,7 @@ class _SalesPageState extends State<SalesPage> {
                 controller: _discountController,
                 autofocus: true,
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
+                inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}$'))],
                 decoration: InputDecoration(labelText: tr.text('discount')),
                 onChanged: (_) => setState(() {}),
               ),
@@ -1388,7 +1518,7 @@ class _SalesPageState extends State<SalesPage> {
                   TextFormField(
                     controller: _discountController,
                     decoration: InputDecoration(labelText: tr.text('discount')),
-                    inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
+                    inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}$'))],
                     keyboardType: TextInputType.number,
                     onChanged: (_) {
                       setState(() {});
@@ -1460,43 +1590,104 @@ class _SalesPageState extends State<SalesPage> {
     }
   }
 
-  void _addProduct(Product product) {
+  _BarcodeAddResult _addProduct(Product product, {bool showBarcodeFeedback = false}) {
     final tr = AppLocalizations.of(context);
     if (!widget.store.canSell) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('role_not_allowed_to_sell'))));
-      return;
+      if (showBarcodeFeedback) {
+        _showBarcodeAddFeedback(_BarcodeAddResult.notAllowed);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('role_not_allowed_to_sell'))));
+      }
+      _restoreScannerMode();
+      return _BarcodeAddResult.notAllowed;
     }
+
+    if (product.stock <= 0) {
+      if (showBarcodeFeedback) {
+        _showBarcodeAddFeedback(_BarcodeAddResult.outOfStock);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('barcode_out_of_stock'))));
+      }
+      _restoreScannerMode();
+      return _BarcodeAddResult.outOfStock;
+    }
+
     final existingIndex = _cart.indexWhere((item) => item.product.id == product.id);
+    var result = _BarcodeAddResult.added;
     setState(() {
       if (existingIndex == -1) {
         _cart.insert(0, _DraftSaleItem(product: product, quantity: 1));
       } else if (_cart[existingIndex].quantity < product.stock) {
-        final updatedItem = _cart[existingIndex].copyWith(quantity: _cart[existingIndex].quantity + 1);
-        _cart.removeAt(existingIndex);
-        _cart.insert(0, updatedItem);
+        _cart[existingIndex] = _cart[existingIndex].copyWith(quantity: _cart[existingIndex].quantity + 1);
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('stock_limit_reached'))));
+        result = _BarcodeAddResult.stockLimitReached;
       }
     });
+
+    if (showBarcodeFeedback) {
+      _showBarcodeAddFeedback(result);
+    } else if (result == _BarcodeAddResult.stockLimitReached) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('stock_limit_reached'))));
+    }
+
     _restoreScannerMode();
+    return result;
   }
 
-  void _addByCode(String code) {
-    final tr = AppLocalizations.of(context);
+  _BarcodeAddResult _addByCode(String code) {
     final cleanCode = code.trim();
     if (cleanCode.isEmpty) {
       _restoreScannerMode();
-      return;
+      return _BarcodeAddResult.empty;
     }
+
     final product = widget.store.findProductByCode(cleanCode);
-    if (product == null || product.stock <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('product_code_not_found'))));
+    if (product == null) {
       _barcodeController.clear();
+      _showBarcodeAddFeedback(_BarcodeAddResult.notFound);
       _restoreScannerMode();
-      return;
+      return _BarcodeAddResult.notFound;
     }
+
+    if (product.stock <= 0) {
+      _barcodeController.clear();
+      _showBarcodeAddFeedback(_BarcodeAddResult.outOfStock);
+      _restoreScannerMode();
+      return _BarcodeAddResult.outOfStock;
+    }
+
     _barcodeController.clear();
-    _addProduct(product);
+    return _addProduct(product, showBarcodeFeedback: true);
+  }
+
+  void _showBarcodeAddFeedback(_BarcodeAddResult result) {
+    final tr = AppLocalizations.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+
+    switch (result) {
+      case _BarcodeAddResult.added:
+        unawaited(BarcodeFeedbackService.play(force: true));
+        messenger.showSnackBar(SnackBar(content: Text(tr.text('barcode_product_added'))));
+        return;
+      case _BarcodeAddResult.notFound:
+        unawaited(BarcodeFeedbackService.playError(force: true));
+        messenger.showSnackBar(SnackBar(content: Text(tr.text('barcode_product_not_registered'))));
+        return;
+      case _BarcodeAddResult.outOfStock:
+        unawaited(BarcodeFeedbackService.playError(force: true));
+        messenger.showSnackBar(SnackBar(content: Text(tr.text('barcode_out_of_stock'))));
+        return;
+      case _BarcodeAddResult.stockLimitReached:
+        unawaited(BarcodeFeedbackService.playError(force: true));
+        messenger.showSnackBar(SnackBar(content: Text(tr.text('barcode_stock_limit_reached'))));
+        return;
+      case _BarcodeAddResult.notAllowed:
+        unawaited(BarcodeFeedbackService.playError(force: true));
+        messenger.showSnackBar(SnackBar(content: Text(tr.text('role_not_allowed_to_sell'))));
+        return;
+      case _BarcodeAddResult.empty:
+        return;
+    }
   }
 
   Future<void> _saveCurrentInvoice({required bool printAfterSave}) async {
