@@ -43,6 +43,12 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
   @override
   String get label => 'LAN';
 
+  @override
+  String get deviceId => _service.store.deviceId;
+
+  @override
+  String get deviceToken => _service.store.appIdentity.deviceToken;
+
 
   Future<void> stopHostIfSupported() => _service.stopHost();
 
@@ -172,22 +178,43 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<UnifiedSyncResult> pushPending(UnifiedSyncPushRequest request) async {
-    final result = await _service.syncNow(
+    final pendingCount = _service.store.pendingSyncChangesForTarget('host').length;
+    final result = await _service.pushPendingOnly(
       _settings.host,
       port: _settings.port,
       token: _settings.secret,
     );
-    return UnifiedSyncResult(ok: result.ok, message: result.message, error: _errorFor(result.ok, result.message), cursor: _cursor());
+    return UnifiedSyncResult(
+      ok: result.ok,
+      message: result.message,
+      pushed: result.ok ? pendingCount : 0,
+      error: _errorFor(result.ok, result.message),
+      cursor: _cursor(),
+    );
   }
 
   @override
   Future<UnifiedSyncResult> pullChanges(UnifiedSyncPullRequest request) async {
-    final result = await _service.pullNow(
+    final before = _settings.lastPullCursor;
+    final result = await _service.pullChangesOnly(
       _settings.host,
       port: _settings.port,
       token: _settings.secret,
     );
-    return UnifiedSyncResult(ok: result.ok, message: result.message, error: _errorFor(result.ok, result.message), cursor: _cursor());
+    final afterSettings = LanSyncSettings.load();
+    final after = afterSettings.lastPullCursor;
+    final pulled = result.ok && after != null && after != before ? 1 : 0;
+    return UnifiedSyncResult(
+      ok: result.ok,
+      message: result.message,
+      pulled: pulled,
+      error: _errorFor(result.ok, result.message),
+      cursor: UnifiedCursorEnvelope(
+        value: after?.toIso8601String() ?? '',
+        generatedAt: after,
+        source: 'lan',
+      ),
+    );
   }
 
   @override

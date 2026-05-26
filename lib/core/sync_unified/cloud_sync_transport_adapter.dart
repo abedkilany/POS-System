@@ -44,6 +44,12 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
   String get label => 'Cloud';
 
   @override
+  String get deviceId => _service.store.deviceId;
+
+  @override
+  String get deviceToken => _service.store.appIdentity.deviceToken;
+
+  @override
   Future<UnifiedSyncResult> testConnection() async {
     final result = await _service.testConnection(_settings);
     return UnifiedSyncResult(ok: result.ok, message: result.message, error: _errorFor(result.ok, result.message), cursor: _cursor());
@@ -137,7 +143,7 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<UnifiedSyncResult> pushPending(UnifiedSyncPushRequest request) async {
-    final result = await _service.syncNow(_settings);
+    final result = await _service.pushPendingForUnifiedEngine(_settings);
     return UnifiedSyncResult(
       ok: result.ok,
       message: result.message,
@@ -151,7 +157,8 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<UnifiedSyncResult> pullChanges(UnifiedSyncPullRequest request) async {
-    final result = await _service.syncNow(_settings);
+    final result = await _service.pullAuthoritativeChangesForUnifiedEngine(_settings);
+    final current = CloudSyncSettings.load();
     return UnifiedSyncResult(
       ok: result.ok,
       message: result.message,
@@ -159,7 +166,11 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
       pulled: result.pulled,
       restoredSnapshot: result.restoredSnapshot,
       error: _errorFor(result.ok, result.message),
-      cursor: _cursor(),
+      cursor: UnifiedCursorEnvelope(
+        value: current.lastPullCursor?.toIso8601String() ?? '',
+        generatedAt: current.lastPullCursor,
+        source: 'cloud',
+      ),
     );
   }
 

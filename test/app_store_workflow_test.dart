@@ -79,7 +79,6 @@ void main() {
       await seeded.addOrUpdateProduct(product());
       await seeded.addOrUpdateCustomer(Customer(id: 'c1', name: 'Alice', phone: '1', address: 'A'));
       await seeded.updateStoreProfile(StoreProfile.defaults.copyWith(name: 'Seeded Store'));
-      await seeded.setSecurityPin('1234');
       final sale = await seeded.createSale(customerName: 'Alice', items: const [SaleItem(productId: 'p1', productName: 'Coffee', unitPrice: 12, quantity: 2)]);
       final raw = seeded.exportBackupJson();
 
@@ -89,9 +88,6 @@ void main() {
       expect(restored.products.single.code, 'P001');
       expect(restored.sales.single.invoiceNo, sale.invoiceNo);
       expect(restored.storeProfile.name, 'Seeded Store');
-      // Security PIN persistence is platform-storage backed and is intentionally not
-      // asserted through backup import here; the import contract below focuses on
-      // business data that is included in the backup payload.
       expect(restored.totalSalesAmount, 24);
     });
   });
@@ -308,7 +304,7 @@ void main() {
       expect(store.pendingSyncQueueCount, 0);
     });
 
-    test('applies remote sync changes for product, profile, pin, roles, users, and stock movements', () async {
+    test('applies remote sync changes for product, profile, roles, users, and stock movements', () async {
       final store = await readyStore();
       final now = DateTime.now();
       final remoteProduct = product(id: 'remote_p', code: 'REMOTE', name: 'Remote', stock: 1).copyWith(updatedAt: now.add(const Duration(minutes: 1)));
@@ -317,7 +313,6 @@ void main() {
 
       await store.applyRemoteSyncChanges([
         SyncChange(id: 'ch_profile', entityType: 'store_profile', entityId: 'store', operation: 'update', deviceId: 'other', createdAt: now, payload: StoreProfile.defaults.copyWith(name: 'Remote Store').toJson()),
-        SyncChange(id: 'ch_pin', entityType: 'security_pin', entityId: 'store', operation: 'update', deviceId: 'other', createdAt: now, payload: {'pinHash': 'sha256salt:salt:hash'}),
         SyncChange(id: 'ch_role', entityType: 'role', entityId: remoteRole.id, operation: 'create', deviceId: 'other', createdAt: now, payload: remoteRole.toJson()),
         SyncChange(id: 'ch_user', entityType: 'user', entityId: remoteUser.id, operation: 'create', deviceId: 'other', createdAt: now, payload: remoteUser.toJson()),
         SyncChange(id: 'ch_product', entityType: 'product', entityId: remoteProduct.id, operation: 'create', deviceId: 'other', createdAt: now, payload: remoteProduct.toJson()),
@@ -327,7 +322,6 @@ void main() {
       ]);
 
       expect(store.storeProfile.name, 'Remote Store');
-      expect(store.isPinEnabled, isFalse);
       expect(store.roles.map((r) => r.id), contains(remoteRole.id));
       expect(store.users.map((u) => u.id), contains(remoteUser.id));
       expect(store.products.singleWhere((p) => p.id == 'remote_p').stock, 5);
@@ -361,14 +355,8 @@ void main() {
       expect(store.roles.map((r) => r.id), isNot(contains('cashier')));
     });
 
-    test('updates identity, pin, admin setup, and keeps protected operations safe', () async {
+    test('updates identity, admin setup, and keeps protected operations safe', () async {
       final store = await readyStore();
-      expect(store.setSecurityPin('12'), throwsArgumentError);
-      await store.setSecurityPin('9876');
-      expect(store.verifySecurityPin('9876'), isTrue);
-      expect(store.verifySecurityPin('0000'), isFalse);
-      await store.clearSecurityPin();
-      expect(store.isPinEnabled, isFalse);
 
       await store.updateAppIdentity(store.appIdentity.copyWith(syncMode: SyncMode.marketplaceEnabled, deviceRole: DeviceRole.host));
       expect(store.appIdentity.syncMode, SyncMode.marketplaceEnabled);

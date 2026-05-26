@@ -131,6 +131,8 @@ class UnifiedSyncPullRequest {
 abstract class SyncTransportAdapter {
   UnifiedSyncTransportKind get kind;
   String get label;
+  String get deviceId;
+  String get deviceToken;
 
   Future<UnifiedSyncResult> testConnection();
 

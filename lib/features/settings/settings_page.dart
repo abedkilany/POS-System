@@ -1278,7 +1278,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   }
 
   int get _lanPort => int.tryParse(_lanPortController.text.trim()) ?? 8787;
-  int get _cloudInterval => int.tryParse(_cloudIntervalController.text.trim())?.clamp(30, 3600).toInt() ?? 30;
+  int get _cloudInterval => int.tryParse(_cloudIntervalController.text.trim())?.clamp(5, 3600).toInt() ?? 5;
 
   Future<void> _run(Future<void> Function() action) async {
     if (_busy) return;

@@ -144,9 +144,12 @@ class AppIdentity {
       deviceId: deviceId.isEmpty ? _withPrefix('DV') : _normalizeDeviceId(deviceId),
       deviceName: 'Main device',
       platform: platform,
-      deviceRole: platform == AppPlatformType.web ? DeviceRole.client : DeviceRole.host,
+      // A fresh native device must not start as Host automatically.
+      // Register creates the Host; Connect to Store turns this device into a Client.
+      // Web remains Client-only.
+      deviceRole: platform == AppPlatformType.web ? DeviceRole.client : DeviceRole.standalone,
       appRole: AppRole.store,
-      syncMode: platform == AppPlatformType.web ? SyncMode.cloudConnected : SyncMode.lanOnly,
+      syncMode: platform == AppPlatformType.web ? SyncMode.cloudConnected : SyncMode.localOnly,
       createdAt: now,
       updatedAt: now,
       deviceToken: 'device_${now.microsecondsSinceEpoch}_${deviceId.hashCode.abs()}',

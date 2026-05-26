@@ -98,22 +98,87 @@ void main() {
   });
 
   group('AppIdentity defaults', () {
-    test('windows default is host on LAN', () {
-      final identity = AppIdentity.defaults(deviceId: 'win-1', platform: AppPlatformType.windows);
-      expect(identity.isHost, isTrue);
-      expect(identity.syncMode, SyncMode.lanOnly);
+    test('windows default is standalone and local-only before setup', () {
+      final identity = AppIdentity.defaults(
+        deviceId: 'win-1',
+        platform: AppPlatformType.windows,
+      );
+
+      expect(identity.deviceRole, DeviceRole.standalone);
+      expect(identity.isHost, isFalse);
+      expect(identity.isClient, isFalse);
+      expect(identity.syncMode, SyncMode.localOnly);
+      expect(identity.isCloudEnabled, isFalse);
+      expect(identity.storeId, startsWith('ST-'));
+      expect(identity.storeId.length, greaterThan('ST-'.length));
+    });
+
+    test('android default is standalone and local-only before setup', () {
+      final identity = AppIdentity.defaults(
+        deviceId: 'android-1',
+        platform: AppPlatformType.android,
+      );
+
+      expect(identity.deviceRole, DeviceRole.standalone);
+      expect(identity.isHost, isFalse);
+      expect(identity.isClient, isFalse);
+      expect(identity.syncMode, SyncMode.localOnly);
+      expect(identity.isCloudEnabled, isFalse);
       expect(identity.storeId, startsWith('ST-'));
       expect(identity.storeId.length, greaterThan('ST-'.length));
     });
 
     test('web default is cloud-connected client', () {
-      final identity = AppIdentity.defaults(deviceId: 'web-1', platform: AppPlatformType.web);
+      final identity = AppIdentity.defaults(
+        deviceId: 'web-1',
+        platform: AppPlatformType.web,
+      );
+
+      expect(identity.deviceRole, DeviceRole.client);
       expect(identity.isClient, isTrue);
+      expect(identity.isHost, isFalse);
+      expect(identity.syncMode, SyncMode.cloudConnected);
       expect(identity.isCloudEnabled, isTrue);
     });
 
+    test('register setup can turn a native standalone device into a host', () {
+      final identity = AppIdentity.defaults(
+        deviceId: 'win-1',
+        platform: AppPlatformType.windows,
+      ).copyWith(
+        deviceRole: DeviceRole.host,
+        syncMode: SyncMode.lanOnly,
+      );
+
+      expect(identity.deviceRole, DeviceRole.host);
+      expect(identity.isHost, isTrue);
+      expect(identity.isClient, isFalse);
+      expect(identity.syncMode, SyncMode.lanOnly);
+    });
+
+    test('connect to store can turn a native standalone device into a client', () {
+      final identity = AppIdentity.defaults(
+        deviceId: 'win-1',
+        platform: AppPlatformType.windows,
+      ).copyWith(
+        deviceRole: DeviceRole.client,
+        syncMode: SyncMode.lanOnly,
+        hostDeviceId: 'host-1',
+      );
+
+      expect(identity.deviceRole, DeviceRole.client);
+      expect(identity.isClient, isTrue);
+      expect(identity.isHost, isFalse);
+      expect(identity.syncMode, SyncMode.lanOnly);
+      expect(identity.hostDeviceId, 'host-1');
+    });
+
     test('marketplace mode is both cloud enabled and marketplace enabled', () {
-      final identity = AppIdentity.defaults(deviceId: 'web-1', platform: AppPlatformType.web).copyWith(syncMode: SyncMode.marketplaceEnabled);
+      final identity = AppIdentity.defaults(
+        deviceId: 'web-1',
+        platform: AppPlatformType.web,
+      ).copyWith(syncMode: SyncMode.marketplaceEnabled);
+
       expect(identity.isCloudEnabled, isTrue);
       expect(identity.isMarketplaceEnabled, isTrue);
     });

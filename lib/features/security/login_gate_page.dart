@@ -6,17 +6,17 @@ import '../../core/utils/responsive.dart';
 import '../../data/app_store.dart';
 import '../settings/sync_setup_page.dart';
 
-class PinLockPage extends StatefulWidget {
-  const PinLockPage({super.key, required this.store, required this.child});
+class LoginGatePage extends StatefulWidget {
+  const LoginGatePage({super.key, required this.store, required this.child});
 
   final AppStore store;
   final Widget child;
 
   @override
-  State<PinLockPage> createState() => _PinLockPageState();
+  State<LoginGatePage> createState() => _LoginGatePageState();
 }
 
-class _PinLockPageState extends State<PinLockPage> {
+class _LoginGatePageState extends State<LoginGatePage> {
   final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _fullNameController =
@@ -46,7 +46,7 @@ class _PinLockPageState extends State<PinLockPage> {
   }
 
   Future<void> _unlock() async {
-    final wrongPinMessage = AppLocalizations.of(context).text('wrong_pin');
+    final invalidLoginMessage = AppLocalizations.of(context).text('invalid_login');
     final messenger = ScaffoldMessenger.of(context);
 
     setState(() => _loggingIn = true);
@@ -64,7 +64,7 @@ class _PinLockPageState extends State<PinLockPage> {
       setState(() {});
     } else {
       _passwordController.clear();
-      messenger.showSnackBar(SnackBar(content: Text(wrongPinMessage)));
+      messenger.showSnackBar(SnackBar(content: Text(invalidLoginMessage)));
     }
   }
 

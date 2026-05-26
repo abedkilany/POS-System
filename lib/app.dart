@@ -19,7 +19,7 @@ import 'features/products/products_page.dart';
 import 'features/purchases/purchases_page.dart';
 import 'features/reports/reports_page.dart';
 import 'features/sales/sales_page.dart';
-import 'features/security/pin_lock_page.dart';
+import 'features/security/login_gate_page.dart';
 import 'features/settings/settings_page.dart';
 import 'features/suppliers/suppliers_page.dart';
 
@@ -109,7 +109,7 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
             GlobalCupertinoLocalizations.delegate,
           ],
           home: _store.isReady
-              ? PinLockPage(
+              ? LoginGatePage(
                   store: _store,
                   child: MainShell(
                     store: _store,
@@ -184,9 +184,15 @@ class _MainShellState extends State<MainShell> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final isWide = constraints.maxWidth >= VentioResponsive.tabletBreakpoint;
         return Scaffold(
           appBar: AppBar(
+            leading: Builder(
+              builder: (context) => IconButton(
+                tooltip: MaterialLocalizations.of(context).openAppDrawerTooltip,
+                icon: const Icon(Icons.menu),
+                onPressed: () => Scaffold.of(context).openDrawer(),
+              ),
+            ),
             title: Text('$shellTitle • ${items[selectedIndex].label}', overflow: TextOverflow.ellipsis),
             actions: [
               ConstrainedBox(
@@ -222,40 +228,26 @@ class _MainShellState extends State<MainShell> {
               ),
             ],
           ),
-          drawer: isWide
-              ? null
-              : Drawer(
-                  child: SafeArea(
-                    child: ListView.builder(
-                      itemCount: items.length,
-                      itemBuilder: (context, index) {
-                        final item = items[index];
-                        return ListTile(
-                          leading: Icon(index == selectedIndex ? item.selectedIcon : item.icon),
-                          title: Text(item.label),
-                          selected: index == selectedIndex,
-                          onTap: () {
-                            Navigator.pop(context);
-                            setState(() => selectedIndex = index);
-                          },
-                        );
-                      },
-                    ),
-                  ),
-                ),
-          body: isWide
-              ? Row(
-                  children: [
-                    _WideSideNavigation(
-                      items: items,
-                      selectedIndex: selectedIndex,
-                      onSelected: (value) => setState(() => selectedIndex = value),
-                    ),
-                    const VerticalDivider(width: 1),
-                    Expanded(child: items[selectedIndex].page),
-                  ],
-                )
-              : items[selectedIndex].page,
+          drawer: Drawer(
+            child: SafeArea(
+              child: ListView.builder(
+                itemCount: items.length,
+                itemBuilder: (context, index) {
+                  final item = items[index];
+                  return ListTile(
+                    leading: Icon(index == selectedIndex ? item.selectedIcon : item.icon),
+                    title: Text(item.label),
+                    selected: index == selectedIndex,
+                    onTap: () {
+                      Navigator.pop(context);
+                      setState(() => selectedIndex = index);
+                    },
+                  );
+                },
+              ),
+            ),
+          ),
+          body: items[selectedIndex].page,
         );
       },
     );
@@ -263,95 +255,6 @@ class _MainShellState extends State<MainShell> {
 }
 
 
-
-class _WideSideNavigation extends StatelessWidget {
-  const _WideSideNavigation({required this.items, required this.selectedIndex, required this.onSelected});
-
-  final List<_ShellItem> items;
-  final int selectedIndex;
-  final ValueChanged<int> onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final width = VentioResponsive.clampToScreen(
-      context,
-      VentioResponsive.adaptiveWidth(context, mobile: 0, tablet: 200, desktop: 224),
-      min: 180,
-      horizontalPadding: 0,
-    );
-    return SizedBox(
-      width: width,
-      child: SafeArea(
-        top: false,
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              child: Row(
-                children: [
-                  CircleAvatar(
-                    radius: 20,
-                    backgroundColor: colorScheme.primaryContainer,
-                    foregroundColor: colorScheme.onPrimaryContainer,
-                    child: const Icon(Icons.flash_on_rounded),
-                  ),
-                  const SizedBox(width: 10),
-                  Text('Ventio', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
-                ],
-              ),
-            ),
-            Expanded(
-              child: ListView.builder(
-                padding: const EdgeInsets.fromLTRB(8, 8, 8, 16),
-                itemCount: items.length,
-                itemBuilder: (context, index) {
-                  final item = items[index];
-                  final selected = index == selectedIndex;
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 2),
-                    child: NavigationRailDestinationListTile(
-                      icon: selected ? item.selectedIcon : item.icon,
-                      label: item.label,
-                      selected: selected,
-                      onTap: () => onSelected(index),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class NavigationRailDestinationListTile extends StatelessWidget {
-  const NavigationRailDestinationListTile({super.key, required this.icon, required this.label, required this.selected, required this.onTap});
-
-  final IconData icon;
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Material(
-      color: selected ? colorScheme.primaryContainer : Colors.transparent,
-      borderRadius: BorderRadius.circular(14),
-      child: ListTile(
-        dense: true,
-        selected: selected,
-        leading: Icon(icon, color: selected ? colorScheme.onPrimaryContainer : null),
-        title: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        onTap: onTap,
-      ),
-    );
-  }
-}
 
 enum _TransportState { checking, active, online, pending, provisioning, offline, error, disabled, notConfigured }
 

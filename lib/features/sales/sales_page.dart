@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -8,6 +9,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../core/localization/app_localizations.dart';
 import '../../core/services/barcode_feedback_service.dart';
 import '../../core/services/invoice_pdf_service.dart';
+import '../../core/services/local_database_service.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../core/utils/responsive.dart';
 import '../../data/app_store.dart';
@@ -32,13 +34,19 @@ class _SalesPageState extends State<SalesPage> {
   final TextEditingController _discountController = TextEditingController();
   final FocusNode _barcodeFocusNode = FocusNode();
 
+  static const String _quickPagesStorageKey = 'sale_quick_product_pages_v1';
+
   final List<_DraftSaleItem> _cart = [];
+  final List<_QuickProductPage> _quickPages = [];
   String _selectedCustomerId = AppStore.walkInCustomerId;
   String _paymentMethod = 'Cash';
   String _search = '';
   List<_DraftSaleItem>? _heldCart;
   final MobileScannerController _scannerController = MobileScannerController(detectionSpeed: DetectionSpeed.noDuplicates);
   bool _scannerActive = false;
+  bool _manualBarcodeInput = false;
+  bool _quickGridEditMode = false;
+  int _selectedQuickPageIndex = 0;
   String? _lastScannedCode;
   DateTime? _lastScannedAt;
 
@@ -46,7 +54,12 @@ class _SalesPageState extends State<SalesPage> {
   void initState() {
     super.initState();
     _selectedCustomerId = AppStore.walkInCustomerId;
-    WidgetsBinding.instance.addPostFrameCallback((_) => _barcodeFocusNode.requestFocus());
+    _loadQuickProductPages();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _manualBarcodeInput) return;
+      _barcodeFocusNode.requestFocus();
+      SystemChannels.textInput.invokeMethod('TextInput.hide');
+    });
   }
 
   @override
@@ -87,66 +100,128 @@ class _SalesPageState extends State<SalesPage> {
           return _buildMobileSalesLayout(context, tr, products, pagePadding);
         }
 
-        final posPanel = _buildPosPanel(context, tr, products, isWide: isWide);
-        final invoicesPanel = _buildInvoicesPanel(context, tr, sales);
-        return Padding(
-          padding: EdgeInsets.all(pagePadding),
-          child: Column(
-            children: [
-              AppSectionHeader(
-                title: tr.text('pos_terminal'),
-                subtitle: tr.text('pos_terminal_desc'),
-                action: FilledButton.icon(
-                  onPressed: _cart.isEmpty ? null : () => _saveCurrentInvoice(printAfterSave: true),
-                  icon: const Icon(Icons.point_of_sale),
-                  label: Text(tr.text('complete_sale')),
-                ),
-              ),
-              const SizedBox(height: 16),
-              Expanded(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(flex: 7, child: posPanel),
-                    const SizedBox(width: 16),
-                    Expanded(flex: 4, child: invoicesPanel),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        );
+        return _buildDesktopSalesLayout(context, tr, products, sales, pagePadding);
       },
     );
   }
 
-  double _formFieldWidth(BuildContext context, double preferredWidth) {
-    final width = MediaQuery.sizeOf(context).width;
-    final available = width - (VentioResponsive.pagePadding(context) * 2) - 48;
-    if (available < 420) return available.clamp(220, preferredWidth).toDouble();
-    if (available < 760) return ((available - 12) / 2).clamp(220, preferredWidth).toDouble();
-    return preferredWidth;
+
+  Widget _buildDesktopSalesLayout(BuildContext context, AppLocalizations tr, List<Product> products, List<Sale> sales, double pagePadding) {
+    return Padding(
+      padding: EdgeInsets.all(pagePadding),
+      child: Column(
+        children: [
+          AppSectionHeader(
+            title: tr.text('pos_terminal'),
+            subtitle: tr.text('pos_terminal_desc'),
+            action: OutlinedButton.icon(
+              onPressed: _showInvoicesSheet,
+              icon: const Icon(Icons.receipt_long_outlined),
+              label: Text(tr.text('recent_invoices')),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Expanded(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(flex: 6, child: _buildCurrentSalePanel(context, tr)),
+                const SizedBox(width: 12),
+                Expanded(flex: 4, child: _buildQuickProductGridPanel(context, tr, products)),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          _buildDesktopInvoiceSummaryBar(context, tr),
+        ],
+      ),
+    );
   }
 
-  Widget _buildMobileSalesLayout(BuildContext context, AppLocalizations tr, List<Product> products, double pagePadding) {
-    return SafeArea(
-      child: SingleChildScrollView(
-        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-        padding: EdgeInsets.all(pagePadding),
+  Widget _buildCurrentSalePanel(BuildContext context, AppLocalizations tr) {
+    return Card(
+      child: Padding(
+        padding: VentioResponsive.pageInsets(context),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _buildMobileSaleControls(context, tr),
-            const SizedBox(height: 8),
-            _buildMobileProductList(context, tr, products),
-            const SizedBox(height: 8),
-            _MobileCheckoutBar(
-              enabled: _cart.isNotEmpty,
-              itemsCount: _itemsCount,
-              total: formatCurrency(_total, currency: widget.store.storeProfile.currency),
-              completeLabel: tr.text('complete_sale'),
-              saveLabel: tr.text('cart'),
-              onComplete: _showCheckoutSheet,
-              onSave: _showCartSheet,
+            _buildBarcodeStation(context, tr),
+            const SizedBox(height: 12),
+            Expanded(child: _buildCart(context, tr, showTotals: false, showActions: false)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDesktopInvoiceSummaryBar(BuildContext context, AppLocalizations tr) {
+    final customerName = widget.store.resolveCustomerName(_selectedCustomerId);
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Expanded(
+              flex: 3,
+              child: DropdownButtonFormField<String>(
+                initialValue: widget.store.sanitizeSelectedCustomerId(_selectedCustomerId),
+                items: widget.store.customers.map((customer) => DropdownMenuItem<String>(value: customer.id, child: Text(customer.name))).toList(),
+                decoration: InputDecoration(labelText: tr.text('customer'), isDense: true),
+                onChanged: (value) => setState(() => _selectedCustomerId = widget.store.sanitizeSelectedCustomerId(value)),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              flex: 2,
+              child: TextFormField(
+                controller: _discountController,
+                decoration: InputDecoration(labelText: tr.text('discount'), isDense: true),
+                inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                onChanged: (_) => setState(() {}),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              flex: 2,
+              child: DropdownButtonFormField<String>(
+                initialValue: _paymentMethod,
+                decoration: InputDecoration(labelText: tr.text('payment'), isDense: true),
+                items: [
+                  DropdownMenuItem(value: 'Cash', child: Text(tr.text('payment_cash'))),
+                  DropdownMenuItem(value: 'Card', child: Text(tr.text('payment_card'))),
+                  DropdownMenuItem(value: 'Transfer', child: Text(tr.text('payment_transfer'))),
+                  DropdownMenuItem(value: 'Mixed', child: Text(tr.text('payment_mixed'))),
+                ],
+                onChanged: (value) => setState(() => _paymentMethod = value ?? 'Cash'),
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              flex: 3,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('$customerName • ${_paymentMethodLabel(tr, _paymentMethod)}', maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.titleSmall),
+                  const SizedBox(height: 4),
+                  Text('$_itemsCount ${tr.text('items_count')} | ${formatCurrency(_total, currency: widget.store.storeProfile.currency)}', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            FilledButton.icon(
+              onPressed: _cart.isEmpty ? null : () => _saveCurrentInvoice(printAfterSave: true),
+              icon: const Icon(Icons.point_of_sale),
+              label: Text(tr.text('complete_sale_print')),
+            ),
+            const SizedBox(width: 8),
+            OutlinedButton.icon(
+              onPressed: _cart.isEmpty ? null : () => _saveCurrentInvoice(printAfterSave: false),
+              icon: const Icon(Icons.save_outlined),
+              label: Text(tr.text('save_only')),
             ),
           ],
         ),
@@ -154,8 +229,435 @@ class _SalesPageState extends State<SalesPage> {
     );
   }
 
-  Widget _buildMobileSaleControls(BuildContext context, AppLocalizations tr) {
+  Widget _buildQuickProductGridPanel(BuildContext context, AppLocalizations tr, List<Product> products) {
+    _ensureQuickPages(products);
+    final page = _quickPages[_selectedQuickPageIndex.clamp(0, _quickPages.length - 1).toInt()];
     return Card(
+      child: Padding(
+        padding: VentioResponsive.pageInsets(context),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(child: Text('Quick Product Grid', style: Theme.of(context).textTheme.titleLarge)),
+                TextButton.icon(
+                  onPressed: () => setState(() => _quickGridEditMode = !_quickGridEditMode),
+                  icon: Icon(_quickGridEditMode ? Icons.check : Icons.edit_outlined),
+                  label: Text(_quickGridEditMode ? tr.text('save') : 'Edit Layout'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 42,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _quickGridEditMode
+                        ? ReorderableListView.builder(
+                            scrollDirection: Axis.horizontal,
+                            buildDefaultDragHandles: false,
+                            itemCount: _quickPages.length,
+                            onReorder: _moveQuickPage,
+                            proxyDecorator: (child, _, __) => Material(elevation: 6, borderRadius: BorderRadius.circular(24), child: child),
+                            itemBuilder: (context, index) {
+                              final selected = index == _selectedQuickPageIndex;
+                              return Padding(
+                                key: ValueKey('quick_page_${index}_${_quickPages[index].name}'),
+                                padding: const EdgeInsetsDirectional.only(end: 8),
+                                child: ReorderableDragStartListener(
+                                  index: index,
+                                  child: InputChip(
+                                    avatar: const Icon(Icons.drag_indicator, size: 18),
+                                    label: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        ConstrainedBox(constraints: const BoxConstraints(maxWidth: 120), child: Text(_quickPages[index].name, overflow: TextOverflow.ellipsis)),
+                                        const SizedBox(width: 4),
+                                        const Icon(Icons.edit_outlined, size: 16),
+                                      ],
+                                    ),
+                                    selected: selected,
+                                    onSelected: (_) {
+                                      if (selected) {
+                                        _renameQuickPage(index);
+                                      } else {
+                                        setState(() => _selectedQuickPageIndex = index);
+                                      }
+                                    },
+                                    deleteIcon: _quickPages.length > 1 ? const Icon(Icons.close, size: 18) : null,
+                                    onDeleted: _quickPages.length > 1 ? () => _deleteQuickPage(index) : null,
+                                  ),
+                                ),
+                              );
+                            },
+                          )
+                        : ListView.separated(
+                            scrollDirection: Axis.horizontal,
+                            itemCount: _quickPages.length,
+                            separatorBuilder: (_, __) => const SizedBox(width: 8),
+                            itemBuilder: (context, index) {
+                              final selected = index == _selectedQuickPageIndex;
+                              return InputChip(
+                                label: Text(_quickPages[index].name),
+                                selected: selected,
+                                onSelected: (_) => setState(() => _selectedQuickPageIndex = index),
+                              );
+                            },
+                          ),
+                  ),
+                  const SizedBox(width: 8),
+                  ActionChip(
+                    avatar: const Icon(Icons.add, size: 18),
+                    label: const Text('Page'),
+                    onPressed: _addQuickPage,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final crossAxisCount = constraints.maxWidth > 520 ? 3 : 2;
+                  return GridView.builder(
+                    itemCount: page.slots.length,
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: crossAxisCount,
+                      mainAxisSpacing: 10,
+                      crossAxisSpacing: 10,
+                      childAspectRatio: 1.18,
+                    ),
+                    itemBuilder: (context, index) {
+                      final slot = page.slots[index];
+                      final product = slot.productId == null ? null : _productById(slot.productId!);
+                      final isEmpty = product == null;
+                      final child = _buildQuickProductTile(context, tr, page, index, slot, product, isEmpty);
+                      if (!_quickGridEditMode) return child;
+                      final target = DragTarget<int>(
+                        onWillAcceptWithDetails: (details) => details.data != index,
+                        onAcceptWithDetails: (details) => _moveQuickSlot(details.data, index),
+                        builder: (_, candidateData, ___) {
+                          if (candidateData.isEmpty) return child;
+                          return DecoratedBox(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(color: Theme.of(context).colorScheme.primary, width: 2),
+                            ),
+                            child: child,
+                          );
+                        },
+                      );
+                      if (isEmpty) return target;
+                      return LongPressDraggable<int>(
+                        data: index,
+                        feedback: Material(
+                          elevation: 6,
+                          borderRadius: BorderRadius.circular(16),
+                          child: SizedBox(width: 150, height: 120, child: child),
+                        ),
+                        childWhenDragging: Opacity(opacity: 0.35, child: child),
+                        child: target,
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuickProductTile(BuildContext context, AppLocalizations tr, _QuickProductPage page, int index, _QuickProductSlot slot, Product? product, bool isEmpty) {
+    final scheme = Theme.of(context).colorScheme;
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: () {
+        if (isEmpty || _quickGridEditMode) {
+          _configureQuickSlot(page, index);
+        } else {
+          _addProduct(product!);
+        }
+      },
+      child: Ink(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          color: isEmpty ? scheme.surfaceContainerHighest.withValues(alpha: 0.35) : scheme.primaryContainer.withValues(alpha: 0.40),
+          border: Border.all(color: isEmpty ? scheme.outlineVariant : scheme.primary.withValues(alpha: 0.28)),
+        ),
+        child: Stack(
+          children: [
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: isEmpty
+                    ? Icon(Icons.add, size: 34, color: scheme.primary)
+                    : Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(slot.shortName?.trim().isNotEmpty == true ? slot.shortName!.trim() : product!.name, textAlign: TextAlign.center, maxLines: 3, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+                          const SizedBox(height: 8),
+                          Text(formatCurrency(product!.price, currency: widget.store.storeProfile.currency), maxLines: 1, overflow: TextOverflow.ellipsis),
+                        ],
+                      ),
+              ),
+            ),
+            if (_quickGridEditMode && !isEmpty)
+              Positioned(
+                top: 4,
+                right: 4,
+                child: IconButton.filledTonal(
+                  tooltip: tr.text('delete'),
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => _clearQuickSlot(page, index),
+                  icon: const Icon(Icons.close, size: 18),
+                ),
+              ),
+            if (_quickGridEditMode && !isEmpty)
+              const Positioned(left: 8, bottom: 8, child: Icon(Icons.drag_indicator, size: 20)),
+          ],
+        ),
+      ),
+    );
+  }
+
+
+  void _loadQuickProductPages() {
+    final raw = LocalDatabaseService.getString(_quickPagesStorageKey);
+    if (raw == null || raw.trim().isEmpty) return;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return;
+      _quickPages
+        ..clear()
+        ..addAll(decoded.whereType<Map<String, dynamic>>().map(_QuickProductPage.fromJson));
+    } catch (_) {
+      _quickPages.clear();
+    }
+  }
+
+  void _ensureQuickPages(List<Product> products) {
+    if (_quickPages.isEmpty) {
+      _quickPages.add(
+        _QuickProductPage(
+          name: 'Favorites',
+          slots: List.generate(12, (index) {
+            if (index < products.length && index < 6) {
+              final product = products[index];
+              return _QuickProductSlot(productId: product.id, shortName: _shortProductName(product.name));
+            }
+            return const _QuickProductSlot();
+          }),
+        ),
+      );
+      unawaited(_saveQuickProductPages());
+    }
+    if (_selectedQuickPageIndex >= _quickPages.length) _selectedQuickPageIndex = _quickPages.length - 1;
+    if (_selectedQuickPageIndex < 0) _selectedQuickPageIndex = 0;
+  }
+
+  Future<void> _saveQuickProductPages() => LocalDatabaseService.setString(
+        _quickPagesStorageKey,
+        jsonEncode(_quickPages.map((page) => page.toJson()).toList()),
+      );
+
+  String _shortProductName(String name) {
+    final clean = name.trim();
+    if (clean.length <= 14) return clean;
+    return clean.substring(0, 14).trim();
+  }
+
+  Product? _productById(String id) {
+    for (final product in widget.store.products) {
+      if (product.id == id && product.stock > 0) return product;
+    }
+    return null;
+  }
+
+  void _addQuickPage() {
+    setState(() {
+      _quickPages.add(_QuickProductPage(name: 'Page ${_quickPages.length + 1}', slots: List.generate(12, (_) => const _QuickProductSlot())));
+      _selectedQuickPageIndex = _quickPages.length - 1;
+      _quickGridEditMode = true;
+    });
+    unawaited(_saveQuickProductPages());
+  }
+
+  void _deleteQuickPage(int index) {
+    if (_quickPages.length <= 1 || index < 0 || index >= _quickPages.length) return;
+    setState(() {
+      _quickPages.removeAt(index);
+      _selectedQuickPageIndex = _selectedQuickPageIndex.clamp(0, _quickPages.length - 1).toInt();
+    });
+    unawaited(_saveQuickProductPages());
+  }
+
+  Future<void> _renameQuickPage(int index) async {
+    if (index < 0 || index >= _quickPages.length) return;
+    final controller = TextEditingController(text: _quickPages[index].name);
+    final tr = AppLocalizations.of(context);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Rename quick page'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          textInputAction: TextInputAction.done,
+          decoration: const InputDecoration(labelText: 'Page name'),
+          onSubmitted: (value) => Navigator.pop(dialogContext, value.trim()),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: Text(tr.text('cancel'))),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, controller.text.trim()), child: Text(tr.text('save'))),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (result == null || result.trim().isEmpty) return;
+    setState(() => _quickPages[index].name = result.trim());
+    unawaited(_saveQuickProductPages());
+  }
+
+  void _moveQuickPage(int oldIndex, int newIndex) {
+    if (oldIndex < 0 || oldIndex >= _quickPages.length) return;
+    if (newIndex > oldIndex) newIndex -= 1;
+    if (newIndex < 0 || newIndex >= _quickPages.length || oldIndex == newIndex) return;
+    setState(() {
+      final page = _quickPages.removeAt(oldIndex);
+      _quickPages.insert(newIndex, page);
+      if (_selectedQuickPageIndex == oldIndex) {
+        _selectedQuickPageIndex = newIndex;
+      } else if (oldIndex < _selectedQuickPageIndex && newIndex >= _selectedQuickPageIndex) {
+        _selectedQuickPageIndex -= 1;
+      } else if (oldIndex > _selectedQuickPageIndex && newIndex <= _selectedQuickPageIndex) {
+        _selectedQuickPageIndex += 1;
+      }
+    });
+    unawaited(_saveQuickProductPages());
+  }
+
+  void _moveQuickSlot(int fromIndex, int toIndex) {
+    if (_selectedQuickPageIndex < 0 || _selectedQuickPageIndex >= _quickPages.length) return;
+    final page = _quickPages[_selectedQuickPageIndex];
+    if (fromIndex < 0 || fromIndex >= page.slots.length || toIndex < 0 || toIndex >= page.slots.length || fromIndex == toIndex) return;
+    setState(() {
+      final moved = page.slots.removeAt(fromIndex);
+      page.slots.insert(toIndex, moved);
+    });
+    unawaited(_saveQuickProductPages());
+  }
+
+  void _clearQuickSlot(_QuickProductPage page, int index) {
+    if (index < 0 || index >= page.slots.length) return;
+    setState(() => page.slots[index] = const _QuickProductSlot());
+    unawaited(_saveQuickProductPages());
+  }
+
+  Future<void> _configureQuickSlot(_QuickProductPage page, int slotIndex) async {
+    if (slotIndex < 0 || slotIndex >= page.slots.length) return;
+    final tr = AppLocalizations.of(context);
+    final products = widget.store.products.where((product) => product.stock > 0).toList();
+    final nameController = TextEditingController(text: page.slots[slotIndex].shortName ?? '');
+    Product? selected = page.slots[slotIndex].productId == null ? null : _productById(page.slots[slotIndex].productId!);
+    var query = '';
+    final result = await showDialog<_QuickProductSlot>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final filtered = products.where((product) {
+            if (query.trim().isEmpty) return true;
+            final q = query.toLowerCase();
+            return product.name.toLowerCase().contains(q) || product.code.toLowerCase().contains(q) || product.category.toLowerCase().contains(q);
+          }).toList();
+          return AlertDialog(
+            title: const Text('Quick Product Shortcut'),
+            content: SizedBox(
+              width: 520,
+              height: 520,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextField(
+                    decoration: InputDecoration(prefixIcon: const Icon(Icons.search), labelText: tr.text('search_product')),
+                    onChanged: (value) => setDialogState(() => query = value),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(labelText: 'Short name'),
+                  ),
+                  const SizedBox(height: 10),
+                  Expanded(
+                    child: filtered.isEmpty
+                        ? Center(child: Text(tr.text('no_products')))
+                        : ListView.separated(
+                            itemCount: filtered.length,
+                            separatorBuilder: (_, __) => const Divider(height: 1),
+                            itemBuilder: (context, index) {
+                              final product = filtered[index];
+                              final isSelected = selected?.id == product.id;
+                              return ListTile(
+                                selected: isSelected,
+                                leading: Icon(isSelected ? Icons.check_circle : Icons.inventory_2_outlined),
+                                title: Text(product.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                                subtitle: Text('${product.code} • ${tr.text('stock')}: ${product.stock}', maxLines: 1, overflow: TextOverflow.ellipsis),
+                                trailing: Text(formatCurrency(product.price, currency: widget.store.storeProfile.currency)),
+                                onTap: () {
+                                  setDialogState(() {
+                                    selected = product;
+                                    if (nameController.text.trim().isEmpty) nameController.text = _shortProductName(product.name);
+                                  });
+                                },
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(dialogContext), child: Text(tr.text('cancel'))),
+              if (page.slots[slotIndex].productId != null)
+                TextButton(onPressed: () => Navigator.pop(dialogContext, const _QuickProductSlot()), child: Text(tr.text('delete'))),
+              FilledButton(
+                onPressed: selected == null ? null : () => Navigator.pop(dialogContext, _QuickProductSlot(productId: selected!.id, shortName: nameController.text.trim().isEmpty ? _shortProductName(selected!.name) : nameController.text.trim())),
+                child: Text(tr.text('save')),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    nameController.dispose();
+    if (result == null) return;
+    setState(() => page.slots[slotIndex] = result);
+    unawaited(_saveQuickProductPages());
+  }
+
+  Widget _buildMobileSalesLayout(BuildContext context, AppLocalizations tr, List<Product> products, double pagePadding) {
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.all(pagePadding),
+        child: Column(
+          children: [
+            _buildMobileSaleControls(context, tr, products),
+            const SizedBox(height: 8),
+            _buildMobileInvoiceSummary(context, tr),
+            const SizedBox(height: 8),
+            Expanded(child: _buildCart(context, tr, compactActions: true)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMobileSaleControls(BuildContext context, AppLocalizations tr, List<Product> products) {
+    return Card(
+      margin: EdgeInsets.zero,
       child: Padding(
         padding: VentioResponsive.cardInsets(context),
         child: Column(
@@ -168,14 +670,15 @@ class _SalesPageState extends State<SalesPage> {
               _buildEmbeddedScannerPreview(),
             ],
             const SizedBox(height: 10),
-            TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                labelText: tr.text('search_product'),
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon: _search.isEmpty ? null : IconButton(onPressed: () => setState(() { _search = ''; _searchController.clear(); }), icon: const Icon(Icons.clear)),
-              ),
-              onChanged: (value) => setState(() => _search = value),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                _MobileSaleAction(icon: Icons.search, label: tr.text('search'), onTap: () => _showProductSearchSheet(products)),
+                _MobileSaleAction(icon: Icons.person_outline, label: tr.text('customer'), onTap: _showCustomerSheet),
+                _MobileSaleAction(icon: Icons.percent, label: tr.text('discount'), onTap: _showDiscountSheet),
+                _MobileSaleAction(icon: Icons.receipt_long_outlined, label: tr.text('recent_invoices'), onTap: _showInvoicesSheet),
+                _MobileSaleAction(icon: Icons.more_horiz, label: tr.text('more'), onTap: _showCheckoutSheet),
+              ],
             ),
           ],
         ),
@@ -183,136 +686,61 @@ class _SalesPageState extends State<SalesPage> {
     );
   }
 
-  Widget _buildMobileProductList(BuildContext context, AppLocalizations tr, List<Product> products) {
-    if (products.isEmpty) {
-      return EmptyStateCard(icon: Icons.inventory_2_outlined, title: tr.text('no_products'), subtitle: tr.text('no_products_desc'));
-    }
+  Widget _buildMobileInvoiceSummary(BuildContext context, AppLocalizations tr) {
+    final customerName = widget.store.resolveCustomerName(_selectedCustomerId);
     return Card(
       margin: EdgeInsets.zero,
-      child: ListView.separated(
-        padding: const EdgeInsets.all(8),
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        itemCount: products.length,
-        separatorBuilder: (_, __) => const Divider(height: 1),
-        itemBuilder: (context, index) {
-          final product = products[index];
-          return ListTile(
-            dense: true,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            title: Text(product.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-            subtitle: Text('${product.code} • ${tr.text('stock')}: ${product.stock}', maxLines: 1, overflow: TextOverflow.ellipsis),
-            trailing: Wrap(
-              crossAxisAlignment: WrapCrossAlignment.center,
-              spacing: 8,
-              children: [
-                Text(formatCurrency(product.price, currency: widget.store.storeProfile.currency)),
-                IconButton.filledTonal(
-                  tooltip: tr.text('add_to_cart'),
-                  onPressed: () => _addProduct(product),
-                  icon: const Icon(Icons.add),
-                ),
-              ],
-            ),
-            onTap: () => _addProduct(product),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildPosPanel(BuildContext context, AppLocalizations tr, List<Product> products, {required bool isWide}) {
-    return Card(
       child: Padding(
-        padding: VentioResponsive.pageInsets(context),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _buildBarcodeStation(context, tr),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
+            Text('$customerName • ${_paymentMethodLabel(tr, _paymentMethod)}', maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 6),
+            Row(
               children: [
-                SizedBox(
-                  width: _formFieldWidth(context, 320),
-                  child: DropdownButtonFormField<String>(
-                    initialValue: widget.store.sanitizeSelectedCustomerId(_selectedCustomerId),
-                    items: widget.store.customers
-                        .map((customer) => DropdownMenuItem<String>(value: customer.id, child: Text(customer.name)))
-                        .toList(),
-                    decoration: InputDecoration(labelText: tr.text('customer')),
-                    onChanged: (value) => setState(() => _selectedCustomerId = widget.store.sanitizeSelectedCustomerId(value)),
-                  ),
-                ),
-                SizedBox(
-                  width: _formFieldWidth(context, 220),
-                  child: TextFormField(
-                    controller: _discountController,
-                    decoration: InputDecoration(labelText: tr.text('discount')),
-                    inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
-                    keyboardType: TextInputType.number,
-                    onChanged: (_) => setState(() {}),
-                  ),
-                ),
-                SizedBox(
-                  width: _formFieldWidth(context, 180),
-                  child: DropdownButtonFormField<String>(
-                    initialValue: _paymentMethod,
-                    decoration: InputDecoration(labelText: tr.text('payment')),
-                    items: [
-                      DropdownMenuItem(value: 'Cash', child: Text(tr.text('payment_cash'))),
-                      DropdownMenuItem(value: 'Card', child: Text(tr.text('payment_card'))),
-                      DropdownMenuItem(value: 'Transfer', child: Text(tr.text('payment_transfer'))),
-                      DropdownMenuItem(value: 'Mixed', child: Text(tr.text('payment_mixed'))),
-                    ],
-                    onChanged: (value) => setState(() => _paymentMethod = value ?? 'Cash'),
-                  ),
-                ),
-                SizedBox(
-                  width: _formFieldWidth(context, 340),
-                  child: TextField(
-                    controller: _searchController,
-                    decoration: InputDecoration(
-                      labelText: tr.text('search_product'),
-                      prefixIcon: const Icon(Icons.search),
-                      suffixIcon: _search.isEmpty
-                          ? null
-                          : IconButton(
-                              onPressed: () => setState(() {
-                                _search = '';
-                                _searchController.clear();
-                              }),
-                              icon: const Icon(Icons.clear),
-                            ),
-                    ),
-                    onChanged: (value) => setState(() => _search = value),
-                  ),
-                ),
+                Expanded(child: Text('$_itemsCount ${tr.text('items_count')}', style: Theme.of(context).textTheme.bodyMedium)),
+                Text(formatCurrency(_total, currency: widget.store.storeProfile.currency), style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
               ],
-            ),
-            const SizedBox(height: 16),
-            Expanded(
-              child: isWide
-                  ? Row(
-                      children: [
-                        Expanded(flex: 6, child: _buildProductPicker(context, tr, products)),
-                        const SizedBox(width: 16),
-                        Expanded(flex: 5, child: _buildCart(context, tr)),
-                      ],
-                    )
-                  : Column(
-                      children: [
-                        Expanded(flex: 5, child: _buildCart(context, tr)),
-                        const SizedBox(height: 16),
-                        Expanded(flex: 4, child: _buildProductPicker(context, tr, products)),
-                      ],
-                    ),
             ),
           ],
         ),
       ),
     );
+  }
+
+  String _paymentMethodLabel(AppLocalizations tr, String method) {
+    switch (method) {
+      case 'Card':
+        return tr.text('payment_card');
+      case 'Transfer':
+        return tr.text('payment_transfer');
+      case 'Mixed':
+        return tr.text('payment_mixed');
+      case 'Cash':
+      default:
+        return tr.text('payment_cash');
+    }
+  }
+
+
+  void _toggleManualBarcodeInput() {
+    setState(() => _manualBarcodeInput = !_manualBarcodeInput);
+    if (_manualBarcodeInput) {
+      _barcodeFocusNode.requestFocus();
+      SystemChannels.textInput.invokeMethod('TextInput.show');
+    } else {
+      _barcodeFocusNode.unfocus();
+      SystemChannels.textInput.invokeMethod('TextInput.hide');
+    }
+  }
+
+  void _restoreScannerMode() {
+    if (_manualBarcodeInput) {
+      setState(() => _manualBarcodeInput = false);
+    }
+    _barcodeFocusNode.requestFocus();
+    SystemChannels.textInput.invokeMethod('TextInput.hide');
   }
 
   bool get _canUseCameraScanner =>
@@ -427,8 +855,17 @@ class _SalesPageState extends State<SalesPage> {
           final field = TextField(
             controller: _barcodeController,
             focusNode: _barcodeFocusNode,
-            autofocus: true,
+            autofocus: false,
+            readOnly: false,
+            showCursor: _manualBarcodeInput,
+            enableInteractiveSelection: _manualBarcodeInput,
+            keyboardType: _manualBarcodeInput ? TextInputType.text : TextInputType.none,
             textInputAction: TextInputAction.done,
+            onTap: () {
+              if (!_manualBarcodeInput) {
+                SystemChannels.textInput.invokeMethod('TextInput.hide');
+              }
+            },
             decoration: InputDecoration(
               labelText: tr.text('scan_barcode'),
               hintText: tr.text('scan_barcode_hint'),
@@ -436,6 +873,11 @@ class _SalesPageState extends State<SalesPage> {
               suffixIcon: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  IconButton(
+                    tooltip: _manualBarcodeInput ? tr.text('hide_keyboard') : tr.text('manual_input'),
+                    onPressed: _toggleManualBarcodeInput,
+                    icon: Icon(_manualBarcodeInput ? Icons.keyboard_hide_outlined : Icons.keyboard_outlined),
+                  ),
                   if (_canUseCameraScanner)
                     IconButton(
                       tooltip: _scannerActive ? tr.text('stop_camera_scanner') : tr.text('start_camera_scanner'),
@@ -446,7 +888,11 @@ class _SalesPageState extends State<SalesPage> {
                     tooltip: tr.text('clear'),
                     onPressed: () {
                       _barcodeController.clear();
-                      _barcodeFocusNode.requestFocus();
+                      if (_manualBarcodeInput) {
+                        _barcodeFocusNode.requestFocus();
+                      } else {
+                        SystemChannels.textInput.invokeMethod('TextInput.hide');
+                      }
                     },
                     icon: const Icon(Icons.clear),
                   ),
@@ -479,75 +925,7 @@ class _SalesPageState extends State<SalesPage> {
     );
   }
 
-  Widget _buildProductPicker(BuildContext context, AppLocalizations tr, List<Product> products) {
-    if (products.isEmpty) {
-      return EmptyStateCard(icon: Icons.inventory_2_outlined, title: tr.text('no_products'), subtitle: tr.text('no_products_desc'));
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Expanded(child: Text(tr.text('quick_products'), style: Theme.of(context).textTheme.titleMedium)),
-            Text('${products.length}'),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Expanded(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final crossAxisCount = constraints.maxWidth > 760 ? 3 : (constraints.maxWidth < 420 ? 1 : 2);
-              final cardHeight = constraints.maxWidth < 420 ? 172.0 : 188.0;
-              return GridView.builder(
-                itemCount: products.length,
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: crossAxisCount,
-                  mainAxisSpacing: 12,
-                  crossAxisSpacing: 12,
-                  mainAxisExtent: cardHeight,
-                ),
-                itemBuilder: (context, index) {
-                  final product = products[index];
-                  return InkWell(
-                    borderRadius: BorderRadius.circular(16),
-                    onTap: () => _addProduct(product),
-                    child: Ink(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
-                      ),
-                      child: Padding(
-                        padding: VentioResponsive.cardInsets(context),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(product.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.titleMedium),
-                            const SizedBox(height: 8),
-                            Text(product.code, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall),
-                            Text('${tr.text('stock')}: ${product.stock}', maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall),
-                            const Spacer(),
-                            Text(
-                              formatCurrency(product.price, currency: widget.store.storeProfile.currency),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.titleMedium,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              );
-            },
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildCart(BuildContext context, AppLocalizations tr) {
+  Widget _buildCart(BuildContext context, AppLocalizations tr, {bool compactActions = false, bool showTotals = true, bool showActions = true}) {
     return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
@@ -590,13 +968,13 @@ class _SalesPageState extends State<SalesPage> {
                               children: [
                                 IconButton(
                                   tooltip: tr.text('decrease_qty'),
-                                  onPressed: item.quantity > 1 ? () => setState(() => _cart[index] = item.copyWith(quantity: item.quantity - 1)) : null,
+                                  onPressed: item.quantity > 1 ? () => _changeCartQuantity(index, item.quantity - 1) : null,
                                   icon: const Icon(Icons.remove_circle_outline),
                                 ),
                                 SizedBox(width: 28, child: Text('${item.quantity}', textAlign: TextAlign.center)),
                                 IconButton(
                                   tooltip: tr.text('increase_qty'),
-                                  onPressed: item.quantity < item.product.stock ? () => setState(() => _cart[index] = item.copyWith(quantity: item.quantity + 1)) : null,
+                                  onPressed: item.quantity < item.product.stock ? () => _changeCartQuantity(index, item.quantity + 1) : null,
                                   icon: const Icon(Icons.add_circle_outline),
                                 ),
                                 IconButton(
@@ -607,16 +985,20 @@ class _SalesPageState extends State<SalesPage> {
                               ],
                             );
                             if (constraints.maxWidth < 520) {
-                              return Padding(
-                                padding: const EdgeInsets.symmetric(vertical: 8),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(item.product.name, style: Theme.of(context).textTheme.titleSmall),
-                                    const SizedBox(height: 4),
-                                    Text('${item.product.code} • ${formatCurrency(item.product.price, currency: widget.store.storeProfile.currency)} • ${tr.text('stock')}: ${item.product.stock}'),
-                                    Align(alignment: Alignment.centerRight, child: actions),
-                                  ],
+                              return InkWell(
+                                onTap: () => _showQuantitySheet(index),
+                                borderRadius: BorderRadius.circular(12),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 8),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(item.product.name, style: Theme.of(context).textTheme.titleSmall),
+                                      const SizedBox(height: 4),
+                                      Text('${item.product.code} • ${formatCurrency(item.product.price, currency: widget.store.storeProfile.currency)} • ${tr.text('stock')}: ${item.product.stock}'),
+                                      Align(alignment: Alignment.centerRight, child: actions),
+                                    ],
+                                  ),
                                 ),
                               );
                             }
@@ -624,6 +1006,7 @@ class _SalesPageState extends State<SalesPage> {
                               contentPadding: EdgeInsets.zero,
                               title: Text(item.product.name),
                               subtitle: Text('${item.product.code} • ${formatCurrency(item.product.price, currency: widget.store.storeProfile.currency)} • ${tr.text('stock')}: ${item.product.stock}'),
+                              onTap: () => _showQuantitySheet(index),
                               trailing: ConstrainedBox(constraints: BoxConstraints(maxWidth: VentioResponsive.adaptiveWidth(context, mobile: 144, tablet: 164, desktop: 178)), child: actions),
                             );
                           },
@@ -631,30 +1014,34 @@ class _SalesPageState extends State<SalesPage> {
                       },
                     ),
             ),
-            const Divider(height: 24),
-            _totalLine(tr.text('subtotal'), formatCurrency(_subtotal, currency: widget.store.storeProfile.currency)),
-            _totalLine(tr.text('discount'), formatCurrency(_discount, currency: widget.store.storeProfile.currency)),
-            if (_discount > _subtotal)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Text(
-                  tr.text('discount_exceeds_subtotal'),
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+            if (showTotals) ...[
+              const Divider(height: 24),
+              _totalLine(tr.text('subtotal'), formatCurrency(_subtotal, currency: widget.store.storeProfile.currency)),
+              _totalLine(tr.text('discount'), formatCurrency(_discount, currency: widget.store.storeProfile.currency)),
+              if (_discount > _subtotal)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Text(
+                    tr.text('discount_exceeds_subtotal'),
+                    style: TextStyle(color: Theme.of(context).colorScheme.error),
+                  ),
                 ),
+              const SizedBox(height: 8),
+              _totalLine(tr.text('total'), formatCurrency(_total, currency: widget.store.storeProfile.currency), isBold: true),
+            ],
+            if (showActions) ...[
+              const SizedBox(height: 12),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final primary = FilledButton.icon(onPressed: _cart.isEmpty ? null : () => _saveCurrentInvoice(printAfterSave: true), icon: const Icon(Icons.point_of_sale), label: Text(tr.text('complete_sale_print')));
+                  final secondary = OutlinedButton.icon(onPressed: _cart.isEmpty ? null : () => _saveCurrentInvoice(printAfterSave: false), icon: const Icon(Icons.save_outlined), label: Text(tr.text('save_only')));
+                  if (constraints.maxWidth < 460) {
+                    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [primary, const SizedBox(height: 8), secondary]);
+                  }
+                  return Row(children: [Expanded(child: primary), const SizedBox(width: 12), Expanded(child: secondary)]);
+                },
               ),
-            const SizedBox(height: 8),
-            _totalLine(tr.text('total'), formatCurrency(_total, currency: widget.store.storeProfile.currency), isBold: true),
-            const SizedBox(height: 12),
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final primary = FilledButton.icon(onPressed: _cart.isEmpty ? null : () => _saveCurrentInvoice(printAfterSave: true), icon: const Icon(Icons.point_of_sale), label: Text(tr.text('complete_sale_print')));
-                final secondary = OutlinedButton.icon(onPressed: _cart.isEmpty ? null : () => _saveCurrentInvoice(printAfterSave: false), icon: const Icon(Icons.save_outlined), label: Text(tr.text('save_only')));
-                if (constraints.maxWidth < 460) {
-                  return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [primary, const SizedBox(height: 8), secondary]);
-                }
-                return Row(children: [Expanded(child: primary), const SizedBox(width: 12), Expanded(child: secondary)]);
-              },
-            ),
+            ],
           ],
         ),
       ),
@@ -739,22 +1126,231 @@ class _SalesPageState extends State<SalesPage> {
     );
   }
 
-  void _showCartSheet() {
+  void _changeCartQuantity(int index, int quantity) {
+    if (index < 0 || index >= _cart.length) return;
+    final item = _cart[index];
+    final cleanQuantity = quantity.clamp(1, item.product.stock).toInt();
+    setState(() {
+      final updatedItem = item.copyWith(quantity: cleanQuantity);
+      _cart.removeAt(index);
+      _cart.insert(0, updatedItem);
+    });
+  }
+
+  Future<void> _showQuantitySheet(int index) async {
+    if (index < 0 || index >= _cart.length) return;
+    final tr = AppLocalizations.of(context);
+    final item = _cart[index];
+    final controller = TextEditingController(text: '${item.quantity}');
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setModalState) => SafeArea(
+          child: Padding(
+            padding: EdgeInsets.only(left: 16, right: 16, top: 16, bottom: MediaQuery.viewInsetsOf(sheetContext).bottom + 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(item.product.name, style: Theme.of(context).textTheme.titleLarge, maxLines: 2, overflow: TextOverflow.ellipsis),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  textAlign: TextAlign.center,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  decoration: InputDecoration(labelText: tr.text('quantity')),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          final current = int.tryParse(controller.text) ?? item.quantity;
+                          controller.text = '${(current - 1).clamp(1, item.product.stock)}';
+                          controller.selection = TextSelection.fromPosition(TextPosition(offset: controller.text.length));
+                        },
+                        icon: const Icon(Icons.remove),
+                        label: Text(tr.text('decrease_qty')),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          final current = int.tryParse(controller.text) ?? item.quantity;
+                          controller.text = '${(current + 1).clamp(1, item.product.stock)}';
+                          controller.selection = TextSelection.fromPosition(TextPosition(offset: controller.text.length));
+                        },
+                        icon: const Icon(Icons.add),
+                        label: Text(tr.text('increase_qty')),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                FilledButton(
+                  onPressed: () {
+                    final quantity = int.tryParse(controller.text) ?? item.quantity;
+                    Navigator.pop(sheetContext);
+                    _changeCartQuantity(index, quantity);
+                    FocusScope.of(context).unfocus();
+                  },
+                  child: Text(tr.text('save')),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    controller.dispose();
+  }
+
+  void _showProductSearchSheet(List<Product> products) {
+    final tr = AppLocalizations.of(context);
+    final controller = TextEditingController(text: _search);
+    var query = _search;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setModalState) {
+          final filteredProducts = products.where((product) {
+            if (query.trim().isEmpty) return true;
+            final q = query.toLowerCase();
+            return product.name.toLowerCase().contains(q) || product.code.toLowerCase().contains(q) || product.category.toLowerCase().contains(q);
+          }).toList();
+          return SafeArea(
+            child: Padding(
+              padding: EdgeInsets.only(left: 16, right: 16, top: 16, bottom: MediaQuery.viewInsetsOf(sheetContext).bottom + 16),
+              child: SizedBox(
+                height: MediaQuery.sizeOf(sheetContext).height * 0.78,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(tr.text('search_product'), style: Theme.of(context).textTheme.titleLarge),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: controller,
+                      autofocus: true,
+                      decoration: InputDecoration(prefixIcon: const Icon(Icons.search), labelText: tr.text('search_product')),
+                      onChanged: (value) => setModalState(() => query = value),
+                    ),
+                    const SizedBox(height: 12),
+                    Expanded(
+                      child: filteredProducts.isEmpty
+                          ? Center(child: Text(tr.text('no_products')))
+                          : ListView.separated(
+                              itemCount: filteredProducts.length,
+                              separatorBuilder: (_, __) => const Divider(height: 1),
+                              itemBuilder: (context, index) {
+                                final product = filteredProducts[index];
+                                return ListTile(
+                                  title: Text(product.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                                  subtitle: Text('${product.code} • ${tr.text('stock')}: ${product.stock}', maxLines: 1, overflow: TextOverflow.ellipsis),
+                                  trailing: Text(formatCurrency(product.price, currency: widget.store.storeProfile.currency)),
+                                  onTap: () {
+                                    Navigator.pop(sheetContext);
+                                    _search = '';
+                                    _searchController.clear();
+                                    FocusScope.of(context).unfocus();
+                                    _addProduct(product);
+                                  },
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    ).whenComplete(controller.dispose);
+  }
+
+  void _showCustomerSheet() {
+    final tr = AppLocalizations.of(context);
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            Padding(padding: const EdgeInsets.all(16), child: Text(tr.text('customer'), style: Theme.of(context).textTheme.titleLarge)),
+            ...widget.store.customers.map((customer) {
+              final selectedCustomerId = widget.store.sanitizeSelectedCustomerId(_selectedCustomerId);
+              final isSelected = customer.id == selectedCustomerId;
+              return ListTile(
+                leading: Icon(isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked),
+                title: Text(customer.name),
+                selected: isSelected,
+                onTap: () {
+                  setState(() => _selectedCustomerId = widget.store.sanitizeSelectedCustomerId(customer.id));
+                  Navigator.pop(sheetContext);
+                },
+              );
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showDiscountSheet() {
     final tr = AppLocalizations.of(context);
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       builder: (sheetContext) => SafeArea(
         child: Padding(
-          padding: EdgeInsets.only(
-            left: 12,
-            right: 12,
-            top: 12,
-            bottom: MediaQuery.viewInsetsOf(sheetContext).bottom + 12,
+          padding: EdgeInsets.only(left: 16, right: 16, top: 16, bottom: MediaQuery.viewInsetsOf(sheetContext).bottom + 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(tr.text('discount'), style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _discountController,
+                autofocus: true,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
+                decoration: InputDecoration(labelText: tr.text('discount')),
+                onChanged: (_) => setState(() {}),
+              ),
+              const SizedBox(height: 12),
+              FilledButton(
+                onPressed: () {
+                  setState(() {});
+                  Navigator.pop(sheetContext);
+                  FocusScope.of(context).unfocus();
+                },
+                child: Text(tr.text('save')),
+              ),
+            ],
           ),
+        ),
+      ),
+    );
+  }
+
+  void _showInvoicesSheet() {
+    final tr = AppLocalizations.of(context);
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
           child: SizedBox(
-            height: MediaQuery.sizeOf(sheetContext).height * 0.72,
-            child: _buildCart(sheetContext, tr),
+            height: MediaQuery.sizeOf(sheetContext).height * 0.76,
+            child: _buildInvoicesPanel(sheetContext, tr, widget.store.sales),
           ),
         ),
       ),
@@ -873,28 +1469,30 @@ class _SalesPageState extends State<SalesPage> {
     final existingIndex = _cart.indexWhere((item) => item.product.id == product.id);
     setState(() {
       if (existingIndex == -1) {
-        _cart.add(_DraftSaleItem(product: product, quantity: 1));
+        _cart.insert(0, _DraftSaleItem(product: product, quantity: 1));
       } else if (_cart[existingIndex].quantity < product.stock) {
-        _cart[existingIndex] = _cart[existingIndex].copyWith(quantity: _cart[existingIndex].quantity + 1);
+        final updatedItem = _cart[existingIndex].copyWith(quantity: _cart[existingIndex].quantity + 1);
+        _cart.removeAt(existingIndex);
+        _cart.insert(0, updatedItem);
       } else {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('stock_limit_reached'))));
       }
     });
-    _barcodeFocusNode.requestFocus();
+    _restoreScannerMode();
   }
 
   void _addByCode(String code) {
     final tr = AppLocalizations.of(context);
     final cleanCode = code.trim();
     if (cleanCode.isEmpty) {
-      _barcodeFocusNode.requestFocus();
+      _restoreScannerMode();
       return;
     }
     final product = widget.store.findProductByCode(cleanCode);
     if (product == null || product.stock <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('product_code_not_found'))));
       _barcodeController.clear();
-      _barcodeFocusNode.requestFocus();
+      _restoreScannerMode();
       return;
     }
     _barcodeController.clear();
@@ -941,7 +1539,7 @@ class _SalesPageState extends State<SalesPage> {
       _barcodeController.clear();
       _search = '';
     });
-    _barcodeFocusNode.requestFocus();
+    _restoreScannerMode();
 
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('invoice_created_successfully'))));
 
@@ -961,57 +1559,73 @@ class _SalesPageState extends State<SalesPage> {
 }
 
 
-class _MobileCheckoutBar extends StatelessWidget {
-  const _MobileCheckoutBar({
-    required this.enabled,
-    required this.itemsCount,
-    required this.total,
-    required this.completeLabel,
-    required this.saveLabel,
-    required this.onComplete,
-    required this.onSave,
-  });
+class _MobileSaleAction extends StatelessWidget {
+  const _MobileSaleAction({required this.icon, required this.label, required this.onTap});
 
-  final bool enabled;
-  final int itemsCount;
-  final String total;
-  final String completeLabel;
-  final String saveLabel;
-  final VoidCallback onComplete;
-  final VoidCallback onSave;
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final tr = AppLocalizations.of(context);
-    return SafeArea(
-      top: false,
-      child: Card(
-        elevation: 4,
-        margin: EdgeInsets.zero,
-        child: Padding(
-          padding: VentioResponsive.cardInsets(context),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  Expanded(child: Text("$itemsCount ${tr.text('items_count')}", maxLines: 1, overflow: TextOverflow.ellipsis)),
-                  Text(total, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(child: FilledButton.icon(onPressed: enabled ? onComplete : null, icon: const Icon(Icons.point_of_sale), label: Text(completeLabel, overflow: TextOverflow.ellipsis))),
-                  const SizedBox(width: 8),
-                  Expanded(child: OutlinedButton.icon(onPressed: enabled ? onSave : null, icon: const Icon(Icons.save_outlined), label: Text(saveLabel, overflow: TextOverflow.ellipsis))),
-                ],
-              ),
-            ],
-          ),
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon),
+            const SizedBox(height: 2),
+            Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.labelSmall),
+          ],
         ),
       ),
+    );
+  }
+}
+
+class _QuickProductSlot {
+  const _QuickProductSlot({this.productId, this.shortName});
+
+  final String? productId;
+  final String? shortName;
+
+  Map<String, dynamic> toJson() => {
+        'productId': productId,
+        'shortName': shortName,
+      };
+
+  factory _QuickProductSlot.fromJson(Map<String, dynamic> json) => _QuickProductSlot(
+        productId: json['productId'] as String?,
+        shortName: json['shortName'] as String?,
+      );
+}
+
+class _QuickProductPage {
+  _QuickProductPage({required this.name, required this.slots});
+
+  String name;
+  final List<_QuickProductSlot> slots;
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'slots': slots.map((slot) => slot.toJson()).toList(),
+      };
+
+  factory _QuickProductPage.fromJson(Map<String, dynamic> json) {
+    final rawSlots = json['slots'];
+    final slots = rawSlots is List
+        ? rawSlots.whereType<Map<String, dynamic>>().map(_QuickProductSlot.fromJson).toList()
+        : <_QuickProductSlot>[];
+    while (slots.length < 12) {
+      slots.add(const _QuickProductSlot());
+    }
+    if (slots.length > 12) slots.removeRange(12, slots.length);
+    return _QuickProductPage(
+      name: (json['name'] as String?)?.trim().isNotEmpty == true ? (json['name'] as String).trim() : 'Favorites',
+      slots: slots,
     );
   }
 }

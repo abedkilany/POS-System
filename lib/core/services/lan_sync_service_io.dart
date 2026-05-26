@@ -8,6 +8,7 @@ import '../../data/app_store.dart';
 import '../../models/app_identity.dart';
 import '../../models/sync_change.dart';
 import 'local_database_service.dart';
+import 'unified_sync_core_service.dart';
 
 typedef LanSyncProgressCallback = void Function(double value, String label);
 
@@ -188,6 +189,7 @@ class LanSyncService {
   LanSyncService(this.store);
 
   final AppStore store;
+  late final UnifiedSyncCoreService _syncCore = UnifiedSyncCoreService(store);
   static HttpServer? _sharedServer;
   static int? _sharedPort;
 
@@ -335,25 +337,18 @@ class LanSyncService {
           await _json(request, {'ok': false, 'error': 'Reset data can only be initiated on the Host device.'}, status: HttpStatus.forbidden);
           return;
         }
-        final latestResetAt = store.latestResetSyncAt;
-        final hostReceivedAt = DateTime.now();
-        final applicableChanges = (latestResetAt == null
-                ? changes
-                : changes.where((item) => item.createdAt.isAfter(latestResetAt)).toList())
-            // Re-stamp accepted client changes on the Host timeline. Otherwise a
-            // second client whose cursor is already newer than the original
-            // offline client timestamp may never pull that change.
-            .map((item) => item.copyWith(createdAt: hostReceivedAt))
-            .toList();
-        await store.applyRemoteSyncChanges(applicableChanges, markAppliedAsSynced: true, mirrorToCloud: store.appIdentity.isCloudEnabled && store.appIdentity.isHost);
+        final accepted = await _syncCore.acceptClientChangesOnHost(
+          changes,
+          mirrorToCloud: store.appIdentity.isCloudEnabled && store.appIdentity.isHost,
+        );
         await _json(request, {
           'ok': true,
           // Acknowledge all received IDs. Changes older than the latest Host reset
           // are intentionally discarded so stale offline client data cannot revive
           // deleted business data after a central reset.
-          'ackIds': changes.map((item) => item.id).toList(),
+          'ackIds': accepted.ackIds,
           'serverTime': DateTime.now().toIso8601String(),
-          'discardedBecauseOfReset': changes.length - applicableChanges.length,
+          'discardedBecauseOfReset': accepted.discardedBecauseOfReset,
         });
         return;
       }
@@ -546,9 +541,75 @@ class LanSyncService {
     }
   }
 
+
+  Future<LanSyncResult> pushPendingOnly(String host, {int port = 8787, String token = '', LanSyncProgressCallback? onProgress}) async {
+    final pending = _syncCore.pendingChangesForTarget('host');
+    final pendingIds = _syncCore.changeIds(pending);
+    if (pending.isEmpty) return const LanSyncResult(ok: true, message: 'No LAN changes to push.');
+    try {
+      final client = _client();
+      onProgress?.call(0.18, 'Preparing ${pending.length} local change(s) for LAN push...');
+      await _syncCore.markPushInProgress(pendingIds);
+      final pushRequest = await client.post(host.trim(), port, '/changes/push');
+      _attachToken(pushRequest, token);
+      pushRequest.headers.contentType = ContentType.json;
+      pushRequest.write(jsonEncode({
+        'deviceId': store.deviceId,
+        'storeId': store.appIdentity.storeId,
+        'branchId': store.appIdentity.branchId,
+        'changes': pending.map((item) => item.toJson()).toList(),
+      }));
+      final pushResponse = await pushRequest.close();
+      final pushBody = await utf8.decoder.bind(pushResponse).join();
+      client.close(force: true);
+      if (pushResponse.statusCode != 200) {
+        final message = 'Push failed: ${pushResponse.statusCode} $pushBody';
+        await _syncCore.markPushFailed(pendingIds, message);
+        return LanSyncResult(ok: false, message: message);
+      }
+      final decoded = jsonDecode(pushBody) as Map<String, dynamic>;
+      final ackIds = (decoded['ackIds'] as List<dynamic>? ?? []).map((item) => '$item').toList();
+      await _syncCore.markPushAcknowledged(ackIds, fallbackIds: pendingIds);
+      return LanSyncResult(ok: true, message: 'LAN push completed. Pushed ${pending.length} change(s).');
+    } catch (error) {
+      await _syncCore.markPushFailed(pendingIds, error.toString());
+      return LanSyncResult(ok: false, message: 'LAN push failed: $error');
+    }
+  }
+
+  Future<LanSyncResult> pullChangesOnly(String host, {int port = 8787, String token = '', LanSyncProgressCallback? onProgress}) async {
+    final settings = LanSyncSettings.load();
+    try {
+      final client = _client();
+      final path = settings.lastPullCursor == null
+          ? '/changes/pull'
+          : '/changes/pull?since=${Uri.encodeQueryComponent(settings.lastPullCursor!.toIso8601String())}';
+      onProgress?.call(0.62, 'Pulling new changes from LAN Host...');
+      final pullRequest = await client.get(host.trim(), port, path);
+      _attachToken(pullRequest, token);
+      final pullResponse = await pullRequest.close();
+      final pullBody = await utf8.decoder.bind(pullResponse).join();
+      client.close(force: true);
+      if (pullResponse.statusCode != 200) {
+        return LanSyncResult(ok: false, message: 'Pull changes failed: ${pullResponse.statusCode} $pullBody');
+      }
+      final decodedPull = jsonDecode(pullBody) as Map<String, dynamic>;
+      final changes = _syncCore.filterOutLocalEchoes(
+        _syncCore.decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
+      );
+      onProgress?.call(0.78, 'Applying ${changes.length} LAN change(s) locally...');
+      await _syncCore.applyAuthoritativeChanges(changes);
+      final generatedAt = DateTime.tryParse(decodedPull['generatedAt'] as String? ?? '') ?? DateTime.now();
+      await settings.copyWith(lastPullCursor: generatedAt, lastConnectionAt: DateTime.now(), lastSyncAt: DateTime.now()).save();
+      return LanSyncResult(ok: true, message: 'LAN pull completed. Pulled ${changes.length} change(s).');
+    } catch (error) {
+      return LanSyncResult(ok: false, message: 'LAN pull failed: $error');
+    }
+  }
+
   Future<LanSyncResult> syncNow(String host, {int port = 8787, String token = '', LanSyncProgressCallback? onProgress}) async {
     final settings = LanSyncSettings.load();
-    final pending = store.pendingSyncChangesForTarget('host');
+    final pending = _syncCore.pendingChangesForTarget('host');
 
     // New Client bootstrap must use the Host snapshot, not the incremental
     // event stream. A Host can have valid products/customers/sales that were
@@ -559,14 +620,14 @@ class LanSyncService {
       return initialClone(host, port: port, token: token, onProgress: onProgress);
     }
 
-    final pendingIds = pending.map((item) => item.id).toList();
+    final pendingIds = _syncCore.changeIds(pending);
     var pushCompleted = pending.isEmpty;
     try {
       final client = _client();
 
       if (pending.isNotEmpty) {
         onProgress?.call(0.18, 'Preparing ${pending.length} local change(s) for LAN push...');
-        await store.markSyncQueueChangesInProgress(pendingIds);
+        await _syncCore.markPushInProgress(pendingIds);
         onProgress?.call(0.32, 'Uploading local changes to Host...');
         final pushRequest = await client.post(host.trim(), port, '/changes/push');
         _attachToken(pushRequest, token);
@@ -583,13 +644,13 @@ class LanSyncService {
         if (pushResponse.statusCode != 200) {
           client.close(force: true);
           final message = 'Push failed: ${pushResponse.statusCode} $pushBody';
-          await store.markSyncQueueChangesFailed(pendingIds, message);
+          await _syncCore.markPushFailed(pendingIds, message);
           return LanSyncResult(ok: false, message: message);
         }
         final decoded = jsonDecode(pushBody) as Map<String, dynamic>;
         final ackIds = (decoded['ackIds'] as List<dynamic>? ?? []).map((item) => '$item').toList();
         onProgress?.call(0.48, 'Host acknowledged ${ackIds.length} pushed change(s)...');
-        await store.markSyncChangesSyncedByIds(ackIds);
+        await _syncCore.markPushAcknowledged(ackIds);
         pushCompleted = true;
       }
 
@@ -606,16 +667,15 @@ class LanSyncService {
         final message = 'Pull changes failed: ${pullResponse.statusCode} $pullBody';
         final repair = pushCompleted ? await repairFromHostSnapshot(host, port: port, token: token, onProgress: onProgress) : null;
         if (repair?.ok == true) return LanSyncResult(ok: true, message: '$message. ${repair!.message}');
-        if (pendingIds.isNotEmpty && !pushCompleted) await store.markSyncQueueChangesFailed(pendingIds, message);
+        if (pendingIds.isNotEmpty && !pushCompleted) await _syncCore.markPushFailed(pendingIds, message);
         return LanSyncResult(ok: false, message: repair == null ? message : '$message. ${repair.message}');
       }
       final decodedPull = jsonDecode(pullBody) as Map<String, dynamic>;
-      final changes = (decodedPull['changes'] as List<dynamic>? ?? [])
-          .map((item) => SyncChange.fromJson(Map<String, dynamic>.from(item as Map)))
-          .where((item) => item.deviceId != store.deviceId)
-          .toList();
+      final changes = _syncCore.filterOutLocalEchoes(
+        _syncCore.decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
+      );
       onProgress?.call(0.78, 'Applying ${changes.length} LAN change(s) locally...');
-      await store.applyRemoteSyncChanges(changes, markAppliedAsSynced: true);
+      await _syncCore.applyAuthoritativeChanges(changes);
       final generatedAt = DateTime.tryParse(decodedPull['generatedAt'] as String? ?? '') ?? DateTime.now();
       onProgress?.call(0.92, 'Saving LAN sync cursor...');
       await settings.copyWith(lastPullCursor: generatedAt, lastConnectionAt: DateTime.now(), lastSyncAt: DateTime.now()).save();
@@ -629,7 +689,7 @@ class LanSyncService {
         final repair = await repairFromHostSnapshot(host, port: port, token: token, onProgress: onProgress);
         if (repair.ok) return LanSyncResult(ok: true, message: 'Incremental sync failed: $error. ${repair.message}');
       }
-      if (pendingIds.isNotEmpty && !pushCompleted) await store.markSyncQueueChangesFailed(pendingIds, error.toString());
+      if (pendingIds.isNotEmpty && !pushCompleted) await _syncCore.markPushFailed(pendingIds, error.toString());
       return LanSyncResult(ok: false, message: 'Sync failed: $error');
     }
   }

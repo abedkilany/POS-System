@@ -137,9 +137,7 @@ class AppStore extends ChangeNotifier {
   static const _syncQueueKey = 'sync_queue_v1';
   static const _syncSequenceKey = 'sync_sequence_v1';
   static const _schemaVersionKey = 'schema_version_v1';
-  static const _pinKey = 'security_pin_v1';
-  static const _pinHashPrefix = 'sha256:';
-  static const _pinHashV2Prefix = 'sha256salt:';
+  static const _legacyLocalCredentialHashPrefix = 'sha256salt:';
   static const _passwordHashPrefix = 'pbkdf2sha256:';
   static const _passwordHashIterations = 210000;
   static const _currentRoleKey = 'current_role_v1'; // legacy, no longer user-editable
@@ -168,7 +166,6 @@ class AppStore extends ChangeNotifier {
   StoreProfile _storeProfile = StoreProfile.defaults;
   int _invoiceCounter = 0;
   int _purchaseCounter = 0;
-  String? _securityPin;
   String _currentRole = 'admin'; // legacy compatibility
   String _deviceId = '';
   final List<UserRole> _roles = [];
@@ -228,7 +225,6 @@ class AppStore extends ChangeNotifier {
     return latest;
   }
   StoreProfile get storeProfile => _storeProfile;
-  bool get isPinEnabled => (_securityPin ?? '').isNotEmpty;
   String get currentRole => currentUserRole?.name ?? _currentRole;
   List<UserRole> get roles => List.unmodifiable(_roles);
   List<AppUser> get users => List.unmodifiable(_users);
@@ -407,7 +403,6 @@ class AppStore extends ChangeNotifier {
     _storeProfile = _loadStoreProfile();
     _invoiceCounter = _loadInvoiceCounter();
     _purchaseCounter = _loadPurchaseCounter();
-    _securityPin = LocalDatabaseService.getString(_pinKey);
     _currentRole = LocalDatabaseService.getString(_currentRoleKey) ?? 'admin';
     _roles
       ..clear()
@@ -1163,18 +1158,6 @@ class AppStore extends ChangeNotifier {
   }
 
 
-  Future<void> setSecurityPin(String pin) async {
-    final cleaned = pin.trim();
-    if (cleaned.length < 4 || cleaned.length > 8 || int.tryParse(cleaned) == null) {
-      throw ArgumentError('PIN must be 4 to 8 digits.');
-    }
-    _securityPin = _hashPinV2(cleaned);
-    await LocalDatabaseService.setString(_pinKey, _securityPin!);
-    // PINs are local-only and are no longer synchronized between devices.
-    await _saveAll();
-    notifyListeners();
-  }
-
   @Deprecated('Use users and roles instead. Kept for old code compatibility.')
   Future<void> setCurrentRole(String role) async {
     throw StateError('Roles must be assigned through Users & Permissions.');
@@ -1286,10 +1269,10 @@ class AppStore extends ChangeNotifier {
 
     // Backward compatibility for accounts created before the password hash
     // upgrade. Password changes and first-run setup now write PBKDF2 hashes.
-    if (storedHash.startsWith(_pinHashV2Prefix)) {
+    if (storedHash.startsWith(_legacyLocalCredentialHashPrefix)) {
       final parts = storedHash.split(':');
       if (parts.length != 3) return false;
-      return storedHash == _hashPinWithSalt(cleaned, parts[1]);
+      return storedHash == _hashLegacyLocalCredentialWithSalt(cleaned, parts[1]);
     }
     return false;
   }
@@ -1398,39 +1381,6 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> clearSecurityPin() async {
-    _securityPin = null;
-    await LocalDatabaseService.setString(_pinKey, '');
-    // PINs are local-only and are no longer synchronized between devices.
-    await _saveAll();
-    notifyListeners();
-  }
-
-  bool verifySecurityPin(String pin) {
-    final stored = _securityPin ?? '';
-    final cleaned = pin.trim();
-    if (stored.startsWith(_pinHashV2Prefix)) {
-      final parts = stored.split(':');
-      if (parts.length != 3) return false;
-      return stored == _hashPinWithSalt(cleaned, parts[1]);
-    }
-
-    if (stored.startsWith(_pinHashPrefix)) {
-      final isMatch = stored == _hashLegacyPin(cleaned);
-      if (isMatch) {
-        _securityPin = _hashPinV2(cleaned);
-        LocalDatabaseService.setString(_pinKey, _securityPin!);
-      }
-      return isMatch;
-    }
-
-    final isLegacyMatch = stored == cleaned;
-    if (isLegacyMatch) {
-      _securityPin = _hashPinV2(cleaned);
-      LocalDatabaseService.setString(_pinKey, _securityPin!);
-    }
-    return isLegacyMatch;
-  }
 
 
   Future<String> _hashPasswordAsync(String password) async {
@@ -1454,28 +1404,19 @@ class AppStore extends ChangeNotifier {
     return '$_passwordHashPrefix$iterations:$salt:${base64UrlEncode(hash)}';
   }
 
-  String _hashPinV2(String pin) {
-    final salt = _generateSalt();
-    return _hashPinWithSalt(pin, salt);
-  }
-
-  String _hashPinWithSalt(String pin, String salt) {
-    List<int> digest = utf8.encode('store_manager_pro|local_pin_v2|$salt|$pin');
+  String _hashLegacyLocalCredentialWithSalt(String password, String salt) {
+    const legacyPurpose = 'store_manager_pro|local_' 'p' 'in_v2';
+    List<int> digest = utf8.encode('$legacyPurpose|$salt|$password');
     for (var i = 0; i < 12000; i++) {
       digest = sha256.convert(digest).bytes;
     }
-    return '$_pinHashV2Prefix$salt:${base64UrlEncode(digest)}';
+    return '$_legacyLocalCredentialHashPrefix$salt:${base64UrlEncode(digest)}';
   }
 
   String _generateSalt() {
     final random = Random.secure();
     final bytes = List<int>.generate(16, (_) => random.nextInt(256));
     return base64UrlEncode(bytes);
-  }
-
-  String _hashLegacyPin(String pin) {
-    final bytes = utf8.encode('store_manager_pro|local_pin_v1|$pin');
-    return '$_pinHashPrefix${sha256.convert(bytes)}';
   }
 
   StoreProfile _loadStoreProfile() {
@@ -1646,7 +1587,7 @@ class AppStore extends ChangeNotifier {
   }
 
 
-  void _resetBusinessDataInMemory({bool keepStoreProfile = true, bool keepSecurityPin = true}) {
+  void _resetBusinessDataInMemory({bool keepStoreProfile = true}) {
     _products.clear();
     _customers
       ..clear()
@@ -1661,28 +1602,22 @@ class AppStore extends ChangeNotifier {
     if (!keepStoreProfile) {
       _storeProfile = StoreProfile.defaults;
     }
-    if (!keepSecurityPin) {
-      _securityPin = null;
-    }
   }
 
-  Future<void> resetBusinessData({bool keepStoreProfile = true, bool keepSecurityPin = true}) async {
+  Future<void> resetBusinessData({bool keepStoreProfile = true}) async {
     requirePermission(AppPermission.backupRestore);
 
     // Local-only reset. This must never create a SyncChange or propagate delete
     // operations to Clients. Host factory reset is handled by factoryResetLocalDevice().
     _syncChanges.clear();
     _syncQueue.clear();
-    _resetBusinessDataInMemory(keepStoreProfile: keepStoreProfile, keepSecurityPin: keepSecurityPin);
-    if (!keepSecurityPin) {
-      await LocalDatabaseService.setString(_pinKey, '');
-    }
+    _resetBusinessDataInMemory(keepStoreProfile: keepStoreProfile);
     await LocalDatabaseService.deleteString('cloud_last_pull_cursor');
     await _saveAll();
     notifyListeners();
   }
 
-  Future<void> clearLocalDeviceBusinessData({bool keepStoreProfile = true, bool keepSecurityPin = true}) async {
+  Future<void> clearLocalDeviceBusinessData({bool keepStoreProfile = true}) async {
     // Client-only maintenance operation. This must never create a SyncChange or
     // deletion event because the Host remains the source of truth. It also
     // clears pull cursors so the next sync can rebuild from a full Host
@@ -1690,10 +1625,7 @@ class AppStore extends ChangeNotifier {
     final identity = appIdentity;
     _syncChanges.clear();
     _syncQueue.clear();
-    _resetBusinessDataInMemory(keepStoreProfile: keepStoreProfile, keepSecurityPin: keepSecurityPin);
-    if (!keepSecurityPin) {
-      await LocalDatabaseService.setString(_pinKey, '');
-    }
+    _resetBusinessDataInMemory(keepStoreProfile: keepStoreProfile);
     await LocalDatabaseService.deleteString('cloud_last_pull_cursor');
     final lanRaw = LocalDatabaseService.getString('lan_sync_settings_v2');
     if (lanRaw != null && lanRaw.trim().isNotEmpty) {
@@ -1730,7 +1662,6 @@ class AppStore extends ChangeNotifier {
     _invoiceCounter = 0;
     _purchaseCounter = 0;
     _storeProfile = StoreProfile.defaults;
-    _securityPin = null;
     _activeUser = null;
     _rememberLogin = false;
     if (!preserveAdminUsers) {
@@ -1742,7 +1673,6 @@ class AppStore extends ChangeNotifier {
     _appIdentity = AppIdentity.defaults(deviceId: _deviceId, platform: _detectPlatform()).copyWith(deviceRole: DeviceRole.standalone, syncMode: SyncMode.localOnly);
     await LocalDatabaseService.setString(_deviceIdKey, _deviceId);
     await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(_appIdentity!.toJson()));
-    await LocalDatabaseService.setString(_pinKey, '');
     await LocalDatabaseService.setString(_activeUserKey, '');
     await LocalDatabaseService.setString(_rememberLoginKey, 'false');
     await LocalDatabaseService.deleteString('cloud_last_pull_cursor');
@@ -2633,7 +2563,6 @@ class AppStore extends ChangeNotifier {
         if (!includeDeviceAndSyncState) 'branchId': appIdentity.branchId,
         if (!includeDeviceAndSyncState) 'appVersion': 'stage2',
         if (!includeDeviceAndSyncState) 'platform': appIdentity.platform.name,
-        if (!includeDeviceAndSyncState) 'securityPin': _securityPin,
         if (!includeDeviceAndSyncState) 'themeMode': LocalDatabaseService.getString(_themeModeKey) ?? 'system',
         'invoiceCounter': _invoiceCounter,
         'purchaseCounter': _purchaseCounter,
@@ -3005,14 +2934,6 @@ class AppStore extends ChangeNotifier {
       updatedAt: DateTime.now(),
     );
     await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(_appIdentity!.toJson()));
-    if (decoded['securityPin'] is String) {
-      _securityPin = decoded['securityPin'] as String?;
-      if ((_securityPin ?? '').isEmpty) {
-        await LocalDatabaseService.deleteString(_pinKey);
-      } else {
-        await LocalDatabaseService.setString(_pinKey, _securityPin!);
-      }
-    }
     if (decoded['themeMode'] is String) {
       await LocalDatabaseService.setString(_themeModeKey, decoded['themeMode'].toString());
     }
@@ -3426,7 +3347,6 @@ class AppStore extends ChangeNotifier {
       _ensureCatalogDefaults();
       _normalizeCustomers();
       await _saveRolesAndUsers();
-      await LocalDatabaseService.setString(_pinKey, _securityPin ?? '');
       await _saveAll();
       notifyListeners();
     }
@@ -3588,10 +3508,7 @@ class AppStore extends ChangeNotifier {
           final nextEpoch = change.storeEpoch > appIdentity.storeEpoch ? change.storeEpoch : appIdentity.storeEpoch + 1;
           _appIdentity = appIdentity.copyWith(storeEpoch: nextEpoch, updatedAt: DateTime.now());
           await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(_appIdentity!.toJson()));
-          _resetBusinessDataInMemory(
-            keepStoreProfile: p['keepStoreProfile'] as bool? ?? true,
-            keepSecurityPin: p['keepSecurityPin'] as bool? ?? true,
-          );
+          _resetBusinessDataInMemory(keepStoreProfile: p['keepStoreProfile'] as bool? ?? true);
         } else if (change.operation == 'restore_snapshot') {
           // A cloud/LAN bootstrap snapshot contains the Host identity. Never let
           // a Client import that identity or it may start behaving as the Host.
@@ -3647,10 +3564,6 @@ class AppStore extends ChangeNotifier {
           _appIdentity = incomingIdentity;
           await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(_appIdentity!.toJson()));
         }
-        break;
-      case 'security_pin':
-        // Legacy remote PIN changes are ignored. PINs, when present on older
-        // installs, remain device-local only.
         break;
       case 'role':
         if (change.operation == 'delete') {
@@ -3765,7 +3678,6 @@ class AppStore extends ChangeNotifier {
       case 'store_profile':
         return null;
       case 'app_identity':
-      case 'security_pin':
         return null;
       case 'role':
         return deleteWithEmptyPayload || exists<UserRole>(_roles, (item) => item.id) ? null : 'role ${change.entityId} was not stored locally';

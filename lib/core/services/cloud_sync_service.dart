@@ -8,6 +8,7 @@ import '../../data/app_store.dart';
 import '../../models/app_identity.dart';
 import '../../models/sync_change.dart';
 import 'local_database_service.dart';
+import 'unified_sync_core_service.dart';
 
 class CloudSyncSettings {
   const CloudSyncSettings({
@@ -16,7 +17,7 @@ class CloudSyncSettings {
     required this.apiToken,
     this.lastPullCursor,
     this.autoSyncEnabled = true,
-    this.intervalSeconds = 30,
+    this.intervalSeconds = 5,
   });
 
   static const _apiBaseUrlKey = 'cloud_api_base_url';
@@ -86,7 +87,7 @@ class CloudSyncSettings {
       apiToken: token,
       lastPullCursor: DateTime.tryParse(cursorRaw),
       autoSyncEnabled: autoRaw == null ? true : autoRaw == 'true',
-      intervalSeconds: int.tryParse(intervalRaw ?? '')?.clamp(30, 3600).toInt() ?? 30,
+      intervalSeconds: int.tryParse(intervalRaw ?? '')?.clamp(5, 3600).toInt() ?? 5,
     );
   }
 
@@ -241,6 +242,7 @@ class CloudSyncService {
 
   final AppStore store;
   final http.Client _client;
+  late final UnifiedSyncCoreService _syncCore = UnifiedSyncCoreService(store);
 
 
   Future<CloudPairingCodeResult> createPairingCode(CloudSyncSettings settings, {String transport = 'cloud', int ttlMinutes = 5}) async {
@@ -449,13 +451,11 @@ class CloudSyncService {
           return CloudStoreRecoveryResult(ok: false, message: 'Store identity recovered, but snapshot download failed: ${pull.statusCode} ${pull.body}', identity: store.appIdentity);
         }
         final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
-        final changes = (decodedPull['changes'] as List<dynamic>? ?? [])
-            .map((item) => SyncChange.fromJson(Map<String, dynamic>.from(item as Map)))
-            .where((item) => item.deviceId != store.deviceId)
-            .toList();
+        final changes = _syncCore.filterOutLocalEchoes(
+          _syncCore.decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
+        );
         restoredSnapshot = restoredSnapshot || changes.isNotEmpty || decodedPull['source'] == 'entity_snapshots';
-        await store.applyRemoteSyncChanges(changes, markAppliedAsSynced: true);
-        pulled += changes.length;
+        pulled += await _syncCore.applyAuthoritativeChanges(changes);
         onProgress?.call((0.45 + (page + 1) * 0.04).clamp(0.45, 0.88).toDouble(), 'Applied $pulled recovered record(s)...');
         if (decodedPull['hasMore'] != true) {
           final generatedAt = DateTime.tryParse(decodedPull['generatedAt']?.toString() ?? '');
@@ -860,11 +860,11 @@ class CloudSyncService {
 
   Future<int> _pushPendingToEndpoint(CloudSyncSettings settings, String target, String path) async {
     final identity = store.appIdentity;
-    final pending = store.pendingSyncChangesForTarget(target);
-    final pendingIds = pending.map((item) => item.id).toList();
+    final pending = _syncCore.pendingChangesForTarget(target);
+    final pendingIds = _syncCore.changeIds(pending);
     if (pending.isEmpty) return 0;
 
-    await store.markSyncQueueChangesInProgress(pendingIds);
+    await _syncCore.markPushInProgress(pendingIds);
     final push = await _client
         .post(
           settings.endpoint(path),
@@ -879,12 +879,12 @@ class CloudSyncService {
         .timeout(const Duration(seconds: 20));
     if (push.statusCode < 200 || push.statusCode >= 300) {
       final message = 'Cloud push failed: ${push.statusCode} ${push.body}';
-      await store.markSyncQueueChangesFailed(pendingIds, message);
+      await _syncCore.markPushFailed(pendingIds, message);
       throw StateError(message);
     }
     final decoded = jsonDecode(push.body) as Map<String, dynamic>;
     final ackIds = (decoded['ackIds'] as List<dynamic>? ?? []).map((item) => '$item').toList();
-    await store.markSyncChangesSyncedByIds(ackIds.isEmpty ? pendingIds : ackIds);
+    await _syncCore.markPushAcknowledged(ackIds, fallbackIds: pendingIds);
     return pending.length;
   }
 
@@ -905,23 +905,22 @@ class CloudSyncService {
       throw StateError('Cloud request pull failed: ${pull.statusCode} ${pull.body}');
     }
     final decoded = jsonDecode(pull.body) as Map<String, dynamic>;
-    final changes = (decoded['changes'] as List<dynamic>? ?? [])
-        .map((item) => SyncChange.fromJson(Map<String, dynamic>.from(item as Map)))
-        .where((item) => item.deviceId != store.deviceId)
-        .toList();
+    final changes = _syncCore.filterOutLocalEchoes(
+      _syncCore.decodeRemoteChanges(decoded['changes'] as List<dynamic>?),
+    );
     if (changes.isEmpty) return 0;
 
-    // Safety-critical ordering:
-    // 1) apply the client drafts locally on the Host,
-    // 2) verify the entities now exist in the Host's local database,
-    // 3) publish the re-stamped authoritative Host events to Cloud,
-    // 4) only then ACK the relay requests as accepted.
-    // If any step fails, the relay rows stay pending/failed and will retry.
-    await store.applyRemoteSyncChanges(changes, markAppliedAsSynced: true, mirrorToCloud: true);
-    await store.assertRemoteSyncChangesApplied(changes);
+    // Safety-critical ordering is centralized in UnifiedSyncCoreService:
+    // apply Client drafts on Host, verify local persistence, then publish the
+    // re-stamped authoritative Host events to Cloud before ACKing relay rows.
+    final accepted = await _syncCore.acceptClientChangesOnHost(
+      changes,
+      mirrorToCloud: true,
+      verifyApplied: true,
+    );
     await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
 
-    final ackIds = changes.map((item) => item.id).toList();
+    final ackIds = accepted.ackIds;
     final ack = await _client
         .post(
           settings.endpoint('/api/sync/requests/ack'),
@@ -933,6 +932,142 @@ class CloudSyncService {
       throw StateError('Cloud request ACK failed: ${ack.statusCode} ${ack.body}');
     }
     return changes.length;
+  }
+
+
+  Future<CloudSyncResult> pushPendingForUnifiedEngine(CloudSyncSettings settings, {CloudSyncProgressCallback? onProgress}) async {
+    final identity = store.appIdentity;
+    if (identity.syncMode == SyncMode.localOnly || identity.syncMode == SyncMode.lanOnly) {
+      return const CloudSyncResult(ok: false, message: 'Enable cloudConnected or marketplaceEnabled sync mode first.');
+    }
+    if (!settings.isConfigured) {
+      return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
+    }
+
+    try {
+      var pushed = 0;
+      var acceptedRemoteRequests = 0;
+
+      if (identity.isHost) {
+        onProgress?.call(0.10, 'Preparing Host cloud snapshot queue...');
+        await store.ensureHostCloudBootstrapSnapshotQueued();
+        onProgress?.call(0.25, 'Sending Host heartbeat...');
+        await sendHostHeartbeat(settings);
+        onProgress?.call(0.40, 'Registering Host device...');
+        await registerCurrentDevice(settings, transport: 'cloud');
+        onProgress?.call(0.55, 'Checking Client requests...');
+        acceptedRemoteRequests = await _hostPullRemoteRequests(settings);
+        onProgress?.call(0.75, 'Uploading authoritative Host changes...');
+        pushed += await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
+        return CloudSyncResult(
+          ok: true,
+          pushed: pushed,
+          message: 'Host cloud push completed. Accepted $acceptedRemoteRequests remote request(s), pushed $pushed authoritative change(s).',
+        );
+      }
+
+      onProgress?.call(0.12, 'Registering Client device...');
+      await registerCurrentDevice(settings, transport: 'cloud');
+      onProgress?.call(0.28, 'Sending Client requests to Host relay...');
+      pushed += await _pushPendingToEndpoint(settings, 'cloud_host', '/api/sync/requests/push');
+      return CloudSyncResult(ok: true, pushed: pushed, message: 'Client cloud push completed. Sent $pushed request(s) to Host relay.');
+    } catch (error) {
+      return CloudSyncResult(ok: false, message: 'Cloud push failed: $error');
+    }
+  }
+
+  Future<CloudSyncResult> pullAuthoritativeChangesForUnifiedEngine(
+    CloudSyncSettings settings, {
+    DateTime? minSnapshotUpdatedAt,
+    CloudSyncProgressCallback? onProgress,
+  }) async {
+    final identity = store.appIdentity;
+    if (identity.isHost) {
+      return const CloudSyncResult(ok: true, message: 'Host devices do not pull authoritative Cloud changes.', pulled: 0);
+    }
+    if (identity.syncMode == SyncMode.localOnly || identity.syncMode == SyncMode.lanOnly) {
+      return const CloudSyncResult(ok: false, message: 'Enable cloudConnected or marketplaceEnabled sync mode first.');
+    }
+    if (!settings.isConfigured) {
+      return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
+    }
+
+    try {
+      var pulled = 0;
+      final initialCursor = settings.lastPullCursor;
+      var pageCursor = '';
+      DateTime? finalPullCursor;
+      var pageCount = 0;
+      var restoredSnapshot = false;
+      const maxPagesPerRun = 200;
+
+      while (true) {
+        pageCount += 1;
+        if (pageCount > maxPagesPerRun) {
+          return CloudSyncResult(ok: false, message: 'Cloud pull stopped after $maxPagesPerRun pages to avoid an endless loop. Please retry sync.');
+        }
+
+        final query = <String, String>{
+          'store_id': identity.storeId,
+          'branch_id': identity.branchId,
+          'limit': '1000',
+        };
+        if (initialCursor != null) query['since'] = initialCursor.toIso8601String();
+        if (initialCursor == null && minSnapshotUpdatedAt != null) {
+          query['min_snapshot_updated_at'] = minSnapshotUpdatedAt.toIso8601String();
+        }
+        if (pageCursor.isNotEmpty) query['cursor'] = pageCursor;
+
+        final pullProgress = (0.35 + (pageCount - 1) * 0.08).clamp(0.35, 0.82).toDouble();
+        onProgress?.call(pullProgress, 'Pulling Cloud changes page $pageCount...');
+        final pull = await _client.get(settings.endpoint('/api/sync/pull', query), headers: _headers(settings)).timeout(const Duration(seconds: 20));
+        if (pull.statusCode < 200 || pull.statusCode >= 300) {
+          return CloudSyncResult(ok: false, message: 'Cloud pull failed: ${pull.statusCode} ${pull.body}');
+        }
+
+        final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
+        final changes = _syncCore.filterOutLocalEchoes(
+          _syncCore.decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
+        );
+        final source = (decodedPull['source'] ?? '').toString();
+        restoredSnapshot = restoredSnapshot ||
+            changes.any((item) => item.operation == 'restore_snapshot') ||
+            (initialCursor == null && source == 'entity_snapshots' && changes.isNotEmpty);
+        onProgress?.call((0.42 + (pageCount - 1) * 0.08).clamp(0.42, 0.86).toDouble(), 'Applying ${changes.length} Cloud change(s) from page $pageCount...');
+        pulled += await _syncCore.applyAuthoritativeChanges(changes);
+
+        final hasMore = decodedPull['hasMore'] == true;
+        pageCursor = (decodedPull['nextCursor'] ?? '').toString();
+        if (!hasMore) {
+          finalPullCursor = DateTime.tryParse(decodedPull['generatedAt']?.toString() ?? '');
+          break;
+        }
+        if (pageCursor.isEmpty) {
+          return const CloudSyncResult(ok: false, message: 'Cloud pull pagination failed: missing next cursor.');
+        }
+      }
+
+      onProgress?.call(0.90, 'Saving Cloud sync cursor...');
+      if (finalPullCursor != null) {
+        await settings.copyWith(lastPullCursor: finalPullCursor).save();
+      }
+
+      if (pulled > 0) {
+        onProgress?.call(0.96, 'Cleaning up after Cloud sync...');
+        await store.cleanupSoftDeletedRecords();
+      }
+      if (store.appIdentity.isClient && (restoredSnapshot || pulled > 0)) {
+        await CloudProvisioningStatus.markComplete(message: 'Initial Store data downloaded.');
+      }
+      return CloudSyncResult(
+        ok: true,
+        pulled: pulled,
+        restoredSnapshot: restoredSnapshot,
+        message: 'Cloud pull completed. Pulled $pulled authoritative change(s).',
+      );
+    } catch (error) {
+      return CloudSyncResult(ok: false, message: 'Cloud pull failed: $error');
+    }
   }
 
   Future<CloudSyncResult> syncNow(CloudSyncSettings settings, {DateTime? minSnapshotUpdatedAt, CloudSyncProgressCallback? onProgress}) async {
@@ -1011,17 +1146,15 @@ class CloudSyncService {
         }
 
         final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
-        final changes = (decodedPull['changes'] as List<dynamic>? ?? [])
-            .map((item) => SyncChange.fromJson(Map<String, dynamic>.from(item as Map)))
-            .where((item) => item.deviceId != store.deviceId)
-            .toList();
+        final changes = _syncCore.filterOutLocalEchoes(
+          _syncCore.decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
+        );
         final source = (decodedPull['source'] ?? '').toString();
         restoredSnapshot = restoredSnapshot ||
             changes.any((item) => item.operation == 'restore_snapshot') ||
             (initialCursor == null && source == 'entity_snapshots' && changes.isNotEmpty);
         onProgress?.call((0.42 + (pageCount - 1) * 0.08).clamp(0.42, 0.86).toDouble(), 'Applying ${changes.length} Cloud change(s) from page $pageCount...');
-        await store.applyRemoteSyncChanges(changes, markAppliedAsSynced: true);
-        pulled += changes.length;
+        pulled += await _syncCore.applyAuthoritativeChanges(changes);
 
         final hasMore = decodedPull['hasMore'] == true;
         pageCursor = (decodedPull['nextCursor'] ?? '').toString();
@@ -1083,7 +1216,7 @@ class AutoCloudSyncController {
     store.removeListener(_onStoreChanged);
     store.addListener(_onStoreChanged);
 
-    final interval = Duration(seconds: settings.intervalSeconds.clamp(30, 3600).toInt());
+    final interval = Duration(seconds: settings.intervalSeconds.clamp(5, 3600).toInt());
     _timer = Timer.periodic(interval, (_) => _tick());
     await _tick();
   }

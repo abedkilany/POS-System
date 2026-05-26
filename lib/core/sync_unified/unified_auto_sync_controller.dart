@@ -196,7 +196,7 @@ class UnifiedAutoCloudSyncController {
     store.removeListener(_onStoreChanged);
     store.addListener(_onStoreChanged);
 
-    final interval = Duration(seconds: settings.intervalSeconds.clamp(30, 3600).toInt());
+    final interval = Duration(seconds: settings.intervalSeconds.clamp(5, 3600).toInt());
     _timer = Timer.periodic(interval, (_) => _tick());
     await _tick();
   }
