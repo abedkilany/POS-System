@@ -81,10 +81,10 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
   Future<void> _scanQr() async {
     final code = await Navigator.of(context).push<String>(
       MaterialPageRoute(
-        builder: (_) => const BarcodeScannerPage(
-          title: 'Scan pairing QR',
-          helpText: 'Point the camera at the Host pairing QR code.',
-          formats: [BarcodeFormat.qrCode],
+        builder: (_) => BarcodeScannerPage(
+          title: AppLocalizations.of(context).text('scan_pairing_qr'),
+          helpText: AppLocalizations.of(context).text('scan_pairing_qr_help'),
+          formats: const [BarcodeFormat.qrCode],
         ),
       ),
     );
@@ -240,7 +240,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
               child: Card(
                 margin: const EdgeInsets.all(24),
                 child: Padding(
-                  padding: const EdgeInsets.all(24),
+                  padding: VentioResponsive.pageInsets(context),
                   child: ListView(
                     shrinkWrap: true,
                     children: [
@@ -298,7 +298,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
               child: Center(
                 child: Card(
                   child: Padding(
-                    padding: const EdgeInsets.all(24),
+                    padding: VentioResponsive.pageInsets(context),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [

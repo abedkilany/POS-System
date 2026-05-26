@@ -28,7 +28,7 @@ class _SuppliersPageState extends State<SuppliersPage> {
     }).toList();
 
     return Padding(
-      padding: const EdgeInsets.all(16),
+      padding: VentioResponsive.pageInsets(context),
       child: Column(
         children: [
           AppSectionHeader(
@@ -144,7 +144,7 @@ class _SupplierDialogState extends State<_SupplierDialog> {
     return AlertDialog(
       title: Text(widget.supplier == null ? tr.text('add_supplier') : tr.text('edit_supplier')),
       content: ResponsiveDialogBox(
-        maxWidth: 420,
+        maxWidth: VentioResponsive.modalMaxWidth(context, 420),
         child: Form(
           key: _formKey,
           child: SingleChildScrollView(

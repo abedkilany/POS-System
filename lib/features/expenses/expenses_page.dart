@@ -29,7 +29,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
     }).toList();
 
     return Padding(
-      padding: const EdgeInsets.all(16),
+      padding: VentioResponsive.pageInsets(context),
       child: Column(
         children: [
           AppSectionHeader(
@@ -151,7 +151,7 @@ class _ExpenseDialogState extends State<_ExpenseDialog> {
     return AlertDialog(
       title: Text(widget.expense == null ? tr.text('add_expense') : tr.text('edit_expense')),
       content: ResponsiveDialogBox(
-        maxWidth: 420,
+        maxWidth: VentioResponsive.modalMaxWidth(context, 420),
         child: Form(
           key: _formKey,
           child: SingleChildScrollView(

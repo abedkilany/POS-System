@@ -4,6 +4,7 @@ import '../../core/localization/app_localizations.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../data/app_store.dart';
 import '../../widgets/summary_card.dart';
+import '../../core/utils/responsive.dart';
 
 class DashboardPage extends StatelessWidget {
   const DashboardPage({super.key, required this.store});
@@ -21,7 +22,7 @@ class DashboardPage extends StatelessWidget {
     final todayTotal = todaySales.fold<double>(0, (sum, sale) => sum + sale.total);
 
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: VentioResponsive.pageInsets(context),
       children: [
         Wrap(
           spacing: 16,
@@ -41,7 +42,7 @@ class DashboardPage extends StatelessWidget {
             final isNarrow = constraints.maxWidth < 900;
             final salesPanel = Card(
               child: Padding(
-                padding: const EdgeInsets.all(16),
+                padding: VentioResponsive.pageInsets(context),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -63,7 +64,7 @@ class DashboardPage extends StatelessWidget {
             );
             final snapshotPanel = Card(
               child: Padding(
-                padding: const EdgeInsets.all(16),
+                padding: VentioResponsive.pageInsets(context),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [

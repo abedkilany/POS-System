@@ -144,7 +144,7 @@ class AppIdentity {
       deviceId: deviceId.isEmpty ? _withPrefix('DV') : _normalizeDeviceId(deviceId),
       deviceName: 'Main device',
       platform: platform,
-      deviceRole: platform == AppPlatformType.windows ? DeviceRole.host : DeviceRole.client,
+      deviceRole: platform == AppPlatformType.web ? DeviceRole.client : DeviceRole.host,
       appRole: AppRole.store,
       syncMode: platform == AppPlatformType.web ? SyncMode.cloudConnected : SyncMode.lanOnly,
       createdAt: now,

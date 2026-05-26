@@ -24,7 +24,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
     return Scaffold(
       appBar: AppBar(title: Text(tr.text('users_permissions'))),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: VentioResponsive.pageInsets(context),
         children: [
           Card(
             child: ListTile(
@@ -98,13 +98,13 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: Text(role == null ? 'Add role' : 'Edit role'),
+          title: Text(role == null ? tr.text('add_role') : tr.text('edit_role')),
           content: ResponsiveDialogBox(
-            maxWidth: 520,
+            maxWidth: VentioResponsive.modalMaxWidth(context, 520),
             child: SingleChildScrollView(
               child: Column(
                 children: [
-                  TextField(controller: nameController, decoration: const InputDecoration(labelText: 'Role name')),
+                  TextField(controller: nameController, decoration: InputDecoration(labelText: tr.text('role_name'))),
                   const SizedBox(height: 16),
                   for (final permission in AppPermission.all)
                     CheckboxListTile(
@@ -178,15 +178,15 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: Text(user == null ? 'Add user' : 'Edit user'),
+          title: Text(user == null ? tr.text('add_user') : tr.text('edit_user')),
           content: ResponsiveDialogBox(
-            maxWidth: 560,
+            maxWidth: VentioResponsive.modalMaxWidth(context, 560),
             child: SingleChildScrollView(
               child: Column(
                 children: [
-                  TextField(controller: nameController, decoration: const InputDecoration(labelText: 'Full name')),
+                  TextField(controller: nameController, decoration: InputDecoration(labelText: tr.text('full_name'))),
                   const SizedBox(height: 12),
-                  TextField(controller: usernameController, decoration: const InputDecoration(labelText: 'Username')),
+                  TextField(controller: usernameController, decoration: InputDecoration(labelText: tr.text('username'))),
                   const SizedBox(height: 12),
                   TextField(
                     controller: passwordController,

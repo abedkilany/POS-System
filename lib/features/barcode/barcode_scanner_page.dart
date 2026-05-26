@@ -74,7 +74,7 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
     final tr = AppLocalizations.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.title),
+        title: Text(widget.title == 'Scan barcode' ? AppLocalizations.of(context).text('scan_barcode_title') : widget.title),
         actions: [
           IconButton(
             tooltip: tr.text('flash'),
@@ -121,9 +121,11 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
             child: Card(
               color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.90),
               child: Padding(
-                padding: const EdgeInsets.all(14),
+                padding: VentioResponsive.cardInsets(context),
                 child: Text(
-                  widget.helpText,
+                  widget.helpText == 'Point the camera at the product barcode. The code will be filled automatically.'
+                      ? AppLocalizations.of(context).text('scan_barcode_help')
+                      : widget.helpText,
                   textAlign: TextAlign.center,
                 ),
               ),

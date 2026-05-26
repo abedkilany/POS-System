@@ -4,6 +4,7 @@ import '../../core/localization/app_localizations.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../data/app_store.dart';
 import '../../widgets/report_card.dart';
+import '../../core/utils/responsive.dart';
 
 class ReportsPage extends StatelessWidget {
   const ReportsPage({super.key, required this.store});
@@ -33,7 +34,7 @@ class ReportsPage extends StatelessWidget {
     final currency = store.storeProfile.currency;
 
     return Padding(
-      padding: const EdgeInsets.all(16),
+      padding: VentioResponsive.pageInsets(context),
       child: ListView(
         children: [
           GridView.count(
@@ -86,7 +87,7 @@ class _ReportSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Card(
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: VentioResponsive.pageInsets(context),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(title, style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 8),

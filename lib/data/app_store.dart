@@ -42,6 +42,17 @@ bool _verifyPasswordInBackground(Map<String, String> request) {
   return storedHash == '$prefix$iterations:${parts[2]}:${base64UrlEncode(hash)}';
 }
 
+String _hashPasswordInBackground(Map<String, String> request) {
+  const prefix = 'pbkdf2sha256:';
+  final password = request['password'] ?? '';
+  final salt = request['salt'] ?? '';
+  final iterations = int.tryParse(request['iterations'] ?? '') ?? 210000;
+  final derivator = pc.PBKDF2KeyDerivator(pc.HMac(pc.SHA256Digest(), 64));
+  derivator.init(pc.Pbkdf2Parameters(base64Url.decode(salt), iterations, 32));
+  final hash = derivator.process(Uint8List.fromList(utf8.encode('ventio|password|$password')));
+  return '$prefix$iterations:$salt:${base64UrlEncode(hash)}';
+}
+
 class BackupSummary {
   const BackupSummary({
     required this.version,
@@ -259,7 +270,7 @@ class AppStore extends ChangeNotifier {
     required String username,
     required String password,
   }) async {
-    final cleanName = fullName.trim().isEmpty ? 'Administrator' : fullName.trim();
+    final cleanName = fullName.trim().isEmpty ? 'Admin' : fullName.trim();
     final cleanUsername = username.trim().toLowerCase();
     final cleanPassword = password.trim();
     if (cleanUsername.length < 3) throw ArgumentError('Username must be at least 3 characters.');
@@ -268,16 +279,34 @@ class AppStore extends ChangeNotifier {
       throw StateError('Initial administrator setup is already complete.');
     }
     final now = DateTime.now();
+    final platform = _detectPlatform();
+    if (platform == AppPlatformType.web) {
+      throw StateError('Web devices cannot create a Host. Use Connect to Store from Web.');
+    }
     final legacyIndex = _hasOnlyLegacyDefaultAdminUser ? 0 : -1;
     if (legacyIndex == -1 && _users.any((user) => user.username.trim().toLowerCase() == cleanUsername)) {
       throw StateError('Username already exists.');
     }
+    final passwordHash = await _hashPasswordAsync(cleanPassword);
+    final hostIdentity = _normalizedLocalIdentity(appIdentity.copyWith(
+      deviceRole: DeviceRole.host,
+      syncMode: appIdentity.syncMode == SyncMode.cloudConnected || appIdentity.syncMode == SyncMode.marketplaceEnabled
+          ? appIdentity.syncMode
+          : SyncMode.lanOnly,
+      hostDeviceId: '',
+      platform: platform,
+      updatedAt: now,
+    ));
+    _assertSafeRoleTransition(hostIdentity, source: 'initial Host registration', allowInitialHostRegistration: true);
+    _assertLanCloudRoleRules(hostIdentity, source: 'initial Host registration');
+    _appIdentity = hostIdentity;
+    await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(hostIdentity.toJson()));
     final adminUser = legacyIndex == -1
         ? AppUser(
             id: 'admin_${now.microsecondsSinceEpoch}',
             fullName: cleanName,
             username: cleanUsername,
-            passwordHash: _hashPassword(cleanPassword),
+            passwordHash: passwordHash,
             roleId: 'admin',
             isSystem: true,
             createdAt: now,
@@ -287,7 +316,7 @@ class AppStore extends ChangeNotifier {
         : _users[legacyIndex].copyWith(
             fullName: cleanName,
             username: cleanUsername,
-            passwordHash: _hashPassword(cleanPassword),
+            passwordHash: passwordHash,
             updatedAt: now,
             lastLoginAt: now,
           );
@@ -933,7 +962,7 @@ class AppStore extends ChangeNotifier {
     await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(normalized.toJson()));
   }
 
-  void _assertSafeRoleTransition(AppIdentity next, {required String source, bool allowApprovedTransfer = false}) {
+  void _assertSafeRoleTransition(AppIdentity next, {required String source, bool allowApprovedTransfer = false, bool allowInitialHostRegistration = false}) {
     final current = _appIdentity;
     if (current == null) return;
     if (current.deviceRole == next.deviceRole) return;
@@ -946,7 +975,9 @@ class AppStore extends ChangeNotifier {
     }
 
     // A Client can become Host only after an explicit Host transfer approval.
-    if (current.isClient && next.isHost && !(allowApprovedTransfer && _isApprovedHostTransferTarget())) {
+    if (current.isClient && next.isHost &&
+        !allowInitialHostRegistration &&
+        !(allowApprovedTransfer && _isApprovedHostTransferTarget())) {
       throw StateError('Client devices cannot become Host by $source. Request and approve Transfer Host first.');
     }
   }
@@ -1401,6 +1432,15 @@ class AppStore extends ChangeNotifier {
     return isLegacyMatch;
   }
 
+
+  Future<String> _hashPasswordAsync(String password) async {
+    final salt = _generateSalt();
+    return compute(_hashPasswordInBackground, <String, String>{
+      'password': password,
+      'salt': salt,
+      'iterations': _passwordHashIterations.toString(),
+    });
+  }
 
   String _hashPassword(String password) {
     final salt = _generateSalt();
@@ -2591,7 +2631,6 @@ class AppStore extends ChangeNotifier {
         if (!includeDeviceAndSyncState) 'backupType': 'business_backup',
         if (!includeDeviceAndSyncState) 'storeId': appIdentity.storeId,
         if (!includeDeviceAndSyncState) 'branchId': appIdentity.branchId,
-        if (!includeDeviceAndSyncState) 'recoveryKey': appIdentity.recoveryKey,
         if (!includeDeviceAndSyncState) 'appVersion': 'stage2',
         if (!includeDeviceAndSyncState) 'platform': appIdentity.platform.name,
         if (!includeDeviceAndSyncState) 'securityPin': _securityPin,
@@ -2618,6 +2657,74 @@ class AppStore extends ChangeNotifier {
         if (includeDeviceAndSyncState) 'storeEpoch': appIdentity.storeEpoch,
         'syncGeneratedAt': DateTime.now().toIso8601String(),
       };
+
+
+  String exportRecoveryFileJson({String cloudApiUrl = ''}) {
+    requirePermission(AppPermission.backupExport);
+    final payload = <String, dynamic>{
+      'format': 'ventio_store_recovery_file',
+      'version': 2,
+      'generatedAt': DateTime.now().toIso8601String(),
+      'storeId': appIdentity.storeId,
+      'branchId': appIdentity.branchId,
+      'cloudApiUrl': cloudApiUrl.trim(),
+      'recoveryKey': appIdentity.recoveryKey,
+      'storeEpoch': appIdentity.storeEpoch,
+    };
+    payload['checksum'] = _recoveryChecksum(payload);
+    payload['signature'] = _recoverySignature(payload);
+    return const JsonEncoder.withIndent('  ').convert(payload);
+  }
+
+  Map<String, String> parseRecoveryFileJson(String rawJson) {
+    final decoded = jsonDecode(rawJson);
+    if (decoded is! Map) {
+      throw ArgumentError('Invalid recovery file.');
+    }
+    final payload = Map<String, dynamic>.from(decoded);
+    if (payload['format']?.toString() != 'ventio_store_recovery_file') {
+      throw ArgumentError('Invalid recovery file format.');
+    }
+    final version = (payload['version'] as num? ?? 0).toInt();
+    if (version < 1 || version > 2) {
+      throw ArgumentError('Unsupported recovery file version.');
+    }
+    final expected = payload['checksum']?.toString() ?? '';
+    if (expected.isEmpty || expected != _recoveryChecksum(payload)) {
+      throw ArgumentError('Recovery file checksum failed.');
+    }
+    if (version >= 2) {
+      final signature = payload['signature']?.toString() ?? '';
+      if (signature.isEmpty || signature != _recoverySignature(payload)) {
+        throw ArgumentError('Recovery file signature failed.');
+      }
+    }
+    final storeId = payload['storeId']?.toString().trim().toUpperCase() ?? '';
+    final branchId = payload['branchId']?.toString().trim().toUpperCase() ?? '';
+    final recoveryKey = payload['recoveryKey']?.toString().trim().toUpperCase() ?? '';
+    if (!storeId.startsWith('ST-') || branchId.isEmpty || !recoveryKey.startsWith('RK-')) {
+      throw ArgumentError('Recovery file is missing required store identity fields.');
+    }
+    return {
+      'storeId': storeId,
+      'branchId': branchId,
+      'cloudApiUrl': payload['cloudApiUrl']?.toString().trim() ?? '',
+      'recoveryKey': recoveryKey,
+    };
+  }
+
+  String _recoveryChecksum(Map<String, dynamic> payload) {
+    final copy = Map<String, dynamic>.from(payload)
+      ..remove('checksum')
+      ..remove('signature');
+    final canonical = jsonEncode(Map.fromEntries(copy.entries.toList()..sort((a, b) => a.key.compareTo(b.key))));
+    var hash = 2166136261;
+    for (final unit in canonical.codeUnits) {
+      hash ^= unit;
+      hash = (hash * 16777619) & 0xffffffff;
+    }
+    return hash.toRadixString(16).padLeft(8, '0');
+  }
 
   String exportBackupJson() {
     requirePermission(AppPermission.backupExport);
@@ -2648,6 +2755,15 @@ class AppStore extends ChangeNotifier {
       'generatedAt': cursor.toIso8601String(),
       'changes': changes.map((item) => item.toJson()).toList(),
     });
+  }
+
+  String _recoverySignature(Map<String, dynamic> payload) {
+    final copy = Map<String, dynamic>.from(payload)
+      ..remove('checksum')
+      ..remove('signature');
+    final canonical = jsonEncode(Map.fromEntries(copy.entries.toList()..sort((a, b) => a.key.compareTo(b.key))));
+    final storeSecret = "${copy['storeId'] ?? ''}|${copy['branchId'] ?? ''}|${copy['recoveryKey'] ?? ''}|${copy['storeEpoch'] ?? ''}";
+    return Hmac(sha256, utf8.encode(storeSecret)).convert(utf8.encode(canonical)).toString();
   }
 
   String exportEncryptedBackupJson(String password) {
@@ -2877,15 +2993,13 @@ class AppStore extends ChangeNotifier {
       ..addAll(stockMovements);
     _syncChanges.clear();
     _storeProfile = profile;
-    // Business Backup may restore the permanent Store/Branch identity and Recovery Key,
-    // but it must never replace this device identity, role, tokens, pairing data, or cursors.
+    // Business Backup may restore the permanent Store/Branch identity,
+    // but it must never replace this device identity, role, tokens, pairing data, cursors, or Recovery Key.
     final importedStoreId = decoded['storeId']?.toString().trim() ?? '';
     final importedBranchId = decoded['branchId']?.toString().trim() ?? '';
-    final importedRecoveryKey = decoded['recoveryKey']?.toString().trim() ?? '';
     _appIdentity = appIdentity.copyWith(
       storeId: importedStoreId.isNotEmpty ? importedStoreId.toUpperCase() : appIdentity.storeId,
       branchId: importedBranchId.isNotEmpty ? importedBranchId.toUpperCase() : appIdentity.branchId,
-      recoveryKey: importedRecoveryKey.isNotEmpty ? importedRecoveryKey.toUpperCase() : appIdentity.recoveryKey,
       deviceId: _deviceId,
       platform: _detectPlatform(),
       updatedAt: DateTime.now(),

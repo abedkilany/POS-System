@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../core/utils/responsive.dart';
+
 class SummaryCard extends StatelessWidget {
   const SummaryCard({super.key, required this.title, required this.value, required this.icon});
 
@@ -14,10 +16,10 @@ class SummaryCard extends StatelessWidget {
         final width = constraints.maxWidth.isFinite ? constraints.maxWidth : 240.0;
         final compact = width < 220;
         return ConstrainedBox(
-          constraints: const BoxConstraints(minWidth: 180, maxWidth: 320),
+          constraints: BoxConstraints(minWidth: compact ? 0 : 180, maxWidth: VentioResponsive.adaptiveWidth(context, mobile: double.infinity, tablet: 320, desktop: 340)),
           child: Card(
             child: Padding(
-              padding: EdgeInsets.all(compact ? 12 : 16),
+              padding: VentioResponsive.cardInsets(context),
               child: Row(
                 children: [
                   CircleAvatar(radius: compact ? 20 : 24, child: Icon(icon, size: compact ? 20 : 24)),

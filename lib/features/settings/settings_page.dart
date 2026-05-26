@@ -85,7 +85,7 @@ class SettingsPage extends StatelessWidget {
     return [
       Card(
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: VentioResponsive.pageInsets(context),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -110,7 +110,7 @@ class SettingsPage extends StatelessWidget {
 
       Card(
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: VentioResponsive.pageInsets(context),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -131,7 +131,7 @@ class SettingsPage extends StatelessWidget {
       ),
       Card(
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: VentioResponsive.pageInsets(context),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -159,7 +159,7 @@ class SettingsPage extends StatelessWidget {
     return [
       Card(
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: VentioResponsive.pageInsets(context),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -177,6 +177,15 @@ class SettingsPage extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               if (!store.appIdentity.isClient) ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () => _downloadRecoveryFile(context),
+                    icon: const Icon(Icons.security_outlined),
+                    label: Text(tr.text('download_recovery_file')),
+                  ),
+                ),
+                const SizedBox(height: 8),
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton.icon(
@@ -201,7 +210,7 @@ class SettingsPage extends StatelessWidget {
       ),
       Card(
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: VentioResponsive.pageInsets(context),
           child: _dataManagementTile(context),
         ),
       ),
@@ -275,7 +284,7 @@ class SettingsPage extends StatelessWidget {
         child: ListTile(
           leading: const Icon(Icons.people),
           title: Text(tr.text('users_permissions')),
-          subtitle: Text("Signed in as ${store.activeUser?.fullName ?? 'Unknown'} • Role: ${store.currentRole}"),
+          subtitle: Text(tr.format('signed_in_as_role', {'user': store.activeUser?.fullName ?? tr.text('unknown_user'), 'role': store.currentRole})),
           trailing: FilledButton.icon(
             onPressed: store.canManageUsers ? () => Navigator.push(context, MaterialPageRoute(builder: (_) => UsersPermissionsPage(store: store))) : null,
             icon: const Icon(Icons.manage_accounts_outlined),
@@ -304,7 +313,7 @@ class SettingsPage extends StatelessWidget {
             return AlertDialog(
               title: Text(tr.text('edit_store_profile')),
               content: ResponsiveDialogBox(
-                maxWidth: 520,
+                maxWidth: VentioResponsive.modalMaxWidth(context, 520),
                 child: SingleChildScrollView(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -381,7 +390,7 @@ class SettingsPage extends StatelessWidget {
         content: TextField(
           controller: controller,
           obscureText: true,
-          decoration: const InputDecoration(labelText: 'Password (min 6 characters)'),
+          decoration: InputDecoration(labelText: AppLocalizations.of(context).text('password_min_6')),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(dialogContext), child: Text(AppLocalizations.of(context).text('cancel'))),
@@ -389,6 +398,92 @@ class SettingsPage extends StatelessWidget {
         ],
       ),
     );
+  }
+
+
+  Future<void> _downloadRecoveryFile(BuildContext context) async {
+    final tr = AppLocalizations.of(context);
+    final identity = store.appIdentity;
+    final cloud = CloudSyncSettings.load();
+    var confirmed = false;
+    final ok = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: Text(tr.text('store_recovery_security')),
+          content: ResponsiveDialogBox(
+            maxWidth: VentioResponsive.modalMaxWidth(context, 540),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(tr.text('store_recovery_security_desc')),
+                const SizedBox(height: 12),
+                _SecureRecoveryLine(title: tr.text('store_id'), value: identity.storeId),
+                _SecureRecoveryLine(title: tr.text('branch_id'), value: identity.branchId),
+                _SecureRecoveryLine(title: tr.text('cloud_api_url'), value: cloud.apiBaseUrl.isEmpty ? '—' : cloud.apiBaseUrl),
+                _SecureRecoveryLine(title: tr.text('recovery_key'), value: identity.recoveryKey),
+                const SizedBox(height: 12),
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: confirmed,
+                  onChanged: (value) => setState(() => confirmed = value ?? false),
+                  title: Text(tr.text('confirm_recovery_saved')),
+                  controlAffinity: ListTileControlAffinity.leading,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: Text(tr.text('cancel'))),
+            FilledButton(onPressed: confirmed ? () => Navigator.pop(dialogContext, true) : null, child: Text(tr.text('download_recovery_file'))),
+          ],
+        ),
+      ),
+    );
+    if (ok != true) return;
+    final filename = 'ventio_recovery_${identity.storeId}_${DateTime.now().millisecondsSinceEpoch}.json';
+    try {
+      await downloadTextFile(filename: filename, content: store.exportRecoveryFileJson(cloudApiUrl: cloud.apiBaseUrl));
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('recovery_file_downloaded'))));
+      }
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('backup_download_not_supported'))));
+      }
+    }
+  }
+
+  Future<void> _loadRecoveryFileIntoFields(
+    BuildContext context, {
+    required TextEditingController apiUrlController,
+    required TextEditingController storeIdController,
+    required TextEditingController branchIdController,
+    required TextEditingController recoveryKeyController,
+    required VoidCallback onLoaded,
+  }) async {
+    final tr = AppLocalizations.of(context);
+    try {
+      final result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: const ['json'], withData: true);
+      if (result == null || result.files.isEmpty) return;
+      final bytes = result.files.single.bytes;
+      if (bytes == null || bytes.isEmpty) throw Exception(tr.text('empty_recovery_file'));
+      final data = store.parseRecoveryFileJson(utf8.decode(bytes));
+      if ((data['cloudApiUrl'] ?? '').isNotEmpty) apiUrlController.text = data['cloudApiUrl']!;
+      storeIdController.text = data['storeId'] ?? '';
+      branchIdController.text = data['branchId'] ?? '';
+      recoveryKeyController.text = data['recoveryKey'] ?? '';
+      onLoaded();
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('recovery_file_loaded'))));
+      }
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${tr.text('invalid_recovery_file')}: $error')));
+      }
+    }
   }
 
   Future<void> _downloadBackupFile(BuildContext context) async {
@@ -431,19 +526,19 @@ class SettingsPage extends StatelessWidget {
       final file = result.files.single;
       final bytes = file.bytes;
       if (bytes == null || bytes.isEmpty) {
-        throw Exception('Empty backup file');
+        throw Exception(tr.text('empty_backup_file'));
       }
 
       var raw = utf8.decode(bytes);
       if (raw.trim().startsWith('{') && raw.contains('store_manager_pro_encrypted_backup')) {
         if (!context.mounted) return;
-        final password = await _askPassword(context, title: 'Backup password');
+        final password = await _askPassword(context, title: AppLocalizations.of(context).text('backup_password'));
         if (password == null) return;
         if (!context.mounted) return;
         raw = store.decryptBackupJson(raw, password);
       }
       if (raw.trim().isEmpty) {
-        throw Exception('Empty backup file');
+        throw Exception(tr.text('empty_backup_file'));
       }
 
       final validation = store.validateBackupJson(raw);
@@ -487,12 +582,28 @@ class SettingsPage extends StatelessWidget {
           builder: (context, setState) => AlertDialog(
             title: Text(AppLocalizations.of(context).text('recover_existing_store')),
             content: ResponsiveDialogBox(
-              maxWidth: 460,
+              maxWidth: VentioResponsive.modalMaxWidth(context, 460),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(AppLocalizations.of(context).text('recover_existing_store_desc')),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () => _loadRecoveryFileIntoFields(
+                        context,
+                        apiUrlController: apiUrlController,
+                        storeIdController: storeIdController,
+                        branchIdController: branchIdController,
+                        recoveryKeyController: recoveryKeyController,
+                        onLoaded: () => refresh(setState),
+                      ),
+                      icon: const Icon(Icons.upload_file_outlined),
+                      label: Text(AppLocalizations.of(context).text('upload_recovery_file')),
+                    ),
+                  ),
                   const SizedBox(height: 12),
                   TextField(
                     controller: apiUrlController,
@@ -503,20 +614,20 @@ class SettingsPage extends StatelessWidget {
                   TextField(
                     controller: storeIdController,
                     textCapitalization: TextCapitalization.characters,
-                    decoration: const InputDecoration(labelText: 'Store ID', hintText: 'ST-XXXXXX', border: OutlineInputBorder()),
+                    decoration: InputDecoration(labelText: AppLocalizations.of(context).text('store_id'), hintText: 'ST-XXXXXX', border: const OutlineInputBorder()),
                     onChanged: (_) => refresh(setState),
                   ),
                   const SizedBox(height: 8),
                   TextField(
                     controller: branchIdController,
                     textCapitalization: TextCapitalization.characters,
-                    decoration: const InputDecoration(labelText: 'Branch ID (optional)', hintText: 'Leave blank to recover the latest branch', border: OutlineInputBorder()),
+                    decoration: InputDecoration(labelText: AppLocalizations.of(context).text('branch_id_optional'), hintText: AppLocalizations.of(context).text('branch_id_recover_hint'), border: const OutlineInputBorder()),
                   ),
                   const SizedBox(height: 8),
                   TextField(
                     controller: recoveryKeyController,
                     textCapitalization: TextCapitalization.characters,
-                    decoration: const InputDecoration(labelText: 'Recovery Key', hintText: 'RK-XXXX-XXXX-XXXX', border: OutlineInputBorder()),
+                    decoration: InputDecoration(labelText: AppLocalizations.of(context).text('recovery_key'), hintText: 'RK-XXXX-XXXX-XXXX', border: const OutlineInputBorder()),
                     onChanged: (_) => refresh(setState),
                   ),
                 ],
@@ -570,7 +681,7 @@ class SettingsPage extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  'Type $confirmationWord to confirm.',
+                  AppLocalizations.of(context).format('type_word_to_confirm', {'word': confirmationWord}),
                   style: Theme.of(context).textTheme.labelLarge,
                 ),
                 const SizedBox(height: 8),
@@ -578,9 +689,9 @@ class SettingsPage extends StatelessWidget {
                   controller: controller,
                   autofocus: true,
                   textCapitalization: TextCapitalization.characters,
-                  decoration: const InputDecoration(
-                    border: OutlineInputBorder(),
-                    labelText: 'Confirmation word',
+                  decoration: InputDecoration(
+                    border: const OutlineInputBorder(),
+                    labelText: AppLocalizations.of(context).text('confirmation_word'),
                     hintText: confirmationWord,
                   ),
                   onChanged: (value) {
@@ -905,7 +1016,7 @@ class SettingsPage extends StatelessWidget {
       builder: (dialogContext) => AlertDialog(
         title: Text(tr.text('confirm_backup_import')),
         content: ResponsiveDialogBox(
-          maxWidth: 420,
+          maxWidth: VentioResponsive.modalMaxWidth(context, 420),
           child: _BackupSummaryDetails(summary: summary),
         ),
         actions: [
@@ -950,7 +1061,7 @@ class _ScannerFeedbackSettingsCardState extends State<_ScannerFeedbackSettingsCa
     final tr = AppLocalizations.of(context);
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: VentioResponsive.pageInsets(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1004,7 +1115,7 @@ class _BackupSummaryCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(12),
+      padding: VentioResponsive.cardInsets(context),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
         borderRadius: BorderRadius.circular(12),
@@ -1432,10 +1543,10 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   Future<void> _scanPairingQr() async {
     final raw = await Navigator.of(context).push<String>(
       MaterialPageRoute(
-        builder: (_) => const BarcodeScannerPage(
-          title: 'Scan pairing QR',
-          helpText: 'Point the camera at the Host pairing QR code.',
-          formats: [BarcodeFormat.qrCode],
+        builder: (_) => BarcodeScannerPage(
+          title: AppLocalizations.of(context).text('scan_pairing_qr'),
+          helpText: AppLocalizations.of(context).text('scan_pairing_qr_help'),
+          formats: const [BarcodeFormat.qrCode],
         ),
       ),
     );
@@ -1638,7 +1749,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     final hostActionLabel = needsInitialCloudHost ? (_hostCreateFailed ? 'Retry Create Host' : 'Create New Host') : 'Sync Now';
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: VentioResponsive.pageInsets(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1699,7 +1810,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
             ] else ...[
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(12),
+                padding: VentioResponsive.cardInsets(context),
                 decoration: BoxDecoration(borderRadius: BorderRadius.circular(12), border: Border.all(color: Theme.of(context).dividerColor)),
                 child: Text(widget.store.appIdentity.hostDeviceId.trim().isNotEmpty
                     ? 'Connection Status: Connected to ${widget.store.appIdentity.storeId} / ${widget.store.appIdentity.branchId} / ${widget.store.appIdentity.hostDeviceId}'
@@ -1756,13 +1867,13 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
             const SizedBox(height: 12),
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.all(12),
+              padding: VentioResponsive.cardInsets(context),
               decoration: BoxDecoration(color: color.surfaceContainerHighest, borderRadius: BorderRadius.circular(12)),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(_busy ? (_status.isEmpty ? 'Working...' : _status) : (_status.isEmpty ? _humanStatus : _status)),
+                  Text(_busy ? (_status.isEmpty ? tr.text('working') : _status) : (_status.isEmpty ? _humanStatus(context) : _status)),
                   if (_busy) ...[
                     const SizedBox(height: 8),
                     LinearProgressIndicator(value: _statusProgress),
@@ -1776,14 +1887,15 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     );
   }
 
-  String get _humanStatus {
+  String _humanStatus(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     final identity = widget.store.appIdentity;
     if (identity.isHost) {
       final lan = LanSyncSettings.load();
       final cloud = CloudSyncSettings.load();
-      return 'Host • LAN: ${lan.setupComplete && lan.isHost ? 'Enabled' : 'Disabled'} • Cloud: ${identity.isCloudEnabled && cloud.isConfigured ? 'Enabled' : 'Disabled'}';
+      return '${tr.text('connection_role_host')} • ${tr.text('connection_lan')}: ${lan.setupComplete && lan.isHost ? tr.text('connection_lan_enabled') : tr.text('connection_lan_disabled')} • ${tr.text('connection_cloud')}: ${identity.isCloudEnabled && cloud.isConfigured ? tr.text('connection_cloud_enabled') : tr.text('connection_cloud_disabled')}';
     }
-    return 'Client • ${identity.syncMode == SyncMode.cloudConnected ? 'Cloud' : identity.syncMode == SyncMode.lanOnly ? 'LAN' : 'Local'}';
+    return '${tr.text('connection_role_client')} • ${identity.syncMode == SyncMode.cloudConnected ? tr.text('connection_cloud') : identity.syncMode == SyncMode.lanOnly ? tr.text('connection_lan') : tr.text('connection_local')}';
   }
 
 
@@ -1796,7 +1908,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(12),
+      padding: VentioResponsive.cardInsets(context),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.35),
         borderRadius: BorderRadius.circular(12),
@@ -1827,7 +1939,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(top: 12),
-      padding: const EdgeInsets.all(12),
+      padding: VentioResponsive.cardInsets(context),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: Theme.of(context).dividerColor),
@@ -1907,7 +2019,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(12),
+      padding: VentioResponsive.cardInsets(context),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: Theme.of(context).dividerColor),
@@ -1953,7 +2065,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
+      padding: VentioResponsive.pageInsets(context),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Theme.of(context).dividerColor),
@@ -1980,7 +2092,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           const SizedBox(height: 12),
           Center(
             child: Container(
-              padding: const EdgeInsets.all(12),
+              padding: VentioResponsive.cardInsets(context),
               decoration: BoxDecoration(
                 color: Theme.of(context).colorScheme.surface,
                 borderRadius: BorderRadius.circular(12),
@@ -1995,8 +2107,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           const SizedBox(height: 12),
           InputDecorator(
             decoration: InputDecoration(
-              labelText: 'Code',
-              helperText: 'Expires in ${_countdownText(_latestLanPairingExpiresAt)}',
+              labelText: tr.text('code'),
+              helperText: tr.format('expires_in', {'time': _countdownText(_latestLanPairingExpiresAt)}),
               border: const OutlineInputBorder(),
             ),
             child: Text(
@@ -2015,11 +2127,11 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     if (code.isEmpty) {
       return const SizedBox.shrink();
     }
-    final expiresText = 'Expires in ${_countdownText(_latestCloudPairingExpiresAt)}';
+    final expiresText = tr.format('expires_in', {'time': _countdownText(_latestCloudPairingExpiresAt)});
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
+      padding: VentioResponsive.pageInsets(context),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Theme.of(context).dividerColor),
@@ -2042,7 +2154,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           const SizedBox(height: 12),
           Center(
             child: Container(
-              padding: const EdgeInsets.all(12),
+              padding: VentioResponsive.cardInsets(context),
               decoration: BoxDecoration(
                 color: Theme.of(context).colorScheme.surface,
                 borderRadius: BorderRadius.circular(12),
@@ -2057,7 +2169,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           const SizedBox(height: 12),
           InputDecorator(
             decoration: InputDecoration(
-              labelText: 'Code',
+              labelText: tr.text('code'),
               helperText: expiresText,
               border: const OutlineInputBorder(),
               suffixIcon: IconButton(
@@ -2078,7 +2190,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
 
   List<Widget> _lanFields({required bool showHostIp, bool forHost = false}) => [
         if (showHostIp)
-          TextField(controller: _lanHostController, decoration: const InputDecoration(labelText: 'Manual Host IP (optional)', border: OutlineInputBorder())),
+          TextField(controller: _lanHostController, decoration: InputDecoration(labelText: AppLocalizations.of(context).text('manual_host_ip_optional'), border: const OutlineInputBorder())),
         if (showHostIp) const SizedBox(height: 12),
         TextField(controller: _lanPortController, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: AppLocalizations.of(context).text('port'), border: const OutlineInputBorder())),
         const SizedBox(height: 12),
@@ -2209,6 +2321,43 @@ class _Line extends StatelessWidget {
 }
 
 
+
+class _SecureRecoveryLine extends StatelessWidget {
+  const _SecureRecoveryLine({required this.title, required this.value});
+
+  final String title;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 130,
+            child: Text(title, style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+          ),
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                value,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontFamily: 'monospace'),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _SystemIdentityCard extends StatelessWidget {
   const _SystemIdentityCard({required this.store});
 
@@ -2220,7 +2369,7 @@ class _SystemIdentityCard extends StatelessWidget {
     final identity = store.appIdentity;
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: VentioResponsive.pageInsets(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

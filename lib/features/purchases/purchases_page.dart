@@ -24,7 +24,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
     final purchases = widget.store.purchases;
     final currency = widget.store.storeProfile.currency;
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: VentioResponsive.pageInsets(context),
       children: [
         LayoutBuilder(builder: (context, constraints) {
           final compact = constraints.maxWidth < 650;
@@ -58,7 +58,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
         const SizedBox(height: 16),
         Card(
           child: purchases.isEmpty
-              ? Padding(padding: const EdgeInsets.all(24), child: Text(tr.text('no_purchases_yet')))
+              ? Padding(padding: VentioResponsive.pageInsets(context), child: Text(tr.text('no_purchases_yet')))
               : Column(
                   children: [
                     for (final purchase in purchases) ...[
@@ -132,7 +132,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
           return AlertDialog(
             title: Text(tr.text('new_purchase')),
             content: ResponsiveDialogBox(
-              maxWidth: 720,
+              maxWidth: VentioResponsive.modalMaxWidth(context, 720),
               child: Form(
                 key: formKey,
                 child: SingleChildScrollView(
@@ -246,7 +246,7 @@ class _MetricCard extends StatelessWidget {
         ),
         child: Card(
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: VentioResponsive.pageInsets(context),
             child: Row(children: [Icon(icon), const SizedBox(width: 12), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(label), Text(value, style: Theme.of(context).textTheme.titleLarge)]))]),
           ),
         ),

@@ -157,7 +157,7 @@ class _SalesPageState extends State<SalesPage> {
   Widget _buildMobileSaleControls(BuildContext context, AppLocalizations tr) {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: VentioResponsive.cardInsets(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
@@ -224,7 +224,7 @@ class _SalesPageState extends State<SalesPage> {
   Widget _buildPosPanel(BuildContext context, AppLocalizations tr, List<Product> products, {required bool isWide}) {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: VentioResponsive.pageInsets(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -416,7 +416,7 @@ class _SalesPageState extends State<SalesPage> {
 
   Widget _buildBarcodeStation(BuildContext context, AppLocalizations tr, {bool embedded = false}) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: VentioResponsive.cardInsets(context),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(18),
         color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.45),
@@ -518,7 +518,7 @@ class _SalesPageState extends State<SalesPage> {
                         border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
                       ),
                       child: Padding(
-                        padding: const EdgeInsets.all(12),
+                        padding: VentioResponsive.cardInsets(context),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -554,7 +554,7 @@ class _SalesPageState extends State<SalesPage> {
         color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: VentioResponsive.pageInsets(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -675,7 +675,7 @@ class _SalesPageState extends State<SalesPage> {
   Widget _buildInvoicesPanel(BuildContext context, AppLocalizations tr, List<Sale> sales) {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: VentioResponsive.pageInsets(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -989,7 +989,7 @@ class _MobileCheckoutBar extends StatelessWidget {
         elevation: 4,
         margin: EdgeInsets.zero,
         child: Padding(
-          padding: const EdgeInsets.all(10),
+          padding: VentioResponsive.cardInsets(context),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,

@@ -28,7 +28,7 @@ class _CustomersPageState extends State<CustomersPage> {
     }).toList();
 
     return Padding(
-      padding: const EdgeInsets.all(16),
+      padding: VentioResponsive.pageInsets(context),
       child: Column(
         children: [
           AppSectionHeader(
@@ -135,7 +135,7 @@ class _CustomerDialogState extends State<_CustomerDialog> {
     return AlertDialog(
       title: Text(widget.customer == null ? tr.text('add_customer') : tr.text('edit_customer')),
       content: ResponsiveDialogBox(
-        maxWidth: 400,
+        maxWidth: VentioResponsive.modalMaxWidth(context, 400),
         child: Form(
           key: _formKey,
           child: Column(

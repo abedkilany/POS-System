@@ -7,14 +7,14 @@ Future<void> downloadTextFile({
   required String content,
 }) async {
   final savedPath = await FilePicker.platform.saveFile(
-    dialogTitle: 'Save backup file',
+    dialogTitle: filename.toLowerCase().contains('recovery') ? 'Save recovery file' : 'Save backup file',
     fileName: filename,
     type: FileType.custom,
     allowedExtensions: const ['json'],
   );
 
   if (savedPath == null) {
-    throw StateError('Backup save was cancelled.');
+    throw StateError('File save was cancelled.');
   }
 
   await File(savedPath).writeAsString(content);

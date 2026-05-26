@@ -189,14 +189,22 @@ class _MainShellState extends State<MainShell> {
           appBar: AppBar(
             title: Text('$shellTitle • ${items[selectedIndex].label}', overflow: TextOverflow.ellipsis),
             actions: [
-              Flexible(
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: constraints.maxWidth < 420
+                      ? 72
+                      : constraints.maxWidth < 720
+                          ? 118
+                          : VentioResponsive.clampToScreen(context, 360, min: 180, horizontalPadding: 220),
+                ),
                 child: HostConnectionIndicator(
                   store: widget.store,
                   compact: constraints.maxWidth < 720,
                 ),
               ),
               if (constraints.maxWidth >= 720)
-                Flexible(
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 180),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                     child: Center(
@@ -367,12 +375,14 @@ class _ConnectionStatusSnapshot {
     required this.roleMessage,
     required this.lan,
     required this.cloud,
+    required this.syncHealth,
   });
 
   final String roleLabel;
   final String roleMessage;
   final _TransportSnapshot lan;
   final _TransportSnapshot cloud;
+  final _TransportSnapshot syncHealth;
 }
 
 class HostConnectionIndicator extends StatefulWidget {
@@ -393,6 +403,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     roleMessage: 'Checking device role...',
     lan: _TransportSnapshot(label: 'LAN', state: _TransportState.checking, message: 'Checking LAN status...'),
     cloud: _TransportSnapshot(label: 'Cloud', state: _TransportState.checking, message: 'Checking Cloud status...'),
+    syncHealth: _TransportSnapshot(label: 'Sync', state: _TransportState.checking, message: 'Checking sync health...'),
   );
 
   @override
@@ -558,17 +569,42 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     }
   }
 
+  _TransportSnapshot _readSyncHealthStatus() {
+    final pending = widget.store.pendingSyncCount;
+    if (CloudProvisioningStatus.isPending) {
+      return _TransportSnapshot(
+        label: _t('connection_sync_health'),
+        state: _TransportState.provisioning,
+        message: _t('connection_sync_provisioning'),
+      );
+    }
+    if (pending > 0) {
+      return _TransportSnapshot(
+        label: _t('connection_sync_health'),
+        state: _TransportState.pending,
+        message: '${_t('connection_sync_pending_prefix')} $pending ${_t('connection_sync_pending_suffix')}',
+      );
+    }
+    return _TransportSnapshot(
+      label: _t('connection_sync_health'),
+      state: _TransportState.active,
+      message: _t('connection_sync_healthy'),
+    );
+  }
+
   Future<void> _refresh() async {
     final checking = _ConnectionStatusSnapshot(
       roleLabel: _roleLabel(),
       roleMessage: _roleMessage(),
       lan: _TransportSnapshot(label: _t('connection_lan'), state: _TransportState.checking, message: _t('connection_lan_checking')),
       cloud: _TransportSnapshot(label: _t('connection_cloud'), state: _TransportState.checking, message: _t('connection_cloud_checking')),
+      syncHealth: _TransportSnapshot(label: _t('connection_sync_health'), state: _TransportState.checking, message: _t('connection_sync_checking')),
     );
     if (mounted) setState(() => _snapshot = checking);
 
     final lan = await _readLanStatus();
     final cloud = await _readCloudStatus();
+    final syncHealth = _readSyncHealthStatus();
     if (!mounted) return;
     setState(() {
       _snapshot = _ConnectionStatusSnapshot(
@@ -576,6 +612,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
         roleMessage: _roleMessage(),
         lan: lan,
         cloud: cloud,
+        syncHealth: syncHealth,
       );
     });
   }
@@ -641,6 +678,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
   Widget build(BuildContext context) {
     final lan = _snapshot.lan;
     final cloud = _snapshot.cloud;
+    final syncHealth = _snapshot.syncHealth;
     final tooltip = [
       _snapshot.roleLabel,
       _snapshot.roleMessage,
@@ -652,6 +690,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
       _chip(context, _snapshot.roleLabel, _TransportState.online, role: true),
       _chip(context, _t('connection_lan'), lan.state),
       _chip(context, _t('connection_cloud'), cloud.state),
+      _chip(context, _t('connection_sync_health'), syncHealth.state),
     ];
 
     if (widget.compact) {
@@ -661,16 +700,17 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
           message: tooltip,
           child: PopupMenuButton<void>(
             tooltip: tooltip,
-            constraints: const BoxConstraints(minWidth: 220, maxWidth: 280),
+            constraints: BoxConstraints(minWidth: 200, maxWidth: VentioResponsive.modalMaxWidth(context, 280)),
             onOpened: _refresh,
             itemBuilder: (context) => [
               PopupMenuItem<void>(enabled: false, child: Text(_snapshot.roleLabel, style: Theme.of(context).textTheme.titleSmall)),
               PopupMenuItem<void>(enabled: false, child: Text('${_t('connection_lan')}: ${_stateText(lan.state)}')),
               PopupMenuItem<void>(enabled: false, child: Text('${_t('connection_cloud')}: ${_stateText(cloud.state)}')),
+              PopupMenuItem<void>(enabled: false, child: Text('${_t('connection_sync_health')}: ${_stateText(syncHealth.state)}')),
               PopupMenuItem<void>(enabled: false, child: Text(_snapshot.roleMessage, maxLines: 2, overflow: TextOverflow.ellipsis)),
             ],
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 118),
+              constraints: BoxConstraints(maxWidth: widget.compact ? 118 : VentioResponsive.clampToScreen(context, 220, min: 118)),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [

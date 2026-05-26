@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
@@ -27,6 +28,7 @@ class _PinLockPageState extends State<PinLockPage> {
   bool _loggingIn = false;
   bool _rememberLogin = false;
   bool _showRegister = false;
+  bool _showPassword = false;
 
   @override
   void initState() {
@@ -111,7 +113,7 @@ class _PinLockPageState extends State<PinLockPage> {
   Widget build(BuildContext context) {
     if (widget.store.activeUser != null) return widget.child;
 
-    if (_showRegister) {
+    if (_showRegister && !kIsWeb && widget.store.needsInitialAdminSetup) {
       return _InitialAdminSetupCard(
         fullNameController: _fullNameController,
         usernameController: _usernameController,
@@ -119,7 +121,7 @@ class _PinLockPageState extends State<PinLockPage> {
         confirmPasswordController: _confirmPasswordController,
         saving: _savingSetup,
         onSubmit: _completeInitialSetup,
-        onCancel: () => setState(() => _showRegister = false),
+        onCancel: _savingSetup ? null : () => setState(() => _showRegister = false),
       );
     }
 
@@ -129,13 +131,13 @@ class _PinLockPageState extends State<PinLockPage> {
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
+            padding: VentioResponsive.pageInsets(context),
             child: ConstrainedBox(
               constraints: BoxConstraints(maxWidth: VentioResponsive.clampToScreen(context, 420, min: 280, horizontalPadding: 32)),
               child: Card(
                 margin: EdgeInsets.zero,
                 child: Padding(
-                  padding: const EdgeInsets.all(24),
+                  padding: VentioResponsive.pageInsets(context),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -153,6 +155,7 @@ class _PinLockPageState extends State<PinLockPage> {
                       const SizedBox(height: 20),
                       TextField(
                         controller: _usernameController,
+                        enabled: !_loggingIn,
                         autofocus: true,
                         textInputAction: TextInputAction.next,
                         decoration:
@@ -161,10 +164,25 @@ class _PinLockPageState extends State<PinLockPage> {
                       const SizedBox(height: 12),
                       TextField(
                         controller: _passwordController,
-                        obscureText: true,
-                        decoration:
-                            InputDecoration(labelText: tr.text('password')),
-                        onSubmitted: (_) => _unlock(),
+                        enabled: !_loggingIn,
+                        obscureText: !_showPassword,
+                        decoration: InputDecoration(
+                          labelText: tr.text('password'),
+                          suffixIcon: IconButton(
+                            tooltip: _showPassword
+                                ? tr.text('hide_password')
+                                : tr.text('show_password'),
+                            onPressed: _loggingIn
+                                ? null
+                                : () => setState(() => _showPassword = !_showPassword),
+                            icon: Icon(_showPassword
+                                ? Icons.visibility_off_outlined
+                                : Icons.visibility_outlined),
+                          ),
+                        ),
+                        onSubmitted: (_) {
+                          if (!_loggingIn) _unlock();
+                        },
                       ),
                       const SizedBox(height: 8),
                       CheckboxListTile(
@@ -173,7 +191,7 @@ class _PinLockPageState extends State<PinLockPage> {
                         controlAffinity: ListTileControlAffinity.leading,
                         title: Text(tr.text('remember_me')),
                         subtitle: Text(tr.text('remember_me_desc')),
-                        onChanged: (value) => setState(() => _rememberLogin = value ?? false),
+                        onChanged: _loggingIn ? null : (value) => setState(() => _rememberLogin = value ?? false),
                       ),
                       const SizedBox(height: 8),
                       SizedBox(
@@ -188,7 +206,7 @@ class _PinLockPageState extends State<PinLockPage> {
                       Align(
                         alignment: Alignment.centerRight,
                         child: TextButton(
-                          onPressed: () {
+                          onPressed: _loggingIn ? null : () {
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(content: Text(tr.text('password_recovery_not_configured'))),
                             );
@@ -197,41 +215,49 @@ class _PinLockPageState extends State<PinLockPage> {
                         ),
                       ),
                       const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton.icon(
-                              onPressed: widget.store.needsInitialAdminSetup
-                                  ? () => setState(() => _showRegister = true)
-                                  : null,
-                              icon: const Icon(Icons.person_add_alt_1),
-                              label: Text(tr.text('register')),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: OutlinedButton.icon(
-                              onPressed: () async {
-                                await Navigator.of(context).push(
-                                  MaterialPageRoute<void>(
-                                    builder: (_) => SyncSetupPage(
-                                      store: widget.store,
-                                      onDone: () async {
-                                        if (Navigator.of(context).canPop()) {
-                                          Navigator.of(context).pop();
-                                        }
-                                      },
-                                    ),
+                      if (widget.store.needsInitialAdminSetup)
+                        Builder(
+                          builder: (context) {
+                            final canRegisterHere = !kIsWeb;
+                            final actions = <Widget>[
+                              if (canRegisterHere)
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: _loggingIn
+                                        ? null
+                                        : () => setState(() => _showRegister = true),
+                                    icon: const Icon(Icons.person_add_alt_1),
+                                    label: Text(tr.text('register')),
                                   ),
-                                );
-                                if (mounted) setState(() {});
-                              },
-                              icon: const Icon(Icons.link),
-                              label: Text(tr.text('connect_to_store')),
-                            ),
-                          ),
-                        ],
-                      ),
+                                ),
+                              if (canRegisterHere) const SizedBox(width: 12),
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: _loggingIn
+                                      ? null
+                                      : () async {
+                                          await Navigator.of(context).push(
+                                            MaterialPageRoute<void>(
+                                              builder: (_) => SyncSetupPage(
+                                                store: widget.store,
+                                                onDone: () async {
+                                                  if (Navigator.of(context).canPop()) {
+                                                    Navigator.of(context).pop();
+                                                  }
+                                                },
+                                              ),
+                                            ),
+                                          );
+                                          if (mounted) setState(() {});
+                                        },
+                                  icon: const Icon(Icons.link),
+                                  label: Text(tr.text('connect_to_store')),
+                                ),
+                              ),
+                            ];
+                            return Row(children: actions);
+                          },
+                        ),
                     ],
                   ),
                 ),
@@ -244,7 +270,7 @@ class _PinLockPageState extends State<PinLockPage> {
   }
 }
 
-class _InitialAdminSetupCard extends StatelessWidget {
+class _InitialAdminSetupCard extends StatefulWidget {
   const _InitialAdminSetupCard({
     required this.fullNameController,
     required this.usernameController,
@@ -261,7 +287,15 @@ class _InitialAdminSetupCard extends StatelessWidget {
   final TextEditingController confirmPasswordController;
   final bool saving;
   final VoidCallback onSubmit;
-  final VoidCallback onCancel;
+  final VoidCallback? onCancel;
+
+  @override
+  State<_InitialAdminSetupCard> createState() => _InitialAdminSetupCardState();
+}
+
+class _InitialAdminSetupCardState extends State<_InitialAdminSetupCard> {
+  bool _showPassword = false;
+  bool _showConfirmPassword = false;
 
   @override
   Widget build(BuildContext context) {
@@ -270,13 +304,13 @@ class _InitialAdminSetupCard extends StatelessWidget {
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
+            padding: VentioResponsive.pageInsets(context),
             child: ConstrainedBox(
               constraints: BoxConstraints(maxWidth: VentioResponsive.clampToScreen(context, 460, min: 280, horizontalPadding: 32)),
               child: Card(
                 margin: EdgeInsets.zero,
                 child: Padding(
-                  padding: const EdgeInsets.all(24),
+                  padding: VentioResponsive.pageInsets(context),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -296,14 +330,16 @@ class _InitialAdminSetupCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 20),
                       TextField(
-                        controller: fullNameController,
+                        controller: widget.fullNameController,
+                        enabled: !widget.saving,
                         textInputAction: TextInputAction.next,
                         decoration:
                             InputDecoration(labelText: tr.text('admin_name')),
                       ),
                       const SizedBox(height: 12),
                       TextField(
-                        controller: usernameController,
+                        controller: widget.usernameController,
+                        enabled: !widget.saving,
                         autofocus: true,
                         textInputAction: TextInputAction.next,
                         decoration:
@@ -311,19 +347,46 @@ class _InitialAdminSetupCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 12),
                       TextField(
-                        controller: passwordController,
-                        obscureText: true,
+                        controller: widget.passwordController,
+                        enabled: !widget.saving,
+                        obscureText: !_showPassword,
                         textInputAction: TextInputAction.next,
-                        decoration:
-                            InputDecoration(labelText: tr.text('new_password')),
+                        decoration: InputDecoration(
+                          labelText: tr.text('new_password'),
+                          suffixIcon: IconButton(
+                            tooltip: _showPassword
+                                ? tr.text('hide_password')
+                                : tr.text('show_password'),
+                            onPressed: widget.saving
+                                ? null
+                                : () => setState(() => _showPassword = !_showPassword),
+                            icon: Icon(_showPassword
+                                ? Icons.visibility_off_outlined
+                                : Icons.visibility_outlined),
+                          ),
+                        ),
                       ),
                       const SizedBox(height: 12),
                       TextField(
-                        controller: confirmPasswordController,
-                        obscureText: true,
-                        onSubmitted: (_) => onSubmit(),
+                        controller: widget.confirmPasswordController,
+                        enabled: !widget.saving,
+                        obscureText: !_showConfirmPassword,
+                        onSubmitted: (_) {
+                          if (!widget.saving) widget.onSubmit();
+                        },
                         decoration: InputDecoration(
                           labelText: tr.text('confirm_password'),
+                          suffixIcon: IconButton(
+                            tooltip: _showConfirmPassword
+                                ? tr.text('hide_password')
+                                : tr.text('show_password'),
+                            onPressed: widget.saving
+                                ? null
+                                : () => setState(() => _showConfirmPassword = !_showConfirmPassword),
+                            icon: Icon(_showConfirmPassword
+                                ? Icons.visibility_off_outlined
+                                : Icons.visibility_outlined),
+                          ),
                         ),
                       ),
                       const SizedBox(height: 16),
@@ -331,15 +394,15 @@ class _InitialAdminSetupCard extends StatelessWidget {
                         children: [
                           Expanded(
                             child: OutlinedButton(
-                              onPressed: saving ? null : onCancel,
+                              onPressed: widget.saving ? null : widget.onCancel,
                               child: Text(tr.text('back_to_login')),
                             ),
                           ),
                           const SizedBox(width: 12),
                           Expanded(
                             child: FilledButton.icon(
-                              onPressed: saving ? null : onSubmit,
-                              icon: saving
+                              onPressed: widget.saving ? null : widget.onSubmit,
+                              icon: widget.saving
                                   ? const SizedBox(
                                       width: 18,
                                       height: 18,

@@ -35,7 +35,7 @@ class _ProductsPageState extends State<ProductsPage> {
     final categories = <String>{'All', ...widget.store.products.map((p) => p.category).where((e) => e.trim().isNotEmpty)}.toList()..sort();
 
     return Padding(
-      padding: const EdgeInsets.all(16),
+      padding: VentioResponsive.pageInsets(context),
       child: Column(
         children: [
           AppSectionHeader(
@@ -186,7 +186,7 @@ class _ProductTile extends StatelessWidget {
         builder: (context, constraints) {
           if (constraints.maxWidth < 620) {
             return Padding(
-              padding: const EdgeInsets.all(12),
+              padding: VentioResponsive.cardInsets(context),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -207,8 +207,8 @@ class _ProductTile extends StatelessWidget {
                         Wrap(
                           spacing: 4,
                           children: [
-                            IconButton(onPressed: onEdit, icon: const Icon(Icons.edit_outlined), tooltip: 'Edit'),
-                            IconButton(onPressed: onDelete, icon: const Icon(Icons.delete_outline), tooltip: 'Delete'),
+                            IconButton(onPressed: onEdit, icon: const Icon(Icons.edit_outlined), tooltip: AppLocalizations.of(context).text('edit')),
+                            IconButton(onPressed: onDelete, icon: const Icon(Icons.delete_outline), tooltip: AppLocalizations.of(context).text('delete')),
                           ],
                         ),
                       ],
@@ -338,7 +338,7 @@ class _ProductDialogState extends State<_ProductDialog> {
                       labelText: tr.text('barcode'),
                       suffixIcon: _canUseCameraScanner
                           ? IconButton(
-                              tooltip: 'Scan with camera',
+                              tooltip: tr.text('scan_with_camera'),
                               onPressed: _scanBarcodeWithCamera,
                               icon: const Icon(Icons.camera_alt_outlined),
                             )
@@ -688,7 +688,7 @@ class _CatalogManagerDialogState extends State<_CatalogManagerDialog> {
     return AlertDialog(
       title: Text(widget.type == 'category' ? tr.text('manage_categories') : widget.type == 'unit' ? tr.text('manage_units') : tr.text('manage_lookup_items')),
       content: ResponsiveDialogBox(
-        maxWidth: 520,
+        maxWidth: VentioResponsive.modalMaxWidth(context, 520),
         child: ListView.separated(
           shrinkWrap: true,
           itemCount: _items.length,

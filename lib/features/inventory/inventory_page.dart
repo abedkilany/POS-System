@@ -111,7 +111,7 @@ class _InventoryOverview extends StatelessWidget {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: VentioResponsive.pageInsets(context),
       children: [
         Wrap(
           spacing: 16,
@@ -138,7 +138,7 @@ class _InventoryOverview extends StatelessWidget {
               ),
               const Divider(height: 1),
               if (products.isEmpty)
-                Padding(padding: const EdgeInsets.all(24), child: Text(tr.text('no_inventory_items')))
+                Padding(padding: VentioResponsive.pageInsets(context), child: Text(tr.text('no_inventory_items')))
               else
                 ...products.map((item) {
                   final isLow = item.stock <= item.lowStockThreshold;
@@ -193,11 +193,11 @@ class _MovementsList extends StatelessWidget {
     final currency = store.storeProfile.currency;
     final movements = store.stockMovements;
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: VentioResponsive.pageInsets(context),
       children: [
         Card(
           child: movements.isEmpty
-              ? Padding(padding: const EdgeInsets.all(24), child: Text(tr.text('no_stock_movements')))
+              ? Padding(padding: VentioResponsive.pageInsets(context), child: Text(tr.text('no_stock_movements')))
               : Column(
                   children: [
                     for (final movement in movements.take(200)) ...[

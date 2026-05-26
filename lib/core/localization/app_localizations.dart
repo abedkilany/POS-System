@@ -26,6 +26,18 @@ class AppLocalizations {
   String text(String key) {
     return _localizedStrings[key] as String? ?? key;
   }
+
+  String format(String key, Map<String, Object?> values) {
+    var template = text(key);
+    values.forEach((name, value) {
+      template = template.replaceAll('{$name}', value?.toString() ?? '');
+    });
+    return template;
+  }
+
+  bool get isArabic => locale.languageCode == 'ar';
+
+  TextDirection get textDirection => isArabic ? TextDirection.rtl : TextDirection.ltr;
 }
 
 class _AppLocalizationsDelegate extends LocalizationsDelegate<AppLocalizations> {
