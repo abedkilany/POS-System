@@ -656,5 +656,18 @@
   "verifying_pairing_code": "Verifying pairing code and creating device token... 35%",
   "web_cloud_lan_desc": "Web build uses Cloud API + Neon. LAN Host/Client is Desktop only.",
   "welcome_to_ventio": "Welcome to Ventio",
-  "working": "Working..."
+  "working": "Working...",
+  "financial_settings": "Financial Settings",
+  "currencies_pricing": "Currencies & Pricing",
+  "currencies_pricing_desc": "Manage USD/LBP exchange rate, price display, default product currency, and LBP rounding.",
+  "usd_lbp_exchange_rate": "USD to LBP exchange rate",
+  "price_display_mode": "Price display mode",
+  "price_display_usd": "USD only",
+  "price_display_lbp": "LBP only",
+  "price_display_both": "USD + LBP",
+  "default_product_currency": "Default product currency",
+  "lbp_rounding": "LBP rounding",
+  "no_rounding": "No rounding",
+  "financial_settings_updated": "Financial settings updated",
+  "price_currency": "Price currency"
 }

@@ -46,7 +46,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
             spacing: 16,
             runSpacing: 16,
             children: [
-              _MiniCard(title: tr.text('expenses'), value: formatCurrency(widget.store.totalExpensesAmount, currency: widget.store.storeProfile.currency), icon: Icons.payments_outlined),
+              _MiniCard(title: tr.text('expenses'), value: formatUsdReferenceAmount(widget.store.totalExpensesAmount, widget.store.storeProfile), icon: Icons.payments_outlined),
               _MiniCard(title: tr.text('expenses_count'), value: '${widget.store.expenses.length}', icon: Icons.receipt_outlined),
             ],
           ),
@@ -73,7 +73,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
                             spacing: 8,
                             crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
-                              Text(formatCurrency(expense.amount, currency: widget.store.storeProfile.currency)),
+                              Text(formatUsdReferenceAmount(expense.amount, widget.store.storeProfile)),
                               IconButton(onPressed: () => _openExpenseForm(context, expense: expense), icon: const Icon(Icons.edit_outlined)),
                               IconButton(onPressed: () => _deleteExpense(context, expense), icon: const Icon(Icons.delete_outline)),
                             ],

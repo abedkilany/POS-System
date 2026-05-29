@@ -656,5 +656,18 @@
   "verifying_pairing_code": "جار التحقق من كود الربط وإنشاء رمز الجهاز... 35%",
   "web_cloud_lan_desc": "نسخة الويب تستخدم Cloud API + Neon. وضع LAN Host/Client مخصص لسطح المكتب فقط.",
   "welcome_to_ventio": "مرحباً بك في Ventio",
-  "working": "جارٍ العمل..."
+  "working": "جارٍ العمل...",
+  "financial_settings": "الإعدادات المالية",
+  "currencies_pricing": "العملات والأسعار",
+  "currencies_pricing_desc": "إدارة سعر صرف الدولار، طريقة عرض الأسعار، العملة الافتراضية للمنتجات، وتدوير أسعار الليرة.",
+  "usd_lbp_exchange_rate": "سعر صرف الدولار مقابل الليرة",
+  "price_display_mode": "طريقة عرض الأسعار",
+  "price_display_usd": "الدولار فقط",
+  "price_display_lbp": "الليرة فقط",
+  "price_display_both": "الدولار والليرة معاً",
+  "default_product_currency": "العملة الافتراضية للمنتجات",
+  "lbp_rounding": "تدوير أسعار الليرة",
+  "no_rounding": "بدون تدوير",
+  "financial_settings_updated": "تم تحديث الإعدادات المالية",
+  "price_currency": "عملة السعر"
 }

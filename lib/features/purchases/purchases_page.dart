@@ -7,6 +7,7 @@ import '../../data/app_store.dart';
 import '../../models/product.dart';
 import '../../models/purchase.dart';
 import '../../models/purchase_item.dart';
+import '../../models/store_profile.dart';
 
 class PurchasesPage extends StatefulWidget {
   const PurchasesPage({super.key, required this.store});
@@ -22,7 +23,6 @@ class _PurchasesPageState extends State<PurchasesPage> {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final purchases = widget.store.purchases;
-    final currency = widget.store.storeProfile.currency;
     return ListView(
       padding: VentioResponsive.pageInsets(context),
       children: [
@@ -50,7 +50,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
           spacing: 12,
           runSpacing: 12,
           children: [
-            _MetricCard(label: tr.text('purchase_total'), value: formatCurrency(widget.store.totalPurchasesAmount, currency: currency), icon: Icons.shopping_cart_checkout),
+            _MetricCard(label: tr.text('purchase_total'), value: formatUsdReferenceAmount(widget.store.totalPurchasesAmount, widget.store.storeProfile), icon: Icons.shopping_cart_checkout),
             _MetricCard(label: tr.text('pending_purchases'), value: '${widget.store.pendingPurchaseCount}', icon: Icons.pending_actions),
             _MetricCard(label: tr.text('received_purchases'), value: '${purchases.where((p) => p.isReceived).length}', icon: Icons.done_all),
           ],
@@ -64,7 +64,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                     for (final purchase in purchases) ...[
                       _PurchaseTile(
                         purchase: purchase,
-                        currency: currency,
+                        storeProfile: widget.store.storeProfile,
                         onReceive: purchase.status == 'Draft' ? () => _receivePurchase(context, purchase.id) : null,
                         onCancel: !purchase.isCancelled ? () => _cancelPurchase(context, purchase.id) : null,
                       ),
@@ -194,7 +194,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                       if (items.isEmpty) Text(tr.text('no_items_added')) else ...items.map((item) => ListTile(
                             dense: true,
                             title: Text(item.productName),
-                            subtitle: Text('${item.quantity} × ${formatCurrency(item.unitCost, currency: widget.store.storeProfile.currency)}'),
+                            subtitle: Text('${item.quantity} × ${formatUsdReferenceAmount(item.unitCost, widget.store.storeProfile)}'),
                             trailing: IconButton(icon: const Icon(Icons.delete_outline), onPressed: () => setDialogState(() => items.remove(item))),
                           )),
                       const Divider(),
@@ -204,7 +204,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                         title: Text(tr.text('receive_now')),
                         subtitle: Text(tr.text('receive_now_desc')),
                       ),
-                      Text('${tr.text('total')}: ${formatCurrency(total, currency: widget.store.storeProfile.currency)}', style: Theme.of(context).textTheme.titleMedium),
+                      Text('${tr.text('total')}: ${formatUsdReferenceAmount(total, widget.store.storeProfile)}', style: Theme.of(context).textTheme.titleMedium),
                     ],
                   ),
                 ),
@@ -254,9 +254,9 @@ class _MetricCard extends StatelessWidget {
 }
 
 class _PurchaseTile extends StatelessWidget {
-  const _PurchaseTile({required this.purchase, required this.currency, this.onReceive, this.onCancel});
+  const _PurchaseTile({required this.purchase, required this.storeProfile, this.onReceive, this.onCancel});
   final Purchase purchase;
-  final String currency;
+  final StoreProfile storeProfile;
   final VoidCallback? onReceive, onCancel;
 
   @override
@@ -269,7 +269,7 @@ class _PurchaseTile extends StatelessWidget {
         spacing: 6,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          Text(formatCurrency(purchase.subtotal, currency: currency)),
+          Text(formatUsdReferenceAmount(purchase.subtotal, storeProfile)),
           if (onReceive != null) IconButton(tooltip: AppLocalizations.of(context).text('receive'), onPressed: onReceive, icon: const Icon(Icons.download_done)),
           if (onCancel != null) IconButton(tooltip: AppLocalizations.of(context).text('cancel'), onPressed: onCancel, icon: const Icon(Icons.cancel_outlined)),
         ],

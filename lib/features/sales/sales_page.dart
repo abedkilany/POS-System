@@ -217,7 +217,7 @@ class _SalesPageState extends State<SalesPage> {
                 children: [
                   Text('$customerName • ${_paymentMethodLabel(tr, _paymentMethod)}', maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.titleSmall),
                   const SizedBox(height: 4),
-                  Text('$_itemsCount ${tr.text('items_count')} | ${formatCurrency(_total, currency: widget.store.storeProfile.currency)}', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
+                  Text('$_itemsCount ${tr.text('items_count')} | ${formatUsdReferenceAmount(_total, widget.store.storeProfile)}', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
                 ],
               ),
             ),
@@ -410,7 +410,7 @@ class _SalesPageState extends State<SalesPage> {
                         children: [
                           Text(slot.shortName?.trim().isNotEmpty == true ? slot.shortName!.trim() : product!.name, textAlign: TextAlign.center, maxLines: 3, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
                           const SizedBox(height: 8),
-                          Text(formatCurrency(product!.price, currency: widget.store.storeProfile.currency), maxLines: 1, overflow: TextOverflow.ellipsis),
+                          Text(formatUsdReferenceAmount(product!.price, widget.store.storeProfile), maxLines: 1, overflow: TextOverflow.ellipsis),
                         ],
                       ),
               ),
@@ -615,7 +615,7 @@ class _SalesPageState extends State<SalesPage> {
                                 leading: Icon(isSelected ? Icons.check_circle : Icons.inventory_2_outlined),
                                 title: Text(product.name, maxLines: 1, overflow: TextOverflow.ellipsis),
                                 subtitle: Text('${product.code} • ${tr.text('stock')}: ${product.stock}', maxLines: 1, overflow: TextOverflow.ellipsis),
-                                trailing: Text(formatCurrency(product.price, currency: widget.store.storeProfile.currency)),
+                                trailing: Text(formatUsdReferenceAmount(product.price, widget.store.storeProfile)),
                                 onTap: () {
                                   setDialogState(() {
                                     selected = product;
@@ -716,7 +716,7 @@ class _SalesPageState extends State<SalesPage> {
             Row(
               children: [
                 Expanded(child: Text('$_itemsCount ${tr.text('items_count')}', style: Theme.of(context).textTheme.bodyMedium)),
-                Text(formatCurrency(_total, currency: widget.store.storeProfile.currency), style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+                Text(formatUsdReferenceAmount(_total, widget.store.storeProfile), style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
               ],
             ),
           ],
@@ -997,7 +997,7 @@ class _SalesPageState extends State<SalesPage> {
                       children: [
                         Text(item.product.name, style: Theme.of(context).textTheme.titleSmall),
                         const SizedBox(height: 4),
-                        Text('${item.product.code} • ${formatCurrency(item.product.price, currency: widget.store.storeProfile.currency)} • ${tr.text('stock')}: ${item.product.stock}'),
+                        Text('${item.product.code} • ${formatUsdReferenceAmount(item.product.price, widget.store.storeProfile)} • ${tr.text('stock')}: ${item.product.stock}'),
                         Align(alignment: Alignment.centerRight, child: actions),
                       ],
                     ),
@@ -1007,7 +1007,7 @@ class _SalesPageState extends State<SalesPage> {
               return ListTile(
                 contentPadding: EdgeInsets.zero,
                 title: Text(item.product.name),
-                subtitle: Text('${item.product.code} • ${formatCurrency(item.product.price, currency: widget.store.storeProfile.currency)} • ${tr.text('stock')}: ${item.product.stock}'),
+                subtitle: Text('${item.product.code} • ${formatUsdReferenceAmount(item.product.price, widget.store.storeProfile)} • ${tr.text('stock')}: ${item.product.stock}'),
                 onTap: () => _showQuantitySheet(index),
                 trailing: ConstrainedBox(
                   constraints: BoxConstraints(maxWidth: VentioResponsive.adaptiveWidth(context, mobile: 144, tablet: 164, desktop: 178)),
@@ -1063,8 +1063,8 @@ class _SalesPageState extends State<SalesPage> {
             cartContent,
             if (showTotals) ...[
               const Divider(height: 24),
-              _totalLine(tr.text('subtotal'), formatCurrency(_subtotal, currency: widget.store.storeProfile.currency)),
-              _totalLine(tr.text('discount'), formatCurrency(_discount, currency: widget.store.storeProfile.currency)),
+              _totalLine(tr.text('subtotal'), formatUsdReferenceAmount(_subtotal, widget.store.storeProfile)),
+              _totalLine(tr.text('discount'), formatUsdReferenceAmount(_discount, widget.store.storeProfile)),
               if (_discount > _subtotal)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 6),
@@ -1074,7 +1074,7 @@ class _SalesPageState extends State<SalesPage> {
                   ),
                 ),
               const SizedBox(height: 8),
-              _totalLine(tr.text('total'), formatCurrency(_total, currency: widget.store.storeProfile.currency), isBold: true),
+              _totalLine(tr.text('total'), formatUsdReferenceAmount(_total, widget.store.storeProfile), isBold: true),
             ],
             if (showActions) ...[
               const SizedBox(height: 12),
@@ -1127,14 +1127,14 @@ class _SalesPageState extends State<SalesPage> {
                           leading: Icon(sale.isCancelled ? Icons.cancel_outlined : Icons.check_circle),
                           title: Text(sale.invoiceNo),
                           subtitle: Text('${sale.customerName} • ${sale.date.toLocal()}'.split('.').first),
-                          trailing: Text(sale.isCancelled ? sale.status : formatCurrency(sale.total, currency: widget.store.storeProfile.currency)),
+                          trailing: Text(sale.isCancelled ? sale.status : formatUsdReferenceAmount(sale.total, widget.store.storeProfile)),
                           children: [
                             ...sale.items.map(
                               (item) => ListTile(
                                 dense: true,
                                 title: Text(item.productName),
-                                subtitle: Text('${tr.text('quantity')}: ${item.quantity} × ${formatCurrency(item.unitPrice, currency: widget.store.storeProfile.currency)}'),
-                                trailing: Text(formatCurrency(item.lineTotal, currency: widget.store.storeProfile.currency)),
+                                subtitle: Text('${tr.text('quantity')}: ${item.quantity} × ${formatUsdReferenceAmount(item.unitPrice, widget.store.storeProfile)}'),
+                                trailing: Text(formatUsdReferenceAmount(item.lineTotal, widget.store.storeProfile)),
                               ),
                             ),
                             const Divider(height: 1),
@@ -1382,7 +1382,7 @@ class _SalesPageState extends State<SalesPage> {
                                 return ListTile(
                                   title: Text(product.name, maxLines: 1, overflow: TextOverflow.ellipsis),
                                   subtitle: Text('${product.code} • ${tr.text('stock')}: ${product.stock}', maxLines: 1, overflow: TextOverflow.ellipsis),
-                                  trailing: Text(formatCurrency(product.price, currency: widget.store.storeProfile.currency)),
+                                  trailing: Text(formatUsdReferenceAmount(product.price, widget.store.storeProfile)),
                                   onTap: () {
                                     Navigator.pop(sheetContext);
                                     _search = '';
@@ -1538,9 +1538,9 @@ class _SalesPageState extends State<SalesPage> {
                     onChanged: (value) => setState(() => _paymentMethod = value ?? 'Cash'),
                   ),
                   const SizedBox(height: 14),
-                  _totalLine(tr.text('subtotal'), formatCurrency(_subtotal, currency: widget.store.storeProfile.currency)),
-                  _totalLine(tr.text('discount'), formatCurrency(_discount, currency: widget.store.storeProfile.currency)),
-                  _totalLine(tr.text('total'), formatCurrency(_total, currency: widget.store.storeProfile.currency), isBold: true),
+                  _totalLine(tr.text('subtotal'), formatUsdReferenceAmount(_subtotal, widget.store.storeProfile)),
+                  _totalLine(tr.text('discount'), formatUsdReferenceAmount(_discount, widget.store.storeProfile)),
+                  _totalLine(tr.text('total'), formatUsdReferenceAmount(_total, widget.store.storeProfile), isBold: true),
                   const SizedBox(height: 14),
                   FilledButton.icon(
                     onPressed: _cart.isEmpty ? null : () {

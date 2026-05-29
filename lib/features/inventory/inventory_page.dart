@@ -120,7 +120,7 @@ class _InventoryOverview extends StatelessWidget {
             SummaryCard(title: tr.text('product_count'), value: '${store.products.length}', icon: Icons.inventory_2_outlined),
             SummaryCard(title: tr.text('total_units'), value: '${store.totalUnitsInStock}', icon: Icons.layers_outlined),
             SummaryCard(title: tr.text('low_stock_alerts'), value: '${store.lowStockCount}', icon: Icons.warning_amber_rounded),
-            SummaryCard(title: tr.text('inventory_value'), value: formatCurrency(store.inventoryRetailValue, currency: store.storeProfile.currency), icon: Icons.payments_outlined),
+            SummaryCard(title: tr.text('inventory_value'), value: formatUsdReferenceAmount(store.inventoryRetailValue, store.storeProfile), icon: Icons.payments_outlined),
           ],
         ),
         const SizedBox(height: 20),
@@ -151,7 +151,7 @@ class _InventoryOverview extends StatelessWidget {
                             runSpacing: 6,
                             crossAxisAlignment: WrapCrossAlignment.center,
                             children: [
-                              Text(formatCurrency(item.price, currency: store.storeProfile.currency)),
+                              Text(formatUsdReferenceAmount(item.price, store.storeProfile)),
                               Chip(avatar: isLow ? const Icon(Icons.priority_high, size: 16) : null, label: Text('${tr.text('stock')}: ${item.stock}')),
                               TextButton.icon(onPressed: () => onAdjust(item.id), icon: const Icon(Icons.tune), label: Text(tr.text('adjust'))),
                             ],
@@ -190,7 +190,6 @@ class _MovementsList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final currency = store.storeProfile.currency;
     final movements = store.stockMovements;
     return ListView(
       padding: VentioResponsive.pageInsets(context),
@@ -208,7 +207,7 @@ class _MovementsList extends StatelessWidget {
                         isThreeLine: true,
                         trailing: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.end, children: [
                           Text(movement.quantity > 0 ? '+${movement.quantity}' : '${movement.quantity}', style: Theme.of(context).textTheme.titleMedium),
-                          if (movement.unitCost > 0) Text(formatCurrency(movement.value, currency: currency)),
+                          if (movement.unitCost > 0) Text(formatUsdReferenceAmount(movement.value, store.storeProfile)),
                         ]),
                       ),
                       const Divider(height: 1),

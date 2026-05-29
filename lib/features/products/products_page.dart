@@ -9,6 +9,7 @@ import '../../core/utils/currency_utils.dart';
 import '../../data/app_store.dart';
 import '../../models/catalog_item.dart';
 import '../../models/product.dart';
+import '../../models/store_profile.dart';
 import '../../models/supplier.dart';
 import '../../widgets/app_section_header.dart';
 import '../../widgets/empty_state_card.dart';
@@ -30,7 +31,6 @@ class _ProductsPageState extends State<ProductsPage> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final currency = widget.store.storeProfile.currency;
     final products = _filteredProducts(widget.store.products);
     final categories = <String>{'All', ...widget.store.products.map((p) => p.category).where((e) => e.trim().isNotEmpty)}.toList()..sort();
 
@@ -94,7 +94,7 @@ class _ProductsPageState extends State<ProductsPage> {
                       final product = products[index];
                       return _ProductTile(
                         product: product,
-                        currency: currency,
+                        storeProfile: widget.store.storeProfile,
                         onEdit: widget.store.canManageProducts ? () => _openProductForm(context, product: product) : null,
                         onDelete: widget.store.canDeleteOrCancel ? () => _deleteProduct(context, product) : null,
                       );
@@ -170,17 +170,17 @@ class _ProductsPageState extends State<ProductsPage> {
 }
 
 class _ProductTile extends StatelessWidget {
-  const _ProductTile({required this.product, required this.currency, this.onEdit, this.onDelete});
+  const _ProductTile({required this.product, required this.storeProfile, this.onEdit, this.onDelete});
 
   final Product product;
-  final String currency;
+  final StoreProfile storeProfile;
   final VoidCallback? onEdit;
   final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
     final subtitle = [product.code, product.barcode, product.category, product.brand, product.supplier].where((e) => e.trim().isNotEmpty).join(' • ');
-    final meta = '${product.stock} ${product.unit} • ${formatCurrency(product.price, currency: currency)}';
+    final meta = '${product.stock} ${product.unit} • ${formatUsdReferenceAmount(product.price, storeProfile)}';
     return Card(
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -263,6 +263,7 @@ class _ProductDialogState extends State<_ProductDialog> {
   late final TextEditingController stockController;
   late final TextEditingController lowStockController;
   String category = '';
+  String priceCurrency = 'USD';
   String brand = '';
   String supplier = '';
   String unit = 'pcs';
@@ -278,7 +279,8 @@ class _ProductDialogState extends State<_ProductDialog> {
     nameEnController = TextEditingController(text: product?.nameEn.isNotEmpty == true ? product!.nameEn : product?.name ?? '');
     nameArController = TextEditingController(text: product?.nameAr ?? '');
     descriptionController = TextEditingController(text: product?.description ?? '');
-    priceController = TextEditingController(text: product?.price.toString() ?? '');
+    priceCurrency = product?.originalCurrency ?? widget.store.storeProfile.defaultProductCurrency;
+    priceController = TextEditingController(text: product?.originalPrice.toString() ?? '');
     costController = TextEditingController(text: product?.cost.toString() ?? '');
     stockController = TextEditingController(text: product?.stock.toString() ?? '');
     lowStockController = TextEditingController(text: (product?.lowStockThreshold ?? 5).toString());
@@ -385,6 +387,15 @@ class _ProductDialogState extends State<_ProductDialog> {
                 const SizedBox(height: 12),
                 _ResponsiveFields(children: [
                   TextFormField(controller: priceController, decoration: InputDecoration(labelText: tr.text('sale_price')), keyboardType: TextInputType.number, validator: _nonNegativeNumber),
+                  DropdownButtonFormField<String>(
+                    initialValue: priceCurrency,
+                    decoration: InputDecoration(labelText: tr.text('price_currency')),
+                    items: const [
+                      DropdownMenuItem(value: 'USD', child: Text('USD')),
+                      DropdownMenuItem(value: 'LBP', child: Text('LBP')),
+                    ],
+                    onChanged: (value) => setState(() => priceCurrency = value ?? 'USD'),
+                  ),
                   TextFormField(controller: costController, decoration: InputDecoration(labelText: tr.text('cost_price')), keyboardType: TextInputType.number, validator: _nonNegativeNumber),
                   TextFormField(controller: stockController, decoration: InputDecoration(labelText: tr.text('opening_stock')), keyboardType: TextInputType.number, validator: _nonNegativeInteger),
                   TextFormField(controller: lowStockController, decoration: InputDecoration(labelText: tr.text('low_stock_alert')), keyboardType: TextInputType.number, validator: _nonNegativeInteger),
@@ -407,6 +418,9 @@ class _ProductDialogState extends State<_ProductDialog> {
     if (!_formKey.currentState!.validate()) return;
     final nameEn = nameEnController.text.trim();
     final nameAr = nameArController.text.trim();
+    final originalPrice = double.tryParse(priceController.text.trim()) ?? 0;
+    final rate = widget.store.storeProfile.usdToLbpRate;
+    final usdPrice = toUsdReferencePrice(originalPrice, priceCurrency, widget.store.storeProfile);
     Navigator.pop(
       context,
       Product(
@@ -420,13 +434,26 @@ class _ProductDialogState extends State<_ProductDialog> {
         brand: brand.trim(),
         supplier: supplier.trim(),
         description: descriptionController.text.trim(),
-        price: double.tryParse(priceController.text.trim()) ?? 0,
+        price: usdPrice,
+        originalPrice: originalPrice,
+        originalCurrency: priceCurrency,
+        usdPrice: usdPrice,
+        exchangeRateAtEntry: rate,
         cost: double.tryParse(costController.text.trim()) ?? 0,
         stock: int.tryParse(stockController.text.trim()) ?? 0,
         lowStockThreshold: int.tryParse(lowStockController.text.trim()) ?? 5,
         unit: unit.trim().isEmpty ? 'pcs' : unit.trim(),
         trackStock: trackStock,
         isActive: isActive,
+        createdAt: widget.product?.createdAt,
+        updatedAt: widget.product?.updatedAt,
+        deletedAt: widget.product?.deletedAt,
+        deviceId: widget.product?.deviceId ?? '',
+        syncStatus: widget.product?.syncStatus ?? 'pending',
+        storeId: widget.product?.storeId ?? '',
+        branchId: widget.product?.branchId ?? '',
+        version: widget.product?.version ?? 1,
+        lastModifiedByDeviceId: widget.product?.lastModifiedByDeviceId ?? '',
       ),
     );
   }

@@ -63,8 +63,8 @@ class InvoicePdfService {
                   (item) => [
                     item.productName,
                     '${item.quantity}',
-                    _formatMoney(item.unitPrice, profile.currency),
-                    _formatMoney(item.lineTotal, profile.currency),
+                    _formatMoney(item.unitPrice, profile),
+                    _formatMoney(item.lineTotal, profile),
                   ],
                 )
                 .toList(),
@@ -79,10 +79,10 @@ class InvoicePdfService {
               child: pw.Column(
                 crossAxisAlignment: pw.CrossAxisAlignment.start,
                 children: [
-                  _summaryLine('Subtotal', _formatMoney(sale.subtotal, profile.currency)),
-                  _summaryLine('Discount', _formatMoney(sale.discount, profile.currency)),
+                  _summaryLine('Subtotal', _formatMoney(sale.subtotal, profile)),
+                  _summaryLine('Discount', _formatMoney(sale.discount, profile)),
                   pw.Divider(),
-                  _summaryLine('Total', _formatMoney(sale.total, profile.currency), isBold: true),
+                  _summaryLine('Total', _formatMoney(sale.total, profile), isBold: true),
                 ],
               ),
             ),
@@ -117,16 +117,22 @@ class InvoicePdfService {
     );
   }
 
-  static String _formatMoney(double amount, String currency) {
-    final prefix = switch (currency.toUpperCase()) {
-      'USD' => '\$',
-      'EUR' => '€',
-      'GBP' => '£',
-      'LBP' => 'LBP ',
-      'SAR' => 'SAR ',
-      'AED' => 'AED ',
-      _ => '${currency.toUpperCase()} ',
-    };
-    return '$prefix${amount.toStringAsFixed(2)}';
+  static String _formatMoney(double usdAmount, StoreProfile profile) {
+    String usd() => '\$${usdAmount.toStringAsFixed(2)}';
+    String lbp() {
+      final converted = usdAmount * profile.usdToLbpRate;
+      final rounded = profile.lbpRounding <= 0 ? converted : (converted / profile.lbpRounding).round() * profile.lbpRounding;
+      return 'LBP ${rounded.round()}';
+    }
+
+    switch (profile.priceDisplayMode) {
+      case 'lbp':
+        return lbp();
+      case 'both':
+        return '${usd()} (${lbp()})';
+      case 'usd':
+      default:
+        return usd();
+    }
   }
 }

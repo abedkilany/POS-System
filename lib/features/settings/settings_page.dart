@@ -38,6 +38,7 @@ class SettingsPage extends StatelessWidget {
     final isCompact = MediaQuery.sizeOf(context).width < 720;
     final tabs = [
       Tab(icon: const Icon(Icons.store_outlined), text: tr.text('store_information')),
+      Tab(icon: const Icon(Icons.account_balance_wallet_outlined), text: tr.text('financial_settings')),
       Tab(icon: const Icon(Icons.sync_outlined), text: tr.text('sync')),
       Tab(icon: const Icon(Icons.backup_outlined), text: tr.text('backup_restore')),
       Tab(icon: const Icon(Icons.admin_panel_settings_outlined), text: tr.text('users_permissions')),
@@ -58,6 +59,7 @@ class SettingsPage extends StatelessWidget {
             child: TabBarView(
               children: [
                 _settingsList(context, _generalCards(context)),
+                _settingsList(context, _financialCards(context)),
                 _settingsList(context, _syncCards(context)),
                 _settingsList(context, _backupCards(context)),
                 _settingsList(context, _adminCards(context)),
@@ -100,7 +102,6 @@ class SettingsPage extends StatelessWidget {
               _Line(title: tr.text('store_name'), value: profile.name),
               _Line(title: tr.text('phone'), value: profile.phone.isEmpty ? '—' : profile.phone),
               _Line(title: tr.text('address'), value: profile.address.isEmpty ? '—' : profile.address),
-              _Line(title: tr.text('currency'), value: profile.currency),
               _Line(title: tr.text('invoice_footer'), value: profile.footerNote),
             ],
           ),
@@ -146,6 +147,40 @@ class SettingsPage extends StatelessWidget {
         ),
       ),
       const _ScannerFeedbackSettingsCard(),
+    ];
+  }
+
+
+  List<Widget> _financialCards(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    final profile = store.storeProfile;
+    return [
+      Card(
+        child: Padding(
+          padding: VentioResponsive.pageInsets(context),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.payments_outlined),
+                title: Text(tr.text('currencies_pricing')),
+                subtitle: Text(tr.text('currencies_pricing_desc')),
+                trailing: FilledButton.icon(
+                  onPressed: () => _editFinancialSettings(context, profile),
+                  icon: const Icon(Icons.edit_outlined),
+                  label: Text(tr.text('edit')),
+                ),
+              ),
+              const Divider(height: 24),
+              _Line(title: tr.text('usd_lbp_exchange_rate'), value: '1 USD = ${profile.usdToLbpRate.toStringAsFixed(0)} LBP'),
+              _Line(title: tr.text('price_display_mode'), value: tr.text('price_display_${profile.priceDisplayMode}')),
+              _Line(title: tr.text('default_product_currency'), value: profile.defaultProductCurrency),
+              _Line(title: tr.text('lbp_rounding'), value: profile.lbpRounding <= 0 ? tr.text('no_rounding') : '${profile.lbpRounding} LBP'),
+            ],
+          ),
+        ),
+      ),
     ];
   }
 
@@ -297,12 +332,103 @@ class SettingsPage extends StatelessWidget {
 
 
 
+
+  Future<void> _editFinancialSettings(BuildContext context, StoreProfile profile) async {
+    final tr = AppLocalizations.of(context);
+    final rateController = TextEditingController(text: profile.usdToLbpRate.toStringAsFixed(0));
+    String displayMode = profile.priceDisplayMode;
+    String defaultCurrency = profile.defaultProductCurrency.toUpperCase() == 'LBP' ? 'LBP' : 'USD';
+    int rounding = profile.lbpRounding;
+
+    final result = await showDialog<StoreProfile>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setState) => AlertDialog(
+            title: Text(tr.text('financial_settings')),
+            content: ResponsiveDialogBox(
+              maxWidth: VentioResponsive.modalMaxWidth(context, 560),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextFormField(
+                      controller: rateController,
+                      decoration: InputDecoration(labelText: tr.text('usd_lbp_exchange_rate'), helperText: '1 USD = LBP'),
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
+                    ),
+                    const SizedBox(height: 16),
+                    DropdownButtonFormField<String>(
+                      initialValue: displayMode,
+                      decoration: InputDecoration(labelText: tr.text('price_display_mode')),
+                      items: [
+                        DropdownMenuItem(value: 'usd', child: Text(tr.text('price_display_usd'))),
+                        DropdownMenuItem(value: 'lbp', child: Text(tr.text('price_display_lbp'))),
+                        DropdownMenuItem(value: 'both', child: Text(tr.text('price_display_both'))),
+                      ],
+                      onChanged: (value) => setState(() => displayMode = value ?? 'usd'),
+                    ),
+                    const SizedBox(height: 16),
+                    DropdownButtonFormField<String>(
+                      initialValue: defaultCurrency,
+                      decoration: InputDecoration(labelText: tr.text('default_product_currency')),
+                      items: const [
+                        DropdownMenuItem(value: 'USD', child: Text('USD')),
+                        DropdownMenuItem(value: 'LBP', child: Text('LBP')),
+                      ],
+                      onChanged: (value) => setState(() => defaultCurrency = value ?? 'USD'),
+                    ),
+                    const SizedBox(height: 16),
+                    DropdownButtonFormField<int>(
+                      initialValue: rounding,
+                      decoration: InputDecoration(labelText: tr.text('lbp_rounding')),
+                      items: [
+                        DropdownMenuItem(value: 0, child: Text(tr.text('no_rounding'))),
+                        const DropdownMenuItem(value: 1000, child: Text('1,000 LBP')),
+                        const DropdownMenuItem(value: 5000, child: Text('5,000 LBP')),
+                        const DropdownMenuItem(value: 10000, child: Text('10,000 LBP')),
+                      ],
+                      onChanged: (value) => setState(() => rounding = value ?? 0),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(dialogContext), child: Text(tr.text('cancel'))),
+              FilledButton(
+                onPressed: () {
+                  final rate = double.tryParse(rateController.text.trim()) ?? profile.usdToLbpRate;
+                  Navigator.pop(dialogContext, profile.copyWith(
+                    currency: displayMode == 'lbp' ? 'LBP' : 'USD',
+                    usdToLbpRate: rate <= 0 ? profile.usdToLbpRate : rate,
+                    priceDisplayMode: displayMode,
+                    defaultProductCurrency: defaultCurrency,
+                    lbpRounding: rounding,
+                  ));
+                },
+                child: Text(tr.text('save')),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (result != null) {
+      await store.updateStoreProfile(result);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('financial_settings_updated'))));
+      }
+    }
+  }
+
   Future<void> _editStoreProfile(BuildContext context, StoreProfile profile) async {
     final nameController = TextEditingController(text: profile.name);
     final phoneController = TextEditingController(text: profile.phone);
     final addressController = TextEditingController(text: profile.address);
     final footerController = TextEditingController(text: profile.footerNote);
-    String currency = profile.currency;
     final tr = AppLocalizations.of(context);
 
     final result = await showDialog<StoreProfile>(
@@ -324,19 +450,6 @@ class SettingsPage extends StatelessWidget {
                       const SizedBox(height: 12),
                       TextField(controller: addressController, decoration: InputDecoration(labelText: tr.text('address'))),
                       const SizedBox(height: 12),
-                      DropdownButtonFormField<String>(
-                        initialValue: currency,
-                        items: const [
-                          DropdownMenuItem(value: 'USD', child: Text('USD')),
-                          DropdownMenuItem(value: 'LBP', child: Text('LBP')),
-                          DropdownMenuItem(value: 'EUR', child: Text('EUR')),
-                          DropdownMenuItem(value: 'AED', child: Text('AED')),
-                          DropdownMenuItem(value: 'SAR', child: Text('SAR')),
-                        ],
-                        decoration: InputDecoration(labelText: tr.text('currency')),
-                        onChanged: (value) => setState(() => currency = value ?? 'USD'),
-                      ),
-                      const SizedBox(height: 12),
                       TextField(
                         controller: footerController,
                         minLines: 2,
@@ -357,8 +470,14 @@ class SettingsPage extends StatelessWidget {
                         name: nameController.text.trim().isEmpty ? 'My Store' : nameController.text.trim(),
                         phone: phoneController.text.trim(),
                         address: addressController.text.trim(),
-                        currency: currency,
+                        // Keep the legacy currency value for backward compatibility only.
+                        // Currency selection is now managed exclusively from Financial Settings.
+                        currency: profile.currency,
                         footerNote: footerController.text.trim().isEmpty ? 'Thank you for shopping with us.' : footerController.text.trim(),
+                        usdToLbpRate: profile.usdToLbpRate,
+                        priceDisplayMode: profile.priceDisplayMode,
+                        defaultProductCurrency: profile.defaultProductCurrency,
+                        lbpRounding: profile.lbpRounding,
                       ),
                     );
                   },

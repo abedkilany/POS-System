@@ -31,7 +31,6 @@ class ReportsPage extends StatelessWidget {
     }
     final topProductLines = topProducts.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
     final lowStock = store.products.where((product) => product.stock <= product.lowStockThreshold).toList();
-    final currency = store.storeProfile.currency;
 
     return Padding(
       padding: VentioResponsive.pageInsets(context),
@@ -45,12 +44,12 @@ class ReportsPage extends StatelessWidget {
             crossAxisSpacing: 16,
             mainAxisSpacing: 16,
             children: [
-              ReportCard(title: tr.text('daily_sales_report'), subtitle: '${tr.text('current_total_sales')}: ${formatCurrency(todaySales, currency: currency)}'),
-              ReportCard(title: tr.text('monthly_sales'), subtitle: formatCurrency(monthSales, currency: currency)),
-              ReportCard(title: tr.text('monthly_purchases'), subtitle: formatCurrency(monthPurchases, currency: currency)),
-              ReportCard(title: tr.text('profit_report'), subtitle: '${tr.text('estimated_profit')}: ${formatCurrency(estimatedProfit, currency: currency)}'),
-              ReportCard(title: tr.text('expenses_report'), subtitle: '${tr.text('expenses')}: ${formatCurrency(totalExpenses, currency: currency)}'),
-              ReportCard(title: tr.text('inventory_value_report'), subtitle: '${tr.text('inventory_value')}: ${formatCurrency(store.inventoryRetailValue, currency: currency)}'),
+              ReportCard(title: tr.text('daily_sales_report'), subtitle: '${tr.text('current_total_sales')}: ${formatUsdReferenceAmount(todaySales, store.storeProfile)}'),
+              ReportCard(title: tr.text('monthly_sales'), subtitle: formatUsdReferenceAmount(monthSales, store.storeProfile)),
+              ReportCard(title: tr.text('monthly_purchases'), subtitle: formatUsdReferenceAmount(monthPurchases, store.storeProfile)),
+              ReportCard(title: tr.text('profit_report'), subtitle: '${tr.text('estimated_profit')}: ${formatUsdReferenceAmount(estimatedProfit, store.storeProfile)}'),
+              ReportCard(title: tr.text('expenses_report'), subtitle: '${tr.text('expenses')}: ${formatUsdReferenceAmount(totalExpenses, store.storeProfile)}'),
+              ReportCard(title: tr.text('inventory_value_report'), subtitle: '${tr.text('inventory_value')}: ${formatUsdReferenceAmount(store.inventoryRetailValue, store.storeProfile)}'),
               ReportCard(title: tr.text('inventory_health_report'), subtitle: '${tr.text('products_below_limit')}: ${store.lowStockCount}'),
               ReportCard(title: tr.text('stock_movement_report'), subtitle: '${tr.text('stock_in')}: $movementIn • ${tr.text('stock_out')}: $movementOut'),
             ],
