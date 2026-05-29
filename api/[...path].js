@@ -8,6 +8,7 @@ import hostTransferList from '../server_api/sync/host-transfer/list.js';
 import hostTransferRequest from '../server_api/sync/host-transfer/request.js';
 import pairingClaim from '../server_api/sync/pairing/claim.js';
 import pairingCreate from '../server_api/sync/pairing/create.js';
+import pairingStatus from '../server_api/sync/pairing/status.js';
 import pull from '../server_api/sync/pull.js';
 import push from '../server_api/sync/push.js';
 import recoveryClaim from '../server_api/sync/recovery/claim.js';
@@ -26,6 +27,7 @@ const routes = new Map([
   ['sync/host-transfer/request', hostTransferRequest],
   ['sync/pairing/claim', pairingClaim],
   ['sync/pairing/create', pairingCreate],
+  ['sync/pairing/status', pairingStatus],
   ['sync/pull', pull],
   ['sync/push', push],
   ['sync/recovery/claim', recoveryClaim],

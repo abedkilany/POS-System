@@ -221,6 +221,16 @@ class CloudPairingCodeResult {
   final DateTime? expiresAt;
 }
 
+class CloudPairingStatusResult {
+  const CloudPairingStatusResult({required this.ok, required this.status, required this.message, this.expiresAt, this.claimedAt, this.claimedByDeviceId = ''});
+  final bool ok;
+  final String status;
+  final String message;
+  final DateTime? expiresAt;
+  final DateTime? claimedAt;
+  final String claimedByDeviceId;
+}
+
 class CloudPairingClaimResult {
   const CloudPairingClaimResult({required this.ok, required this.message, this.identity});
   final bool ok;
@@ -281,6 +291,40 @@ class CloudSyncService {
       );
     } catch (error) {
       return CloudPairingCodeResult(ok: false, message: 'Pairing code failed: $error');
+    }
+  }
+
+  Future<CloudPairingStatusResult> pairingCodeStatus(CloudSyncSettings settings, String code) async {
+    final identity = store.appIdentity;
+    if (!identity.isHost) return const CloudPairingStatusResult(ok: false, status: 'invalid', message: 'Only the Host can check pairing code status.');
+    if (!settings.hasDeploymentToken || settings.apiBaseUrl.trim().isEmpty) return const CloudPairingStatusResult(ok: false, status: 'invalid', message: 'Cloud API URL and Host deployment token are required.');
+    try {
+      final response = await _client
+          .post(
+            settings.endpoint('/api/sync/pairing/status'),
+            headers: _headers(settings),
+            body: jsonEncode({
+              'storeId': identity.storeId,
+              'branchId': identity.branchId,
+              'code': code.trim(),
+            }),
+          )
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return CloudPairingStatusResult(ok: false, status: 'invalid', message: 'Pairing status failed: ${response.statusCode} ${response.body}');
+      }
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      final status = decoded['status']?.toString() ?? 'invalid';
+      return CloudPairingStatusResult(
+        ok: decoded['ok'] == true,
+        status: status,
+        message: decoded['ok'] == true ? status : (decoded['error']?.toString() ?? 'Pairing status failed.'),
+        expiresAt: DateTime.tryParse(decoded['expiresAt']?.toString() ?? ''),
+        claimedAt: DateTime.tryParse(decoded['claimedAt']?.toString() ?? ''),
+        claimedByDeviceId: decoded['claimedByDeviceId']?.toString() ?? '',
+      );
+    } catch (error) {
+      return CloudPairingStatusResult(ok: false, status: 'invalid', message: 'Pairing status failed: $error');
     }
   }
 

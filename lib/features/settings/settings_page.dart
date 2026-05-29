@@ -35,38 +35,64 @@ class SettingsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final isCompact = MediaQuery.sizeOf(context).width < 720;
-    final tabs = [
-      Tab(icon: const Icon(Icons.store_outlined), text: tr.text('store_information')),
-      Tab(icon: const Icon(Icons.account_balance_wallet_outlined), text: tr.text('financial_settings')),
-      Tab(icon: const Icon(Icons.sync_outlined), text: tr.text('sync')),
-      Tab(icon: const Icon(Icons.backup_outlined), text: tr.text('backup_restore')),
-      Tab(icon: const Icon(Icons.admin_panel_settings_outlined), text: tr.text('users_permissions')),
+    final navItems = [
+      _SettingsNavData(icon: Icons.store_outlined, label: tr.text('store_information'), description: tr.text('store_information_desc')),
+      _SettingsNavData(icon: Icons.account_balance_wallet_outlined, label: tr.text('financial_settings'), description: tr.text('currencies_pricing_desc')),
+      _SettingsNavData(icon: Icons.sync_outlined, label: tr.text('sync'), description: tr.text('sync_nav_desc')),
+      _SettingsNavData(icon: Icons.backup_outlined, label: tr.text('backup_restore'), description: tr.text('backup_preview_desc')),
+      _SettingsNavData(icon: Icons.admin_panel_settings_outlined, label: tr.text('users_permissions'), description: tr.text('users_permissions_desc')),
     ];
 
     return DefaultTabController(
-      length: tabs.length,
-      child: Column(
-        children: [
-          Material(
-            color: Theme.of(context).colorScheme.surface,
-            child: TabBar(
-              isScrollable: isCompact,
-              tabs: tabs,
-            ),
-          ),
-          Expanded(
-            child: TabBarView(
+      length: navItems.length,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final isWide = constraints.maxWidth >= 900;
+          final pages = [
+            _settingsList(context, _generalCards(context)),
+            _settingsList(context, _financialCards(context)),
+            _settingsList(context, _syncCards(context)),
+            _settingsList(context, _backupCards(context)),
+            _settingsList(context, _adminCards(context)),
+          ];
+
+          if (!isWide) {
+            return Column(
               children: [
-                _settingsList(context, _generalCards(context)),
-                _settingsList(context, _financialCards(context)),
-                _settingsList(context, _syncCards(context)),
-                _settingsList(context, _backupCards(context)),
-                _settingsList(context, _adminCards(context)),
+                Material(
+                  color: Theme.of(context).colorScheme.surface,
+                  child: TabBar(
+                    isScrollable: true,
+                    tabs: [for (final item in navItems) Tab(icon: Icon(item.icon), text: item.label)],
+                  ),
+                ),
+                Expanded(child: TabBarView(children: pages)),
               ],
-            ),
-          ),
-        ],
+            );
+          }
+
+          return Builder(builder: (context) {
+            final controller = DefaultTabController.of(context);
+            return Row(
+              children: [
+                SizedBox(
+                  width: 300,
+                  child: AnimatedBuilder(
+                    animation: controller,
+                    builder: (context, _) => _SettingsSideNav(
+                      items: navItems,
+                      selectedIndex: controller.index,
+                      onSelected: controller.animateTo,
+                      store: store,
+                    ),
+                  ),
+                ),
+                VerticalDivider(width: 1, color: Theme.of(context).colorScheme.outlineVariant),
+                Expanded(child: TabBarView(children: pages)),
+              ],
+            );
+          });
+        },
       ),
     );
   }
@@ -85,26 +111,22 @@ class SettingsPage extends StatelessWidget {
     final tr = AppLocalizations.of(context);
     final profile = store.storeProfile;
     return [
-      Card(
-        child: Padding(
-          padding: VentioResponsive.pageInsets(context),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.store),
-                title: Text(tr.text('store_information')),
-                subtitle: Text(tr.text('store_information_desc')),
-                trailing: FilledButton.icon(onPressed: () => _editStoreProfile(context, profile), icon: const Icon(Icons.edit_outlined), label: Text(tr.text('edit'))),
-              ),
-              const Divider(height: 24),
-              _Line(title: tr.text('store_name'), value: profile.name),
-              _Line(title: tr.text('phone'), value: profile.phone.isEmpty ? '—' : profile.phone),
-              _Line(title: tr.text('address'), value: profile.address.isEmpty ? '—' : profile.address),
-              _Line(title: tr.text('invoice_footer'), value: profile.footerNote),
-            ],
-          ),
+      _SectionCard(
+        icon: Icons.store_outlined,
+        title: tr.text('store_information'),
+        subtitle: tr.text('store_information_desc'),
+        trailing: FilledButton.icon(
+          onPressed: () => _editStoreProfile(context, profile),
+          icon: const Icon(Icons.edit_outlined),
+          label: Text(tr.text('edit')),
+        ),
+        child: Column(
+          children: [
+            _InfoTile(icon: Icons.storefront_outlined, title: tr.text('store_name'), value: profile.name),
+            _InfoTile(icon: Icons.phone_outlined, title: tr.text('phone'), value: profile.phone.isEmpty ? '—' : profile.phone),
+            _InfoTile(icon: Icons.location_on_outlined, title: tr.text('address'), value: profile.address.isEmpty ? '—' : profile.address),
+            _InfoTile(icon: Icons.receipt_long_outlined, title: tr.text('invoice_footer'), value: profile.footerNote),
+          ],
         ),
       ),
       _SystemIdentityCard(store: store),
@@ -155,30 +177,22 @@ class SettingsPage extends StatelessWidget {
     final tr = AppLocalizations.of(context);
     final profile = store.storeProfile;
     return [
-      Card(
-        child: Padding(
-          padding: VentioResponsive.pageInsets(context),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.payments_outlined),
-                title: Text(tr.text('currencies_pricing')),
-                subtitle: Text(tr.text('currencies_pricing_desc')),
-                trailing: FilledButton.icon(
-                  onPressed: () => _editFinancialSettings(context, profile),
-                  icon: const Icon(Icons.edit_outlined),
-                  label: Text(tr.text('edit')),
-                ),
-              ),
-              const Divider(height: 24),
-              _Line(title: tr.text('usd_lbp_exchange_rate'), value: '1 USD = ${profile.usdToLbpRate.toStringAsFixed(0)} LBP'),
-              _Line(title: tr.text('price_display_mode'), value: tr.text('price_display_${profile.priceDisplayMode}')),
-              _Line(title: tr.text('default_product_currency'), value: profile.defaultProductCurrency),
-              _Line(title: tr.text('lbp_rounding'), value: profile.lbpRounding <= 0 ? tr.text('no_rounding') : '${profile.lbpRounding} LBP'),
-            ],
-          ),
+      _SectionCard(
+        icon: Icons.payments_outlined,
+        title: tr.text('currencies_pricing'),
+        subtitle: tr.text('currencies_pricing_desc'),
+        trailing: FilledButton.icon(
+          onPressed: () => _editFinancialSettings(context, profile),
+          icon: const Icon(Icons.edit_outlined),
+          label: Text(tr.text('edit')),
+        ),
+        child: _InfoGrid(
+          items: [
+            _InfoGridItem(Icons.currency_exchange_outlined, tr.text('usd_lbp_exchange_rate'), '1 USD = ${profile.usdToLbpRate.toStringAsFixed(0)} LBP'),
+            _InfoGridItem(Icons.visibility_outlined, tr.text('price_display_mode'), tr.text('price_display_${profile.priceDisplayMode}')),
+            _InfoGridItem(Icons.attach_money_outlined, tr.text('default_product_currency'), profile.defaultProductCurrency),
+            _InfoGridItem(Icons.tune_outlined, tr.text('lbp_rounding'), profile.lbpRounding <= 0 ? tr.text('no_rounding') : '${profile.lbpRounding} LBP'),
+          ],
         ),
       ),
     ];
@@ -201,44 +215,54 @@ class SettingsPage extends StatelessWidget {
               ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.backup_outlined), title: Text(tr.text('backup_restore')), subtitle: Text(tr.text('backup_preview_desc'))),
               Align(alignment: Alignment.centerLeft, child: Padding(padding: const EdgeInsets.only(bottom: 12), child: Chip(avatar: const Icon(Icons.storage_outlined, size: 18), label: Text(tr.text('local_db_hive'))))),
               _BackupSummaryCard(summary: store.currentBackupSummary),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: () => _recoverExistingStore(context),
-                  icon: const Icon(Icons.key_outlined),
-                  label: Text(tr.text('recover_existing_store')),
-                ),
+              const SizedBox(height: 16),
+              Text('Actions', style: Theme.of(context).textTheme.titleSmall),
+              const SizedBox(height: 10),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final itemWidth = constraints.maxWidth < 560 ? constraints.maxWidth : (constraints.maxWidth - 12) / 2;
+                  return Wrap(
+                    spacing: 12,
+                    runSpacing: 10,
+                    children: [
+                      SizedBox(
+                        width: itemWidth,
+                        child: OutlinedButton.icon(
+                          onPressed: () => _recoverExistingStore(context),
+                          icon: const Icon(Icons.key_outlined),
+                          label: Text(tr.text('recover_existing_store')),
+                        ),
+                      ),
+                      if (!store.appIdentity.isClient) ...[
+                        SizedBox(
+                          width: itemWidth,
+                          child: OutlinedButton.icon(
+                            onPressed: () => _downloadRecoveryFile(context),
+                            icon: const Icon(Icons.security_outlined),
+                            label: Text(tr.text('download_recovery_file')),
+                          ),
+                        ),
+                        SizedBox(
+                          width: itemWidth,
+                          child: FilledButton.icon(
+                            onPressed: () => _downloadBackupFile(context),
+                            icon: const Icon(Icons.download_outlined),
+                            label: Text(tr.text('export')),
+                          ),
+                        ),
+                        SizedBox(
+                          width: itemWidth,
+                          child: OutlinedButton.icon(
+                            onPressed: () => _importBackupFile(context),
+                            icon: const Icon(Icons.upload_file_outlined),
+                            label: Text(tr.text('import')),
+                          ),
+                        ),
+                      ],
+                    ],
+                  );
+                },
               ),
-              const SizedBox(height: 8),
-              if (!store.appIdentity.isClient) ...[
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: () => _downloadRecoveryFile(context),
-                    icon: const Icon(Icons.security_outlined),
-                    label: Text(tr.text('download_recovery_file')),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.icon(
-                    onPressed: () => _downloadBackupFile(context),
-                    icon: const Icon(Icons.download_outlined),
-                    label: Text(tr.text('export')),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: () => _importBackupFile(context),
-                    icon: const Icon(Icons.upload_file_outlined),
-                    label: Text(tr.text('import')),
-                  ),
-                ),
-              ],
             ],
           ),
         ),
@@ -1263,15 +1287,19 @@ class _BackupSummaryDetails extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(tr.text('current_backup_status'), style: Theme.of(context).textTheme.titleSmall),
-        const SizedBox(height: 8),
-        _Line(title: tr.text('store_name'), value: summary.storeName),
-        _Line(title: tr.text('backup_version'), value: 'V${summary.version}'),
-        _Line(title: tr.text('backup_date'), value: _formatDate(summary.generatedAt)),
-        _Line(title: tr.text('products'), value: summary.productsCount.toString()),
-        _Line(title: tr.text('customers'), value: summary.customersCount.toString()),
-        _Line(title: tr.text('sales'), value: summary.salesCount.toString()),
-        _Line(title: tr.text('suppliers'), value: summary.suppliersCount.toString()),
-        _Line(title: tr.text('expenses'), value: summary.expensesCount.toString()),
+        const SizedBox(height: 12),
+        _InfoGrid(
+          items: [
+            _InfoGridItem(Icons.store_outlined, tr.text('store_name'), summary.storeName),
+            _InfoGridItem(Icons.new_releases_outlined, tr.text('backup_version'), 'V${summary.version}'),
+            _InfoGridItem(Icons.event_outlined, tr.text('backup_date'), _formatDate(summary.generatedAt)),
+            _InfoGridItem(Icons.inventory_2_outlined, tr.text('products'), summary.productsCount.toString()),
+            _InfoGridItem(Icons.people_alt_outlined, tr.text('customers'), summary.customersCount.toString()),
+            _InfoGridItem(Icons.point_of_sale_outlined, tr.text('sales'), summary.salesCount.toString()),
+            _InfoGridItem(Icons.local_shipping_outlined, tr.text('suppliers'), summary.suppliersCount.toString()),
+            _InfoGridItem(Icons.receipt_long_outlined, tr.text('expenses'), summary.expensesCount.toString()),
+          ],
+        ),
       ],
     );
   }
@@ -1309,6 +1337,8 @@ class _BackupSummaryDetails extends StatelessWidget {
 
 
 
+
+enum _PairingCodeVisualStatus { active, expired, consumed, invalid, disabled }
 
 class _OperationProgress {
   const _OperationProgress(this.value, this.label);
@@ -1352,7 +1382,13 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   bool _connectToNewHost = false;
   bool _hostCreateFailed = false;
   DateTime? _latestLanPairingExpiresAt;
+  bool _latestLanPairingConsumed = false;
+  bool _latestCloudPairingConsumed = false;
+  bool _latestCloudPairingInvalid = false;
+  DateTime? _lastCloudPairingStatusCheck;
   Timer? _pairingCountdownTimer;
+
+  AppLocalizations get tr => AppLocalizations.of(context);
 
   static const _lanPairingExpiryStorageKey = 'lan_pairing_expires_at_v1';
   static const _cloudPairingCodeStorageKey = 'cloud_pairing_code_v1';
@@ -1401,9 +1437,10 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
 
   Future<void> _run(Future<void> Function() action) async {
     if (_busy) return;
+    final tr = AppLocalizations.of(context);
     setState(() {
       _busy = true;
-      _status = 'Working...';
+      _status = tr.text('working');
       _statusProgress = null;
     });
     try {
@@ -1412,7 +1449,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     } catch (error) {
       if (mounted) {
         setState(() {
-          _status = error.toString().contains('Pairing code expired or already used') ? 'Pairing code expired or already used. Ask the Host device for a new code.' : 'Failed. Please check the information and try again.';
+          _status = error.toString().contains('Pairing code expired or already used') ? tr.text('pairing_code_expired_or_used') : tr.text('sync_failed_check_info');
           _statusProgress = null;
         });
       }
@@ -1477,9 +1514,10 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     final expiresAt = result.expiresAt ?? DateTime.now().add(_pairingCodeLifetime);
     _lanTokenController.text = code;
     _latestLanPairingExpiresAt = expiresAt;
+    _latestLanPairingConsumed = false;
     _showLanPairingCode = true;
     await LocalDatabaseService.setString(_lanPairingExpiryStorageKey, expiresAt.toIso8601String());
-    if (mounted) setState(() => _status = 'LAN pairing code created.');
+    if (mounted) setState(() => _status = tr.text('lan_pairing_code_created'));
   }
 
   void _loadActivePairingCodes() {
@@ -1496,6 +1534,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     if (cloudCode.trim().isNotEmpty && cloudExpiry != null && cloudExpiry.isAfter(now)) {
       _latestCloudPairingCode = cloudCode.trim();
       _latestCloudPairingExpiresAt = cloudExpiry;
+      _latestCloudPairingInvalid = false;
       _showCloudPairingCode = false;
     } else if (cloudExpiry != null && !cloudExpiry.isAfter(now)) {
       _expireCloudPairingCode();
@@ -1508,14 +1547,35 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       if (!mounted) return;
       final now = DateTime.now();
       if (_latestLanPairingExpiresAt != null && !_latestLanPairingExpiresAt!.isAfter(now)) _expireLanPairingCode();
+      _refreshLanPairingConsumedState();
       if (_latestCloudPairingExpiresAt != null && !_latestCloudPairingExpiresAt!.isAfter(now)) _expireCloudPairingCode();
+      if (_latestCloudPairingCode.trim().isNotEmpty && (_latestCloudPairingExpiresAt?.isAfter(now) ?? false)) {
+        final lastCheck = _lastCloudPairingStatusCheck;
+        if (lastCheck == null || now.difference(lastCheck).inSeconds >= 5) {
+          _lastCloudPairingStatusCheck = now;
+          unawaited(_refreshCloudPairingStatus());
+        }
+      }
       setState(() {});
     });
+  }
+
+  void _refreshLanPairingConsumedState() {
+    final activeCode = _lanTokenController.text.trim();
+    if (activeCode.isEmpty || _latestLanPairingConsumed) return;
+    final expiresAt = _latestLanPairingExpiresAt;
+    if (expiresAt == null || !expiresAt.isAfter(DateTime.now())) return;
+    final savedSecret = LanSyncSettings.load().secret.trim();
+    if (savedSecret.isEmpty || savedSecret != activeCode) {
+      _latestLanPairingConsumed = true;
+      _showLanPairingCode = true;
+    }
   }
 
   void _expireLanPairingCode() {
     _lanTokenController.clear();
     _latestLanPairingExpiresAt = null;
+    _latestLanPairingConsumed = false;
     _showLanPairingCode = false;
     unawaited(LocalDatabaseService.deleteString(_lanPairingExpiryStorageKey));
     unawaited(LanSyncSettings.load().copyWith(secret: '').save());
@@ -1524,6 +1584,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   void _expireCloudPairingCode() {
     _latestCloudPairingCode = '';
     _latestCloudPairingExpiresAt = null;
+    _latestCloudPairingConsumed = false;
+    _latestCloudPairingInvalid = false;
     _showCloudPairingCode = false;
     unawaited(LocalDatabaseService.deleteString(_cloudPairingCodeStorageKey));
     unawaited(LocalDatabaseService.deleteString(_cloudPairingExpiryStorageKey));
@@ -1536,6 +1598,31 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   }
 
   bool get _hasExistingHostConnection => widget.store.appIdentity.hostDeviceId.trim().isNotEmpty;
+
+
+  Future<void> _refreshCloudPairingStatus() async {
+    final code = _latestCloudPairingCode.trim();
+    if (code.isEmpty || !widget.store.appIdentity.isHost) return;
+    final settings = _cloudSettings(enabled: true);
+    if (!settings.isConfigured || !settings.hasDeploymentToken) return;
+    final result = await CloudSyncService(widget.store).pairingCodeStatus(settings, code);
+    if (!mounted || !result.ok) return;
+    setState(() {
+      if (result.status == 'consumed') {
+        _latestCloudPairingConsumed = true;
+        _latestCloudPairingInvalid = false;
+        _showCloudPairingCode = true;
+      } else if (result.status == 'expired' || result.status == 'invalid') {
+        _latestCloudPairingConsumed = false;
+        _latestCloudPairingInvalid = result.status == 'invalid';
+        _showCloudPairingCode = true;
+        _latestCloudPairingExpiresAt = result.status == 'expired' ? DateTime.now().subtract(const Duration(seconds: 1)) : _latestCloudPairingExpiresAt;
+      } else if (result.expiresAt != null) {
+        _latestCloudPairingInvalid = false;
+        _latestCloudPairingExpiresAt = result.expiresAt;
+      }
+    });
+  }
 
   Future<bool> _confirmConnectToNewHost() async {
     final tr = AppLocalizations.of(context);
@@ -1575,8 +1662,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
 
   String get _cloudPairingButtonLabel {
     final active = _latestCloudPairingCode.trim().isNotEmpty && (_latestCloudPairingExpiresAt?.isAfter(DateTime.now()) ?? false);
-    if (!active) return 'Generate New Code';
-    return _showCloudPairingCode ? 'Hide Code' : 'Show Code'; // stage1-final
+    if (!active) return AppLocalizations.of(context).text('generate_new_code');
+    return _showCloudPairingCode ? AppLocalizations.of(context).text('hide_code') : AppLocalizations.of(context).text('show_code'); // stage1-final
   }
 
   Future<void> _handleCloudPairingButton() async {
@@ -1590,8 +1677,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
 
   String get _lanPairingButtonLabel {
     final active = _lanTokenController.text.trim().isNotEmpty && (_latestLanPairingExpiresAt?.isAfter(DateTime.now()) ?? false);
-    if (!active) return 'Generate New Code';
-    return _showLanPairingCode ? 'Hide Code' : 'Show Code'; // stage1-final
+    if (!active) return AppLocalizations.of(context).text('generate_new_code');
+    return _showLanPairingCode ? AppLocalizations.of(context).text('hide_code') : AppLocalizations.of(context).text('show_code'); // stage1-final
   }
 
   Future<void> _handleLanPairingButton() async {
@@ -1702,7 +1789,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       } else {
         _cloudPairingCodeController.text = code;
       }
-      _status = 'QR detected. Review the connection details, then connect.';
+      _status = tr.text('qr_detected_review_connect');
     });
   }
 
@@ -1716,8 +1803,10 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         setState(() {
           _latestCloudPairingCode = result.code;
           _latestCloudPairingExpiresAt = expiresAt;
+          _latestCloudPairingConsumed = false;
+          _latestCloudPairingInvalid = false;
           _showCloudPairingCode = true;
-          _status = 'Cloud pairing code created.';
+          _status = tr.text('cloud_pairing_code_created');
         });
       });
 
@@ -1775,10 +1864,11 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         );
         final result = await _lanEngine(lanSettings).claimPairingCode(secret);
         if (!result.ok) throw StateError(result.message);
+        _latestLanPairingConsumed = true;
         _expireLanPairingCode();
         _expireCloudPairingCode();
         await CloudSyncSettings.load().copyWith(autoSyncEnabled: false, clearLastPullCursor: true).save();
-        setState(() { _connectToNewHost = false; _status = 'LAN Client connected and cloned from Host.'; });
+        setState(() { _connectToNewHost = false; _status = tr.text('lan_client_connected_cloned'); });
       });
 
   Future<void> _claimCloudPairing() => _run(() async {
@@ -1787,6 +1877,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         await settings.save();
         final result = await _cloudEngine(enabled: true).claimPairingCode(_cloudPairingCodeController.text.trim());
         if (!result.ok) throw StateError(result.message);
+        _latestCloudPairingConsumed = true;
         _expireCloudPairingCode();
         _expireLanPairingCode();
         await LanSyncSettings.load().copyWith(autoSyncEnabled: false, setupComplete: false, mode: LanSyncDeviceMode.unconfigured, hostModeEnabled: false, clearLastPullCursor: true).save();
@@ -1862,132 +1953,174 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final color = Theme.of(context).colorScheme;
+    final identity = widget.store.appIdentity;
+    final lan = LanSyncSettings.load();
+    final cloud = CloudSyncSettings.load();
     final isHost = _deviceRole == DeviceRole.host;
     final isCloudClient = !isHost && _clientSyncMode == SyncMode.cloudConnected;
-    final needsInitialCloudHost = _deviceRole == DeviceRole.host && _cloudEnabled && !_initialCloudHostReady;
+    final needsInitialCloudHost = isHost && _cloudEnabled && !_initialCloudHostReady;
     final hostActionLabel = needsInitialCloudHost ? (_hostCreateFailed ? 'Retry Create Host' : 'Create New Host') : 'Sync Now';
+
+    final lanActive = isHost ? _lanEnabledForHost : identity.syncMode == SyncMode.lanOnly;
+    final cloudActive = isHost ? _cloudEnabled : identity.syncMode == SyncMode.cloudConnected;
+
     return Card(
+      elevation: 0,
       child: Padding(
         padding: VentioResponsive.pageInsets(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.sync_alt_outlined),
-              title: Text(tr.text('sync_settings')),
-              subtitle: Text(tr.text('sync_settings_desc')),
-            ),
-            const SizedBox(height: 8),
-            SegmentedButton<DeviceRole>(
-              segments: [
-                ButtonSegment<DeviceRole>(value: DeviceRole.host, icon: const Icon(Icons.desktop_windows_outlined), label: Text(tr.text('host'))),
-                ButtonSegment<DeviceRole>(value: DeviceRole.client, icon: const Icon(Icons.devices_other_outlined), label: Text(tr.text('client'))),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: color.primaryContainer.withValues(alpha: 0.45),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Icon(Icons.sync_outlined, color: color.primary),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(tr.text('sync_settings'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 4),
+                      Text(tr.text('sync_settings_desc'), style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: color.onSurfaceVariant)),
+                    ],
+                  ),
+                ),
+                if (isHost)
+                  FilledButton.icon(
+                    onPressed: _busy ? null : (needsInitialCloudHost ? _createNewHost : _syncNow),
+                    icon: Icon(needsInitialCloudHost ? Icons.add_business_outlined : Icons.sync_outlined),
+                    label: Text(hostActionLabel),
+                  )
+                else
+                  OutlinedButton.icon(
+                    onPressed: _busy ? null : _testHostConnection,
+                    icon: const Icon(Icons.lan_outlined),
+                    label: Text(tr.text('test_host_connection')),
+                  ),
               ],
-              selected: {_deviceRole},
-              onSelectionChanged: null,
             ),
-            const SizedBox(height: 8),
-            Text(
-              'Host/Client role is controlled by the official Transfer Host flow only.',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 18),
             if (widget.store.latestHostTransferNotification != null) _hostChangedNotificationCard(),
-            if (isHost) ...[
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(tr.text('lan_sync')),
-                subtitle: Text(tr.text('lan_sync_desc')),
-                value: _lanEnabledForHost,
-                onChanged: _busy ? null : (value) => setState(() => _lanEnabledForHost = value),
+            _syncSection(
+              context,
+              number: '1.',
+              title: tr.text('connection_status'),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final compact = constraints.maxWidth < 760;
+                  final tiles = [
+                    _statusMetric(context, Icons.dns_outlined, tr.text('role'), isHost ? tr.text('host_device') : tr.text('client_device'), isHost ? tr.text('connection_role_host') : tr.text('connection_role_client'), color.primary),
+                    _statusMetric(context, Icons.account_tree_outlined, tr.text('lan_connection'), lanActive ? tr.text('pairing_status_active') : tr.text('pairing_status_disabled'), lanActive ? tr.text('local_network_ready') : tr.text('not_enabled'), lanActive ? Colors.green : color.onSurfaceVariant),
+                    _statusMetric(context, Icons.cloud_queue_outlined, tr.text('cloud_connection'), cloudActive ? tr.text('enabled') : tr.text('pairing_status_disabled'), cloudActive ? tr.text('cloud_services_online') : tr.text('cloud_sync_off'), cloudActive ? Colors.green : color.onSurfaceVariant),
+                    _statusMetric(context, Icons.storage_outlined, tr.text('pending_changes'), '${widget.store.pendingSyncCount}', widget.store.pendingSyncCount == 0 ? tr.text('all_data_synchronized') : tr.text('needs_sync'), widget.store.pendingSyncCount == 0 ? color.primary : color.error),
+                  ];
+                  return Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
+                    children: tiles.map((tile) => SizedBox(width: compact ? double.infinity : (constraints.maxWidth - 36) / 4, child: tile)).toList(),
+                  );
+                },
               ),
-              if (_lanEnabledForHost) ...[
-                _hostIpInfoCard(),
-                ..._lanFields(showHostIp: false, forHost: true),
-                SizedBox(width: double.infinity, child: OutlinedButton.icon(onPressed: _busy ? null : _handleLanPairingButton, icon: const Icon(Icons.qr_code_2_outlined), label: Text(_lanPairingButtonLabel))),
-                const SizedBox(height: 12),
-                if (_showLanPairingCode) _lanPairingCodeCard(),
-              ],
-              const Divider(height: 28),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(tr.text('cloud_sync')),
-                subtitle: Text(tr.text('cloud_sync_desc')),
-                value: _cloudEnabled,
-                onChanged: _busy ? null : (value) => setState(() => _cloudEnabled = value),
+            ),
+            const SizedBox(height: 14),
+            _syncSection(
+              context,
+              number: '2.',
+              title: tr.text('sync_method'),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final compact = constraints.maxWidth < 720;
+                  final lanCard = _methodCard(
+                    context,
+                    icon: Icons.lan_outlined,
+                    title: tr.text('lan_sync'),
+                    subtitle: tr.text('lan_sync_desc'),
+                    enabled: lanActive,
+                    badge: lanActive ? tr.text('enabled') : tr.text('off'),
+                    accent: Colors.green,
+                    trailing: isHost ? Switch(value: _lanEnabledForHost, onChanged: _busy ? null : (value) => setState(() => _lanEnabledForHost = value)) : null,
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      if (isHost && _lanEnabledForHost) ...[
+                        _hostIpInfoCard(),
+                        ..._lanFields(showHostIp: false, forHost: true),
+                      ] else if (!isHost && _clientSyncMode == SyncMode.lanOnly && (!_hasExistingHostConnection || _connectToNewHost)) ...[
+                        ..._lanFields(showHostIp: true),
+                      ] else ...[
+                        _miniLine(tr.text('host_ip_address'), lan.host),
+                        _miniLine(tr.text('port'), '${lan.port}'),
+                      ],
+                    ]),
+                  );
+                  final cloudCard = _methodCard(
+                    context,
+                    icon: Icons.cloud_outlined,
+                    title: tr.text('cloud_sync'),
+                    subtitle: tr.text('cloud_sync_desc'),
+                    enabled: cloudActive,
+                    badge: cloudActive ? tr.text('enabled') : tr.text('off'),
+                    accent: Colors.blue,
+                    trailing: isHost ? Switch(value: _cloudEnabled, onChanged: _busy ? null : (value) => setState(() => _cloudEnabled = value)) : null,
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      if (isHost && _cloudEnabled) ..._cloudFields(showPairingCode: false)
+                      else if (!isHost && _clientSyncMode == SyncMode.cloudConnected && (!_hasExistingHostConnection || _connectToNewHost)) ..._cloudFields(showPairingCode: true)
+                      else ...[
+                        _miniLine(tr.text('api_url'), cloud.apiBaseUrl.isEmpty ? '—' : cloud.apiBaseUrl),
+                        _miniLine(tr.text('sync_interval'), tr.format('seconds_count', {'count': '${cloud.intervalSeconds}'})),
+                      ],
+                    ]),
+                  );
+                  if (compact) return Column(children: [lanCard, const SizedBox(height: 12), cloudCard]);
+                  return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [Expanded(child: lanCard), const SizedBox(width: 14), Expanded(child: cloudCard)]);
+                },
               ),
-              if (_cloudEnabled) ...[
-                ..._cloudFields(showPairingCode: false),
-                SizedBox(width: double.infinity, child: OutlinedButton.icon(onPressed: _busy ? null : _handleCloudPairingButton, icon: const Icon(Icons.qr_code_2_outlined), label: Text(_cloudPairingButtonLabel))),
-                const SizedBox(height: 12),
-                if (_showCloudPairingCode) _cloudPairingCodeCard(),
-              ],
-              const SizedBox(height: 12),
-              SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: _busy ? null : _saveHostMode, icon: const Icon(Icons.save_outlined), label: Text(tr.text('save_host_settings')))),
-              _transferHostCard(isHost: true),
-            ] else ...[
-              Container(
-                width: double.infinity,
-                padding: VentioResponsive.cardInsets(context),
-                decoration: BoxDecoration(borderRadius: BorderRadius.circular(12), border: Border.all(color: Theme.of(context).dividerColor)),
-                child: Text(widget.store.appIdentity.hostDeviceId.trim().isNotEmpty
-                    ? 'Connection Status: Connected to ${widget.store.appIdentity.storeId} / ${widget.store.appIdentity.branchId} / ${widget.store.appIdentity.hostDeviceId}'
-                    : 'Connection Status: No Host Connected'),
-              ),
-              _transferHostCard(isHost: false),
-              const SizedBox(height: 12),
-              Text(tr.text('client_sync_type')),
-              const SizedBox(height: 8),
-              SegmentedButton<SyncMode>(
-                segments: [
-                  ButtonSegment<SyncMode>(value: SyncMode.lanOnly, icon: const Icon(Icons.wifi_tethering_outlined), label: Text(tr.text('lan'))),
-                  ButtonSegment<SyncMode>(value: SyncMode.cloudConnected, icon: const Icon(Icons.cloud_outlined), label: Text(tr.text('cloud'))),
+            ),
+            const SizedBox(height: 14),
+            _syncSection(
+              context,
+              number: '3.',
+              title: isHost ? tr.text('pair_new_device') : tr.text('connect_device'),
+              subtitle: isHost ? tr.text('pair_new_device_desc') : tr.text('connect_device_desc'),
+              child: _pairingContent(context, isHost: isHost, isCloudClient: isCloudClient),
+            ),
+            const SizedBox(height: 14),
+            _syncSection(
+              context,
+              number: '4.',
+              title: tr.text('advanced_settings'),
+              subtitle: tr.text('advanced_sync_settings_desc'),
+              child: ExpansionTile(
+                tilePadding: EdgeInsets.zero,
+                childrenPadding: EdgeInsets.zero,
+                title: Text(tr.text('show_advanced_actions')),
+                children: [
+                  _transferHostCard(isHost: isHost),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      if (isHost) OutlinedButton.icon(onPressed: _busy ? null : _testCloudConnection, icon: const Icon(Icons.cloud_done_outlined), label: Text(tr.text('test_cloud_connection'))),
+                      if (!isHost) OutlinedButton.icon(onPressed: _busy ? null : _testHostConnection, icon: const Icon(Icons.lan_outlined), label: Text(tr.text('test_host_connection'))),
+                      if (isHost) FilledButton.icon(onPressed: _busy ? null : _saveHostMode, icon: const Icon(Icons.save_outlined), label: Text(tr.text('save_host_settings'))),
+                    ],
+                  ),
                 ],
-                selected: {_clientSyncMode},
-                onSelectionChanged: _busy ? null : (value) => setState(() => _clientSyncMode = value.first),
               ),
-              const SizedBox(height: 16),
-              if (_hasExistingHostConnection && !_connectToNewHost)
-                SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: _busy ? null : () => setState(() => _connectToNewHost = true), icon: const Icon(Icons.add_link_outlined), label: Text(tr.text('connect_to_new_host'))))
-              else if (!isCloudClient) ...[
-                ..._lanFields(showHostIp: true),
-                OutlinedButton.icon(onPressed: _busy ? null : _scanPairingQr, icon: const Icon(Icons.qr_code_scanner_outlined), label: Text(tr.text('scan_qr_code'))),
-                const SizedBox(height: 8),
-                SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: _busy ? null : _saveLanClient, icon: const Icon(Icons.link_outlined), label: Text(_hasExistingHostConnection ? tr.text('connect_to_new_lan_host') : tr.text('connect_to_lan_host')))),
-              ] else ...[
-                ..._cloudFields(showPairingCode: true),
-                OutlinedButton.icon(onPressed: _busy ? null : _scanPairingQr, icon: const Icon(Icons.qr_code_scanner_outlined), label: Text(tr.text('scan_qr_code'))),
-                const SizedBox(height: 8),
-                SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: _busy ? null : _claimCloudPairing, icon: const Icon(Icons.cloud_done_outlined), label: Text(_hasExistingHostConnection ? tr.text('connect_to_new_cloud_host') : tr.text('pair_with_cloud_host')))),
-              ],
-            ],
-            if (isHost) ...[
-              const SizedBox(height: 12),
-              OutlinedButton.icon(
-                onPressed: _busy ? null : (needsInitialCloudHost ? _createNewHost : _syncNow),
-                icon: Icon(needsInitialCloudHost ? Icons.add_business_outlined : Icons.sync_outlined),
-                label: Text(hostActionLabel),
-              ),
-              const SizedBox(height: 8),
-              OutlinedButton.icon(
-                onPressed: _busy ? null : _testCloudConnection,
-                icon: const Icon(Icons.cloud_done_outlined),
-                label: Text(tr.text('test_cloud_connection')),
-              ),
-            ] else ...[
-              const SizedBox(height: 12),
-              OutlinedButton.icon(
-                onPressed: _busy ? null : _testHostConnection,
-                icon: const Icon(Icons.lan_outlined),
-                label: Text(tr.text('test_host_connection')),
-              ),
-            ],
-            const SizedBox(height: 12),
+            ),
+            const SizedBox(height: 14),
             Container(
               width: double.infinity,
               padding: VentioResponsive.cardInsets(context),
-              decoration: BoxDecoration(color: color.surfaceContainerHighest, borderRadius: BorderRadius.circular(12)),
+              decoration: BoxDecoration(color: color.surfaceContainerHighest.withValues(alpha: 0.6), borderRadius: BorderRadius.circular(14)),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 mainAxisSize: MainAxisSize.min,
@@ -2003,6 +2136,181 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _pairingContent(BuildContext context, {required bool isHost, required bool isCloudClient}) {
+    final tr = AppLocalizations.of(context);
+    if (isHost) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              OutlinedButton.icon(onPressed: _busy ? null : _handleLanPairingButton, icon: const Icon(Icons.qr_code_2_outlined), label: Text(_lanPairingButtonLabel)),
+              OutlinedButton.icon(onPressed: _busy ? null : _handleCloudPairingButton, icon: const Icon(Icons.cloud_queue_outlined), label: Text(_cloudPairingButtonLabel)),
+            ],
+          ),
+          if (_showLanPairingCode) ...[const SizedBox(height: 12), _lanPairingCodeCard()],
+          if (_showCloudPairingCode) ...[const SizedBox(height: 12), _cloudPairingCodeCard()],
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (_hasExistingHostConnection && !_connectToNewHost) ...[
+          _softNotice(
+            context,
+            Icons.check_circle_outline,
+            tr.text('connection_status'),
+            widget.store.appIdentity.hostDeviceId.trim().isNotEmpty
+                ? tr.format('connected_to_host_summary', {
+                    'storeId': widget.store.appIdentity.storeId,
+                    'branchId': widget.store.appIdentity.branchId,
+                    'hostDeviceId': widget.store.appIdentity.hostDeviceId,
+                  })
+                : tr.text('no_host_connected'),
+          ),
+          const SizedBox(height: 10),
+          FilledButton.icon(onPressed: _busy ? null : () => setState(() => _connectToNewHost = true), icon: const Icon(Icons.add_link_outlined), label: Text(tr.text('connect_to_new_host'))),
+        ] else ...[
+          Text(tr.text('client_sync_type')),
+          const SizedBox(height: 8),
+          SegmentedButton<SyncMode>(
+            segments: [
+              ButtonSegment<SyncMode>(value: SyncMode.lanOnly, icon: const Icon(Icons.wifi_tethering_outlined), label: Text(tr.text('lan'))),
+              ButtonSegment<SyncMode>(value: SyncMode.cloudConnected, icon: const Icon(Icons.cloud_outlined), label: Text(tr.text('cloud'))),
+            ],
+            selected: {_clientSyncMode},
+            onSelectionChanged: _busy ? null : (value) => setState(() => _clientSyncMode = value.first),
+          ),
+          const SizedBox(height: 14),
+          if (!isCloudClient) ...[
+            Wrap(spacing: 10, runSpacing: 10, children: [
+              OutlinedButton.icon(onPressed: _busy ? null : _scanPairingQr, icon: const Icon(Icons.qr_code_scanner_outlined), label: Text(tr.text('scan_qr_code'))),
+              FilledButton.icon(onPressed: _busy ? null : _saveLanClient, icon: const Icon(Icons.link_outlined), label: Text(_hasExistingHostConnection ? tr.text('connect_to_new_lan_host') : tr.text('connect_to_lan_host'))),
+            ]),
+          ] else ...[
+            Wrap(spacing: 10, runSpacing: 10, children: [
+              OutlinedButton.icon(onPressed: _busy ? null : _scanPairingQr, icon: const Icon(Icons.qr_code_scanner_outlined), label: Text(tr.text('scan_qr_code'))),
+              FilledButton.icon(onPressed: _busy ? null : _claimCloudPairing, icon: const Icon(Icons.cloud_done_outlined), label: Text(_hasExistingHostConnection ? tr.text('connect_to_new_cloud_host') : tr.text('pair_with_cloud_host'))),
+            ]),
+          ],
+        ],
+      ],
+    );
+  }
+
+  Widget _syncSection(BuildContext context, {required String number, required String title, String? subtitle, required Widget child}) {
+    final color = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: VentioResponsive.cardInsets(context),
+      decoration: BoxDecoration(
+        color: color.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: color.outlineVariant.withValues(alpha: 0.75)),
+        boxShadow: [BoxShadow(color: color.shadow.withValues(alpha: 0.04), blurRadius: 18, offset: const Offset(0, 8))],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          RichText(
+            text: TextSpan(
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700, color: color.onSurface),
+              children: [
+                TextSpan(text: '$number ', style: TextStyle(color: color.primary)),
+                TextSpan(text: title),
+              ],
+            ),
+          ),
+          if (subtitle != null) ...[
+            const SizedBox(height: 4),
+            Text(subtitle, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: color.onSurfaceVariant)),
+          ],
+          const SizedBox(height: 14),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _statusMetric(BuildContext context, IconData icon, String label, String value, String detail, Color accent) {
+    final color = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.surfaceContainerHighest.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          CircleAvatar(backgroundColor: accent.withValues(alpha: 0.12), foregroundColor: accent, child: Icon(icon, size: 20)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(label, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: color.onSurfaceVariant)),
+              const SizedBox(height: 2),
+              Text(value, style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700, color: accent)),
+              const SizedBox(height: 2),
+              Text(detail, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: color.onSurfaceVariant)),
+            ]),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _methodCard(BuildContext context, {required IconData icon, required String title, required String subtitle, required bool enabled, required String badge, required Color accent, Widget? trailing, required Widget child}) {
+    final color = Theme.of(context).colorScheme;
+    return Container(
+      padding: VentioResponsive.cardInsets(context),
+      decoration: BoxDecoration(
+        color: enabled ? accent.withValues(alpha: 0.06) : color.surfaceContainerHighest.withValues(alpha: 0.22),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: enabled ? accent.withValues(alpha: 0.28) : color.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(icon, color: enabled ? accent : color.onSurfaceVariant),
+            const SizedBox(width: 10),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+              Text(subtitle, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: color.onSurfaceVariant)),
+            ])),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(color: accent.withValues(alpha: 0.10), borderRadius: BorderRadius.circular(10)),
+              child: Text(badge, style: TextStyle(color: accent, fontWeight: FontWeight.w600)),
+            ),
+            if (trailing != null) ...[const SizedBox(width: 8), trailing],
+          ]),
+          const SizedBox(height: 14),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _miniLine(String title, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 7),
+      child: Row(children: [Expanded(child: Text(title)), Text(value, style: const TextStyle(fontWeight: FontWeight.w600))]),
+    );
+  }
+
+  Widget _softNotice(BuildContext context, IconData icon, String title, String value) {
+    final color = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(color: color.surfaceContainerHighest.withValues(alpha: 0.45), borderRadius: BorderRadius.circular(14)),
+      child: Row(children: [Icon(icon), const SizedBox(width: 10), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title, style: const TextStyle(fontWeight: FontWeight.w600)), Text(value)]))]),
     );
   }
 
@@ -2170,16 +2478,76 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     );
   }
 
+
+  _PairingCodeVisualStatus _pairingVisualStatus({
+    required String code,
+    required DateTime? expiresAt,
+    required bool consumed,
+    bool invalid = false,
+  }) {
+    if (invalid) return _PairingCodeVisualStatus.invalid;
+    if (consumed) return _PairingCodeVisualStatus.consumed;
+    if (code.trim().isEmpty) return _PairingCodeVisualStatus.disabled;
+    if (expiresAt == null) return _PairingCodeVisualStatus.invalid;
+    if (!expiresAt.isAfter(DateTime.now())) return _PairingCodeVisualStatus.expired;
+    return _PairingCodeVisualStatus.active;
+  }
+
+  ({String label, IconData icon, Color background, Color foreground}) _pairingStatusData(
+    BuildContext context,
+    _PairingCodeVisualStatus status,
+  ) {
+    final tr = AppLocalizations.of(context);
+    final color = Theme.of(context).colorScheme;
+    return switch (status) {
+      _PairingCodeVisualStatus.active => (label: tr.text('pairing_status_active'), icon: Icons.check_circle_outline, background: Colors.green.withValues(alpha: 0.12), foreground: Colors.green.shade700),
+      _PairingCodeVisualStatus.expired => (label: tr.text('pairing_status_expired'), icon: Icons.timer_off_outlined, background: Colors.grey.withValues(alpha: 0.16), foreground: color.onSurfaceVariant),
+      _PairingCodeVisualStatus.consumed => (label: tr.text('pairing_status_consumed'), icon: Icons.done_all_outlined, background: Colors.green.withValues(alpha: 0.12), foreground: Colors.green.shade700),
+      _PairingCodeVisualStatus.invalid => (label: tr.text('pairing_status_invalid'), icon: Icons.error_outline, background: color.errorContainer, foreground: color.onErrorContainer),
+      _PairingCodeVisualStatus.disabled => (label: tr.text('pairing_status_disabled'), icon: Icons.block_outlined, background: Colors.grey.withValues(alpha: 0.16), foreground: color.onSurfaceVariant),
+    };
+  }
+
+  Widget _pairingStatusBadge(BuildContext context, _PairingCodeVisualStatus status) {
+    final data = _pairingStatusData(context, status);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(color: data.background, borderRadius: BorderRadius.circular(999)),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(data.icon, size: 16, color: data.foreground),
+          const SizedBox(width: 6),
+          Text(data.label, style: TextStyle(color: data.foreground, fontWeight: FontWeight.w700)),
+        ],
+      ),
+    );
+  }
+
+  Color _pairingBorderColor(BuildContext context, _PairingCodeVisualStatus status) {
+    final color = Theme.of(context).colorScheme;
+    return switch (status) {
+      _PairingCodeVisualStatus.active => Colors.green,
+      _PairingCodeVisualStatus.consumed => Colors.green,
+      _PairingCodeVisualStatus.expired => Colors.grey,
+      _PairingCodeVisualStatus.invalid => color.error,
+      _PairingCodeVisualStatus.disabled => color.outlineVariant,
+    };
+  }
+
   Widget _lanPairingCodeCard() {
     final tr = AppLocalizations.of(context);
     final code = _lanTokenController.text.trim();
     if (code.isEmpty) return const SizedBox.shrink();
     final host = _lanHostController.text.trim().isNotEmpty ? _lanHostController.text.trim() : LanSyncSettings.load().host;
+    final status = _pairingVisualStatus(code: code, expiresAt: _latestLanPairingExpiresAt, consumed: _latestLanPairingConsumed);
+    final borderColor = _pairingBorderColor(context, status);
     final payload = jsonEncode({
       'transport': 'lan',
       'host': host,
       'port': _lanPort,
       'pairingCode': code,
+      'expiresAt': _latestLanPairingExpiresAt?.toIso8601String(),
     });
     return Container(
       width: double.infinity,
@@ -2187,7 +2555,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       padding: VentioResponsive.pageInsets(context),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Theme.of(context).dividerColor),
+        border: Border.all(color: borderColor.withValues(alpha: 0.65), width: 1.2),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2197,6 +2565,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
               const Icon(Icons.qr_code_2_outlined),
               const SizedBox(width: 8),
               Expanded(child: Text(tr.text('lan_one_time_pairing_code'), style: Theme.of(context).textTheme.titleMedium)),
+              _pairingStatusBadge(context, status),
+              const SizedBox(width: 8),
               IconButton(
                 tooltip: tr.text('copy_code'),
                 onPressed: () async {
@@ -2227,7 +2597,9 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           InputDecorator(
             decoration: InputDecoration(
               labelText: tr.text('code'),
-              helperText: tr.format('expires_in', {'time': _countdownText(_latestLanPairingExpiresAt)}),
+              helperText: status == _PairingCodeVisualStatus.active
+                  ? tr.format('expires_in', {'time': _countdownText(_latestLanPairingExpiresAt)})
+                  : tr.format('pairing_code_state_help', {'status': _pairingStatusData(context, status).label.toLowerCase()}),
               border: const OutlineInputBorder(),
             ),
             child: Text(
@@ -2246,14 +2618,18 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     if (code.isEmpty) {
       return const SizedBox.shrink();
     }
-    final expiresText = tr.format('expires_in', {'time': _countdownText(_latestCloudPairingExpiresAt)});
+    final status = _pairingVisualStatus(code: code, expiresAt: _latestCloudPairingExpiresAt, consumed: _latestCloudPairingConsumed, invalid: _latestCloudPairingInvalid);
+    final borderColor = _pairingBorderColor(context, status);
+    final expiresText = status == _PairingCodeVisualStatus.active
+        ? tr.format('expires_in', {'time': _countdownText(_latestCloudPairingExpiresAt)})
+        : tr.format('pairing_code_state_help', {'status': _pairingStatusData(context, status).label.toLowerCase()});
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 12),
       padding: VentioResponsive.pageInsets(context),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Theme.of(context).dividerColor),
+        border: Border.all(color: borderColor.withValues(alpha: 0.65), width: 1.2),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2263,6 +2639,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
               const Icon(Icons.qr_code_2_outlined),
               const SizedBox(width: 8),
               Expanded(child: Text(tr.text('cloud_pairing_code'), style: Theme.of(context).textTheme.titleMedium)),
+              _pairingStatusBadge(context, status),
+              const SizedBox(width: 8),
               IconButton(
                 tooltip: tr.text('copy_code'),
                 onPressed: _copyCloudPairingCode,
@@ -2279,7 +2657,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                 borderRadius: BorderRadius.circular(12),
               ),
               child: QrImageView(
-                data: jsonEncode({'transport': 'cloud', 'apiBaseUrl': _cloudApiController.text.trim(), 'pairingCode': code}),
+                data: jsonEncode({'transport': 'cloud', 'apiBaseUrl': _cloudApiController.text.trim(), 'pairingCode': code, 'expiresAt': _latestCloudPairingExpiresAt?.toIso8601String()}),
                 version: QrVersions.auto,
                 size: 180,
               ),
@@ -2403,6 +2781,269 @@ class _AdvancedSyncDebugCard extends StatelessWidget {
 }
 
 
+
+class _SettingsNavData {
+  const _SettingsNavData({required this.icon, required this.label, required this.description});
+
+  final IconData icon;
+  final String label;
+  final String description;
+}
+
+class _SettingsSideNav extends StatelessWidget {
+  const _SettingsSideNav({required this.items, required this.selectedIndex, required this.onSelected, required this.store});
+
+  final List<_SettingsNavData> items;
+  final int selectedIndex;
+  final ValueChanged<int> onSelected;
+  final AppStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+      children: [
+        for (var i = 0; i < items.length; i++)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: _SettingsNavItem(
+              item: items[i],
+              selected: selectedIndex == i,
+              onTap: () => onSelected(i),
+            ),
+          ),
+        const SizedBox(height: 18),
+        _SystemStatusPanel(store: store),
+      ],
+    );
+  }
+}
+
+class _SettingsNavItem extends StatelessWidget {
+  const _SettingsNavItem({required this.item, required this.selected, required this.onTap});
+
+  final _SettingsNavData item;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        decoration: BoxDecoration(
+          color: selected ? colorScheme.primaryContainer.withValues(alpha: 0.45) : Colors.transparent,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: selected ? colorScheme.primary.withValues(alpha: 0.14) : Colors.transparent),
+        ),
+        child: Row(
+          children: [
+            Icon(item.icon, color: selected ? colorScheme.primary : colorScheme.onSurfaceVariant),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(item.label, style: Theme.of(context).textTheme.titleSmall?.copyWith(color: selected ? colorScheme.primary : null, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 3),
+                  Text(item.description, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant)),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, size: 20, color: selected ? colorScheme.primary : colorScheme.onSurfaceVariant),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SystemStatusPanel extends StatelessWidget {
+  const _SystemStatusPanel({required this.store});
+
+  final AppStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    final identity = store.appIdentity;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(Icons.verified_user_outlined, color: Theme.of(context).colorScheme.primary),
+            const SizedBox(width: 8),
+            Text('System Status', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+          ]),
+          const SizedBox(height: 12),
+          _StatusBullet(label: identity.isHost ? 'Host Device' : 'Client Device'),
+          const _StatusBullet(label: 'LAN Active'),
+          _StatusBullet(label: identity.isCloudEnabled ? 'Cloud Online' : 'Cloud Disabled'),
+          const _StatusBullet(label: 'Sync Active'),
+          const Divider(height: 22),
+          Text('All systems are running smoothly', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatusBullet extends StatelessWidget {
+  const _StatusBullet({required this.label});
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(children: [
+        Icon(Icons.circle, size: 9, color: Colors.green.shade600),
+        const SizedBox(width: 10),
+        Expanded(child: Text(label, style: Theme.of(context).textTheme.bodyMedium)),
+      ]),
+    );
+  }
+}
+
+class _SectionCard extends StatelessWidget {
+  const _SectionCard({required this.icon, required this.title, required this.subtitle, required this.child, this.trailing});
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Widget child;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      elevation: 0,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant)),
+      child: Padding(
+        padding: VentioResponsive.pageInsets(context),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(icon, size: 28, color: Theme.of(context).colorScheme.primary),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title, style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 4),
+                      Text(subtitle, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                    ],
+                  ),
+                ),
+                if (trailing != null) ...[const SizedBox(width: 12), trailing!],
+              ],
+            ),
+            const Divider(height: 28),
+            child,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _InfoTile extends StatelessWidget {
+  const _InfoTile({required this.icon, required this.title, required this.value});
+
+  final IconData icon;
+  final String title;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.7)))),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 22, color: Theme.of(context).colorScheme.onSurfaceVariant),
+          const SizedBox(width: 14),
+          SizedBox(width: VentioResponsive.adaptiveWidth(context, mobile: 120, tablet: 150, desktop: 170), child: Text(title, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant))),
+          Expanded(child: Text(value, style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600))),
+        ],
+      ),
+    );
+  }
+}
+
+class _InfoGridItem {
+  const _InfoGridItem(this.icon, this.title, this.value);
+  final IconData icon;
+  final String title;
+  final String value;
+}
+
+class _InfoGrid extends StatelessWidget {
+  const _InfoGrid({required this.items});
+
+  final List<_InfoGridItem> items;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 900 ? 3 : constraints.maxWidth >= 560 ? 2 : 1;
+        return Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            for (final item in items)
+              SizedBox(
+                width: (constraints.maxWidth - (columns - 1) * 12) / columns,
+                child: Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.28),
+                    border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(item.icon, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(item.title, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                            const SizedBox(height: 5),
+                            Text(item.value, maxLines: 2, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
 class _Line extends StatelessWidget {
   const _Line({required this.title, required this.value});
 
@@ -2486,32 +3127,26 @@ class _SystemIdentityCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final identity = store.appIdentity;
-    return Card(
-      child: Padding(
-        padding: VentioResponsive.pageInsets(context),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.hub_outlined),
-              title: Text(tr.text('system_foundation')),
-              subtitle: Text(tr.text('system_foundation_desc')),
-              trailing: Chip(label: Text(tr.text('read_only'))),
-            ),
-            const Divider(height: 24),
-            _Line(title: tr.text('store_id'), value: identity.storeId),
-            _Line(title: tr.text('branch_id'), value: identity.branchId),
-            _Line(title: tr.text('device_id'), value: identity.deviceId),
-            _Line(title: tr.text('platform'), value: identity.platform.name),
-            _Line(title: tr.text('device_role'), value: identity.deviceRole.name),
-            _Line(title: tr.text('app_role'), value: identity.appRole.name),
-            _Line(title: tr.text('sync_mode'), value: identity.isHost ? tr.text('host_lan_cloud_controlled') : identity.syncMode.name),
-            _Line(title: tr.text('cloud_tenant'), value: identity.cloudTenantId.isEmpty ? '—' : identity.cloudTenantId),
-          ],
-        ),
+    return _SectionCard(
+      icon: Icons.hub_outlined,
+      title: tr.text('system_foundation'),
+      subtitle: tr.text('system_foundation_desc'),
+      trailing: Chip(
+        avatar: const Icon(Icons.lock_outline, size: 16),
+        label: Text(tr.text('read_only')),
+      ),
+      child: _InfoGrid(
+        items: [
+          _InfoGridItem(Icons.tag_outlined, tr.text('store_id'), identity.storeId),
+          _InfoGridItem(Icons.business_outlined, tr.text('branch_id'), identity.branchId),
+          _InfoGridItem(Icons.devices_outlined, tr.text('device_id'), identity.deviceId),
+          _InfoGridItem(Icons.computer_outlined, tr.text('platform'), identity.platform.name),
+          _InfoGridItem(Icons.dns_outlined, tr.text('device_role'), identity.deviceRole.name),
+          _InfoGridItem(Icons.badge_outlined, tr.text('app_role'), identity.appRole.name),
+          _InfoGridItem(Icons.sync_outlined, tr.text('sync_mode'), identity.isHost ? tr.text('host_lan_cloud_controlled') : identity.syncMode.name),
+          _InfoGridItem(Icons.cloud_outlined, tr.text('cloud_tenant'), identity.cloudTenantId.isEmpty ? '—' : identity.cloudTenantId),
+        ],
       ),
     );
   }
-
 }
