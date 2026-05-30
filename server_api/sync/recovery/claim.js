@@ -105,9 +105,9 @@ export default async function handler(req, res) {
     const cloudTenantId = rows[0].cloud_tenant_id || '';
     await sql`
       insert into store_devices (
-        store_id, branch_id, device_id, device_name, platform, app_version, role, transport, device_token, revoked, last_seen_at, updated_at
+        store_id, branch_id, device_id, device_name, platform, app_version, role, transport, active_transport, last_sync_transport, device_token, revoked, online, last_seen_at, updated_at
       ) values (
-        ${storeId}, ${recoveredBranchId}, ${deviceId}, ${deviceName}, ${platform}, ${appVersion}, 'host', 'cloud', ${deviceToken}, false, now(), now()
+        ${storeId}, ${recoveredBranchId}, ${deviceId}, ${deviceName}, ${platform}, ${appVersion}, 'host', 'cloud', 'cloud', 'cloud', ${deviceToken}, false, true, now(), now()
       )
       on conflict (store_id, branch_id, device_id) do update set
         device_name = excluded.device_name,
@@ -115,8 +115,11 @@ export default async function handler(req, res) {
         app_version = excluded.app_version,
         role = 'host',
         transport = 'cloud',
+        active_transport = 'cloud',
+        last_sync_transport = 'cloud',
         device_token = excluded.device_token,
         revoked = false,
+        online = true,
         last_seen_at = now(),
         updated_at = now()
     `;

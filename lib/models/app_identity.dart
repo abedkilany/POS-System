@@ -25,6 +25,7 @@ class AppIdentity {
     this.deviceToken = '',
     this.storeEpoch = 1,
     this.recoveryKey = '',
+    this.activeSyncTransport = '',
   });
 
   final String storeId;
@@ -44,12 +45,21 @@ class AppIdentity {
   final String deviceToken;
   final int storeEpoch;
   final String recoveryKey;
+  /// Selected delivery method for sync. Sync progress is device-scoped and
+  /// transport-independent; this chooses only which transport is active now.
+  final String activeSyncTransport;
 
   bool get isHost => deviceRole == DeviceRole.host;
   bool get isClient => deviceRole == DeviceRole.client;
   bool get isCloudEnabled => syncMode == SyncMode.cloudConnected || syncMode == SyncMode.marketplaceEnabled;
   bool get isMarketplaceEnabled => syncMode == SyncMode.marketplaceEnabled;
-  String get transportType => syncMode == SyncMode.lanOnly ? 'lan' : (isCloudEnabled ? 'cloud' : 'local');
+  String get activeSyncTransportNormalized {
+    final normalized = activeSyncTransport.trim().toLowerCase();
+    if (normalized == 'lan' || normalized == 'cloud') return normalized;
+    return syncMode == SyncMode.lanOnly ? 'lan' : (isCloudEnabled ? 'cloud' : 'local');
+  }
+  String get transportType => activeSyncTransportNormalized;
+
 
   AppIdentity copyWith({
     String? storeId,
@@ -67,6 +77,7 @@ class AppIdentity {
     String? deviceToken,
     int? storeEpoch,
     String? recoveryKey,
+    String? activeSyncTransport,
   }) {
     return AppIdentity(
       storeId: storeId ?? this.storeId,
@@ -84,6 +95,7 @@ class AppIdentity {
       deviceToken: deviceToken ?? this.deviceToken,
       storeEpoch: storeEpoch ?? this.storeEpoch,
       recoveryKey: recoveryKey ?? this.recoveryKey,
+      activeSyncTransport: activeSyncTransport ?? this.activeSyncTransport,
     );
   }
 
@@ -104,6 +116,7 @@ class AppIdentity {
         'transportType': transportType,
         'storeEpoch': storeEpoch,
         'recoveryKey': recoveryKey,
+        'activeSyncTransport': activeSyncTransportNormalized,
       };
 
   factory AppIdentity.fromJson(Map<String, dynamic> json) {
@@ -114,6 +127,10 @@ class AppIdentity {
       }
       return fallback;
     }
+
+    final recoveryRaw = (json['recoveryKey']?.toString() ?? '').trim();
+    final activeRaw = (json['activeSyncTransport']?.toString() ?? '').trim().toLowerCase();
+    final transportRaw = (json['transportType']?.toString() ?? '').trim().toLowerCase();
 
     return AppIdentity(
       storeId: json['storeId']?.toString() ?? '',
@@ -130,9 +147,8 @@ class AppIdentity {
       cloudTenantId: json['cloudTenantId']?.toString() ?? '',
       deviceToken: json['deviceToken']?.toString() ?? json['device_token']?.toString() ?? '',
       storeEpoch: (json['storeEpoch'] as num?)?.toInt() ?? 1,
-      recoveryKey: (json['recoveryKey']?.toString().trim().isNotEmpty ?? false)
-          ? json['recoveryKey'].toString().trim().toUpperCase()
-          : _recoveryKey(),
+      recoveryKey: recoveryRaw.isNotEmpty ? recoveryRaw.toUpperCase() : _recoveryKey(),
+      activeSyncTransport: activeRaw.isNotEmpty ? activeRaw : transportRaw,
     );
   }
 
@@ -155,6 +171,7 @@ class AppIdentity {
       deviceToken: 'device_${now.microsecondsSinceEpoch}_${deviceId.hashCode.abs()}',
       storeEpoch: 1,
       recoveryKey: _recoveryKey(),
+      activeSyncTransport: platform == AppPlatformType.web ? 'cloud' : 'local',
     );
   }
 

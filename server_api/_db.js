@@ -34,6 +34,16 @@ export function assertStoreAllowed(storeId) {
 export async function ensureDeviceAuthColumns() {
   await sql`alter table store_devices add column if not exists device_token text default ''`;
   await sql`alter table store_devices add column if not exists revoked boolean not null default false`;
+  // Host-authoritative per-device sync state. LAN/Cloud are delivery methods;
+  // progress must be tied to the device, not to the transport used last.
+  await sql`alter table store_devices add column if not exists active_transport text default ''`;
+  await sql`alter table store_devices add column if not exists last_sync_transport text default ''`;
+  await sql`alter table store_devices add column if not exists last_applied_cursor timestamptz`;
+  await sql`alter table store_devices add column if not exists last_ack_cursor timestamptz`;
+  await sql`alter table store_devices add column if not exists last_applied_sequence bigint not null default 0`;
+  await sql`alter table store_devices add column if not exists last_ack_sequence bigint not null default 0`;
+  await sql`alter table store_devices add column if not exists last_ack_at timestamptz`;
+  await sql`alter table store_devices add column if not exists online boolean not null default false`;
 }
 
 export async function assertDeviceAllowed(req, { storeId, branchId = 'main', allowedRoles = [], allowedTransports = [], force = false } = {}) {
@@ -49,7 +59,7 @@ export async function assertDeviceAllowed(req, { storeId, branchId = 'main', all
   }
   await ensureDeviceAuthColumns();
   const rows = await sql`
-    select device_id, role, transport, revoked, device_token
+    select device_id, role, transport, active_transport, revoked, device_token
     from store_devices
     where store_id = ${storeId}
       and branch_id = ${branchId}

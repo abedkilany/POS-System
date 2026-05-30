@@ -9,6 +9,7 @@ import '../../models/app_identity.dart';
 import '../../models/sync_change.dart';
 import 'local_database_service.dart';
 import 'unified_sync_core_service.dart';
+import '../sync_unified/sync_device_state.dart';
 
 class CloudSyncSettings {
   const CloudSyncSettings({
@@ -49,8 +50,25 @@ class CloudSyncSettings {
   }
   bool get isConfigured => enabled && apiBaseUrl.trim().isNotEmpty && (hasDeploymentToken || hasDeviceCredentials);
 
+  static String normalizeApiBaseUrl(String value, {String fallback = ''}) {
+    var raw = value.trim();
+    if (raw.isEmpty) return fallback.trim();
+    raw = raw.replaceAll(RegExp(r'/+$'), '');
+    if (raw.startsWith('/')) {
+      throw const FormatException('Cloud API URL must be a full domain, not a relative path.');
+    }
+    if (!raw.contains('://')) {
+      raw = 'https://$raw';
+    }
+    final uri = Uri.tryParse(raw);
+    if (uri == null || (uri.scheme != 'https' && uri.scheme != 'http') || uri.host.trim().isEmpty) {
+      throw const FormatException('Cloud API URL is invalid.');
+    }
+    return uri.replace(path: uri.path.replaceAll(RegExp(r'/+$'), '')).toString().replaceAll(RegExp(r'/+$'), '');
+  }
+
   Uri endpoint(String path, [Map<String, String>? query]) {
-    final base = apiBaseUrl.trim().replaceAll(RegExp(r'/+$'), '');
+    final base = normalizeApiBaseUrl(apiBaseUrl);
     final normalizedPath = path.startsWith('/') ? path : '/$path';
     final uri = Uri.parse('$base$normalizedPath');
     return query == null ? uri : uri.replace(queryParameters: {...uri.queryParameters, ...query});
@@ -81,9 +99,17 @@ class CloudSyncSettings {
     final autoRaw = LocalDatabaseService.getString(_autoSyncKey);
     final intervalRaw = LocalDatabaseService.getString(_intervalKey);
     final currentOrigin = kIsWeb ? Uri.base.origin : '';
+    var normalizedBaseUrl = currentOrigin;
+    if (base != null && base.trim().isNotEmpty) {
+      try {
+        normalizedBaseUrl = normalizeApiBaseUrl(base, fallback: currentOrigin);
+      } catch (_) {
+        normalizedBaseUrl = currentOrigin;
+      }
+    }
     return CloudSyncSettings(
       enabled: true,
-      apiBaseUrl: (base == null || base.trim().isEmpty) ? currentOrigin : base.trim(),
+      apiBaseUrl: normalizedBaseUrl,
       apiToken: token,
       lastPullCursor: DateTime.tryParse(cursorRaw),
       autoSyncEnabled: autoRaw == null ? true : autoRaw == 'true',
@@ -92,7 +118,8 @@ class CloudSyncSettings {
   }
 
   Future<void> save() async {
-    await LocalDatabaseService.setString(_apiBaseUrlKey, apiBaseUrl.trim());
+    final normalizedBaseUrl = normalizeApiBaseUrl(apiBaseUrl, fallback: kIsWeb ? Uri.base.origin : '');
+    await LocalDatabaseService.setString(_apiBaseUrlKey, normalizedBaseUrl);
     await LocalDatabaseService.setString(_apiTokenKey, apiToken.trim());
     await LocalDatabaseService.setString(_autoSyncKey, autoSyncEnabled ? 'true' : 'false');
     await LocalDatabaseService.setString(_intervalKey, intervalSeconds.toString());
@@ -133,6 +160,14 @@ class CloudDeviceStatus {
     required this.transport,
     required this.lastSeenAt,
     required this.appVersion,
+    this.activeTransport = '',
+    this.lastSyncTransport = '',
+    this.lastAppliedCursor,
+    this.lastAckCursor,
+    this.lastAppliedSequence = 0,
+    this.lastAckSequence = 0,
+    this.lastAckAt,
+    this.online = false,
     this.revoked = false,
   });
 
@@ -143,6 +178,14 @@ class CloudDeviceStatus {
   final String transport;
   final DateTime? lastSeenAt;
   final String appVersion;
+  final String activeTransport;
+  final String lastSyncTransport;
+  final DateTime? lastAppliedCursor;
+  final DateTime? lastAckCursor;
+  final int lastAppliedSequence;
+  final int lastAckSequence;
+  final DateTime? lastAckAt;
+  final bool online;
   final bool revoked;
 
   bool get isOnline => lastSeenAt != null && DateTime.now().toUtc().difference(lastSeenAt!.toUtc()) <= const Duration(seconds: 90);
@@ -155,6 +198,14 @@ class CloudDeviceStatus {
         transport: (json['transport'] ?? '').toString(),
         lastSeenAt: DateTime.tryParse((json['lastSeenAt'] ?? json['last_seen_at'] ?? '').toString()),
         appVersion: (json['appVersion'] ?? json['app_version'] ?? '').toString(),
+        activeTransport: (json['activeTransport'] ?? json['active_transport'] ?? json['transport'] ?? '').toString(),
+        lastSyncTransport: (json['lastSyncTransport'] ?? json['last_sync_transport'] ?? '').toString(),
+        lastAppliedCursor: DateTime.tryParse((json['lastAppliedCursor'] ?? json['last_applied_cursor'] ?? '').toString()),
+        lastAckCursor: DateTime.tryParse((json['lastAckCursor'] ?? json['last_ack_cursor'] ?? '').toString()),
+        lastAppliedSequence: int.tryParse((json['lastAppliedSequence'] ?? json['last_applied_sequence'] ?? '').toString()) ?? 0,
+        lastAckSequence: int.tryParse((json['lastAckSequence'] ?? json['last_ack_sequence'] ?? '').toString()) ?? 0,
+        lastAckAt: DateTime.tryParse((json['lastAckAt'] ?? json['last_ack_at'] ?? '').toString()),
+        online: json['online'] == true,
         revoked: json['revoked'] == true,
       );
 }
@@ -254,6 +305,34 @@ class CloudSyncService {
   final http.Client _client;
   late final UnifiedSyncCoreService _syncCore = UnifiedSyncCoreService(store);
 
+  bool _cloudAllowedForIdentity(AppIdentity identity) {
+    if (identity.isHost) return identity.isCloudEnabled;
+    if (!identity.isClient) return false;
+    return identity.isCloudEnabled || identity.activeSyncTransportNormalized == 'cloud';
+  }
+
+  Future<void> _recordDeviceSyncState(
+    String transport,
+    DateTime? cursor, {
+    int sequence = 0,
+    CloudSyncSettings? settings,
+  }) async {
+    await SyncDeviceStateStore.recordSyncResult(
+      store.appIdentity,
+      transport: transport,
+      appliedCursor: cursor,
+      ackCursor: cursor,
+      appliedSequence: sequence,
+      ackSequence: sequence,
+    );
+
+    // Authoritative ACK: update the Host-visible device state only after the
+    // Client has successfully applied the pulled data locally. Pull itself must
+    // never be treated as ACK.
+    if (settings != null && store.appIdentity.isClient && cursor != null) {
+      await registerCurrentDevice(settings, transport: transport);
+    }
+  }
 
   Future<CloudPairingCodeResult> createPairingCode(CloudSyncSettings settings, {String transport = 'cloud', int ttlMinutes = 5}) async {
     final identity = store.appIdentity;
@@ -333,9 +412,9 @@ class CloudSyncService {
     if (current.isHost) {
       return const CloudPairingClaimResult(ok: false, message: 'Host devices cannot pair as Cloud Clients. Use Transfer Host instead.');
     }
-    if (current.isClient && current.syncMode == SyncMode.lanOnly) {
-      return const CloudPairingClaimResult(ok: false, message: 'This device is already a LAN Client. Clear local data or connect to a new Host before using Cloud pairing.');
-    }
+    // A Client may configure both LAN and Cloud, but only one active transport
+    // should run at a time. Pairing Cloud is therefore allowed for an existing
+    // LAN Client as long as it is not a Host.
     // Client bootstrap pairing intentionally requires only the Cloud API URL and
     // a single-use pairing code. The Host deployment token must stay on Host devices.
     if (!settings.enabled || settings.apiBaseUrl.trim().isEmpty) {
@@ -369,6 +448,7 @@ class CloudSyncService {
         hostDeviceId: decoded['hostDeviceId']?.toString() ?? current.hostDeviceId,
         deviceRole: DeviceRole.client,
         syncMode: transport,
+        activeSyncTransport: transport == SyncMode.lanOnly ? 'lan' : 'cloud',
         deviceToken: decoded['deviceToken']?.toString() ?? current.deviceToken,
         updatedAt: DateTime.now(),
       );
@@ -683,6 +763,7 @@ class CloudSyncService {
   Future<CloudSyncResult> registerCurrentDevice(CloudSyncSettings settings, {String transport = 'cloud'}) async {
     final identity = store.appIdentity;
     if (!settings.isConfigured) return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
+    final deviceState = SyncDeviceStateStore.load(identity);
     try {
       final response = await _client
           .post(
@@ -696,6 +777,12 @@ class CloudSyncService {
               'platform': identity.platform.name,
               'role': identity.deviceRole.name,
               'transport': transport,
+              'activeTransport': identity.activeSyncTransportNormalized,
+              'lastSyncTransport': deviceState.lastSyncTransport.isEmpty ? transport : deviceState.lastSyncTransport,
+              'lastAppliedCursor': deviceState.lastAppliedHostCursor?.toIso8601String(),
+              'lastAckCursor': deviceState.lastAckCursor?.toIso8601String(),
+              'lastAppliedSequence': deviceState.lastAppliedSequence,
+              'lastAckSequence': deviceState.lastAckSequence,
               'deviceToken': identity.deviceToken,
               'appVersion': 'store-manager-pro',
               'storeEpoch': identity.storeEpoch,
@@ -917,6 +1004,8 @@ class CloudSyncService {
             'deviceId': store.deviceId,
             'storeId': identity.storeId,
             'branchId': identity.branchId,
+            'sequence': SyncDeviceStateStore.load(identity).lastAppliedSequence,
+            'lastAppliedSequence': SyncDeviceStateStore.load(identity).lastAppliedSequence,
             'changes': pending.map((item) => item.toJson()).toList(),
           }),
         )
@@ -981,8 +1070,8 @@ class CloudSyncService {
 
   Future<CloudSyncResult> pushPendingForUnifiedEngine(CloudSyncSettings settings, {CloudSyncProgressCallback? onProgress}) async {
     final identity = store.appIdentity;
-    if (identity.syncMode == SyncMode.localOnly || identity.syncMode == SyncMode.lanOnly) {
-      return const CloudSyncResult(ok: false, message: 'Enable cloudConnected or marketplaceEnabled sync mode first.');
+    if (!_cloudAllowedForIdentity(identity)) {
+      return const CloudSyncResult(ok: false, message: 'Cloud is not the active/configured sync transport for this device.');
     }
     if (!settings.isConfigured) {
       return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
@@ -1029,8 +1118,8 @@ class CloudSyncService {
     if (identity.isHost) {
       return const CloudSyncResult(ok: true, message: 'Host devices do not pull authoritative Cloud changes.', pulled: 0);
     }
-    if (identity.syncMode == SyncMode.localOnly || identity.syncMode == SyncMode.lanOnly) {
-      return const CloudSyncResult(ok: false, message: 'Enable cloudConnected or marketplaceEnabled sync mode first.');
+    if (!_cloudAllowedForIdentity(identity)) {
+      return const CloudSyncResult(ok: false, message: 'Cloud is not the active/configured sync transport for this device.');
     }
     if (!settings.isConfigured) {
       return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
@@ -1041,6 +1130,7 @@ class CloudSyncService {
       final initialCursor = settings.lastPullCursor;
       var pageCursor = '';
       DateTime? finalPullCursor;
+      var finalPullSequence = 0;
       var pageCount = 0;
       var restoredSnapshot = false;
       const maxPagesPerRun = 200;
@@ -1056,6 +1146,8 @@ class CloudSyncService {
           'branch_id': identity.branchId,
           'limit': '1000',
         };
+        final lastSequence = SyncDeviceStateStore.load(store.appIdentity).lastAppliedSequence;
+        if (lastSequence > 0) query['since_sequence'] = lastSequence.toString();
         if (initialCursor != null) query['since'] = initialCursor.toIso8601String();
         if (initialCursor == null && minSnapshotUpdatedAt != null) {
           query['min_snapshot_updated_at'] = minSnapshotUpdatedAt.toIso8601String();
@@ -1084,6 +1176,7 @@ class CloudSyncService {
         pageCursor = (decodedPull['nextCursor'] ?? '').toString();
         if (!hasMore) {
           finalPullCursor = DateTime.tryParse(decodedPull['generatedAt']?.toString() ?? '');
+          finalPullSequence = int.tryParse(decodedPull['generatedSequence']?.toString() ?? '') ?? finalPullSequence;
           break;
         }
         if (pageCursor.isEmpty) {
@@ -1094,6 +1187,7 @@ class CloudSyncService {
       onProgress?.call(0.90, 'Saving Cloud sync cursor...');
       if (finalPullCursor != null) {
         await settings.copyWith(lastPullCursor: finalPullCursor).save();
+        await _recordDeviceSyncState('cloud', finalPullCursor, sequence: finalPullSequence, settings: settings);
       }
 
       if (pulled > 0) {
@@ -1116,8 +1210,8 @@ class CloudSyncService {
 
   Future<CloudSyncResult> syncNow(CloudSyncSettings settings, {DateTime? minSnapshotUpdatedAt, CloudSyncProgressCallback? onProgress}) async {
     final identity = store.appIdentity;
-    if (identity.syncMode == SyncMode.localOnly || identity.syncMode == SyncMode.lanOnly) {
-      return const CloudSyncResult(ok: false, message: 'Enable cloudConnected or marketplaceEnabled sync mode first.');
+    if (!_cloudAllowedForIdentity(identity)) {
+      return const CloudSyncResult(ok: false, message: 'Cloud is not the active/configured sync transport for this device.');
     }
     if (!settings.isConfigured) {
       return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
@@ -1160,6 +1254,7 @@ class CloudSyncService {
       final initialCursor = settings.lastPullCursor;
       var pageCursor = '';
       DateTime? finalPullCursor;
+      var finalPullSequence = 0;
       var pageCount = 0;
       var restoredSnapshot = false;
       const maxPagesPerRun = 200;
@@ -1175,6 +1270,8 @@ class CloudSyncService {
           'branch_id': identity.branchId,
           'limit': '1000',
         };
+        final lastSequence = SyncDeviceStateStore.load(store.appIdentity).lastAppliedSequence;
+        if (lastSequence > 0) query['since_sequence'] = lastSequence.toString();
         if (initialCursor != null) query['since'] = initialCursor.toIso8601String();
         if (initialCursor == null && minSnapshotUpdatedAt != null) {
           query['min_snapshot_updated_at'] = minSnapshotUpdatedAt.toIso8601String();
@@ -1204,6 +1301,7 @@ class CloudSyncService {
         pageCursor = (decodedPull['nextCursor'] ?? '').toString();
         if (!hasMore) {
           finalPullCursor = DateTime.tryParse(decodedPull['generatedAt']?.toString() ?? '');
+          finalPullSequence = int.tryParse(decodedPull['generatedSequence']?.toString() ?? '') ?? finalPullSequence;
           break;
         }
         if (pageCursor.isEmpty) {
@@ -1214,6 +1312,7 @@ class CloudSyncService {
       onProgress?.call(0.90, 'Saving Cloud sync cursor...');
       if (finalPullCursor != null) {
         await settings.copyWith(lastPullCursor: finalPullCursor).save();
+        await _recordDeviceSyncState('cloud', finalPullCursor, sequence: finalPullSequence, settings: settings);
       }
 
       if (pulled > 0) {
@@ -1251,7 +1350,7 @@ class AutoCloudSyncController {
   Future<void> start() async {
     stop();
     _disposed = false;
-    if (!store.appIdentity.isCloudEnabled) return;
+    if (!store.appIdentity.isCloudEnabled && store.appIdentity.activeSyncTransportNormalized != 'cloud') return;
     final settings = CloudSyncSettings.load();
     if (!settings.autoSyncEnabled || !settings.isConfigured) return;
 
@@ -1277,7 +1376,7 @@ class AutoCloudSyncController {
   void _onStoreChanged() {
     if (_disposed) return;
     final settings = CloudSyncSettings.load();
-    if (!settings.autoSyncEnabled || !settings.isConfigured || !store.appIdentity.isCloudEnabled) return;
+    if (!settings.autoSyncEnabled || !settings.isConfigured || (!store.appIdentity.isCloudEnabled && store.appIdentity.activeSyncTransportNormalized != 'cloud')) return;
 
     final cloudCount = store.pendingSyncQueueForTarget('cloud', readyOnly: false).length;
     final relayCount = store.pendingSyncQueueForTarget('cloud_host', readyOnly: false).length;
@@ -1297,7 +1396,7 @@ class AutoCloudSyncController {
     _running = true;
     try {
       var settings = CloudSyncSettings.load();
-      if (settings.autoSyncEnabled && settings.isConfigured && store.appIdentity.isCloudEnabled) {
+      if (settings.autoSyncEnabled && settings.isConfigured && (store.appIdentity.isCloudEnabled || store.appIdentity.activeSyncTransportNormalized == 'cloud')) {
         final hasOutgoingWork = store.pendingSyncQueueForTarget('cloud', readyOnly: false).isNotEmpty ||
             store.pendingSyncQueueForTarget('cloud_host', readyOnly: false).isNotEmpty;
         final now = DateTime.now().toUtc();

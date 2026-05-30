@@ -34,7 +34,7 @@ class UnifiedSyncFactory {
   static bool get isLanSetupComplete => LanSyncSettings.load().setupComplete;
   static bool get isLanHost => LanSyncSettings.load().isHost;
   static bool get isCloudConfigured => CloudSyncSettings.load().isConfigured;
-  static bool cloudCanCheck(AppStore store) => store.appIdentity.isCloudEnabled && CloudSyncSettings.load().isConfigured;
+  static bool cloudCanCheck(AppStore store) => (store.appIdentity.isCloudEnabled || store.appIdentity.activeSyncTransportNormalized == 'cloud') && CloudSyncSettings.load().isConfigured;
 }
 
 class UnifiedAutoLanSyncController {
@@ -62,7 +62,7 @@ class UnifiedAutoLanSyncController {
     final identity = store.appIdentity;
     if (identity.isHost) return settings.setupComplete && settings.isHost;
     if (identity.isClient) {
-      return identity.syncMode == SyncMode.lanOnly && settings.setupComplete && settings.isClient;
+      return (identity.syncMode == SyncMode.lanOnly || identity.activeSyncTransportNormalized == 'lan') && settings.setupComplete && settings.isClient;
     }
     return false;
   }
@@ -187,7 +187,7 @@ class UnifiedAutoCloudSyncController {
   Future<void> start() async {
     stop();
     _disposed = false;
-    if (!store.appIdentity.isCloudEnabled) return;
+    if (!store.appIdentity.isCloudEnabled && store.appIdentity.activeSyncTransportNormalized != 'cloud') return;
     final settings = CloudSyncSettings.load();
     if (!settings.autoSyncEnabled || !settings.isConfigured) return;
 
@@ -213,7 +213,7 @@ class UnifiedAutoCloudSyncController {
   void _onStoreChanged() {
     if (_disposed) return;
     final settings = CloudSyncSettings.load();
-    if (!settings.autoSyncEnabled || !settings.isConfigured || !store.appIdentity.isCloudEnabled) return;
+    if (!settings.autoSyncEnabled || !settings.isConfigured || (!store.appIdentity.isCloudEnabled && store.appIdentity.activeSyncTransportNormalized != 'cloud')) return;
 
     final cloudCount = store.pendingSyncQueueForTarget('cloud', readyOnly: false).length;
     final relayCount = store.pendingSyncQueueForTarget('cloud_host', readyOnly: false).length;
@@ -231,7 +231,7 @@ class UnifiedAutoCloudSyncController {
     _running = true;
     try {
       var settings = CloudSyncSettings.load();
-      if (settings.autoSyncEnabled && settings.isConfigured && store.appIdentity.isCloudEnabled) {
+      if (settings.autoSyncEnabled && settings.isConfigured && (store.appIdentity.isCloudEnabled || store.appIdentity.activeSyncTransportNormalized == 'cloud')) {
         final hasOutgoingWork = store.pendingSyncQueueForTarget('cloud', readyOnly: false).isNotEmpty ||
             store.pendingSyncQueueForTarget('cloud_host', readyOnly: false).isNotEmpty;
         final now = DateTime.now().toUtc();

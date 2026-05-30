@@ -1,5 +1,6 @@
 import '../services/cloud_sync_service.dart';
 import 'sync_contracts.dart';
+import 'sync_device_state.dart';
 import 'sync_transport_adapter.dart';
 
 /// Cloud adapter shell for Fix 10A.
@@ -31,10 +32,32 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
     return UnifiedSyncError(code: code, userMessage: message, debugMessage: message);
   }
 
-  UnifiedCursorEnvelope _cursor() => UnifiedCursorEnvelope(
-        value: _settings.lastPullCursor?.toIso8601String() ?? '',
-        generatedAt: _settings.lastPullCursor,
-        source: 'cloud',
+  DateTime? get _unifiedCursor => SyncDeviceStateStore.cursorForTransport(
+        _service.store.appIdentity,
+        'cloud',
+        _settings.lastPullCursor,
+      );
+
+  UnifiedCursorEnvelope _cursor() {
+    final cursor = _unifiedCursor;
+    return UnifiedCursorEnvelope(
+      value: cursor?.toIso8601String() ?? '',
+      generatedAt: cursor,
+      source: 'device',
+    );
+  }
+
+  CloudSyncSettings _settingsWithUnifiedCursor() {
+    final cursor = _unifiedCursor;
+    if (cursor == null || cursor == _settings.lastPullCursor) return _settings;
+    return _settings.copyWith(lastPullCursor: cursor);
+  }
+
+  Future<void> _recordCloudResult(DateTime? cursor) => SyncDeviceStateStore.recordSyncResult(
+        _service.store.appIdentity,
+        transport: 'cloud',
+        appliedCursor: cursor,
+        ackCursor: cursor,
       );
 
   @override
@@ -86,8 +109,9 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
     void Function(double value, String label)? onProgress,
   }) async {
     await _service.store.ensureHostCloudBootstrapSnapshotQueued(force: true);
+    final effectiveSettings = _settingsWithUnifiedCursor();
     final result = await _service.syncNow(
-      _settings,
+      effectiveSettings,
       minSnapshotUpdatedAt: minSnapshotUpdatedAt,
       onProgress: onProgress,
     );
@@ -143,7 +167,9 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<UnifiedSyncResult> pushPending(UnifiedSyncPushRequest request) async {
-    final result = await _service.pushPendingForUnifiedEngine(_settings);
+    final effectiveSettings = _settingsWithUnifiedCursor();
+    final result = await _service.pushPendingForUnifiedEngine(effectiveSettings);
+    await _recordCloudResult(_unifiedCursor);
     return UnifiedSyncResult(
       ok: result.ok,
       message: result.message,
@@ -157,8 +183,10 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<UnifiedSyncResult> pullChanges(UnifiedSyncPullRequest request) async {
-    final result = await _service.pullAuthoritativeChangesForUnifiedEngine(_settings);
+    final effectiveSettings = _settingsWithUnifiedCursor();
+    final result = await _service.pullAuthoritativeChangesForUnifiedEngine(effectiveSettings);
     final current = CloudSyncSettings.load();
+    await _recordCloudResult(current.lastPullCursor);
     return UnifiedSyncResult(
       ok: result.ok,
       message: result.message,
@@ -169,14 +197,16 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
       cursor: UnifiedCursorEnvelope(
         value: current.lastPullCursor?.toIso8601String() ?? '',
         generatedAt: current.lastPullCursor,
-        source: 'cloud',
+        source: 'device',
       ),
     );
   }
 
   @override
   Future<UnifiedSyncResult> rebuildFromHostSnapshot({void Function(double value, String label)? onProgress}) async {
-    final result = await _service.rebuildFromCloudHostSnapshot(_settings, onProgress: onProgress);
+    final effectiveSettings = _settingsWithUnifiedCursor();
+    final result = await _service.rebuildFromCloudHostSnapshot(effectiveSettings, onProgress: onProgress);
+    await _recordCloudResult(_unifiedCursor);
     return UnifiedSyncResult(
       ok: result.ok,
       message: result.message,
@@ -190,7 +220,10 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<UnifiedSyncResult> syncNow({void Function(double value, String label)? onProgress}) async {
-    final result = await _service.syncNow(_settings, onProgress: onProgress);
+    final effectiveSettings = _settingsWithUnifiedCursor();
+    final result = await _service.syncNow(effectiveSettings, onProgress: onProgress);
+    final current = CloudSyncSettings.load();
+    await _recordCloudResult(current.lastPullCursor);
     return UnifiedSyncResult(
       ok: result.ok,
       message: result.message,

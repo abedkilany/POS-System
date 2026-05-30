@@ -1,7 +1,20 @@
 import { sql, assertSyncToken, assertStoreAllowed, ensureDeviceAuthColumns, sendError } from '../_db.js';
 
 function asIso(value) {
+  if (!value) return null;
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+}
+
+function safeIso(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+}
+
+function normalizeTransport(value) {
+  const v = String(value || '').trim().toLowerCase();
+  return v === 'lan' || v === 'cloud' ? v : '';
 }
 
 async function ensureDeviceTable() {
@@ -18,6 +31,14 @@ async function ensureDeviceTable() {
       store_epoch integer not null default 1,
       revoked boolean not null default false,
       device_token text default '',
+      active_transport text default '',
+      last_sync_transport text default '',
+      last_applied_cursor timestamptz,
+      last_ack_cursor timestamptz,
+      last_applied_sequence bigint not null default 0,
+      last_ack_sequence bigint not null default 0,
+      last_ack_at timestamptz,
+      online boolean not null default false,
       last_seen_at timestamptz not null default now(),
       updated_at timestamptz not null default now(),
       primary key (store_id, branch_id, device_id)
@@ -28,6 +49,30 @@ async function ensureDeviceTable() {
     create index if not exists idx_store_devices_latest
     on store_devices (store_id, branch_id, last_seen_at desc)
   `;
+}
+
+function rowToDevice(row) {
+  return {
+    storeId: row.store_id,
+    branchId: row.branch_id,
+    deviceId: row.device_id,
+    deviceName: row.device_name || '',
+    platform: row.platform || '',
+    role: row.role || '',
+    transport: row.transport || '',
+    activeTransport: row.active_transport || row.transport || '',
+    lastSyncTransport: row.last_sync_transport || row.transport || '',
+    appVersion: row.app_version || '',
+    storeEpoch: row.store_epoch || 1,
+    revoked: row.revoked === true,
+    online: row.online === true,
+    lastAppliedCursor: asIso(row.last_applied_cursor),
+    lastAckCursor: asIso(row.last_ack_cursor),
+    lastAppliedSequence: Number(row.last_applied_sequence || 0),
+    lastAckSequence: Number(row.last_ack_sequence || 0),
+    lastAckAt: asIso(row.last_ack_at),
+    lastSeenAt: asIso(row.last_seen_at),
+  };
 }
 
 export default async function handler(req, res) {
@@ -47,46 +92,47 @@ export default async function handler(req, res) {
       const deviceName = String(body.deviceName || body.device_name || '').trim();
       const platform = String(body.platform || '').trim();
       const role = String(body.role || '').trim();
-      const transport = String(body.transport || '').trim();
+      const transport = normalizeTransport(body.transport) || String(body.transport || '').trim();
+      const activeTransport = normalizeTransport(body.activeTransport || body.active_transport) || transport;
+      const lastSyncTransport = normalizeTransport(body.lastSyncTransport || body.last_sync_transport) || activeTransport || transport;
       const appVersion = String(body.appVersion || body.app_version || '').trim();
       const deviceToken = String(body.deviceToken || body.device_token || req.headers['x-device-token'] || '').trim();
       const storeEpoch = Number(body.storeEpoch || body.store_epoch || 1);
+      const lastAppliedCursor = safeIso(body.lastAppliedCursor || body.last_applied_cursor);
+      const lastAckCursor = safeIso(body.lastAckCursor || body.last_ack_cursor || lastAppliedCursor);
+      const lastAppliedSequence = Math.max(Number(body.lastAppliedSequence || body.last_applied_sequence || 0), 0);
+      const lastAckSequence = Math.max(Number(body.lastAckSequence || body.last_ack_sequence || lastAppliedSequence || 0), 0);
 
       const rows = await sql`
         insert into store_devices (
-          store_id, branch_id, device_id, device_name, platform, role, transport, app_version, store_epoch, device_token, last_seen_at, updated_at
+          store_id, branch_id, device_id, device_name, platform, role, transport, active_transport, last_sync_transport,
+          app_version, store_epoch, device_token, last_applied_cursor, last_ack_cursor, last_applied_sequence, last_ack_sequence, last_ack_at, online, last_seen_at, updated_at
         ) values (
-          ${storeId}, ${branchId}, ${deviceId}, ${deviceName}, ${platform}, ${role}, ${transport}, ${appVersion}, ${storeEpoch}, ${deviceToken}, now(), now()
+          ${storeId}, ${branchId}, ${deviceId}, ${deviceName}, ${platform}, ${role}, ${transport}, ${activeTransport}, ${lastSyncTransport},
+          ${appVersion}, ${storeEpoch}, ${deviceToken}, ${lastAppliedCursor}::timestamptz, ${lastAckCursor}::timestamptz, ${lastAppliedSequence}, ${lastAckSequence}, now(), true, now(), now()
         )
         on conflict (store_id, branch_id, device_id) do update set
           device_name = excluded.device_name,
           platform = excluded.platform,
           role = excluded.role,
-          transport = excluded.transport,
+          transport = case when excluded.transport <> '' then excluded.transport else store_devices.transport end,
+          active_transport = case when excluded.active_transport <> '' then excluded.active_transport else store_devices.active_transport end,
+          last_sync_transport = case when excluded.last_sync_transport <> '' then excluded.last_sync_transport else store_devices.last_sync_transport end,
           app_version = excluded.app_version,
           store_epoch = greatest(store_devices.store_epoch, excluded.store_epoch),
           device_token = case when excluded.device_token <> '' then excluded.device_token else store_devices.device_token end,
+          last_applied_cursor = greatest(coalesce(store_devices.last_applied_cursor, 'epoch'::timestamptz), coalesce(excluded.last_applied_cursor, store_devices.last_applied_cursor, 'epoch'::timestamptz)),
+          last_ack_cursor = greatest(coalesce(store_devices.last_ack_cursor, 'epoch'::timestamptz), coalesce(excluded.last_ack_cursor, store_devices.last_ack_cursor, 'epoch'::timestamptz)),
+          last_applied_sequence = greatest(coalesce(store_devices.last_applied_sequence, 0), coalesce(excluded.last_applied_sequence, 0)),
+          last_ack_sequence = greatest(coalesce(store_devices.last_ack_sequence, 0), coalesce(excluded.last_ack_sequence, 0)),
+          last_ack_at = case when excluded.last_ack_cursor is not null then now() else store_devices.last_ack_at end,
+          online = true,
           last_seen_at = now(),
           updated_at = now()
-        returning store_id, branch_id, device_id, device_name, platform, role, transport, app_version, store_epoch, revoked, last_seen_at
+        returning store_id, branch_id, device_id, device_name, platform, role, transport, active_transport, last_sync_transport,
+          app_version, store_epoch, revoked, online, last_applied_cursor, last_ack_cursor, last_applied_sequence, last_ack_sequence, last_ack_at, last_seen_at
       `;
-      const row = rows[0];
-      return res.status(200).json({
-        ok: true,
-        device: {
-          storeId: row.store_id,
-          branchId: row.branch_id,
-          deviceId: row.device_id,
-          deviceName: row.device_name || '',
-          platform: row.platform || '',
-          role: row.role || '',
-          transport: row.transport || '',
-          appVersion: row.app_version || '',
-          storeEpoch: row.store_epoch || 1,
-          revoked: row.revoked === true,
-          lastSeenAt: asIso(row.last_seen_at),
-        },
-      });
+      return res.status(200).json({ ok: true, device: rowToDevice(rows[0]) });
     }
 
     if (req.method === 'GET') {
@@ -95,30 +141,15 @@ export default async function handler(req, res) {
       if (!storeId) return res.status(400).json({ ok: false, error: 'store_id is required.' });
       assertStoreAllowed(storeId);
       const rows = await sql`
-        select store_id, branch_id, device_id, device_name, platform, role, transport, app_version, store_epoch, revoked, last_seen_at
+        select store_id, branch_id, device_id, device_name, platform, role, transport, active_transport, last_sync_transport,
+          app_version, store_epoch, revoked, online, last_applied_cursor, last_ack_cursor, last_applied_sequence, last_ack_sequence, last_ack_at, last_seen_at
         from store_devices
         where store_id = ${storeId}
           and branch_id = ${branchId}
         order by last_seen_at desc
         limit 100
       `;
-      return res.status(200).json({
-        ok: true,
-        devices: rows.map((row) => ({
-          storeId: row.store_id,
-          branchId: row.branch_id,
-          deviceId: row.device_id,
-          deviceName: row.device_name || '',
-          platform: row.platform || '',
-          role: row.role || '',
-          transport: row.transport || '',
-          appVersion: row.app_version || '',
-          storeEpoch: row.store_epoch || 1,
-          revoked: row.revoked === true,
-          lastSeenAt: asIso(row.last_seen_at),
-        })),
-        serverTime: new Date().toISOString(),
-      });
+      return res.status(200).json({ ok: true, devices: rows.map(rowToDevice), serverTime: new Date().toISOString() });
     }
 
     return res.status(405).json({ ok: false, error: 'Method not allowed' });

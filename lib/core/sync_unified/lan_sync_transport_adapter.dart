@@ -1,5 +1,6 @@
 import '../services/lan_sync_service.dart';
 import 'sync_contracts.dart';
+import 'sync_device_state.dart';
 import 'sync_transport_adapter.dart';
 
 /// LAN adapter shell for Fix 10A.
@@ -31,10 +32,32 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
     return UnifiedSyncError(code: code, userMessage: message, debugMessage: message);
   }
 
-  UnifiedCursorEnvelope _cursor() => UnifiedCursorEnvelope(
-        value: _settings.lastPullCursor?.toIso8601String() ?? '',
-        generatedAt: _settings.lastPullCursor,
-        source: 'lan',
+  DateTime? get _unifiedCursor => SyncDeviceStateStore.cursorForTransport(
+        _service.store.appIdentity,
+        'lan',
+        _settings.lastPullCursor,
+      );
+
+  UnifiedCursorEnvelope _cursor() {
+    final cursor = _unifiedCursor;
+    return UnifiedCursorEnvelope(
+      value: cursor?.toIso8601String() ?? '',
+      generatedAt: cursor,
+      source: 'device',
+    );
+  }
+
+  LanSyncSettings _settingsWithUnifiedCursor() {
+    final cursor = _unifiedCursor;
+    if (cursor == null || cursor == _settings.lastPullCursor) return _settings;
+    return _settings.copyWith(lastPullCursor: cursor);
+  }
+
+  Future<void> _recordLanResult(DateTime? cursor) => SyncDeviceStateStore.recordSyncResult(
+        _service.store.appIdentity,
+        transport: 'lan',
+        appliedCursor: cursor,
+        ackCursor: cursor,
       );
 
   @override
@@ -59,6 +82,7 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
       port: _settings.port,
       token: _settings.secret,
     );
+    await _recordLanResult(_unifiedCursor);
     return UnifiedSyncResult(ok: result.ok, message: result.message, error: _errorFor(result.ok, result.message), cursor: _cursor());
   }
 
@@ -178,11 +202,12 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<UnifiedSyncResult> pushPending(UnifiedSyncPushRequest request) async {
+    final effectiveSettings = _settingsWithUnifiedCursor();
     final pendingCount = _service.store.pendingSyncChangesForTarget('host').length;
     final result = await _service.pushPendingOnly(
-      _settings.host,
-      port: _settings.port,
-      token: _settings.secret,
+      effectiveSettings.host,
+      port: effectiveSettings.port,
+      token: effectiveSettings.secret,
     );
     return UnifiedSyncResult(
       ok: result.ok,
@@ -195,14 +220,16 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<UnifiedSyncResult> pullChanges(UnifiedSyncPullRequest request) async {
-    final before = _settings.lastPullCursor;
+    final effectiveSettings = _settingsWithUnifiedCursor();
+    final before = effectiveSettings.lastPullCursor;
     final result = await _service.pullChangesOnly(
-      _settings.host,
-      port: _settings.port,
-      token: _settings.secret,
+      effectiveSettings.host,
+      port: effectiveSettings.port,
+      token: effectiveSettings.secret,
     );
     final afterSettings = LanSyncSettings.load();
     final after = afterSettings.lastPullCursor;
+    await _recordLanResult(after);
     final pulled = result.ok && after != null && after != before ? 1 : 0;
     return UnifiedSyncResult(
       ok: result.ok,
@@ -212,17 +239,18 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
       cursor: UnifiedCursorEnvelope(
         value: after?.toIso8601String() ?? '',
         generatedAt: after,
-        source: 'lan',
+        source: 'device',
       ),
     );
   }
 
   @override
   Future<UnifiedSyncResult> rebuildFromHostSnapshot({void Function(double value, String label)? onProgress}) async {
+    final effectiveSettings = _settingsWithUnifiedCursor();
     final result = await _service.repairFromHostSnapshot(
-      _settings.host,
-      port: _settings.port,
-      token: _settings.secret,
+      effectiveSettings.host,
+      port: effectiveSettings.port,
+      token: effectiveSettings.secret,
       onProgress: onProgress,
     );
     return UnifiedSyncResult(ok: result.ok, message: result.message, error: _errorFor(result.ok, result.message), cursor: _cursor());
@@ -230,12 +258,15 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<UnifiedSyncResult> syncNow({void Function(double value, String label)? onProgress}) async {
+    final effectiveSettings = _settingsWithUnifiedCursor();
     final result = await _service.syncNow(
-      _settings.host,
-      port: _settings.port,
-      token: _settings.secret,
+      effectiveSettings.host,
+      port: effectiveSettings.port,
+      token: effectiveSettings.secret,
       onProgress: onProgress,
     );
+    final afterSettings = LanSyncSettings.load();
+    await _recordLanResult(afterSettings.lastPullCursor);
     return UnifiedSyncResult(ok: result.ok, message: result.message, error: _errorFor(result.ok, result.message), cursor: _cursor());
   }
 }

@@ -1,4 +1,4 @@
-import { sql, assertSyncTokenOrDevice, assertStoreAllowed, sendError } from '../_db.js';
+import { sql, assertSyncTokenOrDevice, assertStoreAllowed, ensureDeviceAuthColumns, sendError } from '../_db.js';
 
 function asIso(value) {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
@@ -23,10 +23,31 @@ function decodeCursor(value) {
   }
 }
 
+async function markDevicePullSeen(req, { storeId, branchId }) {
+  const deviceId = String(req.headers['x-device-id'] || req.headers['X-Device-Id'] || req.query.device_id || req.query.deviceId || '').trim();
+  if (!deviceId || !storeId) return;
+
+  // A Pull means the Host sent data, not that the Client applied it.
+  // Keep only presence/transport metadata here. lastApplied*/lastAck* are
+  // updated exclusively by the Client ACK/heartbeat after local apply succeeds.
+  await sql`
+    update store_devices
+    set active_transport = case when coalesce(active_transport, '') = '' then 'cloud' else active_transport end,
+        last_sync_transport = 'cloud',
+        online = true,
+        last_seen_at = now(),
+        updated_at = now()
+    where store_id = ${storeId}
+      and branch_id = ${branchId}
+      and device_id = ${deviceId}
+  `;
+}
+
 export default async function handler(req, res) {
   try {
     await sql`alter table sync_events add column if not exists store_epoch integer not null default 1`;
     await sql`alter table sync_events add column if not exists sequence integer not null default 0`;
+    await ensureDeviceAuthColumns();
     if (req.method !== 'GET') return res.status(405).json({ ok: false, error: 'Method not allowed' });
 
     const storeId = String(req.query.store_id || req.query.storeId || 'default-store');
@@ -34,6 +55,7 @@ export default async function handler(req, res) {
     assertStoreAllowed(storeId);
     await assertSyncTokenOrDevice(req, { storeId, branchId, allowedRoles: ['host', 'client'], allowedTransports: ['cloud'] });
     const since = req.query.since ? safeIso(String(req.query.since)) : null;
+    const sinceSequence = Math.max(Number(req.query.since_sequence || req.query.sinceSequence || 0), 0);
     const limit = Math.min(Math.max(Number(req.query.limit || 1000), 1), 5000);
     const cursor = decodeCursor(req.query.cursor);
     const minSnapshotUpdatedAt = req.query.min_snapshot_updated_at ? safeIso(String(req.query.min_snapshot_updated_at)) : null;
@@ -41,7 +63,7 @@ export default async function handler(req, res) {
     // First-time/new-device pull: return the latest materialized state in
     // stable pages. The cursor also carries a high-water mark so events created
     // during a multi-page snapshot are not skipped after the snapshot finishes.
-    if (!since) {
+    if (!since && sinceSequence <= 0) {
       const watermark = cursor?.watermark || new Date().toISOString();
       const cursorUpdatedAt = cursor?.updatedAt ? safeIso(cursor.updatedAt) : null;
       const cursorEntityType = cursor?.entityType || '';
@@ -77,6 +99,14 @@ export default async function handler(req, res) {
       const pageRows = snapshotRows.slice(0, limit);
       const hasMore = snapshotRows.length > limit;
       const last = pageRows[pageRows.length - 1];
+      const sequenceRows = await sql`
+        select coalesce(max(sequence), 0) as max_sequence
+        from sync_events
+        where store_id = ${storeId}
+          and branch_id = ${branchId}
+          and received_at <= ${watermark}::timestamptz
+      `;
+      const watermarkSequence = Number(sequenceRows[0]?.max_sequence || 0);
       const changes = pageRows.map((row) => ({
         id: `snapshot-${row.entity_type}-${row.entity_id}-${asIso(row.updated_at)}`,
         storeId: row.store_id,
@@ -92,12 +122,14 @@ export default async function handler(req, res) {
         storeEpoch: 1,
         sequence: 0,
       }));
+      await markDevicePullSeen(req, { storeId, branchId });
       return res.status(200).json({
         ok: true,
         changes,
         hasMore,
         nextCursor: hasMore && last ? encodeCursor({ mode: 'snapshot', watermark, updatedAt: asIso(last.updated_at), entityType: last.entity_type, entityId: last.entity_id }) : null,
         generatedAt: hasMore ? null : watermark,
+        generatedSequence: hasMore ? null : watermarkSequence,
         source: 'entity_snapshots',
       });
     }
@@ -111,7 +143,7 @@ export default async function handler(req, res) {
           from sync_events
           where store_id = ${storeId}
             and branch_id = ${branchId}
-            and received_at > ${since}
+            and (case when ${sinceSequence} > 0 then sequence > ${sinceSequence} else received_at > ${since} end)
             and (
               received_at > ${cursorReceivedAt}
               or (received_at = ${cursorReceivedAt} and created_at > ${cursorCreatedAt})
@@ -125,7 +157,7 @@ export default async function handler(req, res) {
           from sync_events
           where store_id = ${storeId}
             and branch_id = ${branchId}
-            and received_at > ${since}
+            and (case when ${sinceSequence} > 0 then sequence > ${sinceSequence} else received_at > ${since} end)
           order by received_at asc, created_at asc, id asc
           limit ${limit + 1}
         `;
@@ -150,12 +182,15 @@ export default async function handler(req, res) {
     }));
 
     const maxReceivedAt = pageRows.length ? asIso(pageRows[pageRows.length - 1].received_at) : since;
+    const maxSequence = pageRows.length ? Math.max(...pageRows.map((row) => Number(row.sequence || 0))) : sinceSequence;
+    await markDevicePullSeen(req, { storeId, branchId });
     res.status(200).json({
       ok: true,
       changes,
       hasMore,
       nextCursor: hasMore && last ? encodeCursor({ mode: 'events', receivedAt: asIso(last.received_at), createdAt: asIso(last.created_at), id: last.id }) : null,
       generatedAt: hasMore ? null : (maxReceivedAt || new Date().toISOString()),
+      generatedSequence: hasMore ? null : maxSequence,
       source: 'sync_events',
     });
   } catch (error) {

@@ -8,6 +8,7 @@ import 'package:pointycastle/export.dart' as pc;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/services/local_database_service.dart';
+import '../core/sync_unified/sync_device_state.dart';
 import '../core/utils/currency_utils.dart';
 
 import '../models/catalog_item.dart';
@@ -202,6 +203,7 @@ class AppStore extends ChangeNotifier {
   List<Purchase> get purchases => List.unmodifiable(_purchases.where((item) => !item.isDeleted).toList().reversed);
   List<StockMovement> get stockMovements => List.unmodifiable(_stockMovements.toList().reversed);
   List<SyncChange> get syncChanges => List.unmodifiable(_syncChanges);
+  int get currentSyncSequence => _syncSequence;
   List<SyncQueueItem> get syncQueue => List.unmodifiable(_syncQueue);
   List<SyncQueueItem> get pendingSyncQueue => List.unmodifiable(_syncQueue.where((item) => item.isPending));
   List<SyncChange> get pendingSyncChanges => List.unmodifiable(_syncChanges.where((item) => !item.isSynced));
@@ -1129,12 +1131,20 @@ class AppStore extends ChangeNotifier {
       throw StateError('A Host device cannot keep LAN Client state. Clear local data or use Transfer Host before changing sync role.');
     }
 
-    // A Client must choose one transport only: LAN Client or Cloud Client.
+    // A Client may configure both LAN and Cloud transport settings, but only
+    // one active transport may run at a time. Sync progress is tracked by
+    // deviceId/storeId/branchId, not by the transport that delivered it.
     if (next.isClient && lanClient && cloudClient) {
-      throw StateError('A Client device cannot be both LAN Client and Cloud Client. Connect to one Host type only.');
+      final active = next.activeSyncTransportNormalized;
+      if (active != 'lan' && active != 'cloud') {
+        throw StateError('Client has LAN and Cloud configured but no active sync transport was selected.');
+      }
     }
     if (lanIdentityClient && cloudClient) {
-      throw StateError('A Client device cannot be both LAN Client and Cloud Client.');
+      final active = next.activeSyncTransportNormalized;
+      if (active != 'lan' && active != 'cloud') {
+        throw StateError('Client has LAN and Cloud configured but no active sync transport was selected.');
+      }
     }
 
     // Prevent cross-authority conflicts: Host in one system, Client in another.
@@ -1153,6 +1163,7 @@ class AppStore extends ChangeNotifier {
     _assertLanCloudRoleRules(normalized, source: 'setup/pairing/rebuild');
     _appIdentity = normalized;
     await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(normalized.toJson()));
+    await SyncDeviceStateStore.setActiveTransport(normalized, normalized.activeSyncTransportNormalized);
     notifyListeners();
   }
 
@@ -1170,7 +1181,53 @@ class AppStore extends ChangeNotifier {
       payload: normalized.toJson(),
     );
     await _saveAll();
+    await SyncDeviceStateStore.setActiveTransport(normalized, normalized.activeSyncTransportNormalized);
     notifyListeners();
+  }
+
+
+  Future<void> setActiveSyncTransport(String transport) async {
+    requirePermission(AppPermission.settingsManage);
+    final normalizedTransport = transport.trim().toLowerCase();
+    if (normalizedTransport != 'lan' && normalizedTransport != 'cloud') {
+      throw ArgumentError('Active sync transport must be either lan or cloud.');
+    }
+    final identity = appIdentity;
+    if (!identity.isClient) {
+      throw StateError('Only Client devices switch the active sync transport. Hosts may run LAN and Cloud together.');
+    }
+
+    final nextIdentity = identity.copyWith(
+      activeSyncTransport: normalizedTransport,
+      updatedAt: DateTime.now(),
+    );
+    _assertLanCloudRoleRules(nextIdentity, source: 'active transport switch');
+    _appIdentity = nextIdentity;
+    await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(nextIdentity.toJson()));
+    await SyncDeviceStateStore.setActiveTransport(nextIdentity, normalizedTransport);
+    await _retargetPendingClientSyncQueue(normalizedTransport);
+    notifyListeners();
+  }
+
+  Future<void> _retargetPendingClientSyncQueue(String activeTransport) async {
+    final newTarget = activeTransport == 'lan' ? 'host' : 'cloud_host';
+    final oldTarget = activeTransport == 'lan' ? 'cloud_host' : 'host';
+    final now = DateTime.now();
+    var changed = false;
+    for (var i = 0; i < _syncQueue.length; i++) {
+      final item = _syncQueue[i];
+      if (item.target == oldTarget && item.isPending) {
+        _syncQueue[i] = item.copyWith(
+          id: '${item.changeId}-$newTarget',
+          target: newTarget,
+          status: 'pending',
+          updatedAt: now,
+          clearNextRetryAt: true,
+        );
+        changed = true;
+      }
+    }
+    if (changed) await _saveAll();
   }
 
 
@@ -2051,8 +2108,9 @@ class AppStore extends ChangeNotifier {
 
   void _enqueueSyncChange(String changeId, DateTime now) {
     final identity = appIdentity;
-    final isLanClient = _isLanClientConfigured ||
-        (identity.isClient && identity.syncMode == SyncMode.lanOnly);
+    final activeTransport = identity.activeSyncTransportNormalized;
+    final isLanClient = identity.isClient && activeTransport == 'lan' &&
+        (_isLanClientConfigured || identity.syncMode == SyncMode.lanOnly);
 
     // Sync architecture v2: the Host is the only source of truth.
     // - Host devices publish accepted/authoritative changes to Cloud.
@@ -2068,10 +2126,10 @@ class AppStore extends ChangeNotifier {
             ? 'host'
             : isLanClient
                 ? 'host'
-                : (identity.isCloudEnabled && identity.isClient)
+                : (identity.isClient && activeTransport == 'cloud')
                     ? 'cloud_host'
                     : (identity.platform == AppPlatformType.web &&
-                            identity.isCloudEnabled)
+                            activeTransport == 'cloud')
                         ? 'cloud_host'
                         : 'local';
     if (target == 'local') return;
@@ -2749,6 +2807,7 @@ class AppStore extends ChangeNotifier {
         if (includeDeviceAndSyncState) 'appIdentity': appIdentity.toJson(),
         if (includeDeviceAndSyncState) 'storeEpoch': appIdentity.storeEpoch,
         'syncGeneratedAt': DateTime.now().toIso8601String(),
+        'syncGeneratedSequence': _syncChanges.isEmpty ? 0 : _syncChanges.map((item) => item.sequence).reduce((a, b) => a > b ? a : b),
       };
 
 
@@ -2835,17 +2894,33 @@ class AppStore extends ChangeNotifier {
     }
   }
 
-  String exportSyncChangesJson({DateTime? since}) {
-    final changes = since == null
-        ? _syncChanges
-        : _syncChanges.where((item) => !item.createdAt.isBefore(since)).toList();
+  int syncSnapshotGeneratedSequenceFromJson(String rawJson) {
+    try {
+      final decoded = jsonDecode(rawJson) as Map<String, dynamic>;
+      return int.tryParse(decoded['syncGeneratedSequence']?.toString() ?? '') ?? 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  String exportSyncChangesJson({DateTime? since, int? sinceSequence}) {
+    final sequenceFloor = sinceSequence ?? 0;
+    final changes = _syncChanges.where((item) {
+      if (sequenceFloor > 0) return item.sequence > sequenceFloor;
+      if (since != null) return !item.createdAt.isBefore(since);
+      return true;
+    }).toList();
     final cursor = changes.isEmpty
         ? (since ?? DateTime.fromMillisecondsSinceEpoch(0))
         : changes.map((item) => item.createdAt).reduce((a, b) => a.isAfter(b) ? a : b);
+    final generatedSequence = changes.isEmpty
+        ? sequenceFloor
+        : changes.map((item) => item.sequence).reduce((a, b) => a > b ? a : b);
     return jsonEncode({
       'ok': true,
       'deviceId': _deviceId,
       'generatedAt': cursor.toIso8601String(),
+      'generatedSequence': generatedSequence,
       'changes': changes.map((item) => item.toJson()).toList(),
     });
   }

@@ -1,4 +1,11 @@
-import { sql, assertSyncTokenOrDevice, assertStoreAllowed, sendError } from '../_db.js';
+import { sql, assertSyncTokenOrDevice, assertStoreAllowed, ensureDeviceAuthColumns, sendError } from '../_db.js';
+
+function safeDate(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+}
 
 function normalizeChange(raw, fallback) {
   if (!raw || typeof raw !== 'object') throw new Error('Invalid sync change.');
@@ -228,6 +235,7 @@ export default async function handler(req, res) {
   try {
     await sql`alter table sync_events add column if not exists store_epoch integer not null default 1`;
     await sql`alter table sync_events add column if not exists sequence integer not null default 0`;
+    await ensureDeviceAuthColumns();
     if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Method not allowed' });
 
     const body = req.body || {};
@@ -246,6 +254,8 @@ export default async function handler(req, res) {
     }
 
     const ackIds = [];
+    let latestAcceptedAt = null;
+    let latestAcceptedSequence = 0;
     for (const raw of changes) {
       const change = normalizeChange(raw, fallback);
       assertStoreAllowed(change.storeId);
@@ -266,10 +276,34 @@ export default async function handler(req, res) {
         await materializeChange(change);
         await cleanupExpiredSoftDeletes(change.storeId, change.branchId);
       }
+      latestAcceptedAt = change.createdAt;
+      latestAcceptedSequence = Math.max(latestAcceptedSequence, Number(change.sequence || 0));
       ackIds.push(change.id);
     }
 
-    res.status(200).json({ ok: true, ackIds, serverTime: new Date().toISOString() });
+    const deviceId = String(body.deviceId || body.device_id || req.headers['x-device-id'] || fallback.deviceId || '').trim();
+    const storeId = String(fallback.storeId || (changes[0] && (changes[0].storeId || changes[0].store_id)) || '').trim();
+    const branchId = String(fallback.branchId || (changes[0] && (changes[0].branchId || changes[0].branch_id)) || 'main').trim() || 'main';
+    if (storeId && deviceId) {
+      const cursor = safeDate(body.cursor || body.lastAppliedCursor || body.last_applied_cursor || latestAcceptedAt);
+      const sequence = Math.max(Number(body.sequence || body.lastAppliedSequence || body.last_applied_sequence || 0), latestAcceptedSequence);
+      await sql`
+        update store_devices
+        set last_sync_transport = 'cloud',
+            active_transport = case when coalesce(active_transport, '') = '' then 'cloud' else active_transport end,
+            last_ack_cursor = greatest(coalesce(last_ack_cursor, 'epoch'::timestamptz), coalesce(${cursor}::timestamptz, last_ack_cursor, 'epoch'::timestamptz)),
+            last_ack_sequence = greatest(coalesce(last_ack_sequence, 0), ${sequence}),
+            last_ack_at = now(),
+            online = true,
+            last_seen_at = now(),
+            updated_at = now()
+        where store_id = ${storeId}
+          and branch_id = ${branchId}
+          and device_id = ${deviceId}
+      `;
+    }
+
+    res.status(200).json({ ok: true, ackIds, acceptedSequence: latestAcceptedSequence, serverTime: new Date().toISOString() });
   } catch (error) {
     sendError(res, error);
   }

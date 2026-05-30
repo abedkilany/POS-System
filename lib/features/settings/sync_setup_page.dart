@@ -38,7 +38,6 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
   );
 
   final _cloudApiController = TextEditingController(text: CloudSyncSettings.load().apiBaseUrl);
-  final _cloudTokenController = TextEditingController(text: CloudSyncSettings.load().apiToken);
   final _cloudPairingCodeController = TextEditingController();
 
   late final LanSyncService _lanSyncService = LanSyncService(widget.store);
@@ -67,7 +66,6 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
 
   _ConnectMode _mode = _ConnectMode.cloud;
   bool _busy = false;
-  bool _advancedCloud = false;
   String _status = '';
   _SetupStatus _statusType = _SetupStatus.idle;
   Timer? _qrCountdownTimer;
@@ -152,7 +150,6 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
     _portController.dispose();
     _lanTokenController.dispose();
     _cloudApiController.dispose();
-    _cloudTokenController.dispose();
     _cloudPairingCodeController.dispose();
     _qrCountdownTimer?.cancel();
     super.dispose();
@@ -193,7 +190,13 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
 
         if (host.trim().isNotEmpty) _hostController.text = host.trim();
         if (port.trim().isNotEmpty) _portController.text = port.trim();
-        if (apiBaseUrl.trim().isNotEmpty) _cloudApiController.text = apiBaseUrl.trim();
+        if (apiBaseUrl.trim().isNotEmpty) {
+          try {
+            _cloudApiController.text = CloudSyncSettings.normalizeApiBaseUrl(apiBaseUrl.trim());
+          } catch (_) {
+            _cloudApiController.text = apiBaseUrl.trim();
+          }
+        }
 
         code = token.trim().isNotEmpty ? token.trim() : raw;
       }
@@ -294,13 +297,18 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       }
 
       final existing = CloudSyncSettings.load();
+      final normalizedApiBaseUrl = CloudSyncSettings.normalizeApiBaseUrl(
+        _cloudApiController.text.trim(),
+        fallback: existing.apiBaseUrl,
+      );
+      _cloudApiController.text = normalizedApiBaseUrl;
       final settings = CloudSyncSettings(
         enabled: true,
-        apiBaseUrl: _cloudApiController.text.trim(),
-        // Clients must not need the Host deployment token. Preserve an existing
-        // token only for upgraded Host/advanced setups; normal client pairing
-        // works with API URL + single-use code only.
-        apiToken: _cloudTokenController.text.trim().isNotEmpty ? _cloudTokenController.text.trim() : existing.apiToken,
+        apiBaseUrl: normalizedApiBaseUrl,
+        // Client pairing only needs API URL + single-use pairing code.
+        // Preserve an existing deployment token for Host/admin settings, but do
+        // not expose or require it in Connect to Store.
+        apiToken: existing.apiToken,
         autoSyncEnabled: true,
       );
       await settings.save();
@@ -320,9 +328,15 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
         SnackBar(content: Text(result.message.isEmpty ? connectedStoreSignIn : result.message)),
       );
       await widget.onDone();
+    } on FormatException catch (error) {
+      _markQrFailed(error.message);
+      _setStatus(error.message, type: _SetupStatus.error);
     } catch (error) {
       _markQrFailed(error.toString());
-      _setStatus('$cloudConnectionFailed: $error', type: _SetupStatus.error);
+      final message = error.toString().contains('Null check operator used on a null value')
+          ? tr.text('pairing_state_refresh_failed')
+          : '$cloudConnectionFailed: $error';
+      _setStatus(message, type: _SetupStatus.error);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -672,26 +686,6 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
             helperText: tr.text('cloud_pairing_code_helper'),
             border: const OutlineInputBorder(),
           ),
-        ),
-        const SizedBox(height: 8),
-        ExpansionTile(
-          initiallyExpanded: _advancedCloud,
-          onExpansionChanged: (value) => setState(() => _advancedCloud = value),
-          tilePadding: EdgeInsets.zero,
-          title: Text(tr.text('advanced_cloud_settings')),
-          subtitle: Text(tr.text('advanced_cloud_settings_desc')),
-          children: [
-            TextField(
-              controller: _cloudTokenController,
-              enabled: !_busy,
-              obscureText: true,
-              decoration: InputDecoration(
-                labelText: tr.text('cloud_sync_token'),
-                helperText: tr.text('cloud_sync_token_helper'),
-                border: const OutlineInputBorder(),
-              ),
-            ),
-          ],
         ),
       ];
 }

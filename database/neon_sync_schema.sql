@@ -100,6 +100,14 @@ create table if not exists store_devices (
 
 alter table store_devices add column if not exists device_token text default '';
 alter table store_devices add column if not exists revoked boolean not null default false;
+alter table store_devices add column if not exists active_transport text default '';
+alter table store_devices add column if not exists last_sync_transport text default '';
+alter table store_devices add column if not exists last_applied_cursor timestamptz;
+alter table store_devices add column if not exists last_ack_cursor timestamptz;
+alter table store_devices add column if not exists last_applied_sequence bigint not null default 0;
+alter table store_devices add column if not exists last_ack_sequence bigint not null default 0;
+alter table store_devices add column if not exists last_ack_at timestamptz;
+alter table store_devices add column if not exists online boolean not null default false;
 
 create index if not exists idx_store_devices_latest
   on store_devices (store_id, branch_id, last_seen_at desc);

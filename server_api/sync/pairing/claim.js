@@ -85,16 +85,19 @@ export default async function handler(req, res) {
 
     const deviceToken = makeDeviceToken();
     await sql`
-      insert into store_devices (store_id, branch_id, device_id, device_name, platform, role, transport, app_version, device_token, revoked, last_seen_at, updated_at)
-      values (${pairing.store_id}, ${pairing.branch_id}, ${deviceId}, ${deviceName}, ${platform}, 'client', ${pairing.transport}, ${appVersion}, ${deviceToken}, false, now(), now())
+      insert into store_devices (store_id, branch_id, device_id, device_name, platform, role, transport, active_transport, last_sync_transport, app_version, device_token, revoked, online, last_seen_at, updated_at)
+      values (${pairing.store_id}, ${pairing.branch_id}, ${deviceId}, ${deviceName}, ${platform}, 'client', ${pairing.transport}, ${pairing.transport}, ${pairing.transport}, ${appVersion}, ${deviceToken}, false, true, now(), now())
       on conflict (store_id, branch_id, device_id) do update set
         device_name = excluded.device_name,
         platform = excluded.platform,
         role = 'client',
         transport = excluded.transport,
+        active_transport = excluded.active_transport,
+        last_sync_transport = excluded.last_sync_transport,
         app_version = excluded.app_version,
         device_token = excluded.device_token,
         revoked = false,
+        online = true,
         last_seen_at = now(),
         updated_at = now()
     `;

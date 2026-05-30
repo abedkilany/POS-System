@@ -21,7 +21,7 @@ export default async function handler(req, res) {
       returning *
     `;
     if (!rows.length) return res.status(409).json({ ok: false, error: 'No approved Host transfer was found for this device.' });
-    await sql`update store_devices set role = 'host', transport = 'cloud', updated_at = now() where store_id = ${storeId} and branch_id = ${branchId} and device_id = ${newHostDeviceId}`;
+    await sql`update store_devices set role = 'host', transport = 'cloud', active_transport = 'cloud', last_sync_transport = 'cloud', online = true, last_seen_at = now(), updated_at = now() where store_id = ${storeId} and branch_id = ${branchId} and device_id = ${newHostDeviceId}`;
     res.status(200).json({ ok: true, request: transferDto(rows[0]) });
   } catch (error) { sendError(res, error); }
 }

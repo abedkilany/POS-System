@@ -9,6 +9,7 @@ import '../../models/app_identity.dart';
 import '../../models/sync_change.dart';
 import 'local_database_service.dart';
 import 'unified_sync_core_service.dart';
+import '../sync_unified/sync_device_state.dart';
 
 typedef LanSyncProgressCallback = void Function(double value, String label);
 
@@ -245,6 +246,8 @@ class LanSyncService {
       }
 
       final settings = LanSyncSettings.load();
+      final receivedDeviceId = request.headers.value('x-device-id');
+      final receivedDeviceToken = request.headers.value('x-device-token');
 
       if (request.method == 'POST' && request.uri.path == '/pairing/claim') {
         final body = await utf8.decoder.bind(request).join();
@@ -281,8 +284,6 @@ class LanSyncService {
       }
 
       if (!_authorized(request, settings)) {
-        final receivedDeviceId = request.headers.value('x-device-id');
-        final receivedDeviceToken = request.headers.value('x-device-token');
         // Keep a safe log for troubleshooting LAN/Host pairing problems without printing full tokens.
         developer.log(
           'LAN SYNC AUTH FAILED: path=${request.uri.path} '
@@ -321,9 +322,30 @@ class LanSyncService {
 
       if (request.method == 'GET' && request.uri.path == '/changes/pull') {
         final since = DateTime.tryParse(request.uri.queryParameters['since'] ?? '');
+        final sinceSequence = int.tryParse(request.uri.queryParameters['since_sequence'] ?? '') ?? 0;
+        // Pull is delivery only. The Host must not mark changes as applied or
+        // ACKed until the Client posts /changes/ack after local apply succeeds.
         request.response.headers.contentType = ContentType.json;
-        request.response.write(store.exportSyncChangesJson(since: since));
+        request.response.write(store.exportSyncChangesJson(since: since, sinceSequence: sinceSequence));
         await request.response.close();
+        return;
+      }
+
+      if (request.method == 'POST' && request.uri.path == '/changes/ack') {
+        final body = await utf8.decoder.bind(request).join();
+        final decoded = jsonDecode(body) as Map<String, dynamic>;
+        final clientDeviceId = decoded['deviceId']?.toString() ?? receivedDeviceId ?? '';
+        final cursor = DateTime.tryParse(decoded['lastAppliedCursor']?.toString() ?? decoded['lastAckCursor']?.toString() ?? '');
+        final sequence = int.tryParse(decoded['lastAppliedSequence']?.toString() ?? decoded['lastAckSequence']?.toString() ?? '') ?? 0;
+        await SyncDeviceStateStore.recordPeerSyncResult(
+          deviceId: clientDeviceId,
+          transport: 'lan',
+          appliedCursor: cursor,
+          ackCursor: cursor,
+          appliedSequence: sequence,
+          ackSequence: sequence,
+        );
+        await _json(request, {'ok': true, 'serverTime': DateTime.now().toIso8601String()});
         return;
       }
 
@@ -337,9 +359,17 @@ class LanSyncService {
           await _json(request, {'ok': false, 'error': 'Reset data can only be initiated on the Host device.'}, status: HttpStatus.forbidden);
           return;
         }
+        final clientCursor = DateTime.tryParse(decoded['cursor']?.toString() ?? '');
+        final clientSequence = int.tryParse(decoded['sequence']?.toString() ?? decoded['lastAppliedSequence']?.toString() ?? '') ?? 0;
         final accepted = await _syncCore.acceptClientChangesOnHost(
           changes,
           mirrorToCloud: store.appIdentity.isCloudEnabled && store.appIdentity.isHost,
+        );
+        await SyncDeviceStateStore.recordPeerSyncResult(
+          deviceId: decoded['deviceId']?.toString() ?? receivedDeviceId ?? '',
+          transport: 'lan',
+          ackCursor: clientCursor,
+          ackSequence: clientSequence,
         );
         await _json(request, {
           'ok': true,
@@ -394,9 +424,9 @@ class LanSyncService {
     if (identity.isHost) {
       return const LanSyncResult(ok: false, message: 'Host devices cannot pair as LAN Clients. Use Transfer Host instead.');
     }
-    if (identity.isClient && (identity.syncMode == SyncMode.cloudConnected || identity.syncMode == SyncMode.marketplaceEnabled)) {
-      return const LanSyncResult(ok: false, message: 'This device is already a Cloud Client. Clear local data or connect to a new Host before using LAN pairing.');
-    }
+    // A Client may configure both LAN and Cloud transports. Pairing LAN only
+    // prepares another delivery method; the active transport still decides
+    // which one auto-sync runs.
     try {
       final client = _client();
       final request = await client.post(host.trim(), port, '/pairing/claim');
@@ -428,6 +458,7 @@ class LanSyncService {
         deviceId: decoded['deviceId']?.toString() ?? current.deviceId,
         deviceRole: DeviceRole.client,
         syncMode: SyncMode.lanOnly,
+        activeSyncTransport: 'lan',
         hostDeviceId: decoded['hostDeviceId']?.toString() ?? current.hostDeviceId,
         deviceToken: decoded['deviceToken']?.toString() ?? current.deviceToken,
       ));
@@ -444,6 +475,7 @@ class LanSyncService {
         lastConnectionAt: DateTime.now(),
         lastSyncAt: DateTime.now(),
       ).save();
+      await SyncDeviceStateStore.recordSyncResult(store.appIdentity, transport: 'lan', appliedCursor: hostCursor, ackCursor: hostCursor);
       return const LanSyncResult(ok: true, message: 'LAN pairing completed.');
     } catch (error) {
       return LanSyncResult(ok: false, message: 'LAN pairing failed: $error');
@@ -483,6 +515,9 @@ class LanSyncService {
       final settings = LanSyncSettings.load();
       onProgress?.call(0.94, 'Saving LAN sync cursor...');
       await settings.copyWith(lastPullCursor: hostCursor, lastConnectionAt: DateTime.now(), lastSyncAt: DateTime.now()).save();
+      final hostSequence = store.syncSnapshotGeneratedSequenceFromJson(body);
+      await SyncDeviceStateStore.recordSyncResult(store.appIdentity, transport: 'lan', appliedCursor: hostCursor, ackCursor: hostCursor, appliedSequence: hostSequence, ackSequence: hostSequence);
+      await _sendLanAck(host, port: port, token: token, cursor: hostCursor, sequence: hostSequence);
       return const LanSyncResult(ok: true, message: 'Initial clone completed.');
     } catch (error) {
       return LanSyncResult(ok: false, message: 'Initial clone failed: $error');
@@ -534,6 +569,9 @@ class LanSyncService {
       final hostCursor = store.syncSnapshotGeneratedAtFromJson(body);
       final settings = LanSyncSettings.load();
       await settings.copyWith(lastPullCursor: hostCursor, lastConnectionAt: DateTime.now(), lastSyncAt: DateTime.now()).save();
+      final hostSequence = store.syncSnapshotGeneratedSequenceFromJson(body);
+      await SyncDeviceStateStore.recordSyncResult(store.appIdentity, transport: 'lan', appliedCursor: hostCursor, ackCursor: hostCursor, appliedSequence: hostSequence, ackSequence: hostSequence);
+      await _sendLanAck(host, port: port, token: token, cursor: hostCursor, sequence: hostSequence);
       onProgress?.call(1.0, 'LAN rebuild completed.');
       return const LanSyncResult(ok: true, message: 'LAN rebuild completed from full Host snapshot.');
     } catch (error) {
@@ -541,6 +579,28 @@ class LanSyncService {
     }
   }
 
+
+  Future<void> _sendLanAck(String host, {int port = 8787, String token = '', required DateTime cursor, int sequence = 0}) async {
+    try {
+      final client = _client();
+      final request = await client.post(host.trim(), port, '/changes/ack');
+      _attachToken(request, token);
+      request.headers.contentType = ContentType.json;
+      request.write(jsonEncode({
+        'deviceId': store.deviceId,
+        'storeId': store.appIdentity.storeId,
+        'branchId': store.appIdentity.branchId,
+        'lastAppliedCursor': cursor.toIso8601String(),
+        'lastAckCursor': cursor.toIso8601String(),
+        'lastAppliedSequence': sequence,
+        'lastAckSequence': sequence,
+      }));
+      await request.close();
+      client.close(force: true);
+    } catch (_) {
+      // ACK is best-effort; the next LAN pull/heartbeat can repair Host visibility.
+    }
+  }
 
   Future<LanSyncResult> pushPendingOnly(String host, {int port = 8787, String token = '', LanSyncProgressCallback? onProgress}) async {
     final pending = _syncCore.pendingChangesForTarget('host');
@@ -557,6 +617,8 @@ class LanSyncService {
         'deviceId': store.deviceId,
         'storeId': store.appIdentity.storeId,
         'branchId': store.appIdentity.branchId,
+        'cursor': LanSyncSettings.load().lastPullCursor?.toIso8601String(),
+        'sequence': SyncDeviceStateStore.load(store.appIdentity).lastAppliedSequence,
         'changes': pending.map((item) => item.toJson()).toList(),
       }));
       final pushResponse = await pushRequest.close();
@@ -581,9 +643,12 @@ class LanSyncService {
     final settings = LanSyncSettings.load();
     try {
       final client = _client();
+      final ackCursor = settings.lastPullCursor?.toIso8601String() ?? '';
+      final lastSequence = SyncDeviceStateStore.load(store.appIdentity).lastAppliedSequence;
+      final seqParam = '&since_sequence=$lastSequence';
       final path = settings.lastPullCursor == null
-          ? '/changes/pull'
-          : '/changes/pull?since=${Uri.encodeQueryComponent(settings.lastPullCursor!.toIso8601String())}';
+          ? '/changes/pull?device_id=${Uri.encodeQueryComponent(store.deviceId)}&ack_cursor=${Uri.encodeQueryComponent(ackCursor)}$seqParam'
+          : '/changes/pull?device_id=${Uri.encodeQueryComponent(store.deviceId)}&ack_cursor=${Uri.encodeQueryComponent(ackCursor)}&since=${Uri.encodeQueryComponent(settings.lastPullCursor!.toIso8601String())}$seqParam';
       onProgress?.call(0.62, 'Pulling new changes from LAN Host...');
       final pullRequest = await client.get(host.trim(), port, path);
       _attachToken(pullRequest, token);
@@ -600,7 +665,10 @@ class LanSyncService {
       onProgress?.call(0.78, 'Applying ${changes.length} LAN change(s) locally...');
       await _syncCore.applyAuthoritativeChanges(changes);
       final generatedAt = DateTime.tryParse(decodedPull['generatedAt'] as String? ?? '') ?? DateTime.now();
+      final generatedSequence = int.tryParse(decodedPull['generatedSequence']?.toString() ?? '') ?? 0;
       await settings.copyWith(lastPullCursor: generatedAt, lastConnectionAt: DateTime.now(), lastSyncAt: DateTime.now()).save();
+      await SyncDeviceStateStore.recordSyncResult(store.appIdentity, transport: 'lan', appliedCursor: generatedAt, ackCursor: generatedAt, appliedSequence: generatedSequence, ackSequence: generatedSequence);
+      await _sendLanAck(host, port: port, token: token, cursor: generatedAt, sequence: generatedSequence);
       return LanSyncResult(ok: true, message: 'LAN pull completed. Pulled ${changes.length} change(s).');
     } catch (error) {
       return LanSyncResult(ok: false, message: 'LAN pull failed: $error');
@@ -654,9 +722,12 @@ class LanSyncService {
         pushCompleted = true;
       }
 
+      final ackCursor = settings.lastPullCursor?.toIso8601String() ?? '';
+      final lastSequence = SyncDeviceStateStore.load(store.appIdentity).lastAppliedSequence;
+      final seqParam = '&since_sequence=$lastSequence';
       final path = settings.lastPullCursor == null
-          ? '/changes/pull'
-          : '/changes/pull?since=${Uri.encodeQueryComponent(settings.lastPullCursor!.toIso8601String())}';
+          ? '/changes/pull?device_id=${Uri.encodeQueryComponent(store.deviceId)}&ack_cursor=${Uri.encodeQueryComponent(ackCursor)}$seqParam'
+          : '/changes/pull?device_id=${Uri.encodeQueryComponent(store.deviceId)}&ack_cursor=${Uri.encodeQueryComponent(ackCursor)}&since=${Uri.encodeQueryComponent(settings.lastPullCursor!.toIso8601String())}$seqParam';
       onProgress?.call(0.62, 'Pulling new changes from LAN Host...');
       final pullRequest = await client.get(host.trim(), port, path);
       _attachToken(pullRequest, token);
@@ -677,8 +748,11 @@ class LanSyncService {
       onProgress?.call(0.78, 'Applying ${changes.length} LAN change(s) locally...');
       await _syncCore.applyAuthoritativeChanges(changes);
       final generatedAt = DateTime.tryParse(decodedPull['generatedAt'] as String? ?? '') ?? DateTime.now();
+      final generatedSequence = int.tryParse(decodedPull['generatedSequence']?.toString() ?? '') ?? 0;
       onProgress?.call(0.92, 'Saving LAN sync cursor...');
       await settings.copyWith(lastPullCursor: generatedAt, lastConnectionAt: DateTime.now(), lastSyncAt: DateTime.now()).save();
+      await SyncDeviceStateStore.recordSyncResult(store.appIdentity, transport: 'lan', appliedCursor: generatedAt, ackCursor: generatedAt, appliedSequence: generatedSequence, ackSequence: generatedSequence);
+      await _sendLanAck(host, port: port, token: token, cursor: generatedAt, sequence: generatedSequence);
       onProgress?.call(1.0, 'LAN sync completed.');
       return LanSyncResult(
         ok: true,
@@ -721,7 +795,7 @@ class AutoLanSyncController {
     final identity = store.appIdentity;
     if (identity.isHost) return settings.setupComplete && settings.isHost;
     if (identity.isClient) {
-      return identity.syncMode == SyncMode.lanOnly && settings.setupComplete && settings.isClient;
+      return (identity.syncMode == SyncMode.lanOnly || identity.activeSyncTransportNormalized == 'lan') && settings.setupComplete && settings.isClient;
     }
     return false;
   }

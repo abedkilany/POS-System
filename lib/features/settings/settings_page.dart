@@ -1415,6 +1415,17 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     _cloudApiController.text = cloud.apiBaseUrl;
     _cloudTokenController.text = cloud.apiToken;
     _cloudIntervalController.text = cloud.intervalSeconds.toString();
+    for (final controller in [
+      _lanHostController,
+      _lanPortController,
+      _lanTokenController,
+      _cloudApiController,
+      _cloudTokenController,
+      _cloudPairingCodeController,
+      _cloudIntervalController,
+    ]) {
+      controller.addListener(_onSyncDraftChanged);
+    }
     _loadActivePairingCodes();
     _startPairingCountdownTimer();
     _refreshHostIpAddresses();
@@ -1437,6 +1448,91 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   int get _lanPort => int.tryParse(_lanPortController.text.trim()) ?? 8787;
   int get _cloudInterval => int.tryParse(_cloudIntervalController.text.trim())?.clamp(5, 3600).toInt() ?? 5;
 
+  void _onSyncDraftChanged() {
+    if (mounted) setState(() {});
+  }
+
+  bool get _hasUnsavedSyncChanges {
+    final identity = widget.store.appIdentity;
+    final lan = LanSyncSettings.load();
+    final cloud = CloudSyncSettings.load();
+    final role = identity.isClient ? DeviceRole.client : DeviceRole.host;
+    final clientMode = identity.isCloudEnabled ? SyncMode.cloudConnected : SyncMode.lanOnly;
+    final lanEnabled = identity.isHost && lan.setupComplete && lan.isHost;
+    final cloudEnabled = identity.isCloudEnabled && cloud.isConfigured;
+    return _deviceRole != role ||
+        _clientSyncMode != clientMode ||
+        _lanEnabledForHost != lanEnabled ||
+        _cloudEnabled != cloudEnabled ||
+        _lanHostController.text.trim() != lan.host.trim() ||
+        _lanPortController.text.trim() != lan.port.toString() ||
+        _cloudApiController.text.trim() != cloud.apiBaseUrl.trim() ||
+        _cloudTokenController.text.trim() != cloud.apiToken.trim() ||
+        _cloudIntervalController.text.trim() != cloud.intervalSeconds.toString();
+  }
+
+  void _resetSyncDraft() {
+    final identity = widget.store.appIdentity;
+    final lan = LanSyncSettings.load();
+    final cloud = CloudSyncSettings.load();
+    setState(() {
+      _deviceRole = identity.isClient ? DeviceRole.client : DeviceRole.host;
+      _clientSyncMode = identity.isCloudEnabled ? SyncMode.cloudConnected : SyncMode.lanOnly;
+      _lanEnabledForHost = identity.isHost && lan.setupComplete && lan.isHost;
+      _cloudEnabled = identity.isCloudEnabled && cloud.isConfigured;
+      _lanHostController.text = lan.host;
+      _lanPortController.text = lan.port.toString();
+      _cloudApiController.text = cloud.apiBaseUrl;
+      _cloudTokenController.text = cloud.apiToken;
+      _cloudIntervalController.text = cloud.intervalSeconds.toString();
+      _status = AppLocalizations.of(context).text('cancelled');
+    });
+  }
+
+  Future<void> _testCurrentConnection() {
+    final identity = widget.store.appIdentity;
+    final shouldTestCloud = _cloudEnabled || identity.syncMode == SyncMode.cloudConnected;
+    return shouldTestCloud ? _testCloudConnection() : _testHostConnection();
+  }
+
+  Future<void> _saveSyncSettings() => _run(() async {
+        final identity = widget.store.appIdentity;
+        if (_deviceRole == DeviceRole.host) {
+          await widget.store.updateAppIdentity(identity.copyWith(
+            deviceRole: DeviceRole.host,
+            syncMode: _cloudEnabled ? SyncMode.cloudConnected : (_lanEnabledForHost ? SyncMode.lanOnly : SyncMode.localOnly),
+          ));
+          final existingLan = LanSyncSettings.load();
+          await LanSyncSettings(
+            host: _lanHostController.text.trim().isEmpty ? existingLan.host : _lanHostController.text.trim(),
+            port: _lanPort,
+            autoSyncEnabled: _lanEnabledForHost,
+            hostModeEnabled: _lanEnabledForHost,
+            setupComplete: _lanEnabledForHost,
+            mode: _lanEnabledForHost ? LanSyncDeviceMode.host : LanSyncDeviceMode.unconfigured,
+            secret: existingLan.secret,
+            pairedDevices: existingLan.pairedDevices,
+          ).save();
+          await _cloudSettings(enabled: _cloudEnabled).save();
+          if (!_cloudEnabled) await LocalDatabaseService.deleteString(_initialCloudHostReadyKey);
+        } else {
+          await widget.store.updateAppIdentity(identity.copyWith(
+            deviceRole: DeviceRole.client,
+            syncMode: _clientSyncMode,
+          ));
+          await LanSyncSettings.load().copyWith(
+            host: _lanHostController.text.trim(),
+            port: _lanPort,
+            secret: _lanTokenController.text.trim(),
+            mode: _clientSyncMode == SyncMode.lanOnly ? LanSyncDeviceMode.client : LanSyncDeviceMode.unconfigured,
+            setupComplete: _clientSyncMode == SyncMode.lanOnly && _lanHostController.text.trim().isNotEmpty,
+            hostModeEnabled: false,
+          ).save();
+          await _cloudSettings(enabled: _clientSyncMode == SyncMode.cloudConnected).save();
+        }
+        if (mounted) setState(() => _status = AppLocalizations.of(context).text('sync_settings_saved'));
+      });
+
   Future<void> _run(Future<void> Function() action) async {
     if (_busy) return;
     final tr = AppLocalizations.of(context);
@@ -1450,8 +1546,13 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       await widget.onSyncSettingsChanged?.call();
     } catch (error) {
       if (mounted) {
+        final rawMessage = error.toString().replaceFirst('Exception: ', '').replaceFirst('Bad state: ', '').replaceFirst('FormatException: ', '').trim();
         setState(() {
-          _status = error.toString().contains('Pairing code expired or already used') ? tr.text('pairing_code_expired_or_used') : tr.text('sync_failed_check_info');
+          _status = rawMessage.contains('Pairing code expired or already used')
+              ? tr.text('pairing_code_expired_or_used')
+              : rawMessage.isEmpty
+                  ? tr.text('sync_failed_check_info')
+                  : rawMessage;
           _statusProgress = null;
         });
       }
@@ -1466,13 +1567,23 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     }
   }
 
-  CloudSyncSettings _cloudSettings({bool enabled = true}) => CloudSyncSettings.load().copyWith(
-        enabled: enabled,
-        apiBaseUrl: _cloudApiController.text.trim().isEmpty ? (kIsWeb ? Uri.base.origin : '') : _cloudApiController.text.trim(),
-        apiToken: _cloudTokenController.text.trim(),
-        autoSyncEnabled: enabled,
-        intervalSeconds: _cloudInterval,
-      );
+  CloudSyncSettings _cloudSettings({bool enabled = true}) {
+    final fallback = kIsWeb ? Uri.base.origin : '';
+    final normalizedUrl = CloudSyncSettings.normalizeApiBaseUrl(
+      _cloudApiController.text.trim().isEmpty ? fallback : _cloudApiController.text.trim(),
+      fallback: fallback,
+    );
+    if (_cloudApiController.text.trim() != normalizedUrl) {
+      _cloudApiController.text = normalizedUrl;
+    }
+    return CloudSyncSettings.load().copyWith(
+      enabled: enabled,
+      apiBaseUrl: normalizedUrl,
+      apiToken: _cloudTokenController.text.trim(),
+      autoSyncEnabled: enabled,
+      intervalSeconds: _cloudInterval,
+    );
+  }
 
   UnifiedSyncEngine _cloudEngine({bool enabled = true}) => UnifiedSyncEngine(
         CloudSyncTransportAdapter(
@@ -1662,34 +1773,20 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     return result == true;
   }
 
-  String get _cloudPairingButtonLabel {
-    final active = _latestCloudPairingCode.trim().isNotEmpty && (_latestCloudPairingExpiresAt?.isAfter(DateTime.now()) ?? false);
-    if (!active) return AppLocalizations.of(context).text('generate_new_code');
-    return _showCloudPairingCode ? AppLocalizations.of(context).text('hide_code') : AppLocalizations.of(context).text('show_code'); // stage1-final
-  }
+  bool get _hasActiveCloudPairingCode => _latestCloudPairingCode.trim().isNotEmpty && (_latestCloudPairingExpiresAt?.isAfter(DateTime.now()) ?? false);
+  bool get _hasActiveLanPairingCode => _lanTokenController.text.trim().isNotEmpty && (_latestLanPairingExpiresAt?.isAfter(DateTime.now()) ?? false);
+
+  String get _cloudPairingButtonLabel => _hasActiveCloudPairingCode ? tr.text('regenerate_cloud_code') : tr.text('generate_cloud_code');
+  String get _lanPairingButtonLabel => _hasActiveLanPairingCode ? tr.text('regenerate_lan_code') : tr.text('generate_lan_code');
 
   Future<void> _handleCloudPairingButton() async {
-    final active = _latestCloudPairingCode.trim().isNotEmpty && (_latestCloudPairingExpiresAt?.isAfter(DateTime.now()) ?? false);
-    if (!active) {
-      await _createCloudPairingCode();
-      return;
-    }
-    setState(() => _showCloudPairingCode = !_showCloudPairingCode);
-  }
-
-  String get _lanPairingButtonLabel {
-    final active = _lanTokenController.text.trim().isNotEmpty && (_latestLanPairingExpiresAt?.isAfter(DateTime.now()) ?? false);
-    if (!active) return AppLocalizations.of(context).text('generate_new_code');
-    return _showLanPairingCode ? AppLocalizations.of(context).text('hide_code') : AppLocalizations.of(context).text('show_code'); // stage1-final
+    if (_hasActiveCloudPairingCode) _expireCloudPairingCode();
+    await _createCloudPairingCode();
   }
 
   Future<void> _handleLanPairingButton() async {
-    final active = _lanTokenController.text.trim().isNotEmpty && (_latestLanPairingExpiresAt?.isAfter(DateTime.now()) ?? false);
-    if (!active) {
-      await _generateLanToken();
-      return;
-    }
-    setState(() => _showLanPairingCode = !_showLanPairingCode);
+    if (_hasActiveLanPairingCode) _expireLanPairingCode();
+    await _generateLanToken();
   }
 
 
@@ -1779,7 +1876,13 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         final apiBaseUrl = (decoded['apiBaseUrl'] ?? decoded['apiUrl'] ?? decoded['cloudApiUrl'] ?? '').toString();
         if (host.trim().isNotEmpty) _lanHostController.text = host.trim();
         if (port.trim().isNotEmpty) _lanPortController.text = port.trim();
-        if (apiBaseUrl.trim().isNotEmpty) _cloudApiController.text = apiBaseUrl.trim();
+        if (apiBaseUrl.trim().isNotEmpty) {
+          try {
+            _cloudApiController.text = CloudSyncSettings.normalizeApiBaseUrl(apiBaseUrl.trim());
+          } catch (_) {
+            _cloudApiController.text = apiBaseUrl.trim();
+          }
+        }
         code = token.trim().isNotEmpty ? token.trim() : raw;
       }
     } catch (_) {
@@ -1829,29 +1932,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     await _cloudSettings(enabled: true).save();
   }
 
-  Future<void> _saveHostMode() => _run(() async {
-        final identity = widget.store.appIdentity;
-        final existingLan = LanSyncSettings.load();
-        final lanSecret = _lanTokenController.text.trim();
-        await widget.store.updateAppIdentity(identity.copyWith(
-          deviceRole: DeviceRole.host,
-          syncMode: _cloudEnabled ? SyncMode.cloudConnected : (_lanEnabledForHost ? SyncMode.lanOnly : SyncMode.localOnly),
-        ));
-        await LanSyncSettings(
-          host: _lanHostController.text.trim().isEmpty ? LanSyncSettings.load().host : _lanHostController.text.trim(),
-          port: _lanPort,
-          autoSyncEnabled: _lanEnabledForHost,
-          hostModeEnabled: _lanEnabledForHost,
-          setupComplete: _lanEnabledForHost,
-          mode: _lanEnabledForHost ? LanSyncDeviceMode.host : LanSyncDeviceMode.unconfigured,
-          secret: lanSecret,
-          pairedDevices: existingLan.pairedDevices,
-        ).save();
-        await _cloudSettings(enabled: _cloudEnabled).save();
-        if (!_cloudEnabled) await LocalDatabaseService.deleteString(_initialCloudHostReadyKey);
-        setState(() => _status = 'Host sync settings saved.');
-      });
-
   Future<void> _saveLanClient() => _run(() async {
         if (!await _confirmConnectToNewHost()) return;
         final secret = _lanTokenController.text.trim();
@@ -1870,7 +1950,12 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         _expireLanPairingCode();
         _expireCloudPairingCode();
         await CloudSyncSettings.load().copyWith(autoSyncEnabled: false, clearLastPullCursor: true).save();
-        setState(() { _connectToNewHost = false; _status = tr.text('lan_client_connected_cloned'); });
+        await widget.store.logout();
+        setState(() {
+          _connectToNewHost = false;
+          _clientSyncMode = SyncMode.lanOnly;
+          _status = tr.text('lan_client_connected_cloned');
+        });
       });
 
   Future<void> _claimCloudPairing() => _run(() async {
@@ -1883,7 +1968,12 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         _expireCloudPairingCode();
         _expireLanPairingCode();
         await LanSyncSettings.load().copyWith(autoSyncEnabled: false, setupComplete: false, mode: LanSyncDeviceMode.unconfigured, hostModeEnabled: false, clearLastPullCursor: true).save();
-        setState(() { _connectToNewHost = false; _status = result.message; });
+        await widget.store.logout();
+        setState(() {
+          _connectToNewHost = false;
+          _clientSyncMode = SyncMode.cloudConnected;
+          _status = result.message.trim().isEmpty ? 'Device paired successfully. Data will synchronize shortly.' : result.message;
+        });
       });
 
 
@@ -1956,15 +2046,12 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     final tr = AppLocalizations.of(context);
     final color = Theme.of(context).colorScheme;
     final identity = widget.store.appIdentity;
-    final lan = LanSyncSettings.load();
-    final cloud = CloudSyncSettings.load();
     final isHost = _deviceRole == DeviceRole.host;
-    final isCloudClient = !isHost && _clientSyncMode == SyncMode.cloudConnected;
-    final needsInitialCloudHost = isHost && _cloudEnabled && !_initialCloudHostReady;
-    final hostActionLabel = needsInitialCloudHost ? (_hostCreateFailed ? 'Retry Create Host' : 'Create New Host') : 'Sync Now';
-
     final lanActive = isHost ? _lanEnabledForHost : identity.syncMode == SyncMode.lanOnly;
     final cloudActive = isHost ? _cloudEnabled : identity.syncMode == SyncMode.cloudConnected;
+    final needsInitialCloudHost = isHost && _cloudEnabled && !_initialCloudHostReady;
+    final hostActionLabel = needsInitialCloudHost ? (_hostCreateFailed ? 'Retry Create Host' : 'Create New Host') : tr.text('sync_now');
+    final allGood = widget.store.pendingSyncCount == 0 && (lanActive || cloudActive || !isHost);
 
     return Card(
       elevation: 0,
@@ -1973,170 +2060,466 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    color: color.primaryContainer.withValues(alpha: 0.45),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Icon(Icons.sync_outlined, color: color.primary),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(tr.text('sync_settings'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
-                      const SizedBox(height: 4),
-                      Text(tr.text('sync_settings_desc'), style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: color.onSurfaceVariant)),
-                    ],
-                  ),
-                ),
-                if (isHost)
-                  FilledButton.icon(
-                    onPressed: _busy ? null : (needsInitialCloudHost ? _createNewHost : _syncNow),
-                    icon: Icon(needsInitialCloudHost ? Icons.add_business_outlined : Icons.sync_outlined),
-                    label: Text(hostActionLabel),
-                  )
-                else
-                  OutlinedButton.icon(
-                    onPressed: _busy ? null : _testHostConnection,
-                    icon: const Icon(Icons.lan_outlined),
-                    label: Text(tr.text('test_host_connection')),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 18),
-            if (widget.store.latestHostTransferNotification != null) _hostChangedNotificationCard(),
-            _syncSection(
+            _syncHeroHeader(
               context,
-              number: '1.',
-              title: tr.text('connection_status'),
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final compact = constraints.maxWidth < 760;
-                  final tiles = [
-                    _statusMetric(context, Icons.dns_outlined, tr.text('role'), isHost ? tr.text('host_device') : tr.text('client_device'), isHost ? tr.text('connection_role_host') : tr.text('connection_role_client'), color.primary),
-                    _statusMetric(context, Icons.account_tree_outlined, tr.text('lan_connection'), lanActive ? tr.text('pairing_status_active') : tr.text('pairing_status_disabled'), lanActive ? tr.text('local_network_ready') : tr.text('not_enabled'), lanActive ? Colors.green : color.onSurfaceVariant),
-                    _statusMetric(context, Icons.cloud_queue_outlined, tr.text('cloud_connection'), cloudActive ? tr.text('enabled') : tr.text('pairing_status_disabled'), cloudActive ? tr.text('cloud_services_online') : tr.text('cloud_sync_off'), cloudActive ? Colors.green : color.onSurfaceVariant),
-                    _statusMetric(context, Icons.storage_outlined, tr.text('pending_changes'), '${widget.store.pendingSyncCount}', widget.store.pendingSyncCount == 0 ? tr.text('all_data_synchronized') : tr.text('needs_sync'), widget.store.pendingSyncCount == 0 ? color.primary : color.error),
-                  ];
-                  return Wrap(
-                    spacing: 12,
-                    runSpacing: 12,
-                    children: tiles.map((tile) => SizedBox(width: compact ? double.infinity : (constraints.maxWidth - 36) / 4, child: tile)).toList(),
-                  );
-                },
-              ),
+              allGood: allGood,
+              isHost: isHost,
+              lanActive: lanActive,
+              cloudActive: cloudActive,
+              actionLabel: hostActionLabel,
+              needsInitialCloudHost: needsInitialCloudHost,
             ),
+            if (widget.store.latestHostTransferNotification != null) ...[
+              const SizedBox(height: 12),
+              _hostChangedNotificationCard(),
+            ],
             const SizedBox(height: 14),
-            _syncSection(
-              context,
-              number: '2.',
-              title: tr.text('sync_method'),
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final compact = constraints.maxWidth < 720;
-                  final lanCard = _methodCard(
-                    context,
-                    icon: Icons.lan_outlined,
-                    title: tr.text('lan_sync'),
-                    subtitle: tr.text('lan_sync_desc'),
-                    enabled: lanActive,
-                    badge: lanActive ? tr.text('enabled') : tr.text('off'),
-                    accent: Colors.green,
-                    trailing: isHost ? Switch(value: _lanEnabledForHost, onChanged: _busy ? null : (value) => setState(() => _lanEnabledForHost = value)) : null,
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      if (isHost && _lanEnabledForHost) ...[
-                        _hostIpInfoCard(),
-                        ..._lanFields(showHostIp: false, forHost: true),
-                      ] else if (!isHost && _clientSyncMode == SyncMode.lanOnly && (!_hasExistingHostConnection || _connectToNewHost)) ...[
-                        ..._lanFields(showHostIp: true),
-                      ] else ...[
-                        _miniLine(tr.text('host_ip_address'), lan.host),
-                        _miniLine(tr.text('port'), '${lan.port}'),
-                      ],
-                    ]),
-                  );
-                  final cloudCard = _methodCard(
-                    context,
-                    icon: Icons.cloud_outlined,
-                    title: tr.text('cloud_sync'),
-                    subtitle: tr.text('cloud_sync_desc'),
-                    enabled: cloudActive,
-                    badge: cloudActive ? tr.text('enabled') : tr.text('off'),
-                    accent: Colors.blue,
-                    trailing: isHost ? Switch(value: _cloudEnabled, onChanged: _busy ? null : (value) => setState(() => _cloudEnabled = value)) : null,
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      if (isHost && _cloudEnabled) ..._cloudFields(showPairingCode: false)
-                      else if (!isHost && _clientSyncMode == SyncMode.cloudConnected && (!_hasExistingHostConnection || _connectToNewHost)) ..._cloudFields(showPairingCode: true)
-                      else ...[
-                        _miniLine(tr.text('api_url'), cloud.apiBaseUrl.isEmpty ? '—' : cloud.apiBaseUrl),
-                        _miniLine(tr.text('sync_interval'), tr.format('seconds_count', {'count': '${cloud.intervalSeconds}'})),
-                      ],
-                    ]),
-                  );
-                  if (compact) return Column(children: [lanCard, const SizedBox(height: 12), cloudCard]);
-                  return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [Expanded(child: lanCard), const SizedBox(width: 14), Expanded(child: cloudCard)]);
-                },
-              ),
-            ),
+            _syncOverviewCard(context, allGood: allGood, isHost: isHost, lanActive: lanActive, cloudActive: cloudActive),
             const SizedBox(height: 14),
-            _syncSection(
-              context,
-              number: '3.',
-              title: isHost ? tr.text('pair_new_device') : tr.text('connect_device'),
-              subtitle: isHost ? tr.text('pair_new_device_desc') : tr.text('connect_device_desc'),
-              child: _pairingContent(context, isHost: isHost, isCloudClient: isCloudClient),
-            ),
-            const SizedBox(height: 14),
-            _syncSection(
-              context,
-              number: '4.',
-              title: tr.text('advanced_settings'),
-              subtitle: tr.text('advanced_sync_settings_desc'),
-              child: ExpansionTile(
-                tilePadding: EdgeInsets.zero,
-                childrenPadding: EdgeInsets.zero,
-                title: Text(tr.text('show_advanced_actions')),
-                children: [
-                  _transferHostCard(isHost: isHost),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 10,
-                    runSpacing: 10,
-                    children: [
-                      if (isHost) OutlinedButton.icon(onPressed: _busy ? null : _testCloudConnection, icon: const Icon(Icons.cloud_done_outlined), label: Text(tr.text('test_cloud_connection'))),
-                      if (!isHost) OutlinedButton.icon(onPressed: _busy ? null : _testHostConnection, icon: const Icon(Icons.lan_outlined), label: Text(tr.text('test_host_connection'))),
-                      if (isHost) FilledButton.icon(onPressed: _busy ? null : _saveHostMode, icon: const Icon(Icons.save_outlined), label: Text(tr.text('save_host_settings'))),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 14),
-            Container(
-              width: double.infinity,
-              padding: VentioResponsive.cardInsets(context),
-              decoration: BoxDecoration(color: color.surfaceContainerHighest.withValues(alpha: 0.6), borderRadius: BorderRadius.circular(14)),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(_busy ? (_status.isEmpty ? tr.text('working') : _status) : (_status.isEmpty ? _humanStatus(context) : _status)),
-                  if (_busy) ...[
-                    const SizedBox(height: 8),
-                    LinearProgressIndicator(value: _statusProgress),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final compact = constraints.maxWidth < 760;
+                final thisDevice = _thisDeviceCard(context, isHost: isHost, lanActive: lanActive, cloudActive: cloudActive);
+                final addDevice = _addDeviceCard(context, isHost: isHost, isCloudClient: !isHost && _clientSyncMode == SyncMode.cloudConnected);
+                if (compact) {
+                  return Column(children: [thisDevice, const SizedBox(height: 14), addDevice]);
+                }
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: thisDevice),
+                    const SizedBox(width: 14),
+                    Expanded(child: addDevice),
                   ],
+                );
+              },
+            ),
+            const SizedBox(height: 14),
+            _syncChannelsCard(context, isHost: isHost, lanActive: lanActive, cloudActive: cloudActive),
+            if (isHost) ...[
+              const SizedBox(height: 14),
+              _advancedSyncCard(context, isHost: isHost),
+            ],
+            const SizedBox(height: 14),
+            _syncStatusMessage(context, color),
+            const SizedBox(height: 14),
+            _syncSaveCancelBar(context),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _syncHeroHeader(
+    BuildContext context, {
+    required bool allGood,
+    required bool isHost,
+    required bool lanActive,
+    required bool cloudActive,
+    required String actionLabel,
+    required bool needsInitialCloudHost,
+  }) {
+    final tr = AppLocalizations.of(context);
+    final color = Theme.of(context).colorScheme;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 620;
+        final actionButtons = Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            FilledButton.icon(
+              onPressed: _busy ? null : (needsInitialCloudHost ? _createNewHost : _syncNow),
+              icon: Icon(needsInitialCloudHost ? Icons.add_business_outlined : Icons.sync_outlined),
+              label: Text(actionLabel),
+            ),
+            OutlinedButton.icon(
+              onPressed: _busy ? null : _testCurrentConnection,
+              icon: const Icon(Icons.network_check_outlined),
+              label: Text(tr.text('test_connection')),
+            ),
+          ],
+        );
+        final titleBlock = Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: compact ? 40 : 44,
+              height: compact ? 40 : 44,
+              decoration: BoxDecoration(
+                color: allGood ? Colors.green.withValues(alpha: 0.12) : color.primaryContainer.withValues(alpha: 0.55),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(allGood ? Icons.check_circle_outline : Icons.sync_outlined, color: allGood ? Colors.green.shade700 : color.primary),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    tr.text('sync_settings'),
+                    style: (compact ? Theme.of(context).textTheme.titleLarge : Theme.of(context).textTheme.headlineSmall)?.copyWith(fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    allGood ? tr.text('all_data_synchronized') : tr.text('needs_sync'),
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: color.onSurfaceVariant),
+                  ),
                 ],
               ),
             ),
           ],
-        ),
+        );
+        if (compact) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              titleBlock,
+              const SizedBox(height: 12),
+              actionButtons,
+            ],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(child: titleBlock),
+            const SizedBox(width: 16),
+            actionButtons,
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _syncOverviewCard(BuildContext context, {required bool allGood, required bool isHost, required bool lanActive, required bool cloudActive}) {
+    final tr = AppLocalizations.of(context);
+    final color = Theme.of(context).colorScheme;
+    final accent = allGood ? Colors.green : color.primary;
+    return Container(
+      width: double.infinity,
+      padding: VentioResponsive.cardInsets(context),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: accent.withValues(alpha: 0.24)),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 680;
+          final summary = Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              CircleAvatar(
+                backgroundColor: accent.withValues(alpha: 0.14),
+                foregroundColor: accent,
+                child: Icon(allGood ? Icons.verified_outlined : Icons.sync_problem_outlined),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(allGood ? tr.text('all_systems_are_running_smoothly') : tr.text('needs_sync'), style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 4),
+                    Text(_humanStatus(context), style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: color.onSurfaceVariant)),
+                  ],
+                ),
+              ),
+            ],
+          );
+          final metrics = Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _compactStatusChip(context, Icons.dns_outlined, isHost ? tr.text('host_device') : tr.text('client_device'), color.primary),
+              _compactStatusChip(context, Icons.lan_outlined, '${tr.text('lan')}: ${lanActive ? tr.text('pairing_status_active') : tr.text('off')}', lanActive ? Colors.green : color.onSurfaceVariant),
+              _compactStatusChip(context, Icons.cloud_outlined, '${tr.text('cloud')}: ${cloudActive ? tr.text('cloud_online') : tr.text('off')}', cloudActive ? Colors.green : color.onSurfaceVariant),
+              _compactStatusChip(context, Icons.storage_outlined, '${tr.text('pending_changes')}: ${widget.store.pendingSyncCount}', widget.store.pendingSyncCount == 0 ? Colors.green : color.error),
+            ],
+          );
+          if (compact) {
+            return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [summary, const SizedBox(height: 14), metrics]);
+          }
+          return Row(crossAxisAlignment: CrossAxisAlignment.center, children: [Expanded(child: summary), const SizedBox(width: 16), Flexible(child: metrics)]);
+        },
+      ),
+    );
+  }
+
+  Widget _thisDeviceCard(BuildContext context, {required bool isHost, required bool lanActive, required bool cloudActive}) {
+    final tr = AppLocalizations.of(context);
+    final color = Theme.of(context).colorScheme;
+    return _plainSyncPanel(
+      context,
+      icon: Icons.devices_outlined,
+      title: tr.text('device_role'),
+      subtitle: isHost ? tr.text('connection_role_host') : tr.text('connection_role_client'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _simpleInfoRow(context, tr.text('role'), isHost ? tr.text('host_device') : tr.text('client_device'), Icons.dns_outlined, color.primary),
+          const SizedBox(height: 8),
+          _simpleInfoRow(context, tr.text('lan_connection'), lanActive ? tr.text('pairing_status_active') : tr.text('pairing_status_disabled'), Icons.lan_outlined, lanActive ? Colors.green : color.onSurfaceVariant),
+          const SizedBox(height: 8),
+          _simpleInfoRow(context, tr.text('cloud_connection'), cloudActive ? tr.text('cloud_online') : tr.text('cloud_disabled'), Icons.cloud_outlined, cloudActive ? Colors.green : color.onSurfaceVariant),
+        ],
+      ),
+    );
+  }
+
+  Widget _addDeviceCard(BuildContext context, {required bool isHost, required bool isCloudClient}) {
+    final tr = AppLocalizations.of(context);
+    return _plainSyncPanel(
+      context,
+      icon: isHost ? Icons.add_link_outlined : Icons.link_outlined,
+      title: isHost ? tr.text('pair_new_device') : tr.text('connect_device'),
+      subtitle: isHost ? tr.text('pair_new_device_desc') : tr.text('connect_device_desc'),
+      child: _pairingContent(context, isHost: isHost, isCloudClient: isCloudClient),
+    );
+  }
+
+  Widget _syncChannelsCard(BuildContext context, {required bool isHost, required bool lanActive, required bool cloudActive}) {
+    final tr = AppLocalizations.of(context);
+    final lan = LanSyncSettings.load();
+    final cloud = CloudSyncSettings.load();
+    final showLanClientFields = !isHost && _clientSyncMode == SyncMode.lanOnly && (!_hasExistingHostConnection || _connectToNewHost);
+    final showCloudClientFields = !isHost && _clientSyncMode == SyncMode.cloudConnected && (!_hasExistingHostConnection || _connectToNewHost);
+    return _plainSyncPanel(
+      context,
+      icon: Icons.hub_outlined,
+      title: tr.text('sync_method'),
+      subtitle: tr.text('sync_settings_desc'),
+      child: Column(
+        children: [
+          _syncMethodExpansionTile(
+            context,
+            icon: Icons.lan_outlined,
+            title: tr.text('lan_sync'),
+            subtitle: lanActive ? tr.text('local_network_ready') : tr.text('cloud_sync_off'),
+            active: lanActive,
+            accent: Colors.green,
+            trailing: isHost ? Switch(value: _lanEnabledForHost, onChanged: _busy ? null : (value) => setState(() => _lanEnabledForHost = value)) : null,
+            children: [
+              if (isHost && _lanEnabledForHost) ...[
+                _hostIpInfoCard(),
+                ..._lanFields(showHostIp: false, forHost: true),
+              ] else if (showLanClientFields) ...[
+                ..._lanFields(showHostIp: true),
+              ] else ...[
+                _miniLine(tr.text('host_ip_address'), lan.host.isEmpty ? '—' : lan.host),
+                _miniLine(tr.text('port'), '${lan.port}'),
+              ],
+            ],
+          ),
+          const Divider(height: 20),
+          _syncMethodExpansionTile(
+            context,
+            icon: Icons.cloud_outlined,
+            title: tr.text('cloud_sync'),
+            subtitle: cloudActive ? tr.text('cloud_services_online') : tr.text('cloud_sync_off'),
+            active: cloudActive,
+            accent: Colors.blue,
+            trailing: isHost ? Switch(value: _cloudEnabled, onChanged: _busy ? null : (value) => setState(() => _cloudEnabled = value)) : null,
+            children: [
+              if (isHost && _cloudEnabled) ..._cloudFields(showPairingCode: false)
+              else if (showCloudClientFields) ..._cloudFields(showPairingCode: true)
+              else ...[
+                _miniLine(tr.text('api_url'), cloud.apiBaseUrl.isEmpty ? '—' : cloud.apiBaseUrl),
+                _miniLine(tr.text('sync_interval'), tr.format('seconds_count', {'count': '${cloud.intervalSeconds}'})),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _syncMethodExpansionTile(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required bool active,
+    required Color accent,
+    required List<Widget> children,
+    Widget? trailing,
+  }) {
+    final tr = AppLocalizations.of(context);
+    final color = Theme.of(context).colorScheme;
+    return ExpansionTile(
+      tilePadding: EdgeInsets.zero,
+      childrenPadding: const EdgeInsets.only(top: 8, bottom: 4),
+      leading: CircleAvatar(
+        backgroundColor: accent.withValues(alpha: active ? 0.14 : 0.07),
+        foregroundColor: active ? accent : color.onSurfaceVariant,
+        child: Icon(icon),
+      ),
+      title: Text(title, style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800)),
+      subtitle: Text(subtitle, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: color.onSurfaceVariant)),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(color: (active ? accent : color.onSurfaceVariant).withValues(alpha: 0.10), borderRadius: BorderRadius.circular(999)),
+            child: Text(active ? tr.text('enabled') : tr.text('off'), style: TextStyle(color: active ? accent : color.onSurfaceVariant, fontWeight: FontWeight.w700)),
+          ),
+          if (trailing != null) ...[const SizedBox(width: 8), trailing],
+          const Icon(Icons.expand_more),
+        ],
+      ),
+      children: children,
+    );
+  }
+
+  Widget _advancedSyncCard(BuildContext context, {required bool isHost}) {
+    final tr = AppLocalizations.of(context);
+    return _plainSyncPanel(
+      context,
+      icon: Icons.admin_panel_settings_outlined,
+      title: tr.text('advanced_settings'),
+      subtitle: tr.text('advanced_sync_settings_desc'),
+      child: ExpansionTile(
+        tilePadding: EdgeInsets.zero,
+        childrenPadding: EdgeInsets.zero,
+        title: Text(tr.text('advanced_settings')),
+        children: [
+          _transferHostCard(isHost: isHost),
+        ],
+      ),
+    );
+  }
+
+  Widget _plainSyncPanel(BuildContext context, {required IconData icon, required String title, required String subtitle, required Widget child}) {
+    final color = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: VentioResponsive.cardInsets(context),
+      decoration: BoxDecoration(
+        color: color.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: color.outlineVariant.withValues(alpha: 0.75)),
+        boxShadow: [BoxShadow(color: color.shadow.withValues(alpha: 0.04), blurRadius: 18, offset: const Offset(0, 8))],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(icon, color: color.primary),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 3),
+                    Text(subtitle, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: color.onSurfaceVariant)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _compactStatusChip(BuildContext context, IconData icon, String label, Color accent) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: accent.withValues(alpha: 0.18)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: accent),
+          const SizedBox(width: 6),
+          Text(label, style: TextStyle(color: accent, fontWeight: FontWeight.w700)),
+        ],
+      ),
+    );
+  }
+
+  Widget _simpleInfoRow(BuildContext context, String label, String value, IconData icon, Color accent) {
+    final color = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(color: color.surfaceContainerHighest.withValues(alpha: 0.32), borderRadius: BorderRadius.circular(14)),
+      child: Row(
+        children: [
+          CircleAvatar(radius: 18, backgroundColor: accent.withValues(alpha: 0.12), foregroundColor: accent, child: Icon(icon, size: 18)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(label, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: color.onSurfaceVariant)),
+              Text(value, style: Theme.of(context).textTheme.titleSmall?.copyWith(color: accent, fontWeight: FontWeight.w800)),
+            ]),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _syncSaveCancelBar(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    final changed = _hasUnsavedSyncChanges;
+    final color = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: changed ? color.primary.withValues(alpha: 0.35) : color.outlineVariant),
+        boxShadow: [BoxShadow(color: color.shadow.withValues(alpha: 0.05), blurRadius: 18, offset: const Offset(0, -4))],
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: _busy || !changed ? null : _resetSyncDraft,
+              icon: const Icon(Icons.close_outlined),
+              label: Text(tr.text('cancel')),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: FilledButton.icon(
+              onPressed: _busy || !changed ? null : _saveSyncSettings,
+              icon: const Icon(Icons.save_outlined),
+              label: Text(tr.text('save')),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _syncStatusMessage(BuildContext context, ColorScheme color) {
+    final tr = AppLocalizations.of(context);
+    return Container(
+      width: double.infinity,
+      padding: VentioResponsive.cardInsets(context),
+      decoration: BoxDecoration(color: color.surfaceContainerHighest.withValues(alpha: 0.45), borderRadius: BorderRadius.circular(14)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(_busy ? (_status.isEmpty ? tr.text('working') : _status) : (_status.isEmpty ? _humanStatus(context) : _status)),
+          if (_busy) ...[
+            const SizedBox(height: 8),
+            LinearProgressIndicator(value: _statusProgress),
+          ],
+        ],
       ),
     );
   }
@@ -2153,6 +2536,10 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
             children: [
               OutlinedButton.icon(onPressed: _busy ? null : _handleLanPairingButton, icon: const Icon(Icons.qr_code_2_outlined), label: Text(_lanPairingButtonLabel)),
               OutlinedButton.icon(onPressed: _busy ? null : _handleCloudPairingButton, icon: const Icon(Icons.cloud_queue_outlined), label: Text(_cloudPairingButtonLabel)),
+              if (_lanTokenController.text.trim().isNotEmpty)
+                TextButton.icon(onPressed: _busy ? null : () => setState(() => _showLanPairingCode = !_showLanPairingCode), icon: Icon(_showLanPairingCode ? Icons.visibility_off_outlined : Icons.visibility_outlined), label: Text(_showLanPairingCode ? tr.text('hide_code') : tr.text('show_code'))),
+              if (_latestCloudPairingCode.trim().isNotEmpty)
+                TextButton.icon(onPressed: _busy ? null : () => setState(() => _showCloudPairingCode = !_showCloudPairingCode), icon: Icon(_showCloudPairingCode ? Icons.visibility_off_outlined : Icons.visibility_outlined), label: Text(_showCloudPairingCode ? tr.text('hide_code') : tr.text('show_code'))),
             ],
           ),
           if (_showLanPairingCode) ...[const SizedBox(height: 12), _lanPairingCodeCard()],
@@ -2191,11 +2578,13 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           ),
           const SizedBox(height: 14),
           if (!isCloudClient) ...[
+            ..._lanFields(showHostIp: true),
             Wrap(spacing: 10, runSpacing: 10, children: [
               OutlinedButton.icon(onPressed: _busy ? null : _scanPairingQr, icon: const Icon(Icons.qr_code_scanner_outlined), label: Text(tr.text('scan_qr_code'))),
               FilledButton.icon(onPressed: _busy ? null : _saveLanClient, icon: const Icon(Icons.link_outlined), label: Text(_hasExistingHostConnection ? tr.text('connect_to_new_lan_host') : tr.text('connect_to_lan_host'))),
             ]),
           ] else ...[
+            ..._cloudFields(showPairingCode: true),
             Wrap(spacing: 10, runSpacing: 10, children: [
               OutlinedButton.icon(onPressed: _busy ? null : _scanPairingQr, icon: const Icon(Icons.qr_code_scanner_outlined), label: Text(tr.text('scan_qr_code'))),
               FilledButton.icon(onPressed: _busy ? null : _claimCloudPairing, icon: const Icon(Icons.cloud_done_outlined), label: Text(_hasExistingHostConnection ? tr.text('connect_to_new_cloud_host') : tr.text('pair_with_cloud_host'))),
@@ -2203,99 +2592,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           ],
         ],
       ],
-    );
-  }
-
-  Widget _syncSection(BuildContext context, {required String number, required String title, String? subtitle, required Widget child}) {
-    final color = Theme.of(context).colorScheme;
-    return Container(
-      width: double.infinity,
-      padding: VentioResponsive.cardInsets(context),
-      decoration: BoxDecoration(
-        color: color.surface,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: color.outlineVariant.withValues(alpha: 0.75)),
-        boxShadow: [BoxShadow(color: color.shadow.withValues(alpha: 0.04), blurRadius: 18, offset: const Offset(0, 8))],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          RichText(
-            text: TextSpan(
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700, color: color.onSurface),
-              children: [
-                TextSpan(text: '$number ', style: TextStyle(color: color.primary)),
-                TextSpan(text: title),
-              ],
-            ),
-          ),
-          if (subtitle != null) ...[
-            const SizedBox(height: 4),
-            Text(subtitle, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: color.onSurfaceVariant)),
-          ],
-          const SizedBox(height: 14),
-          child,
-        ],
-      ),
-    );
-  }
-
-  Widget _statusMetric(BuildContext context, IconData icon, String label, String value, String detail, Color accent) {
-    final color = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: color.surfaceContainerHighest.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Row(
-        children: [
-          CircleAvatar(backgroundColor: accent.withValues(alpha: 0.12), foregroundColor: accent, child: Icon(icon, size: 20)),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(label, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: color.onSurfaceVariant)),
-              const SizedBox(height: 2),
-              Text(value, style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700, color: accent)),
-              const SizedBox(height: 2),
-              Text(detail, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: color.onSurfaceVariant)),
-            ]),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _methodCard(BuildContext context, {required IconData icon, required String title, required String subtitle, required bool enabled, required String badge, required Color accent, Widget? trailing, required Widget child}) {
-    final color = Theme.of(context).colorScheme;
-    return Container(
-      padding: VentioResponsive.cardInsets(context),
-      decoration: BoxDecoration(
-        color: enabled ? accent.withValues(alpha: 0.06) : color.surfaceContainerHighest.withValues(alpha: 0.22),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: enabled ? accent.withValues(alpha: 0.28) : color.outlineVariant),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            Icon(icon, color: enabled ? accent : color.onSurfaceVariant),
-            const SizedBox(width: 10),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-              Text(subtitle, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: color.onSurfaceVariant)),
-            ])),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(color: accent.withValues(alpha: 0.10), borderRadius: BorderRadius.circular(10)),
-              child: Text(badge, style: TextStyle(color: accent, fontWeight: FontWeight.w600)),
-            ),
-            if (trailing != null) ...[const SizedBox(width: 8), trailing],
-          ]),
-          const SizedBox(height: 14),
-          child,
-        ],
-      ),
     );
   }
 
@@ -2723,34 +3019,26 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
             ),
           ),
         if (showPairingCode) const SizedBox(height: 12),
-        if (!showPairingCode)
-          ExpansionTile(
-            tilePadding: EdgeInsets.zero,
-            leading: const Icon(Icons.tune_outlined),
-            title: Text(AppLocalizations.of(context).text('advanced_cloud_settings')),
-            subtitle: Text(AppLocalizations.of(context).text('advanced_cloud_settings_desc')),
-            childrenPadding: const EdgeInsets.only(top: 8, bottom: 8),
-            children: [
-              TextField(
-                controller: _cloudTokenController,
-                obscureText: true,
-                decoration: InputDecoration(
-                  labelText: AppLocalizations.of(context).text('cloud_token_label'),
-                  helperText: AppLocalizations.of(context).text('cloud_token_helper_professional'),
-                  border: const OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _cloudIntervalController,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  labelText: AppLocalizations.of(context).text('auto_sync_interval_seconds'),
-                  border: const OutlineInputBorder(),
-                ),
-              ),
-            ],
+        if (!showPairingCode) ...[
+          TextField(
+            controller: _cloudTokenController,
+            obscureText: true,
+            decoration: InputDecoration(
+              labelText: AppLocalizations.of(context).text('cloud_token_label'),
+              helperText: AppLocalizations.of(context).text('cloud_token_helper_professional'),
+              border: const OutlineInputBorder(),
+            ),
           ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _cloudIntervalController,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              labelText: AppLocalizations.of(context).text('auto_sync_interval_seconds'),
+              border: const OutlineInputBorder(),
+            ),
+          ),
+        ],
         const SizedBox(height: 12),
       ];
 }
