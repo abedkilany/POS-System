@@ -13,8 +13,8 @@ class SyncQueueItem {
 
   final String id;
   final String changeId;
-  final String target; // host, cloud, marketplace
-  final String status; // pending, inProgress, failed, synced
+  final String target; // host, cloud, cloud_host, marketplace
+  final String status; // pending, inProgress, submitted, failed, rejected, synced
   final int attempts;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -29,7 +29,9 @@ class SyncQueueItem {
     return status == 'inProgress' && updatedAt.isBefore(DateTime.now().subtract(const Duration(seconds: 30)));
   }
   bool get isInProgress => status == 'inProgress';
+  bool get isSubmitted => status == 'submitted';
   bool get isSynced => status == 'synced';
+  bool get isRejected => status == 'rejected';
   bool get isFailed => status == 'failed';
 
   bool get isReadyToSend {

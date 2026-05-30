@@ -20,6 +20,7 @@ function normalizeChange(raw, fallback) {
     createdAt: raw.createdAt ? new Date(raw.createdAt).toISOString() : new Date().toISOString(),
     storeEpoch: Number(raw.storeEpoch || raw.store_epoch || 1),
     sequence: Number(raw.sequence || 0),
+    requestId: String((raw.payload && raw.payload._syncV2 && raw.payload._syncV2.requestId) || raw.requestId || raw.request_id || id),
   };
 }
 
@@ -27,6 +28,9 @@ export default async function handler(req, res) {
   try {
     await sql`alter table cloud_change_requests add column if not exists store_epoch integer not null default 1`;
     await sql`alter table cloud_change_requests add column if not exists sequence integer not null default 0`;
+    await sql`alter table cloud_change_requests add column if not exists request_id text default ''`;
+    await sql`alter table cloud_change_requests add column if not exists rejection_reason text default ''`;
+    await sql`create unique index if not exists idx_cloud_change_requests_request_unique on cloud_change_requests (store_id, branch_id, request_id) where request_id is not null and request_id <> ''`;
     if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Method not allowed' });
 
     const body = req.body || {};
@@ -47,11 +51,28 @@ export default async function handler(req, res) {
       if (syncV2Kind === 'authoritativeEvent') {
         return res.status(403).json({ ok: false, error: 'Authoritative events can only be published by the Host.' });
       }
+      if (change.requestId) {
+        const duplicateRows = await sql`
+          select id, status, coalesce(rejection_reason, '') as rejection_reason
+          from cloud_change_requests
+          where store_id = ${change.storeId}
+            and branch_id = ${change.branchId}
+            and request_id = ${change.requestId}
+          limit 1
+        `;
+        if (duplicateRows.length > 0) {
+          if (duplicateRows[0].status === 'rejected') {
+            return res.status(200).json({ ok: true, ackIds, rejected: [{ id: change.id, reason: duplicateRows[0].rejection_reason || 'Rejected by Host.' }], relay: 'host_inbox', serverTime: new Date().toISOString() });
+          }
+          ackIds.push(change.id);
+          continue;
+        }
+      }
       await sql`
         insert into cloud_change_requests (
-          id, store_id, branch_id, device_id, entity_type, entity_id, operation, payload, created_at, store_epoch, sequence, status
+          id, store_id, branch_id, device_id, entity_type, entity_id, operation, payload, created_at, store_epoch, sequence, status, request_id
         ) values (
-          ${change.id}, ${change.storeId}, ${change.branchId}, ${change.deviceId}, ${change.entityType}, ${change.entityId}, ${change.operation}, ${JSON.stringify(change.payload)}, ${change.createdAt}, ${change.storeEpoch}, ${change.sequence}, 'pending'
+          ${change.id}, ${change.storeId}, ${change.branchId}, ${change.deviceId}, ${change.entityType}, ${change.entityId}, ${change.operation}, ${JSON.stringify(change.payload)}, ${change.createdAt}, ${change.storeEpoch}, ${change.sequence}, 'pending', ${change.requestId}
         )
         on conflict (id) do nothing
       `;

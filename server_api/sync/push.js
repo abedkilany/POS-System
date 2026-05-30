@@ -27,6 +27,9 @@ function normalizeChange(raw, fallback) {
     createdAt: raw.createdAt ? new Date(raw.createdAt).toISOString() : new Date().toISOString(),
     storeEpoch: Number(raw.storeEpoch || raw.store_epoch || 1),
     sequence: Number(raw.sequence || 0),
+    eventId: String((raw.payload && raw.payload._syncV2 && raw.payload._syncV2.eventId) || raw.eventId || raw.event_id || id),
+    requestId: String((raw.payload && raw.payload._syncV2 && raw.payload._syncV2.requestId) || raw.requestId || raw.request_id || ''),
+    sourceCommandId: String((raw.payload && raw.payload._syncV2 && raw.payload._syncV2.sourceCommandId) || raw.sourceCommandId || raw.source_command_id || ''),
   };
 }
 
@@ -235,6 +238,11 @@ export default async function handler(req, res) {
   try {
     await sql`alter table sync_events add column if not exists store_epoch integer not null default 1`;
     await sql`alter table sync_events add column if not exists sequence integer not null default 0`;
+    await sql`alter table sync_events add column if not exists event_id text default ''`;
+    await sql`alter table sync_events add column if not exists request_id text default ''`;
+    await sql`alter table sync_events add column if not exists source_command_id text default ''`;
+    await sql`create unique index if not exists idx_sync_events_event_id_unique on sync_events (store_id, branch_id, event_id) where event_id is not null and event_id <> ''`;
+    await sql`create unique index if not exists idx_sync_events_source_command_unique on sync_events (store_id, branch_id, source_command_id) where source_command_id is not null and source_command_id <> ''`;
     await ensureDeviceAuthColumns();
     if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Method not allowed' });
 
@@ -263,11 +271,28 @@ export default async function handler(req, res) {
       if (syncV2Kind === 'draftCommand') {
         return res.status(403).json({ ok: false, error: 'Draft commands must be sent to the Host relay, not the authoritative event stream.' });
       }
+      if (change.eventId || change.sourceCommandId) {
+        const duplicateRows = await sql`
+          select id
+          from sync_events
+          where store_id = ${change.storeId}
+            and branch_id = ${change.branchId}
+            and (
+              (${change.eventId} <> '' and event_id = ${change.eventId})
+              or (${change.sourceCommandId} <> '' and source_command_id = ${change.sourceCommandId})
+            )
+          limit 1
+        `;
+        if (duplicateRows.length > 0) {
+          ackIds.push(change.id);
+          continue;
+        }
+      }
       const inserted = await sql`
         insert into sync_events (
-          id, store_id, branch_id, device_id, entity_type, entity_id, operation, payload, created_at, store_epoch, sequence
+          id, store_id, branch_id, device_id, entity_type, entity_id, operation, payload, created_at, store_epoch, sequence, event_id, request_id, source_command_id
         ) values (
-          ${change.id}, ${change.storeId}, ${change.branchId}, ${change.deviceId}, ${change.entityType}, ${change.entityId}, ${change.operation}, ${JSON.stringify(change.payload)}, ${change.createdAt}, ${change.storeEpoch}, ${change.sequence}
+          ${change.id}, ${change.storeId}, ${change.branchId}, ${change.deviceId}, ${change.entityType}, ${change.entityId}, ${change.operation}, ${JSON.stringify(change.payload)}, ${change.createdAt}, ${change.storeEpoch}, ${change.sequence}, ${change.eventId}, ${change.requestId}, ${change.sourceCommandId}
         )
         on conflict (id) do nothing
         returning id

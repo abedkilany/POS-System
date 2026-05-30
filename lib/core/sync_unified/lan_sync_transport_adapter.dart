@@ -258,15 +258,56 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<UnifiedSyncResult> syncNow({void Function(double value, String label)? onProgress}) async {
-    final effectiveSettings = _settingsWithUnifiedCursor();
-    final result = await _service.syncNow(
-      effectiveSettings.host,
-      port: effectiveSettings.port,
-      token: effectiveSettings.secret,
-      onProgress: onProgress,
+    onProgress?.call(0.08, 'Preparing LAN sync...');
+    final push = await pushPending(UnifiedSyncPushRequest(deviceId: deviceId, deviceToken: deviceToken));
+    if (!push.ok) {
+      onProgress?.call(1.0, 'LAN sync failed while sending local changes.');
+      return push;
+    }
+
+    onProgress?.call(0.55, 'Pulling authoritative LAN changes...');
+    final pull = await pullChanges(
+      UnifiedSyncPullRequest(
+        deviceId: deviceId,
+        deviceToken: deviceToken,
+        cursor: UnifiedSyncCursor(
+          value: push.cursor.value,
+          generatedAt: push.cursor.generatedAt,
+          source: push.cursor.source,
+        ),
+      ),
     );
-    final afterSettings = LanSyncSettings.load();
-    await _recordLanResult(afterSettings.lastPullCursor);
-    return UnifiedSyncResult(ok: result.ok, message: result.message, error: _errorFor(result.ok, result.message), cursor: _cursor());
+    if (pull.ok) {
+      onProgress?.call(1.0, 'LAN sync completed.');
+      return UnifiedSyncResult(
+        ok: true,
+        message: 'LAN sync completed. Pushed ${push.pushed} change(s), pulled ${pull.pulled} change(s).',
+        pushed: push.pushed,
+        pulled: pull.pulled,
+        restoredSnapshot: pull.restoredSnapshot,
+        cursor: pull.cursor,
+      );
+    }
+
+    onProgress?.call(0.78, 'LAN pull failed. Trying snapshot repair...');
+    final repair = await rebuildFromHostSnapshot(onProgress: onProgress);
+    if (repair.ok) {
+      return UnifiedSyncResult(
+        ok: true,
+        message: '${pull.message}. ${repair.message}',
+        pushed: push.pushed,
+        pulled: repair.pulled,
+        restoredSnapshot: true,
+        cursor: repair.cursor,
+      );
+    }
+    return UnifiedSyncResult(
+      ok: false,
+      message: '${pull.message}. ${repair.message}',
+      pushed: push.pushed,
+      pulled: pull.pulled,
+      error: pull.error.hasError ? pull.error : repair.error,
+      cursor: pull.cursor,
+    );
   }
 }

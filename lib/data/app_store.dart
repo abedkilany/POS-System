@@ -217,6 +217,14 @@ class AppStore extends ChangeNotifier {
     final ids = queueItems.map((item) => item.changeId).toSet();
     return List.unmodifiable(_syncChanges.where((change) => ids.contains(change.id) && !change.isSynced));
   }
+
+  List<SyncChange> submittedSyncChangesForTarget(String target) {
+    final ids = _syncQueue
+        .where((item) => item.target == target && item.status == 'submitted')
+        .map((item) => item.changeId)
+        .toSet();
+    return List.unmodifiable(_syncChanges.where((change) => ids.contains(change.id) && !change.isSynced));
+  }
   String get deviceId => _deviceId;
   int get pendingSyncCount => pendingSyncQueue.length;
   int get pendingSyncQueueCount => pendingSyncQueue.length;
@@ -702,6 +710,76 @@ class AppStore extends ChangeNotifier {
   int _nextSyncSequence() {
     _syncSequence += 1;
     return _syncSequence;
+  }
+
+  String _newSyncEnvelopeId(DateTime now, String prefix) {
+    final safeDevice = _deviceId.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '');
+    return '${prefix}_${safeDevice}_${now.microsecondsSinceEpoch}_${_syncChanges.length}_$_syncSequence';
+  }
+
+  Map<String, dynamic> _syncV2MetaOf(SyncChange change) {
+    return Map<String, dynamic>.from(change.payload['_syncV2'] as Map? ?? const {});
+  }
+
+  String _syncMetaString(SyncChange change, String key) {
+    final value = _syncV2MetaOf(change)[key];
+    return value == null ? '' : value.toString();
+  }
+
+  bool _isReplayOrDuplicateSyncEvent(
+    SyncChange change, {
+    required Set<String> existingEnvelopeIds,
+    required Set<String> existingEventIds,
+    required Set<String> acceptedSourceCommandIds,
+    required int lastAppliedSequence,
+  }) {
+    if (existingEnvelopeIds.contains(change.id)) return true;
+
+    final meta = _syncV2MetaOf(change);
+    final eventId = (meta['eventId'] ?? '').toString();
+    if (eventId.isNotEmpty && existingEventIds.contains(eventId)) return true;
+
+    final sourceCommandId = (meta['sourceCommandId'] ?? '').toString();
+    if (sourceCommandId.isNotEmpty && acceptedSourceCommandIds.contains(sourceCommandId)) return true;
+
+    // Host sequence is the authoritative ordering guard. If this device has
+    // already applied a newer/equal Host sequence, the incoming event is a
+    // replay from an old cursor/page and must not be applied again.
+    if (change.sequence > 0 && lastAppliedSequence > 0 && change.sequence <= lastAppliedSequence) {
+      return true;
+    }
+
+    return false;
+  }
+
+
+  String? validateClientDraftForHostAcceptance(SyncChange change) {
+    if (change.entityType == 'system' && change.operation == 'reset_store_data') {
+      return 'Reset data can only be initiated on the Host device.';
+    }
+    if (change.operation == 'delete') return null;
+    final p = change.payload;
+    switch (change.entityType) {
+      case 'product':
+        final code = (p['code'] ?? '').toString().trim().toLowerCase();
+        final barcode = (p['barcode'] ?? '').toString().trim().toLowerCase();
+        if (code.isEmpty) return null;
+        final duplicate = _products.any((item) {
+          if (item.id == change.entityId || item.isDeleted) return false;
+          final sameCode = item.code.trim().toLowerCase() == code;
+          final sameBarcode = barcode.isNotEmpty && item.barcode.trim().toLowerCase() == barcode;
+          return sameCode || sameBarcode;
+        });
+        if (duplicate) return 'Product code or barcode already exists on the Host.';
+        return null;
+      case 'sale':
+        final invoiceNo = (p['invoiceNo'] ?? p['invoice_no'] ?? '').toString().trim().toLowerCase();
+        if (invoiceNo.isEmpty) return null;
+        final duplicate = _sales.any((item) => item.id != change.entityId && !item.isDeleted && item.invoiceNo.trim().toLowerCase() == invoiceNo);
+        if (duplicate) return 'Invoice number already exists on the Host.';
+        return null;
+    }
+    return null;
   }
 
   Future<void> clearPendingSyncQueue({bool notify = true}) async {
@@ -2041,7 +2119,7 @@ class AppStore extends ChangeNotifier {
   }) {
     final now = DateTime.now();
     final identity = appIdentity;
-    final changeId = '${now.microsecondsSinceEpoch}-${_syncChanges.length}';
+    final changeId = _newSyncEnvelopeId(now, identity.isHost ? 'evt' : 'cmd');
 
     // Sync V2 bridge:
     // The existing SyncChange envelope is still kept for compatibility with
@@ -2050,8 +2128,13 @@ class AppStore extends ChangeNotifier {
     // AuthoritativeEvent. Cloud/LAN transports can therefore enforce the new
     // Host-authoritative contract without guessing from endpoint names.
     final mutationId = '${_deviceId}_${now.microsecondsSinceEpoch}_${entityType}_${entityId}_$operation';
+    final isHostEvent = identity.isHost;
+    final requestId = isHostEvent ? '' : changeId;
+    final eventId = isHostEvent ? changeId : '';
     final syncV2Meta = <String, dynamic>{
-      'kind': identity.isHost ? 'authoritativeEvent' : 'draftCommand',
+      'kind': isHostEvent ? 'authoritativeEvent' : 'draftCommand',
+      'requestId': requestId,
+      'eventId': eventId,
       'clientMutationId': mutationId,
       'sourceDeviceId': _deviceId,
       'sourceRole': identity.deviceRole.name,
@@ -2074,7 +2157,10 @@ class AppStore extends ChangeNotifier {
       storeId: identity.storeId,
       branchId: identity.branchId,
       storeEpoch: identity.storeEpoch,
-      sequence: _nextSyncSequence(),
+      // Host is the only authority that may assign final ordering. Client
+      // draft commands carry sequence 0 until the Host accepts and republishes
+      // them as authoritative events.
+      sequence: isHostEvent ? _nextSyncSequence() : 0,
     ));
     _enqueueSyncChange(changeId, now);
   }
@@ -3523,6 +3609,9 @@ class AppStore extends ChangeNotifier {
     bool mirrorToCloud = false,
   }) async {
     final existingIds = _syncChanges.map((item) => item.id).toSet();
+    final existingEventIds = _syncChanges.map((item) => _syncMetaString(item, 'eventId')).where((item) => item.isNotEmpty).toSet();
+    final acceptedSourceCommandIds = _syncChanges.map((item) => _syncMetaString(item, 'sourceCommandId')).where((item) => item.isNotEmpty).toSet();
+    final lastAppliedSequence = SyncDeviceStateStore.load(appIdentity).lastAppliedSequence;
     final currentEpoch = appIdentity.storeEpoch;
     final sorted = [...incoming]
       ..sort((a, b) {
@@ -3533,7 +3622,15 @@ class AppStore extends ChangeNotifier {
       });
     var changed = false;
     for (final change in sorted) {
-      if (existingIds.contains(change.id)) continue;
+      if (_isReplayOrDuplicateSyncEvent(
+        change,
+        existingEnvelopeIds: existingIds,
+        existingEventIds: existingEventIds,
+        acceptedSourceCommandIds: acceptedSourceCommandIds,
+        lastAppliedSequence: lastAppliedSequence,
+      )) {
+        continue;
+      }
       final incomingEpoch = change.storeEpoch;
       if (incomingEpoch < currentEpoch && !(change.entityType == 'system' && change.operation == 'reset_store_data')) {
         continue;
@@ -3549,20 +3646,29 @@ class AppStore extends ChangeNotifier {
       // Restamping on every Host acceptance makes Local sync timing stable.
       final acceptedAt = DateTime.now();
       final shouldRestampAsHostAuthority = appIdentity.isHost && change.deviceId != _deviceId;
+      final incomingMeta = _syncV2MetaOf(change);
+      final requestId = (incomingMeta['requestId'] ?? change.id).toString();
+      final authoritativeEventId = shouldRestampAsHostAuthority
+          ? _newSyncEnvelopeId(acceptedAt, 'evt')
+          : (_syncMetaString(change, 'eventId').isNotEmpty ? _syncMetaString(change, 'eventId') : change.id);
       final authoritativePayload = shouldRestampAsHostAuthority
           ? <String, dynamic>{
               ...change.payload,
               '_syncV2': <String, dynamic>{
-                ...Map<String, dynamic>.from(change.payload['_syncV2'] as Map? ?? const {}),
+                ...incomingMeta,
                 'kind': 'authoritativeEvent',
+                'requestId': requestId,
+                'eventId': authoritativeEventId,
                 'acceptedByHostDeviceId': _deviceId,
                 'acceptedAt': acceptedAt.toIso8601String(),
                 'sourceCommandId': change.id,
+                'sourceCommandDeviceId': change.deviceId,
               },
             }
           : change.payload;
       final authoritativeChange = shouldRestampAsHostAuthority
           ? change.copyWith(
+              id: authoritativeEventId,
               createdAt: acceptedAt,
               deviceId: _deviceId,
               storeId: appIdentity.storeId,
@@ -3580,6 +3686,11 @@ class AppStore extends ChangeNotifier {
         _enqueueSyncChangeForTarget(storedChange.id, 'cloud', acceptedAt);
       }
       existingIds.add(change.id);
+      existingIds.add(storedChange.id);
+      final storedEventId = _syncMetaString(storedChange, 'eventId');
+      if (storedEventId.isNotEmpty) existingEventIds.add(storedEventId);
+      final storedSourceCommandId = _syncMetaString(storedChange, 'sourceCommandId');
+      if (storedSourceCommandId.isNotEmpty) acceptedSourceCommandIds.add(storedSourceCommandId);
       changed = true;
     }
     if (changed) {
@@ -3960,18 +4071,48 @@ class AppStore extends ChangeNotifier {
   }
 
 
+  Future<void> markSyncChangesSubmittedByIds(Iterable<String> ids) async {
+    final idSet = ids.toSet();
+    if (idSet.isEmpty) return;
+    final now = DateTime.now();
+    var changed = false;
+    for (var i = 0; i < _syncQueue.length; i++) {
+      final item = _syncQueue[i];
+      if (idSet.contains(item.changeId) && item.status != 'synced' && item.status != 'rejected') {
+        _syncQueue[i] = item.copyWith(
+          status: 'submitted',
+          lastError: '',
+          updatedAt: now,
+          clearNextRetryAt: true,
+        );
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    await _saveAll();
+    notifyListeners();
+  }
+
   Future<void> markSyncChangesSyncedByIds(Iterable<String> ids) async {
     final idSet = ids.toSet();
     if (idSet.isEmpty) return;
     final now = DateTime.now();
+    final matchedChangeIds = <String>{};
     for (var i = 0; i < _syncChanges.length; i++) {
-      if (idSet.contains(_syncChanges[i].id)) {
-        _syncChanges[i] = _syncChanges[i].copyWith(isSynced: true, syncedAt: now);
+      final change = _syncChanges[i];
+      final matches = idSet.contains(change.id) ||
+          idSet.contains(_syncMetaString(change, 'eventId')) ||
+          idSet.contains(_syncMetaString(change, 'requestId')) ||
+          idSet.contains(_syncMetaString(change, 'sourceCommandId'));
+      if (matches) {
+        matchedChangeIds.add(change.id);
+        _syncChanges[i] = change.copyWith(isSynced: true, syncedAt: now);
       }
     }
     for (var i = 0; i < _syncQueue.length; i++) {
-      if (idSet.contains(_syncQueue[i].changeId)) {
-        _syncQueue[i] = _syncQueue[i].copyWith(status: 'synced', updatedAt: now, clearNextRetryAt: true);
+      final item = _syncQueue[i];
+      if (idSet.contains(item.changeId) || matchedChangeIds.contains(item.changeId)) {
+        _syncQueue[i] = item.copyWith(status: 'synced', updatedAt: now, clearNextRetryAt: true);
       }
     }
     await _saveAll();
@@ -3986,6 +4127,29 @@ class AppStore extends ChangeNotifier {
     for (var i = 0; i < _syncQueue.length; i++) {
       if (idSet.contains(_syncQueue[i].changeId) && _syncQueue[i].status != 'synced') {
         _syncQueue[i] = _syncQueue[i].copyWith(status: 'inProgress', updatedAt: now, clearNextRetryAt: true);
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    await _saveAll();
+    notifyListeners();
+  }
+
+  Future<void> markSyncChangesRejectedByIds(Map<String, String> rejected) async {
+    if (rejected.isEmpty) return;
+    final idSet = rejected.keys.toSet();
+    final now = DateTime.now();
+    var changed = false;
+    for (var i = 0; i < _syncQueue.length; i++) {
+      final item = _syncQueue[i];
+      final reason = rejected[item.changeId];
+      if (idSet.contains(item.changeId) && item.status != 'synced' && reason != null) {
+        _syncQueue[i] = item.copyWith(
+          status: 'rejected',
+          lastError: reason,
+          updatedAt: now,
+          clearNextRetryAt: true,
+        );
         changed = true;
       }
     }

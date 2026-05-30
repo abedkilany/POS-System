@@ -308,7 +308,7 @@ class CloudSyncService {
   bool _cloudAllowedForIdentity(AppIdentity identity) {
     if (identity.isHost) return identity.isCloudEnabled;
     if (!identity.isClient) return false;
-    return identity.isCloudEnabled || identity.activeSyncTransportNormalized == 'cloud';
+    return identity.activeSyncTransportNormalized == 'cloud';
   }
 
   Future<void> _recordDeviceSyncState(
@@ -1017,8 +1017,55 @@ class CloudSyncService {
     }
     final decoded = jsonDecode(push.body) as Map<String, dynamic>;
     final ackIds = (decoded['ackIds'] as List<dynamic>? ?? []).map((item) => '$item').toList();
-    await _syncCore.markPushAcknowledged(ackIds, fallbackIds: pendingIds);
+    final rejected = _decodeRejectedSyncRequests(decoded['rejected']);
+    if (rejected.isNotEmpty) await _syncCore.markPushRejected(rejected);
+    if (target == 'cloud_host') {
+      // Relay ACK only means the draft reached the Cloud inbox. It is not a
+      // Host confirmation and must not turn the local draft into confirmed data.
+      await _syncCore.markPushSubmitted(ackIds, fallbackIds: pendingIds);
+    } else {
+      await _syncCore.markPushAcknowledged(ackIds, fallbackIds: pendingIds);
+    }
     return pending.length;
+  }
+
+
+
+  Map<String, String> _decodeRejectedSyncRequests(dynamic raw) {
+    final output = <String, String>{};
+    if (raw is List) {
+      for (final item in raw) {
+        if (item is Map) {
+          final id = (item['id'] ?? '').toString();
+          if (id.isNotEmpty) output[id] = (item['reason'] ?? 'Rejected by Host.').toString();
+        }
+      }
+    }
+    return output;
+  }
+
+  Future<void> _pollSubmittedClientRequests(CloudSyncSettings settings) async {
+    final identity = store.appIdentity;
+    if (!identity.isClient) return;
+    final submitted = _syncCore.submittedChangesForTarget('cloud_host');
+    if (submitted.isEmpty) return;
+    final requestIds = submitted.map((item) => item.id).toList();
+    final response = await _client
+        .post(
+          settings.endpoint('/api/sync/requests/status'),
+          headers: _headers(settings),
+          body: jsonEncode({
+            'deviceId': store.deviceId,
+            'storeId': identity.storeId,
+            'branchId': identity.branchId,
+            'requestIds': requestIds,
+          }),
+        )
+        .timeout(const Duration(seconds: 20));
+    if (response.statusCode < 200 || response.statusCode >= 300) return;
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    final rejected = _decodeRejectedSyncRequests(decoded['rejected']);
+    if (rejected.isNotEmpty) await _syncCore.markPushRejected(rejected);
   }
 
   Future<int> _hostPullRemoteRequests(CloudSyncSettings settings) async {
@@ -1058,7 +1105,13 @@ class CloudSyncService {
         .post(
           settings.endpoint('/api/sync/requests/ack'),
           headers: _headers(settings),
-          body: jsonEncode({'storeId': identity.storeId, 'branchId': identity.branchId, 'hostDeviceId': store.deviceId, 'ackIds': ackIds}),
+          body: jsonEncode({
+            'storeId': identity.storeId,
+            'branchId': identity.branchId,
+            'hostDeviceId': store.deviceId,
+            'ackIds': ackIds,
+            'rejected': accepted.rejected.entries.map((entry) => {'id': entry.key, 'reason': entry.value}).toList(),
+          }),
         )
         .timeout(const Duration(seconds: 20));
     if (ack.statusCode < 200 || ack.statusCode >= 300) {
@@ -1101,6 +1154,8 @@ class CloudSyncService {
 
       onProgress?.call(0.12, 'Registering Client device...');
       await registerCurrentDevice(settings, transport: 'cloud');
+      onProgress?.call(0.22, 'Checking submitted Client requests...');
+      await _pollSubmittedClientRequests(settings);
       onProgress?.call(0.28, 'Sending Client requests to Host relay...');
       pushed += await _pushPendingToEndpoint(settings, 'cloud_host', '/api/sync/requests/push');
       return CloudSyncResult(ok: true, pushed: pushed, message: 'Client cloud push completed. Sent $pushed request(s) to Host relay.');
@@ -1126,6 +1181,7 @@ class CloudSyncService {
     }
 
     try {
+      await _pollSubmittedClientRequests(settings);
       var pulled = 0;
       final initialCursor = settings.lastPullCursor;
       var pageCursor = '';
@@ -1332,108 +1388,6 @@ class CloudSyncService {
       );
     } catch (error) {
       return CloudSyncResult(ok: false, message: 'Cloud sync failed: $error');
-    }
-  }
-}
-
-class AutoCloudSyncController {
-  AutoCloudSyncController(this.store);
-
-  final AppStore store;
-  Timer? _timer;
-  Timer? _debounceTimer;
-  bool _running = false;
-  bool _disposed = false;
-  int _lastCloudQueueCount = 0;
-  int _lastRelayQueueCount = 0;
-
-  Future<void> start() async {
-    stop();
-    _disposed = false;
-    if (!store.appIdentity.isCloudEnabled && store.appIdentity.activeSyncTransportNormalized != 'cloud') return;
-    final settings = CloudSyncSettings.load();
-    if (!settings.autoSyncEnabled || !settings.isConfigured) return;
-
-    _lastCloudQueueCount = store.pendingSyncQueueForTarget('cloud', readyOnly: false).length;
-    _lastRelayQueueCount = store.pendingSyncQueueForTarget('cloud_host', readyOnly: false).length;
-    store.removeListener(_onStoreChanged);
-    store.addListener(_onStoreChanged);
-
-    final interval = Duration(seconds: settings.intervalSeconds.clamp(5, 3600).toInt());
-    _timer = Timer.periodic(interval, (_) => _tick());
-    await _tick();
-  }
-
-  void stop() {
-    _disposed = true;
-    store.removeListener(_onStoreChanged);
-    _timer?.cancel();
-    _debounceTimer?.cancel();
-    _timer = null;
-    _debounceTimer = null;
-  }
-
-  void _onStoreChanged() {
-    if (_disposed) return;
-    final settings = CloudSyncSettings.load();
-    if (!settings.autoSyncEnabled || !settings.isConfigured || (!store.appIdentity.isCloudEnabled && store.appIdentity.activeSyncTransportNormalized != 'cloud')) return;
-
-    final cloudCount = store.pendingSyncQueueForTarget('cloud', readyOnly: false).length;
-    final relayCount = store.pendingSyncQueueForTarget('cloud_host', readyOnly: false).length;
-    final hasNewCloudWork = cloudCount > _lastCloudQueueCount || relayCount > _lastRelayQueueCount;
-    _lastCloudQueueCount = cloudCount;
-    _lastRelayQueueCount = relayCount;
-    if (!hasNewCloudWork) return;
-
-    // Do not wait for the next polling interval after a local edit. This is why
-    // some devices appeared to sync at 30 seconds even when polling was set to 5.
-    _debounceTimer?.cancel();
-    _debounceTimer = Timer(const Duration(seconds: 3), () => _tick());
-  }
-
-  Future<void> _tick() async {
-    if (_running || _disposed) return;
-    _running = true;
-    try {
-      var settings = CloudSyncSettings.load();
-      if (settings.autoSyncEnabled && settings.isConfigured && (store.appIdentity.isCloudEnabled || store.appIdentity.activeSyncTransportNormalized == 'cloud')) {
-        final hasOutgoingWork = store.pendingSyncQueueForTarget('cloud', readyOnly: false).isNotEmpty ||
-            store.pendingSyncQueueForTarget('cloud_host', readyOnly: false).isNotEmpty;
-        final now = DateTime.now().toUtc();
-        final pendingProvisioning = store.appIdentity.isClient && CloudProvisioningStatus.isPending;
-        if (pendingProvisioning) {
-          final lastAttempt = CloudProvisioningStatus.lastAttemptAt;
-          final shouldRequest = lastAttempt == null || now.difference(lastAttempt) > const Duration(minutes: 1);
-          if (shouldRequest) {
-            await CloudProvisioningStatus.markAttempted(now);
-            final requestedAt = CloudProvisioningStatus.requestedAt ?? now;
-            await CloudSyncService(store).requestFreshHostSnapshot(settings, requestedAt: requestedAt);
-            settings = settings.copyWith(clearLastPullCursor: true);
-          }
-        }
-
-        final cursor = settings.lastPullCursor;
-        final staleClient = store.appIdentity.isClient &&
-            cursor != null &&
-            now.difference(cursor.toUtc()) > const Duration(days: 7);
-        if (staleClient && !hasOutgoingWork) {
-          final repair = await CloudSyncService(store).rebuildFromCloudHostSnapshot(settings);
-          if (!repair.ok) {
-            // Fall back to a cursor reset only if a full repair could not be
-            // completed yet, for example when the Host is offline. The pending
-            // snapshot request remains in the relay for the Host to process.
-            await CloudSyncSettings.clearSavedPullCursor();
-            settings = settings.copyWith(clearLastPullCursor: true);
-          } else {
-            settings = CloudSyncSettings.load();
-          }
-        }
-        await CloudSyncService(store).syncNow(settings);
-        _lastCloudQueueCount = store.pendingSyncQueueForTarget('cloud', readyOnly: false).length;
-        _lastRelayQueueCount = store.pendingSyncQueueForTarget('cloud_host', readyOnly: false).length;
-      }
-    } finally {
-      _running = false;
     }
   }
 }

@@ -11,7 +11,10 @@ create table if not exists sync_events (
   operation text not null,
   payload jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
-  received_at timestamptz not null default now()
+  received_at timestamptz not null default now(),
+  event_id text default '',
+  request_id text default '',
+  source_command_id text default ''
 );
 
 create index if not exists idx_sync_events_store_created
@@ -50,7 +53,8 @@ create table if not exists cloud_change_requests (
   status text not null default 'pending',
   accepted_at timestamptz,
   host_device_id text default '',
-  last_error text default ''
+  last_error text default '',
+  request_id text default ''
 );
 
 create index if not exists idx_cloud_change_requests_pending
@@ -111,3 +115,19 @@ alter table store_devices add column if not exists online boolean not null defau
 
 create index if not exists idx_store_devices_latest
   on store_devices (store_id, branch_id, last_seen_at desc);
+
+
+-- Sync Phase 2 identity metadata for duplicate/replay protection.
+alter table sync_events add column if not exists event_id text default '';
+alter table sync_events add column if not exists request_id text default '';
+alter table sync_events add column if not exists source_command_id text default '';
+alter table cloud_change_requests add column if not exists request_id text default '';
+create unique index if not exists idx_sync_events_event_id_unique
+  on sync_events (store_id, branch_id, event_id)
+  where event_id is not null and event_id <> '';
+create unique index if not exists idx_sync_events_source_command_unique
+  on sync_events (store_id, branch_id, source_command_id)
+  where source_command_id is not null and source_command_id <> '';
+create unique index if not exists idx_cloud_change_requests_request_unique
+  on cloud_change_requests (store_id, branch_id, request_id)
+  where request_id is not null and request_id <> '';

@@ -14,6 +14,7 @@ import push from '../server_api/sync/push.js';
 import recoveryClaim from '../server_api/sync/recovery/claim.js';
 import requestsAck from '../server_api/sync/requests/ack.js';
 import requestsPull from '../server_api/sync/requests/pull.js';
+import requestsStatus from '../server_api/sync/requests/status.js';
 import requestsPush from '../server_api/sync/requests/push.js';
 
 const routes = new Map([
@@ -33,6 +34,7 @@ const routes = new Map([
   ['sync/recovery/claim', recoveryClaim],
   ['sync/requests/ack', requestsAck],
   ['sync/requests/pull', requestsPull],
+  ['sync/requests/status', requestsStatus],
   ['sync/requests/push', requestsPush],
 ]);
 

@@ -161,10 +161,3 @@ class LanSyncService {
   Future<LanSyncResult> syncNow(String host, {int port = 8787, String token = '', LanSyncProgressCallback? onProgress}) async =>
       const LanSyncResult(ok: false, message: 'LAN sync is not available in the web build.');
 }
-
-class AutoLanSyncController {
-  AutoLanSyncController(this.store);
-  final AppStore store;
-  Future<void> start() async {}
-  Future<void> stop() async {}
-}

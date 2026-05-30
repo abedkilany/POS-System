@@ -377,26 +377,26 @@ class LanSyncService {
           // are intentionally discarded so stale offline client data cannot revive
           // deleted business data after a central reset.
           'ackIds': accepted.ackIds,
+          'rejected': accepted.rejected.entries.map((entry) => {'id': entry.key, 'reason': entry.value}).toList(),
           'serverTime': DateTime.now().toIso8601String(),
           'discardedBecauseOfReset': accepted.discardedBecauseOfReset,
         });
         return;
       }
 
-      // Backward compatible endpoints.
-      if (request.method == 'GET' && request.uri.path == '/pull') {
-        request.response.headers.contentType = ContentType.json;
-        request.response.write(store.exportSyncSnapshotJson());
-        await request.response.close();
-        return;
-      }
-
-      if (request.method == 'POST' && request.uri.path == '/sync') {
-        final body = await utf8.decoder.bind(request).join();
-        await store.mergeBackupJson(body, markSynced: true);
-        request.response.headers.contentType = ContentType.json;
-        request.response.write(store.exportSyncSnapshotJson());
-        await request.response.close();
+      // Legacy LAN Sync V1 endpoints are intentionally disabled.
+      // Stage 4 keeps all LAN synchronization on the unified /changes/* protocol
+      // so old clients cannot merge snapshots directly into Host data.
+      if ((request.method == 'GET' && request.uri.path == '/pull') ||
+          (request.method == 'POST' && request.uri.path == '/sync')) {
+        await _json(
+          request,
+          {
+            'ok': false,
+            'error': 'Legacy LAN sync endpoint disabled. Use /changes/push and /changes/pull.',
+          },
+          status: HttpStatus.gone,
+        );
         return;
       }
 
@@ -580,6 +580,20 @@ class LanSyncService {
   }
 
 
+
+  Map<String, String> _decodeRejectedSyncRequests(dynamic raw) {
+    final output = <String, String>{};
+    if (raw is List) {
+      for (final item in raw) {
+        if (item is Map) {
+          final id = (item['id'] ?? '').toString();
+          if (id.isNotEmpty) output[id] = (item['reason'] ?? 'Rejected by Host.').toString();
+        }
+      }
+    }
+    return output;
+  }
+
   Future<void> _sendLanAck(String host, {int port = 8787, String token = '', required DateTime cursor, int sequence = 0}) async {
     try {
       final client = _client();
@@ -631,7 +645,9 @@ class LanSyncService {
       }
       final decoded = jsonDecode(pushBody) as Map<String, dynamic>;
       final ackIds = (decoded['ackIds'] as List<dynamic>? ?? []).map((item) => '$item').toList();
-      await _syncCore.markPushAcknowledged(ackIds, fallbackIds: pendingIds);
+      final rejected = _decodeRejectedSyncRequests(decoded['rejected']);
+      if (rejected.isNotEmpty) await _syncCore.markPushRejected(rejected);
+      await _syncCore.markPushSubmitted(ackIds, fallbackIds: pendingIds);
       return LanSyncResult(ok: true, message: 'LAN push completed. Pushed ${pending.length} change(s).');
     } catch (error) {
       await _syncCore.markPushFailed(pendingIds, error.toString());
@@ -717,8 +733,10 @@ class LanSyncService {
         }
         final decoded = jsonDecode(pushBody) as Map<String, dynamic>;
         final ackIds = (decoded['ackIds'] as List<dynamic>? ?? []).map((item) => '$item').toList();
-        onProgress?.call(0.48, 'Host acknowledged ${ackIds.length} pushed change(s)...');
-        await _syncCore.markPushAcknowledged(ackIds);
+        final rejected = _decodeRejectedSyncRequests(decoded['rejected']);
+        if (rejected.isNotEmpty) await _syncCore.markPushRejected(rejected);
+        onProgress?.call(0.48, 'Host accepted ${ackIds.length} pushed change(s)...');
+        await _syncCore.markPushSubmitted(ackIds);
         pushCompleted = true;
       }
 
@@ -765,147 +783,6 @@ class LanSyncService {
       }
       if (pendingIds.isNotEmpty && !pushCompleted) await _syncCore.markPushFailed(pendingIds, error.toString());
       return LanSyncResult(ok: false, message: 'Sync failed: $error');
-    }
-  }
-}
-
-class AutoLanSyncController {
-  AutoLanSyncController(this.store) : _service = LanSyncService(store);
-
-  final AppStore store;
-  final LanSyncService _service;
-  Timer? _periodicTimer;
-  Timer? _debounceTimer;
-  bool _running = false;
-  bool _disposed = false;
-  int _lastPendingCount = 0;
-  String _lastSettingsSignature = '';
-
-  String _settingsSignature(LanSyncSettings settings) => [
-        settings.setupComplete,
-        settings.mode.name,
-        settings.hostModeEnabled,
-        settings.host.trim(),
-        settings.port,
-        settings.autoSyncEnabled,
-        settings.secret.trim(),
-      ].join('|');
-
-  bool _lanAllowedForCurrentRole(LanSyncSettings settings) {
-    final identity = store.appIdentity;
-    if (identity.isHost) return settings.setupComplete && settings.isHost;
-    if (identity.isClient) {
-      return (identity.syncMode == SyncMode.lanOnly || identity.activeSyncTransportNormalized == 'lan') && settings.setupComplete && settings.isClient;
-    }
-    return false;
-  }
-
-  Future<void> start() async {
-    _disposed = false;
-    final settings = LanSyncSettings.load();
-    _lastSettingsSignature = _settingsSignature(settings);
-    _lastPendingCount = store.pendingSyncCount;
-
-    if (!_lanAllowedForCurrentRole(settings)) {
-      await _service.stopHost();
-      store.removeListener(_onStoreChanged);
-      _periodicTimer?.cancel();
-      _debounceTimer?.cancel();
-      return;
-    }
-
-    if (store.appIdentity.isHost && settings.isHost) {
-      try {
-        await _service.startHost(port: settings.port);
-      } catch (_) {}
-    }
-
-    store.removeListener(_onStoreChanged);
-    store.addListener(_onStoreChanged);
-    _periodicTimer?.cancel();
-    _periodicTimer = Timer.periodic(const Duration(seconds: 30), (_) => _syncBecauseOfTimer());
-
-    if (store.appIdentity.isClient && settings.autoSyncEnabled && settings.isClient) {
-      unawaited(_runClientSync());
-    }
-  }
-
-  Future<void> stop() async {
-    _disposed = true;
-    store.removeListener(_onStoreChanged);
-    _periodicTimer?.cancel();
-    _debounceTimer?.cancel();
-    unawaited(_service.stopHost());
-  }
-
-  void _onStoreChanged() {
-    if (_disposed) return;
-    final settings = LanSyncSettings.load();
-    final signature = _settingsSignature(settings);
-    if (signature != _lastSettingsSignature) {
-      _lastSettingsSignature = signature;
-      unawaited(_applySettingsChange(settings));
-    }
-    final pending = store.pendingSyncCount;
-    final pendingIncreased = pending > _lastPendingCount;
-    _lastPendingCount = pending;
-    if (!_lanAllowedForCurrentRole(settings) || !settings.autoSyncEnabled || !settings.isClient || !pendingIncreased) return;
-
-    _debounceTimer?.cancel();
-    _debounceTimer = Timer(const Duration(seconds: 1), () => _runClientSync());
-  }
-
-  void _syncBecauseOfTimer() {
-    final settings = LanSyncSettings.load();
-    final signature = _settingsSignature(settings);
-    if (signature != _lastSettingsSignature) {
-      _lastSettingsSignature = signature;
-      unawaited(_applySettingsChange(settings));
-    }
-    if (!_lanAllowedForCurrentRole(settings)) {
-      unawaited(_service.stopHost());
-      return;
-    }
-    if (store.appIdentity.isHost && settings.isHost) {
-      if (!_service.isHosting || _service.port != settings.port) {
-        unawaited(_service.startHost(port: settings.port));
-      }
-      return;
-    }
-    if (!settings.autoSyncEnabled) return;
-    // Keep LAN reconnects responsive: failed items are moved back to pending
-    // on the next auto tick instead of waiting for long backoff windows.
-    unawaited(store.retryFailedSyncQueue(target: 'host'));
-    unawaited(_runClientSync());
-  }
-
-  Future<void> _applySettingsChange(LanSyncSettings settings) async {
-    if (_disposed) return;
-    if (!_lanAllowedForCurrentRole(settings) || !settings.isHost) {
-      unawaited(_service.stopHost());
-    } else if (!_service.isHosting || _service.port != settings.port) {
-      await _service.startHost(port: settings.port);
-    }
-    if (store.appIdentity.isClient && _lanAllowedForCurrentRole(settings) && settings.autoSyncEnabled && settings.isClient) {
-      await store.retryFailedSyncQueue(target: 'host');
-      await _runClientSync();
-    }
-  }
-
-  Future<void> _runClientSync() async {
-    if (_running || _disposed) return;
-    final settings = LanSyncSettings.load();
-    if (!_lanAllowedForCurrentRole(settings) || !settings.autoSyncEnabled || !settings.isClient || settings.host.trim().isEmpty) return;
-
-    _running = true;
-    try {
-      await store.retryFailedSyncQueue(target: 'host');
-      final result = await _service.syncNow(settings.host, port: settings.port, token: settings.secret);
-      if (result.ok) {
-        _lastPendingCount = store.pendingSyncCount;
-      }
-    } finally {
-      _running = false;
     }
   }
 }

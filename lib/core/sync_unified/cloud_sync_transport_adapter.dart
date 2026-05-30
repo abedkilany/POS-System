@@ -220,18 +220,56 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<UnifiedSyncResult> syncNow({void Function(double value, String label)? onProgress}) async {
-    final effectiveSettings = _settingsWithUnifiedCursor();
-    final result = await _service.syncNow(effectiveSettings, onProgress: onProgress);
-    final current = CloudSyncSettings.load();
-    await _recordCloudResult(current.lastPullCursor);
+    onProgress?.call(0.08, 'Preparing Cloud sync...');
+    final push = await pushPending(UnifiedSyncPushRequest(deviceId: deviceId, deviceToken: deviceToken));
+    if (!push.ok) {
+      onProgress?.call(1.0, 'Cloud sync failed while sending local changes.');
+      return push;
+    }
+
+    onProgress?.call(0.55, 'Pulling authoritative Cloud changes...');
+    final pull = await pullChanges(
+      UnifiedSyncPullRequest(
+        deviceId: deviceId,
+        deviceToken: deviceToken,
+        cursor: UnifiedSyncCursor(
+          value: push.cursor.value,
+          generatedAt: push.cursor.generatedAt,
+          source: push.cursor.source,
+        ),
+      ),
+    );
+    if (pull.ok) {
+      onProgress?.call(1.0, 'Cloud sync completed.');
+      return UnifiedSyncResult(
+        ok: true,
+        message: 'Cloud sync completed. Pushed ${push.pushed} change(s), pulled ${pull.pulled} change(s).',
+        pushed: push.pushed,
+        pulled: pull.pulled,
+        restoredSnapshot: pull.restoredSnapshot,
+        cursor: pull.cursor,
+      );
+    }
+
+    onProgress?.call(0.78, 'Cloud pull failed. Trying snapshot repair...');
+    final repair = await rebuildFromHostSnapshot(onProgress: onProgress);
+    if (repair.ok) {
+      return UnifiedSyncResult(
+        ok: true,
+        message: '${pull.message}. ${repair.message}',
+        pushed: push.pushed,
+        pulled: repair.pulled,
+        restoredSnapshot: true,
+        cursor: repair.cursor,
+      );
+    }
     return UnifiedSyncResult(
-      ok: result.ok,
-      message: result.message,
-      pushed: result.pushed,
-      pulled: result.pulled,
-      restoredSnapshot: result.restoredSnapshot,
-      error: _errorFor(result.ok, result.message),
-      cursor: _cursor(),
+      ok: false,
+      message: '${pull.message}. ${repair.message}',
+      pushed: push.pushed,
+      pulled: pull.pulled,
+      error: pull.error.hasError ? pull.error : repair.error,
+      cursor: pull.cursor,
     );
   }
 }
