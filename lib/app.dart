@@ -47,7 +47,13 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
   Future<void> _initializeApp() async {
     await _store.initialize();
     final savedTheme = await _store.loadThemeMode();
-    if (mounted) setState(() => _themeMode = savedTheme);
+    final savedLocale = await _store.loadLocale();
+    if (mounted) {
+      setState(() {
+        _themeMode = savedTheme;
+        _locale = savedLocale;
+      });
+    }
     if (_store.activeUser != null) {
       unawaited(_startSyncAfterLogin());
     }
@@ -77,8 +83,9 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
     super.dispose();
   }
 
-  void _changeLocale(Locale locale) {
-    setState(() => _locale = locale);
+  Future<void> _changeLocale(Locale locale) async {
+    await _store.saveLocale(locale);
+    if (mounted) setState(() => _locale = locale);
   }
 
   Future<void> _changeThemeMode(ThemeMode mode) async {
@@ -156,6 +163,73 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell> {
   int selectedIndex = 0;
 
+  Widget _buildLanguageShortcut(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    final currentLocale = Localizations.localeOf(context);
+    final isArabic = currentLocale.languageCode == 'ar';
+    final languageCode = isArabic ? 'AR' : 'EN';
+
+    return PopupMenuButton<Locale>(
+      tooltip: tr.text('language'),
+      initialValue: Locale(currentLocale.languageCode),
+      onSelected: (locale) {
+        if (locale.languageCode != currentLocale.languageCode) {
+          widget.onLocaleChanged(locale);
+        }
+      },
+      itemBuilder: (context) => [
+        PopupMenuItem<Locale>(
+          value: const Locale('en'),
+          child: Row(
+            children: [
+              const Text('🇺🇸'),
+              const SizedBox(width: 10),
+              Expanded(child: Text(tr.text('language_english'))),
+              if (!isArabic) const Icon(Icons.check, size: 18),
+            ],
+          ),
+        ),
+        PopupMenuItem<Locale>(
+          value: const Locale('ar'),
+          child: Row(
+            children: [
+              const Text('🇱🇧'),
+              const SizedBox(width: 10),
+              Expanded(child: Text(tr.text('language_arabic'))),
+              if (isArabic) const Icon(Icons.check, size: 18),
+            ],
+          ),
+        ),
+      ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: Tooltip(
+          message: tr.text('language'),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.translate, size: 18),
+                  const SizedBox(width: 4),
+                  Text(
+                    languageCode,
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w700),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
@@ -208,6 +282,7 @@ class _MainShellState extends State<MainShell> {
                   compact: constraints.maxWidth < 720,
                 ),
               ),
+              _buildLanguageShortcut(context),
               if (constraints.maxWidth >= 720)
                 ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 180),

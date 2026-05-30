@@ -160,10 +160,14 @@ class SettingsPage extends StatelessWidget {
             children: [
               Text(tr.text('language'), style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 12),
-              Wrap(spacing: 12, runSpacing: 12, children: [
-                OutlinedButton(onPressed: () => onLocaleChanged(const Locale('en')), child: Text(tr.text('language_english'))),
-                OutlinedButton(onPressed: () => onLocaleChanged(const Locale('ar')), child: Text(tr.text('language_arabic'))),
-              ]),
+              SegmentedButton<Locale>(
+                segments: [
+                  ButtonSegment<Locale>(value: const Locale('en'), label: Text(tr.text('language_english'))),
+                  ButtonSegment<Locale>(value: const Locale('ar'), label: Text(tr.text('language_arabic'))),
+                ],
+                selected: {tr.locale},
+                onSelectionChanged: (selection) => onLocaleChanged(selection.first),
+              ),
             ],
           ),
         ),
@@ -213,10 +217,10 @@ class SettingsPage extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.backup_outlined), title: Text(tr.text('backup_restore')), subtitle: Text(tr.text('backup_preview_desc'))),
-              Align(alignment: Alignment.centerLeft, child: Padding(padding: const EdgeInsets.only(bottom: 12), child: Chip(avatar: const Icon(Icons.storage_outlined, size: 18), label: Text(tr.text('local_db_hive'))))),
+              Align(alignment: AlignmentDirectional.centerStart, child: Padding(padding: const EdgeInsets.only(bottom: 12), child: Chip(avatar: const Icon(Icons.storage_outlined, size: 18), label: Text(tr.text('local_db_hive'))))),
               _BackupSummaryCard(summary: store.currentBackupSummary),
               const SizedBox(height: 16),
-              Text('Actions', style: Theme.of(context).textTheme.titleSmall),
+              Text(tr.text('actions'), style: Theme.of(context).textTheme.titleSmall),
               const SizedBox(height: 10),
               LayoutBuilder(
                 builder: (context, constraints) {
@@ -819,9 +823,7 @@ class SettingsPage extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'This will erase all local data, settings, and Host pairing on this Client device. Other devices will not be affected.',
-                ),
+                Text(AppLocalizations.of(context).text('clear_local_data_warning')),
                 const SizedBox(height: 16),
                 Text(
                   AppLocalizations.of(context).format('type_word_to_confirm', {'word': confirmationWord}),
@@ -2883,15 +2885,15 @@ class _SystemStatusPanel extends StatelessWidget {
           Row(children: [
             Icon(Icons.verified_user_outlined, color: Theme.of(context).colorScheme.primary),
             const SizedBox(width: 8),
-            Text('System Status', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+            Text(AppLocalizations.of(context).text('system_status'), style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
           ]),
           const SizedBox(height: 12),
-          _StatusBullet(label: identity.isHost ? 'Host Device' : 'Client Device'),
-          const _StatusBullet(label: 'LAN Active'),
-          _StatusBullet(label: identity.isCloudEnabled ? 'Cloud Online' : 'Cloud Disabled'),
-          const _StatusBullet(label: 'Sync Active'),
+          _StatusBullet(label: AppLocalizations.of(context).text(identity.isHost ? 'host_device' : 'client_device')),
+          _StatusBullet(label: AppLocalizations.of(context).text('lan_active')),
+          _StatusBullet(label: AppLocalizations.of(context).text(identity.isCloudEnabled ? 'cloud_online' : 'cloud_disabled')),
+          _StatusBullet(label: AppLocalizations.of(context).text('sync_active')),
           const Divider(height: 22),
-          Text('All systems are running smoothly', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+          Text(AppLocalizations.of(context).text('all_systems_are_running_smoothly'), style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
         ],
       ),
     );

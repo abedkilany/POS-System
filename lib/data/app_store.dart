@@ -8,6 +8,7 @@ import 'package:pointycastle/export.dart' as pc;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/services/local_database_service.dart';
+import '../core/utils/currency_utils.dart';
 
 import '../models/catalog_item.dart';
 import '../models/customer.dart';
@@ -15,6 +16,7 @@ import '../models/expense.dart';
 import '../models/product.dart';
 import '../models/purchase.dart';
 import '../models/purchase_item.dart';
+import '../models/supplier_purchase_price.dart';
 import '../models/stock_movement.dart';
 import '../models/sale.dart';
 import '../models/sale_item.dart';
@@ -147,6 +149,7 @@ class AppStore extends ChangeNotifier {
   static const _rememberLoginKey = 'remember_login_v1';
   static const _appIdentityKey = 'app_identity_v1';
   static const _themeModeKey = 'theme_mode_v1';
+  static const _localeKey = 'locale_v1';
   static const _hostTransferApprovedDeviceKey = 'host_transfer_approved_device_v1';
   static const _hostTransferRequestKey = 'host_transfer_request_v1';
   static const _hostTransferNotificationKey = 'host_transfer_notification_v1';
@@ -247,6 +250,16 @@ class AppStore extends ChangeNotifier {
 
   Future<void> saveThemeMode(ThemeMode mode) async {
     await LocalDatabaseService.setString(_themeModeKey, mode.name);
+  }
+
+  Future<Locale> loadLocale() async {
+    final raw = LocalDatabaseService.getString(_localeKey) ?? 'en';
+    return ['en', 'ar'].contains(raw) ? Locale(raw) : const Locale('en');
+  }
+
+  Future<void> saveLocale(Locale locale) async {
+    final languageCode = ['en', 'ar'].contains(locale.languageCode) ? locale.languageCode : 'en';
+    await LocalDatabaseService.setString(_localeKey, languageCode);
   }
 
 
@@ -355,10 +368,87 @@ class AppStore extends ChangeNotifier {
   double get totalExpensesAmount => expenses.fold<double>(0, (sum, expense) => sum + expense.amount);
   double get totalPurchasesAmount => purchases.where((item) => !item.isCancelled).fold<double>(0, (sum, purchase) => sum + purchase.subtotal);
   int get pendingPurchaseCount => purchases.where((item) => item.status.toLowerCase() == 'draft').length;
-  int get lowStockCount => products.where((product) => product.isLowStock).length;
-  int get totalUnitsInStock => products.fold<int>(0, (sum, item) => sum + item.stock);
-  double get inventoryRetailValue => products.fold<double>(0, (sum, item) => sum + (item.price * item.stock));
-  double get inventoryCostValue => products.fold<double>(0, (sum, item) => sum + (item.cost * item.stock));
+
+  List<SupplierPurchasePrice> purchasePriceHistoryForProduct(String productId) {
+    final history = <SupplierPurchasePrice>[];
+    for (final purchase in _purchases.where((item) => !item.isDeleted && !item.isCancelled)) {
+      for (final item in purchase.items.where((line) => line.productId == productId)) {
+        history.add(SupplierPurchasePrice(
+          productId: item.productId,
+          productName: item.productName,
+          supplierId: purchase.supplierId,
+          supplierName: purchase.supplierName,
+          unitCost: item.unitCostPerBase,
+          quantity: item.baseQuantity,
+          purchaseId: purchase.id,
+          purchaseNo: purchase.purchaseNo,
+          date: purchase.date,
+        ));
+      }
+    }
+    history.sort((a, b) => b.date.compareTo(a.date));
+    return List.unmodifiable(history);
+  }
+
+  List<SupplierPurchasePrice> supplierPriceComparisonForProduct(String productId) {
+    final latestBySupplier = <String, SupplierPurchasePrice>{};
+    for (final entry in purchasePriceHistoryForProduct(productId)) {
+      latestBySupplier.putIfAbsent(entry.supplierId, () => entry);
+    }
+    final prices = latestBySupplier.values.toList()..sort((a, b) => a.unitCost.compareTo(b.unitCost));
+    return List.unmodifiable(prices);
+  }
+
+  double? lastPurchasePriceFor({required String productId, required String supplierId}) {
+    for (final entry in purchasePriceHistoryForProduct(productId)) {
+      if (entry.supplierId == supplierId) return entry.unitCost;
+    }
+    return null;
+  }
+
+  double? lastPurchasePriceForProduct(String productId) {
+    final history = purchasePriceHistoryForProduct(productId);
+    return history.isEmpty ? null : history.first.unitCost;
+  }
+
+  PurchaseItem? lastPurchaseItemFor({required String productId, required String supplierId}) {
+    final sortedPurchases = _purchases.where((purchase) => !purchase.isDeleted && !purchase.isCancelled && purchase.supplierId == supplierId).toList()
+      ..sort((a, b) => b.date.compareTo(a.date));
+    for (final purchase in sortedPurchases) {
+      for (final item in purchase.items) {
+        if (item.productId == productId) return item;
+      }
+    }
+    return null;
+  }
+
+  PurchaseItem? lastPurchaseItemForProduct(String productId) {
+    final sortedPurchases = _purchases.where((purchase) => !purchase.isDeleted && !purchase.isCancelled).toList()
+      ..sort((a, b) => b.date.compareTo(a.date));
+    for (final purchase in sortedPurchases) {
+      for (final item in purchase.items) {
+        if (item.productId == productId) return item;
+      }
+    }
+    return null;
+  }
+
+  double averagePurchaseCostForProduct(String productId) {
+    double totalQty = 0;
+    double totalCost = 0;
+    for (final entry in purchasePriceHistoryForProduct(productId)) {
+      totalQty += entry.quantity;
+      totalCost += entry.quantity * entry.unitCost;
+    }
+    return totalQty <= 0 ? 0 : totalCost / totalQty;
+  }
+
+  int supplierCountForProduct(String productId) => supplierPriceComparisonForProduct(productId).length;
+  int get lowStockCount => products.where((product) => product.trackStock && product.isLowStock).length;
+  List<Product> get stockTrackedProducts => products.where((product) => product.trackStock).toList(growable: false);
+  double get totalUnitsInStock => stockTrackedProducts.fold<double>(0, (sum, item) => sum + item.stock);
+  double get inventoryRetailValue => stockTrackedProducts.fold<double>(0, (sum, item) => sum + (item.usdPrice * item.stock));
+  double get inventoryCostValue => stockTrackedProducts.fold<double>(0, (sum, item) => sum + (_safeUsdCost(item) * item.stock));
 
   Future<void> initialize() async {
     await _migrateLegacySharedPreferencesIfNeeded();
@@ -645,7 +735,7 @@ class AppStore extends ChangeNotifier {
 
   Future<void> _runDataMigrationsIfNeeded() async {
     final current = int.tryParse(LocalDatabaseService.getString(_schemaVersionKey) ?? '') ?? 0;
-    if (current >= 11) return;
+    if (current >= 13) return;
 
     if (current < 7) {
       // Version 7 captures unit cost on every historical sale item when possible
@@ -660,7 +750,10 @@ class AppStore extends ChangeNotifier {
             productName: item.productName,
             unitPrice: item.unitPrice,
             quantity: item.quantity,
-            unitCost: product?.cost ?? 0,
+            unitName: item.unitName,
+            baseQuantity: item.effectiveBaseQuantity,
+            conversionToBase: item.conversionToBase,
+            unitCost: product?.usdCost ?? 0,
           );
         }).toList();
         _sales[saleIndex] = Sale(
@@ -687,14 +780,51 @@ class AppStore extends ChangeNotifier {
       _prepareExistingDataForSync();
     }
 
+    if (current < 13) {
+      _normalizeProductCostReferences();
+    }
+
     _appIdentity = _loadOrCreateAppIdentity();
     _syncSequence = _loadSyncSequence();
 
     await LocalDatabaseService.setString(_syncSequenceKey, _syncSequence.toString());
-    await LocalDatabaseService.setString(_schemaVersionKey, '12');
+    await LocalDatabaseService.setString(_schemaVersionKey, '13');
     await LocalDatabaseService.setString(_invoiceCounterKey, _invoiceCounter.toString());
     await LocalDatabaseService.setString(_purchaseCounterKey, _purchaseCounter.toString());
     await _saveAll();
+  }
+
+  double _safeUsdCost(Product product) {
+    final usdCost = product.usdCost.isFinite && product.usdCost >= 0 ? product.usdCost : 0.0;
+    final originalCost = product.originalCost.isFinite && product.originalCost >= 0 ? product.originalCost : 0.0;
+    final rawCost = product.cost.isFinite && product.cost >= 0 ? product.cost : 0.0;
+    if (product.costCurrency.toUpperCase() != 'LBP') {
+      return usdCost;
+    }
+
+    final sourceLbpCost = originalCost > 0 ? originalCost : (rawCost > 0 ? rawCost : usdCost);
+    final expectedUsdCost = toUsdReferencePrice(sourceLbpCost, 'LBP', storeProfile);
+    if (expectedUsdCost <= 0) return usdCost;
+
+    // Legacy records sometimes stored the LBP cost directly in usdCost/cost.
+    // When costCurrency is LBP, the USD reference must be originalCost / rate.
+    final usdLooksLikeLbp = usdCost > expectedUsdCost * 10 || usdCost > 1000;
+    return usdLooksLikeLbp ? expectedUsdCost : usdCost;
+  }
+
+  void _normalizeProductCostReferences() {
+    for (var index = 0; index < _products.length; index++) {
+      final product = _products[index];
+      final normalizedUsdCost = _safeUsdCost(product);
+      if ((normalizedUsdCost - product.usdCost).abs() < 0.000001 &&
+          (normalizedUsdCost - product.cost).abs() < 0.000001) {
+        continue;
+      }
+      _products[index] = product.copyWith(
+        cost: normalizedUsdCost,
+        usdCost: normalizedUsdCost,
+      );
+    }
   }
 
   void _prepareExistingDataForSync() {
@@ -1522,7 +1652,7 @@ class AppStore extends ChangeNotifier {
       LocalDatabaseService.setString(_invoiceCounterKey, _invoiceCounter.toString()),
       LocalDatabaseService.setString(_purchaseCounterKey, _purchaseCounter.toString()),
       LocalDatabaseService.setString(_syncSequenceKey, _syncSequence.toString()),
-      LocalDatabaseService.setString(_schemaVersionKey, '12'),
+      LocalDatabaseService.setString(_schemaVersionKey, '13'),
     ]);
   }
 
@@ -1580,7 +1710,9 @@ class AppStore extends ChangeNotifier {
     final normalized = code.trim().toLowerCase();
     final matches = _products
         .where((product) => !product.isDeleted)
-        .where((product) => product.code.trim().toLowerCase() == normalized || (product.barcode.trim().isNotEmpty && product.barcode.trim().toLowerCase() == normalized))
+        .where((product) =>
+            product.code.trim().toLowerCase() == normalized ||
+            product.effectiveSaleUnits.any((unit) => unit.barcode.trim().isNotEmpty && unit.barcode.trim().toLowerCase() == normalized))
         .toList();
     if (matches.length != 1) return null;
     return matches.first;
@@ -1790,19 +1922,25 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _validateProduct(Product product) {
+  void _validateProduct(Product product, {Product? previousProduct}) {
     if (product.name.trim().isEmpty || product.code.trim().isEmpty || product.category.trim().isEmpty) {
       throw ArgumentError('Product name, code, and category are required.');
     }
     if (!product.price.isFinite || !product.cost.isFinite || product.price < 0 || product.cost < 0 || product.stock < 0 || product.lowStockThreshold < 0) {
       throw ArgumentError('Product price, cost, stock, and low stock threshold must be zero or positive.');
     }
+
     final normalizedCode = product.code.trim().toLowerCase();
     final normalizedBarcode = product.barcode.trim().toLowerCase();
+    final previousCode = previousProduct?.code.trim().toLowerCase();
+    final previousBarcode = previousProduct?.barcode.trim().toLowerCase();
+    final codeChanged = previousProduct == null || normalizedCode != previousCode;
+    final barcodeChanged = previousProduct == null || normalizedBarcode != previousBarcode;
+
     final duplicate = _products.any((item) {
       if (item.id == product.id) return false;
-      final sameCode = item.code.trim().toLowerCase() == normalizedCode;
-      final sameBarcode = normalizedBarcode.isNotEmpty && item.barcode.trim().toLowerCase() == normalizedBarcode;
+      final sameCode = codeChanged && item.code.trim().toLowerCase() == normalizedCode;
+      final sameBarcode = barcodeChanged && normalizedBarcode.isNotEmpty && item.barcode.trim().toLowerCase() == normalizedBarcode;
       return sameCode || sameBarcode;
     });
     if (duplicate) {
@@ -1986,10 +2124,11 @@ class AppStore extends ChangeNotifier {
     requirePermission(exists ? AppPermission.productsEdit : AppPermission.productsCreate);
     final now = DateTime.now();
     final normalizedProduct = product.code.trim().isEmpty ? product.copyWith(code: _generateUniqueProductCode(exceptProductId: product.id)) : product;
-    _validateProduct(normalizedProduct);
 
     final index = _products.indexWhere((item) => item.id == normalizedProduct.id);
     final isCreate = index == -1;
+    final previousProduct = isCreate ? null : _products[index];
+    _validateProduct(normalizedProduct, previousProduct: previousProduct);
     final syncedProduct = _markProductForSync(normalizedProduct, now, isCreate: isCreate);
     if (isCreate) {
       _products.add(syncedProduct);
@@ -2196,7 +2335,7 @@ class AppStore extends ChangeNotifier {
     requirePermission(AppPermission.suppliersManage);
     if (items.isEmpty) throw ArgumentError('Purchase must contain at least one item.');
     for (final item in items) {
-      if (item.quantity <= 0 || item.unitCost < 0) throw ArgumentError('Invalid purchase item values.');
+      if (item.quantity <= 0 || item.conversionToBase <= 0 || item.unitCost < 0) throw ArgumentError('Invalid purchase item values.');
       if (_findProductById(item.productId) == null) throw ArgumentError('Product not found: ${item.productName}');
     }
     _purchaseCounter += 1;
@@ -2256,7 +2395,8 @@ class AppStore extends ChangeNotifier {
         final productIndex = _products.indexWhere((product) => product.id == item.productId);
         if (productIndex == -1) continue;
         final product = _products[productIndex];
-        final qty = -item.quantity;
+        if (!product.trackStock) continue;
+        final qty = -item.baseQuantity;
         _products[productIndex] = _withSyncMeta<Product>(product.copyWith(stock: product.stock + qty), now);
         _addStockMovement(StockMovement(
           id: '${purchase.id}-${item.productId}-purchase-cancel',
@@ -2268,7 +2408,7 @@ class AppStore extends ChangeNotifier {
           referenceId: purchase.id,
           referenceNo: purchase.purchaseNo,
           reason: 'Purchase cancelled',
-          unitCost: item.unitCost,
+          unitCost: item.unitCostPerBase,
           createdAt: now,
           updatedAt: now,
           deviceId: _deviceId,
@@ -2284,25 +2424,31 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> adjustStock({required String productId, required int quantityDelta, required String reason}) async {
+  Future<void> adjustStock({required String productId, required double quantityDelta, required String reason, String adjustmentCategory = 'other', String notes = '', String evidenceRef = ''}) async {
     requirePermission(AppPermission.productsEdit);
     if (quantityDelta == 0) return;
     final index = _products.indexWhere((product) => product.id == productId);
     if (index == -1) throw ArgumentError('Product not found.');
     final now = DateTime.now();
     final product = _products[index];
+    if (!product.trackStock) {
+      throw StateError('This product does not track stock.');
+    }
     _products[index] = _withSyncMeta<Product>(product.copyWith(stock: product.stock + quantityDelta), now);
     _addStockMovement(StockMovement(
       id: '${now.microsecondsSinceEpoch}-$productId-adjustment',
       productId: productId,
       productName: product.name,
-      type: 'adjustment',
+      type: quantityDelta < 0 ? 'inventory_loss' : 'inventory_adjustment',
       quantity: quantityDelta,
       date: now,
       referenceId: productId,
       referenceNo: product.code,
       reason: reason.trim().isEmpty ? 'Manual adjustment' : reason.trim(),
-      unitCost: product.cost,
+      adjustmentCategory: adjustmentCategory.trim().isEmpty ? 'other' : adjustmentCategory.trim(),
+      notes: notes.trim(),
+      evidenceRef: evidenceRef.trim(),
+      unitCost: product.usdCost,
       createdAt: now,
       updatedAt: now,
       deviceId: _deviceId,
@@ -2319,18 +2465,25 @@ class AppStore extends ChangeNotifier {
       final index = _products.indexWhere((product) => product.id == item.productId);
       if (index == -1) continue;
       final product = _products[index];
-      _products[index] = _withSyncMeta<Product>(product.copyWith(stock: product.stock + item.quantity, cost: item.unitCost), now);
+      if (!product.trackStock) continue;
+      final receivedQty = item.baseQuantity;
+      final newStock = product.stock + receivedQty;
+      final baseUnitCost = item.unitCostPerBase;
+      final weightedCost = newStock <= 0
+          ? baseUnitCost
+          : ((product.stock * _safeUsdCost(product)) + (receivedQty * baseUnitCost)) / newStock;
+      _products[index] = _withSyncMeta<Product>(product.copyWith(stock: newStock, cost: weightedCost, usdCost: weightedCost, originalCost: weightedCost, costCurrency: 'USD', costExchangeRateAtEntry: storeProfile.usdToLbpRate), now);
       _addStockMovement(StockMovement(
         id: '${purchase.id}-${item.productId}-purchase-receive',
         productId: item.productId,
         productName: item.productName,
         type: 'purchase_receive',
-        quantity: item.quantity,
+        quantity: item.baseQuantity,
         date: now,
         referenceId: purchase.id,
         referenceNo: purchase.purchaseNo,
         reason: 'Purchase received',
-        unitCost: item.unitCost,
+        unitCost: item.unitCostPerBase,
         createdAt: now,
         updatedAt: now,
         deviceId: _deviceId,
@@ -2353,6 +2506,9 @@ class AppStore extends ChangeNotifier {
     required String customerName,
     required List<SaleItem> items,
     double discount = 0,
+    double? originalDiscount,
+    String discountCurrency = 'USD',
+    double discountExchangeRateAtEntry = 0,
     String paymentMethod = 'Cash',
   }) async {
     requirePermission(AppPermission.salesCreate);
@@ -2378,7 +2534,7 @@ class AppStore extends ChangeNotifier {
       if (product == null) {
         throw ArgumentError('Product not found: ${item.productName}');
       }
-      if (product.stock < item.quantity) {
+      if (product.trackStock && product.stock < item.effectiveBaseQuantity) {
         throw StateError('Not enough stock for ${product.name}.');
       }
     }
@@ -2391,7 +2547,10 @@ class AppStore extends ChangeNotifier {
         productName: item.productName,
         unitPrice: item.unitPrice,
         quantity: item.quantity,
-        unitCost: item.unitCost > 0 ? item.unitCost : product.cost,
+        unitName: item.unitName,
+        baseQuantity: item.effectiveBaseQuantity,
+        conversionToBase: item.conversionToBase,
+        unitCost: item.unitCost > 0 ? item.unitCost : product.usdCost,
       );
     }).toList();
 
@@ -2405,6 +2564,9 @@ class AppStore extends ChangeNotifier {
       paymentMethod: paymentMethod.trim().isEmpty ? 'Cash' : paymentMethod.trim(),
       items: saleItems,
       discount: cleanedDiscount,
+      originalDiscount: originalDiscount ?? cleanedDiscount,
+      discountCurrency: discountCurrency.toUpperCase() == 'LBP' ? 'LBP' : 'USD',
+      discountExchangeRateAtEntry: discountExchangeRateAtEntry,
       createdAt: now,
       updatedAt: now,
       deviceId: _deviceId,
@@ -2421,19 +2583,20 @@ class AppStore extends ChangeNotifier {
     for (final item in saleItems) {
       final index = _products.indexWhere((product) => product.id == item.productId);
       final product = _products[index];
-      final updatedProduct = _withSyncMeta<Product>(product.copyWith(stock: product.stock - item.quantity), now);
+      if (!product.trackStock) continue;
+      final updatedProduct = _withSyncMeta<Product>(product.copyWith(stock: product.stock - item.effectiveBaseQuantity), now);
       _products[index] = updatedProduct;
       _addStockMovement(StockMovement(
         id: '${sale.id}-${item.productId}-sale',
         productId: item.productId,
         productName: item.productName,
         type: 'sale',
-        quantity: -item.quantity,
+        quantity: -item.effectiveBaseQuantity,
         date: now,
         referenceId: sale.id,
         referenceNo: sale.invoiceNo,
         reason: 'Sale invoice',
-        unitCost: item.unitCost,
+        unitCost: item.unitCostPerBase,
         createdAt: now,
         updatedAt: now,
         deviceId: _deviceId,
@@ -2464,20 +2627,21 @@ class AppStore extends ChangeNotifier {
         final productIndex = _products.indexWhere((product) => product.id == item.productId);
         if (productIndex == -1) continue;
         final product = _products[productIndex];
+        if (!product.trackStock) continue;
         final now = DateTime.now();
-        final updatedProduct = _withSyncMeta<Product>(product.copyWith(stock: product.stock + item.quantity), now);
+        final updatedProduct = _withSyncMeta<Product>(product.copyWith(stock: product.stock + item.effectiveBaseQuantity), now);
         _products[productIndex] = updatedProduct;
         _addStockMovement(StockMovement(
           id: '$id-${item.productId}-sale-restore',
           productId: item.productId,
           productName: item.productName,
           type: 'sale_restore',
-          quantity: item.quantity,
+          quantity: item.effectiveBaseQuantity,
           date: now,
           referenceId: id,
           referenceNo: sale.invoiceNo,
           reason: 'Sale cancelled',
-          unitCost: item.unitCost,
+          unitCost: item.unitCostPerBase,
           createdAt: now,
           updatedAt: now,
           deviceId: _deviceId,
@@ -3654,10 +3818,12 @@ class AppStore extends ChangeNotifier {
         final index = _products.indexWhere((item) => item.id == productId);
         if (index != -1 && quantity != 0) {
           final product = _products[index];
+          if (!product.trackStock) break;
           final at = movement.date;
           _products[index] = product.copyWith(
             stock: product.stock + quantity,
             cost: movement.type == 'purchase_receive' && movement.unitCost > 0 ? movement.unitCost : product.cost,
+            usdCost: movement.type == 'purchase_receive' && movement.unitCost > 0 ? movement.unitCost : product.usdCost,
             updatedAt: at.isAfter(product.updatedAt) ? at : product.updatedAt,
             syncStatus: 'synced',
           );

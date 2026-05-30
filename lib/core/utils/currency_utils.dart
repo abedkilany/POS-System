@@ -1,3 +1,5 @@
+import 'package:intl/intl.dart';
+
 import '../../models/store_profile.dart';
 
 double roundLbpAmount(double value, int step) {
@@ -10,17 +12,27 @@ double convertUsdToLbp(double usdAmount, StoreProfile profile) {
   return roundLbpAmount(converted, profile.lbpRounding);
 }
 
+String _formatNumberWithThousands(double value, {required int decimalDigits}) {
+  final formatter = NumberFormat.decimalPattern('en_US')
+    ..minimumFractionDigits = decimalDigits
+    ..maximumFractionDigits = decimalDigits;
+  return formatter.format(value);
+}
+
 String formatCurrency(double value, {String currency = 'USD'}) {
   final normalized = currency.toUpperCase();
+
   if (normalized == 'LBP') {
     final isWholeNumber = value == value.roundToDouble();
-    return 'LBP ${isWholeNumber ? value.round().toString() : value.toStringAsFixed(2)}';
+    final digits = isWholeNumber ? 0 : 2;
+    return 'LBP ${_formatNumberWithThousands(value, decimalDigits: digits)}';
   }
+
   final symbol = switch (normalized) {
     'USD' => r'$',
     _ => '$normalized ',
   };
-  return '$symbol${value.toStringAsFixed(2)}';
+  return '$symbol${_formatNumberWithThousands(value, decimalDigits: 2)}';
 }
 
 String formatUsdReferenceAmount(double usdAmount, StoreProfile profile) {
@@ -42,4 +54,10 @@ double toUsdReferencePrice(double amount, String currency, StoreProfile profile)
     return amount / rate;
   }
   return amount;
+}
+
+double fromUsdReferencePrice(double usdAmount, String currency, StoreProfile profile) {
+  final normalized = currency.toUpperCase();
+  if (normalized == 'LBP') return convertUsdToLbp(usdAmount, profile);
+  return usdAmount;
 }

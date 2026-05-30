@@ -9,6 +9,9 @@ class StockMovement {
     this.referenceId = '',
     this.referenceNo = '',
     this.reason = '',
+    this.adjustmentCategory = '',
+    this.notes = '',
+    this.evidenceRef = '',
     this.unitCost = 0,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -22,7 +25,8 @@ class StockMovement {
         updatedAt = updatedAt ?? createdAt ?? date;
 
   final String id, productId, productName, type, referenceId, referenceNo, reason;
-  final int quantity;
+  final String adjustmentCategory, notes, evidenceRef;
+  final double quantity;
   final double unitCost;
   final DateTime date, createdAt, updatedAt;
   final String deviceId, syncStatus, storeId, branchId, lastModifiedByDeviceId;
@@ -30,7 +34,7 @@ class StockMovement {
 
   double get value => quantity.abs() * unitCost;
 
-  StockMovement copyWith({String? productName, String? type, int? quantity, DateTime? date, String? referenceId, String? referenceNo, String? reason, double? unitCost, DateTime? createdAt, DateTime? updatedAt, String? deviceId, String? syncStatus, String? storeId, String? branchId, int? version, String? lastModifiedByDeviceId}) => StockMovement(
+  StockMovement copyWith({String? productName, String? type, double? quantity, DateTime? date, String? referenceId, String? referenceNo, String? reason, String? adjustmentCategory, String? notes, String? evidenceRef, double? unitCost, DateTime? createdAt, DateTime? updatedAt, String? deviceId, String? syncStatus, String? storeId, String? branchId, int? version, String? lastModifiedByDeviceId}) => StockMovement(
         id: id,
         productId: productId,
         productName: productName ?? this.productName,
@@ -40,6 +44,9 @@ class StockMovement {
         referenceId: referenceId ?? this.referenceId,
         referenceNo: referenceNo ?? this.referenceNo,
         reason: reason ?? this.reason,
+        adjustmentCategory: adjustmentCategory ?? this.adjustmentCategory,
+        notes: notes ?? this.notes,
+        evidenceRef: evidenceRef ?? this.evidenceRef,
         unitCost: unitCost ?? this.unitCost,
         createdAt: createdAt ?? this.createdAt,
         updatedAt: updatedAt ?? this.updatedAt,
@@ -61,6 +68,9 @@ class StockMovement {
         'referenceId': referenceId,
         'referenceNo': referenceNo,
         'reason': reason,
+        'adjustmentCategory': adjustmentCategory,
+        'notes': notes,
+        'evidenceRef': evidenceRef,
         'unitCost': unitCost,
         'createdAt': createdAt.toIso8601String(),
         'updatedAt': updatedAt.toIso8601String(),
@@ -79,11 +89,14 @@ class StockMovement {
       productId: json['productId']?.toString() ?? '',
       productName: json['productName']?.toString() ?? '',
       type: json['type']?.toString() ?? 'adjustment',
-      quantity: (json['quantity'] as num? ?? 0).toInt(),
+      quantity: (json['quantity'] as num? ?? 0).toDouble(),
       date: date,
       referenceId: json['referenceId']?.toString() ?? json['saleId']?.toString() ?? json['purchaseId']?.toString() ?? '',
       referenceNo: json['referenceNo']?.toString() ?? '',
       reason: json['reason']?.toString() ?? '',
+      adjustmentCategory: json['adjustmentCategory']?.toString() ?? json['category']?.toString() ?? '',
+      notes: json['notes']?.toString() ?? '',
+      evidenceRef: json['evidenceRef']?.toString() ?? '',
       unitCost: (json['unitCost'] as num? ?? 0).toDouble(),
       createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? '') ?? date,
       updatedAt: DateTime.tryParse(json['updatedAt']?.toString() ?? '') ?? date,

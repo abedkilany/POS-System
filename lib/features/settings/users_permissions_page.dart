@@ -208,7 +208,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                     onChanged: user?.isSystem == true ? null : (value) => setDialogState(() => isActive = value),
                   ),
                   const Divider(),
-                  Align(alignment: Alignment.centerLeft, child: Text(tr.text('user_specific_overrides'), style: const TextStyle(fontWeight: FontWeight.bold))),
+                  Align(alignment: AlignmentDirectional.centerStart, child: Text(tr.text('user_specific_overrides'), style: const TextStyle(fontWeight: FontWeight.bold))),
                   for (final permission in AppPermission.all)
                     ListTile(
                       title: Text(AppPermission.labels[permission] ?? permission),

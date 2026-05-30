@@ -204,7 +204,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
                       ),
                       const SizedBox(height: 12),
                       Align(
-                        alignment: Alignment.centerRight,
+                        alignment: AlignmentDirectional.centerEnd,
                         child: TextButton(
                           onPressed: _loggingIn ? null : () {
                             ScaffoldMessenger.of(context).showSnackBar(

@@ -5,6 +5,7 @@ import '../../core/utils/responsive.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../data/app_store.dart';
 import '../../models/expense.dart';
+import '../../models/store_profile.dart';
 import '../../widgets/app_section_header.dart';
 import '../../widgets/empty_state_card.dart';
 
@@ -99,7 +100,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
   Future<void> _openExpenseForm(BuildContext context, {Expense? expense}) async {
     final result = await showDialog<Expense>(
       context: context,
-      builder: (_) => _ExpenseDialog(expense: expense),
+      builder: (_) => _ExpenseDialog(expense: expense, storeProfile: widget.store.storeProfile),
     );
     if (result != null) {
       await widget.store.addOrUpdateExpense(result);
@@ -111,9 +112,10 @@ class _ExpensesPageState extends State<ExpensesPage> {
 }
 
 class _ExpenseDialog extends StatefulWidget {
-  const _ExpenseDialog({this.expense});
+  const _ExpenseDialog({this.expense, required this.storeProfile});
 
   final Expense? expense;
+  final StoreProfile storeProfile;
 
   @override
   State<_ExpenseDialog> createState() => _ExpenseDialogState();
@@ -125,6 +127,7 @@ class _ExpenseDialogState extends State<_ExpenseDialog> {
   late final TextEditingController categoryController;
   late final TextEditingController amountController;
   late final TextEditingController notesController;
+  String amountCurrency = 'USD';
 
   @override
   void initState() {
@@ -132,7 +135,8 @@ class _ExpenseDialogState extends State<_ExpenseDialog> {
     final expense = widget.expense;
     titleController = TextEditingController(text: expense?.title ?? '');
     categoryController = TextEditingController(text: expense?.category ?? '');
-    amountController = TextEditingController(text: expense?.amount.toString() ?? '');
+    amountCurrency = expense?.originalCurrency ?? widget.storeProfile.defaultProductCurrency;
+    amountController = TextEditingController(text: (expense?.originalAmount ?? expense?.amount)?.toString() ?? '');
     notesController = TextEditingController(text: expense?.notes ?? '');
   }
 
@@ -162,7 +166,17 @@ class _ExpenseDialogState extends State<_ExpenseDialog> {
                 const SizedBox(height: 12),
                 TextFormField(controller: categoryController, decoration: InputDecoration(labelText: tr.text('category')), validator: _required),
                 const SizedBox(height: 12),
-                TextFormField(controller: amountController, decoration: InputDecoration(labelText: tr.text('amount')), keyboardType: TextInputType.number, validator: _required),
+                TextFormField(controller: amountController, decoration: InputDecoration(labelText: tr.text('amount')), keyboardType: const TextInputType.numberWithOptions(decimal: true), validator: _required),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue: amountCurrency,
+                  decoration: InputDecoration(labelText: tr.text('currency')),
+                  items: const [
+                    DropdownMenuItem(value: 'USD', child: Text('USD')),
+                    DropdownMenuItem(value: 'LBP', child: Text('LBP')),
+                  ],
+                  onChanged: (value) => setState(() => amountCurrency = value ?? 'USD'),
+                ),
                 const SizedBox(height: 12),
                 TextFormField(controller: notesController, decoration: InputDecoration(labelText: tr.text('notes')), maxLines: 3),
               ],
@@ -175,13 +189,18 @@ class _ExpenseDialogState extends State<_ExpenseDialog> {
         FilledButton(
           onPressed: () {
             if (!_formKey.currentState!.validate()) return;
+            final originalAmount = double.tryParse(amountController.text.trim()) ?? 0;
+            final amount = toUsdReferencePrice(originalAmount, amountCurrency, widget.storeProfile);
             Navigator.pop(
               context,
               Expense(
                 id: widget.expense?.id ?? DateTime.now().microsecondsSinceEpoch.toString(),
                 title: titleController.text.trim(),
                 category: categoryController.text.trim(),
-                amount: double.tryParse(amountController.text.trim()) ?? 0,
+                amount: amount,
+                originalAmount: originalAmount,
+                originalCurrency: amountCurrency,
+                exchangeRateAtEntry: widget.storeProfile.usdToLbpRate,
                 date: widget.expense?.date ?? DateTime.now(),
                 notes: notesController.text.trim(),
               ),

@@ -21,16 +21,16 @@ class ReportsPage extends StatelessWidget {
     final todaySales = activeSales.where((sale) => sale.date.year == today.year && sale.date.month == today.month && sale.date.day == today.day).fold<double>(0, (sum, sale) => sum + sale.total);
     final monthSales = activeSales.where((sale) => sale.date.year == today.year && sale.date.month == today.month).fold<double>(0, (sum, sale) => sum + sale.total);
     final monthPurchases = store.purchases.where((purchase) => !purchase.isCancelled && purchase.date.year == today.year && purchase.date.month == today.month).fold<double>(0, (sum, purchase) => sum + purchase.subtotal);
-    final movementIn = store.stockMovements.where((item) => item.quantity > 0).fold<int>(0, (sum, item) => sum + item.quantity);
-    final movementOut = store.stockMovements.where((item) => item.quantity < 0).fold<int>(0, (sum, item) => sum + item.quantity.abs());
-    final topProducts = <String, int>{};
+    final movementIn = store.stockMovements.where((item) => item.quantity > 0).fold<double>(0, (sum, item) => sum + item.quantity);
+    final movementOut = store.stockMovements.where((item) => item.quantity < 0).fold<double>(0, (sum, item) => sum + item.quantity.abs());
+    final topProducts = <String, double>{};
     for (final sale in activeSales) {
       for (final item in sale.items) {
         topProducts[item.productName] = (topProducts[item.productName] ?? 0) + item.quantity;
       }
     }
     final topProductLines = topProducts.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
-    final lowStock = store.products.where((product) => product.stock <= product.lowStockThreshold).toList();
+    final lowStock = store.stockTrackedProducts.where((product) => product.stock <= product.lowStockThreshold).toList();
 
     return Padding(
       padding: VentioResponsive.pageInsets(context),

@@ -33,7 +33,7 @@ class Purchase {
   bool get isReceived => status.toLowerCase() == 'received';
   bool get isCancelled => status.toLowerCase() == 'cancelled';
   double get subtotal => items.fold<double>(0, (sum, item) => sum + item.lineTotal);
-  int get totalUnits => items.fold<int>(0, (sum, item) => sum + item.quantity);
+  double get totalUnits => items.fold<double>(0, (sum, item) => sum + item.baseQuantity);
 
   Purchase copyWith({String? purchaseNo, String? supplierId, String? supplierName, DateTime? date, String? status, List<PurchaseItem>? items, String? note, DateTime? createdAt, DateTime? updatedAt, DateTime? deletedAt, bool clearDeletedAt = false, String? deviceId, String? syncStatus, String? storeId, String? branchId, int? version, String? lastModifiedByDeviceId}) => Purchase(
         id: id,

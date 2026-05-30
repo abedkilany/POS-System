@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 
@@ -14,6 +15,7 @@ class InvoicePdfService {
   static Future<Uint8List> buildInvoicePdf({
     required Sale sale,
     required StoreProfile profile,
+    Locale locale = const Locale('en'),
   }) async {
     final baseFont = pw.Font.ttf(
       await rootBundle.load('assets/fonts/DejaVuSans.ttf'),
@@ -21,12 +23,16 @@ class InvoicePdfService {
     final boldFont = pw.Font.ttf(
       await rootBundle.load('assets/fonts/DejaVuSans-Bold.ttf'),
     );
+    final isArabic = locale.languageCode == 'ar';
+    final labels = _InvoicePdfLabels(isArabic);
+    final textDirection = isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr;
     final pdf = pw.Document(theme: pw.ThemeData.withFont(base: baseFont, bold: boldFont));
 
     pdf.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(28),
+        textDirection: textDirection,
         build: (context) => [
           pw.Row(
             mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
@@ -36,17 +42,17 @@ class InvoicePdfService {
                 crossAxisAlignment: pw.CrossAxisAlignment.start,
                 children: [
                   pw.Text(profile.name, style: pw.TextStyle(fontSize: 22, fontWeight: pw.FontWeight.bold)),
-                  if (profile.phone.isNotEmpty) pw.Text('Phone: ${profile.phone}'),
-                  if (profile.address.isNotEmpty) pw.Text('Address: ${profile.address}'),
+                  if (profile.phone.isNotEmpty) pw.Text('${labels.phone}: ${profile.phone}'),
+                  if (profile.address.isNotEmpty) pw.Text('${labels.address}: ${profile.address}'),
                 ],
               ),
               pw.Column(
                 crossAxisAlignment: pw.CrossAxisAlignment.end,
                 children: [
-                  pw.Text('Invoice', style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold)),
-                  pw.Text('No: ${sale.invoiceNo}'),
-                  pw.Text('Date: ${sale.date.toLocal()}'.split('.').first),
-                  pw.Text('Customer: ${sale.customerName}'),
+                  pw.Text(labels.invoice, style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold)),
+                  pw.Text('${labels.no}: ${sale.invoiceNo}'),
+                  pw.Text('${labels.date}: ${sale.date.toLocal()}'.split('.').first),
+                  pw.Text('${labels.customer}: ${sale.customerName}'),
                 ],
               ),
             ],
@@ -57,12 +63,12 @@ class InvoicePdfService {
             headerDecoration: const pw.BoxDecoration(color: PdfColors.grey300),
             cellAlignment: pw.Alignment.centerLeft,
             headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-            headers: const ['Item', 'Qty', 'Unit Price', 'Line Total'],
+            headers: [labels.item, labels.qty, labels.unitPrice, labels.lineTotal],
             data: sale.items
                 .map(
                   (item) => [
                     item.productName,
-                    '${item.quantity}',
+                    item.quantity % 1 == 0 ? item.quantity.toStringAsFixed(0) : item.quantity.toStringAsFixed(3),
                     _formatMoney(item.unitPrice, profile),
                     _formatMoney(item.lineTotal, profile),
                   ],
@@ -79,10 +85,10 @@ class InvoicePdfService {
               child: pw.Column(
                 crossAxisAlignment: pw.CrossAxisAlignment.start,
                 children: [
-                  _summaryLine('Subtotal', _formatMoney(sale.subtotal, profile)),
-                  _summaryLine('Discount', _formatMoney(sale.discount, profile)),
+                  _summaryLine(labels.subtotal, _formatMoney(sale.subtotal, profile)),
+                  _summaryLine(labels.discount, _formatMoney(sale.discount, profile)),
                   pw.Divider(),
-                  _summaryLine('Total', _formatMoney(sale.total, profile), isBold: true),
+                  _summaryLine(labels.total, _formatMoney(sale.total, profile), isBold: true),
                 ],
               ),
             ),
@@ -96,13 +102,13 @@ class InvoicePdfService {
     return pdf.save();
   }
 
-  static Future<void> printInvoice({required Sale sale, required StoreProfile profile}) async {
-    final bytes = await buildInvoicePdf(sale: sale, profile: profile);
+  static Future<void> printInvoice({required Sale sale, required StoreProfile profile, Locale locale = const Locale('en')}) async {
+    final bytes = await buildInvoicePdf(sale: sale, profile: profile, locale: locale);
     await Printing.layoutPdf(onLayout: (_) async => bytes, name: sale.invoiceNo);
   }
 
-  static Future<void> shareInvoice({required Sale sale, required StoreProfile profile}) async {
-    final bytes = await buildInvoicePdf(sale: sale, profile: profile);
+  static Future<void> shareInvoice({required Sale sale, required StoreProfile profile, Locale locale = const Locale('en')}) async {
+    final bytes = await buildInvoicePdf(sale: sale, profile: profile, locale: locale);
     await Printing.sharePdf(bytes: bytes, filename: '${sale.invoiceNo}.pdf');
   }
 
@@ -135,4 +141,25 @@ class InvoicePdfService {
         return usd();
     }
   }
+}
+
+
+class _InvoicePdfLabels {
+  const _InvoicePdfLabels(this.isArabic);
+
+  final bool isArabic;
+
+  String get invoice => isArabic ? 'فاتورة' : 'Invoice';
+  String get phone => isArabic ? 'الهاتف' : 'Phone';
+  String get address => isArabic ? 'العنوان' : 'Address';
+  String get no => isArabic ? 'الرقم' : 'No';
+  String get date => isArabic ? 'التاريخ' : 'Date';
+  String get customer => isArabic ? 'العميل' : 'Customer';
+  String get item => isArabic ? 'الصنف' : 'Item';
+  String get qty => isArabic ? 'الكمية' : 'Qty';
+  String get unitPrice => isArabic ? 'سعر الوحدة' : 'Unit Price';
+  String get lineTotal => isArabic ? 'الإجمالي' : 'Line Total';
+  String get subtotal => isArabic ? 'المجموع الفرعي' : 'Subtotal';
+  String get discount => isArabic ? 'الخصم' : 'Discount';
+  String get total => isArabic ? 'الإجمالي' : 'Total';
 }

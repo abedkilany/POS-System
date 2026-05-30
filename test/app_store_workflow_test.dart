@@ -17,7 +17,7 @@ import 'package:ventio/models/supplier.dart';
 import 'package:ventio/models/sync_change.dart';
 import 'package:ventio/models/user_role.dart';
 
-Product product({String id = 'p1', String code = 'P001', String name = 'Coffee', int stock = 10, double price = 12, double cost = 7}) {
+Product product({String id = 'p1', String code = 'P001', String name = 'Coffee', double stock = 10, double price = 12, double cost = 7}) {
   return Product(id: id, name: name, code: code, price: price, cost: cost, stock: stock, category: 'Drinks');
 }
 
@@ -212,12 +212,17 @@ void main() {
       await store.receivePurchase(draft.id);
       expect(store.purchases.single.isReceived, isTrue);
       expect(store.products.single.stock, 5);
-      expect(store.products.single.cost, 6);
+      expect(store.products.single.cost, closeTo(5.6, 0.001));
       expect(store.totalPurchasesAmount, 18);
 
       await store.adjustStock(productId: 'p1', quantityDelta: -2, reason: 'count correction');
       expect(store.products.single.stock, 3);
-      expect(store.stockMovements.where((m) => m.type == 'adjustment'), isNotEmpty);
+      expect(
+        store.stockMovements.where(
+          (m) => m.type == 'inventory_loss' || m.type == 'inventory_adjustment',
+        ),
+        isNotEmpty,
+      );
 
       await store.cancelPurchase(draft.id);
       expect(store.purchases.single.isCancelled, isTrue);
