@@ -3942,10 +3942,11 @@ class _InfoTile extends StatelessWidget {
 }
 
 class _InfoGridItem {
-  const _InfoGridItem(this.icon, this.title, this.value);
+  const _InfoGridItem(this.icon, this.title, this.value, {this.onEdit});
   final IconData icon;
   final String title;
   final String value;
+  final VoidCallback? onEdit;
 }
 
 class _InfoGrid extends StatelessWidget {
@@ -3983,7 +3984,22 @@ class _InfoGrid extends StatelessWidget {
                           children: [
                             Text(item.title, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
                             const SizedBox(height: 5),
-                            Text(item.value, maxLines: 2, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(item.value, maxLines: 2, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+                                ),
+                                if (item.onEdit != null) ...[
+                                  const SizedBox(width: 8),
+                                  IconButton.filledTonal(
+                                    visualDensity: VisualDensity.compact,
+                                    tooltip: AppLocalizations.of(context).text('edit'),
+                                    icon: const Icon(Icons.edit_outlined, size: 18),
+                                    onPressed: item.onEdit,
+                                  ),
+                                ],
+                              ],
+                            ),
                           ],
                         ),
                       ),
@@ -4072,15 +4088,93 @@ class _SecureRecoveryLine extends StatelessWidget {
   }
 }
 
-class _SystemIdentityCard extends StatelessWidget {
+class _SystemIdentityCard extends StatefulWidget {
   const _SystemIdentityCard({required this.store});
 
   final AppStore store;
 
   @override
+  State<_SystemIdentityCard> createState() => _SystemIdentityCardState();
+}
+
+class _SystemIdentityCardState extends State<_SystemIdentityCard> {
+  Future<void> _editDeviceName() async {
+    final tr = AppLocalizations.of(context);
+    final controller = TextEditingController(text: widget.store.appIdentity.deviceName);
+    String? errorText;
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: Text(tr.text('device_name')),
+              content: TextField(
+                controller: controller,
+                autofocus: true,
+                maxLength: 60,
+                textInputAction: TextInputAction.done,
+                decoration: InputDecoration(
+                  labelText: tr.text('device_name'),
+                  errorText: errorText,
+                ),
+                onSubmitted: (_) {
+                  final value = controller.text.trim().replaceAll(RegExp(r'\s+'), ' ');
+                  if (value.isEmpty) {
+                    setDialogState(() => errorText = 'Device name cannot be empty.');
+                    return;
+                  }
+                  Navigator.of(dialogContext).pop(value);
+                },
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: Text(tr.text('cancel')),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final value = controller.text.trim().replaceAll(RegExp(r'\s+'), ' ');
+                    if (value.isEmpty) {
+                      setDialogState(() => errorText = 'Device name cannot be empty.');
+                      return;
+                    }
+                    Navigator.of(dialogContext).pop(value);
+                  },
+                  child: Text(tr.text('save')),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    controller.dispose();
+    if (result == null || result.trim().isEmpty) return;
+    try {
+      await widget.store.updateDeviceName(result);
+      final cloud = CloudSyncSettings.load();
+      if (widget.store.appIdentity.isCloudEnabled && cloud.isConfigured) {
+        await CloudSyncService(widget.store).registerCurrentDevice(
+          cloud,
+          transport: widget.store.appIdentity.activeSyncTransportNormalized == 'lan' ? 'cloud' : widget.store.appIdentity.activeSyncTransportNormalized,
+        );
+      }
+      if (!mounted) return;
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${tr.text('device_name')} ${tr.text('save')}')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final identity = store.appIdentity;
+    final identity = widget.store.appIdentity;
     return _SectionCard(
       icon: Icons.hub_outlined,
       title: tr.text('system_foundation'),
@@ -4094,6 +4188,7 @@ class _SystemIdentityCard extends StatelessWidget {
           _InfoGridItem(Icons.tag_outlined, tr.text('store_id'), identity.storeId),
           _InfoGridItem(Icons.business_outlined, tr.text('branch_id'), identity.branchId),
           _InfoGridItem(Icons.devices_outlined, tr.text('device_id'), identity.deviceId),
+          _InfoGridItem(Icons.badge_outlined, tr.text('device_name'), identity.deviceName.trim().isEmpty ? identity.deviceId : identity.deviceName.trim(), onEdit: _editDeviceName),
           _InfoGridItem(Icons.computer_outlined, tr.text('platform'), identity.platform.name),
           _InfoGridItem(Icons.dns_outlined, tr.text('device_role'), identity.deviceRole.name),
           _InfoGridItem(Icons.badge_outlined, tr.text('app_role'), identity.appRole.name),

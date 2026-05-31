@@ -152,13 +152,17 @@ class AppIdentity {
     );
   }
 
-  static AppIdentity defaults({required String deviceId, required AppPlatformType platform}) {
+  static AppIdentity defaults({required String deviceId, required AppPlatformType platform, String? detectedDeviceName}) {
     final now = DateTime.now();
+    final normalizedDeviceId = deviceId.isEmpty ? _withPrefix('DV') : _normalizeDeviceId(deviceId);
+    final initialDeviceName = (detectedDeviceName ?? '').trim().isNotEmpty
+        ? detectedDeviceName!.trim()
+        : normalizedDeviceId;
     return AppIdentity(
       storeId: _withPrefix('ST'),
       branchId: _withPrefix('BR'),
-      deviceId: deviceId.isEmpty ? _withPrefix('DV') : _normalizeDeviceId(deviceId),
-      deviceName: 'Main device',
+      deviceId: normalizedDeviceId,
+      deviceName: initialDeviceName,
       platform: platform,
       // A fresh native device must not start as Host automatically.
       // Register creates the Host; Connect to Store turns this device into a Client.

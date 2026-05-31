@@ -1037,14 +1037,46 @@ class AppStore extends ChangeNotifier {
           deviceId: _deviceId,
           platform: _detectPlatform(),
           deviceToken: token,
+          deviceName: parsed.deviceName.trim().isNotEmpty ? parsed.deviceName.trim() : _deviceId,
         );
         unawaited(LocalDatabaseService.setString(_appIdentityKey, jsonEncode(normalized.toJson())));
         return normalized;
       } catch (_) {}
     }
-    final created = AppIdentity.defaults(deviceId: _deviceId, platform: _detectPlatform());
+    final created = AppIdentity.defaults(deviceId: _deviceId, platform: _detectPlatform(), detectedDeviceName: _detectInitialDeviceName());
     unawaited(LocalDatabaseService.setString(_appIdentityKey, jsonEncode(created.toJson())));
     return created;
+  }
+
+  String _detectInitialDeviceName() {
+    // Keep this conservative and dependency-free. When a platform-specific real
+    // device name provider is added later, return it here. Until then, defaults
+    // fall back to the stable Ventio deviceId instead of the legacy "Main device".
+    return '';
+  }
+
+  Future<void> updateDeviceName(String deviceName) async {
+    requirePermission(AppPermission.settingsManage);
+    final cleanName = deviceName.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (cleanName.isEmpty) {
+      throw ArgumentError('Device name cannot be empty.');
+    }
+    if (cleanName.length > 60) {
+      throw ArgumentError('Device name must be 60 characters or fewer.');
+    }
+    final current = appIdentity;
+    if (current.deviceName == cleanName) return;
+    final normalized = _normalizedLocalIdentity(current.copyWith(deviceName: cleanName));
+    _appIdentity = normalized;
+    await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(normalized.toJson()));
+    _recordSyncChange(
+      entityType: 'app_identity',
+      entityId: _deviceId,
+      operation: 'update',
+      payload: normalized.toJson(),
+    );
+    await _saveAll();
+    notifyListeners();
   }
 
 
