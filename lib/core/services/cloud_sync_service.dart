@@ -420,6 +420,7 @@ class CloudSyncService {
     if (!settings.enabled || settings.apiBaseUrl.trim().isEmpty) {
       return const CloudPairingClaimResult(ok: false, message: 'Cloud API URL is required.');
     }
+    var deviceRegistered = false;
     try {
       final response = await _client
           .post(
@@ -453,6 +454,7 @@ class CloudSyncService {
         updatedAt: DateTime.now(),
       );
       await store.updateAppIdentityDuringSetup(identity);
+      deviceRegistered = true;
 
       if (identity.syncMode == SyncMode.cloudConnected || identity.syncMode == SyncMode.marketplaceEnabled) {
         // Pairing and provisioning are separate lifecycle steps. A valid pairing
@@ -490,7 +492,14 @@ class CloudSyncService {
       }
       return CloudPairingClaimResult(ok: true, message: 'Device paired successfully. Please sign in.', identity: identity);
     } catch (error) {
-      return CloudPairingClaimResult(ok: false, message: 'Pairing failed: $error');
+      if (deviceRegistered) {
+        return CloudPairingClaimResult(
+          ok: true,
+          message: 'Device paired successfully. Initial Store data will download automatically when the Host is online.',
+          identity: store.appIdentity,
+        );
+      }
+      return const CloudPairingClaimResult(ok: false, message: 'Could not connect this device. Check the pairing code and try again.');
     }
   }
 
@@ -671,8 +680,8 @@ class CloudSyncService {
 
     onProgress?.call(0.18, 'Checking for fresh Host snapshot before changing local data...');
     // Do not wipe current Client data until a fresh restore_snapshot is actually
-    // received and applied. This keeps Connect to New Host safe: failed pairing
-    // or unavailable Host data must not erase anything locally.
+    // received and applied. Failed pairing or unavailable Host data must not
+    // erase anything locally.
     await CloudSyncSettings.clearSavedPullCursor();
 
     var freshSettings = settings.copyWith(clearLastPullCursor: true);

@@ -18,16 +18,17 @@ export default async function handler(req, res) {
     await assertSyncTokenOrDevice(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['cloud'] });
     const rows = await sql`
       insert into host_transfer_requests (store_id, branch_id, requesting_device_id, current_host_device_id, status, approved_by_host_device_id, requested_at, approved_at, updated_at)
-      values (${storeId}, ${branchId}, ${requestingDeviceId}, ${approvedByHostDeviceId}, 'approved', ${approvedByHostDeviceId}, now(), now(), now())
+      values (${storeId}, ${branchId}, ${requestingDeviceId}, ${approvedByHostDeviceId}, 'approved_pending_activation', ${approvedByHostDeviceId}, now(), now(), now())
       on conflict (store_id, branch_id, requesting_device_id) do update set
         current_host_device_id = ${approvedByHostDeviceId},
-        status = 'approved',
+        status = 'approved_pending_activation',
         approved_by_host_device_id = ${approvedByHostDeviceId},
         approved_at = now(),
         updated_at = now()
       returning *
     `;
-    await sql`update store_devices set role = 'client', updated_at = now() where store_id = ${storeId} and branch_id = ${branchId} and device_id = ${approvedByHostDeviceId}`;
+    // Keep the current Host authoritative until the approved Client activates.
+    // The old Host becomes Client only after activation succeeds.
     res.status(200).json({ ok: true, request: transferDto(rows[0]) });
   } catch (error) { sendError(res, error); }
 }

@@ -16,7 +16,7 @@ enum _ConnectMode { lan, cloud }
 
 enum _SetupStatus { idle, info, success, warning, error }
 
-enum _QrPairingStatus { active, expired, consumed, invalid, disabled }
+enum _ClientPairingState { noCode, ready, connecting, connected, failed, expired }
 
 class SyncSetupPage extends StatefulWidget {
   const SyncSetupPage({super.key, required this.store, required this.onDone});
@@ -32,9 +32,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
   final _hostController = TextEditingController(text: LanSyncSettings.load().host);
   final _portController = TextEditingController(text: LanSyncSettings.load().port.toString());
   final _lanTokenController = TextEditingController(
-    text: LanSyncSettings.load().secret.trim().isNotEmpty
-        ? LanSyncSettings.load().secret.trim()
-        : LanSyncSettings.generatePairingCode(),
+    text: LanSyncSettings.load().secret.trim(),
   );
 
   final _cloudApiController = TextEditingController(text: CloudSyncSettings.load().apiBaseUrl);
@@ -70,55 +68,49 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
   _SetupStatus _statusType = _SetupStatus.idle;
   Timer? _qrCountdownTimer;
   DateTime? _qrExpiresAt;
-  _QrPairingStatus _qrStatus = _QrPairingStatus.disabled;
+  _ClientPairingState _qrStatus = _ClientPairingState.noCode;
 
   int get _port => int.tryParse(_portController.text.trim()) ?? 8787;
 
   String get _activePairingCode => _mode == _ConnectMode.cloud ? _cloudPairingCodeController.text.trim() : _lanTokenController.text.trim();
 
-  String _countdownText(DateTime? expiresAt) {
-    if (expiresAt == null) return '00:00';
-    final seconds = expiresAt.difference(DateTime.now()).inSeconds.clamp(0, 24 * 60 * 60).toInt();
-    return '${(seconds ~/ 60).toString().padLeft(2, '0')}:${(seconds % 60).toString().padLeft(2, '0')}';
-  }
-
   void _startQrCountdownTimer() {
     _qrCountdownTimer?.cancel();
     _qrCountdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
-      if (_qrStatus == _QrPairingStatus.active && _qrExpiresAt != null && !_qrExpiresAt!.isAfter(DateTime.now())) {
-        setState(() => _qrStatus = _QrPairingStatus.expired);
+      if (_qrStatus == _ClientPairingState.ready && _qrExpiresAt != null && !_qrExpiresAt!.isAfter(DateTime.now())) {
+        setState(() => _qrStatus = _ClientPairingState.expired);
         return;
       }
-      if (_qrStatus == _QrPairingStatus.active) setState(() {});
+      if (_qrStatus == _ClientPairingState.ready) setState(() {});
     });
   }
 
   void _syncQrStatusFromInput() {
     final code = _activePairingCode;
     if (code.isEmpty) {
-      _qrStatus = _QrPairingStatus.disabled;
+      _qrStatus = _ClientPairingState.noCode;
       _qrExpiresAt = null;
       return;
     }
-    if (_qrStatus == _QrPairingStatus.consumed || _qrStatus == _QrPairingStatus.invalid) return;
+    if (_qrStatus == _ClientPairingState.connected || _qrStatus == _ClientPairingState.failed || _qrStatus == _ClientPairingState.connecting) return;
     if (_qrExpiresAt != null && !_qrExpiresAt!.isAfter(DateTime.now())) {
-      _qrStatus = _QrPairingStatus.expired;
+      _qrStatus = _ClientPairingState.expired;
       return;
     }
-    _qrStatus = _QrPairingStatus.active;
+    _qrStatus = _ClientPairingState.ready;
   }
 
   void _markQrConsumed() {
     if (!mounted) return;
-    setState(() => _qrStatus = _QrPairingStatus.consumed);
+    setState(() => _qrStatus = _ClientPairingState.connected);
   }
 
   void _markQrFailed(String message) {
     final lower = message.toLowerCase();
     final expiredOrUsed = lower.contains('expired') || lower.contains('already used') || lower.contains('410') || lower.contains('409');
     if (!mounted) return;
-    setState(() => _qrStatus = expiredOrUsed ? _QrPairingStatus.expired : _QrPairingStatus.invalid);
+    setState(() => _qrStatus = expiredOrUsed ? _ClientPairingState.expired : _ClientPairingState.failed);
   }
 
   void _setStatus(String message, {_SetupStatus type = _SetupStatus.info}) {
@@ -135,6 +127,21 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       _status = '';
       _statusType = _SetupStatus.idle;
     });
+  }
+
+  String _friendlyErrorMessage(Object error, {required String fallback}) {
+    final raw = error.toString();
+    final lower = raw.toLowerCase();
+    if (lower.contains('pairing code expired') || lower.contains('already used') || lower.contains('410') || lower.contains('409')) {
+      return AppLocalizations.of(context).text('pairing_code_expired_or_used');
+    }
+    if (lower.contains('socketexception') || lower.contains('clientexception') || lower.contains('timeoutexception') || lower.contains('failed host lookup')) {
+      return fallback;
+    }
+    if (lower.contains('null check operator used on a null value')) {
+      return AppLocalizations.of(context).text('pairing_state_refresh_failed');
+    }
+    return fallback;
   }
 
   @override
@@ -230,12 +237,12 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
     final hostIpRequiredLan = tr.text('host_ip_required_lan');
     final lanPairingCodeRequired = tr.text('lan_pairing_code_required');
     final claimingLanPairing = tr.text('claiming_lan_pairing');
-    final lanCredentialsSaved = tr.text('lan_credentials_saved');
     final connectedLanSignIn = tr.text('connected_lan_sign_in');
     final lanConnectionFailed = tr.text('lan_connection_failed');
 
     setState(() {
       _busy = true;
+      _qrStatus = _ClientPairingState.connecting;
       _status = connectLanStart;
       _statusType = _SetupStatus.info;
     });
@@ -243,10 +250,12 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       final secret = _lanTokenController.text.trim();
       final host = _hostController.text.trim();
       if (host.isEmpty) {
+        setState(() => _qrStatus = _ClientPairingState.noCode);
         _setStatus(hostIpRequiredLan, type: _SetupStatus.warning);
         return;
       }
       if (secret.isEmpty) {
+        setState(() => _qrStatus = _ClientPairingState.noCode);
         _setStatus(lanPairingCodeRequired, type: _SetupStatus.warning);
         return;
       }
@@ -260,16 +269,13 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       }
 
       _markQrConsumed();
-      _setStatus(lanCredentialsSaved, type: _SetupStatus.success);
+      _setStatus(connectedLanSignIn, type: _SetupStatus.success);
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(connectedLanSignIn)),
-      );
       await widget.onDone();
     } catch (error) {
       _markQrFailed(error.toString());
-      _setStatus('$lanConnectionFailed: $error', type: _SetupStatus.error);
+      _setStatus(_friendlyErrorMessage(error, fallback: lanConnectionFailed), type: _SetupStatus.error);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -280,18 +286,19 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
     final claimingCloudPairing = tr.text('claiming_cloud_pairing');
     final cloudPairingCodeRequired = tr.text('cloud_pairing_code_required');
     final verifyingPairingCode = tr.text('verifying_pairing_code');
-    final cloudPairingCompleteBackground = tr.text('cloud_pairing_complete_background');
     final connectedStoreSignIn = tr.text('connected_store_sign_in');
     final cloudConnectionFailed = tr.text('cloud_connection_failed');
 
     setState(() {
       _busy = true;
+      _qrStatus = _ClientPairingState.connecting;
       _status = claimingCloudPairing;
       _statusType = _SetupStatus.info;
     });
     try {
       final code = _cloudPairingCodeController.text.trim();
       if (code.isEmpty) {
+        setState(() => _qrStatus = _ClientPairingState.noCode);
         _setStatus(cloudPairingCodeRequired, type: _SetupStatus.warning);
         return;
       }
@@ -323,20 +330,14 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
 
       if (!mounted) return;
       _markQrConsumed();
-      _setStatus(cloudPairingCompleteBackground, type: _SetupStatus.success);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(result.message.isEmpty ? connectedStoreSignIn : result.message)),
-      );
+      _setStatus(result.message.isEmpty ? connectedStoreSignIn : result.message, type: _SetupStatus.success);
       await widget.onDone();
-    } on FormatException catch (error) {
-      _markQrFailed(error.message);
-      _setStatus(error.message, type: _SetupStatus.error);
+    } on FormatException catch (_) {
+      _markQrFailed(cloudConnectionFailed);
+      _setStatus(cloudConnectionFailed, type: _SetupStatus.error);
     } catch (error) {
       _markQrFailed(error.toString());
-      final message = error.toString().contains('Null check operator used on a null value')
-          ? tr.text('pairing_state_refresh_failed')
-          : '$cloudConnectionFailed: $error';
-      _setStatus(message, type: _SetupStatus.error);
+      _setStatus(_friendlyErrorMessage(error, fallback: cloudConnectionFailed), type: _SetupStatus.error);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -463,11 +464,12 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
   ({String label, IconData icon, Color background, Color foreground}) _qrStatusData(BuildContext context, AppLocalizations tr) {
     final color = Theme.of(context).colorScheme;
     return switch (_qrStatus) {
-      _QrPairingStatus.active => (label: tr.text('pairing_status_active'), icon: Icons.check_circle_outline, background: Colors.green.withValues(alpha: 0.12), foreground: Colors.green.shade700),
-      _QrPairingStatus.expired => (label: tr.text('pairing_status_expired'), icon: Icons.timer_off_outlined, background: Colors.orange.withValues(alpha: 0.14), foreground: Colors.orange.shade800),
-      _QrPairingStatus.consumed => (label: tr.text('pairing_status_consumed'), icon: Icons.done_all_outlined, background: Colors.green.withValues(alpha: 0.12), foreground: Colors.green.shade700),
-      _QrPairingStatus.invalid => (label: tr.text('pairing_status_invalid'), icon: Icons.error_outline, background: color.errorContainer, foreground: color.onErrorContainer),
-      _QrPairingStatus.disabled => (label: tr.text('pairing_status_disabled'), icon: Icons.block_outlined, background: Colors.grey.withValues(alpha: 0.16), foreground: color.onSurfaceVariant),
+      _ClientPairingState.ready => (label: tr.text('pairing_status_ready_to_connect'), icon: Icons.check_circle_outline, background: Colors.green.withValues(alpha: 0.12), foreground: Colors.green.shade700),
+      _ClientPairingState.connecting => (label: tr.text('connection_state_connecting'), icon: Icons.sync_rounded, background: color.primaryContainer, foreground: color.onPrimaryContainer),
+      _ClientPairingState.expired => (label: tr.text('pairing_status_expired'), icon: Icons.timer_off_outlined, background: Colors.orange.withValues(alpha: 0.14), foreground: Colors.orange.shade800),
+      _ClientPairingState.connected => (label: tr.text('connection_state_connected'), icon: Icons.done_all_outlined, background: Colors.green.withValues(alpha: 0.12), foreground: Colors.green.shade700),
+      _ClientPairingState.failed => (label: tr.text('connection_state_error'), icon: Icons.error_outline, background: color.errorContainer, foreground: color.onErrorContainer),
+      _ClientPairingState.noCode => (label: tr.text('pairing_status_no_code_entered'), icon: Icons.edit_note_outlined, background: Colors.grey.withValues(alpha: 0.16), foreground: color.onSurfaceVariant),
     };
   }
 
@@ -490,11 +492,12 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
   Color _qrBorderColor(BuildContext context) {
     final color = Theme.of(context).colorScheme;
     return switch (_qrStatus) {
-      _QrPairingStatus.active => Colors.green,
-      _QrPairingStatus.consumed => Colors.green,
-      _QrPairingStatus.expired => Colors.orange,
-      _QrPairingStatus.invalid => color.error,
-      _QrPairingStatus.disabled => color.outlineVariant,
+      _ClientPairingState.ready => Colors.green,
+      _ClientPairingState.connecting => color.primary,
+      _ClientPairingState.connected => Colors.green,
+      _ClientPairingState.expired => Colors.orange,
+      _ClientPairingState.failed => color.error,
+      _ClientPairingState.noCode => color.outlineVariant,
     };
   }
 
@@ -534,9 +537,13 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
     final color = Theme.of(context).colorScheme;
     final hasCode = _activePairingCode.isNotEmpty;
     final borderColor = _qrBorderColor(context);
-    final helper = _qrStatus == _QrPairingStatus.active && _qrExpiresAt != null
-        ? tr.format('expires_in', {'time': _countdownText(_qrExpiresAt)})
-        : tr.format('pairing_code_state_help', {'status': _qrStatusData(context, tr).label.toLowerCase()});
+    final helper = _qrStatus == _ClientPairingState.ready
+        ? tr.text('pairing_code_ready_to_connect_help')
+        : _qrStatus == _ClientPairingState.noCode
+            ? tr.text('scan_or_enter_host_pairing_code')
+            : _qrStatus == _ClientPairingState.connected
+                ? tr.text('device_connected_waiting_store_data')
+                : tr.text('connection_failed_check_code');
     return Card.outlined(
       margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(
@@ -564,9 +571,9 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(tr.text('qr_pairing'), style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                      Text(tr.text('scan_host_qr_code'), style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
                       const SizedBox(height: 2),
-                      Text(hasCode ? tr.text('qr_pairing_detected') : tr.text('qr_pairing_empty'), style: Theme.of(context).textTheme.bodyMedium),
+                      Text(hasCode ? tr.text('pairing_code_ready_to_connect_help') : tr.text('scan_or_enter_host_pairing_code'), style: Theme.of(context).textTheme.bodyMedium),
                     ],
                   ),
                 ),

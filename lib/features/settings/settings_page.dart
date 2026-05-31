@@ -1381,7 +1381,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   bool _detectingHostIp = false;
   bool _showLanPairingCode = false;
   bool _showCloudPairingCode = false;
-  bool _connectToNewHost = false;
   bool _hostCreateFailed = false;
   DateTime? _latestLanPairingExpiresAt;
   bool _latestLanPairingConsumed = false;
@@ -1457,7 +1456,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     final lan = LanSyncSettings.load();
     final cloud = CloudSyncSettings.load();
     final role = identity.isClient ? DeviceRole.client : DeviceRole.host;
-    final clientMode = identity.isCloudEnabled ? SyncMode.cloudConnected : SyncMode.lanOnly;
+    final clientMode = identity.activeSyncTransportNormalized == 'cloud' ? SyncMode.cloudConnected : SyncMode.lanOnly;
     final lanEnabled = identity.isHost && lan.setupComplete && lan.isHost;
     final cloudEnabled = identity.isCloudEnabled && cloud.isConfigured;
     return _deviceRole != role ||
@@ -1477,7 +1476,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     final cloud = CloudSyncSettings.load();
     setState(() {
       _deviceRole = identity.isClient ? DeviceRole.client : DeviceRole.host;
-      _clientSyncMode = identity.isCloudEnabled ? SyncMode.cloudConnected : SyncMode.lanOnly;
+      _clientSyncMode = identity.activeSyncTransportNormalized == 'cloud' ? SyncMode.cloudConnected : SyncMode.lanOnly;
       _lanEnabledForHost = identity.isHost && lan.setupComplete && lan.isHost;
       _cloudEnabled = identity.isCloudEnabled && cloud.isConfigured;
       _lanHostController.text = lan.host;
@@ -1489,10 +1488,39 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     });
   }
 
-  Future<void> _testCurrentConnection() {
+  Future<void> _testCurrentConnection() async {
     final identity = widget.store.appIdentity;
-    final shouldTestCloud = _cloudEnabled || identity.syncMode == SyncMode.cloudConnected;
-    return shouldTestCloud ? _testCloudConnection() : _testHostConnection();
+    final lan = LanSyncSettings.load();
+    final cloud = CloudSyncSettings.load();
+    final hostLanEnabled = identity.isHost && (_lanEnabledForHost || (lan.setupComplete && lan.isHost));
+    final hostCloudEnabled = identity.isHost && (_cloudEnabled || (identity.isCloudEnabled && cloud.isConfigured));
+    if (hostLanEnabled && hostCloudEnabled) {
+      await _testHostTransports();
+      return;
+    }
+    final shouldTestCloud = identity.isClient
+        ? identity.activeSyncTransportNormalized == 'cloud'
+        : hostCloudEnabled || _cloudEnabled || identity.syncMode == SyncMode.cloudConnected;
+    if (shouldTestCloud) {
+      await _testCloudConnection();
+    } else {
+      await _testHostConnection();
+    }
+  }
+
+  String _simpleSyncError(Object error, {required String fallback}) {
+    final raw = error.toString();
+    final lower = raw.toLowerCase();
+    if (lower.contains('pairing code expired') || lower.contains('already used')) {
+      return tr.text('pairing_code_expired_or_used');
+    }
+    if (lower.contains('socketexception') || lower.contains('clientexception') || lower.contains('timeoutexception') || lower.contains('failed host lookup')) {
+      return fallback;
+    }
+    if (lower.contains('null check operator used on a null value')) {
+      return tr.text('pairing_state_refresh_failed');
+    }
+    return fallback;
   }
 
   Future<void> _saveSyncSettings() => _run(() async {
@@ -1516,19 +1544,26 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           await _cloudSettings(enabled: _cloudEnabled).save();
           if (!_cloudEnabled) await LocalDatabaseService.deleteString(_initialCloudHostReadyKey);
         } else {
+          final activeTransport = _clientSyncMode == SyncMode.cloudConnected ? 'cloud' : 'lan';
           await widget.store.updateAppIdentity(identity.copyWith(
             deviceRole: DeviceRole.client,
             syncMode: _clientSyncMode,
+            activeSyncTransport: activeTransport,
           ));
           await LanSyncSettings.load().copyWith(
             host: _lanHostController.text.trim(),
             port: _lanPort,
             secret: _lanTokenController.text.trim(),
-            mode: _clientSyncMode == SyncMode.lanOnly ? LanSyncDeviceMode.client : LanSyncDeviceMode.unconfigured,
-            setupComplete: _clientSyncMode == SyncMode.lanOnly && _lanHostController.text.trim().isNotEmpty,
+            mode: _lanHostController.text.trim().isNotEmpty ? LanSyncDeviceMode.client : LanSyncDeviceMode.unconfigured,
+            setupComplete: _lanHostController.text.trim().isNotEmpty,
+            autoSyncEnabled: activeTransport == 'lan',
             hostModeEnabled: false,
           ).save();
-          await _cloudSettings(enabled: _clientSyncMode == SyncMode.cloudConnected).save();
+          await _cloudSettings(
+            enabled: _cloudApiController.text.trim().isNotEmpty,
+            autoSyncEnabled: activeTransport == 'cloud',
+          ).save();
+          await widget.store.setActiveSyncTransport(activeTransport);
         }
         if (mounted) setState(() => _status = AppLocalizations.of(context).text('sync_settings_saved'));
       });
@@ -1546,13 +1581,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       await widget.onSyncSettingsChanged?.call();
     } catch (error) {
       if (mounted) {
-        final rawMessage = error.toString().replaceFirst('Exception: ', '').replaceFirst('Bad state: ', '').replaceFirst('FormatException: ', '').trim();
         setState(() {
-          _status = rawMessage.contains('Pairing code expired or already used')
-              ? tr.text('pairing_code_expired_or_used')
-              : rawMessage.isEmpty
-                  ? tr.text('sync_failed_check_info')
-                  : rawMessage;
+          _status = _simpleSyncError(error, fallback: tr.text('sync_failed_check_info'));
           _statusProgress = null;
         });
       }
@@ -1567,7 +1597,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     }
   }
 
-  CloudSyncSettings _cloudSettings({bool enabled = true}) {
+  CloudSyncSettings _cloudSettings({bool enabled = true, bool? autoSyncEnabled}) {
     final fallback = kIsWeb ? Uri.base.origin : '';
     final normalizedUrl = CloudSyncSettings.normalizeApiBaseUrl(
       _cloudApiController.text.trim().isEmpty ? fallback : _cloudApiController.text.trim(),
@@ -1580,7 +1610,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       enabled: enabled,
       apiBaseUrl: normalizedUrl,
       apiToken: _cloudTokenController.text.trim(),
-      autoSyncEnabled: enabled,
+      autoSyncEnabled: autoSyncEnabled ?? enabled,
       intervalSeconds: _cloudInterval,
     );
   }
@@ -1710,8 +1740,30 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     return '${(seconds ~/ 60).toString().padLeft(2, '0')}:${(seconds % 60).toString().padLeft(2, '0')}';
   }
 
-  bool get _hasExistingHostConnection => widget.store.appIdentity.hostDeviceId.trim().isNotEmpty;
 
+  bool get _hasActiveLanPairingCode =>
+      _lanTokenController.text.trim().isNotEmpty &&
+      _latestLanPairingExpiresAt != null &&
+      _latestLanPairingExpiresAt!.isAfter(DateTime.now());
+
+  bool get _hasActiveCloudPairingCode =>
+      _latestCloudPairingCode.trim().isNotEmpty &&
+      _latestCloudPairingExpiresAt != null &&
+      _latestCloudPairingExpiresAt!.isAfter(DateTime.now());
+
+  String get _lanPairingButtonLabel {
+    if (_hasActiveLanPairingCode) {
+      return _showLanPairingCode ? 'Hide LAN Code' : 'Show LAN Code';
+    }
+    return 'Generate LAN Code';
+  }
+
+  String get _cloudPairingButtonLabel {
+    if (_hasActiveCloudPairingCode) {
+      return _showCloudPairingCode ? 'Hide Cloud Code' : 'Show Cloud Code';
+    }
+    return 'Generate Cloud Code';
+  }
 
   Future<void> _refreshCloudPairingStatus() async {
     final code = _latestCloudPairingCode.trim();
@@ -1736,48 +1788,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       }
     });
   }
-
-  Future<bool> _confirmConnectToNewHost() async {
-    final tr = AppLocalizations.of(context);
-    if (!_hasExistingHostConnection) return true;
-    const confirmationWord = 'CONFIRM';
-    final controller = TextEditingController();
-    var canContinue = false;
-    final result = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: Text(tr.text('connect_to_new_host')),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(tr.text('connect_new_host_desc')),
-              const SizedBox(height: 12),
-              TextField(
-                controller: controller,
-                textCapitalization: TextCapitalization.characters,
-                decoration: InputDecoration(labelText: tr.text('type_confirm'), border: const OutlineInputBorder()),
-                onChanged: (value) => setState(() => canContinue = value.trim() == confirmationWord),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: Text(AppLocalizations.of(context).text('cancel'))),
-            FilledButton(onPressed: canContinue ? () => Navigator.pop(dialogContext, true) : null, child: Text(tr.text('confirm'))),
-          ],
-        ),
-      ),
-    );
-    return result == true;
-  }
-
-  bool get _hasActiveCloudPairingCode => _latestCloudPairingCode.trim().isNotEmpty && (_latestCloudPairingExpiresAt?.isAfter(DateTime.now()) ?? false);
-  bool get _hasActiveLanPairingCode => _lanTokenController.text.trim().isNotEmpty && (_latestLanPairingExpiresAt?.isAfter(DateTime.now()) ?? false);
-
-  String get _cloudPairingButtonLabel => _hasActiveCloudPairingCode ? tr.text('regenerate_cloud_code') : tr.text('generate_cloud_code');
-  String get _lanPairingButtonLabel => _hasActiveLanPairingCode ? tr.text('regenerate_lan_code') : tr.text('generate_lan_code');
 
   Future<void> _handleCloudPairingButton() async {
     if (_hasActiveCloudPairingCode) _expireCloudPairingCode();
@@ -1825,8 +1835,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         await widget.store.approveHostTransfer(deviceId);
         if (mounted) {
           setState(() {
-            _deviceRole = DeviceRole.client;
-            _status = 'Host transfer approved. This device is now a Client. The new Host must activate and upload a fresh snapshot.';
+            _deviceRole = DeviceRole.host;
+            _status = 'Host transfer approved. This device remains Host until the new Host activates.';
           });
         }
       });
@@ -1840,7 +1850,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         if (mounted) {
           setState(() {
             _deviceRole = DeviceRole.host;
-            _status = 'Host transfer activated. This device is now Host and a fresh snapshot was queued.';
+            _status = 'Host transfer activated. This device is now Host. Other Clients will switch after receiving HOST_CHANGED.';
           });
         }
       });
@@ -1920,7 +1930,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     if (code.isEmpty) return;
     await Clipboard.setData(ClipboardData(text: code));
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('cloud_pairing_code_copied'))) );
+    setState(() => _status = AppLocalizations.of(context).text('cloud_pairing_code_copied'));
   }
 
   Future<void> _saveCloudSettingsForPairing() async {
@@ -1931,51 +1941,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     ));
     await _cloudSettings(enabled: true).save();
   }
-
-  Future<void> _saveLanClient() => _run(() async {
-        if (!await _confirmConnectToNewHost()) return;
-        final secret = _lanTokenController.text.trim();
-        if (secret.isEmpty) throw StateError('LAN pairing code is required.');
-        final lanSettings = LanSyncSettings.load().copyWith(
-          host: _lanHostController.text.trim(),
-          port: _lanPort,
-          secret: secret,
-          mode: LanSyncDeviceMode.client,
-          setupComplete: true,
-          hostModeEnabled: false,
-        );
-        final result = await _lanEngine(lanSettings).claimPairingCode(secret);
-        if (!result.ok) throw StateError(result.message);
-        _latestLanPairingConsumed = true;
-        _expireLanPairingCode();
-        _expireCloudPairingCode();
-        await CloudSyncSettings.load().copyWith(autoSyncEnabled: false, clearLastPullCursor: true).save();
-        await widget.store.logout();
-        setState(() {
-          _connectToNewHost = false;
-          _clientSyncMode = SyncMode.lanOnly;
-          _status = tr.text('lan_client_connected_cloned');
-        });
-      });
-
-  Future<void> _claimCloudPairing() => _run(() async {
-        if (!await _confirmConnectToNewHost()) return;
-        final settings = _cloudSettings(enabled: true);
-        await settings.save();
-        final result = await _cloudEngine(enabled: true).claimPairingCode(_cloudPairingCodeController.text.trim());
-        if (!result.ok) throw StateError(result.message);
-        _latestCloudPairingConsumed = true;
-        _expireCloudPairingCode();
-        _expireLanPairingCode();
-        await LanSyncSettings.load().copyWith(autoSyncEnabled: false, setupComplete: false, mode: LanSyncDeviceMode.unconfigured, hostModeEnabled: false, clearLastPullCursor: true).save();
-        await widget.store.logout();
-        setState(() {
-          _connectToNewHost = false;
-          _clientSyncMode = SyncMode.cloudConnected;
-          _status = result.message.trim().isEmpty ? 'Device paired successfully. Data will synchronize shortly.' : result.message;
-        });
-      });
-
 
   Future<void> _createNewHost() => _run(() async {
         setState(() { _status = 'Connecting to Cloud'; _statusProgress = 0.10; });
@@ -2004,41 +1969,67 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
 
   Future<void> _syncNow() => _run(() async {
         final identity = widget.store.appIdentity;
-        if (identity.isCloudEnabled) {
+        final lan = LanSyncSettings.load();
+        final cloud = CloudSyncSettings.load();
+        final hostLanEnabled = identity.isHost && (_lanEnabledForHost || (lan.setupComplete && lan.isHost));
+        final hostCloudEnabled = identity.isHost && (_cloudEnabled || (identity.isCloudEnabled && cloud.isConfigured));
+        final messages = <String>[];
+        if (hostCloudEnabled || (!identity.isHost && identity.activeSyncTransportNormalized == 'cloud')) {
           final result = await _cloudEngine(enabled: true).syncNow(
             onProgress: (value, label) {
-              if (mounted) setState(() { _status = 'Cloud sync: $label ${(value * 100).round()}%'; _statusProgress = value; });
+              if (mounted) setState(() { _status = '${tr.text('connection_cloud')}: $label ${(value * 100).round()}%'; _statusProgress = value; });
             },
           );
           if (!result.ok) throw StateError(result.message);
-          setState(() { _status = 'Cloud sync complete... 100% • ${result.message}'; _statusProgress = 1.0; });
-        } else if (identity.syncMode == SyncMode.lanOnly) {
+          messages.add('${tr.text('connection_cloud')}: ${tr.text('sync_completed')}');
+        }
+        if (identity.isClient && identity.activeSyncTransportNormalized == 'lan') {
           final result = await _lanEngine().syncNow(
             onProgress: (value, label) {
-              if (mounted) setState(() { _status = 'LAN sync: $label ${(value * 100).round()}%'; _statusProgress = value; });
+              if (mounted) setState(() { _status = '${tr.text('connection_lan')}: $label ${(value * 100).round()}%'; _statusProgress = value; });
             },
           );
           if (!result.ok) throw StateError(result.message);
-          setState(() { _status = 'LAN sync complete... 100% • ${result.message}'; _statusProgress = 1.0; });
+          messages.add('${tr.text('connection_lan')}: ${tr.text('sync_completed')}');
+        } else if (hostLanEnabled) {
+          messages.add('${tr.text('connection_lan')}: ${tr.text('lan_host_running')}');
+        }
+        if (messages.isEmpty) {
+          setState(() => _status = tr.text('no_sync_mode_enabled'));
         } else {
-          setState(() => _status = 'No sync mode is enabled.');
+          setState(() { _status = messages.join(' • '); _statusProgress = 1.0; });
         }
       });
 
+  Future<void> _testHostTransports() => _run(() async {
+        final messages = <String>[];
+        final cloudResult = await _cloudEngine(enabled: true).testConnection();
+        messages.add(cloudResult.ok ? '${tr.text('connection_cloud')}: ${tr.text('connection_ok')}' : '${tr.text('connection_cloud')}: ${tr.text('connection_failed')}');
+        final lan = LanSyncSettings.load();
+        final host = _lanHostController.text.trim().isEmpty ? lan.host : _lanHostController.text.trim();
+        final lanResult = await _lanEngine(lan.copyWith(host: host, port: _lanPort)).testConnection();
+        messages.add(lanResult.ok ? '${tr.text('connection_lan')}: ${tr.text('connection_ok')}' : '${tr.text('connection_lan')}: ${tr.text('connection_failed')}');
+        if (!cloudResult.ok || !lanResult.ok) {
+          setState(() { _status = messages.join(' • '); _statusProgress = 1.0; });
+          return;
+        }
+        setState(() { _status = messages.join(' • '); _statusProgress = 1.0; });
+      });
+
   Future<void> _testCloudConnection() => _run(() async {
-        setState(() { _status = 'Testing Cloud connection... 25%'; _statusProgress = 0.25; });
+        setState(() { _status = tr.text('testing_cloud_connection'); _statusProgress = 0.25; });
         final result = await _cloudEngine(enabled: true).testConnection();
         if (!result.ok) throw StateError(result.message);
-        setState(() { _status = 'Cloud connection OK. ${result.message}'; _statusProgress = 1.0; });
+        setState(() { _status = '${tr.text('connection_cloud')}: ${tr.text('connection_ok')}'; _statusProgress = 1.0; });
       });
 
   Future<void> _testHostConnection() => _run(() async {
         final lan = LanSyncSettings.load();
         final host = _lanHostController.text.trim().isEmpty ? lan.host : _lanHostController.text.trim();
-        setState(() { _status = 'Testing LAN Host connection... 25%'; _statusProgress = 0.25; });
+        setState(() { _status = tr.text('testing_lan_connection'); _statusProgress = 0.25; });
         final result = await _lanEngine(lan.copyWith(host: host, port: _lanPort)).testConnection();
         if (!result.ok) throw StateError(result.message);
-        setState(() { _status = 'LAN Host connection OK. ${result.message}'; _statusProgress = 1.0; });
+        setState(() { _status = '${tr.text('connection_lan')}: ${tr.text('connection_ok')}'; _statusProgress = 1.0; });
       });
 
   @override
@@ -2284,8 +2275,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     final tr = AppLocalizations.of(context);
     final lan = LanSyncSettings.load();
     final cloud = CloudSyncSettings.load();
-    final showLanClientFields = !isHost && _clientSyncMode == SyncMode.lanOnly && (!_hasExistingHostConnection || _connectToNewHost);
-    final showCloudClientFields = !isHost && _clientSyncMode == SyncMode.cloudConnected && (!_hasExistingHostConnection || _connectToNewHost);
+    final showLanClientFields = !isHost;
+    final showCloudClientFields = !isHost;
     return _plainSyncPanel(
       context,
       icon: Icons.hub_outlined,
@@ -2293,11 +2284,15 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       subtitle: tr.text('sync_settings_desc'),
       child: Column(
         children: [
+          if (!isHost) ...[
+            _activeTransportSelector(context),
+            const SizedBox(height: 12),
+          ],
           _syncMethodExpansionTile(
             context,
             icon: Icons.lan_outlined,
             title: tr.text('lan_sync'),
-            subtitle: lanActive ? tr.text('local_network_ready') : tr.text('cloud_sync_off'),
+            subtitle: isHost ? (lanActive ? tr.text('local_network_ready') : tr.text('cloud_sync_off')) : (lanActive ? tr.text('active_transport') : tr.text('saved_sync_settings')),
             active: lanActive,
             accent: Colors.green,
             trailing: isHost ? Switch(value: _lanEnabledForHost, onChanged: _busy ? null : (value) => setState(() => _lanEnabledForHost = value)) : null,
@@ -2318,7 +2313,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
             context,
             icon: Icons.cloud_outlined,
             title: tr.text('cloud_sync'),
-            subtitle: cloudActive ? tr.text('cloud_services_online') : tr.text('cloud_sync_off'),
+            subtitle: isHost ? (cloudActive ? tr.text('cloud_services_online') : tr.text('cloud_sync_off')) : (cloudActive ? tr.text('active_transport') : tr.text('saved_sync_settings')),
             active: cloudActive,
             accent: Colors.blue,
             trailing: isHost ? Switch(value: _cloudEnabled, onChanged: _busy ? null : (value) => setState(() => _cloudEnabled = value)) : null,
@@ -2332,6 +2327,34 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
             ],
           ),
         ],
+      ),
+    );
+  }
+
+
+  Widget _activeTransportSelector(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    return Card.outlined(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(tr.text('active_transport'), style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 8),
+            SegmentedButton<SyncMode>(
+              segments: [
+                ButtonSegment<SyncMode>(value: SyncMode.lanOnly, icon: const Icon(Icons.lan_outlined), label: Text(tr.text('lan'))),
+                ButtonSegment<SyncMode>(value: SyncMode.cloudConnected, icon: const Icon(Icons.cloud_outlined), label: Text(tr.text('cloud'))),
+              ],
+              selected: {_clientSyncMode},
+              onSelectionChanged: _busy ? null : (value) => setState(() => _clientSyncMode = value.first),
+            ),
+            const SizedBox(height: 8),
+            Text(tr.text('active_transport_desc'), style: Theme.of(context).textTheme.bodySmall),
+          ],
+        ),
       ),
     );
   }
@@ -2534,12 +2557,12 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
             spacing: 10,
             runSpacing: 10,
             children: [
-              OutlinedButton.icon(onPressed: _busy ? null : _handleLanPairingButton, icon: const Icon(Icons.qr_code_2_outlined), label: Text(_lanPairingButtonLabel)),
+              OutlinedButton.icon(onPressed: _busy ? null : _handleLanPairingButton, icon: const Icon(Icons.lan_outlined), label: Text(_lanPairingButtonLabel)),
               OutlinedButton.icon(onPressed: _busy ? null : _handleCloudPairingButton, icon: const Icon(Icons.cloud_queue_outlined), label: Text(_cloudPairingButtonLabel)),
               if (_lanTokenController.text.trim().isNotEmpty)
-                TextButton.icon(onPressed: _busy ? null : () => setState(() => _showLanPairingCode = !_showLanPairingCode), icon: Icon(_showLanPairingCode ? Icons.visibility_off_outlined : Icons.visibility_outlined), label: Text(_showLanPairingCode ? tr.text('hide_code') : tr.text('show_code'))),
+                TextButton.icon(onPressed: _busy ? null : () => setState(() => _showLanPairingCode = !_showLanPairingCode), icon: Icon(_showLanPairingCode ? Icons.visibility_off_outlined : Icons.visibility_outlined), label: Text(_showLanPairingCode ? tr.text('hide_lan_code') : tr.text('show_lan_code'))),
               if (_latestCloudPairingCode.trim().isNotEmpty)
-                TextButton.icon(onPressed: _busy ? null : () => setState(() => _showCloudPairingCode = !_showCloudPairingCode), icon: Icon(_showCloudPairingCode ? Icons.visibility_off_outlined : Icons.visibility_outlined), label: Text(_showCloudPairingCode ? tr.text('hide_code') : tr.text('show_code'))),
+                TextButton.icon(onPressed: _busy ? null : () => setState(() => _showCloudPairingCode = !_showCloudPairingCode), icon: Icon(_showCloudPairingCode ? Icons.visibility_off_outlined : Icons.visibility_outlined), label: Text(_showCloudPairingCode ? tr.text('hide_cloud_code') : tr.text('show_cloud_code'))),
             ],
           ),
           if (_showLanPairingCode) ...[const SizedBox(height: 12), _lanPairingCodeCard()],
@@ -2550,47 +2573,25 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (_hasExistingHostConnection && !_connectToNewHost) ...[
-          _softNotice(
-            context,
-            Icons.check_circle_outline,
-            tr.text('connection_status'),
-            widget.store.appIdentity.hostDeviceId.trim().isNotEmpty
-                ? tr.format('connected_to_host_summary', {
-                    'storeId': widget.store.appIdentity.storeId,
-                    'branchId': widget.store.appIdentity.branchId,
-                    'hostDeviceId': widget.store.appIdentity.hostDeviceId,
-                  })
-                : tr.text('no_host_connected'),
+        _softNotice(
+          context,
+          Icons.info_outline,
+          tr.text('connect_device'),
+          tr.text('client_pairing_enter_or_scan_host_code'),
+        ),
+        const SizedBox(height: 10),
+        Wrap(spacing: 10, runSpacing: 10, children: [
+          OutlinedButton.icon(
+            onPressed: _busy ? null : _scanPairingQr,
+            icon: const Icon(Icons.qr_code_scanner_outlined),
+            label: Text(tr.text('scan_qr_code')),
           ),
-          const SizedBox(height: 10),
-          FilledButton.icon(onPressed: _busy ? null : () => setState(() => _connectToNewHost = true), icon: const Icon(Icons.add_link_outlined), label: Text(tr.text('connect_to_new_host'))),
-        ] else ...[
-          Text(tr.text('client_sync_type')),
-          const SizedBox(height: 8),
-          SegmentedButton<SyncMode>(
-            segments: [
-              ButtonSegment<SyncMode>(value: SyncMode.lanOnly, icon: const Icon(Icons.wifi_tethering_outlined), label: Text(tr.text('lan'))),
-              ButtonSegment<SyncMode>(value: SyncMode.cloudConnected, icon: const Icon(Icons.cloud_outlined), label: Text(tr.text('cloud'))),
-            ],
-            selected: {_clientSyncMode},
-            onSelectionChanged: _busy ? null : (value) => setState(() => _clientSyncMode = value.first),
-          ),
-          const SizedBox(height: 14),
-          if (!isCloudClient) ...[
-            ..._lanFields(showHostIp: true),
-            Wrap(spacing: 10, runSpacing: 10, children: [
-              OutlinedButton.icon(onPressed: _busy ? null : _scanPairingQr, icon: const Icon(Icons.qr_code_scanner_outlined), label: Text(tr.text('scan_qr_code'))),
-              FilledButton.icon(onPressed: _busy ? null : _saveLanClient, icon: const Icon(Icons.link_outlined), label: Text(_hasExistingHostConnection ? tr.text('connect_to_new_lan_host') : tr.text('connect_to_lan_host'))),
-            ]),
-          ] else ...[
-            ..._cloudFields(showPairingCode: true),
-            Wrap(spacing: 10, runSpacing: 10, children: [
-              OutlinedButton.icon(onPressed: _busy ? null : _scanPairingQr, icon: const Icon(Icons.qr_code_scanner_outlined), label: Text(tr.text('scan_qr_code'))),
-              FilledButton.icon(onPressed: _busy ? null : _claimCloudPairing, icon: const Icon(Icons.cloud_done_outlined), label: Text(_hasExistingHostConnection ? tr.text('connect_to_new_cloud_host') : tr.text('pair_with_cloud_host'))),
-            ]),
-          ],
-        ],
+        ]),
+        const SizedBox(height: 8),
+        Text(
+          tr.text('replace_host_reset_required'),
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+        ),
       ],
     );
   }
@@ -2870,7 +2871,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                 onPressed: () async {
                   await Clipboard.setData(ClipboardData(text: code));
                   if (!mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('lan_pairing_code_copied'))) );
+                  setState(() => _status = tr.text('lan_pairing_code_copied'));
                 },
                 icon: const Icon(Icons.copy_outlined),
               ),

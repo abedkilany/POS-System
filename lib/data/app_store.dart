@@ -1359,19 +1359,21 @@ class AppStore extends ChangeNotifier {
     _recordSyncChange(
       entityType: 'host_transfer',
       entityId: cleanDeviceId,
-      operation: 'host_changed_pending',
-      payload: transferPayload,
+      operation: 'host_transfer_approved_pending_activation',
+      payload: {
+        ...transferPayload,
+        'status': 'approved_pending_activation',
+      },
     );
 
-    // Fix #4: once the current Host approves the transfer, this device must
-    // immediately stop being authoritative. This is intentionally not routed
-    // through updateAppIdentity(), because normal Host->Client transitions are
-    // blocked everywhere except this official Transfer Host flow.
-    await _forceApplyRoleFromTransfer(appIdentity.copyWith(
-      deviceRole: DeviceRole.client,
-      hostDeviceId: cleanDeviceId,
-      updatedAt: DateTime.now(),
-    ));
+    // The current Host must remain authoritative after approval. The device
+    // requesting the transfer becomes Host only after explicit activation, then
+    // publishes HOST_CHANGED. This prevents any period with no Host.
+    await LocalDatabaseService.setString(_hostTransferRequestKey, jsonEncode({
+      ...transferPayload,
+      'requestingDeviceId': cleanDeviceId,
+      'status': 'approved_pending_activation',
+    }));
     await _saveAll();
     notifyListeners();
   }
@@ -1383,6 +1385,7 @@ class AppStore extends ChangeNotifier {
     if (!_isApprovedHostTransferTarget()) {
       throw StateError('No approved Host transfer was found for this device.');
     }
+    final oldHostDeviceId = appIdentity.hostDeviceId;
     final next = _normalizedLocalIdentity(appIdentity.copyWith(
       deviceRole: DeviceRole.host,
       hostDeviceId: '',
@@ -1393,9 +1396,9 @@ class AppStore extends ChangeNotifier {
     _appIdentity = next;
     await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(next.toJson()));
     await LocalDatabaseService.setString(_hostTransferApprovedDeviceKey, '');
-    await ensureHostCloudBootstrapSnapshotQueued(force: true);
     final activationPayload = <String, dynamic>{
       'newHostDeviceId': _deviceId,
+      'oldHostDeviceId': oldHostDeviceId,
       'storeId': next.storeId,
       'branchId': next.branchId,
       'activatedAt': DateTime.now().toIso8601String(),
@@ -1415,7 +1418,7 @@ class AppStore extends ChangeNotifier {
     _recordSyncChange(
       entityType: 'host_transfer',
       entityId: _deviceId,
-      operation: 'notify_clients_host_changed',
+      operation: 'HOST_CHANGED',
       payload: activationPayload,
     );
     await _saveAll();
@@ -3886,9 +3889,13 @@ class AppStore extends ChangeNotifier {
           if (approvedDeviceId == _deviceId) {
             await LocalDatabaseService.setString(_hostTransferApprovedDeviceKey, approvedDeviceId);
           }
-        } else if (change.operation == 'new_host_activated' || change.operation == 'notify_clients_host_changed') {
+        } else if (change.operation == 'new_host_activated' || change.operation == 'HOST_CHANGED' || change.operation == 'notify_clients_host_changed') {
           final newHostDeviceId = p['newHostDeviceId']?.toString().trim() ?? '';
-          if (newHostDeviceId.isNotEmpty && newHostDeviceId != _deviceId && appIdentity.isClient) {
+          final oldHostDeviceId = p['oldHostDeviceId']?.toString().trim() ?? '';
+          final shouldSwitchToNewHost = newHostDeviceId.isNotEmpty &&
+              newHostDeviceId != _deviceId &&
+              (appIdentity.isClient || (appIdentity.isHost && oldHostDeviceId == _deviceId));
+          if (shouldSwitchToNewHost) {
             await _forceApplyRoleFromTransfer(appIdentity.copyWith(
               deviceRole: DeviceRole.client,
               hostDeviceId: newHostDeviceId,
@@ -3897,6 +3904,7 @@ class AppStore extends ChangeNotifier {
             await _storeHostTransferNotification({
               'type': 'host_changed',
               'newHostDeviceId': newHostDeviceId,
+              'oldHostDeviceId': oldHostDeviceId,
               'storeId': p['storeId']?.toString() ?? appIdentity.storeId,
               'branchId': p['branchId']?.toString() ?? appIdentity.branchId,
               'receivedAt': DateTime.now().toIso8601String(),
