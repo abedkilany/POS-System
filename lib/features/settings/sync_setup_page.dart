@@ -93,12 +93,16 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       _qrExpiresAt = null;
       return;
     }
-    if (_qrStatus == _ClientPairingState.connected || _qrStatus == _ClientPairingState.failed || _qrStatus == _ClientPairingState.connecting) return;
+    if (_qrStatus == _ClientPairingState.connected || _qrStatus == _ClientPairingState.connecting) return;
     if (_qrExpiresAt != null && !_qrExpiresAt!.isAfter(DateTime.now())) {
       _qrStatus = _ClientPairingState.expired;
       return;
     }
     _qrStatus = _ClientPairingState.ready;
+    if (_statusType == _SetupStatus.error) {
+      _status = '';
+      _statusType = _SetupStatus.idle;
+    }
   }
 
   void _markQrConsumed() {
@@ -127,6 +131,57 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       _status = '';
       _statusType = _SetupStatus.idle;
     });
+  }
+
+
+  void _beginConnectionAttempt(String message) {
+    setState(() {
+      _busy = true;
+      _qrStatus = _ClientPairingState.connecting;
+      _status = message;
+      _statusType = _SetupStatus.info;
+    });
+  }
+
+  Future<void> _finishSuccessfulConnection(String message) async {
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _qrStatus = _ClientPairingState.connected;
+      _status = message;
+      _statusType = _SetupStatus.success;
+    });
+    try {
+      await widget.onDone();
+    } catch (_) {
+      // Pairing has already succeeded. Navigation cleanup must never turn a
+      // successful connection into an error message for the user.
+    }
+    if (!mounted) return;
+    try {
+      final navigator = Navigator.of(context);
+      if (navigator.canPop()) navigator.pop();
+    } catch (_) {
+      // Best-effort fallback only. The login gate will refresh after onDone.
+    }
+  }
+
+  void _finishRegisteredWaitingForStoreData() {
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _qrStatus = _ClientPairingState.connected;
+      _status = AppLocalizations.of(context).text('device_connected_waiting_store_data');
+      _statusType = _SetupStatus.warning;
+    });
+  }
+
+  bool _cloudPairingDownloadedInitialData(UnifiedPairingClaimResult result) {
+    final message = result.message.toLowerCase();
+    if (message.contains('will download') || message.contains('being prepared') || message.contains('waiting')) {
+      return false;
+    }
+    return message.contains('downloaded') || message.contains('please sign in');
   }
 
   String _friendlyErrorMessage(Object error, {required String fallback}) {
@@ -240,12 +295,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
     final connectedLanSignIn = tr.text('connected_lan_sign_in');
     final lanConnectionFailed = tr.text('lan_connection_failed');
 
-    setState(() {
-      _busy = true;
-      _qrStatus = _ClientPairingState.connecting;
-      _status = connectLanStart;
-      _statusType = _SetupStatus.info;
-    });
+    _beginConnectionAttempt(connectLanStart);
     try {
       final secret = _lanTokenController.text.trim();
       final host = _hostController.text.trim();
@@ -268,11 +318,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
         return;
       }
 
-      _markQrConsumed();
-      _setStatus(connectedLanSignIn, type: _SetupStatus.success);
-
-      if (!mounted) return;
-      await widget.onDone();
+      await _finishSuccessfulConnection(connectedLanSignIn);
     } catch (error) {
       _markQrFailed(error.toString());
       _setStatus(_friendlyErrorMessage(error, fallback: lanConnectionFailed), type: _SetupStatus.error);
@@ -289,12 +335,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
     final connectedStoreSignIn = tr.text('connected_store_sign_in');
     final cloudConnectionFailed = tr.text('cloud_connection_failed');
 
-    setState(() {
-      _busy = true;
-      _qrStatus = _ClientPairingState.connecting;
-      _status = claimingCloudPairing;
-      _statusType = _SetupStatus.info;
-    });
+    _beginConnectionAttempt(claimingCloudPairing);
     try {
       final code = _cloudPairingCodeController.text.trim();
       if (code.isEmpty) {
@@ -328,10 +369,11 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
         return;
       }
 
-      if (!mounted) return;
-      _markQrConsumed();
-      _setStatus(result.message.isEmpty ? connectedStoreSignIn : result.message, type: _SetupStatus.success);
-      await widget.onDone();
+      if (_cloudPairingDownloadedInitialData(result)) {
+        await _finishSuccessfulConnection(connectedStoreSignIn);
+      } else {
+        _finishRegisteredWaitingForStoreData();
+      }
     } on FormatException catch (_) {
       _markQrFailed(cloudConnectionFailed);
       _setStatus(cloudConnectionFailed, type: _SetupStatus.error);
@@ -385,6 +427,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
                                   _status = '';
                                   _statusType = _SetupStatus.idle;
                                   _qrExpiresAt = null;
+                                  _qrStatus = _ClientPairingState.noCode;
                                   _syncQrStatusFromInput();
                                 }),
                       ),
@@ -533,17 +576,17 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
   }
 
   Widget _buildQrCard(BuildContext context, AppLocalizations tr) {
-    _syncQrStatusFromInput();
     final color = Theme.of(context).colorScheme;
     final hasCode = _activePairingCode.isNotEmpty;
     final borderColor = _qrBorderColor(context);
-    final helper = _qrStatus == _ClientPairingState.ready
-        ? tr.text('pairing_code_ready_to_connect_help')
-        : _qrStatus == _ClientPairingState.noCode
-            ? tr.text('scan_or_enter_host_pairing_code')
-            : _qrStatus == _ClientPairingState.connected
-                ? tr.text('device_connected_waiting_store_data')
-                : tr.text('connection_failed_check_code');
+    final helper = switch (_qrStatus) {
+      _ClientPairingState.noCode => tr.text('scan_or_enter_host_pairing_code'),
+      _ClientPairingState.ready => tr.text('pairing_code_ready_to_connect_help'),
+      _ClientPairingState.connecting => tr.text('connecting_downloading_store_data'),
+      _ClientPairingState.connected => tr.text('device_connected_waiting_store_data'),
+      _ClientPairingState.expired => tr.text('pairing_code_expired_or_used'),
+      _ClientPairingState.failed => tr.text('connection_failed_check_code'),
+    };
     return Card.outlined(
       margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(
