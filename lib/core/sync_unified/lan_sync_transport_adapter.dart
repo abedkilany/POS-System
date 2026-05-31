@@ -108,7 +108,8 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
   Future<UnifiedSyncResult> registerCurrentHost({String transport = ''}) async {
     try {
       await _service.startHost(port: _settings.port);
-      await _settings.copyWith(
+      final migratedSettings = LanSyncSettings.load();
+      await migratedSettings.copyWith(
         setupComplete: true,
         hostModeEnabled: true,
         mode: LanSyncDeviceMode.host,
@@ -149,7 +150,8 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
     final expiresAt = DateTime.now().add(Duration(minutes: ttlMinutes));
     try {
       await _service.startHost(port: _settings.port);
-      await _settings.copyWith(
+      final migratedSettings = LanSyncSettings.load();
+      await migratedSettings.copyWith(
         secret: code,
         setupComplete: true,
         hostModeEnabled: true,

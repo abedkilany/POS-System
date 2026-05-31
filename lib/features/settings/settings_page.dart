@@ -1526,15 +1526,17 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
             syncMode: _cloudEnabled ? SyncMode.cloudConnected : (_lanEnabledForHost ? SyncMode.lanOnly : SyncMode.localOnly),
           ));
           final existingLan = LanSyncSettings.load();
+          final migratedLan = existingLan.withMigratedHostRegistry(widget.store.deviceId);
           await LanSyncSettings(
-            host: _lanHostController.text.trim().isEmpty ? existingLan.host : _lanHostController.text.trim(),
+            host: _lanHostController.text.trim().isEmpty ? migratedLan.host : _lanHostController.text.trim(),
             port: _lanPort,
             autoSyncEnabled: _lanEnabledForHost,
             hostModeEnabled: _lanEnabledForHost,
             setupComplete: _lanEnabledForHost,
             mode: _lanEnabledForHost ? LanSyncDeviceMode.host : LanSyncDeviceMode.unconfigured,
-            secret: existingLan.secret,
-            pairedDevices: existingLan.pairedDevices,
+            secret: migratedLan.secret,
+            pairedDevices: migratedLan.pairedDevices,
+            hostRegistry: migratedLan.hostRegistry,
           ).save();
           await _cloudSettings(enabled: _cloudEnabled).save();
           if (!_cloudEnabled) await LocalDatabaseService.deleteString(_initialCloudHostReadyKey);
@@ -2048,11 +2050,14 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           for (final device in cloudDevices)
             if (device.deviceId.trim().isNotEmpty) device.deviceId.trim(): device,
         };
-        final ids = <String>{
-          ...lan.pairedDevices.keys.map((id) => id.trim()).where((id) => id.isNotEmpty),
-          ...cloudById.keys,
-          ...peerStates.keys,
-        }..remove(identity.deviceId);
+        // Phase 3: Host Registry is the single source of truth for
+        // Monitoring/Test Connection device discovery. Cloud devices and peer
+        // states are used only as status overlays for registered Clients.
+        final registryById = <String, HostRegistryDevice>{
+          for (final entry in lan.hostRegistry.entries)
+            if (entry.key.trim().isNotEmpty && entry.value.isActive) entry.key.trim(): entry.value,
+        };
+        final ids = registryById.keys.toSet()..remove(identity.deviceId);
 
         if (ids.isEmpty) {
           setState(() {
@@ -2065,9 +2070,13 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         final lines = <String>[];
         var ready = 0;
         for (final id in ids) {
+          final registryDevice = registryById[id];
           final cloudDevice = cloudById[id];
           final peer = peerStates[id];
-          final lanToken = lan.pairedDevices[id]?.trim() ?? '';
+          final lanToken = (registryDevice?.deviceToken.trim().isNotEmpty == true
+                  ? registryDevice?.deviceToken.trim()
+                  : lan.pairedDevices[id]?.trim()) ??
+              '';
           final parts = <String>[];
           if (cloudDevice != null) {
             if (cloudDevice.revoked) {
@@ -2089,7 +2098,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           if (syncStatus == 'Synced' && parts.any((p) => p.contains('Ready') || p.contains('Authorized'))) ready++;
           parts.add(syncStatus);
           parts.add('Last Sync: ${_formatShortDateTime(peer?.lastAckCursor ?? peer?.lastAppliedHostCursor ?? peer?.updatedAt)}');
-          final label = _shortDeviceLabel(id, name: cloudDevice?.deviceName ?? '');
+          final label = _shortDeviceLabel(id, name: registryDevice?.deviceName ?? cloudDevice?.deviceName ?? '');
           lines.add('$label → ${parts.join(' | ')}');
         }
 
@@ -3188,9 +3197,10 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
     if (confirmed != true) return;
 
     final lanSettings = LanSyncSettings.load();
-    if (lanSettings.pairedDevices.containsKey(deviceId)) {
+    if (lanSettings.pairedDevices.containsKey(deviceId) || lanSettings.hostRegistry.containsKey(deviceId)) {
       final paired = Map<String, String>.from(lanSettings.pairedDevices)..remove(deviceId);
-      await lanSettings.copyWith(pairedDevices: paired).save();
+      final registry = Map<String, HostRegistryDevice>.from(lanSettings.hostRegistry)..remove(deviceId);
+      await lanSettings.copyWith(pairedDevices: paired, hostRegistry: registry).save();
     }
 
     await SyncDeviceStateStore.removePeerState(deviceId);
@@ -3278,11 +3288,14 @@ class _HostSyncMonitoringTable extends StatelessWidget {
     };
     final deleted = SyncDeviceAccessStore.deletedDeviceIds();
     final suspended = SyncDeviceAccessStore.suspendedDeviceIds();
-    final deviceIds = <String>{
-      ...lanSettings.pairedDevices.keys.map((id) => id.trim()).where((id) => id.isNotEmpty),
-      ...cloudById.keys,
-      ...peerStates.keys,
-    }..removeWhere((id) => deleted.contains(id));
+    // Phase 3: Host Sync Monitoring must discover devices only from the
+    // Host Registry. LAN pairing, Cloud rows, and peer history are status
+    // details only; they must not add extra devices to this table.
+    final registryById = <String, HostRegistryDevice>{
+      for (final entry in lanSettings.hostRegistry.entries)
+        if (entry.key.trim().isNotEmpty && entry.value.isActive) entry.key.trim(): entry.value,
+    };
+    final deviceIds = registryById.keys.toSet()..removeWhere((id) => deleted.contains(id));
     final pairedDeviceIds = deviceIds.toList()..sort();
 
     if (pairedDeviceIds.isEmpty) {
@@ -3322,7 +3335,8 @@ class _HostSyncMonitoringTable extends StatelessWidget {
                     _HostPeerMonitoringCard(
                       deviceId: deviceId,
                       state: peerStates[deviceId],
-                      lanAuthorized: lanSettings.pairedDevices.containsKey(deviceId),
+                      registryDevice: registryById[deviceId],
+                      lanAuthorized: (registryById[deviceId]?.deviceToken.trim().isNotEmpty ?? false) || lanSettings.pairedDevices.containsKey(deviceId),
                       cloudDevice: cloudById[deviceId],
                       suspended: suspended.contains(deviceId),
                       onToggleSuspend: () => onToggleSuspend(deviceId, suspended.contains(deviceId)),
@@ -3349,7 +3363,8 @@ class _HostSyncMonitoringTable extends StatelessWidget {
                       context,
                       deviceId: deviceId,
                       state: peerStates[deviceId],
-                      lanAuthorized: lanSettings.pairedDevices.containsKey(deviceId),
+                      registryDevice: registryById[deviceId],
+                      lanAuthorized: (registryById[deviceId]?.deviceToken.trim().isNotEmpty ?? false) || lanSettings.pairedDevices.containsKey(deviceId),
                       cloudDevice: cloudById[deviceId],
                       suspended: suspended.contains(deviceId),
                     ),
@@ -3366,6 +3381,7 @@ class _HostSyncMonitoringTable extends StatelessWidget {
     BuildContext context, {
     required String deviceId,
     required HostPeerSyncState? state,
+    required HostRegistryDevice? registryDevice,
     required bool lanAuthorized,
     required CloudDeviceStatus? cloudDevice,
     required bool suspended,
@@ -3374,7 +3390,7 @@ class _HostSyncMonitoringTable extends StatelessWidget {
     final status = _syncStatusForHostPeer(context, state, lanAuthorized: lanAuthorized, cloudDevice: cloudDevice, suspended: suspended);
     return DataRow(
       cells: [
-        DataCell(Text(_deviceLabel(deviceId, cloudDevice: cloudDevice))),
+        DataCell(Text(_deviceLabel(deviceId, registryDevice: registryDevice, cloudDevice: cloudDevice))),
         DataCell(Text(_deviceSource(context, lanAuthorized: lanAuthorized, cloudDevice: cloudDevice, hasHistory: state != null))),
         DataCell(_StatusChip(label: status.label, color: status.color, icon: status.icon)),
         DataCell(Text(_formatDateTime(context, state?.lastAckCursor ?? state?.lastAppliedHostCursor ?? cloudDevice?.lastAckAt ?? cloudDevice?.lastSeenAt ?? state?.updatedAt))),
@@ -3396,6 +3412,7 @@ class _HostPeerMonitoringCard extends StatelessWidget {
   const _HostPeerMonitoringCard({
     required this.deviceId,
     required this.state,
+    required this.registryDevice,
     required this.lanAuthorized,
     required this.cloudDevice,
     required this.suspended,
@@ -3405,6 +3422,7 @@ class _HostPeerMonitoringCard extends StatelessWidget {
 
   final String deviceId;
   final HostPeerSyncState? state;
+  final HostRegistryDevice? registryDevice;
   final bool lanAuthorized;
   final CloudDeviceStatus? cloudDevice;
   final bool suspended;
@@ -3430,7 +3448,7 @@ class _HostPeerMonitoringCard extends StatelessWidget {
             children: [
               const Icon(Icons.devices_other_outlined, size: 20),
               const SizedBox(width: 8),
-              Expanded(child: Text(_deviceLabel(deviceId, cloudDevice: cloudDevice), style: Theme.of(context).textTheme.titleSmall)),
+              Expanded(child: Text(_deviceLabel(deviceId, registryDevice: registryDevice, cloudDevice: cloudDevice), style: Theme.of(context).textTheme.titleSmall)),
               _StatusChip(label: status.label, color: status.color, icon: status.icon),
             ],
           ),
@@ -3534,9 +3552,11 @@ _SyncStatusView _syncStatusForHostPeer(BuildContext context, HostPeerSyncState? 
   return _SyncStatusView(label: tr.text('needs_attention'), color: Theme.of(context).colorScheme.error, icon: Icons.warning_amber_outlined);
 }
 
-String _deviceLabel(String deviceId, {CloudDeviceStatus? cloudDevice}) {
-  final name = cloudDevice?.deviceName.trim() ?? '';
-  if (name.isNotEmpty) return name;
+String _deviceLabel(String deviceId, {HostRegistryDevice? registryDevice, CloudDeviceStatus? cloudDevice}) {
+  final registryName = registryDevice?.deviceName.trim() ?? '';
+  if (registryName.isNotEmpty) return registryName;
+  final cloudName = cloudDevice?.deviceName.trim() ?? '';
+  if (cloudName.isNotEmpty) return cloudName;
   return _shortDeviceId(deviceId);
 }
 

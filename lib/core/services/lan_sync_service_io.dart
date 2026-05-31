@@ -15,6 +15,129 @@ typedef LanSyncProgressCallback = void Function(double value, String label);
 
 enum LanSyncDeviceMode { unconfigured, host, client }
 
+class HostRegistryDevice {
+  const HostRegistryDevice({
+    required this.clientDeviceId,
+    required this.deviceToken,
+    this.hostDeviceId = '',
+    this.deviceName = '',
+    this.status = 'active',
+    this.source = 'manual',
+    this.pairedAt,
+    this.lastSeenAt,
+    this.lastSyncAt,
+  });
+
+  final String clientDeviceId;
+  final String deviceToken;
+  final String hostDeviceId;
+  final String deviceName;
+  final String status;
+  final String source;
+  final DateTime? pairedAt;
+  final DateTime? lastSeenAt;
+  final DateTime? lastSyncAt;
+
+  bool get isActive => status != 'revoked' && status != 'deleted';
+
+  HostRegistryDevice copyWith({
+    String? clientDeviceId,
+    String? deviceToken,
+    String? hostDeviceId,
+    String? deviceName,
+    String? status,
+    String? source,
+    DateTime? pairedAt,
+    DateTime? lastSeenAt,
+    DateTime? lastSyncAt,
+    bool clearHostDeviceId = false,
+    bool clearDeviceName = false,
+    bool clearLastSeenAt = false,
+    bool clearLastSyncAt = false,
+  }) {
+    return HostRegistryDevice(
+      clientDeviceId: clientDeviceId ?? this.clientDeviceId,
+      deviceToken: deviceToken ?? this.deviceToken,
+      hostDeviceId: clearHostDeviceId ? '' : (hostDeviceId ?? this.hostDeviceId),
+      deviceName: clearDeviceName ? '' : (deviceName ?? this.deviceName),
+      status: status ?? this.status,
+      source: source ?? this.source,
+      pairedAt: pairedAt ?? this.pairedAt,
+      lastSeenAt: clearLastSeenAt ? null : (lastSeenAt ?? this.lastSeenAt),
+      lastSyncAt: clearLastSyncAt ? null : (lastSyncAt ?? this.lastSyncAt),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'clientDeviceId': clientDeviceId,
+        'deviceToken': deviceToken,
+        'hostDeviceId': hostDeviceId,
+        'deviceName': deviceName,
+        'status': status,
+        'source': source,
+        'pairedAt': pairedAt?.toIso8601String(),
+        'lastSeenAt': lastSeenAt?.toIso8601String(),
+        'lastSyncAt': lastSyncAt?.toIso8601String(),
+      };
+
+  factory HostRegistryDevice.fromJson(Map<String, dynamic> json) {
+    final clientDeviceId = (json['clientDeviceId'] ?? json['deviceId'] ?? '').toString().trim();
+    return HostRegistryDevice(
+      clientDeviceId: clientDeviceId,
+      deviceToken: (json['deviceToken'] ?? json['token'] ?? '').toString().trim(),
+      hostDeviceId: (json['hostDeviceId'] ?? '').toString().trim(),
+      deviceName: (json['deviceName'] ?? json['name'] ?? '').toString().trim(),
+      status: (json['status'] ?? 'active').toString().trim().isEmpty ? 'active' : (json['status'] ?? 'active').toString().trim(),
+      source: (json['source'] ?? 'host_registry').toString().trim().isEmpty ? 'host_registry' : (json['source'] ?? 'host_registry').toString().trim(),
+      pairedAt: DateTime.tryParse((json['pairedAt'] ?? '').toString()),
+      lastSeenAt: DateTime.tryParse((json['lastSeenAt'] ?? '').toString()),
+      lastSyncAt: DateTime.tryParse((json['lastSyncAt'] ?? '').toString()),
+    );
+  }
+
+  static Map<String, HostRegistryDevice> fromJsonMap(Object? raw) {
+    if (raw is! Map) return const <String, HostRegistryDevice>{};
+    final result = <String, HostRegistryDevice>{};
+    for (final entry in raw.entries) {
+      if (entry.value is! Map) continue;
+      final device = HostRegistryDevice.fromJson(Map<String, dynamic>.from(entry.value as Map));
+      final id = device.clientDeviceId.trim().isNotEmpty ? device.clientDeviceId.trim() : '${entry.key}'.trim();
+      if (id.isEmpty) continue;
+      result[id] = device.clientDeviceId.trim().isEmpty ? device.copyWith(clientDeviceId: id) : device;
+    }
+    return Map.unmodifiable(result);
+  }
+
+  static Map<String, HostRegistryDevice> migrateFromPairedDevices(
+    Map<String, String> pairedDevices, {
+    Map<String, HostRegistryDevice> existing = const <String, HostRegistryDevice>{},
+    String hostDeviceId = '',
+  }) {
+    final registry = <String, HostRegistryDevice>{...existing};
+    final now = DateTime.now();
+    for (final entry in pairedDevices.entries) {
+      final clientDeviceId = entry.key.trim();
+      final deviceToken = entry.value.trim();
+      if (clientDeviceId.isEmpty || deviceToken.isEmpty) continue;
+      final current = registry[clientDeviceId];
+      registry[clientDeviceId] = (current ??
+              HostRegistryDevice(
+                clientDeviceId: clientDeviceId,
+                deviceToken: deviceToken,
+                hostDeviceId: hostDeviceId.trim(),
+                source: 'migrated_from_paired_devices',
+                pairedAt: now,
+              ))
+          .copyWith(
+        deviceToken: deviceToken,
+        hostDeviceId: hostDeviceId.trim().isEmpty ? current?.hostDeviceId : hostDeviceId.trim(),
+        status: 'active',
+      );
+    }
+    return Map.unmodifiable(registry);
+  }
+}
+
 class LanSyncSettings {
   const LanSyncSettings({
     required this.host,
@@ -28,7 +151,8 @@ class LanSyncSettings {
     this.lastConnectionAt,
     this.lastSyncAt,
     this.pairedDevices = const <String, String>{},
-  });
+    Map<String, HostRegistryDevice>? hostRegistry,
+  }) : hostRegistry = hostRegistry ?? const <String, HostRegistryDevice>{};
 
   static const String storageKey = 'lan_sync_settings_v2';
 
@@ -45,6 +169,11 @@ class LanSyncSettings {
   /// LAN paired Client credentials: deviceId -> deviceToken.
   /// Host stores this map; Clients store only their own deviceToken in AppIdentity.
   final Map<String, String> pairedDevices;
+  /// Host-owned registry of Clients that belong to this Host.
+  /// This is the new single source of truth for Sync Monitoring. It is
+  /// initially migrated from pairedDevices so existing Clients do not need
+  /// to be paired again after the update.
+  final Map<String, HostRegistryDevice> hostRegistry;
 
   bool get isHost => mode == LanSyncDeviceMode.host || hostModeEnabled;
   bool get isClient => mode == LanSyncDeviceMode.client || (!hostModeEnabled && setupComplete);
@@ -61,6 +190,7 @@ class LanSyncSettings {
     DateTime? lastConnectionAt,
     DateTime? lastSyncAt,
     Map<String, String>? pairedDevices,
+    Map<String, HostRegistryDevice>? hostRegistry,
     bool clearLastPullCursor = false,
     bool clearLastConnectionAt = false,
     bool clearLastSyncAt = false,
@@ -77,6 +207,7 @@ class LanSyncSettings {
       lastConnectionAt: clearLastConnectionAt ? null : (lastConnectionAt ?? this.lastConnectionAt),
       lastSyncAt: clearLastSyncAt ? null : (lastSyncAt ?? this.lastSyncAt),
       pairedDevices: pairedDevices ?? this.pairedDevices,
+      hostRegistry: hostRegistry ?? this.hostRegistry,
     );
   }
 
@@ -92,6 +223,7 @@ class LanSyncSettings {
         'lastConnectionAt': lastConnectionAt?.toIso8601String(),
         'lastSyncAt': lastSyncAt?.toIso8601String(),
         'pairedDevices': pairedDevices,
+        'hostRegistry': hostRegistry.map((key, value) => MapEntry(key, value.toJson())),
       };
 
   factory LanSyncSettings.fromJson(Map<String, dynamic> json) {
@@ -99,6 +231,13 @@ class LanSyncSettings {
     final mode = LanSyncDeviceMode.values.firstWhere(
       (item) => item.name == modeName,
       orElse: () => (json['hostModeEnabled'] as bool? ?? false) ? LanSyncDeviceMode.host : LanSyncDeviceMode.client,
+    );
+    final pairedDevices = (json['pairedDevices'] is Map)
+        ? Map<String, String>.from((json['pairedDevices'] as Map).map((key, value) => MapEntry('$key', '$value')))
+        : const <String, String>{};
+    final hostRegistry = HostRegistryDevice.migrateFromPairedDevices(
+      pairedDevices,
+      existing: HostRegistryDevice.fromJsonMap(json['hostRegistry']),
     );
     return LanSyncSettings(
       host: (json['host'] as String?)?.trim().isNotEmpty == true ? (json['host'] as String).trim() : '192.168.1.100',
@@ -111,10 +250,37 @@ class LanSyncSettings {
       lastPullCursor: DateTime.tryParse(json['lastPullCursor'] as String? ?? ''),
       lastConnectionAt: DateTime.tryParse(json['lastConnectionAt'] as String? ?? ''),
       lastSyncAt: DateTime.tryParse(json['lastSyncAt'] as String? ?? ''),
-      pairedDevices: (json['pairedDevices'] is Map)
-          ? Map<String, String>.from((json['pairedDevices'] as Map).map((key, value) => MapEntry('$key', '$value')))
-          : const <String, String>{},
+      pairedDevices: pairedDevices,
+      hostRegistry: hostRegistry,
     );
+  }
+
+  /// Returns a settings copy where Host Registry has been rebuilt/adopted from
+  /// the current Host pairedDevices. This is the phase-2 automatic migration:
+  /// existing paired Clients become Host Registry members on first Host startup
+  /// after the update, without forcing users to pair them again.
+  LanSyncSettings withMigratedHostRegistry(String hostDeviceId) {
+    final migrated = HostRegistryDevice.migrateFromPairedDevices(
+      pairedDevices,
+      existing: hostRegistry,
+      hostDeviceId: hostDeviceId,
+    );
+    return copyWith(hostRegistry: migrated);
+  }
+
+  bool hostRegistryNeedsMigration(String hostDeviceId) {
+    final hostId = hostDeviceId.trim();
+    for (final entry in pairedDevices.entries) {
+      final clientDeviceId = entry.key.trim();
+      final deviceToken = entry.value.trim();
+      if (clientDeviceId.isEmpty || deviceToken.isEmpty) continue;
+      final registryDevice = hostRegistry[clientDeviceId];
+      if (registryDevice == null) return true;
+      if (registryDevice.deviceToken.trim() != deviceToken) return true;
+      if (hostId.isNotEmpty && registryDevice.hostDeviceId.trim() != hostId) return true;
+      if (!registryDevice.isActive) return true;
+    }
+    return false;
   }
 
   static LanSyncSettings load() {
@@ -198,11 +364,19 @@ class LanSyncService {
   int? get port => _sharedPort;
 
   Future<void> startHost({int port = 8787}) async {
+    await _ensureHostRegistryMigration();
     if (_sharedServer != null && _sharedPort == port) return;
     await stopHost();
     _sharedServer = await HttpServer.bind(InternetAddress.anyIPv4, port);
     _sharedPort = port;
     _sharedServer!.listen(_handleRequest, onError: (_) {});
+  }
+
+  Future<void> _ensureHostRegistryMigration() async {
+    final settings = LanSyncSettings.load();
+    final hostDeviceId = store.deviceId.trim();
+    if (!settings.hostRegistryNeedsMigration(hostDeviceId)) return;
+    await settings.withMigratedHostRegistry(hostDeviceId).save();
   }
 
   Future<void> stopHost() async {
@@ -267,10 +441,15 @@ class LanSyncService {
         final deviceToken = LanSyncSettings.generateDeviceToken();
         final paired = Map<String, String>.from(settings.pairedDevices);
         paired[deviceId] = deviceToken;
+        final registry = HostRegistryDevice.migrateFromPairedDevices(
+          paired,
+          existing: settings.hostRegistry,
+          hostDeviceId: store.deviceId,
+        );
 
         // Single-use LAN pairing: immediately clear the pairing code after the
         // oldest successful claim is accepted. Later claims with the same code fail.
-        await settings.copyWith(secret: '', pairedDevices: paired).save();
+        await settings.copyWith(secret: '', pairedDevices: paired, hostRegistry: registry).save();
 
         final snapshot = jsonDecode(store.exportSyncSnapshotJson()) as Map<String, dynamic>;
         await _json(request, {
