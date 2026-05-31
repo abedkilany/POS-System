@@ -105,11 +105,6 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
     }
   }
 
-  void _markQrConsumed() {
-    if (!mounted) return;
-    setState(() => _qrStatus = _ClientPairingState.connected);
-  }
-
   void _markQrFailed(String message) {
     final lower = message.toLowerCase();
     final expiredOrUsed = lower.contains('expired') || lower.contains('already used') || lower.contains('410') || lower.contains('409');

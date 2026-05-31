@@ -52,7 +52,7 @@ void main() {
       final result = await service.testConnection(settings());
 
       expect(result.ok, isFalse);
-      expect(result.message, contains('failed'));
+      expect(result.message, contains('Cloud Server Unreachable'));
     });
 
     test('parses online device list from mock server', () async {

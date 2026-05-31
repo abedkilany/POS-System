@@ -13,6 +13,7 @@ import '../../core/services/barcode_feedback_service.dart';
 import '../../core/services/cloud_sync_service.dart';
 import '../../core/services/lan_sync_service.dart';
 import '../../core/services/local_database_service.dart';
+import '../../core/sync_unified/sync_device_state.dart';
 import '../../core/sync_unified/sync_unified.dart';
 
 import '../../core/localization/app_localizations.dart';
@@ -1490,17 +1491,11 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
 
   Future<void> _testCurrentConnection() async {
     final identity = widget.store.appIdentity;
-    final lan = LanSyncSettings.load();
-    final cloud = CloudSyncSettings.load();
-    final hostLanEnabled = identity.isHost && (_lanEnabledForHost || (lan.setupComplete && lan.isHost));
-    final hostCloudEnabled = identity.isHost && (_cloudEnabled || (identity.isCloudEnabled && cloud.isConfigured));
-    if (hostLanEnabled && hostCloudEnabled) {
-      await _testHostTransports();
+    if (identity.isHost || _deviceRole == DeviceRole.host) {
+      await _testPairedClientConnections();
       return;
     }
-    final shouldTestCloud = identity.isClient
-        ? identity.activeSyncTransportNormalized == 'cloud'
-        : hostCloudEnabled || _cloudEnabled || identity.syncMode == SyncMode.cloudConnected;
+    final shouldTestCloud = identity.activeSyncTransportNormalized == 'cloud';
     if (shouldTestCloud) {
       await _testCloudConnection();
     } else {
@@ -2001,26 +1996,115 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         }
       });
 
-  Future<void> _testHostTransports() => _run(() async {
-        final messages = <String>[];
-        final cloudResult = await _cloudEngine(enabled: true).testConnection();
-        messages.add(cloudResult.ok ? '${tr.text('connection_cloud')}: ${tr.text('connection_ok')}' : '${tr.text('connection_cloud')}: ${tr.text('connection_failed')}');
+  String _shortDeviceLabel(String deviceId, {String name = ''}) {
+    final trimmedName = name.trim();
+    if (trimmedName.isNotEmpty) return trimmedName;
+    final id = deviceId.trim();
+    if (id.length <= 8) return id.isEmpty ? 'Unknown Client' : id;
+    return 'Client ${id.substring(0, 4)}…${id.substring(id.length - 4)}';
+  }
+
+  String _formatShortDateTime(DateTime? value) {
+    if (value == null) return 'never';
+    final local = value.toLocal();
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${local.year}-${two(local.month)}-${two(local.day)} ${two(local.hour)}:${two(local.minute)}';
+  }
+
+  String _peerSyncStatus(HostPeerSyncState? peer) {
+    if (peer == null) return 'Sync Not Ready';
+    if (peer.lastAckSequence > 0 || peer.lastAckCursor != null || peer.lastAppliedHostCursor != null) {
+      return 'Synced';
+    }
+    return 'Sync Pending';
+  }
+
+  Future<void> _testPairedClientConnections() => _run(() async {
+        setState(() { _status = 'Testing paired Clients...'; _statusProgress = 0.15; });
+        final identity = widget.store.appIdentity;
         final lan = LanSyncSettings.load();
-        final host = _lanHostController.text.trim().isEmpty ? lan.host : _lanHostController.text.trim();
-        final lanResult = await _lanEngine(lan.copyWith(host: host, port: _lanPort)).testConnection();
-        messages.add(lanResult.ok ? '${tr.text('connection_lan')}: ${tr.text('connection_ok')}' : '${tr.text('connection_lan')}: ${tr.text('connection_failed')}');
-        if (!cloudResult.ok || !lanResult.ok) {
-          setState(() { _status = messages.join(' • '); _statusProgress = 1.0; });
+        final cloud = CloudSyncSettings.load();
+        final peerStates = <String, HostPeerSyncState>{
+          for (final state in SyncDeviceStateStore.loadPeerStates()) state.deviceId: state,
+        };
+        var cloudReachable = false;
+        var cloudProblem = '';
+        var cloudDevices = const <CloudDeviceStatus>[];
+        if ((_cloudEnabled || identity.isCloudEnabled) && cloud.isConfigured) {
+          final service = CloudSyncService(widget.store);
+          final cloudConnection = await service.testConnection(cloud);
+          cloudReachable = cloudConnection.ok;
+          cloudProblem = cloudConnection.ok ? '' : cloudConnection.message;
+          if (cloudReachable) {
+            try {
+              cloudDevices = await service.listDevices(cloud);
+            } catch (error) {
+              cloudReachable = false;
+              cloudProblem = error.toString();
+            }
+          }
+        }
+        final cloudById = <String, CloudDeviceStatus>{
+          for (final device in cloudDevices)
+            if (device.deviceId.trim().isNotEmpty) device.deviceId.trim(): device,
+        };
+        final ids = <String>{
+          ...lan.pairedDevices.keys.map((id) => id.trim()).where((id) => id.isNotEmpty),
+          ...cloudById.keys,
+          ...peerStates.keys,
+        }..remove(identity.deviceId);
+
+        if (ids.isEmpty) {
+          setState(() {
+            _status = 'No paired Clients found. Pair a Client first, then run Test Connection again.';
+            _statusProgress = 1.0;
+          });
           return;
         }
-        setState(() { _status = messages.join(' • '); _statusProgress = 1.0; });
+
+        final lines = <String>[];
+        var ready = 0;
+        for (final id in ids) {
+          final cloudDevice = cloudById[id];
+          final peer = peerStates[id];
+          final lanToken = lan.pairedDevices[id]?.trim() ?? '';
+          final parts = <String>[];
+          if (cloudDevice != null) {
+            if (cloudDevice.revoked) {
+              parts.add('Cloud Unauthorized');
+            } else if (cloudDevice.online || cloudDevice.isOnline) {
+              parts.add('Cloud Ready');
+            } else {
+              parts.add('Cloud Offline');
+            }
+          } else if ((_cloudEnabled || identity.isCloudEnabled) && cloud.isConfigured) {
+            parts.add(cloudReachable ? 'Cloud Not Registered' : 'Cloud Failed${cloudProblem.isEmpty ? '' : ': $cloudProblem'}');
+          }
+          if (lanToken.isNotEmpty) {
+            parts.add('LAN Authorized');
+          } else if (_lanEnabledForHost || (lan.setupComplete && lan.isHost)) {
+            parts.add('LAN Not Paired');
+          }
+          final syncStatus = _peerSyncStatus(peer);
+          if (syncStatus == 'Synced' && parts.any((p) => p.contains('Ready') || p.contains('Authorized'))) ready++;
+          parts.add(syncStatus);
+          parts.add('Last Sync: ${_formatShortDateTime(peer?.lastAckCursor ?? peer?.lastAppliedHostCursor ?? peer?.updatedAt)}');
+          final label = _shortDeviceLabel(id, name: cloudDevice?.deviceName ?? '');
+          lines.add('$label → ${parts.join(' | ')}');
+        }
+
+        final total = ids.length;
+        setState(() {
+          _status = 'Paired Clients: $ready/$total ready • ${lines.join(' • ')}';
+          _statusProgress = 1.0;
+        });
       });
 
   Future<void> _testCloudConnection() => _run(() async {
         setState(() { _status = tr.text('testing_cloud_connection'); _statusProgress = 0.25; });
         final result = await _cloudEngine(enabled: true).testConnection();
         if (!result.ok) throw StateError(result.message);
-        setState(() { _status = '${tr.text('connection_cloud')}: ${tr.text('connection_ok')}'; _statusProgress = 1.0; });
+        setState(() { _status = '${tr.text('connection_cloud')}: ${result.message}'; _statusProgress = 1.0; });
       });
 
   Future<void> _testHostConnection() => _run(() async {
@@ -3044,6 +3128,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       ];
 }
 
+
 class _AdvancedSyncDebugCard extends StatelessWidget {
   const _AdvancedSyncDebugCard({required this.store});
 
@@ -3051,25 +3136,307 @@ class _AdvancedSyncDebugCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    final isHost = store.appIdentity.isHost;
+    final lanSettings = LanSyncSettings.load();
+    final cloudSettings = CloudSyncSettings.load();
+    final peers = SyncDeviceStateStore.loadPeerStates();
+    final peerById = <String, HostPeerSyncState>{for (final peer in peers) peer.deviceId: peer};
+    final pairedIds = <String>{...lanSettings.pairedDevices.keys.map((id) => id.trim()).where((id) => id.isNotEmpty), ...peerById.keys};
+    final selfState = SyncDeviceStateStore.load(store.appIdentity);
+
     return Card(
       child: ExpansionTile(
-        leading: const Icon(Icons.bug_report_outlined),
-        title: Text(AppLocalizations.of(context).text('advanced_debug_information')),
-        subtitle: Text(AppLocalizations.of(context).text('advanced_debug_information_desc')),
+        leading: const Icon(Icons.monitor_heart_outlined),
+        title: Text(tr.text('sync_monitoring_diagnostics')),
+        subtitle: Text(isHost ? tr.text('sync_monitoring_host_desc') : tr.text('sync_monitoring_client_desc')),
+        initiallyExpanded: true,
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         children: [
-          _Line(title: AppLocalizations.of(context).text('device_id'), value: store.deviceId),
-          _Line(title: AppLocalizations.of(context).text('store_id'), value: store.appIdentity.storeId),
-          _Line(title: AppLocalizations.of(context).text('branch_id'), value: store.appIdentity.branchId),
-          _Line(title: AppLocalizations.of(context).text('role'), value: store.appIdentity.deviceRole.name),
-          _Line(title: AppLocalizations.of(context).text('sync_mode'), value: store.appIdentity.syncMode.name),
-          _Line(title: AppLocalizations.of(context).text('pending_changes'), value: '${store.pendingSyncCount}'),
-          _Line(title: AppLocalizations.of(context).text('pending_queue'), value: '${store.pendingSyncQueueCount}'),
+          if (isHost)
+            _HostSyncMonitoringTable(
+              pairedDeviceIds: pairedIds.toList()..sort(),
+              peerStates: peerById,
+              lanSettings: lanSettings,
+              cloudConfigured: cloudSettings.isConfigured,
+            )
+          else
+            _ClientSyncMonitoringPanel(
+              state: selfState,
+              store: store,
+              lanSettings: lanSettings,
+              cloudSettings: cloudSettings,
+            ),
         ],
       ),
     );
   }
 }
+
+class _HostSyncMonitoringTable extends StatelessWidget {
+  const _HostSyncMonitoringTable({
+    required this.pairedDeviceIds,
+    required this.peerStates,
+    required this.lanSettings,
+    required this.cloudConfigured,
+  });
+
+  final List<String> pairedDeviceIds;
+  final Map<String, HostPeerSyncState> peerStates;
+  final LanSyncSettings lanSettings;
+  final bool cloudConfigured;
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    if (pairedDeviceIds.isEmpty) {
+      return Align(
+        alignment: AlignmentDirectional.centerStart,
+        child: Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Text(tr.text('no_paired_devices_yet'), style: Theme.of(context).textTheme.bodyMedium),
+        ),
+      );
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 760) {
+          return Column(
+            children: [
+              for (final deviceId in pairedDeviceIds)
+                _HostPeerMonitoringCard(
+                  deviceId: deviceId,
+                  state: peerStates[deviceId],
+                  lanAuthorized: lanSettings.pairedDevices.containsKey(deviceId),
+                  cloudConfigured: cloudConfigured,
+                ),
+            ],
+          );
+        }
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: DataTable(
+            columns: [
+              DataColumn(label: Text(tr.text('device'))),
+              DataColumn(label: Text(tr.text('sync_status'))),
+              DataColumn(label: Text(tr.text('last_successful_sync'))),
+              DataColumn(label: Text(tr.text('last_transport'))),
+              DataColumn(label: Text(tr.text('authorization_status'))),
+              DataColumn(label: Text(tr.text('last_ack_sequence'))),
+            ],
+            rows: [
+              for (final deviceId in pairedDeviceIds)
+                _hostPeerRow(
+                  context,
+                  deviceId: deviceId,
+                  state: peerStates[deviceId],
+                  lanAuthorized: lanSettings.pairedDevices.containsKey(deviceId),
+                  cloudConfigured: cloudConfigured,
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  DataRow _hostPeerRow(
+    BuildContext context, {
+    required String deviceId,
+    required HostPeerSyncState? state,
+    required bool lanAuthorized,
+    required bool cloudConfigured,
+  }) {
+    final tr = AppLocalizations.of(context);
+    final status = _syncStatusForHostPeer(context, state, lanAuthorized: lanAuthorized, cloudConfigured: cloudConfigured);
+    return DataRow(
+      cells: [
+        DataCell(Text(_shortDeviceId(deviceId))),
+        DataCell(_StatusChip(label: status.label, color: status.color, icon: status.icon)),
+        DataCell(Text(_formatDateTime(context, state?.lastAckCursor ?? state?.lastAppliedHostCursor ?? state?.updatedAt))),
+        DataCell(Text(_transportLabel(context, state?.lastSyncTransport ?? ''))),
+        DataCell(Text(lanAuthorized ? tr.text('lan_authorized') : tr.text('cloud_or_unknown'))),
+        DataCell(Text('${state?.lastAckSequence ?? 0}')),
+      ],
+    );
+  }
+}
+
+class _HostPeerMonitoringCard extends StatelessWidget {
+  const _HostPeerMonitoringCard({required this.deviceId, required this.state, required this.lanAuthorized, required this.cloudConfigured});
+
+  final String deviceId;
+  final HostPeerSyncState? state;
+  final bool lanAuthorized;
+  final bool cloudConfigured;
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    final status = _syncStatusForHostPeer(context, state, lanAuthorized: lanAuthorized, cloudConfigured: cloudConfigured);
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: VentioResponsive.cardInsets(context),
+      decoration: BoxDecoration(
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.devices_other_outlined, size: 20),
+              const SizedBox(width: 8),
+              Expanded(child: Text(_shortDeviceId(deviceId), style: Theme.of(context).textTheme.titleSmall)),
+              _StatusChip(label: status.label, color: status.color, icon: status.icon),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _Line(title: tr.text('last_successful_sync'), value: _formatDateTime(context, state?.lastAckCursor ?? state?.lastAppliedHostCursor ?? state?.updatedAt)),
+          _Line(title: tr.text('last_transport'), value: _transportLabel(context, state?.lastSyncTransport ?? '')),
+          _Line(title: tr.text('authorization_status'), value: lanAuthorized ? tr.text('lan_authorized') : tr.text('cloud_or_unknown')),
+          _Line(title: tr.text('last_ack_sequence'), value: '${state?.lastAckSequence ?? 0}'),
+        ],
+      ),
+    );
+  }
+}
+
+class _ClientSyncMonitoringPanel extends StatelessWidget {
+  const _ClientSyncMonitoringPanel({required this.state, required this.store, required this.lanSettings, required this.cloudSettings});
+
+  final SyncDeviceState state;
+  final AppStore store;
+  final LanSyncSettings lanSettings;
+  final CloudSyncSettings cloudSettings;
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    final status = _syncStatusForClient(context, state, pendingCount: store.pendingSyncQueueCount);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Align(alignment: AlignmentDirectional.centerStart, child: _StatusChip(label: status.label, color: status.color, icon: status.icon)),
+        const SizedBox(height: 12),
+        _Line(title: tr.text('host_connection'), value: _clientHostReadiness(context, lanSettings: lanSettings, cloudSettings: cloudSettings)),
+        _Line(title: tr.text('last_successful_sync'), value: _formatDateTime(context, state.lastAckCursor ?? state.lastAppliedHostCursor ?? state.updatedAt)),
+        _Line(title: tr.text('last_transport'), value: _transportLabel(context, state.lastSyncTransport)),
+        _Line(title: tr.text('pending_changes'), value: '${store.pendingSyncQueueCount}'),
+        _Line(title: tr.text('last_ack_sequence'), value: '${state.lastAckSequence}'),
+        _Line(title: tr.text('authorization_status'), value: store.appIdentity.deviceToken.trim().isEmpty ? tr.text('token_missing') : tr.text('authorized')),
+      ],
+    );
+  }
+}
+
+class _SyncStatusView {
+  const _SyncStatusView({required this.label, required this.color, required this.icon});
+
+  final String label;
+  final Color color;
+  final IconData icon;
+}
+
+class _StatusChip extends StatelessWidget {
+  const _StatusChip({required this.label, required this.color, required this.icon});
+
+  final String label;
+  final Color color;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Chip(
+      avatar: Icon(icon, size: 18, color: color),
+      label: Text(label),
+      side: BorderSide(color: color.withValues(alpha: 0.45)),
+    );
+  }
+}
+
+_SyncStatusView _syncStatusForHostPeer(BuildContext context, HostPeerSyncState? state, {required bool lanAuthorized, required bool cloudConfigured}) {
+  final tr = AppLocalizations.of(context);
+  final now = DateTime.now();
+  final lastSync = state?.lastAckCursor ?? state?.lastAppliedHostCursor ?? state?.updatedAt;
+  if (!lanAuthorized && !cloudConfigured) {
+    return _SyncStatusView(label: tr.text('sync_not_ready'), color: Theme.of(context).colorScheme.error, icon: Icons.block_outlined);
+  }
+  if (state == null) {
+    return _SyncStatusView(label: tr.text('not_synced_yet'), color: Theme.of(context).colorScheme.error, icon: Icons.sync_problem_outlined);
+  }
+  if (lastSync == null) {
+    return _SyncStatusView(label: tr.text('sync_pending'), color: Colors.orange, icon: Icons.pending_actions_outlined);
+  }
+  final age = now.difference(lastSync);
+  if (age <= const Duration(minutes: 10)) {
+    return _SyncStatusView(label: tr.text('synced'), color: Colors.green, icon: Icons.check_circle_outline);
+  }
+  if (age <= const Duration(hours: 2)) {
+    return _SyncStatusView(label: tr.text('sync_delayed'), color: Colors.orange, icon: Icons.schedule_outlined);
+  }
+  return _SyncStatusView(label: tr.text('needs_attention'), color: Theme.of(context).colorScheme.error, icon: Icons.warning_amber_outlined);
+}
+
+_SyncStatusView _syncStatusForClient(BuildContext context, SyncDeviceState state, {required int pendingCount}) {
+  final tr = AppLocalizations.of(context);
+  final lastSync = state.lastAckCursor ?? state.lastAppliedHostCursor ?? state.updatedAt;
+  if (pendingCount > 0) {
+    return _SyncStatusView(label: tr.text('sync_pending'), color: Colors.orange, icon: Icons.pending_actions_outlined);
+  }
+  if (lastSync == null) {
+    return _SyncStatusView(label: tr.text('not_synced_yet'), color: Theme.of(context).colorScheme.error, icon: Icons.sync_problem_outlined);
+  }
+  final age = DateTime.now().difference(lastSync);
+  if (age <= const Duration(minutes: 10)) {
+    return _SyncStatusView(label: tr.text('synced'), color: Colors.green, icon: Icons.check_circle_outline);
+  }
+  if (age <= const Duration(hours: 2)) {
+    return _SyncStatusView(label: tr.text('sync_delayed'), color: Colors.orange, icon: Icons.schedule_outlined);
+  }
+  return _SyncStatusView(label: tr.text('needs_attention'), color: Theme.of(context).colorScheme.error, icon: Icons.warning_amber_outlined);
+}
+
+String _clientHostReadiness(BuildContext context, {required LanSyncSettings lanSettings, required CloudSyncSettings cloudSettings}) {
+  final tr = AppLocalizations.of(context);
+  final parts = <String>[];
+  if (cloudSettings.isConfigured) parts.add(tr.text('cloud_ready'));
+  if (lanSettings.setupComplete) parts.add(tr.text('lan_configured'));
+  if (parts.isEmpty) return tr.text('sync_not_ready');
+  return parts.join(' / ');
+}
+
+String _transportLabel(BuildContext context, String value) {
+  final tr = AppLocalizations.of(context);
+  switch (value.trim().toLowerCase()) {
+    case 'cloud':
+      return tr.text('cloud');
+    case 'lan':
+      return tr.text('lan');
+    case 'local':
+      return tr.text('local');
+    default:
+      return tr.text('unknown');
+  }
+}
+
+String _formatDateTime(BuildContext context, DateTime? value) {
+  final tr = AppLocalizations.of(context);
+  if (value == null) return tr.text('never');
+  final local = value.toLocal();
+  String two(int n) => n.toString().padLeft(2, '0');
+  return '${local.year}-${two(local.month)}-${two(local.day)} ${two(local.hour)}:${two(local.minute)}';
+}
+
+String _shortDeviceId(String value) {
+  final id = value.trim();
+  if (id.length <= 14) return id;
+  return '${id.substring(0, 6)}…${id.substring(id.length - 6)}';
+}
+
 
 
 

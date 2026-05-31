@@ -163,73 +163,6 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell> {
   int selectedIndex = 0;
 
-  Widget _buildLanguageShortcut(BuildContext context) {
-    final tr = AppLocalizations.of(context);
-    final currentLocale = Localizations.localeOf(context);
-    final isArabic = currentLocale.languageCode == 'ar';
-    final languageCode = isArabic ? 'AR' : 'EN';
-
-    return PopupMenuButton<Locale>(
-      tooltip: tr.text('language'),
-      initialValue: Locale(currentLocale.languageCode),
-      onSelected: (locale) {
-        if (locale.languageCode != currentLocale.languageCode) {
-          widget.onLocaleChanged(locale);
-        }
-      },
-      itemBuilder: (context) => [
-        PopupMenuItem<Locale>(
-          value: const Locale('en'),
-          child: Row(
-            children: [
-              const Text('🇺🇸'),
-              const SizedBox(width: 10),
-              Expanded(child: Text(tr.text('language_english'))),
-              if (!isArabic) const Icon(Icons.check, size: 18),
-            ],
-          ),
-        ),
-        PopupMenuItem<Locale>(
-          value: const Locale('ar'),
-          child: Row(
-            children: [
-              const Text('🇱🇧'),
-              const SizedBox(width: 10),
-              Expanded(child: Text(tr.text('language_arabic'))),
-              if (isArabic) const Icon(Icons.check, size: 18),
-            ],
-          ),
-        ),
-      ],
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4),
-        child: Tooltip(
-          message: tr.text('language'),
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
-              borderRadius: BorderRadius.circular(999),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.translate, size: 18),
-                  const SizedBox(width: 4),
-                  Text(
-                    languageCode,
-                    style: Theme.of(context).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w700),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
@@ -269,37 +202,58 @@ class _MainShellState extends State<MainShell> {
             ),
             title: Text('$shellTitle • ${items[selectedIndex].label}', overflow: TextOverflow.ellipsis),
             actions: [
-              ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: constraints.maxWidth < 420
-                      ? 72
-                      : constraints.maxWidth < 720
-                          ? 118
-                          : VentioResponsive.clampToScreen(context, 360, min: 180, horizontalPadding: 220),
-                ),
-                child: HostConnectionIndicator(
-                  store: widget.store,
-                  compact: constraints.maxWidth < 720,
-                ),
-              ),
-              _buildLanguageShortcut(context),
-              if (constraints.maxWidth >= 720)
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 180),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    child: Center(
-                      child: Text(widget.store.activeUser?.fullName ?? '', maxLines: 1, overflow: TextOverflow.ellipsis),
-                    ),
-                  ),
-                ),
-              IconButton(
-                tooltip: tr.text('logout'),
-                onPressed: () async {
-                  await widget.onLogout?.call();
-                  await widget.store.logout();
+              HostConnectionIndicator(store: widget.store),
+              PopupMenuButton<String>(
+                tooltip: widget.store.activeUser?.fullName ?? tr.text('logout'),
+                onSelected: (value) async {
+                  if (value == 'language_en') {
+                    widget.onLocaleChanged(const Locale('en'));
+                  } else if (value == 'language_ar') {
+                    widget.onLocaleChanged(const Locale('ar'));
+                  } else if (value == 'logout') {
+                    await widget.onLogout?.call();
+                    await widget.store.logout();
+                  }
                 },
-                icon: const Icon(Icons.logout),
+                itemBuilder: (context) {
+                  final currentLocale = Localizations.localeOf(context);
+                  final isArabic = currentLocale.languageCode == 'ar';
+                  return [
+                    if ((widget.store.activeUser?.fullName ?? '').trim().isNotEmpty)
+                      PopupMenuItem<String>(
+                        enabled: false,
+                        child: Text(widget.store.activeUser!.fullName, maxLines: 1, overflow: TextOverflow.ellipsis),
+                      ),
+                    PopupMenuItem<String>(
+                      value: 'language_en',
+                      child: Row(children: [
+                        const Text('🇺🇸'),
+                        const SizedBox(width: 10),
+                        Expanded(child: Text(tr.text('language_english'))),
+                        if (!isArabic) const Icon(Icons.check, size: 18),
+                      ]),
+                    ),
+                    PopupMenuItem<String>(
+                      value: 'language_ar',
+                      child: Row(children: [
+                        const Text('🇱🇧'),
+                        const SizedBox(width: 10),
+                        Expanded(child: Text(tr.text('language_arabic'))),
+                        if (isArabic) const Icon(Icons.check, size: 18),
+                      ]),
+                    ),
+                    const PopupMenuDivider(),
+                    PopupMenuItem<String>(
+                      value: 'logout',
+                      child: Row(children: [
+                        const Icon(Icons.logout),
+                        const SizedBox(width: 10),
+                        Text(tr.text('logout')),
+                      ]),
+                    ),
+                  ];
+                },
+                icon: const Icon(Icons.more_vert),
               ),
             ],
           ),
@@ -630,23 +584,62 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     return ' • ${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
   }
 
-  Widget _chip(BuildContext context, String label, _TransportState state, {bool role = false}) {
+
+  bool _needsAttention(_TransportSnapshot snapshot) {
+    return switch (snapshot.state) {
+      _TransportState.offline || _TransportState.error || _TransportState.pending || _TransportState.provisioning || _TransportState.checking => true,
+      _ => false,
+    };
+  }
+
+  bool get _hasAttention => _needsAttention(_snapshot.lan) || _needsAttention(_snapshot.cloud) || _needsAttention(_snapshot.syncHealth);
+
+  _TransportState get _summaryState {
+    if (_snapshot.lan.state == _TransportState.checking || _snapshot.cloud.state == _TransportState.checking || _snapshot.syncHealth.state == _TransportState.checking) {
+      return _TransportState.checking;
+    }
+    if (_hasAttention) return _TransportState.error;
+    return _TransportState.online;
+  }
+
+  String get _summaryLabel {
+    if (_summaryState == _TransportState.checking) return _t('connection_state_checking');
+    return _hasAttention ? _t('needs_attention') : _t('synced');
+  }
+
+  PopupMenuItem<void> _detailItem(BuildContext context, IconData icon, String title, _TransportSnapshot snapshot) {
     final theme = Theme.of(context);
-    final color = role ? Colors.blue : _stateColor(context, state);
-    final text = role ? label : '$label ${_stateText(state)}';
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.13),
-        border: Border.all(color: color.withValues(alpha: 0.42)),
-        borderRadius: BorderRadius.circular(999),
-      ),
+    final color = _stateColor(context, snapshot.state);
+    return PopupMenuItem<void>(
+      enabled: false,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.circle, color: color, size: 8),
-          const SizedBox(width: 5),
-          Text(text, style: theme.textTheme.labelSmall),
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Icon(icon, color: color, size: 18),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('$title: ${_stateText(snapshot.state)}', style: theme.textTheme.labelLarge),
+                if (snapshot.message.trim().isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      '${snapshot.message}${_lastSeenText(snapshot.lastSeenAt)}',
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -654,72 +647,80 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final lan = _snapshot.lan;
     final cloud = _snapshot.cloud;
     final syncHealth = _snapshot.syncHealth;
+    final summaryColor = _stateColor(context, _summaryState);
     final tooltip = [
+      _summaryLabel,
       _snapshot.roleLabel,
-      _snapshot.roleMessage,
       "${_t('connection_lan')}: ${_stateText(lan.state)}${_lastSeenText(lan.lastSeenAt)} — ${lan.message}",
       "${_t('connection_cloud')}: ${_stateText(cloud.state)}${_lastSeenText(cloud.lastSeenAt)} — ${cloud.message}",
+      "${_t('connection_sync_health')}: ${_stateText(syncHealth.state)} — ${syncHealth.message}",
     ].join('\n');
-
-    final chips = <Widget>[
-      _chip(context, _snapshot.roleLabel, _TransportState.online, role: true),
-      _chip(context, _t('connection_lan'), lan.state),
-      _chip(context, _t('connection_cloud'), cloud.state),
-      _chip(context, _t('connection_sync_health'), syncHealth.state),
-    ];
-
-    if (widget.compact) {
-      return Padding(
-        padding: const EdgeInsetsDirectional.only(end: 2),
-        child: Tooltip(
-          message: tooltip,
-          child: PopupMenuButton<void>(
-            tooltip: tooltip,
-            constraints: BoxConstraints(minWidth: 200, maxWidth: VentioResponsive.modalMaxWidth(context, 280)),
-            onOpened: _refresh,
-            itemBuilder: (context) => [
-              PopupMenuItem<void>(enabled: false, child: Text(_snapshot.roleLabel, style: Theme.of(context).textTheme.titleSmall)),
-              PopupMenuItem<void>(enabled: false, child: Text('${_t('connection_lan')}: ${_stateText(lan.state)}')),
-              PopupMenuItem<void>(enabled: false, child: Text('${_t('connection_cloud')}: ${_stateText(cloud.state)}')),
-              PopupMenuItem<void>(enabled: false, child: Text('${_t('connection_sync_health')}: ${_stateText(syncHealth.state)}')),
-              PopupMenuItem<void>(enabled: false, child: Text(_snapshot.roleMessage, maxLines: 2, overflow: TextOverflow.ellipsis)),
-            ],
-            child: ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: widget.compact ? 118 : VentioResponsive.clampToScreen(context, 220, min: 118)),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.lan_outlined, size: 14, color: _stateColor(context, lan.state)),
-                  const SizedBox(width: 4),
-                  Icon(Icons.cloud_outlined, size: 14, color: _stateColor(context, cloud.state)),
-                  const SizedBox(width: 6),
-                  Flexible(child: Text(_snapshot.roleLabel, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.labelSmall)),
-                ],
-              ),
-            ),
-          ),
-        ),
-      );
-    }
 
     return Padding(
       padding: const EdgeInsetsDirectional.only(end: 4),
       child: Tooltip(
         message: tooltip,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(999),
-          onTap: _refresh,
-          child: ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: VentioResponsive.clampToScreen(context, 360, min: 220, horizontalPadding: 160)),
-            child: Wrap(
-              spacing: 6,
-              runSpacing: 4,
-              alignment: WrapAlignment.end,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: chips,
+        child: PopupMenuButton<void>(
+          tooltip: tooltip,
+          constraints: BoxConstraints(minWidth: 260, maxWidth: VentioResponsive.modalMaxWidth(context, 360)),
+          onOpened: _refresh,
+          itemBuilder: (context) => [
+            PopupMenuItem<void>(
+              enabled: false,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              child: Row(
+                children: [
+                  Icon(Icons.circle, color: summaryColor, size: 12),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(_summaryLabel, style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+                        Text(_snapshot.roleLabel, style: theme.textTheme.bodySmall),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const PopupMenuDivider(),
+            _detailItem(context, Icons.lan_outlined, _t('connection_lan'), lan),
+            _detailItem(context, Icons.cloud_outlined, _t('connection_cloud'), cloud),
+            _detailItem(context, Icons.sync_outlined, _t('connection_sync_health'), syncHealth),
+            PopupMenuItem<void>(
+              enabled: false,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              child: Text(_snapshot.roleMessage, maxLines: 3, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall),
+            ),
+          ],
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+            decoration: BoxDecoration(
+              color: summaryColor.withValues(alpha: 0.12),
+              border: Border.all(color: summaryColor.withValues(alpha: 0.38)),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.circle, color: summaryColor, size: 9),
+                const SizedBox(width: 6),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 132),
+                  child: Text(
+                    _summaryLabel,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ],
             ),
           ),
         ),

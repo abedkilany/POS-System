@@ -901,14 +901,64 @@ class CloudSyncService {
     if (!settings.isConfigured) {
       return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
     }
+
     try {
-      final response = await _client.get(settings.endpoint('/api/health'), headers: _headers(settings)).timeout(const Duration(seconds: 10));
-      return CloudSyncResult(
-        ok: response.statusCode >= 200 && response.statusCode < 300,
-        message: response.statusCode >= 200 && response.statusCode < 300 ? 'Cloud API connection is healthy.' : 'Cloud API returned ${response.statusCode}: ${response.body}',
-      );
+      final health = await _client.get(settings.endpoint('/api/health'), headers: _headers(settings)).timeout(const Duration(seconds: 10));
+      if (health.statusCode < 200 || health.statusCode >= 300) {
+        final authMessage = health.statusCode == 401 || health.statusCode == 403
+            ? 'Unauthorized/Token invalid: Cloud API rejected the token.'
+            : 'Cloud Server Unreachable: Cloud API returned ${health.statusCode}: ${health.body}';
+        return CloudSyncResult(ok: false, message: authMessage);
+      }
     } catch (error) {
-      return CloudSyncResult(ok: false, message: 'Cloud API connection failed: $error');
+      return CloudSyncResult(ok: false, message: 'Cloud Server Unreachable: $error');
+    }
+
+    final identity = store.appIdentity;
+    if (!identity.isClient) {
+      return const CloudSyncResult(ok: true, message: 'Cloud API connection is healthy.');
+    }
+
+    if (identity.deviceToken.trim().isEmpty) {
+      return const CloudSyncResult(ok: false, message: 'Unauthorized/Token invalid: this Client has no saved device token. Pair this device again.');
+    }
+
+    try {
+      final hostStatus = await getHostHeartbeatStatus(settings);
+      if (!hostStatus.cloudReachable) {
+        final lower = hostStatus.message.toLowerCase();
+        final message = lower.contains('401') || lower.contains('403') || lower.contains('unauthorized') || lower.contains('token')
+            ? 'Unauthorized/Token invalid: ${hostStatus.message}'
+            : 'Cloud Server Unreachable: ${hostStatus.message}';
+        return CloudSyncResult(ok: false, message: message);
+      }
+      if (!hostStatus.hostReachable) {
+        return CloudSyncResult(ok: false, message: 'Host Offline: ${hostStatus.message}');
+      }
+
+      final state = SyncDeviceStateStore.load(identity);
+      final query = <String, String>{
+        'store_id': identity.storeId,
+        'branch_id': identity.branchId,
+        'limit': '1',
+      };
+      if (state.lastAppliedSequence > 0) {
+        query['since_sequence'] = state.lastAppliedSequence.toString();
+      } else if (settings.lastPullCursor != null) {
+        query['since'] = settings.lastPullCursor!.toIso8601String();
+      }
+
+      final ping = await _client.get(settings.endpoint('/api/sync/pull', query), headers: _headers(settings)).timeout(const Duration(seconds: 10));
+      if (ping.statusCode < 200 || ping.statusCode >= 300) {
+        final message = ping.statusCode == 401 || ping.statusCode == 403
+            ? 'Unauthorized/Token invalid: Cloud sync rejected this device. Pair this device again.'
+            : 'Sync Not Ready: Cloud sync ping failed with ${ping.statusCode}: ${ping.body}';
+        return CloudSyncResult(ok: false, message: message);
+      }
+
+      return const CloudSyncResult(ok: true, message: 'Cloud Connected/Ready for Sync.');
+    } catch (error) {
+      return CloudSyncResult(ok: false, message: 'Sync Not Ready: $error');
     }
   }
 
