@@ -273,13 +273,24 @@ class CloudPairingCodeResult {
 }
 
 class CloudPairingStatusResult {
-  const CloudPairingStatusResult({required this.ok, required this.status, required this.message, this.expiresAt, this.claimedAt, this.claimedByDeviceId = ''});
+  const CloudPairingStatusResult({
+    required this.ok,
+    required this.status,
+    required this.message,
+    this.expiresAt,
+    this.claimedAt,
+    this.claimedByDeviceId = '',
+    this.claimedByDeviceName = '',
+    this.claimedDeviceToken = '',
+  });
   final bool ok;
   final String status;
   final String message;
   final DateTime? expiresAt;
   final DateTime? claimedAt;
   final String claimedByDeviceId;
+  final String claimedByDeviceName;
+  final String claimedDeviceToken;
 }
 
 class CloudPairingClaimResult {
@@ -401,6 +412,8 @@ class CloudSyncService {
         expiresAt: DateTime.tryParse(decoded['expiresAt']?.toString() ?? ''),
         claimedAt: DateTime.tryParse(decoded['claimedAt']?.toString() ?? ''),
         claimedByDeviceId: decoded['claimedByDeviceId']?.toString() ?? '',
+        claimedByDeviceName: decoded['claimedByDeviceName']?.toString() ?? '',
+        claimedDeviceToken: decoded['claimedDeviceToken']?.toString() ?? '',
       );
     } catch (error) {
       return CloudPairingStatusResult(ok: false, status: 'invalid', message: 'Pairing status failed: $error');

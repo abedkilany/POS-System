@@ -268,6 +268,46 @@ class LanSyncSettings {
     return copyWith(hostRegistry: migrated);
   }
 
+  /// Adopt a Cloud-paired Client into the Host Registry. The Registry remains
+  /// the Monitoring source of truth; Cloud pairing is only allowed to add a
+  /// device after the Host verifies that the single-use pairing code was
+  /// consumed by that Client for this Host.
+  LanSyncSettings withCloudPairedHostRegistryDevice({
+    required String hostDeviceId,
+    required String clientDeviceId,
+    String deviceToken = '',
+    String deviceName = '',
+    DateTime? pairedAt,
+  }) {
+    final cleanHostId = hostDeviceId.trim();
+    final cleanClientId = clientDeviceId.trim();
+    if (cleanHostId.isEmpty || cleanClientId.isEmpty) return this;
+    final existing = hostRegistry[cleanClientId];
+    final cleanToken = deviceToken.trim().isNotEmpty ? deviceToken.trim() : (existing?.deviceToken.trim() ?? '');
+    final cleanName = deviceName.trim().isNotEmpty ? deviceName.trim() : (existing?.deviceName.trim() ?? '');
+    final registry = <String, HostRegistryDevice>{...hostRegistry};
+    registry[cleanClientId] = (existing ??
+            HostRegistryDevice(
+              clientDeviceId: cleanClientId,
+              deviceToken: cleanToken,
+              hostDeviceId: cleanHostId,
+              deviceName: cleanName,
+              source: 'cloud_pairing_claim',
+              pairedAt: pairedAt ?? DateTime.now(),
+              lastSeenAt: pairedAt ?? DateTime.now(),
+            ))
+        .copyWith(
+      deviceToken: cleanToken,
+      hostDeviceId: cleanHostId,
+      deviceName: cleanName,
+      status: 'active',
+      source: 'cloud_pairing_claim',
+      pairedAt: existing?.pairedAt ?? pairedAt ?? DateTime.now(),
+      lastSeenAt: pairedAt ?? DateTime.now(),
+    );
+    return copyWith(hostRegistry: Map.unmodifiable(registry));
+  }
+
   bool hostRegistryNeedsMigration(String hostDeviceId) {
     final hostId = hostDeviceId.trim();
     for (final entry in pairedDevices.entries) {

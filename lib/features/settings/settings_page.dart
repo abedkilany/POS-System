@@ -1769,6 +1769,10 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     if (!settings.isConfigured || !settings.hasDeploymentToken) return;
     final result = await CloudSyncService(widget.store).pairingCodeStatus(settings, code);
     if (!mounted || !result.ok) return;
+    if (result.status == 'consumed') {
+      await _adoptConsumedCloudPairingDevice(result);
+      if (!mounted) return;
+    }
     setState(() {
       if (result.status == 'consumed') {
         _latestCloudPairingConsumed = true;
@@ -1784,6 +1788,23 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         _latestCloudPairingExpiresAt = result.expiresAt;
       }
     });
+  }
+
+
+  Future<void> _adoptConsumedCloudPairingDevice(CloudPairingStatusResult result) async {
+    final clientDeviceId = result.claimedByDeviceId.trim();
+    if (clientDeviceId.isEmpty || !widget.store.appIdentity.isHost) return;
+
+    final hostDeviceId = widget.store.deviceId.trim();
+    final current = LanSyncSettings.load().withMigratedHostRegistry(hostDeviceId);
+    final updated = current.withCloudPairedHostRegistryDevice(
+      hostDeviceId: hostDeviceId,
+      clientDeviceId: clientDeviceId,
+      deviceToken: result.claimedDeviceToken,
+      deviceName: result.claimedByDeviceName,
+      pairedAt: result.claimedAt ?? DateTime.now(),
+    );
+    await updated.save();
   }
 
   Future<void> _handleCloudPairingButton() async {
@@ -2073,10 +2094,11 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           final registryDevice = registryById[id];
           final cloudDevice = cloudById[id];
           final peer = peerStates[id];
-          final lanToken = (registryDevice?.deviceToken.trim().isNotEmpty == true
-                  ? registryDevice?.deviceToken.trim()
-                  : lan.pairedDevices[id]?.trim()) ??
-              '';
+          final lanToken = lan.pairedDevices[id]?.trim().isNotEmpty == true
+              ? lan.pairedDevices[id]!.trim()
+              : ((registryDevice?.source != 'cloud_pairing_claim' && registryDevice?.deviceToken.trim().isNotEmpty == true)
+                  ? registryDevice!.deviceToken.trim()
+                  : '');
           final parts = <String>[];
           if (cloudDevice != null) {
             if (cloudDevice.revoked) {
@@ -3336,7 +3358,7 @@ class _HostSyncMonitoringTable extends StatelessWidget {
                       deviceId: deviceId,
                       state: peerStates[deviceId],
                       registryDevice: registryById[deviceId],
-                      lanAuthorized: (registryById[deviceId]?.deviceToken.trim().isNotEmpty ?? false) || lanSettings.pairedDevices.containsKey(deviceId),
+                      lanAuthorized: lanSettings.pairedDevices.containsKey(deviceId) || ((registryById[deviceId]?.deviceToken.trim().isNotEmpty ?? false) && registryById[deviceId]?.source != 'cloud_pairing_claim'),
                       cloudDevice: cloudById[deviceId],
                       suspended: suspended.contains(deviceId),
                       onToggleSuspend: () => onToggleSuspend(deviceId, suspended.contains(deviceId)),
@@ -3364,7 +3386,7 @@ class _HostSyncMonitoringTable extends StatelessWidget {
                       deviceId: deviceId,
                       state: peerStates[deviceId],
                       registryDevice: registryById[deviceId],
-                      lanAuthorized: (registryById[deviceId]?.deviceToken.trim().isNotEmpty ?? false) || lanSettings.pairedDevices.containsKey(deviceId),
+                      lanAuthorized: lanSettings.pairedDevices.containsKey(deviceId) || ((registryById[deviceId]?.deviceToken.trim().isNotEmpty ?? false) && registryById[deviceId]?.source != 'cloud_pairing_claim'),
                       cloudDevice: cloudById[deviceId],
                       suspended: suspended.contains(deviceId),
                     ),

@@ -47,6 +47,24 @@ export default async function handler(req, res) {
     let status = 'active';
     if (row.claimed_at) status = 'consumed';
     else if (new Date(row.expires_at).getTime() < Date.now()) status = 'expired';
+
+    let claimedByDeviceName = '';
+    let claimedDeviceToken = '';
+    if (row.claimed_by_device_id) {
+      const devices = await sql`
+        select device_name, device_token
+        from store_devices
+        where store_id = ${row.store_id}
+          and branch_id = ${row.branch_id}
+          and device_id = ${row.claimed_by_device_id}
+        limit 1
+      `;
+      if (devices.length) {
+        claimedByDeviceName = devices[0].device_name || '';
+        claimedDeviceToken = devices[0].device_token || '';
+      }
+    }
+
     return res.status(200).json({
       ok: true,
       status,
@@ -55,6 +73,8 @@ export default async function handler(req, res) {
       expiresAt: toIso(row.expires_at),
       claimedAt: toIso(row.claimed_at),
       claimedByDeviceId: row.claimed_by_device_id || '',
+      claimedByDeviceName,
+      claimedDeviceToken,
     });
   } catch (error) {
     sendError(res, error);
