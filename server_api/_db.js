@@ -33,6 +33,7 @@ export function assertStoreAllowed(storeId) {
 
 export async function ensureDeviceAuthColumns() {
   await sql`alter table store_devices add column if not exists device_token text default ''`;
+  await sql`alter table store_devices add column if not exists host_device_id text default ''`;
   await sql`alter table store_devices add column if not exists revoked boolean not null default false`;
   // Host-authoritative per-device sync state. LAN/Cloud are delivery methods;
   // progress must be tied to the device, not to the transport used last.

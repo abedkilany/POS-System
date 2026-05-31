@@ -3182,10 +3182,84 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
   void _refreshCloudDevices() {
     final cloudSettings = CloudSyncSettings.load();
     if (widget.store.appIdentity.isHost && cloudSettings.isConfigured) {
-      _cloudDevicesFuture = CloudSyncService(widget.store).listDevices(cloudSettings).catchError((_) => <CloudDeviceStatus>[]);
+      _cloudDevicesFuture = _loadAndAdoptCloudDevices(cloudSettings).catchError((_) => <CloudDeviceStatus>[]);
     } else {
       _cloudDevicesFuture = Future<List<CloudDeviceStatus>>.value(const <CloudDeviceStatus>[]);
     }
+  }
+
+  Future<List<CloudDeviceStatus>> _loadAndAdoptCloudDevices(CloudSyncSettings cloudSettings) async {
+    final service = CloudSyncService(widget.store);
+    var devices = await service.listDevices(cloudSettings);
+    final repaired = await _repairLegacyCloudDeviceLinks(service, cloudSettings, devices);
+    if (repaired) {
+      devices = await service.listDevices(cloudSettings);
+    }
+    await _adoptCloudRegistryDevices(devices);
+    return devices;
+  }
+
+  Future<bool> _repairLegacyCloudDeviceLinks(
+    CloudSyncService service,
+    CloudSyncSettings cloudSettings,
+    List<CloudDeviceStatus> devices,
+  ) async {
+    final identity = widget.store.appIdentity;
+    if (!identity.isHost) return false;
+    final hostDeviceId = widget.store.deviceId.trim();
+    if (hostDeviceId.isEmpty) return false;
+
+    final settings = LanSyncSettings.load().withMigratedHostRegistry(hostDeviceId);
+    final trustedDeviceIds = <String>{
+      ...settings.hostRegistry.keys.map((id) => id.trim()).where((id) => id.isNotEmpty),
+      ...settings.pairedDevices.keys.map((id) => id.trim()).where((id) => id.isNotEmpty),
+    }..remove(hostDeviceId);
+    if (trustedDeviceIds.isEmpty) return false;
+
+    final repairIds = devices
+        .where((device) {
+          final deviceId = device.deviceId.trim();
+          if (deviceId.isEmpty || deviceId == hostDeviceId) return false;
+          if (!trustedDeviceIds.contains(deviceId)) return false;
+          if (device.revoked || device.role.trim().toLowerCase() == 'host') return false;
+          return device.hostDeviceId.trim().isEmpty;
+        })
+        .map((device) => device.deviceId.trim())
+        .toSet();
+
+    if (repairIds.isEmpty) return false;
+    final result = await service.repairLegacyCloudDeviceLinks(
+      cloudSettings,
+      clientDeviceIds: repairIds,
+    );
+    return result.ok;
+  }
+
+  Future<void> _adoptCloudRegistryDevices(List<CloudDeviceStatus> devices) async {
+    final identity = widget.store.appIdentity;
+    if (!identity.isHost) return;
+    final hostDeviceId = widget.store.deviceId.trim();
+    if (hostDeviceId.isEmpty) return;
+
+    var settings = LanSyncSettings.load().withMigratedHostRegistry(hostDeviceId);
+    var changed = settings.hostRegistry.length != LanSyncSettings.load().hostRegistry.length;
+    for (final device in devices) {
+      final clientDeviceId = device.deviceId.trim();
+      if (clientDeviceId.isEmpty || clientDeviceId == hostDeviceId) continue;
+      if (device.revoked || device.role.trim().toLowerCase() == 'host') continue;
+      if (device.hostDeviceId.trim() != hostDeviceId) continue;
+      final before = settings.hostRegistry[clientDeviceId];
+      settings = settings.withCloudPairedHostRegistryDevice(
+        hostDeviceId: hostDeviceId,
+        clientDeviceId: clientDeviceId,
+        deviceToken: '',
+        deviceName: device.deviceName,
+        pairedAt: before?.pairedAt ?? device.lastSeenAt ?? DateTime.now(),
+      );
+      final after = settings.hostRegistry[clientDeviceId];
+      if (before != after) changed = true;
+    }
+    if (changed) await settings.save();
   }
 
   Future<void> _refresh() async {

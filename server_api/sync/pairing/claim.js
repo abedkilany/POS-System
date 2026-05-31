@@ -32,12 +32,14 @@ async function ensureDeviceTable() {
       store_epoch integer not null default 1,
       revoked boolean not null default false,
       device_token text default '',
+      host_device_id text default '',
       last_seen_at timestamptz not null default now(),
       updated_at timestamptz not null default now(),
       primary key (store_id, branch_id, device_id)
     )
   `;
   await ensureDeviceAuthColumns();
+  await sql`alter table store_devices add column if not exists host_device_id text default ''`;
 }
 
 function makeDeviceToken() {
@@ -85,8 +87,8 @@ export default async function handler(req, res) {
 
     const deviceToken = makeDeviceToken();
     await sql`
-      insert into store_devices (store_id, branch_id, device_id, device_name, platform, role, transport, active_transport, last_sync_transport, app_version, device_token, revoked, online, last_seen_at, updated_at)
-      values (${pairing.store_id}, ${pairing.branch_id}, ${deviceId}, ${deviceName}, ${platform}, 'client', ${pairing.transport}, ${pairing.transport}, ${pairing.transport}, ${appVersion}, ${deviceToken}, false, true, now(), now())
+      insert into store_devices (store_id, branch_id, device_id, device_name, platform, role, transport, active_transport, last_sync_transport, app_version, device_token, host_device_id, revoked, online, last_seen_at, updated_at)
+      values (${pairing.store_id}, ${pairing.branch_id}, ${deviceId}, ${deviceName}, ${platform}, 'client', ${pairing.transport}, ${pairing.transport}, ${pairing.transport}, ${appVersion}, ${deviceToken}, ${pairing.host_device_id}, false, true, now(), now())
       on conflict (store_id, branch_id, device_id) do update set
         device_name = excluded.device_name,
         platform = excluded.platform,
@@ -96,6 +98,7 @@ export default async function handler(req, res) {
         last_sync_transport = excluded.last_sync_transport,
         app_version = excluded.app_version,
         device_token = excluded.device_token,
+        host_device_id = excluded.host_device_id,
         revoked = false,
         online = true,
         last_seen_at = now(),

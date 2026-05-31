@@ -160,6 +160,7 @@ class CloudDeviceStatus {
     required this.transport,
     required this.lastSeenAt,
     required this.appVersion,
+    this.hostDeviceId = '',
     this.activeTransport = '',
     this.lastSyncTransport = '',
     this.lastAppliedCursor,
@@ -178,6 +179,7 @@ class CloudDeviceStatus {
   final String transport;
   final DateTime? lastSeenAt;
   final String appVersion;
+  final String hostDeviceId;
   final String activeTransport;
   final String lastSyncTransport;
   final DateTime? lastAppliedCursor;
@@ -198,6 +200,7 @@ class CloudDeviceStatus {
         transport: (json['transport'] ?? '').toString(),
         lastSeenAt: DateTime.tryParse((json['lastSeenAt'] ?? json['last_seen_at'] ?? '').toString()),
         appVersion: (json['appVersion'] ?? json['app_version'] ?? '').toString(),
+        hostDeviceId: (json['hostDeviceId'] ?? json['host_device_id'] ?? '').toString(),
         activeTransport: (json['activeTransport'] ?? json['active_transport'] ?? json['transport'] ?? '').toString(),
         lastSyncTransport: (json['lastSyncTransport'] ?? json['last_sync_transport'] ?? '').toString(),
         lastAppliedCursor: DateTime.tryParse((json['lastAppliedCursor'] ?? json['last_applied_cursor'] ?? '').toString()),
@@ -806,6 +809,7 @@ class CloudSyncService {
               'lastAppliedSequence': deviceState.lastAppliedSequence,
               'lastAckSequence': deviceState.lastAckSequence,
               'deviceToken': identity.deviceToken,
+              'hostDeviceId': identity.hostDeviceId,
               'appVersion': 'store-manager-pro',
               'storeEpoch': identity.storeEpoch,
             }),
@@ -908,6 +912,40 @@ class CloudSyncService {
     return (decoded['devices'] as List<dynamic>? ?? [])
         .map((item) => CloudDeviceStatus.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
+  }
+
+  Future<CloudSyncResult> repairLegacyCloudDeviceLinks(
+    CloudSyncSettings settings, {
+    required Iterable<String> clientDeviceIds,
+  }) async {
+    final identity = store.appIdentity;
+    if (!identity.isHost) return const CloudSyncResult(ok: false, message: 'Only the Host can repair Cloud device links.');
+    if (!settings.isConfigured) return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
+    final cleanClientIds = clientDeviceIds.map((id) => id.trim()).where((id) => id.isNotEmpty && id != store.deviceId).toSet().toList();
+    if (cleanClientIds.isEmpty) return const CloudSyncResult(ok: true, message: 'No legacy Cloud device links need repair.');
+    try {
+      final response = await _client
+          .post(
+            settings.endpoint('/api/sync/devices/repair-host-links'),
+            headers: _headers(settings),
+            body: jsonEncode({
+              'storeId': identity.storeId,
+              'branchId': identity.branchId,
+              'hostDeviceId': store.deviceId,
+              'clientDeviceIds': cleanClientIds,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return CloudSyncResult(ok: false, message: 'Cloud device link repair failed: ${response.statusCode} ${response.body}');
+      }
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      final repaired = int.tryParse('${decoded['repaired'] ?? 0}') ?? 0;
+      final checked = int.tryParse('${decoded['checked'] ?? cleanClientIds.length}') ?? cleanClientIds.length;
+      return CloudSyncResult(ok: decoded['ok'] == true, message: 'Cloud device links checked: $checked, repaired: $repaired.');
+    } catch (error) {
+      return CloudSyncResult(ok: false, message: 'Cloud device link repair failed: $error');
+    }
   }
 
   Future<CloudSyncResult> testConnection(CloudSyncSettings settings) async {
