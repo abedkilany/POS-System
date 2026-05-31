@@ -215,6 +215,9 @@ class LanSyncService {
     final deviceId = request.headers.value('x-device-id')?.trim() ?? '';
     final deviceToken = request.headers.value('x-device-token')?.trim() ?? '';
     if (deviceId.isEmpty || deviceToken.isEmpty) return false;
+    if (SyncDeviceAccessStore.isSuspended(deviceId) || SyncDeviceAccessStore.isDeleted(deviceId)) {
+      return false;
+    }
     final expected = settings.pairedDevices[deviceId]?.trim() ?? '';
     return expected.isNotEmpty && expected == deviceToken;
   }

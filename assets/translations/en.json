@@ -865,5 +865,16 @@
   "lan_configured": "LAN configured",
   "local": "Local",
   "unknown": "Unknown",
-  "never": "Never"
+  "never": "Never",
+  "source": "Source",
+  "suspend": "Suspend",
+  "resume": "Resume",
+  "suspended": "Suspended",
+  "history_only": "History only",
+  "delete_sync_device": "Delete sync device",
+  "delete_sync_device_confirm": "Delete this device from Sync Monitoring and remove its LAN pairing/Cloud authorization where available?",
+  "sync_device_deleted": "Sync device deleted.",
+  "sync_monitoring_source_hint": "Devices are shown from Cloud, LAN pairing, or sync history. Use Suspend to block syncing without deleting history.",
+  "refresh": "Refresh",
+  "unauthorized": "Unauthorized"
 }

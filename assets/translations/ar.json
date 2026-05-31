@@ -865,5 +865,16 @@
   "lan_configured": "LAN مضبوط",
   "local": "محلي",
   "unknown": "غير معروف",
-  "never": "أبداً"
+  "never": "أبداً",
+  "source": "المصدر",
+  "suspend": "تعليق",
+  "resume": "استئناف",
+  "suspended": "معلّق",
+  "history_only": "سجل فقط",
+  "delete_sync_device": "حذف جهاز المزامنة",
+  "delete_sync_device_confirm": "هل تريد حذف هذا الجهاز من مراقبة المزامنة وإزالة اقتران LAN/صلاحية Cloud عند توفرها؟",
+  "sync_device_deleted": "تم حذف جهاز المزامنة.",
+  "sync_monitoring_source_hint": "تظهر الأجهزة من Cloud أو اقتران LAN أو سجل المزامنة. استخدم التعليق لإيقاف المزامنة بدون حذف السجل.",
+  "refresh": "تحديث",
+  "unauthorized": "غير مصرح"
 }

@@ -286,6 +286,16 @@ class SyncDeviceStateStore {
     );
   }
 
+  static Future<void> removePeerState(String deviceId) async {
+    final id = deviceId.trim();
+    if (id.isEmpty) return;
+    final states = loadPeerStates().where((state) => state.deviceId != id).toList();
+    await LocalDatabaseService.setString(
+      _hostPeerStatesKey,
+      jsonEncode(states.map((item) => item.toJson()).toList()),
+    );
+  }
+
   static DateTime? _bestLegacyCursor() {
     final cloud = DateTime.tryParse(LocalDatabaseService.getString(_cloudCursorKey) ?? '');
     DateTime? lan;
@@ -308,6 +318,59 @@ class SyncDeviceStateStore {
     if (a == null) return b;
     if (b == null) return a;
     return a.isAfter(b) ? a : b;
+  }
+}
+
+
+class SyncDeviceAccessStore {
+  SyncDeviceAccessStore._();
+
+  static const String _suspendedDevicesKey = 'sync_monitoring_suspended_devices_v1';
+  static const String _deletedDevicesKey = 'sync_monitoring_deleted_devices_v1';
+
+  static Set<String> suspendedDeviceIds() => _loadSet(_suspendedDevicesKey);
+  static Set<String> deletedDeviceIds() => _loadSet(_deletedDevicesKey);
+
+  static bool isSuspended(String deviceId) => suspendedDeviceIds().contains(deviceId.trim());
+  static bool isDeleted(String deviceId) => deletedDeviceIds().contains(deviceId.trim());
+
+  static Future<void> suspend(String deviceId) async {
+    final id = deviceId.trim();
+    if (id.isEmpty) return;
+    final suspended = suspendedDeviceIds()..add(id);
+    await _saveSet(_suspendedDevicesKey, suspended);
+  }
+
+  static Future<void> resume(String deviceId) async {
+    final id = deviceId.trim();
+    if (id.isEmpty) return;
+    final suspended = suspendedDeviceIds()..remove(id);
+    await _saveSet(_suspendedDevicesKey, suspended);
+  }
+
+  static Future<void> markDeleted(String deviceId) async {
+    final id = deviceId.trim();
+    if (id.isEmpty) return;
+    final deleted = deletedDeviceIds()..add(id);
+    final suspended = suspendedDeviceIds()..remove(id);
+    await _saveSet(_deletedDevicesKey, deleted);
+    await _saveSet(_suspendedDevicesKey, suspended);
+  }
+
+  static Set<String> _loadSet(String key) {
+    final raw = LocalDatabaseService.getString(key);
+    if (raw == null || raw.trim().isEmpty) return <String>{};
+    try {
+      final decoded = jsonDecode(raw) as List<dynamic>;
+      return decoded.map((item) => item.toString().trim()).where((item) => item.isNotEmpty).toSet();
+    } catch (_) {
+      return <String>{};
+    }
+  }
+
+  static Future<void> _saveSet(String key, Set<String> ids) {
+    final normalized = ids.map((item) => item.trim()).where((item) => item.isNotEmpty).toList()..sort();
+    return LocalDatabaseService.setString(key, jsonEncode(normalized));
   }
 }
 
