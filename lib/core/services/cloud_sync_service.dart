@@ -318,24 +318,29 @@ class CloudStoreRecoveryResult {
   final int pulled;
 }
 
+typedef CloudSyncDebugLogCallback = void Function(String line);
+
 class CloudSyncService {
-  CloudSyncService(this.store, {http.Client? client}) : _client = client ?? http.Client();
+  CloudSyncService(this.store, {http.Client? client, CloudSyncDebugLogCallback? onDebugLog})
+      : _client = client ?? http.Client(),
+        _onDebugLog = onDebugLog;
 
   final AppStore store;
   final http.Client _client;
+  final CloudSyncDebugLogCallback? _onDebugLog;
   late final UnifiedSyncCoreService _syncCore = UnifiedSyncCoreService(store);
 
   void _cloudLog(String stage, [Object? data, StackTrace? stackTrace]) {
     final identity = store.appIdentity;
     final now = DateTime.now().toUtc().toIso8601String();
     final prefix = '[VENTIO_CLOUD_SYNC][$now][$stage] device=${store.deviceId} role=${identity.deviceRole.name} store=${identity.storeId} branch=${identity.branchId} host=${identity.hostDeviceId}';
-    if (data == null) {
-      debugPrint(prefix);
-    } else {
-      debugPrint('$prefix :: $data');
-    }
+    final line = data == null ? prefix : '$prefix :: $data';
+    debugPrint(line);
+    _onDebugLog?.call(line);
     if (stackTrace != null) {
-      debugPrint('[VENTIO_CLOUD_SYNC][$now][$stage][STACKTRACE] $stackTrace');
+      final stackLine = '[VENTIO_CLOUD_SYNC][$now][$stage][STACKTRACE] $stackTrace';
+      debugPrint(stackLine);
+      _onDebugLog?.call(stackLine);
     }
   }
 

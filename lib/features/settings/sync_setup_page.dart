@@ -39,7 +39,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
   final _cloudPairingCodeController = TextEditingController();
 
   late final LanSyncService _lanSyncService = LanSyncService(widget.store);
-  late final CloudSyncService _cloudSyncService = CloudSyncService(widget.store);
+  late final CloudSyncService _cloudSyncService = CloudSyncService(widget.store, onDebugLog: _appendSyncDebugLog);
 
   UnifiedSyncEngine _lanEngine() => UnifiedSyncEngine(
         LanSyncTransportAdapter(
@@ -118,16 +118,28 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
     setState(() {
       _status = message;
       _statusType = message.trim().isEmpty ? _SetupStatus.idle : type;
-      _appendLog(message);
+      if (message.trim().isNotEmpty) {
+        _debugLogs.insert(0, '${DateTime.now().toIso8601String()} | $message');
+        if (_debugLogs.length > 120) _debugLogs.removeLast();
+      }
     });
   }
 
   
+  void _appendSyncDebugLog(String message) {
+    if (!mounted) return;
+    final displayMessage = message.length > 1200 ? '${message.substring(0, 1200)} ...' : message;
+    setState(() {
+      _debugLogs.insert(0, displayMessage);
+      if (_debugLogs.length > 120) _debugLogs.removeLast();
+    });
+  }
+
   void _appendLog(String message) {
     if (!mounted) return;
     setState(() {
       _debugLogs.insert(0, '${DateTime.now().toIso8601String()} | ' + message);
-      if (_debugLogs.length > 50) _debugLogs.removeLast();
+      if (_debugLogs.length > 120) _debugLogs.removeLast();
     });
   }
 
@@ -147,6 +159,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       _status = message;
       _statusType = _SetupStatus.info;
     });
+    _appendLog(message);
   }
 
   Future<void> _finishSuccessfulConnection(String message) async {
@@ -174,12 +187,14 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
 
   void _finishRegisteredWaitingForStoreData() {
     if (!mounted) return;
+    final message = AppLocalizations.of(context).text('device_connected_waiting_store_data');
     setState(() {
       _busy = false;
       _qrStatus = _ClientPairingState.connected;
-      _status = AppLocalizations.of(context).text('device_connected_waiting_store_data');
+      _status = message;
       _statusType = _SetupStatus.warning;
     });
+    _appendLog(message);
   }
 
   bool _cloudPairingDownloadedInitialData(UnifiedPairingClaimResult result) {
