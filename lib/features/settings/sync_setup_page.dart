@@ -39,7 +39,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
   final _cloudPairingCodeController = TextEditingController();
 
   late final LanSyncService _lanSyncService = LanSyncService(widget.store);
-  late final CloudSyncService _cloudSyncService = CloudSyncService(widget.store, onDebugLog: _appendSyncDebugLog);
+  late final CloudSyncService _cloudSyncService = CloudSyncService(widget.store);
 
   UnifiedSyncEngine _lanEngine() => UnifiedSyncEngine(
         LanSyncTransportAdapter(
@@ -66,7 +66,6 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
   bool _busy = false;
   String _status = '';
   _SetupStatus _statusType = _SetupStatus.idle;
-  final List<String> _debugLogs = [];
   Timer? _qrCountdownTimer;
   DateTime? _qrExpiresAt;
   _ClientPairingState _qrStatus = _ClientPairingState.noCode;
@@ -118,28 +117,6 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
     setState(() {
       _status = message;
       _statusType = message.trim().isEmpty ? _SetupStatus.idle : type;
-      if (message.trim().isNotEmpty) {
-        _debugLogs.insert(0, '${DateTime.now().toIso8601String()} | $message');
-        if (_debugLogs.length > 120) _debugLogs.removeLast();
-      }
-    });
-  }
-
-  
-  void _appendSyncDebugLog(String message) {
-    if (!mounted) return;
-    final displayMessage = message.length > 1200 ? '${message.substring(0, 1200)} ...' : message;
-    setState(() {
-      _debugLogs.insert(0, displayMessage);
-      if (_debugLogs.length > 120) _debugLogs.removeLast();
-    });
-  }
-
-  void _appendLog(String message) {
-    if (!mounted) return;
-    setState(() {
-      _debugLogs.insert(0, '${DateTime.now().toIso8601String()} | ' + message);
-      if (_debugLogs.length > 120) _debugLogs.removeLast();
     });
   }
 
@@ -159,7 +136,6 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       _status = message;
       _statusType = _SetupStatus.info;
     });
-    _appendLog(message);
   }
 
   Future<void> _finishSuccessfulConnection(String message) async {
@@ -187,14 +163,12 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
 
   void _finishRegisteredWaitingForStoreData() {
     if (!mounted) return;
-    final message = AppLocalizations.of(context).text('device_connected_waiting_store_data');
     setState(() {
       _busy = false;
       _qrStatus = _ClientPairingState.connected;
-      _status = message;
+      _status = AppLocalizations.of(context).text('device_connected_waiting_store_data');
       _statusType = _SetupStatus.warning;
     });
-    _appendLog(message);
   }
 
   bool _cloudPairingDownloadedInitialData(UnifiedPairingClaimResult result) {
@@ -472,8 +446,6 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
                       ),
                       const SizedBox(height: 12),
                       if (_status.isNotEmpty) _buildStatusBanner(context),
-                      const SizedBox(height: 12),
-                      Card(child: SizedBox(height:180, child: ListView(children: _debugLogs.map((e)=>Padding(padding: EdgeInsets.all(4), child: Text(e, style: TextStyle(fontSize: 11)))).toList()))) ,
                     ],
                   ),
                 ),

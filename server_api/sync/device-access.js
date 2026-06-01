@@ -1,8 +1,10 @@
-import { sql, assertSyncToken, assertStoreAllowed, ensureDeviceAuthColumns, sendError } from '../_db.js';
+import { sql, assertStoreAllowed, ensureDeviceAuthColumns, sendError } from '../_db.js';
 
 export default async function handler(req, res) {
   try {
-    assertSyncToken(req);
+    // Device access is called by a newly paired Client before it has the
+    // deployment CLOUD_SYNC_TOKEN. The deviceToken issued by pairing/claim is
+    // the authentication secret for this endpoint.
     if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Method not allowed' });
     const body = req.body || {};
     const storeId = String(body.storeId || body.store_id || '').trim();
@@ -11,6 +13,7 @@ export default async function handler(req, res) {
     const deviceToken = String(body.deviceToken || body.device_token || req.headers['x-device-token'] || '').trim();
     if (!storeId) return res.status(400).json({ ok: false, error: 'storeId is required.' });
     if (!deviceId) return res.status(400).json({ ok: false, error: 'deviceId is required.' });
+    if (!deviceToken) return res.status(401).json({ ok: false, authorized: false, error: 'Missing device token.' });
     assertStoreAllowed(storeId);
     await ensureDeviceAuthColumns();
     const rows = await sql`
@@ -23,7 +26,7 @@ export default async function handler(req, res) {
     `;
     if (!rows.length) return res.status(200).json({ ok: true, authorized: false, suspended: false, wipeRequired: false, reason: 'device_not_registered' });
     const row = rows[0];
-    if (String(row.device_token || '') && String(row.device_token || '') !== deviceToken) {
+    if (!String(row.device_token || '') || String(row.device_token || '') !== deviceToken) {
       return res.status(403).json({ ok: false, authorized: false, error: 'Invalid device token.' });
     }
     if (row.wipe_pending === true) {
