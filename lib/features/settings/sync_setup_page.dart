@@ -66,6 +66,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
   bool _busy = false;
   String _status = '';
   _SetupStatus _statusType = _SetupStatus.idle;
+  final List<String> _debugLogs = [];
   Timer? _qrCountdownTimer;
   DateTime? _qrExpiresAt;
   _ClientPairingState _qrStatus = _ClientPairingState.noCode;
@@ -117,6 +118,16 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
     setState(() {
       _status = message;
       _statusType = message.trim().isEmpty ? _SetupStatus.idle : type;
+      _appendLog(message);
+    });
+  }
+
+  
+  void _appendLog(String message) {
+    if (!mounted) return;
+    setState(() {
+      _debugLogs.insert(0, '${DateTime.now().toIso8601String()} | ' + message);
+      if (_debugLogs.length > 50) _debugLogs.removeLast();
     });
   }
 
@@ -446,6 +457,8 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
                       ),
                       const SizedBox(height: 12),
                       if (_status.isNotEmpty) _buildStatusBanner(context),
+                      const SizedBox(height: 12),
+                      Card(child: SizedBox(height:180, child: ListView(children: _debugLogs.map((e)=>Padding(padding: EdgeInsets.all(4), child: Text(e, style: TextStyle(fontSize: 11)))).toList()))) ,
                     ],
                   ),
                 ),
