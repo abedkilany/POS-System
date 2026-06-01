@@ -325,6 +325,20 @@ class CloudSyncService {
   final http.Client _client;
   late final UnifiedSyncCoreService _syncCore = UnifiedSyncCoreService(store);
 
+  void _cloudLog(String stage, [Object? data, StackTrace? stackTrace]) {
+    final identity = store.appIdentity;
+    final now = DateTime.now().toUtc().toIso8601String();
+    final prefix = '[VENTIO_CLOUD_SYNC][$now][$stage] device=${store.deviceId} role=${identity.deviceRole.name} store=${identity.storeId} branch=${identity.branchId} host=${identity.hostDeviceId}';
+    if (data == null) {
+      debugPrint(prefix);
+    } else {
+      debugPrint('$prefix :: $data');
+    }
+    if (stackTrace != null) {
+      debugPrint('[VENTIO_CLOUD_SYNC][$now][$stage][STACKTRACE] $stackTrace');
+    }
+  }
+
   bool _cloudAllowedForIdentity(AppIdentity identity) {
     if (identity.isHost) return identity.isCloudEnabled;
     if (!identity.isClient) return false;
@@ -443,6 +457,7 @@ class CloudSyncService {
       return const CloudPairingClaimResult(ok: false, message: 'Cloud API URL is required.');
     }
     var deviceRegistered = false;
+    _cloudLog('PAIRING_CLAIM_START', {'codeLength': code.trim().length, 'apiBaseUrl': settings.apiBaseUrl, 'currentDeviceId': store.deviceId, 'currentRole': current.deviceRole.name, 'currentStoreId': current.storeId, 'currentBranchId': current.branchId});
     try {
       final response = await _client
           .post(
@@ -457,11 +472,15 @@ class CloudSyncService {
             }),
           )
           .timeout(const Duration(seconds: 10));
+      _cloudLog('PAIRING_CLAIM_HTTP_RESULT', {'statusCode': response.statusCode, 'bodyLength': response.body.length});
       if (response.statusCode < 200 || response.statusCode >= 300) {
+        _cloudLog('PAIRING_CLAIM_HTTP_FAILED', {'statusCode': response.statusCode, 'body': response.body});
         return const CloudPairingClaimResult(ok: false, message: 'Pairing code expired or already used. Ask the Host device for a new code.');
       }
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      _cloudLog('PAIRING_CLAIM_DECODED', {'ok': decoded['ok'], 'storeId': decoded['storeId'], 'branchId': decoded['branchId'], 'hostDeviceId': decoded['hostDeviceId'], 'transport': decoded['transport'], 'hasDeviceToken': (decoded['deviceToken']?.toString() ?? '').isNotEmpty});
       if (decoded['ok'] != true) {
+        _cloudLog('PAIRING_CLAIM_NOT_OK', decoded);
         return const CloudPairingClaimResult(ok: false, message: 'Pairing code expired or already used. Ask the Host device for a new code.');
       }
       final transport = decoded['transport']?.toString() == 'lan' ? SyncMode.lanOnly : SyncMode.cloudConnected;
@@ -477,6 +496,7 @@ class CloudSyncService {
       );
       await store.updateAppIdentityDuringSetup(identity);
       deviceRegistered = true;
+      _cloudLog('PAIRING_IDENTITY_SAVED', {'storeId': identity.storeId, 'branchId': identity.branchId, 'hostDeviceId': identity.hostDeviceId, 'syncMode': identity.syncMode.name, 'activeTransport': identity.activeSyncTransport, 'hasDeviceToken': identity.deviceToken.trim().isNotEmpty});
 
       if (identity.syncMode == SyncMode.cloudConnected || identity.syncMode == SyncMode.marketplaceEnabled) {
         // Pairing and provisioning are separate lifecycle steps. A valid pairing
@@ -498,12 +518,16 @@ class CloudSyncService {
         // Host snapshot and poll a few times while the Host processes the
         // request through the normal Host-authoritative Cloud relay.
         var appliedInitialData = false;
+        _cloudLog('PAIRING_INITIAL_PULL_START', {'requestedAt': requestedAt.toIso8601String()});
         var initialPull = await syncNow(settings.copyWith(clearLastPullCursor: true));
         appliedInitialData = initialPull.ok && (initialPull.pulled > 0 || initialPull.restoredSnapshot);
+        _cloudLog('PAIRING_INITIAL_PULL_RESULT', {'ok': initialPull.ok, 'pushed': initialPull.pushed, 'pulled': initialPull.pulled, 'restoredSnapshot': initialPull.restoredSnapshot, 'message': initialPull.message, 'appliedInitialData': appliedInitialData});
 
         var request = const CloudSyncResult(ok: true, message: 'Initial pull used existing Cloud snapshot.');
         if (!appliedInitialData) {
+          _cloudLog('PAIRING_SNAPSHOT_REQUEST_START', {'requestedAt': requestedAt.toIso8601String()});
           request = await requestFreshHostSnapshot(settings, requestedAt: requestedAt);
+          _cloudLog('PAIRING_SNAPSHOT_REQUEST_RESULT', {'ok': request.ok, 'message': request.message});
         }
 
         if (request.ok && !appliedInitialData) {
@@ -511,8 +535,10 @@ class CloudSyncService {
           for (var attempt = 0; attempt < 6; attempt += 1) {
             if (attempt > 0) await Future<void>.delayed(const Duration(seconds: 3));
             await CloudProvisioningStatus.markAttempted(DateTime.now().toUtc());
+            _cloudLog('PAIRING_SNAPSHOT_RETRY_START', {'attempt': attempt + 1, 'minSnapshotUpdatedAt': requestedAt.toIso8601String()});
             initialPull = await syncNow(retrySettings, minSnapshotUpdatedAt: requestedAt);
             appliedInitialData = initialPull.ok && (initialPull.pulled > 0 || initialPull.restoredSnapshot);
+            _cloudLog('PAIRING_SNAPSHOT_RETRY_RESULT', {'attempt': attempt + 1, 'ok': initialPull.ok, 'pushed': initialPull.pushed, 'pulled': initialPull.pulled, 'restoredSnapshot': initialPull.restoredSnapshot, 'message': initialPull.message, 'appliedInitialData': appliedInitialData});
             if (appliedInitialData) break;
             retrySettings = CloudSyncSettings.load().copyWith(clearLastPullCursor: attempt == 0 ? true : false);
           }
@@ -521,6 +547,7 @@ class CloudSyncService {
         if (appliedInitialData) {
           await CloudProvisioningStatus.markComplete(message: 'Initial Store data downloaded.');
         }
+        _cloudLog('PAIRING_PROVISIONING_FINISH', {'appliedInitialData': appliedInitialData, 'lastInitialPullOk': initialPull.ok, 'lastInitialPullPulled': initialPull.pulled, 'lastInitialPullRestoredSnapshot': initialPull.restoredSnapshot, 'lastInitialPullMessage': initialPull.message});
         return CloudPairingClaimResult(
           ok: true,
           message: appliedInitialData
@@ -530,7 +557,8 @@ class CloudSyncService {
         );
       }
       return CloudPairingClaimResult(ok: true, message: 'Device paired successfully. Please sign in.', identity: identity);
-    } catch (error) {
+    } catch (error, stackTrace) {
+      _cloudLog('PAIRING_CLAIM_EXCEPTION', error, stackTrace);
       if (deviceRegistered) {
         return CloudPairingClaimResult(
           ok: true,
@@ -653,6 +681,7 @@ class CloudSyncService {
 
   Future<CloudSyncResult> requestFreshHostSnapshot(CloudSyncSettings settings, {DateTime? requestedAt}) async {
     final identity = store.appIdentity;
+    _cloudLog('REQUEST_FRESH_HOST_SNAPSHOT_ENTER', {'requestedAt': requestedAt?.toIso8601String(), 'isHost': identity.isHost, 'settingsConfigured': settings.isConfigured});
     if (identity.isHost) return const CloudSyncResult(ok: true, message: 'Host can publish its own snapshot directly.');
     if (!settings.isConfigured) return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
     final now = requestedAt ?? DateTime.now().toUtc();
@@ -694,11 +723,13 @@ class CloudSyncService {
             }),
           )
           .timeout(const Duration(seconds: 20));
+      _cloudLog('REQUEST_FRESH_HOST_SNAPSHOT_HTTP_RESULT', {'statusCode': response.statusCode, 'body': response.body});
       if (response.statusCode < 200 || response.statusCode >= 300) {
         return CloudSyncResult(ok: false, message: 'Fresh Host snapshot request failed: ${response.statusCode} ${response.body}');
       }
       return const CloudSyncResult(ok: true, message: 'Fresh Host snapshot requested. The Host will publish a new full snapshot on its next Cloud sync.');
-    } catch (error) {
+    } catch (error, stackTrace) {
+      _cloudLog('REQUEST_FRESH_HOST_SNAPSHOT_EXCEPTION', error, stackTrace);
       return CloudSyncResult(ok: false, message: 'Fresh Host snapshot request failed: $error');
     }
   }
@@ -1504,14 +1535,20 @@ class CloudSyncService {
 
   Future<CloudSyncResult> syncNow(CloudSyncSettings settings, {DateTime? minSnapshotUpdatedAt, CloudSyncProgressCallback? onProgress}) async {
     final identity = store.appIdentity;
+    _cloudLog('SYNC_NOW_ENTER', {'settingsConfigured': settings.isConfigured, 'settingsEnabled': settings.enabled, 'apiBaseUrl': settings.apiBaseUrl, 'hasDeploymentToken': settings.hasDeploymentToken, 'hasDeviceCredentials': settings.hasDeviceCredentials, 'lastPullCursor': settings.lastPullCursor?.toIso8601String(), 'minSnapshotUpdatedAt': minSnapshotUpdatedAt?.toIso8601String(), 'activeTransport': identity.activeSyncTransport, 'syncMode': identity.syncMode.name});
     if (!_cloudAllowedForIdentity(identity)) {
+      _cloudLog('SYNC_NOW_BLOCKED_TRANSPORT', {'isHost': identity.isHost, 'isClient': identity.isClient, 'activeTransport': identity.activeSyncTransport, 'isCloudEnabled': identity.isCloudEnabled});
       return const CloudSyncResult(ok: false, message: 'Cloud is not the active/configured sync transport for this device.');
     }
     if (!settings.isConfigured) {
+      _cloudLog('SYNC_NOW_BLOCKED_SETTINGS', {'enabled': settings.enabled, 'apiBaseUrl': settings.apiBaseUrl, 'hasDeploymentToken': settings.hasDeploymentToken, 'hasDeviceCredentials': settings.hasDeviceCredentials});
       return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
     }
     final accessResult = await checkCurrentDeviceAccess(settings);
-    if (accessResult != null) return accessResult;
+    if (accessResult != null) {
+      _cloudLog('SYNC_NOW_BLOCKED_DEVICE_ACCESS', {'ok': accessResult.ok, 'message': accessResult.message});
+      return accessResult;
+    }
 
     try {
       var pushed = 0;
@@ -1519,6 +1556,7 @@ class CloudSyncService {
       var acceptedRemoteRequests = 0;
 
       if (identity.isHost) {
+        _cloudLog('HOST_SYNC_START');
         onProgress?.call(0.10, 'Preparing Host cloud snapshot queue...');
         await store.ensureHostCloudBootstrapSnapshotQueued();
         onProgress?.call(0.25, 'Sending Host heartbeat...');
@@ -1529,6 +1567,7 @@ class CloudSyncService {
         acceptedRemoteRequests = await _hostPullRemoteRequests(settings);
         onProgress?.call(0.75, 'Uploading authoritative Host changes...');
         pushed += await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
+        _cloudLog('HOST_SYNC_FINISH', {'acceptedRemoteRequests': acceptedRemoteRequests, 'pushed': pushed});
         onProgress?.call(1.0, 'Host cloud sync completed.');
         return CloudSyncResult(
           ok: true,
@@ -1541,10 +1580,12 @@ class CloudSyncService {
         // them to the Host relay. LAN Clients normally queue to target "host",
         // so this only affects Web or remote desktop/mobile Clients whose
         // pending changes target "cloud_host".
+        _cloudLog('CLIENT_SYNC_START');
         onProgress?.call(0.12, 'Registering Client device...');
         await registerCurrentDevice(settings, transport: 'cloud');
         onProgress?.call(0.28, 'Sending Client requests to Host relay...');
         pushed += await _pushPendingToEndpoint(settings, 'cloud_host', '/api/sync/requests/push');
+        _cloudLog('CLIENT_SYNC_REQUESTS_PUSHED', {'pushed': pushed});
       }
 
       final initialCursor = settings.lastPullCursor;
@@ -1566,7 +1607,8 @@ class CloudSyncService {
           'branch_id': identity.branchId,
           'limit': '1000',
         };
-        final lastSequence = SyncDeviceStateStore.load(store.appIdentity).lastAppliedSequence;
+        final deviceState = SyncDeviceStateStore.load(store.appIdentity);
+        final lastSequence = deviceState.lastAppliedSequence;
         if (lastSequence > 0) query['since_sequence'] = lastSequence.toString();
         if (initialCursor != null) query['since'] = initialCursor.toIso8601String();
         if (initialCursor == null && minSnapshotUpdatedAt != null) {
@@ -1574,24 +1616,32 @@ class CloudSyncService {
         }
         if (pageCursor.isNotEmpty) query['cursor'] = pageCursor;
 
+        _cloudLog('PULL_PAGE_REQUEST', {'page': pageCount, 'query': query, 'deviceStateLastAppliedSequence': deviceState.lastAppliedSequence, 'deviceStateLastAckSequence': deviceState.lastAckSequence, 'deviceStateLastAppliedCursor': deviceState.lastAppliedCursor?.toIso8601String(), 'deviceStateLastAckCursor': deviceState.lastAckCursor?.toIso8601String()});
         final pullProgress = (0.35 + (pageCount - 1) * 0.08).clamp(0.35, 0.82).toDouble();
         onProgress?.call(pullProgress, 'Pulling Cloud changes page $pageCount...');
         final pull = await _client.get(settings.endpoint('/api/sync/pull', query), headers: _headers(settings)).timeout(const Duration(seconds: 20));
+        _cloudLog('PULL_PAGE_HTTP_RESULT', {'page': pageCount, 'statusCode': pull.statusCode, 'bodyLength': pull.body.length});
         if (pull.statusCode < 200 || pull.statusCode >= 300) {
           final message = 'Cloud pull failed: ${pull.statusCode} ${pull.body}';
+          _cloudLog('PULL_PAGE_HTTP_FAILED', {'page': pageCount, 'message': message});
           return CloudSyncResult(ok: false, message: message);
         }
 
         final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
+        final rawChanges = decodedPull['changes'] as List<dynamic>?;
         final changes = _syncCore.filterOutLocalEchoes(
-          _syncCore.decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
+          _syncCore.decodeRemoteChanges(rawChanges),
         );
         final source = (decodedPull['source'] ?? '').toString();
+        _cloudLog('PULL_PAGE_DECODED', {'page': pageCount, 'source': source, 'rawChanges': rawChanges?.length ?? 0, 'changesAfterEchoFilter': changes.length, 'hasMore': decodedPull['hasMore'], 'nextCursor': decodedPull['nextCursor'], 'generatedAt': decodedPull['generatedAt'], 'generatedSequence': decodedPull['generatedSequence'], 'firstChange': changes.isEmpty ? null : {'id': changes.first.id, 'entityType': changes.first.entityType, 'entityId': changes.first.entityId, 'operation': changes.first.operation, 'deviceId': changes.first.deviceId}});
         restoredSnapshot = restoredSnapshot ||
             changes.any((item) => item.operation == 'restore_snapshot') ||
             (initialCursor == null && source == 'entity_snapshots' && changes.isNotEmpty);
         onProgress?.call((0.42 + (pageCount - 1) * 0.08).clamp(0.42, 0.86).toDouble(), 'Applying ${changes.length} Cloud change(s) from page $pageCount...');
-        pulled += await _syncCore.applyAuthoritativeChanges(changes);
+        _cloudLog('APPLY_PAGE_START', {'page': pageCount, 'changes': changes.length});
+        final appliedThisPage = await _syncCore.applyAuthoritativeChanges(changes);
+        pulled += appliedThisPage;
+        _cloudLog('APPLY_PAGE_SUCCESS', {'page': pageCount, 'appliedThisPage': appliedThisPage, 'pulledTotal': pulled, 'restoredSnapshotSoFar': restoredSnapshot});
 
         final hasMore = decodedPull['hasMore'] == true;
         pageCursor = (decodedPull['nextCursor'] ?? '').toString();
@@ -1606,9 +1656,13 @@ class CloudSyncService {
       }
 
       onProgress?.call(0.90, 'Saving Cloud sync cursor...');
+      _cloudLog('SYNC_CURSOR_READY', {'finalPullCursor': finalPullCursor?.toIso8601String(), 'finalPullSequence': finalPullSequence, 'pulled': pulled, 'restoredSnapshot': restoredSnapshot});
       if (finalPullCursor != null) {
         await settings.copyWith(lastPullCursor: finalPullCursor).save();
         await _recordDeviceSyncState('cloud', finalPullCursor, sequence: finalPullSequence, settings: settings);
+        _cloudLog('SYNC_CURSOR_SAVED_AND_ACKED', {'finalPullCursor': finalPullCursor.toIso8601String(), 'finalPullSequence': finalPullSequence});
+      } else {
+        _cloudLog('SYNC_CURSOR_NOT_SAVED_NULL_CURSOR');
       }
 
       if (pulled > 0) {
@@ -1619,6 +1673,7 @@ class CloudSyncService {
         await CloudProvisioningStatus.markComplete(message: 'Initial Store data downloaded.');
       }
       onProgress?.call(1.0, 'Cloud sync completed.');
+      _cloudLog('SYNC_NOW_FINISH', {'ok': true, 'pushed': pushed, 'pulled': pulled, 'restoredSnapshot': restoredSnapshot, 'finalPullSequence': finalPullSequence});
       return CloudSyncResult(
         ok: true,
         pushed: pushed,
@@ -1626,7 +1681,8 @@ class CloudSyncService {
         restoredSnapshot: restoredSnapshot,
         message: 'Cloud sync completed. Sent $pushed request(s) to Host relay, pulled $pulled authoritative change(s).',
       );
-    } catch (error) {
+    } catch (error, stackTrace) {
+      _cloudLog('SYNC_NOW_EXCEPTION', error, stackTrace);
       return CloudSyncResult(ok: false, message: 'Cloud sync failed: $error');
     }
   }
