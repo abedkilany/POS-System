@@ -76,7 +76,7 @@ export async function assertDeviceAllowed(req, { storeId, branchId = 'main', all
     throw err;
   }
   const role = String(rows[0].role || '');
-  const transport = String(rows[0].transport || '');
+  const transport = String(rows[0].transport || rows[0].active_transport || '');
   if (allowedRoles.length && !allowedRoles.includes(role)) {
     const err = new Error(`This endpoint requires role: ${allowedRoles.join(', ')}.`);
     err.statusCode = 403;

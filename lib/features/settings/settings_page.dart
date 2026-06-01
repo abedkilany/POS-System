@@ -3241,24 +3241,50 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
     final hostDeviceId = widget.store.deviceId.trim();
     if (hostDeviceId.isEmpty) return;
 
-    var settings = LanSyncSettings.load().withMigratedHostRegistry(hostDeviceId);
-    var changed = settings.hostRegistry.length != LanSyncSettings.load().hostRegistry.length;
+    final loadedSettings = LanSyncSettings.load();
+    var settings = loadedSettings.withMigratedHostRegistry(hostDeviceId);
+    var changed = settings.hostRegistry.length != loadedSettings.hostRegistry.length;
+
     for (final device in devices) {
       final clientDeviceId = device.deviceId.trim();
       if (clientDeviceId.isEmpty || clientDeviceId == hostDeviceId) continue;
       if (device.revoked || device.role.trim().toLowerCase() == 'host') continue;
-      if (device.hostDeviceId.trim() != hostDeviceId) continue;
+
+      final cloudDeviceName = device.deviceName.trim();
       final before = settings.hostRegistry[clientDeviceId];
+
+      // Fix #1 completion: Host Registry is the display source for Sync
+      // Monitoring, so refresh an already-registered Client name from Cloud
+      // whenever the Cloud device row reports a newer/manual deviceName.
+      // This must work even for legacy Cloud rows that are already in the
+      // Registry but do not yet have hostDeviceId populated correctly.
+      if (before != null) {
+        final registry = <String, HostRegistryDevice>{...settings.hostRegistry};
+        final updated = before.copyWith(
+          deviceName: cloudDeviceName.isNotEmpty ? cloudDeviceName : before.deviceName,
+          lastSeenAt: device.lastSeenAt ?? before.lastSeenAt,
+        );
+        registry[clientDeviceId] = updated;
+        settings = settings.copyWith(hostRegistry: Map.unmodifiable(registry));
+        if (updated.deviceName != before.deviceName || updated.lastSeenAt != before.lastSeenAt) {
+          changed = true;
+        }
+        continue;
+      }
+
+      // New Cloud-only Clients are adopted only when the Cloud row is explicitly
+      // linked to this Host. Existing Registry members were handled above.
+      if (device.hostDeviceId.trim() != hostDeviceId) continue;
       settings = settings.withCloudPairedHostRegistryDevice(
         hostDeviceId: hostDeviceId,
         clientDeviceId: clientDeviceId,
         deviceToken: '',
-        deviceName: device.deviceName,
-        pairedAt: before?.pairedAt ?? device.lastSeenAt ?? DateTime.now(),
+        deviceName: cloudDeviceName,
+        pairedAt: device.lastSeenAt ?? DateTime.now(),
       );
-      final after = settings.hostRegistry[clientDeviceId];
-      if (before != after) changed = true;
+      changed = true;
     }
+
     if (changed) await settings.save();
   }
 
@@ -3466,11 +3492,13 @@ class _HostSyncMonitoringTable extends StatelessWidget {
                 columns: [
                   DataColumn(label: Text(tr.text('device'))),
                   DataColumn(label: Text(tr.text('active_transport'))),
+                  DataColumn(label: Text(tr.text('last_transport'))),
                   DataColumn(label: Text(tr.text('connection_status'))),
                   DataColumn(label: Text(tr.text('sync_status'))),
                   DataColumn(label: Text(tr.text('last_seen'))),
                   DataColumn(label: Text(tr.text('last_successful_sync'))),
                   DataColumn(label: Text(tr.text('pending_changes'))),
+                  DataColumn(label: Text(tr.text('last_ack_sequence'))),
                   DataColumn(label: Text(tr.text('authorization_status'))),
                   DataColumn(label: Text(tr.text('actions'))),
                 ],
@@ -3510,11 +3538,13 @@ class _HostSyncMonitoringTable extends StatelessWidget {
       cells: [
         DataCell(Text(_deviceLabel(deviceId, registryDevice: registryDevice, cloudDevice: cloudDevice))),
         DataCell(Text(_activeTransportForHostPeer(context, lanAuthorized: lanAuthorized, cloudDevice: cloudDevice, state: state))),
+        DataCell(Text(_lastTransportForHostPeer(context, state: state, cloudDevice: cloudDevice))),
         DataCell(_StatusChip(label: connection.label, color: connection.color, icon: connection.icon)),
         DataCell(_StatusChip(label: status.label, color: status.color, icon: status.icon)),
         DataCell(Text(_formatDateTime(context, _lastSeenForHostPeer(state: state, cloudDevice: cloudDevice)))),
         DataCell(Text(_formatDateTime(context, _lastSuccessfulSyncForHostPeer(state: state, cloudDevice: cloudDevice)))),
         DataCell(Text(_pendingChangesForHostPeer(context, store: store, deviceId: deviceId, state: state, cloudDevice: cloudDevice))),
+        DataCell(Text('${state?.lastAckSequence ?? cloudDevice?.lastAckSequence ?? 0}')),
         DataCell(Text(_authorizationLabel(context, lanAuthorized: lanAuthorized, cloudDevice: cloudDevice, suspended: suspended))),
         DataCell(Row(
           mainAxisSize: MainAxisSize.min,
@@ -3580,6 +3610,7 @@ class _HostPeerMonitoringCard extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           _Line(title: tr.text('active_transport'), value: _activeTransportForHostPeer(context, lanAuthorized: lanAuthorized, cloudDevice: cloudDevice, state: state)),
+          _Line(title: tr.text('last_transport'), value: _lastTransportForHostPeer(context, state: state, cloudDevice: cloudDevice)),
           _Line(title: tr.text('connection_status'), value: connection.label),
           _Line(title: tr.text('sync_status'), value: status.label),
           _Line(title: tr.text('last_seen'), value: _formatDateTime(context, _lastSeenForHostPeer(state: state, cloudDevice: cloudDevice))),
@@ -3672,9 +3703,10 @@ _SyncStatusView _connectionStatusForHostPeer(BuildContext context, {required Hos
     return _SyncStatusView(label: tr.text('connection_state_offline'), color: Theme.of(context).colorScheme.error, icon: Icons.cloud_off_outlined);
   }
   final lastSeen = _lastSeenForHostPeer(state: state, cloudDevice: cloudDevice);
-  final cloudOnline = cloudDevice?.isOnline == true || cloudDevice?.online == true;
+  // Cloud `online` is a sticky database flag and is not a live connection source.
+  // Treat Cloud devices as online only when their heartbeat/lastSeen is fresh.
   final recentlySeen = lastSeen != null && DateTime.now().toUtc().difference(lastSeen.toUtc()) <= const Duration(seconds: 90);
-  if (cloudOnline || recentlySeen) {
+  if (recentlySeen) {
     return _SyncStatusView(label: tr.text('connection_state_online'), color: Colors.green, icon: Icons.wifi_tethering_outlined);
   }
   if (lastSeen != null) {
@@ -3711,6 +3743,13 @@ String _activeTransportForHostPeer(BuildContext context, {required bool lanAutho
   if (lanAuthorized) return tr.text('lan');
   if (lastTransport.isNotEmpty) return _transportLabel(context, lastTransport);
   return tr.text('unknown');
+}
+
+String _lastTransportForHostPeer(BuildContext context, {required HostPeerSyncState? state, required CloudDeviceStatus? cloudDevice}) {
+  final tr = AppLocalizations.of(context);
+  final lastTransport = (state?.lastSyncTransport ?? cloudDevice?.lastSyncTransport ?? '').trim();
+  if (lastTransport.isEmpty) return tr.text('unknown');
+  return _transportLabel(context, lastTransport);
 }
 
 String _pendingChangesForHostPeer(

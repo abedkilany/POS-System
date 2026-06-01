@@ -1,4 +1,4 @@
-import { sql, assertSyncToken, assertStoreAllowed, ensureDeviceAuthColumns, sendError } from '../_db.js';
+import { sql, assertSyncToken, assertDeviceAllowed, assertStoreAllowed, ensureDeviceAuthColumns, sendError } from '../_db.js';
 
 function asIso(value) {
   if (!value) return null;
@@ -85,7 +85,6 @@ function rowToDevice(row) {
 
 export default async function handler(req, res) {
   try {
-    assertSyncToken(req);
     await ensureDeviceTable();
 
     if (req.method === 'POST') {
@@ -96,6 +95,31 @@ export default async function handler(req, res) {
       if (!storeId) return res.status(400).json({ ok: false, error: 'storeId is required.' });
       if (!deviceId) return res.status(400).json({ ok: false, error: 'deviceId is required.' });
       assertStoreAllowed(storeId);
+
+      // Client Cloud ACK is sent through this heartbeat endpoint after the
+      // device has applied authoritative events locally. Hosts may still use
+      // the deployment token, but paired Clients usually only have their
+      // device-scoped token. Accept either auth mode, and when device auth is
+      // used make sure the body cannot update another device row.
+      let usedDeviceAuth = false;
+      try {
+        assertSyncToken(req);
+      } catch (_) {
+        await assertDeviceAllowed(req, {
+          storeId,
+          branchId,
+          allowedRoles: ['host', 'client'],
+          allowedTransports: ['cloud'],
+          force: true,
+        });
+        usedDeviceAuth = true;
+      }
+      if (usedDeviceAuth) {
+        const headerDeviceId = String(req.headers['x-device-id'] || req.headers['X-Device-Id'] || '').trim();
+        if (headerDeviceId !== deviceId) {
+          return res.status(403).json({ ok: false, error: 'Device credentials cannot update another device.' });
+        }
+      }
 
       const deviceName = String(body.deviceName || body.device_name || '').trim();
       const platform = String(body.platform || '').trim();
@@ -146,6 +170,7 @@ export default async function handler(req, res) {
     }
 
     if (req.method === 'GET') {
+      assertSyncToken(req);
       const storeId = String(req.query.store_id || req.query.storeId || '').trim();
       const branchId = String(req.query.branch_id || req.query.branchId || 'main').trim() || 'main';
       if (!storeId) return res.status(400).json({ ok: false, error: 'store_id is required.' });
