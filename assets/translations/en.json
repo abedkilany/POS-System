@@ -876,5 +876,6 @@
   "sync_device_deleted": "Sync device deleted.",
   "sync_monitoring_source_hint": "Devices are shown from Cloud, LAN pairing, or sync history. Use Suspend to block syncing without deleting history.",
   "refresh": "Refresh",
-  "unauthorized": "Unauthorized"
+  "unauthorized": "Unauthorized",
+  "waiting_host_approval": "Waiting for Host approval"
 }

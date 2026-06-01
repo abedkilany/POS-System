@@ -436,6 +436,36 @@ class LanSyncService {
     return expected.isNotEmpty && expected == deviceToken;
   }
 
+  bool _deletedDeviceCanReceiveWipe(HttpRequest request) {
+    final deviceId = request.headers.value('x-device-id')?.trim() ?? '';
+    final deviceToken = request.headers.value('x-device-token')?.trim() ?? '';
+    return SyncDeviceAccessStore.isDeleted(deviceId) && SyncDeviceAccessStore.deletedTokenMatches(deviceId, deviceToken);
+  }
+
+  Future<bool> _handleBlockedDevice(HttpRequest request, LanSyncSettings settings) async {
+    final deviceId = request.headers.value('x-device-id')?.trim() ?? '';
+    if (deviceId.isEmpty) return false;
+    if (SyncDeviceAccessStore.isDeleted(deviceId) && _deletedDeviceCanReceiveWipe(request)) {
+      await _json(request, {
+        'ok': false,
+        'action': 'wipe_local_data',
+        'wipeRequired': true,
+        'error': 'This device was deleted by the Host. Local data must be wiped.',
+      }, status: HttpStatus.gone);
+      return true;
+    }
+    if (SyncDeviceAccessStore.isSuspended(deviceId)) {
+      await _json(request, {
+        'ok': false,
+        'action': 'suspended',
+        'suspended': true,
+        'error': 'This device is suspended by the Host. Resume it from Sync Monitoring to continue.',
+      }, status: HttpStatus.forbidden);
+      return true;
+    }
+    return false;
+  }
+
   String _maskedToken(String? token) {
     final value = (token ?? '').trim();
     if (value.isEmpty) return '<empty>';
@@ -506,6 +536,7 @@ class LanSyncService {
       }
 
       if (!_authorized(request, settings)) {
+        if (await _handleBlockedDevice(request, settings)) return;
         // Keep a safe log for troubleshooting LAN/Host pairing problems without printing full tokens.
         developer.log(
           'LAN SYNC AUTH FAILED: path=${request.uri.path} '
@@ -557,6 +588,8 @@ class LanSyncService {
         final body = await utf8.decoder.bind(request).join();
         final decoded = jsonDecode(body) as Map<String, dynamic>;
         final clientDeviceId = decoded['deviceId']?.toString() ?? receivedDeviceId ?? '';
+        final clientDeviceName = decoded['deviceName']?.toString() ?? '';
+        _updateHostRegistryDeviceName(clientDeviceId, clientDeviceName);
         final cursor = DateTime.tryParse(decoded['lastAppliedCursor']?.toString() ?? decoded['lastAckCursor']?.toString() ?? '');
         final sequence = int.tryParse(decoded['lastAppliedSequence']?.toString() ?? decoded['lastAckSequence']?.toString() ?? '') ?? 0;
         await SyncDeviceStateStore.recordPeerSyncResult(
@@ -587,8 +620,11 @@ class LanSyncService {
           changes,
           mirrorToCloud: store.appIdentity.isCloudEnabled && store.appIdentity.isHost,
         );
+        final clientDeviceId = decoded['deviceId']?.toString() ?? receivedDeviceId ?? '';
+        final clientDeviceName = decoded['deviceName']?.toString() ?? '';
+        _updateHostRegistryDeviceName(clientDeviceId, clientDeviceName);
         await SyncDeviceStateStore.recordPeerSyncResult(
-          deviceId: decoded['deviceId']?.toString() ?? receivedDeviceId ?? '',
+          deviceId: clientDeviceId,
           transport: 'lan',
           ackCursor: clientCursor,
           ackSequence: clientSequence,
@@ -803,6 +839,21 @@ class LanSyncService {
 
 
 
+  void _updateHostRegistryDeviceName(String deviceId, String deviceName) {
+    final cleanId = deviceId.trim();
+    final cleanName = deviceName.trim();
+    if (cleanId.isEmpty || cleanName.isEmpty) return;
+    final settings = LanSyncSettings.load();
+    final existing = settings.hostRegistry[cleanId];
+    if (existing == null || existing.deviceName.trim() == cleanName) return;
+    final registry = Map<String, HostRegistryDevice>.from(settings.hostRegistry);
+    registry[cleanId] = existing.copyWith(
+      deviceName: cleanName,
+      lastSeenAt: DateTime.now(),
+    );
+    settings.copyWith(hostRegistry: Map.unmodifiable(registry)).save();
+  }
+
   Map<String, String> _decodeRejectedSyncRequests(dynamic raw) {
     final output = <String, String>{};
     if (raw is List) {
@@ -816,6 +867,22 @@ class LanSyncService {
     return output;
   }
 
+
+  Future<LanSyncResult?> _handleLanAccessResponse(int statusCode, String body) async {
+    if (body.trim().isEmpty) return null;
+    try {
+      final decoded = jsonDecode(body) as Map<String, dynamic>;
+      if (decoded['wipeRequired'] == true || decoded['action'] == 'wipe_local_data') {
+        await store.factoryResetLocalDevice();
+        return const LanSyncResult(ok: false, message: 'Device deleted by Host. Local data was wiped.');
+      }
+      if (decoded['suspended'] == true || decoded['action'] == 'suspended') {
+        return LanSyncResult(ok: false, message: decoded['error']?.toString() ?? 'Device is suspended by Host.');
+      }
+    } catch (_) {}
+    return null;
+  }
+
   Future<void> _sendLanAck(String host, {int port = 8787, String token = '', required DateTime cursor, int sequence = 0}) async {
     try {
       final client = _client();
@@ -826,6 +893,7 @@ class LanSyncService {
         'deviceId': store.deviceId,
         'storeId': store.appIdentity.storeId,
         'branchId': store.appIdentity.branchId,
+        'deviceName': store.appIdentity.deviceName,
         'lastAppliedCursor': cursor.toIso8601String(),
         'lastAckCursor': cursor.toIso8601String(),
         'lastAppliedSequence': sequence,
@@ -853,6 +921,7 @@ class LanSyncService {
         'deviceId': store.deviceId,
         'storeId': store.appIdentity.storeId,
         'branchId': store.appIdentity.branchId,
+        'deviceName': store.appIdentity.deviceName,
         'cursor': LanSyncSettings.load().lastPullCursor?.toIso8601String(),
         'sequence': SyncDeviceStateStore.load(store.appIdentity).lastAppliedSequence,
         'changes': pending.map((item) => item.toJson()).toList(),
@@ -861,6 +930,8 @@ class LanSyncService {
       final pushBody = await utf8.decoder.bind(pushResponse).join();
       client.close(force: true);
       if (pushResponse.statusCode != 200) {
+        final access = await _handleLanAccessResponse(pushResponse.statusCode, pushBody);
+        if (access != null) return access;
         final message = 'Push failed: ${pushResponse.statusCode} $pushBody';
         await _syncCore.markPushFailed(pendingIds, message);
         return LanSyncResult(ok: false, message: message);
@@ -894,6 +965,8 @@ class LanSyncService {
       final pullBody = await utf8.decoder.bind(pullResponse).join();
       client.close(force: true);
       if (pullResponse.statusCode != 200) {
+        final access = await _handleLanAccessResponse(pullResponse.statusCode, pullBody);
+        if (access != null) return access;
         return LanSyncResult(ok: false, message: 'Pull changes failed: ${pullResponse.statusCode} $pullBody');
       }
       final decodedPull = jsonDecode(pullBody) as Map<String, dynamic>;
@@ -942,6 +1015,7 @@ class LanSyncService {
           'deviceId': store.deviceId,
           'storeId': store.appIdentity.storeId,
           'branchId': store.appIdentity.branchId,
+          'deviceName': store.appIdentity.deviceName,
           'cursor': settings.lastPullCursor?.toIso8601String(),
           'changes': pending.map((item) => item.toJson()).toList(),
         }));
@@ -949,6 +1023,8 @@ class LanSyncService {
         final pushBody = await utf8.decoder.bind(pushResponse).join();
         if (pushResponse.statusCode != 200) {
           client.close(force: true);
+          final access = await _handleLanAccessResponse(pushResponse.statusCode, pushBody);
+          if (access != null) return access;
           final message = 'Push failed: ${pushResponse.statusCode} $pushBody';
           await _syncCore.markPushFailed(pendingIds, message);
           return LanSyncResult(ok: false, message: message);
@@ -975,6 +1051,8 @@ class LanSyncService {
       final pullBody = await utf8.decoder.bind(pullResponse).join();
       client.close(force: true);
       if (pullResponse.statusCode != 200) {
+        final access = await _handleLanAccessResponse(pullResponse.statusCode, pullBody);
+        if (access != null) return access;
         final message = 'Pull changes failed: ${pullResponse.statusCode} $pullBody';
         final repair = pushCompleted ? await repairFromHostSnapshot(host, port: port, token: token, onProgress: onProgress) : null;
         if (repair?.ok == true) return LanSyncResult(ok: true, message: '$message. ${repair!.message}');

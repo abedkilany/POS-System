@@ -19,6 +19,9 @@ on device_pairing_codes (store_id, branch_id, expires_at desc);
 
 alter table store_devices add column if not exists device_token text default '';
 alter table store_devices add column if not exists revoked boolean not null default false;
+alter table store_devices add column if not exists suspended boolean not null default false;
+alter table store_devices add column if not exists wipe_pending boolean not null default false;
+alter table store_devices add column if not exists wipe_requested_at timestamptz;
 alter table store_devices add column if not exists active_transport text default '';
 alter table store_devices add column if not exists last_sync_transport text default '';
 alter table store_devices add column if not exists last_applied_cursor timestamptz;

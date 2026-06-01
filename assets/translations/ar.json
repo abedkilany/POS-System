@@ -121,7 +121,7 @@
   "clear_local_data": "مسح بيانات هذا الجهاز",
   "clear_local_data_warning": "سيتم مسح جميع البيانات المحلية والإعدادات وربط الهوست على هذا الجهاز العميل فقط. لن تتأثر الأجهزة الأخرى.",
   "clear_this_device": "مسح هذا الجهاز",
-  "client": "عميل",
+  "client": "Client",
   "client_device": "جهاز عميل",
   "client_device_id_to_approve": "معرّف جهاز العميل للاعتماد",
   "client_mode": "وضع جهاز فرعي",
@@ -876,5 +876,6 @@
   "sync_device_deleted": "تم حذف جهاز المزامنة.",
   "sync_monitoring_source_hint": "تظهر الأجهزة من Cloud أو اقتران LAN أو سجل المزامنة. استخدم التعليق لإيقاف المزامنة بدون حذف السجل.",
   "refresh": "تحديث",
-  "unauthorized": "غير مصرح"
+  "unauthorized": "غير مصرح",
+  "waiting_host_approval": "بانتظار موافقة الهوست"
 }

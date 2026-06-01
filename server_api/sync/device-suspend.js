@@ -8,6 +8,7 @@ export default async function handler(req, res) {
     const storeId = String(body.storeId || body.store_id || '').trim();
     const branchId = String(body.branchId || body.branch_id || 'main').trim() || 'main';
     const deviceId = String(body.deviceId || body.device_id || '').trim();
+    const suspended = body.suspended === true;
     if (!storeId) return res.status(400).json({ ok: false, error: 'storeId is required.' });
     if (!deviceId) return res.status(400).json({ ok: false, error: 'deviceId is required.' });
     assertStoreAllowed(storeId);
@@ -15,14 +16,15 @@ export default async function handler(req, res) {
     await assertDeviceAllowed(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['cloud'] });
     const rows = await sql`
       update store_devices
-      set revoked = true, suspended = false, wipe_pending = true, wipe_requested_at = now(), updated_at = now()
+      set suspended = ${suspended}, updated_at = now()
       where store_id = ${storeId}
         and branch_id = ${branchId}
         and device_id = ${deviceId}
         and role <> 'host'
-      returning device_id
+        and revoked = false
+      returning device_id, suspended
     `;
-    return res.status(200).json({ ok: true, revoked: rows.map((row) => row.device_id) });
+    return res.status(200).json({ ok: true, devices: rows });
   } catch (error) {
     sendError(res, error);
   }

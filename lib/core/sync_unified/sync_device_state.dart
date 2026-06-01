@@ -327,12 +327,21 @@ class SyncDeviceAccessStore {
 
   static const String _suspendedDevicesKey = 'sync_monitoring_suspended_devices_v1';
   static const String _deletedDevicesKey = 'sync_monitoring_deleted_devices_v1';
+  static const String _deletedDeviceTokensKey = 'sync_monitoring_deleted_device_tokens_v1';
 
   static Set<String> suspendedDeviceIds() => _loadSet(_suspendedDevicesKey);
   static Set<String> deletedDeviceIds() => _loadSet(_deletedDevicesKey);
 
   static bool isSuspended(String deviceId) => suspendedDeviceIds().contains(deviceId.trim());
   static bool isDeleted(String deviceId) => deletedDeviceIds().contains(deviceId.trim());
+
+  static Map<String, String> deletedDeviceTokens() => _loadMap(_deletedDeviceTokensKey);
+
+  static bool deletedTokenMatches(String deviceId, String token) {
+    final id = deviceId.trim();
+    final expected = deletedDeviceTokens()[id]?.trim() ?? '';
+    return id.isNotEmpty && expected.isNotEmpty && expected == token.trim();
+  }
 
   static Future<void> suspend(String deviceId) async {
     final id = deviceId.trim();
@@ -348,13 +357,16 @@ class SyncDeviceAccessStore {
     await _saveSet(_suspendedDevicesKey, suspended);
   }
 
-  static Future<void> markDeleted(String deviceId) async {
+  static Future<void> markDeleted(String deviceId, {String deviceToken = ''}) async {
     final id = deviceId.trim();
     if (id.isEmpty) return;
     final deleted = deletedDeviceIds()..add(id);
     final suspended = suspendedDeviceIds()..remove(id);
+    final tokens = deletedDeviceTokens();
+    if (deviceToken.trim().isNotEmpty) tokens[id] = deviceToken.trim();
     await _saveSet(_deletedDevicesKey, deleted);
     await _saveSet(_suspendedDevicesKey, suspended);
+    await _saveMap(_deletedDeviceTokensKey, tokens);
   }
 
   static Set<String> _loadSet(String key) {
@@ -370,6 +382,24 @@ class SyncDeviceAccessStore {
 
   static Future<void> _saveSet(String key, Set<String> ids) {
     final normalized = ids.map((item) => item.trim()).where((item) => item.isNotEmpty).toList()..sort();
+    return LocalDatabaseService.setString(key, jsonEncode(normalized));
+  }
+
+  static Map<String, String> _loadMap(String key) {
+    final raw = LocalDatabaseService.getString(key);
+    if (raw == null || raw.trim().isEmpty) return <String, String>{};
+    try {
+      final decoded = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+      return decoded.map((key, value) => MapEntry(key.toString().trim(), value.toString().trim()))
+        ..removeWhere((key, value) => key.isEmpty || value.isEmpty);
+    } catch (_) {
+      return <String, String>{};
+    }
+  }
+
+  static Future<void> _saveMap(String key, Map<String, String> values) {
+    final normalized = Map<String, String>.from(values)
+      ..removeWhere((key, value) => key.trim().isEmpty || value.trim().isEmpty);
     return LocalDatabaseService.setString(key, jsonEncode(normalized));
   }
 }

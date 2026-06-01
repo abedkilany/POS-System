@@ -170,6 +170,8 @@ class CloudDeviceStatus {
     this.lastAckAt,
     this.online = false,
     this.revoked = false,
+    this.suspended = false,
+    this.wipePending = false,
   });
 
   final String deviceId;
@@ -189,6 +191,8 @@ class CloudDeviceStatus {
   final DateTime? lastAckAt;
   final bool online;
   final bool revoked;
+  final bool suspended;
+  final bool wipePending;
 
   bool get isOnline => lastSeenAt != null && DateTime.now().toUtc().difference(lastSeenAt!.toUtc()) <= const Duration(seconds: 90);
 
@@ -210,6 +214,8 @@ class CloudDeviceStatus {
         lastAckAt: DateTime.tryParse((json['lastAckAt'] ?? json['last_ack_at'] ?? '').toString()),
         online: json['online'] == true,
         revoked: json['revoked'] == true,
+        suspended: json['suspended'] == true,
+        wipePending: json['wipePending'] == true || json['wipe_pending'] == true,
       );
 }
 
@@ -746,6 +752,73 @@ class CloudSyncService {
     );
   }
 
+  Future<CloudSyncResult?> checkCurrentDeviceAccess(CloudSyncSettings settings) async {
+    final identity = store.appIdentity;
+    if (!identity.isClient || !settings.isConfigured) return null;
+    try {
+      final response = await _client
+          .post(
+            settings.endpoint('/api/sync/device-access'),
+            headers: _headers(settings),
+            body: jsonEncode({
+              'storeId': identity.storeId,
+              'branchId': identity.branchId,
+              'deviceId': store.deviceId,
+              'deviceToken': identity.deviceToken,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return CloudSyncResult(ok: false, message: 'Cloud device access check failed: ${response.statusCode} ${response.body}');
+      }
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      if (decoded['wipeRequired'] == true || decoded['action'] == 'wipe_local_data') {
+        final wipedDeviceId = store.deviceId;
+        final wipedStoreId = identity.storeId;
+        final wipedBranchId = identity.branchId;
+        final wipedToken = identity.deviceToken;
+        await store.factoryResetLocalDevice();
+        await _confirmCloudWipe(
+          settings,
+          storeId: wipedStoreId,
+          branchId: wipedBranchId,
+          deviceId: wipedDeviceId,
+          deviceToken: wipedToken,
+        );
+        return const CloudSyncResult(ok: false, message: 'Device deleted by Host. Local data was wiped.');
+      }
+      if (decoded['suspended'] == true || decoded['authorized'] == false) {
+        return CloudSyncResult(ok: false, message: decoded['reason']?.toString() ?? 'This device is suspended or not authorized for Cloud sync.');
+      }
+      return null;
+    } catch (error) {
+      return CloudSyncResult(ok: false, message: 'Cloud device access check failed: $error');
+    }
+  }
+
+  Future<CloudSyncResult> setDeviceSuspended(CloudSyncSettings settings, String deviceId, {required bool suspended}) async {
+    final identity = store.appIdentity;
+    if (!identity.isHost) return const CloudSyncResult(ok: false, message: 'Only the Host can suspend devices.');
+    if (!settings.isConfigured) return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
+    try {
+      final response = await _client
+          .post(
+            settings.endpoint('/api/sync/device-suspend'),
+            headers: _headers(settings),
+            body: jsonEncode({'storeId': identity.storeId, 'branchId': identity.branchId, 'deviceId': deviceId, 'suspended': suspended}),
+          )
+          .timeout(const Duration(seconds: 10));
+      return CloudSyncResult(
+        ok: response.statusCode >= 200 && response.statusCode < 300,
+        message: response.statusCode >= 200 && response.statusCode < 300
+            ? (suspended ? 'Device suspended in Cloud.' : 'Device resumed in Cloud.')
+            : 'Cloud device suspend/resume failed: ${response.statusCode} ${response.body}',
+      );
+    } catch (error) {
+      return CloudSyncResult(ok: false, message: 'Cloud device suspend/resume failed: $error');
+    }
+  }
+
   Future<CloudSyncResult> revokeDevice(CloudSyncSettings settings, String deviceId) async {
     final identity = store.appIdentity;
     if (!identity.isHost) return const CloudSyncResult(ok: false, message: 'Only the Host can revoke devices.');
@@ -782,6 +855,42 @@ class CloudSyncService {
       'X-Store-Id': identity.storeId,
       'X-Branch-Id': identity.branchId,
     };
+  }
+
+  Future<void> _confirmCloudWipe(
+    CloudSyncSettings settings, {
+    required String storeId,
+    required String branchId,
+    required String deviceId,
+    required String deviceToken,
+  }) async {
+    try {
+      await _client
+          .post(
+            settings.endpoint('/api/sync/device-wipe-ack'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+              if (settings.apiToken.trim().isNotEmpty) 'Authorization': 'Bearer ${settings.apiToken.trim()}',
+              'X-Device-Id': deviceId,
+              'X-Device-Token': deviceToken,
+              'X-Device-Role': 'client',
+              'X-Sync-Transport': 'cloud',
+              'X-Store-Id': storeId,
+              'X-Branch-Id': branchId,
+            },
+            body: jsonEncode({
+              'storeId': storeId,
+              'branchId': branchId,
+              'deviceId': deviceId,
+              'deviceToken': deviceToken,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
+    } catch (_) {
+      // Keep wipe_pending on Cloud when confirmation cannot be delivered.
+      // The next contact will receive the wipe command again.
+    }
   }
 
 
@@ -952,6 +1061,8 @@ class CloudSyncService {
     if (!settings.isConfigured) {
       return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
     }
+    final accessResult = await checkCurrentDeviceAccess(settings);
+    if (accessResult != null) return accessResult;
 
     try {
       final health = await _client.get(settings.endpoint('/api/health'), headers: _headers(settings)).timeout(const Duration(seconds: 10));
@@ -1382,6 +1493,8 @@ class CloudSyncService {
     if (!settings.isConfigured) {
       return const CloudSyncResult(ok: false, message: 'Cloud API URL and token are required.');
     }
+    final accessResult = await checkCurrentDeviceAccess(settings);
+    if (accessResult != null) return accessResult;
 
     try {
       var pushed = 0;

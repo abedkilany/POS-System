@@ -30,6 +30,9 @@ async function ensureDeviceTable() {
       app_version text default '',
       store_epoch integer not null default 1,
       revoked boolean not null default false,
+      suspended boolean not null default false,
+      wipe_pending boolean not null default false,
+      wipe_requested_at timestamptz,
       device_token text default '',
       host_device_id text default '',
       active_transport text default '',
@@ -68,6 +71,8 @@ function rowToDevice(row) {
     hostDeviceId: row.host_device_id || '',
     storeEpoch: row.store_epoch || 1,
     revoked: row.revoked === true,
+    suspended: row.suspended === true,
+    wipePending: row.wipe_pending === true,
     online: row.online === true,
     lastAppliedCursor: asIso(row.last_applied_cursor),
     lastAckCursor: asIso(row.last_ack_cursor),
@@ -135,7 +140,7 @@ export default async function handler(req, res) {
           last_seen_at = now(),
           updated_at = now()
         returning store_id, branch_id, device_id, device_name, platform, role, transport, active_transport, last_sync_transport,
-          app_version, host_device_id, store_epoch, revoked, online, last_applied_cursor, last_ack_cursor, last_applied_sequence, last_ack_sequence, last_ack_at, last_seen_at
+          app_version, host_device_id, store_epoch, revoked, suspended, wipe_pending, online, last_applied_cursor, last_ack_cursor, last_applied_sequence, last_ack_sequence, last_ack_at, last_seen_at
       `;
       return res.status(200).json({ ok: true, device: rowToDevice(rows[0]) });
     }
@@ -147,7 +152,7 @@ export default async function handler(req, res) {
       assertStoreAllowed(storeId);
       const rows = await sql`
         select store_id, branch_id, device_id, device_name, platform, role, transport, active_transport, last_sync_transport,
-          app_version, host_device_id, store_epoch, revoked, online, last_applied_cursor, last_ack_cursor, last_applied_sequence, last_ack_sequence, last_ack_at, last_seen_at
+          app_version, host_device_id, store_epoch, revoked, suspended, wipe_pending, online, last_applied_cursor, last_ack_cursor, last_applied_sequence, last_ack_sequence, last_ack_at, last_seen_at
         from store_devices
         where store_id = ${storeId}
           and branch_id = ${branchId}

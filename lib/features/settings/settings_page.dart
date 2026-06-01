@@ -3269,11 +3269,25 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
   }
 
   Future<void> _toggleSuspend(String deviceId, bool suspended) async {
-    if (suspended) {
+    final shouldResume = suspended;
+    if (shouldResume) {
       await SyncDeviceAccessStore.resume(deviceId);
     } else {
       await SyncDeviceAccessStore.suspend(deviceId);
     }
+
+    final cloudSettings = CloudSyncSettings.load();
+    if (cloudSettings.isConfigured) {
+      await CloudSyncService(widget.store).setDeviceSuspended(
+        cloudSettings,
+        deviceId,
+        suspended: !shouldResume,
+      );
+    }
+
+    // Resume does not reset any cursor. The device keeps its last ACK/Cursor and
+    // the next sync catches up all Host-authoritative events that were missed
+    // while it was suspended.
     if (mounted) setState(() {});
   }
 
@@ -3293,6 +3307,7 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
     if (confirmed != true) return;
 
     final lanSettings = LanSyncSettings.load();
+    final deletedDeviceToken = lanSettings.pairedDevices[deviceId]?.trim() ?? '';
     if (lanSettings.pairedDevices.containsKey(deviceId) || lanSettings.hostRegistry.containsKey(deviceId)) {
       final paired = Map<String, String>.from(lanSettings.pairedDevices)..remove(deviceId);
       final registry = Map<String, HostRegistryDevice>.from(lanSettings.hostRegistry)..remove(deviceId);
@@ -3300,7 +3315,7 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
     }
 
     await SyncDeviceStateStore.removePeerState(deviceId);
-    await SyncDeviceAccessStore.markDeleted(deviceId);
+    await SyncDeviceAccessStore.markDeleted(deviceId, deviceToken: deletedDeviceToken);
 
     final cloudSettings = CloudSyncSettings.load();
     if (cloudSettings.isConfigured) {
@@ -3334,6 +3349,7 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
             FutureBuilder<List<CloudDeviceStatus>>(
               future: _cloudDevicesFuture,
               builder: (context, snapshot) => _HostSyncMonitoringTable(
+                store: widget.store,
                 cloudDevices: snapshot.data ?? const <CloudDeviceStatus>[],
                 peerStates: peerById,
                 lanSettings: lanSettings,
@@ -3358,6 +3374,7 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
 
 class _HostSyncMonitoringTable extends StatelessWidget {
   const _HostSyncMonitoringTable({
+    required this.store,
     required this.cloudDevices,
     required this.peerStates,
     required this.lanSettings,
@@ -3367,6 +3384,7 @@ class _HostSyncMonitoringTable extends StatelessWidget {
     required this.onDelete,
   });
 
+  final AppStore store;
   final List<CloudDeviceStatus> cloudDevices;
   final Map<String, HostPeerSyncState> peerStates;
   final LanSyncSettings lanSettings;
@@ -3429,6 +3447,7 @@ class _HostSyncMonitoringTable extends StatelessWidget {
                 children: [
                   for (final deviceId in pairedDeviceIds)
                     _HostPeerMonitoringCard(
+                      store: store,
                       deviceId: deviceId,
                       state: peerStates[deviceId],
                       registryDevice: registryById[deviceId],
@@ -3446,10 +3465,12 @@ class _HostSyncMonitoringTable extends StatelessWidget {
               child: DataTable(
                 columns: [
                   DataColumn(label: Text(tr.text('device'))),
-                  DataColumn(label: Text(tr.text('source'))),
+                  DataColumn(label: Text(tr.text('active_transport'))),
+                  DataColumn(label: Text(tr.text('connection_status'))),
                   DataColumn(label: Text(tr.text('sync_status'))),
+                  DataColumn(label: Text(tr.text('last_seen'))),
                   DataColumn(label: Text(tr.text('last_successful_sync'))),
-                  DataColumn(label: Text(tr.text('last_transport'))),
+                  DataColumn(label: Text(tr.text('pending_changes'))),
                   DataColumn(label: Text(tr.text('authorization_status'))),
                   DataColumn(label: Text(tr.text('actions'))),
                 ],
@@ -3483,14 +3504,17 @@ class _HostSyncMonitoringTable extends StatelessWidget {
     required bool suspended,
   }) {
     final tr = AppLocalizations.of(context);
+    final connection = _connectionStatusForHostPeer(context, state: state, cloudDevice: cloudDevice, suspended: suspended);
     final status = _syncStatusForHostPeer(context, state, lanAuthorized: lanAuthorized, cloudDevice: cloudDevice, suspended: suspended);
     return DataRow(
       cells: [
         DataCell(Text(_deviceLabel(deviceId, registryDevice: registryDevice, cloudDevice: cloudDevice))),
-        DataCell(Text(_deviceSource(context, lanAuthorized: lanAuthorized, cloudDevice: cloudDevice, hasHistory: state != null))),
+        DataCell(Text(_activeTransportForHostPeer(context, lanAuthorized: lanAuthorized, cloudDevice: cloudDevice, state: state))),
+        DataCell(_StatusChip(label: connection.label, color: connection.color, icon: connection.icon)),
         DataCell(_StatusChip(label: status.label, color: status.color, icon: status.icon)),
-        DataCell(Text(_formatDateTime(context, state?.lastAckCursor ?? state?.lastAppliedHostCursor ?? cloudDevice?.lastAckAt ?? cloudDevice?.lastSeenAt ?? state?.updatedAt))),
-        DataCell(Text(_transportLabel(context, state?.lastSyncTransport ?? cloudDevice?.lastSyncTransport ?? cloudDevice?.activeTransport ?? cloudDevice?.transport ?? ''))),
+        DataCell(Text(_formatDateTime(context, _lastSeenForHostPeer(state: state, cloudDevice: cloudDevice)))),
+        DataCell(Text(_formatDateTime(context, _lastSuccessfulSyncForHostPeer(state: state, cloudDevice: cloudDevice)))),
+        DataCell(Text(_pendingChangesForHostPeer(context, store: store, deviceId: deviceId, state: state, cloudDevice: cloudDevice))),
         DataCell(Text(_authorizationLabel(context, lanAuthorized: lanAuthorized, cloudDevice: cloudDevice, suspended: suspended))),
         DataCell(Row(
           mainAxisSize: MainAxisSize.min,
@@ -3506,6 +3530,7 @@ class _HostSyncMonitoringTable extends StatelessWidget {
 
 class _HostPeerMonitoringCard extends StatelessWidget {
   const _HostPeerMonitoringCard({
+    required this.store,
     required this.deviceId,
     required this.state,
     required this.registryDevice,
@@ -3516,6 +3541,7 @@ class _HostPeerMonitoringCard extends StatelessWidget {
     required this.onDelete,
   });
 
+  final AppStore store;
   final String deviceId;
   final HostPeerSyncState? state;
   final HostRegistryDevice? registryDevice;
@@ -3528,6 +3554,7 @@ class _HostPeerMonitoringCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
+    final connection = _connectionStatusForHostPeer(context, state: state, cloudDevice: cloudDevice, suspended: suspended);
     final status = _syncStatusForHostPeer(context, state, lanAuthorized: lanAuthorized, cloudDevice: cloudDevice, suspended: suspended);
     return Container(
       width: double.infinity,
@@ -3545,13 +3572,19 @@ class _HostPeerMonitoringCard extends StatelessWidget {
               const Icon(Icons.devices_other_outlined, size: 20),
               const SizedBox(width: 8),
               Expanded(child: Text(_deviceLabel(deviceId, registryDevice: registryDevice, cloudDevice: cloudDevice), style: Theme.of(context).textTheme.titleSmall)),
-              _StatusChip(label: status.label, color: status.color, icon: status.icon),
+              Wrap(spacing: 6, runSpacing: 6, children: [
+                _StatusChip(label: connection.label, color: connection.color, icon: connection.icon),
+                _StatusChip(label: status.label, color: status.color, icon: status.icon),
+              ]),
             ],
           ),
           const SizedBox(height: 12),
-          _Line(title: tr.text('source'), value: _deviceSource(context, lanAuthorized: lanAuthorized, cloudDevice: cloudDevice, hasHistory: state != null)),
-          _Line(title: tr.text('last_successful_sync'), value: _formatDateTime(context, state?.lastAckCursor ?? state?.lastAppliedHostCursor ?? cloudDevice?.lastAckAt ?? cloudDevice?.lastSeenAt ?? state?.updatedAt)),
-          _Line(title: tr.text('last_transport'), value: _transportLabel(context, state?.lastSyncTransport ?? cloudDevice?.lastSyncTransport ?? cloudDevice?.activeTransport ?? cloudDevice?.transport ?? '')),
+          _Line(title: tr.text('active_transport'), value: _activeTransportForHostPeer(context, lanAuthorized: lanAuthorized, cloudDevice: cloudDevice, state: state)),
+          _Line(title: tr.text('connection_status'), value: connection.label),
+          _Line(title: tr.text('sync_status'), value: status.label),
+          _Line(title: tr.text('last_seen'), value: _formatDateTime(context, _lastSeenForHostPeer(state: state, cloudDevice: cloudDevice))),
+          _Line(title: tr.text('last_successful_sync'), value: _formatDateTime(context, _lastSuccessfulSyncForHostPeer(state: state, cloudDevice: cloudDevice))),
+          _Line(title: tr.text('pending_changes'), value: _pendingChangesForHostPeer(context, store: store, deviceId: deviceId, state: state, cloudDevice: cloudDevice)),
           _Line(title: tr.text('authorization_status'), value: _authorizationLabel(context, lanAuthorized: lanAuthorized, cloudDevice: cloudDevice, suspended: suspended)),
           _Line(title: tr.text('last_ack_sequence'), value: '${state?.lastAckSequence ?? cloudDevice?.lastAckSequence ?? 0}'),
           const SizedBox(height: 8),
@@ -3579,15 +3612,25 @@ class _ClientSyncMonitoringPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
+    final connection = _connectionStatusForClient(context, state: state, lanSettings: lanSettings, cloudSettings: cloudSettings);
     final status = _syncStatusForClient(context, state, pendingCount: store.pendingSyncQueueCount);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Align(alignment: AlignmentDirectional.centerStart, child: _StatusChip(label: status.label, color: status.color, icon: status.icon)),
+        Align(
+          alignment: AlignmentDirectional.centerStart,
+          child: Wrap(spacing: 8, runSpacing: 8, children: [
+            _StatusChip(label: connection.label, color: connection.color, icon: connection.icon),
+            _StatusChip(label: status.label, color: status.color, icon: status.icon),
+          ]),
+        ),
         const SizedBox(height: 12),
-        _Line(title: tr.text('host_connection'), value: _clientHostReadiness(context, lanSettings: lanSettings, cloudSettings: cloudSettings)),
-        _Line(title: tr.text('last_successful_sync'), value: _formatDateTime(context, state.lastAckCursor ?? state.lastAppliedHostCursor ?? state.updatedAt)),
-        _Line(title: tr.text('last_transport'), value: _transportLabel(context, state.lastSyncTransport)),
+        _Line(title: tr.text('role'), value: tr.text('client')),
+        _Line(title: tr.text('active_transport'), value: _transportLabel(context, state.activeTransport.isNotEmpty ? state.activeTransport : store.appIdentity.activeSyncTransport)),
+        _Line(title: tr.text('connection_status'), value: connection.label),
+        _Line(title: tr.text('sync_status'), value: status.label),
+        _Line(title: tr.text('last_seen'), value: _formatDateTime(context, state.lastSeenAt)),
+        _Line(title: tr.text('last_successful_sync'), value: _formatDateTime(context, _lastSuccessfulSyncForClient(state))),
         _Line(title: tr.text('pending_changes'), value: '${store.pendingSyncQueueCount}'),
         _Line(title: tr.text('last_ack_sequence'), value: '${state.lastAckSequence}'),
         _Line(title: tr.text('authorization_status'), value: store.appIdentity.deviceToken.trim().isEmpty ? tr.text('token_missing') : tr.text('authorized')),
@@ -3621,6 +3664,86 @@ class _StatusChip extends StatelessWidget {
   }
 }
 
+
+
+_SyncStatusView _connectionStatusForHostPeer(BuildContext context, {required HostPeerSyncState? state, required CloudDeviceStatus? cloudDevice, required bool suspended}) {
+  final tr = AppLocalizations.of(context);
+  if (suspended || cloudDevice?.revoked == true) {
+    return _SyncStatusView(label: tr.text('connection_state_offline'), color: Theme.of(context).colorScheme.error, icon: Icons.cloud_off_outlined);
+  }
+  final lastSeen = _lastSeenForHostPeer(state: state, cloudDevice: cloudDevice);
+  final cloudOnline = cloudDevice?.isOnline == true || cloudDevice?.online == true;
+  final recentlySeen = lastSeen != null && DateTime.now().toUtc().difference(lastSeen.toUtc()) <= const Duration(seconds: 90);
+  if (cloudOnline || recentlySeen) {
+    return _SyncStatusView(label: tr.text('connection_state_online'), color: Colors.green, icon: Icons.wifi_tethering_outlined);
+  }
+  if (lastSeen != null) {
+    return _SyncStatusView(label: tr.text('connection_state_offline'), color: Colors.orange, icon: Icons.wifi_off_outlined);
+  }
+  return _SyncStatusView(label: tr.text('unknown'), color: Theme.of(context).colorScheme.outline, icon: Icons.help_outline);
+}
+
+_SyncStatusView _connectionStatusForClient(BuildContext context, {required SyncDeviceState state, required LanSyncSettings lanSettings, required CloudSyncSettings cloudSettings}) {
+  final tr = AppLocalizations.of(context);
+  final active = state.activeTransport.trim().toLowerCase();
+  final configured = active == 'cloud' ? cloudSettings.isConfigured : active == 'lan' ? lanSettings.setupComplete : false;
+  final lastSeen = state.lastSeenAt;
+  final recentlySeen = lastSeen != null && DateTime.now().toUtc().difference(lastSeen.toUtc()) <= const Duration(seconds: 90);
+  if (recentlySeen) {
+    return _SyncStatusView(label: tr.text('connection_state_online'), color: Colors.green, icon: Icons.wifi_tethering_outlined);
+  }
+  if (configured) {
+    return _SyncStatusView(label: tr.text('connection_state_offline'), color: Colors.orange, icon: Icons.wifi_off_outlined);
+  }
+  return _SyncStatusView(label: tr.text('sync_not_ready'), color: Theme.of(context).colorScheme.error, icon: Icons.block_outlined);
+}
+
+String _activeTransportForHostPeer(BuildContext context, {required bool lanAuthorized, required CloudDeviceStatus? cloudDevice, required HostPeerSyncState? state}) {
+  final tr = AppLocalizations.of(context);
+  final cloudTransport = (cloudDevice?.activeTransport ?? cloudDevice?.transport ?? '').trim().toLowerCase();
+  final lastTransport = (state?.lastSyncTransport ?? cloudDevice?.lastSyncTransport ?? '').trim().toLowerCase();
+  if (lanAuthorized && cloudDevice != null) {
+    final active = cloudTransport.isNotEmpty ? cloudTransport : lastTransport;
+    if (active == 'lan' || active == 'cloud') return _transportLabel(context, active);
+    return '${tr.text('lan')} + ${tr.text('cloud')}';
+  }
+  if (cloudDevice != null) return _transportLabel(context, cloudTransport.isNotEmpty ? cloudTransport : 'cloud');
+  if (lanAuthorized) return tr.text('lan');
+  if (lastTransport.isNotEmpty) return _transportLabel(context, lastTransport);
+  return tr.text('unknown');
+}
+
+String _pendingChangesForHostPeer(
+  BuildContext context, {
+  required AppStore store,
+  required String deviceId,
+  required HostPeerSyncState? state,
+  required CloudDeviceStatus? cloudDevice,
+}) {
+  final ackSequence = state?.lastAckSequence ?? cloudDevice?.lastAckSequence ?? 0;
+  final ackCursor = state?.lastAckCursor ?? cloudDevice?.lastAckCursor ?? cloudDevice?.lastAckAt;
+  var count = 0;
+  for (final change in store.syncChanges) {
+    if (change.deviceId == deviceId) continue;
+    final sequencePending = change.sequence > ackSequence;
+    final cursorPending = ackCursor == null || change.createdAt.isAfter(ackCursor);
+    if (sequencePending || cursorPending) count++;
+  }
+  return '$count';
+}
+
+DateTime? _lastSuccessfulSyncForHostPeer({required HostPeerSyncState? state, required CloudDeviceStatus? cloudDevice}) {
+  return state?.lastAckCursor ?? state?.lastAppliedHostCursor ?? cloudDevice?.lastAckAt ?? cloudDevice?.lastAckCursor;
+}
+
+DateTime? _lastSeenForHostPeer({required HostPeerSyncState? state, required CloudDeviceStatus? cloudDevice}) {
+  return cloudDevice?.lastSeenAt ?? state?.updatedAt;
+}
+
+DateTime? _lastSuccessfulSyncForClient(SyncDeviceState state) {
+  return state.lastAckCursor ?? state.lastAppliedHostCursor;
+}
+
 _SyncStatusView _syncStatusForHostPeer(BuildContext context, HostPeerSyncState? state, {required bool lanAuthorized, required CloudDeviceStatus? cloudDevice, required bool suspended}) {
   final tr = AppLocalizations.of(context);
   if (suspended) {
@@ -3630,7 +3753,7 @@ _SyncStatusView _syncStatusForHostPeer(BuildContext context, HostPeerSyncState? 
     return _SyncStatusView(label: tr.text('unauthorized'), color: Theme.of(context).colorScheme.error, icon: Icons.block_outlined);
   }
   final now = DateTime.now();
-  final lastSync = state?.lastAckCursor ?? state?.lastAppliedHostCursor ?? cloudDevice?.lastAckAt ?? cloudDevice?.lastAckCursor ?? state?.updatedAt;
+  final lastSync = _lastSuccessfulSyncForHostPeer(state: state, cloudDevice: cloudDevice);
   final hasAnyAuth = lanAuthorized || cloudDevice != null;
   if (!hasAnyAuth && state == null) {
     return _SyncStatusView(label: tr.text('sync_not_ready'), color: Theme.of(context).colorScheme.error, icon: Icons.block_outlined);
@@ -3656,15 +3779,6 @@ String _deviceLabel(String deviceId, {HostRegistryDevice? registryDevice, CloudD
   return _shortDeviceId(deviceId);
 }
 
-String _deviceSource(BuildContext context, {required bool lanAuthorized, required CloudDeviceStatus? cloudDevice, required bool hasHistory}) {
-  final tr = AppLocalizations.of(context);
-  final sources = <String>[];
-  if (cloudDevice != null) sources.add(tr.text('cloud'));
-  if (lanAuthorized) sources.add(tr.text('lan'));
-  if (sources.isEmpty && hasHistory) sources.add(tr.text('history_only'));
-  if (sources.isEmpty) return tr.text('unknown');
-  return sources.join(' + ');
-}
 
 String _authorizationLabel(BuildContext context, {required bool lanAuthorized, required CloudDeviceStatus? cloudDevice, required bool suspended}) {
   final tr = AppLocalizations.of(context);
@@ -3679,9 +3793,9 @@ String _authorizationLabel(BuildContext context, {required bool lanAuthorized, r
 
 _SyncStatusView _syncStatusForClient(BuildContext context, SyncDeviceState state, {required int pendingCount}) {
   final tr = AppLocalizations.of(context);
-  final lastSync = state.lastAckCursor ?? state.lastAppliedHostCursor ?? state.updatedAt;
+  final lastSync = _lastSuccessfulSyncForClient(state);
   if (pendingCount > 0) {
-    return _SyncStatusView(label: tr.text('sync_pending'), color: Colors.orange, icon: Icons.pending_actions_outlined);
+    return _SyncStatusView(label: tr.text('waiting_host_approval'), color: Colors.orange, icon: Icons.pending_actions_outlined);
   }
   if (lastSync == null) {
     return _SyncStatusView(label: tr.text('not_synced_yet'), color: Theme.of(context).colorScheme.error, icon: Icons.sync_problem_outlined);
@@ -3696,14 +3810,6 @@ _SyncStatusView _syncStatusForClient(BuildContext context, SyncDeviceState state
   return _SyncStatusView(label: tr.text('needs_attention'), color: Theme.of(context).colorScheme.error, icon: Icons.warning_amber_outlined);
 }
 
-String _clientHostReadiness(BuildContext context, {required LanSyncSettings lanSettings, required CloudSyncSettings cloudSettings}) {
-  final tr = AppLocalizations.of(context);
-  final parts = <String>[];
-  if (cloudSettings.isConfigured) parts.add(tr.text('cloud_ready'));
-  if (lanSettings.setupComplete) parts.add(tr.text('lan_configured'));
-  if (parts.isEmpty) return tr.text('sync_not_ready');
-  return parts.join(' / ');
-}
 
 String _transportLabel(BuildContext context, String value) {
   final tr = AppLocalizations.of(context);

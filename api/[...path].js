@@ -1,5 +1,8 @@
 import health from '../server_api/health.js';
 import deviceRevoke from '../server_api/sync/device-revoke.js';
+import deviceWipeAck from '../server_api/sync/device-wipe-ack.js';
+import deviceSuspend from '../server_api/sync/device-suspend.js';
+import deviceAccess from '../server_api/sync/device-access.js';
 import devices from '../server_api/sync/devices.js';
 import hostHeartbeat from '../server_api/sync/host-heartbeat.js';
 import hostTransferActivate from '../server_api/sync/host-transfer/activate.js';
@@ -20,6 +23,9 @@ import requestsPush from '../server_api/sync/requests/push.js';
 const routes = new Map([
   ['health', health],
   ['sync/device-revoke', deviceRevoke],
+  ['sync/device-wipe-ack', deviceWipeAck],
+  ['sync/device-suspend', deviceSuspend],
+  ['sync/device-access', deviceAccess],
   ['sync/devices', devices],
   ['sync/host-heartbeat', hostHeartbeat],
   ['sync/host-transfer/activate', hostTransferActivate],

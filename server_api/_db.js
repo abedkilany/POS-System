@@ -35,6 +35,9 @@ export async function ensureDeviceAuthColumns() {
   await sql`alter table store_devices add column if not exists device_token text default ''`;
   await sql`alter table store_devices add column if not exists host_device_id text default ''`;
   await sql`alter table store_devices add column if not exists revoked boolean not null default false`;
+  await sql`alter table store_devices add column if not exists suspended boolean not null default false`;
+  await sql`alter table store_devices add column if not exists wipe_pending boolean not null default false`;
+  await sql`alter table store_devices add column if not exists wipe_requested_at timestamptz`;
   // Host-authoritative per-device sync state. LAN/Cloud are delivery methods;
   // progress must be tied to the device, not to the transport used last.
   await sql`alter table store_devices add column if not exists active_transport text default ''`;
@@ -60,15 +63,15 @@ export async function assertDeviceAllowed(req, { storeId, branchId = 'main', all
   }
   await ensureDeviceAuthColumns();
   const rows = await sql`
-    select device_id, role, transport, active_transport, revoked, device_token
+    select device_id, role, transport, active_transport, revoked, suspended, device_token
     from store_devices
     where store_id = ${storeId}
       and branch_id = ${branchId}
       and device_id = ${deviceId}
     limit 1
   `;
-  if (!rows.length || rows[0].revoked === true || String(rows[0].device_token || '') !== deviceToken) {
-    const err = new Error('Device is not authorized or has been revoked.');
+  if (!rows.length || rows[0].revoked === true || rows[0].suspended === true || String(rows[0].device_token || '') !== deviceToken) {
+    const err = new Error('Device is not authorized, suspended, or has been revoked.');
     err.statusCode = 403;
     throw err;
   }

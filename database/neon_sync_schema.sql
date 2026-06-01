@@ -97,6 +97,9 @@ create table if not exists store_devices (
   device_token text default '',
   store_epoch integer not null default 1,
   revoked boolean not null default false,
+  suspended boolean not null default false,
+  wipe_pending boolean not null default false,
+  wipe_requested_at timestamptz,
   last_seen_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   primary key (store_id, branch_id, device_id)
@@ -104,6 +107,9 @@ create table if not exists store_devices (
 
 alter table store_devices add column if not exists device_token text default '';
 alter table store_devices add column if not exists revoked boolean not null default false;
+alter table store_devices add column if not exists suspended boolean not null default false;
+alter table store_devices add column if not exists wipe_pending boolean not null default false;
+alter table store_devices add column if not exists wipe_requested_at timestamptz;
 alter table store_devices add column if not exists active_transport text default '';
 alter table store_devices add column if not exists last_sync_transport text default '';
 alter table store_devices add column if not exists last_applied_cursor timestamptz;

@@ -8,6 +8,7 @@ import 'core/localization/app_localizations.dart';
 import 'core/theme/app_theme.dart';
 import 'core/utils/responsive.dart';
 import 'core/sync_unified/sync_unified.dart';
+import 'core/sync_unified/sync_device_state.dart';
 import 'core/services/cloud_sync_service.dart';
 import 'data/app_store.dart';
 import 'models/user_role.dart';
@@ -293,12 +294,14 @@ class _TransportSnapshot {
     required this.state,
     required this.message,
     this.lastSeenAt,
+    this.lastSuccessfulSyncAt,
   });
 
   final String label;
   final _TransportState state;
   final String message;
   final DateTime? lastSeenAt;
+  final DateTime? lastSuccessfulSyncAt;
 }
 
 class _ConnectionStatusSnapshot {
@@ -308,6 +311,8 @@ class _ConnectionStatusSnapshot {
     required this.lan,
     required this.cloud,
     required this.syncHealth,
+    required this.activeTransportLabel,
+    required this.pendingChanges,
   });
 
   final String roleLabel;
@@ -315,6 +320,8 @@ class _ConnectionStatusSnapshot {
   final _TransportSnapshot lan;
   final _TransportSnapshot cloud;
   final _TransportSnapshot syncHealth;
+  final String activeTransportLabel;
+  final int pendingChanges;
 }
 
 class HostConnectionIndicator extends StatefulWidget {
@@ -336,6 +343,8 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     lan: _TransportSnapshot(label: 'LAN', state: _TransportState.checking, message: 'Checking LAN status...'),
     cloud: _TransportSnapshot(label: 'Cloud', state: _TransportState.checking, message: 'Checking Cloud status...'),
     syncHealth: _TransportSnapshot(label: 'Sync', state: _TransportState.checking, message: 'Checking sync health...'),
+    activeTransportLabel: 'Local',
+    pendingChanges: 0,
   );
 
   @override
@@ -372,6 +381,34 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     if (identity.isHost) return _t('connection_role_host_desc');
     if (identity.isClient) return _t('connection_role_client_desc');
     return _t('connection_role_local_desc');
+  }
+
+  String _activeTransportLabel() {
+    final identity = widget.store.appIdentity;
+    if (identity.isHost) {
+      final lan = UnifiedSyncFactory.isLanSetupComplete ? _t('connection_lan') : '';
+      final cloud = UnifiedSyncFactory.cloudCanCheck(widget.store) ? _t('connection_cloud') : '';
+      final parts = [lan, cloud].where((part) => part.trim().isNotEmpty).toList(growable: false);
+      if (parts.isEmpty) return _t('local');
+      return parts.join(' + ');
+    }
+    final active = identity.activeSyncTransportNormalized;
+    if (active == 'lan') return _t('connection_lan');
+    if (active == 'cloud') return _t('connection_cloud');
+    return _t('local');
+  }
+
+  bool _isActiveTransport(_TransportSnapshot snapshot) {
+    final identity = widget.store.appIdentity;
+    if (identity.isHost) {
+      if (snapshot.label == _t('connection_lan')) return UnifiedSyncFactory.isLanSetupComplete;
+      if (snapshot.label == _t('connection_cloud')) return UnifiedSyncFactory.cloudCanCheck(widget.store);
+      return true;
+    }
+    final active = identity.activeSyncTransportNormalized;
+    if (snapshot.label == _t('connection_lan')) return active == 'lan';
+    if (snapshot.label == _t('connection_cloud')) return active == 'cloud';
+    return true;
   }
 
   Future<_TransportSnapshot> _readLanStatus() async {
@@ -425,7 +462,6 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
   }
 
   Future<_TransportSnapshot> _readCloudStatus() async {
-    final pending = widget.store.pendingSyncCount;
     final provisioning = widget.store.appIdentity.isClient && CloudProvisioningStatus.isPending;
 
     if (!UnifiedSyncFactory.cloudCanCheck(widget.store)) {
@@ -454,15 +490,6 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
           state: _TransportState.offline,
           message: status.message.isEmpty ? _t('connection_cloud_unreachable') : status.message,
           lastSeenAt: status.lastSeenAt,
-        );
-      }
-
-      if (pending > 0) {
-        return _TransportSnapshot(
-          label: _t('connection_cloud'),
-          state: _TransportState.pending,
-          message: "${_t('connection_cloud_pending_prefix')} $pending ${_t('connection_cloud_pending_suffix')}",
-          lastSeenAt: status.lastSeenAt ?? DateTime.now(),
         );
       }
 
@@ -502,25 +529,44 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
   }
 
   _TransportSnapshot _readSyncHealthStatus() {
+    final identity = widget.store.appIdentity;
     final pending = widget.store.pendingSyncCount;
+    final state = SyncDeviceStateStore.load(identity);
+    final lastSuccessfulSync = state.lastAckCursor ?? state.lastAppliedHostCursor;
+
     if (CloudProvisioningStatus.isPending) {
       return _TransportSnapshot(
         label: _t('connection_sync_health'),
         state: _TransportState.provisioning,
         message: _t('connection_sync_provisioning'),
+        lastSuccessfulSyncAt: lastSuccessfulSync,
       );
     }
+
     if (pending > 0) {
       return _TransportSnapshot(
         label: _t('connection_sync_health'),
         state: _TransportState.pending,
-        message: '${_t('connection_sync_pending_prefix')} $pending ${_t('connection_sync_pending_suffix')}',
+        message: identity.isClient
+            ? '${_t('waiting_host_approval')} • $pending ${_t('connection_sync_pending_suffix')}'
+            : '${_t('connection_sync_pending_prefix')} $pending ${_t('connection_sync_pending_suffix')}',
+        lastSuccessfulSyncAt: lastSuccessfulSync,
       );
     }
+
+    if (lastSuccessfulSync == null) {
+      return _TransportSnapshot(
+        label: _t('connection_sync_health'),
+        state: _TransportState.notConfigured,
+        message: _t('not_synced_yet'),
+      );
+    }
+
     return _TransportSnapshot(
       label: _t('connection_sync_health'),
       state: _TransportState.active,
-      message: _t('connection_sync_healthy'),
+      message: _t('synced'),
+      lastSuccessfulSyncAt: lastSuccessfulSync,
     );
   }
 
@@ -531,6 +577,8 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
       lan: _TransportSnapshot(label: _t('connection_lan'), state: _TransportState.checking, message: _t('connection_lan_checking')),
       cloud: _TransportSnapshot(label: _t('connection_cloud'), state: _TransportState.checking, message: _t('connection_cloud_checking')),
       syncHealth: _TransportSnapshot(label: _t('connection_sync_health'), state: _TransportState.checking, message: _t('connection_sync_checking')),
+      activeTransportLabel: _activeTransportLabel(),
+      pendingChanges: widget.store.pendingSyncCount,
     );
     if (mounted) setState(() => _snapshot = checking);
 
@@ -545,6 +593,8 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
         lan: lan,
         cloud: cloud,
         syncHealth: syncHealth,
+        activeTransportLabel: _activeTransportLabel(),
+        pendingChanges: widget.store.pendingSyncCount,
       );
     });
   }
@@ -578,12 +628,17 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     };
   }
 
+  String _timeText(DateTime? value) {
+    if (value == null) return _t('never');
+    final local = value.toLocal();
+    return '${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')} ${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+  }
+
   String _lastSeenText(DateTime? value) {
     if (value == null) return '';
     final local = value.toLocal();
     return ' • ${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
   }
-
 
   bool _needsAttention(_TransportSnapshot snapshot) {
     return switch (snapshot.state) {
@@ -592,24 +647,65 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     };
   }
 
-  bool get _hasAttention => _needsAttention(_snapshot.lan) || _needsAttention(_snapshot.cloud) || _needsAttention(_snapshot.syncHealth);
+  _TransportSnapshot get _activeConnectionSnapshot {
+    final identity = widget.store.appIdentity;
+    if (identity.isHost) {
+      final candidates = <_TransportSnapshot>[];
+      if (UnifiedSyncFactory.isLanSetupComplete) candidates.add(_snapshot.lan);
+      if (UnifiedSyncFactory.cloudCanCheck(widget.store)) candidates.add(_snapshot.cloud);
+      if (candidates.isEmpty) return _snapshot.lan;
+      if (candidates.any((item) => item.state == _TransportState.checking)) {
+        return candidates.firstWhere((item) => item.state == _TransportState.checking);
+      }
+      if (candidates.any((item) => item.state == _TransportState.online || item.state == _TransportState.active)) {
+        return candidates.firstWhere((item) => item.state == _TransportState.online || item.state == _TransportState.active);
+      }
+      return candidates.first;
+    }
+    final active = identity.activeSyncTransportNormalized;
+    if (active == 'lan') return _snapshot.lan;
+    if (active == 'cloud') return _snapshot.cloud;
+    return _TransportSnapshot(label: _t('local'), state: _TransportState.disabled, message: _t('connection_role_local_desc'));
+  }
+
+  bool get _hasAttention {
+    final activeConnection = _activeConnectionSnapshot;
+    return _needsAttention(activeConnection) || _needsAttention(_snapshot.syncHealth);
+  }
 
   _TransportState get _summaryState {
-    if (_snapshot.lan.state == _TransportState.checking || _snapshot.cloud.state == _TransportState.checking || _snapshot.syncHealth.state == _TransportState.checking) {
+    final activeConnection = _activeConnectionSnapshot;
+    if (activeConnection.state == _TransportState.checking || _snapshot.syncHealth.state == _TransportState.checking) {
       return _TransportState.checking;
     }
     if (_hasAttention) return _TransportState.error;
     return _TransportState.online;
   }
 
-  String get _summaryLabel {
-    if (_summaryState == _TransportState.checking) return _t('connection_state_checking');
-    return _hasAttention ? _t('needs_attention') : _t('synced');
+  String get _connectionSummaryLabel {
+    final connection = _activeConnectionSnapshot;
+    if (connection.state == _TransportState.online || connection.state == _TransportState.active) return _t('connection_state_online');
+    if (connection.state == _TransportState.disabled || connection.state == _TransportState.notConfigured) return _t('connection_state_offline');
+    return _stateText(connection.state);
   }
 
-  PopupMenuItem<void> _detailItem(BuildContext context, IconData icon, String title, _TransportSnapshot snapshot) {
+  String get _syncSummaryLabel {
+    final sync = _snapshot.syncHealth;
+    if (sync.state == _TransportState.active) return _t('synced');
+    if (sync.state == _TransportState.pending) return widget.store.appIdentity.isClient ? _t('waiting_host_approval') : _t('connection_state_pending');
+    if (sync.state == _TransportState.notConfigured) return _t('not_synced_yet');
+    return _stateText(sync.state);
+  }
+
+  String get _summaryLabel {
+    if (_summaryState == _TransportState.checking) return _t('connection_state_checking');
+    return '$_connectionSummaryLabel • $_syncSummaryLabel';
+  }
+
+  PopupMenuItem<void> _detailItem(BuildContext context, IconData icon, String title, _TransportSnapshot snapshot, {bool activeTransport = true}) {
     final theme = Theme.of(context);
-    final color = _stateColor(context, snapshot.state);
+    final color = activeTransport ? _stateColor(context, snapshot.state) : Colors.grey;
+    final titleSuffix = activeTransport ? '' : ' (${_t('connection_state_disabled')})';
     return PopupMenuItem<void>(
       enabled: false,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
@@ -626,7 +722,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text('$title: ${_stateText(snapshot.state)}', style: theme.textTheme.labelLarge),
+                Text('$title$titleSuffix: ${_stateText(snapshot.state)}', style: theme.textTheme.labelLarge),
                 if (snapshot.message.trim().isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 2),
@@ -645,6 +741,35 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     );
   }
 
+  PopupMenuItem<void> _infoItem(BuildContext context, IconData icon, String title, String value) {
+    final theme = Theme.of(context);
+    return PopupMenuItem<void>(
+      enabled: false,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Icon(icon, color: theme.colorScheme.primary, size: 18),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(title, style: theme.textTheme.labelLarge),
+                const SizedBox(height: 2),
+                Text(value, maxLines: 3, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -655,9 +780,13 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     final tooltip = [
       _summaryLabel,
       _snapshot.roleLabel,
+      '${_t('active_transport')}: ${_snapshot.activeTransportLabel}',
+      '${_t('connection_status')}: $_connectionSummaryLabel',
+      '${_t('sync_status')}: $_syncSummaryLabel',
+      '${_t('pending_changes')}: ${_snapshot.pendingChanges}',
+      '${_t('last_successful_sync')}: ${_timeText(syncHealth.lastSuccessfulSyncAt)}',
       "${_t('connection_lan')}: ${_stateText(lan.state)}${_lastSeenText(lan.lastSeenAt)} — ${lan.message}",
       "${_t('connection_cloud')}: ${_stateText(cloud.state)}${_lastSeenText(cloud.lastSeenAt)} — ${cloud.message}",
-      "${_t('connection_sync_health')}: ${_stateText(syncHealth.state)} — ${syncHealth.message}",
     ].join('\n');
 
     return Padding(
@@ -666,7 +795,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
         message: tooltip,
         child: PopupMenuButton<void>(
           tooltip: tooltip,
-          constraints: BoxConstraints(minWidth: 260, maxWidth: VentioResponsive.modalMaxWidth(context, 360)),
+          constraints: BoxConstraints(minWidth: 280, maxWidth: VentioResponsive.modalMaxWidth(context, 390)),
           onOpened: _refresh,
           itemBuilder: (context) => [
             PopupMenuItem<void>(
@@ -690,9 +819,14 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
               ),
             ),
             const PopupMenuDivider(),
-            _detailItem(context, Icons.lan_outlined, _t('connection_lan'), lan),
-            _detailItem(context, Icons.cloud_outlined, _t('connection_cloud'), cloud),
-            _detailItem(context, Icons.sync_outlined, _t('connection_sync_health'), syncHealth),
+            _infoItem(context, Icons.swap_horiz_outlined, _t('active_transport'), _snapshot.activeTransportLabel),
+            _infoItem(context, Icons.device_hub_outlined, _t('connection_status'), _connectionSummaryLabel),
+            _infoItem(context, Icons.sync_outlined, _t('sync_status'), _syncSummaryLabel),
+            _infoItem(context, Icons.pending_actions_outlined, _t('pending_changes'), _snapshot.pendingChanges.toString()),
+            _infoItem(context, Icons.verified_outlined, _t('last_successful_sync'), _timeText(syncHealth.lastSuccessfulSyncAt)),
+            const PopupMenuDivider(),
+            _detailItem(context, Icons.lan_outlined, _t('connection_lan'), lan, activeTransport: _isActiveTransport(lan)),
+            _detailItem(context, Icons.cloud_outlined, _t('connection_cloud'), cloud, activeTransport: _isActiveTransport(cloud)),
             PopupMenuItem<void>(
               enabled: false,
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
@@ -712,7 +846,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
                 Icon(Icons.circle, color: summaryColor, size: 9),
                 const SizedBox(width: 6),
                 ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 132),
+                  constraints: const BoxConstraints(maxWidth: 180),
                   child: Text(
                     _summaryLabel,
                     maxLines: 1,
