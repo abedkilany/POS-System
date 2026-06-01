@@ -1616,7 +1616,7 @@ class CloudSyncService {
         }
         if (pageCursor.isNotEmpty) query['cursor'] = pageCursor;
 
-        _cloudLog('PULL_PAGE_REQUEST', {'page': pageCount, 'query': query, 'deviceStateLastAppliedSequence': deviceState.lastAppliedSequence, 'deviceStateLastAckSequence': deviceState.lastAckSequence, 'deviceStateLastAppliedCursor': deviceState.lastAppliedCursor?.toIso8601String(), 'deviceStateLastAckCursor': deviceState.lastAckCursor?.toIso8601String()});
+        _cloudLog('PULL_PAGE_REQUEST', {'page': pageCount, 'query': query, 'deviceStateLastAppliedSequence': deviceState.lastAppliedSequence, 'deviceStateLastAckSequence': deviceState.lastAckSequence, 'deviceStateLastAppliedHostCursor': deviceState.lastAppliedHostCursor?.toIso8601String(), 'deviceStateLastAckCursor': deviceState.lastAckCursor?.toIso8601String()});
         final pullProgress = (0.35 + (pageCount - 1) * 0.08).clamp(0.35, 0.82).toDouble();
         onProgress?.call(pullProgress, 'Pulling Cloud changes page $pageCount...');
         final pull = await _client.get(settings.endpoint('/api/sync/pull', query), headers: _headers(settings)).timeout(const Duration(seconds: 20));
