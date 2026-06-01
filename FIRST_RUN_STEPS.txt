@@ -1,0 +1,15 @@
+Sync v2 test notes
+==================
+
+What changed in this build:
+- v2 sync setup no longer auto-migrates old LAN settings.
+- If the app does not have lan_sync_settings_v2, it shows the Host/Client setup screen.
+- Settings now includes "Reset sync setup". It clears only the v2 Host/Client sync setup, not business data.
+- After pressing Reset sync setup, restart the app to see the Host/Client setup screen again.
+
+Testing recommendation:
+1. For a clean Host test, uninstall the old app or clear app data, then install this build.
+2. Choose Host on the main device.
+3. On the second device, choose Client, enter Host IP + same Pairing token, then clone.
+4. Test online changes both ways.
+5. Test offline changes on Client, reconnect, and run/await auto sync.
