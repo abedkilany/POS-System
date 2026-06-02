@@ -228,6 +228,17 @@ class AppStore extends ChangeNotifier {
   String get deviceId => _deviceId;
   int get pendingSyncCount => pendingSyncQueue.length;
   int get pendingSyncQueueCount => pendingSyncQueue.length;
+
+  String get activeClientSyncTarget {
+    if (!appIdentity.isClient) return '';
+    return appIdentity.activeSyncTransportNormalized == 'lan' ? 'host' : 'cloud_host';
+  }
+
+  int get activeClientPendingSyncCount {
+    final target = activeClientSyncTarget;
+    if (target.isEmpty) return pendingSyncCount;
+    return pendingSyncQueueForTarget(target, readyOnly: false).length;
+  }
   DateTime? get latestResetSyncAt {
     DateTime? latest;
     for (final change in _syncChanges) {
@@ -1327,8 +1338,15 @@ class AppStore extends ChangeNotifier {
     if (!identity.isClient) {
       throw StateError('Only Client devices switch the active sync transport. Hosts may run LAN and Cloud together.');
     }
+    if (normalizedTransport == 'lan' && !_isLanClientConfigured) {
+      throw StateError('LAN is configured only when this device has a saved Client pairing. Configure LAN before switching to it.');
+    }
+    if (normalizedTransport == 'cloud' && !_isCloudClientConfigured) {
+      throw StateError('Cloud is configured only when this device has saved Cloud credentials. Configure Cloud before switching to it.');
+    }
 
     final nextIdentity = identity.copyWith(
+      syncMode: normalizedTransport == 'lan' ? SyncMode.lanOnly : SyncMode.cloudConnected,
       activeSyncTransport: normalizedTransport,
       updatedAt: DateTime.now(),
     );
@@ -2236,6 +2254,21 @@ class AppStore extends ChangeNotifier {
       final setupComplete = decoded['setupComplete'] as bool? ?? false;
       final hostModeEnabled = decoded['hostModeEnabled'] as bool? ?? false;
       return mode == 'client' || (setupComplete && !hostModeEnabled);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  bool get _isCloudClientConfigured {
+    final raw = LocalDatabaseService.getString(_appIdentityKey);
+    if (raw == null || raw.trim().isEmpty) return false;
+    try {
+      final identity = AppIdentity.fromJson(Map<String, dynamic>.from(jsonDecode(raw) as Map));
+      final base = LocalDatabaseService.getString('cloud_api_base_url')?.trim() ?? '';
+      return identity.isClient &&
+          identity.deviceId.trim().isNotEmpty &&
+          identity.deviceToken.trim().isNotEmpty &&
+          base.isNotEmpty;
     } catch (_) {
       return false;
     }

@@ -879,7 +879,7 @@
   "unauthorized": "غير مصرح",
   "waiting_host_approval": "بانتظار موافقة الهوست",
   "copied_to_clipboard": "تم النسخ إلى الحافظة.",
-  "sync_wipe_pending": "تم طلب المسح عن بُعد. سيبقى الجهاز بحالة Wipe Pending حتى يؤكد الـ Client استلام الأمر.",
+  "sync_wipe_pending": "تم طلب المسح عن بُعد. سيبقى الجهاز ظاهراً بحالة Wipe Pending، ويمكن استخدام الحذف النهائي لإزالة السجل يدوياً.",
   "wipe_pending": "بانتظار المسح",
   "connected_or_enabled": "متصل / مفعّل",
   "paired_or_configured": "مقترن / مجهز",
@@ -897,5 +897,9 @@
   "client_suspended_by_host_desc": "تم إيقاف هذا الجهاز من الجهاز الرئيسي. تواصل مع مدير الجهاز الرئيسي لإعادة التفعيل.",
   "check_resume_status": "فحص حالة إعادة التفعيل",
   "client_resume_detected": "تم تأكيد إعادة التفعيل. يمكنك تسجيل الدخول من جديد.",
-  "client_still_suspended": "هذا الجهاز ما زال موقوفاً من الهوست."
+  "client_still_suspended": "هذا الجهاز ما زال موقوفاً من الهوست.",
+  "permanent_delete": "حذف نهائي",
+  "permanent_delete_sync_device": "حذف سجل الجهاز نهائياً",
+  "permanent_delete_sync_device_confirm": "سيتم حذف سجل الجهاز من قائمة الـ Host فوراً. سيبقى طلب المسح عن بُعد مرسلاً إذا كان جهاز Client غير متصل أو مفقوداً. هل تريد المتابعة؟",
+  "sync_device_permanently_deleted": "تم حذف سجل الجهاز نهائياً من قائمة الـ Host."
 }

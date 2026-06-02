@@ -305,7 +305,7 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                             scrollDirection: Axis.horizontal,
                             buildDefaultDragHandles: false,
                             itemCount: _quickPages.length,
-                            onReorder: _moveQuickPage,
+                            onReorderItem: _moveQuickPage,
                             proxyDecorator: (child, _, __) => Material(elevation: 6, borderRadius: BorderRadius.circular(24), child: child),
                             itemBuilder: (context, index) {
                               final selected = index == _selectedQuickPageIndex;
@@ -1508,7 +1508,7 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                                       scrollDirection: Axis.horizontal,
                                       buildDefaultDragHandles: false,
                                       itemCount: _quickPages.length,
-                                      onReorder: (oldIndex, newIndex) {
+                                      onReorderItem: (oldIndex, newIndex) {
                                         _moveQuickPage(oldIndex, newIndex);
                                         setModalState(() => sheetSelectedPageIndex = _selectedQuickPageIndex);
                                       },

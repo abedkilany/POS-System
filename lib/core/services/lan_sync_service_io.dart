@@ -546,12 +546,9 @@ class LanSyncService {
           await _json(request, {'ok': false, 'error': 'Invalid wipe acknowledgement.'}, status: HttpStatus.unauthorized);
           return;
         }
-        final currentSettings = LanSyncSettings.load();
-        final paired = Map<String, String>.from(currentSettings.pairedDevices)..remove(clientDeviceId);
-        final registry = Map<String, HostRegistryDevice>.from(currentSettings.hostRegistry)..remove(clientDeviceId);
-        await currentSettings.copyWith(pairedDevices: paired, hostRegistry: registry).save();
-        await SyncDeviceStateStore.removePeerState(clientDeviceId);
-        await SyncDeviceAccessStore.markDeleted(clientDeviceId, deviceToken: deviceToken);
+        // Fix #11: ACK confirms the client received the wipe command, but it
+        // must not automatically remove the device from the Host list. The row
+        // remains Wipe Pending until the admin presses Permanent Delete.
         await _json(request, {'ok': true, 'wipeConfirmed': true, 'serverTime': DateTime.now().toIso8601String()});
         return;
       }
@@ -726,19 +723,31 @@ class LanSyncService {
       if (decoded['ok'] != true) {
         return LanSyncResult(ok: false, message: decoded['error']?.toString() ?? 'LAN pairing failed.');
       }
+      final claimedStoreId = decoded['storeId']?.toString() ?? identity.storeId;
+      final claimedBranchId = decoded['branchId']?.toString() ?? identity.branchId;
+      final claimedHostDeviceId = decoded['hostDeviceId']?.toString() ?? identity.hostDeviceId;
+      if (identity.isClient && identity.hostDeviceId.trim().isNotEmpty) {
+        final mismatches = <String>[];
+        if (identity.storeId.trim().toUpperCase() != claimedStoreId.trim().toUpperCase()) mismatches.add('Store ID');
+        if (identity.branchId.trim().toUpperCase() != claimedBranchId.trim().toUpperCase()) mismatches.add('Branch ID');
+        if (identity.hostDeviceId.trim().toUpperCase() != claimedHostDeviceId.trim().toUpperCase()) mismatches.add('Host ID');
+        if (mismatches.isNotEmpty) {
+          return LanSyncResult(ok: false, message: 'LAN pairing belongs to a different Store (${mismatches.join(', ')}). Use the current Host pairing code.');
+        }
+      }
 
       final snapshot = jsonEncode(decoded['snapshot'] as Map<String, dynamic>);
       await store.importSyncSnapshotJson(snapshot);
       final hostCursor = store.syncSnapshotGeneratedAtFromJson(snapshot);
       final current = store.appIdentity;
       await store.updateAppIdentityDuringSetup(current.copyWith(
-        storeId: decoded['storeId']?.toString() ?? current.storeId,
-        branchId: decoded['branchId']?.toString() ?? current.branchId,
+        storeId: claimedStoreId,
+        branchId: claimedBranchId,
         deviceId: decoded['deviceId']?.toString() ?? current.deviceId,
         deviceRole: DeviceRole.client,
         syncMode: SyncMode.lanOnly,
         activeSyncTransport: 'lan',
-        hostDeviceId: decoded['hostDeviceId']?.toString() ?? current.hostDeviceId,
+        hostDeviceId: claimedHostDeviceId,
         deviceToken: decoded['deviceToken']?.toString() ?? current.deviceToken,
       ));
       final settings = LanSyncSettings.load();

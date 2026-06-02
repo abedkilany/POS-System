@@ -464,11 +464,23 @@ class CloudSyncService {
       if (decoded['ok'] != true) {
         return const CloudPairingClaimResult(ok: false, message: 'Pairing code expired or already used. Ask the Host device for a new code.');
       }
+      final claimedStoreId = decoded['storeId']?.toString() ?? current.storeId;
+      final claimedBranchId = decoded['branchId']?.toString() ?? current.branchId;
+      final claimedHostDeviceId = decoded['hostDeviceId']?.toString() ?? current.hostDeviceId;
+      if (current.isClient && current.hostDeviceId.trim().isNotEmpty) {
+        final mismatches = <String>[];
+        if (current.storeId.trim().toUpperCase() != claimedStoreId.trim().toUpperCase()) mismatches.add('Store ID');
+        if (current.branchId.trim().toUpperCase() != claimedBranchId.trim().toUpperCase()) mismatches.add('Branch ID');
+        if (current.hostDeviceId.trim().toUpperCase() != claimedHostDeviceId.trim().toUpperCase()) mismatches.add('Host ID');
+        if (mismatches.isNotEmpty) {
+          return CloudPairingClaimResult(ok: false, message: 'Pairing code belongs to a different Store (${mismatches.join(', ')}). Use the current Host pairing code.');
+        }
+      }
       final transport = decoded['transport']?.toString() == 'lan' ? SyncMode.lanOnly : SyncMode.cloudConnected;
       final identity = current.copyWith(
-        storeId: decoded['storeId']?.toString() ?? current.storeId,
-        branchId: decoded['branchId']?.toString() ?? current.branchId,
-        hostDeviceId: decoded['hostDeviceId']?.toString() ?? current.hostDeviceId,
+        storeId: claimedStoreId,
+        branchId: claimedBranchId,
+        hostDeviceId: claimedHostDeviceId,
         deviceRole: DeviceRole.client,
         syncMode: transport,
         activeSyncTransport: transport == SyncMode.lanOnly ? 'lan' : 'cloud',

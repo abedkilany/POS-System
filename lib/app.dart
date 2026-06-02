@@ -464,7 +464,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
   }
 
   Future<_TransportSnapshot> _readCloudStatus() async {
-    final provisioning = widget.store.appIdentity.isClient && CloudProvisioningStatus.isPending;
+    final provisioning = widget.store.appIdentity.isClient && widget.store.appIdentity.activeSyncTransportNormalized == 'cloud' && CloudProvisioningStatus.isPending;
 
     if (!UnifiedSyncFactory.cloudCanCheck(widget.store)) {
       return _TransportSnapshot(
@@ -532,11 +532,11 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
 
   _TransportSnapshot _readSyncHealthStatus() {
     final identity = widget.store.appIdentity;
-    final pending = widget.store.pendingSyncCount;
+    final pending = identity.isClient ? widget.store.activeClientPendingSyncCount : widget.store.pendingSyncCount;
     final state = SyncDeviceStateStore.load(identity);
     final lastSuccessfulSync = state.lastAckCursor ?? state.lastAppliedHostCursor;
 
-    if (CloudProvisioningStatus.isPending) {
+    if (identity.isClient && identity.activeSyncTransportNormalized == 'cloud' && CloudProvisioningStatus.isPending) {
       return _TransportSnapshot(
         label: _t('connection_sync_health'),
         state: _TransportState.provisioning,
@@ -559,7 +559,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
         label: _t('connection_sync_health'),
         state: _TransportState.pending,
         message: identity.isClient
-            ? '${_t('waiting_host_approval')} • $pending ${_t('connection_sync_pending_suffix')}'
+            ? '${_t('sync_pending')} • $pending ${_t('connection_sync_pending_suffix')}'
             : '${_t('connection_sync_pending_prefix')} $pending ${_t('connection_sync_pending_suffix')}',
         lastSuccessfulSyncAt: lastSuccessfulSync,
       );
@@ -589,7 +589,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
       cloud: _TransportSnapshot(label: _t('connection_cloud'), state: _TransportState.checking, message: _t('connection_cloud_checking')),
       syncHealth: _TransportSnapshot(label: _t('connection_sync_health'), state: _TransportState.checking, message: _t('connection_sync_checking')),
       activeTransportLabel: _activeTransportLabel(),
-      pendingChanges: widget.store.pendingSyncCount,
+      pendingChanges: widget.store.appIdentity.isClient ? widget.store.activeClientPendingSyncCount : widget.store.pendingSyncCount,
     );
     if (mounted) setState(() => _snapshot = checking);
 
@@ -605,7 +605,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
         cloud: cloud,
         syncHealth: syncHealth,
         activeTransportLabel: _activeTransportLabel(),
-        pendingChanges: widget.store.pendingSyncCount,
+        pendingChanges: widget.store.appIdentity.isClient ? widget.store.activeClientPendingSyncCount : widget.store.pendingSyncCount,
       );
     });
   }
@@ -706,7 +706,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     final sync = _snapshot.syncHealth;
     if (sync.state == _TransportState.active) return _t('synced');
     if (sync.state == _TransportState.suspended) return _t('suspended');
-    if (sync.state == _TransportState.pending) return widget.store.appIdentity.isClient ? _t('waiting_host_approval') : _t('connection_state_pending');
+    if (sync.state == _TransportState.pending) return widget.store.appIdentity.isClient ? _t('sync_pending') : _t('connection_state_pending');
     if (sync.state == _TransportState.notConfigured) return _t('not_synced_yet');
     return _stateText(sync.state);
   }

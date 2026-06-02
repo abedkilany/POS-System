@@ -879,7 +879,7 @@
   "unauthorized": "Unauthorized",
   "waiting_host_approval": "Waiting for Host approval",
   "copied_to_clipboard": "Copied to clipboard.",
-  "sync_wipe_pending": "Remote wipe requested. Device will stay Wipe Pending until the Client acknowledges the command.",
+  "sync_wipe_pending": "Remote wipe requested. The device remains visible as Wipe Pending. Use Permanent Delete to remove the record manually.",
   "wipe_pending": "Wipe Pending",
   "connected_or_enabled": "Connected / Enabled",
   "paired_or_configured": "Paired / Configured",
@@ -897,5 +897,9 @@
   "client_suspended_by_host_desc": "This device has been suspended by the Host. Contact the main device administrator to resume access.",
   "check_resume_status": "Check resume status",
   "client_resume_detected": "Resume confirmed. You can sign in again.",
-  "client_still_suspended": "This device is still suspended by the Host."
+  "client_still_suspended": "This device is still suspended by the Host.",
+  "permanent_delete": "Permanent Delete",
+  "permanent_delete_sync_device": "Permanently delete device record",
+  "permanent_delete_sync_device_confirm": "This removes the device record from the Host list immediately. The remote wipe request remains sent if the Client is offline or lost. Continue?",
+  "sync_device_permanently_deleted": "Device record permanently deleted from the Host list."
 }
