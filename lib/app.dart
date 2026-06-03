@@ -552,8 +552,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
   _TransportSnapshot _readSyncHealthStatus() {
     final identity = widget.store.appIdentity;
     final pending = identity.isClient ? widget.store.activeClientPendingSyncCount : widget.store.pendingSyncCount;
-    final state = SyncDeviceStateStore.load(identity);
-    final lastSuccessfulSync = state.lastAckCursor ?? state.lastAppliedHostCursor;
+    final lastSuccessfulSync = SyncDeviceStateStore.lastSuccessfulSyncAt(identity);
 
     if (identity.isClient && identity.activeSyncTransportNormalized == 'cloud' && CloudProvisioningStatus.isPending) {
       return _TransportSnapshot(

@@ -1408,7 +1408,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   bool _detectingHostIp = false;
   bool _showLanPairingCode = false;
   bool _showCloudPairingCode = false;
-  bool _hostCreateFailed = false;
   DateTime? _latestLanPairingExpiresAt;
   bool _latestLanPairingConsumed = false;
   bool _latestCloudPairingConsumed = false;
@@ -1427,7 +1426,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   static const _cloudPairingExpiryStorageKey = 'cloud_pairing_expires_at_v1';
   static const _pairingCodeLifetime = Duration(minutes: 5);
   String get _initialCloudHostReadyKey => 'cloud_initial_snapshot_ready_${widget.store.appIdentity.storeId}';
-  bool get _initialCloudHostReady => LocalDatabaseService.getString(_initialCloudHostReadyKey) == 'true';
 
   @override
   void initState() {
@@ -1554,10 +1552,13 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         final identity = widget.store.appIdentity;
         final tr = AppLocalizations.of(context);
         if (_deviceRole == DeviceRole.host) {
-          await widget.store.updateAppIdentity(identity.copyWith(
-            deviceRole: DeviceRole.host,
-            syncMode: _cloudEnabled ? SyncMode.cloudConnected : (_lanEnabledForHost ? SyncMode.lanOnly : SyncMode.localOnly),
-          ));
+          await widget.store.updateAppIdentityLocalOnly(
+            identity.copyWith(
+              deviceRole: DeviceRole.host,
+              syncMode: _cloudEnabled ? SyncMode.cloudConnected : (_lanEnabledForHost ? SyncMode.lanOnly : SyncMode.localOnly),
+            ),
+            source: 'sync settings save',
+          );
           final existingLan = LanSyncSettings.load();
           final migratedLan = existingLan.withMigratedHostRegistry(widget.store.deviceId);
           await LanSyncSettings(
@@ -1585,11 +1586,14 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           if (activeTransport == 'cloud' && !cloudConfigured) {
             throw Exception(tr.text('cloud_not_configured_cannot_switch'));
           }
-          await widget.store.updateAppIdentity(identity.copyWith(
-            deviceRole: DeviceRole.client,
-            syncMode: _clientSyncMode,
-            activeSyncTransport: activeTransport,
-          ));
+          await widget.store.updateAppIdentityLocalOnly(
+            identity.copyWith(
+              deviceRole: DeviceRole.client,
+              syncMode: _clientSyncMode,
+              activeSyncTransport: activeTransport,
+            ),
+            source: 'sync settings save',
+          );
           await lanSettings.copyWith(
             autoSyncEnabled: activeTransport == 'lan',
             hostModeEnabled: false,
@@ -2101,39 +2105,39 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         });
       });
 
-  Future<void> _saveCloudSettingsForPairing() async {
-    final identity = widget.store.appIdentity;
-    await widget.store.updateAppIdentity(identity.copyWith(
-      deviceRole: DeviceRole.host,
-      syncMode: SyncMode.cloudConnected,
-    ));
-    await _cloudSettings(enabled: true).save();
-  }
+  Future<void> _clearInvalidPendingChanges() async {
+    final pendingCount = widget.store.pendingSyncCount;
+    if (pendingCount == 0) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(tr.text('clear_sync_settings_pending')),
+        content: Text(tr.text('clear_sync_settings_pending_confirm')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(tr.text('cancel')),
+          ),
+          FilledButton.tonalIcon(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            icon: const Icon(Icons.cleaning_services_outlined),
+            label: Text(tr.text('clear')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
 
-  Future<void> _createNewHost() => _run(() async {
-        setState(() { _status = 'Connecting to Cloud'; _statusProgress = 0.10; });
-        await _saveCloudSettingsForPairing();
-        setState(() { _status = 'Creating Host'; _statusProgress = 0.25; });
-        final cloudEngine = _cloudEngine(enabled: true);
-        final registerResult = await cloudEngine.registerCurrentHost(transportName: 'cloud');
-        if (!registerResult.ok) throw StateError(registerResult.message);
-        setState(() { _status = 'Preparing store data'; _statusProgress = 0.45; });
-        setState(() { _status = 'Uploading initial snapshot'; _statusProgress = 0.70; });
-        final snapshotRequestedAt = DateTime.now().toUtc().subtract(const Duration(seconds: 2));
-        final result = await cloudEngine.createInitialHostSnapshot(
-          minSnapshotUpdatedAt: snapshotRequestedAt,
-          onProgress: (value, label) {
-            if (mounted) setState(() { _status = label; _statusProgress = value < 0.70 ? 0.70 : value; });
-          },
-        );
-        setState(() { _status = 'Verifying upload'; _statusProgress = 0.90; });
-        if (!result.ok || result.pushed <= 0) {
-          _hostCreateFailed = true;
-          throw StateError(result.ok ? 'Initial snapshot upload was not verified. Please retry Create New Host.' : result.message);
-        }
-        await LocalDatabaseService.setString(_initialCloudHostReadyKey, 'true');
-        setState(() { _hostCreateFailed = false; _status = 'Store is ready'; _statusProgress = 1.0; });
+    await _run(() async {
+      final removed = await widget.store.clearLocalOnlyPendingSyncChanges();
+      if (!mounted) return;
+      setState(() {
+        _status = removed > 0
+            ? tr.text('sync_settings_pending_cleared').replaceAll('{count}', removed.toString())
+            : tr.text('no_sync_settings_pending_found');
       });
+    });
+  }
 
   Future<void> _syncNow() => _run(() async {
         final identity = widget.store.appIdentity;
@@ -2305,8 +2309,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     final isHost = _deviceRole == DeviceRole.host;
     final lanActive = isHost ? _lanEnabledForHost : identity.syncMode == SyncMode.lanOnly;
     final cloudActive = isHost ? _cloudEnabled : identity.syncMode == SyncMode.cloudConnected;
-    final needsInitialCloudHost = isHost && _cloudEnabled && !_initialCloudHostReady;
-    final hostActionLabel = needsInitialCloudHost ? (_hostCreateFailed ? 'Retry Create Host' : 'Create New Host') : tr.text('sync_now');
+    final hostActionLabel = tr.text('sync_now');
     final allGood = widget.store.pendingSyncCount == 0 && (lanActive || cloudActive || !isHost);
 
     return Card(
@@ -2323,7 +2326,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
               lanActive: lanActive,
               cloudActive: cloudActive,
               actionLabel: hostActionLabel,
-              needsInitialCloudHost: needsInitialCloudHost,
             ),
             if (widget.store.latestHostTransferNotification != null) ...[
               const SizedBox(height: 12),
@@ -2421,7 +2423,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     required bool lanActive,
     required bool cloudActive,
     required String actionLabel,
-    required bool needsInitialCloudHost,
   }) {
     final tr = AppLocalizations.of(context);
     final color = Theme.of(context).colorScheme;
@@ -2433,8 +2434,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           runSpacing: 10,
           children: [
             FilledButton.icon(
-              onPressed: _busy ? null : (needsInitialCloudHost ? _createNewHost : _syncNow),
-              icon: Icon(needsInitialCloudHost ? Icons.add_business_outlined : Icons.sync_outlined),
+              onPressed: _busy ? null : _syncNow,
+              icon: const Icon(Icons.sync_outlined),
               label: Text(actionLabel),
             ),
             OutlinedButton.icon(
@@ -2442,6 +2443,12 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
               icon: const Icon(Icons.network_check_outlined),
               label: Text(tr.text('test_connection')),
             ),
+            if (widget.store.pendingSyncCount > 0)
+              OutlinedButton.icon(
+                onPressed: _busy ? null : _clearInvalidPendingChanges,
+                icon: const Icon(Icons.cleaning_services_outlined),
+                label: Text(tr.text('clear_invalid_pending')),
+              ),
           ],
         );
         final titleBlock = Row(
@@ -4053,19 +4060,16 @@ class _HostStatusMonitoringCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final identity = store.appIdentity;
-    final lanReady = lanSettings.isHost || lanSettings.setupComplete || lanSettings.host.trim().isNotEmpty;
-    final cloudSettings = CloudSyncSettings.load();
-    final cloudReady = identity.isCloudEnabled && cloudSettings.isConfigured;
-    final enabledTransports = <String>[
-      if (lanReady) tr.text('connection_lan'),
-      if (cloudReady) tr.text('connection_cloud'),
-    ];
-    final enabledTransportLabel = enabledTransports.isEmpty ? tr.text('connection_state_not_configured') : enabledTransports.join(' + ');
     final lastAckSequence = <int>[
       for (final peer in peerStates.values) peer.lastAckSequence,
       for (final device in cloudDevices) device.lastAckSequence,
     ].fold<int>(0, (latest, value) => value > latest ? value : latest);
+    final identity = store.appIdentity;
+    final activeTransport = identity.activeSyncTransportNormalized;
+    final lanReady = activeTransport == 'lan' &&
+        lanSettings.setupComplete &&
+        lanSettings.autoSyncEnabled;
+    final cloudReady = activeTransport == 'cloud' && identity.isCloudEnabled;
 
     return Container(
       width: double.infinity,

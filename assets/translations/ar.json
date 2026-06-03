@@ -903,5 +903,10 @@
   "permanent_delete_sync_device_confirm": "سيتم حذف سجل الجهاز من قائمة الـ Host فوراً. سيبقى طلب المسح عن بُعد مرسلاً إذا كان جهاز Client غير متصل أو مفقوداً. هل تريد المتابعة؟",
   "sync_device_permanently_deleted": "تم حذف سجل الجهاز نهائياً من قائمة الـ Host.",
   "enable_lan_before_pairing_code": "فعّل مزامنة LAN واحفظ الإعدادات قبل إنشاء كود الربط.",
-  "enable_cloud_before_pairing_code": "فعّل مزامنة Cloud واحفظ الإعدادات قبل إنشاء كود الربط."
+  "enable_cloud_before_pairing_code": "فعّل مزامنة Cloud واحفظ الإعدادات قبل إنشاء كود الربط.",
+  "clear_invalid_pending": "تنظيف pending الوهمي",
+  "clear_sync_settings_pending": "تنظيف تغييرات المزامنة المعلّقة؟",
+  "clear_sync_settings_pending_confirm": "سيتم حذف التغييرات القديمة الناتجة عن إعدادات المزامنة أو هوية الجهاز فقط. لن يتم لمس المنتجات أو الفواتير أو العملاء أو أي بيانات عمل حقيقية.",
+  "sync_settings_pending_cleared": "تم تنظيف {count} تغيير معلّق غير صالح.",
+  "no_sync_settings_pending_found": "لم يتم العثور على تغييرات معلّقة غير صالحة خاصة بإعدادات المزامنة."
 }

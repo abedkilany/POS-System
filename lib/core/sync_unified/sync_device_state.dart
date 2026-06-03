@@ -202,6 +202,29 @@ class SyncDeviceStateStore {
 
   static DateTime? unifiedCursor(AppIdentity identity) => load(identity).lastAppliedHostCursor;
 
+  /// Returns the best transport-independent marker for a successful sync.
+  ///
+  /// Clients store their own progress in [SyncDeviceState]. Hosts may only
+  /// record successful exchanges per connected peer, so Host health must also
+  /// consider [HostPeerSyncState]. This keeps Desktop, Android, LAN and Cloud
+  /// status labels consistent.
+  static DateTime? lastSuccessfulSyncAt(AppIdentity identity) {
+    final state = load(identity);
+    var latest = _latest(state.lastAckCursor, state.lastAppliedHostCursor);
+    latest = _latest(latest, state.lastSeenAt);
+
+    if (identity.isHost) {
+      for (final peer in loadPeerStates()) {
+        var peerLatest = _latest(peer.lastAckCursor, peer.lastAppliedHostCursor);
+        peerLatest = _latest(peerLatest, peer.lastSeenAt);
+        peerLatest = _latest(peerLatest, peer.updatedAt);
+        latest = _latest(latest, peerLatest);
+      }
+    }
+
+    return latest;
+  }
+
   static Future<void> setActiveTransport(AppIdentity identity, String transport) async {
     final current = load(identity);
     await save(identity, current.copyWith(activeTransport: transport, updatedAt: DateTime.now()));

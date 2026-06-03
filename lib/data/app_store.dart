@@ -1314,8 +1314,11 @@ class AppStore extends ChangeNotifier {
     final normalized = _normalizedLocalIdentity(identity);
     _assertSafeRoleTransition(normalized, source: 'settings update');
     _assertLanCloudRoleRules(normalized, source: 'settings update');
+    final previousJson = jsonEncode(appIdentity.toJson());
+    final nextJson = jsonEncode(normalized.toJson());
+    if (previousJson == nextJson) return;
     _appIdentity = normalized;
-    await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(normalized.toJson()));
+    await LocalDatabaseService.setString(_appIdentityKey, nextJson);
     _recordSyncChange(
       entityType: 'app_identity',
       entityId: _deviceId,
@@ -1323,6 +1326,20 @@ class AppStore extends ChangeNotifier {
       payload: normalized.toJson(),
     );
     await _saveAll();
+    await SyncDeviceStateStore.setActiveTransport(normalized, normalized.activeSyncTransportNormalized);
+    notifyListeners();
+  }
+
+  Future<void> updateAppIdentityLocalOnly(AppIdentity identity, {String source = 'local sync settings'}) async {
+    requirePermission(AppPermission.settingsManage);
+    final normalized = _normalizedLocalIdentity(identity);
+    _assertSafeRoleTransition(normalized, source: source);
+    _assertLanCloudRoleRules(normalized, source: source);
+    final previousJson = jsonEncode(appIdentity.toJson());
+    final nextJson = jsonEncode(normalized.toJson());
+    if (previousJson == nextJson) return;
+    _appIdentity = normalized;
+    await LocalDatabaseService.setString(_appIdentityKey, nextJson);
     await SyncDeviceStateStore.setActiveTransport(normalized, normalized.activeSyncTransportNormalized);
     notifyListeners();
   }
@@ -1989,6 +2006,30 @@ class AppStore extends ChangeNotifier {
     await LocalDatabaseService.setString(_appIdentityKey, jsonEncode(_appIdentity!.toJson()));
     await _saveAll();
     notifyListeners();
+  }
+
+
+  Future<int> clearLocalOnlyPendingSyncChanges() async {
+    requirePermission(AppPermission.settingsManage);
+    final invalidChangeIds = _syncChanges
+        .where((change) =>
+            !change.isSynced &&
+            change.entityType == 'app_identity' &&
+            change.operation == 'update')
+        .map((change) => change.id)
+        .toSet();
+    if (invalidChangeIds.isEmpty) return 0;
+
+    final beforeQueue = _syncQueue.length;
+    _syncQueue.removeWhere((item) => invalidChangeIds.contains(item.changeId) && !item.isSynced);
+    final removedQueueRows = beforeQueue - _syncQueue.length;
+
+    final queuedInvalidIds = _syncQueue.map((item) => item.changeId).toSet();
+    _syncChanges.removeWhere((change) => invalidChangeIds.contains(change.id) && !queuedInvalidIds.contains(change.id));
+
+    await _saveAll();
+    notifyListeners();
+    return removedQueueRows;
   }
 
   Future<void> factoryResetLocalDevice({bool preserveAdminUsers = false}) async {

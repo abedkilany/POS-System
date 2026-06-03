@@ -903,5 +903,10 @@
   "permanent_delete_sync_device_confirm": "This removes the device record from the Host list immediately. The remote wipe request remains sent if the Client is offline or lost. Continue?",
   "sync_device_permanently_deleted": "Device record permanently deleted from the Host list.",
   "enable_lan_before_pairing_code": "Enable LAN Sync and save settings before generating a pairing code.",
-  "enable_cloud_before_pairing_code": "Enable Cloud Sync and save settings before generating a pairing code."
+  "enable_cloud_before_pairing_code": "Enable Cloud Sync and save settings before generating a pairing code.",
+  "clear_invalid_pending": "Clear invalid pending",
+  "clear_sync_settings_pending": "Clear sync settings pending changes?",
+  "clear_sync_settings_pending_confirm": "This will remove old pending changes created by Sync settings or device identity updates only. Products, sales, customers, and other business changes will stay untouched.",
+  "sync_settings_pending_cleared": "Cleared {count} invalid pending change(s).",
+  "no_sync_settings_pending_found": "No invalid Sync settings pending changes were found."
 }
