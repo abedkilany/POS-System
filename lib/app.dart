@@ -24,6 +24,7 @@ import 'features/reports/reports_page.dart';
 import 'features/sales/sales_page.dart';
 import 'features/security/login_gate_page.dart';
 import 'features/settings/settings_page.dart';
+import 'features/dev_tools/stress_lab_page.dart';
 import 'features/suppliers/suppliers_page.dart';
 
 class StoreManagerApp extends StatefulWidget {
@@ -193,8 +194,14 @@ class _MainShellState extends State<MainShell> {
       if (widget.store.hasPermission(AppPermission.databaseManage))
         _ShellItem(label: tr.text('database'), icon: Icons.storage_outlined, selectedIcon: Icons.storage, page: DatabasePage(store: widget.store)),
       _ShellItem(label: tr.text('settings'), icon: Icons.settings_outlined, selectedIcon: Icons.settings, page: SettingsPage(store: widget.store, onLocaleChanged: widget.onLocaleChanged, onThemeModeChanged: widget.onThemeModeChanged, themeMode: widget.themeMode, onSyncSettingsChanged: widget.onSyncSettingsChanged)),
+      const _ShellItem(label: 'Stress Lab', icon: Icons.science_outlined, selectedIcon: Icons.science, page: SizedBox.shrink()),
     ];
-    if (selectedIndex >= items.length) selectedIndex = items.length - 1;
+    final stressLabIndex = items.length - 1;
+    final resolvedItems = [
+      ...items.take(stressLabIndex),
+      _ShellItem(label: 'Stress Lab', icon: Icons.science_outlined, selectedIcon: Icons.science, page: StressLabPage(store: widget.store)),
+    ];
+    if (selectedIndex >= resolvedItems.length) selectedIndex = resolvedItems.length - 1;
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -207,7 +214,7 @@ class _MainShellState extends State<MainShell> {
                 onPressed: () => Scaffold.of(context).openDrawer(),
               ),
             ),
-            title: Text('$shellTitle • ${items[selectedIndex].label}', overflow: TextOverflow.ellipsis),
+            title: Text('$shellTitle • ${resolvedItems[selectedIndex].label}', overflow: TextOverflow.ellipsis),
             actions: [
               HostConnectionIndicator(store: widget.store),
               PopupMenuButton<String>(
@@ -267,9 +274,9 @@ class _MainShellState extends State<MainShell> {
           drawer: Drawer(
             child: SafeArea(
               child: ListView.builder(
-                itemCount: items.length,
+                itemCount: resolvedItems.length,
                 itemBuilder: (context, index) {
-                  final item = items[index];
+                  final item = resolvedItems[index];
                   return ListTile(
                     leading: Icon(index == selectedIndex ? item.selectedIcon : item.icon),
                     title: Text(item.label),
@@ -283,7 +290,7 @@ class _MainShellState extends State<MainShell> {
               ),
             ),
           ),
-          body: items[selectedIndex].page,
+          body: resolvedItems[selectedIndex].page,
         );
       },
     );

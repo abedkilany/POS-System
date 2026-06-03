@@ -110,6 +110,21 @@ class LocalDatabaseService {
     await _requireBox.clear();
   }
 
+
+  static List<String> keys() {
+    final memory = _memoryStore;
+    if (memory != null) return memory.keys.toList()..sort();
+    return _requireBox.keys.map((key) => key.toString()).toList()..sort();
+  }
+
+  static Map<String, String> allEntries() {
+    final memory = _memoryStore;
+    if (memory != null) return Map<String, String>.from(memory);
+    return <String, String>{
+      for (final key in _requireBox.keys) key.toString(): _requireBox.get(key)?.toString() ?? '',
+    };
+  }
+
   static bool get isEmpty {
     final memory = _memoryStore;
     if (memory != null) return memory.isEmpty;
