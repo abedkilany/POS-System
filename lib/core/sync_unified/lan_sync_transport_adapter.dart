@@ -146,20 +146,30 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<UnifiedPairingCodeResult> createPairingCode({int ttlMinutes = 5}) async {
+    final savedSettings = LanSyncSettings.load();
+    final lanEnabled = _service.store.appIdentity.isHost && savedSettings.setupComplete && savedSettings.isHost;
+    if (!lanEnabled) {
+      const message = 'Enable LAN Sync and save settings before generating a pairing code.';
+      return const UnifiedPairingCodeResult(
+        ok: false,
+        message: message,
+        error: UnifiedSyncError(
+          code: UnifiedSyncErrorCode.forbiddenRole,
+          userMessage: message,
+          debugMessage: message,
+        ),
+      );
+    }
+
     final code = LanSyncSettings.generatePairingCode();
     final expiresAt = DateTime.now().add(Duration(minutes: ttlMinutes));
     try {
       await _service.startHost(port: _settings.port);
-      final migratedSettings = LanSyncSettings.load();
-      await migratedSettings.copyWith(
-        secret: code,
-        setupComplete: true,
-        hostModeEnabled: true,
-        mode: LanSyncDeviceMode.host,
-      ).save();
+      final migratedSettings = savedSettings.withMigratedHostRegistry(_service.store.deviceId);
+      await migratedSettings.copyWith(secret: code).save();
       return UnifiedPairingCodeResult(
         ok: true,
-        message: 'LAN pairing code created. LAN Host is active.',
+        message: 'LAN pairing code created.',
         code: code,
         expiresAt: expiresAt,
         contract: UnifiedPairingContract(

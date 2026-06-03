@@ -1458,7 +1458,9 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     }
     _loadActivePairingCodes();
     _startPairingCountdownTimer();
-    _refreshHostIpAddresses();
+    // Do not auto-detect or write the LAN Host/IP when the page opens.
+    // IP detection is a user-driven action from the Refresh IP button so
+    // the Save button only becomes enabled after an intentional change.
   }
 
   @override
@@ -1679,8 +1681,14 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   }
 
   Future<void> _generateLanToken() async {
-    final current = LanSyncSettings.load().copyWith(
-      host: _lanHostController.text.trim().isEmpty ? LanSyncSettings.load().host : _lanHostController.text.trim(),
+    final savedLan = LanSyncSettings.load();
+    final identity = widget.store.appIdentity;
+    final lanEnabled = identity.isHost && savedLan.setupComplete && savedLan.isHost;
+    if (!_lanEnabledForHost || !lanEnabled) {
+      throw StateError(tr.text('enable_lan_before_pairing_code'));
+    }
+    final current = savedLan.copyWith(
+      host: _lanHostController.text.trim().isEmpty ? savedLan.host : _lanHostController.text.trim(),
       port: _lanPort,
     );
     final result = await _lanEngine(current).createPairingCode(ttlMinutes: _pairingCodeLifetime.inMinutes);
@@ -1833,11 +1841,24 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   }
 
   Future<void> _handleCloudPairingButton() async {
+    final identity = widget.store.appIdentity;
+    final cloud = CloudSyncSettings.load();
+    if (!_cloudEnabled || !identity.isCloudEnabled || !cloud.isConfigured) {
+      setState(() => _status = tr.text('enable_cloud_before_pairing_code'));
+      return;
+    }
     if (_hasActiveCloudPairingCode) _expireCloudPairingCode();
     await _createCloudPairingCode();
   }
 
   Future<void> _handleLanPairingButton() async {
+    final identity = widget.store.appIdentity;
+    final lan = LanSyncSettings.load();
+    final lanEnabled = identity.isHost && lan.setupComplete && lan.isHost;
+    if (!_lanEnabledForHost || !lanEnabled) {
+      setState(() => _status = tr.text('enable_lan_before_pairing_code'));
+      return;
+    }
     if (_hasActiveLanPairingCode) _expireLanPairingCode();
     await _generateLanToken();
   }
@@ -2060,8 +2081,12 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   }
 
   Future<void> _createCloudPairingCode() => _run(() async {
-        await _saveCloudSettingsForPairing();
-        final result = await _cloudEngine(enabled: true).createPairingCode(ttlMinutes: _pairingCodeLifetime.inMinutes);
+        final identity = widget.store.appIdentity;
+        final cloud = CloudSyncSettings.load();
+        if (!_cloudEnabled || !identity.isCloudEnabled || !cloud.isConfigured) {
+          throw StateError(tr.text('enable_cloud_before_pairing_code'));
+        }
+        final result = await _cloudEngine(enabled: _cloudEnabled).createPairingCode(ttlMinutes: _pairingCodeLifetime.inMinutes);
         if (!result.ok) throw StateError(result.message);
         final expiresAt = result.expiresAt ?? DateTime.now().add(_pairingCodeLifetime);
         await LocalDatabaseService.setString(_cloudPairingCodeStorageKey, result.code);
@@ -2160,7 +2185,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   }
 
   String _peerSyncStatus(HostPeerSyncState? peer) {
-    if (peer == null) return 'Sync Not Ready';
+    if (peer == null) return 'Not Configured';
     if (peer.lastAckSequence > 0 || peer.lastAckCursor != null || peer.lastAppliedHostCursor != null) {
       return 'Synced';
     }
@@ -2229,20 +2254,20 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
             if (cloudDevice.revoked) {
               parts.add('Cloud Unauthorized');
             } else if (cloudDevice.online || cloudDevice.isOnline) {
-              parts.add('Cloud Ready');
+              parts.add('Cloud Active');
             } else {
-              parts.add('Cloud Offline');
+              parts.add('Cloud Pending');
             }
           } else if ((_cloudEnabled || identity.isCloudEnabled) && cloud.isConfigured) {
-            parts.add(cloudReachable ? 'Cloud Not Registered' : 'Cloud Failed${cloudProblem.isEmpty ? '' : ': $cloudProblem'}');
+            parts.add(cloudReachable ? 'Cloud Not Configured' : 'Cloud Error${cloudProblem.isEmpty ? '' : ': $cloudProblem'}');
           }
           if (lanToken.isNotEmpty) {
-            parts.add('LAN Authorized');
+            parts.add('LAN Active');
           } else if (_lanEnabledForHost || (lan.setupComplete && lan.isHost)) {
-            parts.add('LAN Not Paired');
+            parts.add('LAN Not Configured');
           }
           final syncStatus = _peerSyncStatus(peer);
-          if (syncStatus == 'Synced' && parts.any((p) => p.contains('Ready') || p.contains('Authorized'))) ready++;
+          if (syncStatus == 'Synced' && parts.any((p) => p.contains('Active') || p.contains('Authorized'))) ready++;
           parts.add(syncStatus);
           parts.add('Last Sync: ${_formatShortDateTime(peer?.lastAckCursor ?? peer?.lastAppliedHostCursor ?? peer?.updatedAt)}');
           final label = _shortDeviceLabel(id, name: registryDevice?.deviceName ?? cloudDevice?.deviceName ?? '');
@@ -2513,8 +2538,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
             runSpacing: 8,
             children: [
               _compactStatusChip(context, Icons.dns_outlined, isHost ? tr.text('host_device') : tr.text('client_device'), color.primary),
-              _compactStatusChip(context, Icons.lan_outlined, '${tr.text('lan')}: ${lanActive ? tr.text('pairing_status_active') : tr.text('off')}', lanActive ? Colors.green : color.onSurfaceVariant),
-              _compactStatusChip(context, Icons.cloud_outlined, '${tr.text('cloud')}: ${cloudActive ? tr.text('cloud_online') : tr.text('off')}', cloudActive ? Colors.green : color.onSurfaceVariant),
+              _compactStatusChip(context, Icons.lan_outlined, '${tr.text('lan')}: ${lanActive ? tr.text('connection_state_active') : tr.text('off')}', lanActive ? Colors.green : color.onSurfaceVariant),
+              _compactStatusChip(context, Icons.cloud_outlined, '${tr.text('cloud')}: ${cloudActive ? tr.text('connection_state_active') : tr.text('off')}', cloudActive ? Colors.green : color.onSurfaceVariant),
               _compactStatusChip(context, Icons.storage_outlined, '${tr.text('pending_changes')}: ${widget.store.pendingSyncCount}', widget.store.pendingSyncCount == 0 ? Colors.green : color.error),
             ],
           );
@@ -2540,9 +2565,9 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         children: [
           _simpleInfoRow(context, tr.text('role'), isHost ? tr.text('host_device') : tr.text('client_device'), Icons.dns_outlined, color.primary),
           const SizedBox(height: 8),
-          _simpleInfoRow(context, tr.text('lan_connection'), lanActive ? tr.text('pairing_status_active') : tr.text('pairing_status_disabled'), Icons.lan_outlined, lanActive ? Colors.green : color.onSurfaceVariant),
+          _simpleInfoRow(context, tr.text('lan_connection'), lanActive ? tr.text('connection_state_active') : tr.text('pairing_status_disabled'), Icons.lan_outlined, lanActive ? Colors.green : color.onSurfaceVariant),
           const SizedBox(height: 8),
-          _simpleInfoRow(context, tr.text('cloud_connection'), cloudActive ? tr.text('cloud_online') : tr.text('cloud_disabled'), Icons.cloud_outlined, cloudActive ? Colors.green : color.onSurfaceVariant),
+          _simpleInfoRow(context, tr.text('cloud_connection'), cloudActive ? tr.text('connection_state_active') : tr.text('connection_state_disabled'), Icons.cloud_outlined, cloudActive ? Colors.green : color.onSurfaceVariant),
         ],
       ),
     );
@@ -2565,8 +2590,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
 
   String _clientTransportStatusLabel(BuildContext context, {required bool active, required bool configured}) {
     final tr = AppLocalizations.of(context);
-    if (active) return tr.text('connected_or_enabled');
-    if (configured) return tr.text('paired_or_configured');
+    if (active) return tr.text('connection_state_active');
+    if (configured) return tr.text('connection_state_disabled');
     return tr.text('not_configured');
   }
 
@@ -2715,7 +2740,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
             context,
             icon: Icons.lan_outlined,
             title: tr.text('lan_sync'),
-            subtitle: isHost ? (lanConfigured ? tr.text('connection_lan_enabled') : tr.text('connection_lan_disabled')) : _clientTransportStatusLabel(context, active: lanActive, configured: lanConfigured),
+            subtitle: isHost ? (lanConfigured ? tr.text('connection_state_active') : tr.text('connection_state_disabled')) : _clientTransportStatusLabel(context, active: lanActive, configured: lanConfigured),
             active: lanActive,
             configured: lanConfigured,
             accent: Colors.green,
@@ -2728,7 +2753,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                       _hostIpInfoCard(),
                       ..._lanFields(showHostIp: false, forHost: true),
                     ] else
-                      _miniLine(tr.text('status'), tr.text('not_configured')),
+                      _miniLine(tr.text('status'), tr.text('connection_state_disabled')),
                   ]
                 : [
                     _readOnlyTransportLine(context, tr.text('status'), _clientTransportStatusLabel(context, active: lanActive, configured: lanConfigured), lanActive ? Icons.check_circle_outline : (lanConfigured ? Icons.lock_outline : Icons.link_off_outlined)),
@@ -2742,7 +2767,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
             context,
             icon: Icons.cloud_outlined,
             title: tr.text('cloud_sync'),
-            subtitle: isHost ? (cloudConfigured ? tr.text('connection_cloud_enabled') : tr.text('connection_cloud_disabled')) : _clientTransportStatusLabel(context, active: cloudActive, configured: cloudConfigured),
+            subtitle: isHost ? (cloudConfigured ? tr.text('connection_state_active') : tr.text('connection_state_disabled')) : _clientTransportStatusLabel(context, active: cloudActive, configured: cloudConfigured),
             active: cloudActive,
             configured: cloudConfigured,
             accent: Colors.blue,
@@ -2751,7 +2776,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                 : (!cloudConfigured ? TextButton.icon(onPressed: _busy ? null : () => _openConnectToStoreDialog(SyncMode.cloudConnected), icon: const Icon(Icons.add_link_outlined), label: Text(tr.text('connect_to_store'))) : null),
             children: isHost
                 ? [
-                    if (_cloudEnabled) ..._cloudFields(showPairingCode: false) else _miniLine(tr.text('status'), tr.text('not_configured')),
+                    if (_cloudEnabled) ..._cloudFields(showPairingCode: false) else _miniLine(tr.text('status'), tr.text('connection_state_disabled')),
                   ]
                 : [
                     _readOnlyTransportLine(context, tr.text('status'), _clientTransportStatusLabel(context, active: cloudActive, configured: cloudConfigured), cloudActive ? Icons.check_circle_outline : (cloudConfigured ? Icons.lock_outline : Icons.link_off_outlined)),
@@ -2836,7 +2861,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             decoration: BoxDecoration(color: (active ? accent : color.onSurfaceVariant).withValues(alpha: 0.10), borderRadius: BorderRadius.circular(999)),
-            child: Text(active ? tr.text('connected') : (configured ? tr.text('configured') : tr.text('not_configured_short')), style: TextStyle(color: active ? accent : color.onSurfaceVariant, fontWeight: FontWeight.w700)),
+            child: Text(active ? tr.text('connection_state_active') : (configured ? tr.text('connection_state_disabled') : tr.text('connection_state_not_configured')), style: TextStyle(color: active ? accent : color.onSurfaceVariant, fontWeight: FontWeight.w700)),
           ),
           if (trailing != null) ...[const SizedBox(width: 8), trailing],
           const Icon(Icons.expand_more),
@@ -3089,7 +3114,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     if (identity.isHost) {
       final lan = LanSyncSettings.load();
       final cloud = CloudSyncSettings.load();
-      return '${tr.text('connection_role_host')} • ${tr.text('connection_lan')}: ${lan.setupComplete && lan.isHost ? tr.text('connection_lan_enabled') : tr.text('connection_lan_disabled')} • ${tr.text('connection_cloud')}: ${identity.isCloudEnabled && cloud.isConfigured ? tr.text('connection_cloud_enabled') : tr.text('connection_cloud_disabled')}';
+      return '${tr.text('connection_role_host')} • ${tr.text('connection_lan')}: ${lan.setupComplete && lan.isHost ? tr.text('connection_state_active') : tr.text('connection_state_disabled')} • ${tr.text('connection_cloud')}: ${identity.isCloudEnabled && cloud.isConfigured ? tr.text('connection_state_active') : tr.text('connection_state_disabled')}';
     }
     return '${tr.text('connection_role_client')} • ${identity.syncMode == SyncMode.cloudConnected ? tr.text('connection_cloud') : identity.syncMode == SyncMode.lanOnly ? tr.text('connection_lan') : tr.text('connection_local')}';
   }
@@ -3269,7 +3294,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     final tr = AppLocalizations.of(context);
     final color = Theme.of(context).colorScheme;
     return switch (status) {
-      _PairingCodeVisualStatus.active => (label: tr.text('pairing_status_active'), icon: Icons.check_circle_outline, background: Colors.green.withValues(alpha: 0.12), foreground: Colors.green.shade700),
+      _PairingCodeVisualStatus.active => (label: tr.text('connection_state_active'), icon: Icons.check_circle_outline, background: Colors.green.withValues(alpha: 0.12), foreground: Colors.green.shade700),
       _PairingCodeVisualStatus.expired => (label: tr.text('pairing_status_expired'), icon: Icons.timer_off_outlined, background: Colors.grey.withValues(alpha: 0.16), foreground: color.onSurfaceVariant),
       _PairingCodeVisualStatus.consumed => (label: tr.text('pairing_status_consumed'), icon: Icons.done_all_outlined, background: Colors.green.withValues(alpha: 0.12), foreground: Colors.green.shade700),
       _PairingCodeVisualStatus.invalid => (label: tr.text('pairing_status_invalid'), icon: Icons.error_outline, background: color.errorContainer, foreground: color.onErrorContainer),
@@ -3780,7 +3805,7 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
         leading: const Icon(Icons.monitor_heart_outlined),
         title: Text(tr.text('sync_monitoring_diagnostics')),
         subtitle: Text(isHost ? tr.text('sync_monitoring_host_desc') : tr.text('sync_monitoring_client_desc')),
-        initiallyExpanded: true,
+        initiallyExpanded: false,
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         children: [
           if (isHost)
@@ -4060,18 +4085,13 @@ class _HostStatusMonitoringCard extends StatelessWidget {
               const Icon(Icons.dns_outlined, size: 20),
               Text(tr.text('host_status'), style: Theme.of(context).textTheme.titleSmall),
               _StatusChip(label: tr.text('host'), color: Theme.of(context).colorScheme.primary, icon: Icons.home_work_outlined),
-              if (lanReady) _StatusChip(label: tr.text('connection_lan_enabled'), color: Colors.green, icon: Icons.lan_outlined),
-              if (cloudReady) _StatusChip(label: tr.text('connection_cloud_enabled'), color: Colors.blue, icon: Icons.cloud_done_outlined),
+              if (lanReady) _StatusChip(label: '${tr.text('connection_lan')}: ${tr.text('connection_state_active')}', color: Colors.green, icon: Icons.lan_outlined),
+              if (cloudReady) _StatusChip(label: '${tr.text('connection_cloud')}: ${tr.text('connection_state_active')}', color: Colors.blue, icon: Icons.cloud_done_outlined),
               if (!lanReady && !cloudReady) _StatusChip(label: tr.text('connection_state_not_configured'), color: Theme.of(context).colorScheme.error, icon: Icons.link_off_outlined),
             ],
           ),
           const SizedBox(height: 12),
-          _Line(title: tr.text('role'), value: tr.text('host')),
-          _Line(title: tr.text('device_name'), value: identity.deviceName.trim().isEmpty ? identity.deviceId : identity.deviceName),
           _Line(title: tr.text('device_id'), value: identity.deviceId),
-          _Line(title: tr.text('sync_method'), value: enabledTransportLabel),
-          _Line(title: 'LAN', value: lanReady ? tr.text('connection_lan_enabled') : tr.text('connection_state_not_configured')),
-          _Line(title: 'Cloud', value: cloudReady ? tr.text('connection_cloud_enabled') : tr.text('connection_state_not_configured')),
           _Line(title: tr.text('last_ack_sequence'), value: '$lastAckSequence'),
         ],
       ),
@@ -4257,17 +4277,17 @@ _SyncStatusView _connectionStatusForHostPeer(BuildContext context, {required Hos
     return _SyncStatusView(label: tr.text('wipe_pending'), color: Theme.of(context).colorScheme.error, icon: Icons.delete_sweep_outlined);
   }
   if (suspended || cloudDevice?.revoked == true) {
-    return _SyncStatusView(label: tr.text('connection_state_offline'), color: Theme.of(context).colorScheme.error, icon: Icons.cloud_off_outlined);
+    return _SyncStatusView(label: tr.text('connection_state_pending'), color: Theme.of(context).colorScheme.error, icon: Icons.cloud_off_outlined);
   }
   final lastSeen = _lastSeenForHostPeer(state: state, cloudDevice: cloudDevice);
   // Cloud `online` is a sticky database flag and is not a live connection source.
   // Treat Cloud devices as online only when their heartbeat/lastSeen is fresh.
   final recentlySeen = lastSeen != null && DateTime.now().toUtc().difference(lastSeen.toUtc()) <= const Duration(seconds: 90);
   if (recentlySeen) {
-    return _SyncStatusView(label: tr.text('connection_state_online'), color: Colors.green, icon: Icons.wifi_tethering_outlined);
+    return _SyncStatusView(label: tr.text('connection_state_active'), color: Colors.green, icon: Icons.wifi_tethering_outlined);
   }
   if (lastSeen != null) {
-    return _SyncStatusView(label: tr.text('connection_state_offline'), color: Colors.orange, icon: Icons.wifi_off_outlined);
+    return _SyncStatusView(label: tr.text('connection_state_pending'), color: Colors.orange, icon: Icons.wifi_off_outlined);
   }
   return _SyncStatusView(label: tr.text('unknown'), color: Theme.of(context).colorScheme.outline, icon: Icons.help_outline);
 }
@@ -4279,12 +4299,12 @@ _SyncStatusView _connectionStatusForClient(BuildContext context, {required SyncD
   final lastSeen = state.lastSeenAt;
   final recentlySeen = lastSeen != null && DateTime.now().toUtc().difference(lastSeen.toUtc()) <= const Duration(seconds: 90);
   if (recentlySeen) {
-    return _SyncStatusView(label: tr.text('connection_state_online'), color: Colors.green, icon: Icons.wifi_tethering_outlined);
+    return _SyncStatusView(label: tr.text('connection_state_active'), color: Colors.green, icon: Icons.wifi_tethering_outlined);
   }
   if (configured) {
-    return _SyncStatusView(label: tr.text('connection_state_offline'), color: Colors.orange, icon: Icons.wifi_off_outlined);
+    return _SyncStatusView(label: tr.text('connection_state_pending'), color: Colors.orange, icon: Icons.wifi_off_outlined);
   }
-  return _SyncStatusView(label: tr.text('sync_not_ready'), color: Theme.of(context).colorScheme.error, icon: Icons.block_outlined);
+  return _SyncStatusView(label: tr.text('connection_state_not_configured'), color: Theme.of(context).colorScheme.error, icon: Icons.block_outlined);
 }
 
 String _activeTransportForHostPeer(BuildContext context, {required bool lanAuthorized, required CloudDeviceStatus? cloudDevice, required HostPeerSyncState? state}) {
@@ -4349,7 +4369,7 @@ _SyncStatusView _syncStatusForHostPeer(BuildContext context, HostPeerSyncState? 
   final lastSync = _lastSuccessfulSyncForHostPeer(state: state, cloudDevice: cloudDevice);
   final hasAnyAuth = lanAuthorized || cloudDevice != null;
   if (!hasAnyAuth && state == null) {
-    return _SyncStatusView(label: tr.text('sync_not_ready'), color: Theme.of(context).colorScheme.error, icon: Icons.block_outlined);
+    return _SyncStatusView(label: tr.text('connection_state_not_configured'), color: Theme.of(context).colorScheme.error, icon: Icons.block_outlined);
   }
   if (lastSync == null) {
     return _SyncStatusView(label: tr.text('not_synced_yet'), color: Theme.of(context).colorScheme.error, icon: Icons.sync_problem_outlined);
@@ -4528,9 +4548,9 @@ class _SystemStatusPanel extends StatelessWidget {
           ]),
           const SizedBox(height: 12),
           _StatusBullet(label: AppLocalizations.of(context).text(identity.isHost ? 'host_device' : 'client_device')),
-          _StatusBullet(label: AppLocalizations.of(context).text('lan_active')),
-          _StatusBullet(label: AppLocalizations.of(context).text(identity.isCloudEnabled ? 'cloud_online' : 'cloud_disabled')),
-          _StatusBullet(label: AppLocalizations.of(context).text('sync_active')),
+          _StatusBullet(label: '${AppLocalizations.of(context).text('connection_lan')}: ${AppLocalizations.of(context).text('connection_state_active')}'),
+          _StatusBullet(label: '${AppLocalizations.of(context).text('connection_cloud')}: ${AppLocalizations.of(context).text(identity.isCloudEnabled ? 'connection_state_active' : 'connection_state_disabled')}'),
+          _StatusBullet(label: '${AppLocalizations.of(context).text('connection_sync_health')}: ${AppLocalizations.of(context).text('connection_state_active')}'),
           const Divider(height: 22),
           Text(AppLocalizations.of(context).text('all_systems_are_running_smoothly'), style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
         ],

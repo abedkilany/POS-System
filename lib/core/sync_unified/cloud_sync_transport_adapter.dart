@@ -128,6 +128,18 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<UnifiedPairingCodeResult> createPairingCode({int ttlMinutes = 5}) async {
+    if (!_settings.enabled) {
+      const message = 'Enable Cloud Sync and save settings before generating a pairing code.';
+      return const UnifiedPairingCodeResult(
+        ok: false,
+        message: message,
+        error: UnifiedSyncError(
+          code: UnifiedSyncErrorCode.forbiddenRole,
+          userMessage: message,
+          debugMessage: message,
+        ),
+      );
+    }
     final result = await _service.createPairingCode(_settings, ttlMinutes: ttlMinutes);
     return UnifiedPairingCodeResult(
       ok: result.ok,

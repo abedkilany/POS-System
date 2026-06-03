@@ -10,6 +10,7 @@ import 'core/utils/responsive.dart';
 import 'core/sync_unified/sync_unified.dart';
 import 'core/sync_unified/sync_device_state.dart';
 import 'core/services/cloud_sync_service.dart';
+import 'core/services/lan_sync_service.dart';
 import 'data/app_store.dart';
 import 'models/user_role.dart';
 import 'features/customers/customers_page.dart';
@@ -422,15 +423,27 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
       );
     }
 
-    if (!UnifiedSyncFactory.isLanSetupComplete) {
+    final identity = widget.store.appIdentity;
+    final settings = LanSyncSettings.load();
+    final hasSavedLanSettings = settings.host.trim().isNotEmpty || settings.secret.trim().isNotEmpty;
+    final lanEnabledForRole = identity.isHost
+        ? settings.setupComplete && settings.isHost
+        : identity.isClient &&
+            identity.activeSyncTransportNormalized == 'lan' &&
+            settings.setupComplete &&
+            settings.isClient;
+
+    if (!lanEnabledForRole) {
       return _TransportSnapshot(
         label: _t('connection_lan'),
-        state: _TransportState.disabled,
-        message: _t('connection_lan_not_configured'),
+        state: hasSavedLanSettings ? _TransportState.disabled : _TransportState.notConfigured,
+        message: hasSavedLanSettings ? _t('connection_state_disabled') : _t('connection_lan_not_configured'),
       );
     }
 
-    if (UnifiedSyncFactory.isLanHost || widget.store.appIdentity.isHost) {
+    // A device can be the store Host, but LAN is only Active when the LAN
+    // settings explicitly say the LAN host service is enabled/configured.
+    if (identity.isHost && settings.isHost) {
       return _TransportSnapshot(
         label: _t('connection_lan'),
         state: _TransportState.active,
@@ -439,7 +452,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     }
 
     try {
-      final status = await UnifiedSyncFactory.lanEngine(widget.store).getHostStatus();
+      final status = await UnifiedSyncFactory.lanEngine(widget.store, settings: settings).getHostStatus();
       if (status.hostReachable) {
         return _TransportSnapshot(
           label: _t('connection_lan'),
@@ -464,18 +477,24 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
   }
 
   Future<_TransportSnapshot> _readCloudStatus() async {
-    final provisioning = widget.store.appIdentity.isClient && widget.store.appIdentity.activeSyncTransportNormalized == 'cloud' && CloudProvisioningStatus.isPending;
+    final identity = widget.store.appIdentity;
+    final settings = CloudSyncSettings.load();
+    final provisioning = identity.isClient && identity.activeSyncTransportNormalized == 'cloud' && CloudProvisioningStatus.isPending;
+    final hasSavedCloudSettings = settings.apiBaseUrl.trim().isNotEmpty && (settings.hasDeploymentToken || settings.hasDeviceCredentials);
+    final cloudEnabledForRole = identity.isHost
+        ? identity.isCloudEnabled && hasSavedCloudSettings
+        : identity.isClient && identity.activeSyncTransportNormalized == 'cloud' && hasSavedCloudSettings;
 
-    if (!UnifiedSyncFactory.cloudCanCheck(widget.store)) {
+    if (!cloudEnabledForRole) {
       return _TransportSnapshot(
         label: _t('connection_cloud'),
-        state: _TransportState.notConfigured,
-        message: _t('connection_cloud_not_configured'),
+        state: hasSavedCloudSettings ? _TransportState.disabled : _TransportState.notConfigured,
+        message: hasSavedCloudSettings ? _t('connection_state_disabled') : _t('connection_cloud_not_configured'),
       );
     }
 
     try {
-      final status = await UnifiedSyncFactory.cloudEngine(widget.store).getHostStatus();
+      final status = await UnifiedSyncFactory.cloudEngine(widget.store, settings: settings).getHostStatus();
 
       if (provisioning) {
         return _TransportSnapshot(
@@ -550,6 +569,25 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
         label: _t('connection_sync_health'),
         state: _TransportState.suspended,
         message: widget.store.suspendedByHostReason.trim().isEmpty ? _t('client_suspended_by_host_desc') : widget.store.suspendedByHostReason,
+        lastSuccessfulSyncAt: lastSuccessfulSync,
+      );
+    }
+
+    final lanSettings = LanSyncSettings.load();
+    final cloudSettings = CloudSyncSettings.load();
+    final hasSavedCloudSettings = cloudSettings.apiBaseUrl.trim().isNotEmpty && (cloudSettings.hasDeploymentToken || cloudSettings.hasDeviceCredentials);
+    final lanEnabled = identity.isHost
+        ? lanSettings.setupComplete && lanSettings.isHost
+        : identity.isClient && identity.activeSyncTransportNormalized == 'lan' && lanSettings.setupComplete && lanSettings.isClient;
+    final cloudEnabled = identity.isHost
+        ? identity.isCloudEnabled && hasSavedCloudSettings
+        : identity.isClient && identity.activeSyncTransportNormalized == 'cloud' && hasSavedCloudSettings;
+
+    if (!lanEnabled && !cloudEnabled) {
+      return _TransportSnapshot(
+        label: _t('connection_sync_health'),
+        state: _TransportState.disabled,
+        message: _t('connection_state_disabled'),
         lastSuccessfulSyncAt: lastSuccessfulSync,
       );
     }
@@ -629,11 +667,11 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
   String _stateText(_TransportState state) {
     return switch (state) {
       _TransportState.active => _t('connection_state_active'),
-      _TransportState.online => _t('connection_state_online'),
+      _TransportState.online => _t('connection_state_active'),
       _TransportState.pending => _t('connection_state_pending'),
       _TransportState.provisioning => _t('connection_state_provisioning'),
       _TransportState.suspended => _t('suspended'),
-      _TransportState.offline => _t('connection_state_offline'),
+      _TransportState.offline => _t('connection_state_pending'),
       _TransportState.error => _t('connection_state_error'),
       _TransportState.checking => _t('connection_state_checking'),
       _TransportState.disabled => _t('connection_state_disabled'),
@@ -692,13 +730,14 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
       return _TransportState.checking;
     }
     if (_hasAttention) return _TransportState.error;
-    return _TransportState.online;
+    return _TransportState.active;
   }
 
   String get _connectionSummaryLabel {
     final connection = _activeConnectionSnapshot;
-    if (connection.state == _TransportState.online || connection.state == _TransportState.active) return _t('connection_state_online');
-    if (connection.state == _TransportState.disabled || connection.state == _TransportState.notConfigured) return _t('connection_state_offline');
+    if (connection.state == _TransportState.online || connection.state == _TransportState.active) return _t('connection_state_active');
+    if (connection.state == _TransportState.disabled) return _t('connection_state_disabled');
+    if (connection.state == _TransportState.notConfigured) return _t('connection_state_not_configured');
     return _stateText(connection.state);
   }
 

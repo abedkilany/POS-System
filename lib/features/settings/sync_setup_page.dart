@@ -502,10 +502,10 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
   ({String label, IconData icon, Color background, Color foreground}) _qrStatusData(BuildContext context, AppLocalizations tr) {
     final color = Theme.of(context).colorScheme;
     return switch (_qrStatus) {
-      _ClientPairingState.ready => (label: tr.text('pairing_status_ready_to_connect'), icon: Icons.check_circle_outline, background: Colors.green.withValues(alpha: 0.12), foreground: Colors.green.shade700),
+      _ClientPairingState.ready => (label: tr.text('connection_state_pending'), icon: Icons.check_circle_outline, background: Colors.green.withValues(alpha: 0.12), foreground: Colors.green.shade700),
       _ClientPairingState.connecting => (label: tr.text('connection_state_connecting'), icon: Icons.sync_rounded, background: color.primaryContainer, foreground: color.onPrimaryContainer),
       _ClientPairingState.expired => (label: tr.text('pairing_status_expired'), icon: Icons.timer_off_outlined, background: Colors.orange.withValues(alpha: 0.14), foreground: Colors.orange.shade800),
-      _ClientPairingState.connected => (label: tr.text('connection_state_connected'), icon: Icons.done_all_outlined, background: Colors.green.withValues(alpha: 0.12), foreground: Colors.green.shade700),
+      _ClientPairingState.connected => (label: tr.text('connection_state_active'), icon: Icons.done_all_outlined, background: Colors.green.withValues(alpha: 0.12), foreground: Colors.green.shade700),
       _ClientPairingState.failed => (label: tr.text('connection_state_error'), icon: Icons.error_outline, background: color.errorContainer, foreground: color.onErrorContainer),
       _ClientPairingState.noCode => (label: tr.text('pairing_status_no_code_entered'), icon: Icons.edit_note_outlined, background: Colors.grey.withValues(alpha: 0.16), foreground: color.onSurfaceVariant),
     };
@@ -553,8 +553,8 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
         : _statusType == _SetupStatus.error
             ? tr.text('connection_state_error')
             : _statusType == _SetupStatus.success
-                ? tr.text('connection_state_connected')
-                : tr.text('connection_state_ready');
+                ? tr.text('connection_state_active')
+                : tr.text('connection_state_pending');
     final subtitle = _mode == _ConnectMode.cloud ? tr.text('cloud_pairing_code_helper') : tr.text('lan_pairing_code_helper');
     return Card.outlined(
       margin: EdgeInsets.zero,
