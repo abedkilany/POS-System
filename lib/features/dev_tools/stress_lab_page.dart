@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/services/cloud_sync_service.dart';
 import '../../core/sync_unified/sync_unified.dart';
 import '../../data/app_store.dart';
 import '../../models/app_identity.dart';
@@ -275,6 +276,28 @@ class _StressLabPageState extends State<StressLabPage> {
     _setStatus('Running active sync...', progress: 0.84);
     _addLog(_snapshotLine('BEFORE_SYNC'));
     await _measure('Active sync role=${_roleLabel()} transport=${identity.activeSyncTransportNormalized}', () async {
+      // Important diagnostic fix:
+      // A Host must never run the LAN client push/pull/rebuild flow. Its LAN role
+      // is to keep serving local clients. When Cloud is enabled, the Host's
+      // active sync responsibility is to publish its authoritative changes to
+      // Cloud so Cloud clients can pull the complete store state.
+      if (identity.isHost) {
+        if (identity.isCloudEnabled || CloudSyncSettings.load().isConfigured) {
+          _addLog('Host active sync route: Cloud host push/pull. LAN host will not run client pull.');
+          final result = await UnifiedSyncFactory.cloudEngine(store, enabled: true).syncNow(onProgress: (value, label) {
+            _setStatus('Host Cloud Sync: $label', progress: 0.84 + 0.10 * value);
+            _addLog('Sync progress ${(value * 100).toStringAsFixed(0)}% $label');
+          });
+          _addLog('Sync result ok=${result.ok} message=${result.message} cursor=${result.cursor.value} source=${result.cursor.source}');
+          return;
+        }
+
+        _addLog('Host active sync route: LAN host only. No LAN client pull will run on Host.');
+        final result = await UnifiedSyncFactory.lanEngine(store).registerCurrentHost(transportName: 'lan');
+        _addLog('Sync result ok=${result.ok} message=${result.message} cursor=${result.cursor.value} source=${result.cursor.source}');
+        return;
+      }
+
       final transport = identity.activeSyncTransportNormalized;
       final engine = transport == 'cloud'
           ? UnifiedSyncFactory.cloudEngine(store)

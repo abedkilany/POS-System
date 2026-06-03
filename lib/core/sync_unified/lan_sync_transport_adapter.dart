@@ -270,6 +270,21 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<UnifiedSyncResult> syncNow({void Function(double value, String label)? onProgress}) async {
+    if (_service.store.appIdentity.isHost || _settings.isHost) {
+      onProgress?.call(1.0, 'LAN Host is active. Host devices do not run LAN client sync.');
+      try {
+        await _service.startHost(port: _settings.port);
+      } catch (_) {
+        // Keep this guard non-fatal: the caller may only be trying to avoid the
+        // invalid Host-as-client pull flow. Host start errors are shown by the
+        // dedicated LAN setup/status actions.
+      }
+      return const UnifiedSyncResult(
+        ok: true,
+        message: 'LAN Host active. Skipped LAN client push/pull on Host.',
+      );
+    }
+
     onProgress?.call(0.08, 'Preparing LAN sync...');
     final push = await pushPending(UnifiedSyncPushRequest(deviceId: deviceId, deviceToken: deviceToken));
     if (!push.ok) {
