@@ -15,6 +15,7 @@ class AppPermission {
   static const String backupRestore = 'backup.restore';
   static const String settingsManage = 'settings.manage';
   static const String syncManage = 'sync.manage';
+  static const String databaseManage = 'database.manage';
 
   static const List<String> all = [
     usersManage,
@@ -33,6 +34,7 @@ class AppPermission {
     backupRestore,
     settingsManage,
     syncManage,
+    databaseManage,
   ];
 
   static const Map<String, String> labels = {
@@ -52,6 +54,7 @@ class AppPermission {
     backupRestore: 'Restore backups',
     settingsManage: 'Manage store settings',
     syncManage: 'Manage LAN sync',
+    databaseManage: 'Manage database',
   };
 }
 

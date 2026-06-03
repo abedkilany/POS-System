@@ -908,5 +908,22 @@
   "clear_sync_settings_pending": "Clear sync settings pending changes?",
   "clear_sync_settings_pending_confirm": "This will remove old pending changes created by Sync settings or device identity updates only. Products, sales, customers, and other business changes will stay untouched.",
   "sync_settings_pending_cleared": "Cleared {count} invalid pending change(s).",
-  "no_sync_settings_pending_found": "No invalid Sync settings pending changes were found."
+  "no_sync_settings_pending_found": "No invalid Sync settings pending changes were found.",
+  "database": "Database",
+  "database_collection": "Collection",
+  "database_add_row": "Add row",
+  "database_edit_row": "Edit row",
+  "database_warning": "Manual database editing is powerful. Review values carefully before saving because changes affect sync and reports.",
+  "database_empty": "No records found.",
+  "database_saved": "Record saved.",
+  "database_deleted": "Record deleted.",
+  "database_error": "Database error",
+  "database_delete_confirm": "Delete this record? This action will be synced to other devices.",
+  "database_products": "Products",
+  "database_customers": "Customers",
+  "database_suppliers": "Suppliers",
+  "database_expenses": "Expenses",
+  "database_categories": "Categories",
+  "database_brands": "Brands",
+  "database_units": "Units"
 }

@@ -908,5 +908,22 @@
   "clear_sync_settings_pending": "تنظيف تغييرات المزامنة المعلّقة؟",
   "clear_sync_settings_pending_confirm": "سيتم حذف التغييرات القديمة الناتجة عن إعدادات المزامنة أو هوية الجهاز فقط. لن يتم لمس المنتجات أو الفواتير أو العملاء أو أي بيانات عمل حقيقية.",
   "sync_settings_pending_cleared": "تم تنظيف {count} تغيير معلّق غير صالح.",
-  "no_sync_settings_pending_found": "لم يتم العثور على تغييرات معلّقة غير صالحة خاصة بإعدادات المزامنة."
+  "no_sync_settings_pending_found": "لم يتم العثور على تغييرات معلّقة غير صالحة خاصة بإعدادات المزامنة.",
+  "database": "قاعدة البيانات",
+  "database_collection": "القسم",
+  "database_add_row": "إضافة سجل",
+  "database_edit_row": "تعديل سجل",
+  "database_warning": "تعديل قاعدة البيانات يدويًا حساس. راجع القيم جيدًا قبل الحفظ لأن التغييرات تؤثر على المزامنة والتقارير.",
+  "database_empty": "لا توجد سجلات.",
+  "database_saved": "تم حفظ السجل.",
+  "database_deleted": "تم حذف السجل.",
+  "database_error": "خطأ في قاعدة البيانات",
+  "database_delete_confirm": "هل تريد حذف هذا السجل؟ سيتم مزامنة الحذف مع الأجهزة الأخرى.",
+  "database_products": "المنتجات",
+  "database_customers": "الزبائن",
+  "database_suppliers": "الموردون",
+  "database_expenses": "المصاريف",
+  "database_categories": "الفئات",
+  "database_brands": "العلامات التجارية",
+  "database_units": "الوحدات"
 }

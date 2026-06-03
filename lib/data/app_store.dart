@@ -202,6 +202,104 @@ class AppStore extends ChangeNotifier {
   List<Expense> get expenses => List.unmodifiable(_expenses.where((item) => !item.isDeleted).toList().reversed);
   List<Purchase> get purchases => List.unmodifiable(_purchases.where((item) => !item.isDeleted).toList().reversed);
   List<StockMovement> get stockMovements => List.unmodifiable(_stockMovements.toList().reversed);
+
+  static const List<String> databaseEditableEntities = [
+    'products',
+    'customers',
+    'suppliers',
+    'expenses',
+    'categories',
+    'brands',
+    'units',
+  ];
+
+  List<Map<String, dynamic>> databaseRows(String entity) {
+    requirePermission(AppPermission.databaseManage);
+    switch (entity) {
+      case 'products':
+        return List.unmodifiable(_products.where((item) => !item.isDeleted).map((item) => item.toJson()));
+      case 'customers':
+        return List.unmodifiable(_customers.where((item) => !item.isDeleted).map((item) => item.toJson()));
+      case 'suppliers':
+        return List.unmodifiable(_suppliers.where((item) => !item.isDeleted).map((item) => item.toJson()));
+      case 'expenses':
+        return List.unmodifiable(_expenses.where((item) => !item.isDeleted).map((item) => item.toJson()));
+      case 'categories':
+        return List.unmodifiable(_categories.where((item) => !item.isDeleted).map((item) => item.toJson()));
+      case 'brands':
+        return List.unmodifiable(_brands.where((item) => !item.isDeleted).map((item) => item.toJson()));
+      case 'units':
+        return List.unmodifiable(_units.where((item) => !item.isDeleted).map((item) => item.toJson()));
+    }
+    throw ArgumentError('Unsupported database entity: $entity');
+  }
+
+  Future<void> saveDatabaseRow(String entity, Map<String, dynamic> json) async {
+    requirePermission(AppPermission.databaseManage);
+    switch (entity) {
+      case 'products':
+        await addOrUpdateProduct(Product.fromJson(json));
+        return;
+      case 'customers':
+        await addOrUpdateCustomer(Customer.fromJson(json));
+        return;
+      case 'suppliers':
+        await addOrUpdateSupplier(Supplier.fromJson(json));
+        return;
+      case 'expenses':
+        await addOrUpdateExpense(Expense.fromJson(json));
+        return;
+      case 'categories':
+        await addOrUpdateCategory(CatalogItem.fromJson(json));
+        return;
+      case 'brands':
+        await addOrUpdateBrand(CatalogItem.fromJson(json));
+        return;
+      case 'units':
+        await addOrUpdateUnit(CatalogItem.fromJson(json));
+        return;
+    }
+    throw ArgumentError('Unsupported database entity: $entity');
+  }
+
+  Future<void> deleteDatabaseRow(String entity, String id) async {
+    requirePermission(AppPermission.databaseManage);
+    switch (entity) {
+      case 'products':
+        await deleteProduct(id);
+        return;
+      case 'customers':
+        await deleteCustomer(id);
+        return;
+      case 'suppliers':
+        await deleteSupplier(id);
+        return;
+      case 'expenses':
+        await deleteExpense(id);
+        return;
+      case 'categories':
+        await _deleteCatalogItem(_categories, 'category', id, categories: true);
+        return;
+      case 'brands':
+        await _deleteCatalogItem(_brands, 'brand', id, brands: true);
+        return;
+      case 'units':
+        await _deleteCatalogItem(_units, 'unit', id, units: true);
+        return;
+    }
+    throw ArgumentError('Unsupported database entity: $entity');
+  }
+
+  Future<void> _deleteCatalogItem(List<CatalogItem> list, String entityType, String id, {bool categories = false, bool brands = false, bool units = false}) async {
+    requirePermission(AppPermission.catalogManage);
+    final index = list.indexWhere((item) => item.id == id);
+    if (index == -1) return;
+    final now = DateTime.now();
+    list[index] = _withSyncMeta<CatalogItem>(list[index].copyWith(deletedAt: now), now, clearDeletedAt: false);
+    _recordSyncChange(entityType: entityType, entityId: id, operation: 'delete', payload: list[index].toJson());
+    await _saveDirty(categories: categories, brands: brands, units: units, sync: true);
+    notifyListeners();
+  }
   List<SyncChange> get syncChanges => List.unmodifiable(_syncChanges);
   int get currentSyncSequence => _syncSequence;
   List<SyncQueueItem> get syncQueue => List.unmodifiable(_syncQueue);
