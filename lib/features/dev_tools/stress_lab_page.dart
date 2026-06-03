@@ -315,6 +315,25 @@ class _StressLabPageState extends State<StressLabPage> {
     _addLog(_snapshotLine('AFTER_SYNC'));
   }
 
+  Future<void> _compactSyncedSyncHistory() async {
+    if (_running) return;
+    setState(() => _running = true);
+    try {
+      _setStatus('Compacting synced sync history...', progress: 0.05);
+      _addLog(_snapshotLine('BEFORE_COMPACT_SYNC_HISTORY'));
+      final result = await store.compactSyncedSyncHistoryForDiagnostics();
+      _addLog("Compact synced sync history result removedChanges=${result['removedChanges']} removedQueue=${result['removedQueue']} remainingChanges=${result['remainingChanges']} remainingQueue=${result['remainingQueue']} pendingChanges=${result['pendingChanges']} pendingQueue=${result['pendingQueue']}");
+      _addLog(_snapshotLine('AFTER_COMPACT_SYNC_HISTORY'));
+      _setStatus('Compaction completed.', progress: 1);
+    } catch (error, stack) {
+      _addLog('COMPACT_SYNC_HISTORY_FAILED $error');
+      debugPrint('$stack');
+      _setStatus('Compaction failed: $error', progress: 1);
+    } finally {
+      if (mounted) setState(() => _running = false);
+    }
+  }
+
   Future<void> _exportBackupProbe() async {
     _setStatus('Exporting backup probe...', progress: 0.96);
     await _measure('Export backup probe', () async {
@@ -396,6 +415,11 @@ class _StressLabPageState extends State<StressLabPage> {
                           onPressed: _running ? null : _runActiveSync,
                           icon: const Icon(Icons.sync),
                           label: const Text('Sync Now Only'),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: _running ? null : _compactSyncedSyncHistory,
+                          icon: const Icon(Icons.cleaning_services_outlined),
+                          label: const Text('Clean Synced Sync Logs'),
                         ),
                         OutlinedButton.icon(
                           onPressed: _log.isEmpty ? null : _copyLog,

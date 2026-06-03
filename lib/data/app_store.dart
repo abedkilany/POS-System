@@ -3816,12 +3816,124 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
+
+  /// Diagnostic/safety repair for Host -> Cloud publishing.
+  ///
+  /// Older builds and aggressive sync-history compaction could leave Host
+  /// authoritative SyncChange rows marked unsynced while their cloud queue row
+  /// was missing. In that state Host Sync Now reported pendingChanges but had
+  /// nothing (or only a small tail) to upload, so Cloud clients stayed behind.
+  ///
+  /// This method recreates missing cloud queue rows for every unsynced Host
+  /// authoritative change before a Host cloud push.
+  Future<int> repairMissingHostCloudQueueForPendingChanges() async {
+    final identity = appIdentity;
+    if (!identity.isHost || !identity.isCloudEnabled) return 0;
+
+    final existingCloudQueueIds = _syncQueue
+        .where((item) => item.target == 'cloud' && item.status != 'synced')
+        .map((item) => item.changeId)
+        .toSet();
+    final existingAnyCloudQueueIds = _syncQueue
+        .where((item) => item.target == 'cloud')
+        .map((item) => item.changeId)
+        .toSet();
+
+    var repaired = 0;
+    final now = DateTime.now();
+    for (final change in _syncChanges) {
+      if (change.isSynced) continue;
+      if (change.storeId.isNotEmpty && change.storeId != identity.storeId) continue;
+      if (change.branchId.isNotEmpty && change.branchId != identity.branchId) continue;
+      if (change.deviceId == 'cloud-snapshot') continue;
+      // Host only publishes authoritative Host events to Cloud. Client draft
+      // commands must first be accepted/restamped by the Host.
+      final meta = Map<String, dynamic>.from(change.payload['_syncV2'] as Map? ?? const {});
+      final kind = (meta['kind'] ?? '').toString();
+      final isAuthoritative = kind.isEmpty || kind == 'authoritativeEvent' || change.deviceId == _deviceId;
+      if (!isAuthoritative) continue;
+      if (existingCloudQueueIds.contains(change.id)) continue;
+      if (existingAnyCloudQueueIds.contains(change.id)) {
+        // If a cloud queue row exists but is synced while the change is still
+        // unsynced, revive it as pending instead of adding a duplicate row.
+        for (var i = 0; i < _syncQueue.length; i++) {
+          final item = _syncQueue[i];
+          if (item.target == 'cloud' && item.changeId == change.id && item.status == 'synced') {
+            _syncQueue[i] = item.copyWith(
+              status: 'pending',
+              updatedAt: now,
+              clearNextRetryAt: true,
+              lastError: '',
+            );
+            existingCloudQueueIds.add(change.id);
+            repaired += 1;
+            break;
+          }
+        }
+        continue;
+      }
+      _enqueueSyncChangeForTarget(change.id, 'cloud', now);
+      existingCloudQueueIds.add(change.id);
+      existingAnyCloudQueueIds.add(change.id);
+      repaired += 1;
+    }
+
+    if (repaired > 0) {
+      await _saveAll();
+      notifyListeners();
+    }
+    return repaired;
+  }
+
   bool _shouldMirrorRemoteChangeToCloud(SyncChange change) {
     if (!appIdentity.isCloudEnabled || !appIdentity.isHost) return false;
     if (change.deviceId == _deviceId) return false;
     if (change.deviceId == 'cloud-snapshot') return false;
     if (change.storeId.isNotEmpty && change.storeId != appIdentity.storeId) return false;
     return true;
+  }
+
+  /// Diagnostic-only sync log compaction used by Stress Lab.
+  ///
+  /// It removes synced queue rows and old synced change rows while preserving
+  /// every unsynced/submitted/failed/rejected item. This is intentionally not
+  /// called by normal app flows; it is a manual safety tool for temporary stress
+  /// builds after verifying Host/LAN/Cloud are aligned.
+  Future<Map<String, int>> compactSyncedSyncHistoryForDiagnostics({int keepRecentSyncedChanges = 500}) async {
+    final beforeChanges = _syncChanges.length;
+    final beforeQueue = _syncQueue.length;
+
+    final pendingChangeIds = _syncQueue
+        .where((item) => item.status != 'synced')
+        .map((item) => item.changeId)
+        .toSet();
+
+    _syncQueue.removeWhere((item) => item.status == 'synced');
+
+    final syncedChanges = _syncChanges.where((item) => item.isSynced && !pendingChangeIds.contains(item.id)).toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    final keepSyncedIds = syncedChanges.take(keepRecentSyncedChanges).map((item) => item.id).toSet();
+
+    _syncChanges.removeWhere((item) {
+      if (!item.isSynced) return false;
+      if (pendingChangeIds.contains(item.id)) return false;
+      return !keepSyncedIds.contains(item.id);
+    });
+
+    final removedChanges = beforeChanges - _syncChanges.length;
+    final removedQueue = beforeQueue - _syncQueue.length;
+    if (removedChanges > 0 || removedQueue > 0) {
+      await _saveAll();
+      notifyListeners();
+    }
+    return {
+      'removedChanges': removedChanges,
+      'removedQueue': removedQueue,
+      'remainingChanges': _syncChanges.length,
+      'remainingQueue': _syncQueue.length,
+      'pendingChanges': pendingSyncChanges.length,
+      'pendingQueue': pendingSyncQueue.length,
+    };
   }
 
   void _enqueueSyncChangeForTarget(String changeId, String target, DateTime now) {

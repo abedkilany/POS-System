@@ -1246,42 +1246,66 @@ class CloudSyncService {
 
   Future<int> _pushPendingToEndpoint(CloudSyncSettings settings, String target, String path) async {
     final identity = store.appIdentity;
-    final pending = _syncCore.pendingChangesForTarget(target);
-    final pendingIds = _syncCore.changeIds(pending);
-    if (pending.isEmpty) return 0;
+    var totalPushed = 0;
+    var batchNumber = 0;
 
-    await _syncCore.markPushInProgress(pendingIds);
-    final push = await _client
-        .post(
-          settings.endpoint(path),
-          headers: _headers(settings),
-          body: jsonEncode({
-            'deviceId': store.deviceId,
-            'storeId': identity.storeId,
-            'branchId': identity.branchId,
-            'sequence': SyncDeviceStateStore.load(identity).lastAppliedSequence,
-            'lastAppliedSequence': SyncDeviceStateStore.load(identity).lastAppliedSequence,
-            'changes': pending.map((item) => item.toJson()).toList(),
-          }),
-        )
-        .timeout(const Duration(seconds: 20));
-    if (push.statusCode < 200 || push.statusCode >= 300) {
-      final message = 'Cloud push failed: ${push.statusCode} ${push.body}';
-      await _syncCore.markPushFailed(pendingIds, message);
-      throw StateError(message);
+    // Safety-critical fix for large Host -> Cloud publishes:
+    // Do not upload tens of thousands of changes in one HTTP request. A single
+    // timeout could leave the Host appearing idle while Cloud clients are still
+    // missing data. Push in small acknowledged batches and mark only the batch
+    // currently being sent as in-progress.
+    const batchSize = 250;
+
+    while (true) {
+      final pending = _syncCore.pendingChangesForTarget(target).take(batchSize).toList(growable: false);
+      final pendingIds = _syncCore.changeIds(pending);
+      if (pending.isEmpty) break;
+      batchNumber += 1;
+
+      await _syncCore.markPushInProgress(pendingIds);
+      try {
+        final push = await _client
+            .post(
+              settings.endpoint(path),
+              headers: _headers(settings),
+              body: jsonEncode({
+                'deviceId': store.deviceId,
+                'storeId': identity.storeId,
+                'branchId': identity.branchId,
+                'sequence': SyncDeviceStateStore.load(identity).lastAppliedSequence,
+                'lastAppliedSequence': SyncDeviceStateStore.load(identity).lastAppliedSequence,
+                'batchNumber': batchNumber,
+                'batchSize': pending.length,
+                'changes': pending.map((item) => item.toJson()).toList(),
+              }),
+            )
+            .timeout(const Duration(seconds: 30));
+        if (push.statusCode < 200 || push.statusCode >= 300) {
+          final message = 'Cloud push failed on batch $batchNumber: ${push.statusCode} ${push.body}';
+          await _syncCore.markPushFailed(pendingIds, message);
+          throw StateError(message);
+        }
+        final decoded = jsonDecode(push.body) as Map<String, dynamic>;
+        final ackIds = (decoded['ackIds'] as List<dynamic>? ?? []).map((item) => '$item').toList();
+        final rejected = _decodeRejectedSyncRequests(decoded['rejected']);
+        if (rejected.isNotEmpty) await _syncCore.markPushRejected(rejected);
+        if (target == 'cloud_host') {
+          // Relay ACK only means the draft reached the Cloud inbox. It is not a
+          // Host confirmation and must not turn the local draft into confirmed data.
+          await _syncCore.markPushSubmitted(ackIds, fallbackIds: pendingIds);
+        } else {
+          await _syncCore.markPushAcknowledged(ackIds, fallbackIds: pendingIds);
+        }
+        totalPushed += pending.length;
+      } catch (error) {
+        // Keep the affected batch retryable. Already acknowledged previous
+        // batches remain synced; unsent later batches were never touched.
+        await _syncCore.markPushFailed(pendingIds, 'Cloud push failed on batch $batchNumber: $error');
+        rethrow;
+      }
     }
-    final decoded = jsonDecode(push.body) as Map<String, dynamic>;
-    final ackIds = (decoded['ackIds'] as List<dynamic>? ?? []).map((item) => '$item').toList();
-    final rejected = _decodeRejectedSyncRequests(decoded['rejected']);
-    if (rejected.isNotEmpty) await _syncCore.markPushRejected(rejected);
-    if (target == 'cloud_host') {
-      // Relay ACK only means the draft reached the Cloud inbox. It is not a
-      // Host confirmation and must not turn the local draft into confirmed data.
-      await _syncCore.markPushSubmitted(ackIds, fallbackIds: pendingIds);
-    } else {
-      await _syncCore.markPushAcknowledged(ackIds, fallbackIds: pendingIds);
-    }
-    return pending.length;
+
+    return totalPushed;
   }
 
 
@@ -1392,6 +1416,10 @@ class CloudSyncService {
       if (identity.isHost) {
         onProgress?.call(0.10, 'Preparing Host cloud snapshot queue...');
         await store.ensureHostCloudBootstrapSnapshotQueued();
+        final repairedCloudQueue = await store.repairMissingHostCloudQueueForPendingChanges();
+        if (repairedCloudQueue > 0) {
+          onProgress?.call(0.18, 'Repaired $repairedCloudQueue missing Host cloud queue item(s)...');
+        }
         onProgress?.call(0.25, 'Sending Host heartbeat...');
         await sendHostHeartbeat(settings);
         onProgress?.call(0.40, 'Registering Host device...');
@@ -1399,6 +1427,7 @@ class CloudSyncService {
         onProgress?.call(0.55, 'Checking Client requests...');
         acceptedRemoteRequests = await _hostPullRemoteRequests(settings);
         onProgress?.call(0.75, 'Uploading authoritative Host changes...');
+        await store.repairMissingHostCloudQueueForPendingChanges();
         pushed += await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
         return CloudSyncResult(
           ok: true,
@@ -1538,6 +1567,10 @@ class CloudSyncService {
       if (identity.isHost) {
         onProgress?.call(0.10, 'Preparing Host cloud snapshot queue...');
         await store.ensureHostCloudBootstrapSnapshotQueued();
+        final repairedCloudQueue = await store.repairMissingHostCloudQueueForPendingChanges();
+        if (repairedCloudQueue > 0) {
+          onProgress?.call(0.18, 'Repaired $repairedCloudQueue missing Host cloud queue item(s)...');
+        }
         onProgress?.call(0.25, 'Sending Host heartbeat...');
         await sendHostHeartbeat(settings);
         onProgress?.call(0.40, 'Registering Host device...');
@@ -1545,6 +1578,7 @@ class CloudSyncService {
         onProgress?.call(0.55, 'Checking Client requests...');
         acceptedRemoteRequests = await _hostPullRemoteRequests(settings);
         onProgress?.call(0.75, 'Uploading authoritative Host changes...');
+        await store.repairMissingHostCloudQueueForPendingChanges();
         pushed += await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
         onProgress?.call(1.0, 'Host cloud sync completed.');
         return CloudSyncResult(
