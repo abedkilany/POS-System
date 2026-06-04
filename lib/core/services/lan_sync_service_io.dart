@@ -618,6 +618,7 @@ class LanSyncService {
           appliedSequence: sequence,
           ackSequence: sequence,
         );
+        await store.compactSyncedSyncHistoryForMaintenance();
         await _json(request, {'ok': true, 'serverTime': DateTime.now().toIso8601String()});
         return;
       }
@@ -1037,6 +1038,12 @@ class LanSyncService {
         return LanSyncResult(ok: false, message: 'Pull changes failed: ${pullResponse.statusCode} $pullBody');
       }
       final decodedPull = jsonDecode(pullBody) as Map<String, dynamic>;
+      if (decodedPull['needsSnapshot'] == true) {
+        final repair = await repairFromHostSnapshot(host, port: port, token: token, onProgress: onProgress);
+        return repair.ok
+            ? LanSyncResult(ok: true, message: 'LAN event log gap detected. ${repair.message}')
+            : LanSyncResult(ok: false, message: 'LAN event log gap detected and repair failed. ${repair.message}');
+      }
       final changes = _syncCore.filterOutLocalEchoes(
         _syncCore.decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
       );
@@ -1128,6 +1135,12 @@ class LanSyncService {
         return LanSyncResult(ok: false, message: repair == null ? message : '$message. ${repair.message}');
       }
       final decodedPull = jsonDecode(pullBody) as Map<String, dynamic>;
+      if (decodedPull['needsSnapshot'] == true) {
+        final repair = await repairFromHostSnapshot(host, port: port, token: token, onProgress: onProgress);
+        return repair.ok
+            ? LanSyncResult(ok: true, message: 'LAN event log gap detected. ${repair.message}')
+            : LanSyncResult(ok: false, message: 'LAN event log gap detected and repair failed. ${repair.message}');
+      }
       final changes = _syncCore.filterOutLocalEchoes(
         _syncCore.decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
       );

@@ -1343,7 +1343,21 @@ class CloudSyncService {
         .timeout(const Duration(seconds: 20));
     if (response.statusCode < 200 || response.statusCode >= 300) return;
     final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    final acceptedRaw = decoded['acceptedIds'] ?? decoded['accepted_ids'];
+    final acceptedIds = (acceptedRaw is List ? acceptedRaw : const <dynamic>[])
+        .map((item) => '$item')
+        .where((item) => item.trim().isNotEmpty)
+        .toList();
     final rejected = _decodeRejectedSyncRequests(decoded['rejected']);
+
+    // A relay ACK only means the Cloud server received the request. The final
+    // decision comes later from the Host. Once the Host reports accepted, mark
+    // the draft as acknowledged so the Client no longer counts it as pending.
+    if (acceptedIds.isNotEmpty) await _syncCore.markPushAcknowledged(acceptedIds);
+
+    // Rejected drafts must not remain as normal local data. AppStore will mark
+    // the queue row as rejected and quarantine local creates that the Host did
+    // not accept, e.g. duplicate product code/barcode.
     if (rejected.isNotEmpty) await _syncCore.markPushRejected(rejected);
   }
 
@@ -1468,6 +1482,12 @@ class CloudSyncService {
       await _pollSubmittedClientRequests(settings);
       var pulled = 0;
       final initialCursor = settings.lastPullCursor;
+      // Freeze the sequence watermark for the whole paginated pull. Reading
+      // lastAppliedSequence after every page can skip pages: page 1 advances the
+      // local state, then page 2 asks Cloud for sequence > the new value while
+      // also passing the old page cursor. That combination can silently miss
+      // events, which showed up as product count differences across devices.
+      final baseLastAppliedSequence = SyncDeviceStateStore.load(store.appIdentity).lastAppliedSequence;
       var pageCursor = '';
       DateTime? finalPullCursor;
       var finalPullSequence = 0;
@@ -1486,8 +1506,7 @@ class CloudSyncService {
           'branch_id': identity.branchId,
           'limit': '1000',
         };
-        final lastSequence = SyncDeviceStateStore.load(store.appIdentity).lastAppliedSequence;
-        if (lastSequence > 0) query['since_sequence'] = lastSequence.toString();
+        if (baseLastAppliedSequence > 0) query['since_sequence'] = baseLastAppliedSequence.toString();
         if (initialCursor != null) query['since'] = initialCursor.toIso8601String();
         if (initialCursor == null && minSnapshotUpdatedAt != null) {
           query['min_snapshot_updated_at'] = minSnapshotUpdatedAt.toIso8601String();
@@ -1580,6 +1599,8 @@ class CloudSyncService {
         onProgress?.call(0.75, 'Uploading authoritative Host changes...');
         await store.repairMissingHostCloudQueueForPendingChanges();
         pushed += await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
+        onProgress?.call(0.92, 'Running safe sync log maintenance...');
+        await store.compactSyncedSyncHistoryForMaintenance();
         onProgress?.call(1.0, 'Host cloud sync completed.');
         return CloudSyncResult(
           ok: true,
@@ -1599,6 +1620,12 @@ class CloudSyncService {
       }
 
       final initialCursor = settings.lastPullCursor;
+      // Freeze the sequence watermark for the whole paginated pull. Reading
+      // lastAppliedSequence after every page can skip pages: page 1 advances the
+      // local state, then page 2 asks Cloud for sequence > the new value while
+      // also passing the old page cursor. That combination can silently miss
+      // events, which showed up as product count differences across devices.
+      final baseLastAppliedSequence = SyncDeviceStateStore.load(store.appIdentity).lastAppliedSequence;
       var pageCursor = '';
       DateTime? finalPullCursor;
       var finalPullSequence = 0;
@@ -1617,8 +1644,7 @@ class CloudSyncService {
           'branch_id': identity.branchId,
           'limit': '1000',
         };
-        final lastSequence = SyncDeviceStateStore.load(store.appIdentity).lastAppliedSequence;
-        if (lastSequence > 0) query['since_sequence'] = lastSequence.toString();
+        if (baseLastAppliedSequence > 0) query['since_sequence'] = baseLastAppliedSequence.toString();
         if (initialCursor != null) query['since'] = initialCursor.toIso8601String();
         if (initialCursor == null && minSnapshotUpdatedAt != null) {
           query['min_snapshot_updated_at'] = minSnapshotUpdatedAt.toIso8601String();

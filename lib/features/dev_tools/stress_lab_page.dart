@@ -322,7 +322,7 @@ class _StressLabPageState extends State<StressLabPage> {
       _setStatus('Compacting synced sync history...', progress: 0.05);
       _addLog(_snapshotLine('BEFORE_COMPACT_SYNC_HISTORY'));
       final result = await store.compactSyncedSyncHistoryForDiagnostics();
-      _addLog("Compact synced sync history result removedChanges=${result['removedChanges']} removedQueue=${result['removedQueue']} remainingChanges=${result['remainingChanges']} remainingQueue=${result['remainingQueue']} pendingChanges=${result['pendingChanges']} pendingQueue=${result['pendingQueue']}");
+      _addLog("Compact synced sync history result removedChanges=${result['removedChanges']} removedQueue=${result['removedQueue']} remainingChanges=${result['remainingChanges']} remainingQueue=${result['remainingQueue']} pendingChanges=${result['pendingChanges']} pendingQueue=${result['pendingQueue']} safeFloorSequence=${result['safeFloorSequence']} earliestSequence=${result['earliestSequence']} latestSequence=${result['latestSequence']}");
       _addLog(_snapshotLine('AFTER_COMPACT_SYNC_HISTORY'));
       _setStatus('Compaction completed.', progress: 1);
     } catch (error, stack) {

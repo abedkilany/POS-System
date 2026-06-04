@@ -1949,15 +1949,48 @@ class AppStore extends ChangeNotifier {
   }
 
 
+  static const int _syncMaintenanceKeepRecentChanges = 200;
+  static const int _syncMaintenanceMinChangesBeforeCompact = 1000;
+
+  /// Automatic event-log compaction is intentionally not run from normal save
+  /// calls. It is async, Host-only, and must be guarded by ACK-based safety
+  /// checks, so sync transports call [compactSyncedSyncHistoryForMaintenance]
+  /// after a successful sync/ACK cycle.
   void _compactSyncedHistory() {
-    const keepSynced = 200;
-    final synced = _syncChanges.where((item) => item.isSynced).toList()
-      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    if (synced.length <= keepSynced) return;
-    final keepIds = synced.take(keepSynced).map((item) => item.id).toSet();
-    _syncChanges.removeWhere((item) => item.isSynced && !keepIds.contains(item.id));
-    final validChangeIds = _syncChanges.map((item) => item.id).toSet();
-    _syncQueue.removeWhere((item) => !item.isPending && !validChangeIds.contains(item.changeId));
+    return;
+  }
+
+  int _earliestStoredAuthoritativeSequence() {
+    var earliest = 0;
+    for (final change in _syncChanges) {
+      if (change.sequence <= 0) continue;
+      if (earliest == 0 || change.sequence < earliest) earliest = change.sequence;
+    }
+    return earliest;
+  }
+
+  int _latestStoredAuthoritativeSequence() {
+    var latest = _syncSequence;
+    for (final change in _syncChanges) {
+      if (change.sequence > latest) latest = change.sequence;
+    }
+    return latest;
+  }
+
+  int _minimumActivePeerAckSequence({Duration activeWindow = const Duration(days: 14)}) {
+    if (!appIdentity.isHost) return _latestStoredAuthoritativeSequence();
+    final now = DateTime.now();
+    final activePeers = SyncDeviceStateStore.loadPeerStates().where((peer) {
+      final seen = peer.lastSeenAt ?? peer.updatedAt;
+      if (seen == null) return false;
+      return now.difference(seen) <= activeWindow;
+    }).toList();
+    if (activePeers.isEmpty) return 0;
+    return activePeers.fold<int>(1 << 62, (minSeq, peer) {
+      final seq = peer.lastAckSequence > 0 ? peer.lastAckSequence : peer.lastAppliedSequence;
+      if (seq <= 0) return 0;
+      return seq < minSeq ? seq : minSeq;
+    });
   }
 
   Future<void> _saveAll() async {
@@ -3225,22 +3258,41 @@ class AppStore extends ChangeNotifier {
 
   String exportSyncChangesJson({DateTime? since, int? sinceSequence}) {
     final sequenceFloor = sinceSequence ?? 0;
-    final changes = _syncChanges.where((item) {
-      if (sequenceFloor > 0) return item.sequence > sequenceFloor;
-      if (since != null) return !item.createdAt.isBefore(since);
-      return true;
-    }).toList();
+    final earliestSequence = _earliestStoredAuthoritativeSequence();
+    final latestSequence = _latestStoredAuthoritativeSequence();
+
+    // If a client asks for an old sequence that has already been compacted,
+    // incremental delivery cannot be trusted. The client must rebuild from a
+    // full Host snapshot instead of silently accepting a partial event stream.
+    final needsSnapshot = sequenceFloor > 0 &&
+        latestSequence > sequenceFloor &&
+        earliestSequence > 0 &&
+        sequenceFloor < earliestSequence - 1;
+
+    final changes = needsSnapshot
+        ? <SyncChange>[]
+        : (_syncChanges.where((item) {
+            if (sequenceFloor > 0) return item.sequence > sequenceFloor;
+            if (since != null) return !item.createdAt.isBefore(since);
+            return true;
+          }).toList()..sort((a, b) => a.sequence.compareTo(b.sequence)));
     final cursor = changes.isEmpty
         ? (since ?? DateTime.fromMillisecondsSinceEpoch(0))
         : changes.map((item) => item.createdAt).reduce((a, b) => a.isAfter(b) ? a : b);
-    final generatedSequence = changes.isEmpty
-        ? sequenceFloor
-        : changes.map((item) => item.sequence).reduce((a, b) => a > b ? a : b);
+    final generatedSequence = needsSnapshot
+        ? latestSequence
+        : (changes.isEmpty
+            ? sequenceFloor
+            : changes.map((item) => item.sequence).reduce((a, b) => a > b ? a : b));
     return jsonEncode({
       'ok': true,
       'deviceId': _deviceId,
       'generatedAt': cursor.toIso8601String(),
       'generatedSequence': generatedSequence,
+      'earliestSequence': earliestSequence,
+      'latestSequence': latestSequence,
+      'requestedSinceSequence': sequenceFloor,
+      'needsSnapshot': needsSnapshot,
       'changes': changes.map((item) => item.toJson()).toList(),
     });
   }
@@ -3893,13 +3945,97 @@ class AppStore extends ChangeNotifier {
     return true;
   }
 
-  /// Diagnostic-only sync log compaction used by Stress Lab.
+  Map<String, int> _syncHistoryCompactionResult({
+    required int beforeChanges,
+    required int beforeQueue,
+    required int safeFloorSequence,
+    int skipped = 0,
+  }) {
+    return {
+      'removedChanges': beforeChanges - _syncChanges.length,
+      'removedQueue': beforeQueue - _syncQueue.length,
+      'remainingChanges': _syncChanges.length,
+      'remainingQueue': _syncQueue.length,
+      'pendingChanges': pendingSyncChanges.length,
+      'pendingQueue': pendingSyncQueue.length,
+      'safeFloorSequence': safeFloorSequence,
+      'earliestSequence': _earliestStoredAuthoritativeSequence(),
+      'latestSequence': _latestStoredAuthoritativeSequence(),
+      'skipped': skipped,
+    };
+  }
+
+  String _syncHistoryCompactionLogLine(String label, Map<String, int> result) {
+    final pendingQueue = result['pendingQueue'] ?? pendingSyncQueue.length;
+    final pendingChanges = result['pendingChanges'] ?? pendingSyncChanges.length;
+    final remainingQueue = result['remainingQueue'] ?? _syncQueue.length;
+    final remainingChanges = result['remainingChanges'] ?? _syncChanges.length;
+    final safeFloorSequence = result['safeFloorSequence'] ?? 0;
+    final earliestSequence = result['earliestSequence'] ?? _earliestStoredAuthoritativeSequence();
+    final latestSequence = result['latestSequence'] ?? _latestStoredAuthoritativeSequence();
+    return '$label role=${appIdentity.deviceRole.name.toUpperCase()} '
+        'device=$_deviceId store=${appIdentity.storeId} branch=${appIdentity.branchId} '
+        'epoch=${appIdentity.storeEpoch} seq=$_syncSequence '
+        'products=${_products.length} customers=${_customers.length} suppliers=${_suppliers.length} '
+        'sales=${_sales.length} stockMovements=${_stockMovements.length} '
+        'pendingQueue=$pendingQueue pendingChanges=$pendingChanges '
+        'allQueue=$remainingQueue allChanges=$remainingChanges '
+        'safeFloorSequence=$safeFloorSequence earliestSequence=$earliestSequence latestSequence=$latestSequence';
+  }
+
+  /// Cursor-aware sync log compaction.
   ///
-  /// It removes synced queue rows and old synced change rows while preserving
-  /// every unsynced/submitted/failed/rejected item. This is intentionally not
-  /// called by normal app flows; it is a manual safety tool for temporary stress
-  /// builds after verifying Host/LAN/Cloud are aligned.
-  Future<Map<String, int>> compactSyncedSyncHistoryForDiagnostics({int keepRecentSyncedChanges = 500}) async {
+  /// Keeps the latest [keepRecentSyncedChanges] synced authoritative changes and
+  /// removes older synced queue rows only when they are at/below the active peer
+  /// ACK floor. If a Client later asks for a sequence older than the earliest
+  /// retained event, [exportSyncChangesJson] returns needsSnapshot=true so the
+  /// Client rebuilds from a full Host snapshot instead of applying a partial log.
+  Future<Map<String, int>> compactSyncedSyncHistoryForDiagnostics({int keepRecentSyncedChanges = _syncMaintenanceKeepRecentChanges}) async {
+    return _compactSyncedSyncHistory(
+      keepRecentSyncedChanges: keepRecentSyncedChanges,
+      requireSafeFloorSequence: true,
+    );
+  }
+
+  Future<Map<String, int>> compactSyncedSyncHistoryForMaintenance({
+    int keepRecentSyncedChanges = _syncMaintenanceKeepRecentChanges,
+    int minChangesBeforeCompact = _syncMaintenanceMinChangesBeforeCompact,
+  }) async {
+    final safeFloorSequence = _minimumActivePeerAckSequence();
+    final before = _syncHistoryCompactionResult(
+      beforeChanges: _syncChanges.length,
+      beforeQueue: _syncQueue.length,
+      safeFloorSequence: safeFloorSequence,
+    );
+
+    if (!appIdentity.isHost) {
+      return Map<String, int>.from(before)..['skipped'] = 1;
+    }
+    if (pendingSyncQueue.isNotEmpty || pendingSyncChanges.isNotEmpty) {
+      return Map<String, int>.from(before)..['skipped'] = 1;
+    }
+    if (safeFloorSequence <= 0) {
+      return Map<String, int>.from(before)..['skipped'] = 1;
+    }
+    if (_syncChanges.length <= minChangesBeforeCompact && _syncQueue.isEmpty) {
+      return Map<String, int>.from(before)..['skipped'] = 1;
+    }
+
+    debugPrint(_syncHistoryCompactionLogLine('BEFORE_AUTO_COMPACT_SYNC_HISTORY', before));
+    final result = await _compactSyncedSyncHistory(
+      keepRecentSyncedChanges: keepRecentSyncedChanges,
+      requireSafeFloorSequence: true,
+      knownSafeFloorSequence: safeFloorSequence,
+    );
+    debugPrint(_syncHistoryCompactionLogLine('AFTER_AUTO_COMPACT_SYNC_HISTORY', result));
+    return result;
+  }
+
+  Future<Map<String, int>> _compactSyncedSyncHistory({
+    required int keepRecentSyncedChanges,
+    required bool requireSafeFloorSequence,
+    int? knownSafeFloorSequence,
+  }) async {
     final beforeChanges = _syncChanges.length;
     final beforeQueue = _syncQueue.length;
 
@@ -3908,32 +4044,56 @@ class AppStore extends ChangeNotifier {
         .map((item) => item.changeId)
         .toSet();
 
-    _syncQueue.removeWhere((item) => item.status == 'synced');
+    final safeFloorSequence = knownSafeFloorSequence ?? _minimumActivePeerAckSequence();
+    if (requireSafeFloorSequence && safeFloorSequence <= 0) {
+      return _syncHistoryCompactionResult(
+        beforeChanges: beforeChanges,
+        beforeQueue: beforeQueue,
+        safeFloorSequence: safeFloorSequence,
+        skipped: 1,
+      );
+    }
 
-    final syncedChanges = _syncChanges.where((item) => item.isSynced && !pendingChangeIds.contains(item.id)).toList()
-      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    _syncQueue.removeWhere((item) {
+      if (item.status != 'synced') return false;
+      SyncChange? change;
+      for (final candidate in _syncChanges) {
+        if (candidate.id == item.changeId) {
+          change = candidate;
+          break;
+        }
+      }
+      if (change == null) return true;
+      if (change.sequence <= 0) return false;
+      return change.sequence <= safeFloorSequence;
+    });
+
+    final syncedChanges = _syncChanges.where((item) {
+      if (!item.isSynced) return false;
+      if (pendingChangeIds.contains(item.id)) return false;
+      if (item.sequence <= 0) return false;
+      return item.sequence <= safeFloorSequence;
+    }).toList()..sort((a, b) => b.sequence.compareTo(a.sequence));
     final keepSyncedIds = syncedChanges.take(keepRecentSyncedChanges).map((item) => item.id).toSet();
 
     _syncChanges.removeWhere((item) {
       if (!item.isSynced) return false;
       if (pendingChangeIds.contains(item.id)) return false;
+      if (item.sequence <= 0) return false;
+      if (item.sequence > safeFloorSequence) return false;
       return !keepSyncedIds.contains(item.id);
     });
 
-    final removedChanges = beforeChanges - _syncChanges.length;
-    final removedQueue = beforeQueue - _syncQueue.length;
-    if (removedChanges > 0 || removedQueue > 0) {
+    final result = _syncHistoryCompactionResult(
+      beforeChanges: beforeChanges,
+      beforeQueue: beforeQueue,
+      safeFloorSequence: safeFloorSequence,
+    );
+    if ((result['removedChanges'] ?? 0) > 0 || (result['removedQueue'] ?? 0) > 0) {
       await _saveAll();
       notifyListeners();
     }
-    return {
-      'removedChanges': removedChanges,
-      'removedQueue': removedQueue,
-      'remainingChanges': _syncChanges.length,
-      'remainingQueue': _syncQueue.length,
-      'pendingChanges': pendingSyncChanges.length,
-      'pendingQueue': pendingSyncQueue.length,
-    };
+    return result;
   }
 
   void _enqueueSyncChangeForTarget(String changeId, String target, DateTime now) {
@@ -4491,6 +4651,7 @@ class AppStore extends ChangeNotifier {
     final idSet = rejected.keys.toSet();
     final now = DateTime.now();
     var changed = false;
+    final rejectedChanges = <SyncChange>[];
     for (var i = 0; i < _syncQueue.length; i++) {
       final item = _syncQueue[i];
       final reason = rejected[item.changeId];
@@ -4504,9 +4665,77 @@ class AppStore extends ChangeNotifier {
         changed = true;
       }
     }
+    for (var i = 0; i < _syncChanges.length; i++) {
+      final change = _syncChanges[i];
+      final matches = idSet.contains(change.id) ||
+          idSet.contains(_syncMetaString(change, 'eventId')) ||
+          idSet.contains(_syncMetaString(change, 'requestId')) ||
+          idSet.contains(_syncMetaString(change, 'sourceCommandId'));
+      if (matches) {
+        rejectedChanges.add(change);
+        _syncChanges[i] = change.copyWith(isSynced: true, syncedAt: now);
+        changed = true;
+      }
+    }
+    if (rejectedChanges.isNotEmpty) {
+      changed = _quarantineRejectedLocalCreates(rejectedChanges, rejected, now) || changed;
+    }
     if (!changed) return;
     await _saveAll();
     notifyListeners();
+  }
+
+  bool _quarantineRejectedLocalCreates(List<SyncChange> rejectedChanges, Map<String, String> rejectedReasons, DateTime now) {
+    var changed = false;
+    for (final change in rejectedChanges) {
+      // Only quarantine local creates/drafts. Remote authoritative changes must
+      // never be deleted because of a status poll. The most common rejection in
+      // the stress tests is duplicate product code/barcode; leaving that local
+      // draft visible makes device counts diverge even though the Host rejected it.
+      if (change.deviceId != _deviceId || change.operation == 'delete') continue;
+      final reason = rejectedReasons[change.id] ??
+          rejectedReasons[_syncMetaString(change, 'eventId')] ??
+          rejectedReasons[_syncMetaString(change, 'requestId')] ??
+          rejectedReasons[_syncMetaString(change, 'sourceCommandId')] ??
+          'Rejected by Host.';
+      switch (change.entityType) {
+        case 'product':
+          final index = _products.indexWhere((item) => item.id == change.entityId && !item.isDeleted);
+          if (index >= 0) {
+            _products[index] = _products[index].copyWith(
+              isActive: false,
+              syncStatus: 'rejected: $reason',
+              updatedAt: now,
+              deletedAt: now,
+            );
+            changed = true;
+          }
+          break;
+        case 'customer':
+          final index = _customers.indexWhere((item) => item.id == change.entityId && !item.isDeleted);
+          if (index >= 0) {
+            _customers[index] = _customers[index].copyWith(
+              syncStatus: 'rejected: $reason',
+              updatedAt: now,
+              deletedAt: now,
+            );
+            changed = true;
+          }
+          break;
+        case 'supplier':
+          final index = _suppliers.indexWhere((item) => item.id == change.entityId && !item.isDeleted);
+          if (index >= 0) {
+            _suppliers[index] = _suppliers[index].copyWith(
+              syncStatus: 'rejected: $reason',
+              updatedAt: now,
+              deletedAt: now,
+            );
+            changed = true;
+          }
+          break;
+      }
+    }
+    return changed;
   }
 
   Future<void> markSyncQueueChangesFailed(Iterable<String> changeIds, String error) async {
