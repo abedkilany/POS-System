@@ -19,6 +19,7 @@ import requestsAck from '../server_api/sync/requests/ack.js';
 import requestsPull from '../server_api/sync/requests/pull.js';
 import requestsStatus from '../server_api/sync/requests/status.js';
 import requestsPush from '../server_api/sync/requests/push.js';
+import maintenance from '../server_api/sync/maintenance.js';
 
 const routes = new Map([
   ['health', health],
@@ -37,6 +38,7 @@ const routes = new Map([
   ['sync/pairing/status', pairingStatus],
   ['sync/pull', pull],
   ['sync/push', push],
+  ['sync/maintenance', maintenance],
   ['sync/recovery/claim', recoveryClaim],
   ['sync/requests/ack', requestsAck],
   ['sync/requests/pull', requestsPull],

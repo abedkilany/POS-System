@@ -190,6 +190,7 @@ class AppStore extends ChangeNotifier {
 
   bool get isReady => _isReady;
   List<Product> get products => List.unmodifiable(_products.where((item) => !item.isDeleted));
+  List<Product> get allProductsForDiagnostics => List.unmodifiable(_products);
   List<Customer> get customers => List.unmodifiable(_customers.where((item) => !item.isDeleted));
   List<Sale> get sales => List.unmodifiable(_sales.where((item) => !item.isDeleted).toList().reversed);
   List<Supplier> get suppliers => List.unmodifiable(_suppliers.where((item) => !item.isDeleted));
@@ -2219,7 +2220,10 @@ class AppStore extends ChangeNotifier {
     bool expired(DateTime? deletedAt) => deletedAt != null && deletedAt.isBefore(cutoff);
 
     final beforeProducts = _products.length;
-    _products.removeWhere((item) => expired(item.deletedAt) && !_hasPendingSyncFor('product', item.id));
+    _products.removeWhere((item) =>
+        expired(item.deletedAt) &&
+        !_hasPendingSyncFor('product', item.id) &&
+        !isProductReferenced(item.id));
     removed += beforeProducts - _products.length;
 
     final beforeCustomers = _customers.length;
@@ -2264,7 +2268,7 @@ class AppStore extends ChangeNotifier {
 
   Future<BusinessDataIntegrityResult> verifyLocalBusinessDataIntegrity() async {
     final problems = <String>[];
-    final productIds = _products.where((item) => !item.isDeleted).map((item) => item.id).toSet();
+    final productIds = _products.map((item) => item.id).toSet();
 
     for (final sale in _sales.where((item) => !item.isDeleted)) {
       if (sale.invoiceNo.trim().isEmpty) problems.add('Sale ${sale.id} has no invoice number');
@@ -2556,10 +2560,24 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  bool isProductReferenced(String productId) {
+    if (productId.trim().isEmpty) return false;
+    final usedInSales = _sales.any((sale) =>
+        !sale.isDeleted && sale.items.any((item) => item.productId == productId));
+    if (usedInSales) return true;
+    final usedInPurchases = _purchases.any((purchase) =>
+        !purchase.isDeleted && purchase.items.any((item) => item.productId == productId));
+    if (usedInPurchases) return true;
+    return _stockMovements.any((movement) => movement.productId == productId);
+  }
+
   Future<void> deleteProduct(String id) async {
     requirePermission(AppPermission.productsDelete);
     final index = _products.indexWhere((item) => item.id == id);
     if (index == -1) return;
+    if (isProductReferenced(id)) {
+      throw StateError('Cannot delete a product that is used by sales, purchases, or stock movements. Deactivate it instead.');
+    }
     final now = DateTime.now();
     _products[index] = _withSyncMeta<Product>(_products[index].copyWith(deletedAt: now), now, clearDeletedAt: false);
     _recordSyncChange(entityType: 'product', entityId: id, operation: 'delete', payload: _products[index].toJson());
@@ -4031,6 +4049,44 @@ class AppStore extends ChangeNotifier {
     return result;
   }
 
+  /// Client-side sync log compaction. Clients do not own the ACK floor for
+  /// other peers, so they compact only their local, already-synced history up
+  /// to the latest authoritative sequence they have applied. The Host remains
+  /// responsible for serving old events or returning needsSnapshot=true.
+  Future<Map<String, int>> compactClientSyncedSyncHistoryForMaintenance({
+    int keepRecentSyncedChanges = _syncMaintenanceKeepRecentChanges,
+    int minChangesBeforeCompact = _syncMaintenanceMinChangesBeforeCompact,
+  }) async {
+    final latestAppliedSequence = _latestStoredAuthoritativeSequence();
+    final before = _syncHistoryCompactionResult(
+      beforeChanges: _syncChanges.length,
+      beforeQueue: _syncQueue.length,
+      safeFloorSequence: latestAppliedSequence,
+    );
+
+    if (!appIdentity.isClient) {
+      return Map<String, int>.from(before)..['skipped'] = 1;
+    }
+    if (pendingSyncQueue.isNotEmpty || pendingSyncChanges.isNotEmpty) {
+      return Map<String, int>.from(before)..['skipped'] = 1;
+    }
+    if (latestAppliedSequence <= 0) {
+      return Map<String, int>.from(before)..['skipped'] = 1;
+    }
+    if (_syncChanges.length <= minChangesBeforeCompact && _syncQueue.isEmpty) {
+      return Map<String, int>.from(before)..['skipped'] = 1;
+    }
+
+    debugPrint(_syncHistoryCompactionLogLine('BEFORE_CLIENT_AUTO_COMPACT_SYNC_HISTORY', before));
+    final result = await _compactSyncedSyncHistory(
+      keepRecentSyncedChanges: keepRecentSyncedChanges,
+      requireSafeFloorSequence: false,
+      knownSafeFloorSequence: latestAppliedSequence,
+    );
+    debugPrint(_syncHistoryCompactionLogLine('AFTER_CLIENT_AUTO_COMPACT_SYNC_HISTORY', result));
+    return result;
+  }
+
   Future<Map<String, int>> _compactSyncedSyncHistory({
     required int keepRecentSyncedChanges,
     required bool requireSafeFloorSequence,
@@ -4054,8 +4110,16 @@ class AppStore extends ChangeNotifier {
       );
     }
 
+    final isClientLocalCompaction = !requireSafeFloorSequence;
+
     _syncQueue.removeWhere((item) {
       if (item.status != 'synced') return false;
+      // Client-side maintenance may safely remove every already-synced queue
+      // row, including local draft commands that never received an
+      // authoritative sequence locally (sequence=0). Keeping those rows was the
+      // reason Client databases kept thousands of stale SyncQueue entries.
+      if (isClientLocalCompaction) return true;
+
       SyncChange? change;
       for (final candidate in _syncChanges) {
         if (candidate.id == item.changeId) {
@@ -4079,7 +4143,11 @@ class AppStore extends ChangeNotifier {
     _syncChanges.removeWhere((item) {
       if (!item.isSynced) return false;
       if (pendingChangeIds.contains(item.id)) return false;
-      if (item.sequence <= 0) return false;
+      // Client-created draft changes commonly remain at sequence=0 after the
+      // Host accepts and republishes them as authoritative events. Once they
+      // are synced and no pending queue references them, they are stale local
+      // bookkeeping and must be removed on Clients.
+      if (item.sequence <= 0) return isClientLocalCompaction;
       if (item.sequence > safeFloorSequence) return false;
       return !keepSyncedIds.contains(item.id);
     });

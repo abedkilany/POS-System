@@ -80,6 +80,7 @@ class UnifiedSyncEngine {
       onProgress?.call(0.78, '$label pull failed. Trying snapshot repair...');
       final repair = await transport.rebuildFromHostSnapshot(onProgress: onProgress);
       if (repair.ok) {
+        await transport.compactAfterSuccessfulSync();
         return UnifiedSyncResult(
           ok: true,
           message: '${pull.message}. ${repair.message}',
@@ -99,6 +100,7 @@ class UnifiedSyncEngine {
       );
     }
 
+    await transport.compactAfterSuccessfulSync();
     onProgress?.call(1.0, '$label sync completed.');
     return UnifiedSyncResult(
       ok: true,

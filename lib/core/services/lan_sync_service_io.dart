@@ -144,6 +144,7 @@ class LanSyncSettings {
     required this.port,
     required this.autoSyncEnabled,
     required this.hostModeEnabled,
+    this.intervalSeconds = 15,
     this.setupComplete = false,
     this.mode = LanSyncDeviceMode.unconfigured,
     this.secret = '',
@@ -155,11 +156,13 @@ class LanSyncSettings {
   }) : hostRegistry = hostRegistry ?? const <String, HostRegistryDevice>{};
 
   static const String storageKey = 'lan_sync_settings_v2';
+  static const int defaultIntervalSeconds = 15;
 
   final String host;
   final int port;
   final bool autoSyncEnabled;
   final bool hostModeEnabled;
+  final int intervalSeconds;
   final bool setupComplete;
   final LanSyncDeviceMode mode;
   final String secret;
@@ -183,6 +186,7 @@ class LanSyncSettings {
     int? port,
     bool? autoSyncEnabled,
     bool? hostModeEnabled,
+    int? intervalSeconds,
     bool? setupComplete,
     LanSyncDeviceMode? mode,
     String? secret,
@@ -200,6 +204,7 @@ class LanSyncSettings {
       port: port ?? this.port,
       autoSyncEnabled: autoSyncEnabled ?? this.autoSyncEnabled,
       hostModeEnabled: hostModeEnabled ?? this.hostModeEnabled,
+      intervalSeconds: intervalSeconds ?? this.intervalSeconds,
       setupComplete: setupComplete ?? this.setupComplete,
       mode: mode ?? this.mode,
       secret: secret ?? this.secret,
@@ -215,6 +220,7 @@ class LanSyncSettings {
         'host': host,
         'port': port,
         'autoSyncEnabled': autoSyncEnabled,
+      'intervalSeconds': intervalSeconds,
         'hostModeEnabled': hostModeEnabled,
         'setupComplete': setupComplete,
         'mode': mode.name,
@@ -243,6 +249,7 @@ class LanSyncSettings {
       host: (json['host'] as String?)?.trim().isNotEmpty == true ? (json['host'] as String).trim() : '192.168.1.100',
       port: json['port'] as int? ?? int.tryParse('${json['port']}') ?? 8787,
       autoSyncEnabled: json['autoSyncEnabled'] as bool? ?? true,
+      intervalSeconds: json['intervalSeconds'] as int? ?? defaultIntervalSeconds,
       hostModeEnabled: json['hostModeEnabled'] as bool? ?? mode == LanSyncDeviceMode.host,
       setupComplete: json['setupComplete'] as bool? ?? false,
       mode: mode,
@@ -861,6 +868,8 @@ class LanSyncService {
       final hostSequence = store.syncSnapshotGeneratedSequenceFromJson(body);
       await SyncDeviceStateStore.recordSyncResult(store.appIdentity, transport: 'lan', appliedCursor: hostCursor, ackCursor: hostCursor, appliedSequence: hostSequence, ackSequence: hostSequence);
       await _sendLanAck(host, port: port, token: token, cursor: hostCursor, sequence: hostSequence);
+      onProgress?.call(0.94, 'Running Client sync log maintenance...');
+      await store.compactClientSyncedSyncHistoryForMaintenance();
       onProgress?.call(1.0, 'LAN rebuild completed.');
       return const LanSyncResult(ok: true, message: 'LAN rebuild completed from full Host snapshot.');
     } catch (error) {
@@ -1153,6 +1162,8 @@ class LanSyncService {
       await SyncDeviceStateStore.recordSyncResult(store.appIdentity, transport: 'lan', appliedCursor: generatedAt, ackCursor: generatedAt, appliedSequence: generatedSequence, ackSequence: generatedSequence);
       await _sendLanAck(host, port: port, token: token, cursor: generatedAt, sequence: generatedSequence);
       await store.clearSuspendedByHost();
+      onProgress?.call(0.97, 'Running Client sync log maintenance...');
+      await store.compactClientSyncedSyncHistoryForMaintenance();
       onProgress?.call(1.0, 'LAN sync completed.');
       return LanSyncResult(
         ok: true,

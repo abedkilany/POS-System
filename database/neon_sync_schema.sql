@@ -137,3 +137,14 @@ create unique index if not exists idx_sync_events_source_command_unique
 create unique index if not exists idx_cloud_change_requests_request_unique
   on cloud_change_requests (store_id, branch_id, request_id)
   where request_id is not null and request_id <> '';
+
+
+-- Cloud maintenance support: keeps cleanup scoped per store/branch and fast.
+create index if not exists idx_sync_events_store_branch_sequence
+  on sync_events (store_id, branch_id, sequence);
+
+create index if not exists idx_cloud_change_requests_store_status
+  on cloud_change_requests (store_id, branch_id, status, accepted_at, received_at);
+
+create index if not exists idx_entity_snapshots_store_type_updated
+  on entity_snapshots (store_id, branch_id, entity_type, updated_at);

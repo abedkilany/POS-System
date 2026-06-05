@@ -138,6 +138,7 @@ class LanSyncSettings {
     required this.port,
     required this.autoSyncEnabled,
     required this.hostModeEnabled,
+    this.intervalSeconds = 15,
     this.setupComplete = false,
     this.mode = LanSyncDeviceMode.unconfigured,
     this.secret = '',
@@ -149,11 +150,13 @@ class LanSyncSettings {
   }) : hostRegistry = hostRegistry ?? const <String, HostRegistryDevice>{};
 
   static const String storageKey = 'lan_sync_settings_v2';
+  static const int defaultIntervalSeconds = 15;
 
   final String host;
   final int port;
   final bool autoSyncEnabled;
   final bool hostModeEnabled;
+  final int intervalSeconds;
   final bool setupComplete;
   final LanSyncDeviceMode mode;
   final String secret;
@@ -175,6 +178,7 @@ class LanSyncSettings {
     int? port,
     bool? autoSyncEnabled,
     bool? hostModeEnabled,
+    int? intervalSeconds,
     bool? setupComplete,
     LanSyncDeviceMode? mode,
     String? secret,
@@ -191,6 +195,7 @@ class LanSyncSettings {
         port: port ?? this.port,
         autoSyncEnabled: autoSyncEnabled ?? this.autoSyncEnabled,
         hostModeEnabled: hostModeEnabled ?? this.hostModeEnabled,
+        intervalSeconds: intervalSeconds ?? this.intervalSeconds,
         setupComplete: setupComplete ?? this.setupComplete,
         mode: mode ?? this.mode,
         secret: secret ?? this.secret,
@@ -206,6 +211,7 @@ class LanSyncSettings {
         'port': port,
         'autoSyncEnabled': autoSyncEnabled,
         'hostModeEnabled': hostModeEnabled,
+        'intervalSeconds': intervalSeconds,
         'setupComplete': setupComplete,
         'mode': mode.name,
         'secret': secret,
@@ -234,6 +240,7 @@ class LanSyncSettings {
       port: json['port'] as int? ?? int.tryParse('${json['port']}') ?? 8787,
       autoSyncEnabled: json['autoSyncEnabled'] as bool? ?? true,
       hostModeEnabled: json['hostModeEnabled'] as bool? ?? mode == LanSyncDeviceMode.host,
+      intervalSeconds: (json['intervalSeconds'] as num?)?.toInt().clamp(5, 3600) ?? defaultIntervalSeconds,
       setupComplete: json['setupComplete'] as bool? ?? false,
       mode: mode,
       secret: json['secret'] as String? ?? '',

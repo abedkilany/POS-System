@@ -230,6 +230,22 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
     );
   }
 
+
+  @override
+  Future<void> compactAfterSuccessfulSync() async {
+    try {
+      final identity = _service.store.appIdentity;
+      if (identity.isHost) {
+        await _service.store.compactSyncedSyncHistoryForMaintenance();
+      } else if (identity.isClient) {
+        await _service.store.compactClientSyncedSyncHistoryForMaintenance();
+      }
+    } catch (_) {
+      // Best-effort maintenance: never fail a successful sync because local
+      // compaction failed.
+    }
+  }
+
   @override
   Future<UnifiedSyncResult> syncNow({void Function(double value, String label)? onProgress}) async {
     onProgress?.call(0.08, 'Preparing Cloud sync...');
@@ -252,6 +268,7 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
       ),
     );
     if (pull.ok) {
+      await compactAfterSuccessfulSync();
       onProgress?.call(1.0, 'Cloud sync completed.');
       return UnifiedSyncResult(
         ok: true,
@@ -266,6 +283,7 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
     onProgress?.call(0.78, 'Cloud pull failed. Trying snapshot repair...');
     final repair = await rebuildFromHostSnapshot(onProgress: onProgress);
     if (repair.ok) {
+      await compactAfterSuccessfulSync();
       return UnifiedSyncResult(
         ok: true,
         message: '${pull.message}. ${repair.message}',

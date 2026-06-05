@@ -92,7 +92,8 @@ class UnifiedAutoLanSyncController {
     store.removeListener(_onStoreChanged);
     store.addListener(_onStoreChanged);
     _periodicTimer?.cancel();
-    _periodicTimer = Timer.periodic(const Duration(seconds: 30), (_) => _syncBecauseOfTimer());
+    final interval = Duration(seconds: settings.intervalSeconds.clamp(5, 3600).toInt());
+    _periodicTimer = Timer.periodic(interval, (_) => _syncBecauseOfTimer());
 
     if (store.appIdentity.isClient && settings.autoSyncEnabled && settings.isClient) {
       unawaited(_runClientSync());
@@ -122,7 +123,7 @@ class UnifiedAutoLanSyncController {
     if (!_lanAllowedForCurrentRole(settings) || !settings.autoSyncEnabled || !settings.isClient || !pendingIncreased) return;
 
     _debounceTimer?.cancel();
-    _debounceTimer = Timer(const Duration(seconds: 1), () => _runClientSync());
+    _debounceTimer = Timer(const Duration(seconds: 3), () => _runClientSync());
   }
 
   void _syncBecauseOfTimer() {

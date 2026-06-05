@@ -18,7 +18,7 @@ class CloudSyncSettings {
     required this.apiToken,
     this.lastPullCursor,
     this.autoSyncEnabled = true,
-    this.intervalSeconds = 5,
+    this.intervalSeconds = 15,
   });
 
   static const _apiBaseUrlKey = 'cloud_api_base_url';
@@ -113,7 +113,7 @@ class CloudSyncSettings {
       apiToken: token,
       lastPullCursor: DateTime.tryParse(cursorRaw),
       autoSyncEnabled: autoRaw == null ? true : autoRaw == 'true',
-      intervalSeconds: int.tryParse(intervalRaw ?? '')?.clamp(5, 3600).toInt() ?? 5,
+      intervalSeconds: int.tryParse(intervalRaw ?? '')?.clamp(5, 3600).toInt() ?? 15,
     );
   }
 
@@ -635,6 +635,16 @@ class CloudSyncService {
           return CloudStoreRecoveryResult(ok: false, message: 'Store identity recovered, but snapshot download failed: ${pull.statusCode} ${pull.body}', identity: store.appIdentity);
         }
         final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
+        if (decodedPull['needsSnapshot'] == true) {
+          await CloudSyncSettings.clearSavedPullCursor();
+          return CloudStoreRecoveryResult(
+            ok: false,
+            message: 'Cloud event log gap detected. Snapshot repair is required.',
+            identity: store.appIdentity,
+            restoredSnapshot: true,
+            pulled: pulled,
+          );
+        }
         final changes = _syncCore.filterOutLocalEchoes(
           _syncCore.decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
         );
@@ -1244,6 +1254,37 @@ class CloudSyncService {
     }
   }
 
+  Future<Map<String, dynamic>?> runCloudMaintenance(CloudSyncSettings settings, {int keepRecentEvents = 200}) async {
+    final identity = store.appIdentity;
+    if (!identity.isHost || !identity.isCloudEnabled || !settings.isConfigured) return null;
+    try {
+      final response = await _client
+          .post(
+            settings.endpoint('/api/sync/maintenance'),
+            headers: _headers(settings),
+            body: jsonEncode({
+              'storeId': identity.storeId,
+              'branchId': identity.branchId,
+              'hostDeviceId': store.deviceId,
+              'deviceId': store.deviceId,
+              'keepRecentEvents': keepRecentEvents,
+              'activeDeviceDays': 14,
+              'processedRequestRetentionDays': 3,
+              'deletedSnapshotRetentionDays': 7,
+            }),
+          )
+          .timeout(const Duration(seconds: 20));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        debugPrint('Cloud maintenance failed: ${response.statusCode} ${response.body}');
+        return null;
+      }
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    } catch (error) {
+      debugPrint('Cloud maintenance failed: $error');
+      return null;
+    }
+  }
+
   Future<int> _pushPendingToEndpoint(CloudSyncSettings settings, String target, String path) async {
     final identity = store.appIdentity;
     var totalPushed = 0;
@@ -1254,7 +1295,7 @@ class CloudSyncService {
     // timeout could leave the Host appearing idle while Cloud clients are still
     // missing data. Push in small acknowledged batches and mark only the batch
     // currently being sent as in-progress.
-    const batchSize = 250;
+    const batchSize = 50;
 
     while (true) {
       final pending = _syncCore.pendingChangesForTarget(target).take(batchSize).toList(growable: false);
@@ -1443,6 +1484,7 @@ class CloudSyncService {
         onProgress?.call(0.75, 'Uploading authoritative Host changes...');
         await store.repairMissingHostCloudQueueForPendingChanges();
         pushed += await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
+        await runCloudMaintenance(settings);
         return CloudSyncResult(
           ok: true,
           pushed: pushed,
@@ -1521,6 +1563,15 @@ class CloudSyncService {
         }
 
         final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
+        if (decodedPull['needsSnapshot'] == true) {
+          await CloudSyncSettings.clearSavedPullCursor();
+          return CloudSyncResult(
+            ok: false,
+            message: 'Cloud event log gap detected. Snapshot repair is required.',
+            restoredSnapshot: true,
+            pulled: pulled,
+          );
+        }
         final changes = _syncCore.filterOutLocalEchoes(
           _syncCore.decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
         );
@@ -1599,8 +1650,10 @@ class CloudSyncService {
         onProgress?.call(0.75, 'Uploading authoritative Host changes...');
         await store.repairMissingHostCloudQueueForPendingChanges();
         pushed += await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
-        onProgress?.call(0.92, 'Running safe sync log maintenance...');
+        onProgress?.call(0.90, 'Running safe local sync log maintenance...');
         await store.compactSyncedSyncHistoryForMaintenance();
+        onProgress?.call(0.96, 'Running safe Cloud maintenance...');
+        await runCloudMaintenance(settings);
         onProgress?.call(1.0, 'Host cloud sync completed.');
         return CloudSyncResult(
           ok: true,
@@ -1660,6 +1713,15 @@ class CloudSyncService {
         }
 
         final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
+        if (decodedPull['needsSnapshot'] == true) {
+          await CloudSyncSettings.clearSavedPullCursor();
+          return CloudSyncResult(
+            ok: false,
+            message: 'Cloud event log gap detected. Snapshot repair is required.',
+            restoredSnapshot: true,
+            pulled: pulled,
+          );
+        }
         final changes = _syncCore.filterOutLocalEchoes(
           _syncCore.decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
         );
@@ -1689,8 +1751,12 @@ class CloudSyncService {
       }
 
       if (pulled > 0) {
-        onProgress?.call(0.96, 'Cleaning up after Cloud sync...');
+        onProgress?.call(0.94, 'Cleaning up after Cloud sync...');
         await store.cleanupSoftDeletedRecords();
+      }
+      if (store.appIdentity.isClient) {
+        onProgress?.call(0.97, 'Running Client sync log maintenance...');
+        await store.compactClientSyncedSyncHistoryForMaintenance();
       }
       if (store.appIdentity.isClient && (restoredSnapshot || pulled > 0)) {
         await CloudProvisioningStatus.markComplete(message: 'Initial Store data downloaded.');

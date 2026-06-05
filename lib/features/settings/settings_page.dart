@@ -1389,6 +1389,7 @@ class _UnifiedSyncSettingsCard extends StatefulWidget {
 class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   final _lanHostController = TextEditingController();
   final _lanPortController = TextEditingController();
+  final _lanIntervalController = TextEditingController();
   final _lanTokenController = TextEditingController();
   final _cloudApiController = TextEditingController();
   final _cloudTokenController = TextEditingController();
@@ -1439,6 +1440,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     _cloudEnabled = identity.isCloudEnabled && cloud.isConfigured;
     _lanHostController.text = lan.host;
     _lanPortController.text = lan.port.toString();
+    _lanIntervalController.text = lan.intervalSeconds.toString();
     _lanTokenController.text = lan.secret.trim();
     _cloudApiController.text = cloud.apiBaseUrl;
     _cloudTokenController.text = cloud.apiToken;
@@ -1446,6 +1448,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     for (final controller in [
       _lanHostController,
       _lanPortController,
+      _lanIntervalController,
       _lanTokenController,
       _cloudApiController,
       _cloudTokenController,
@@ -1465,6 +1468,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   void dispose() {
     _lanHostController.dispose();
     _lanPortController.dispose();
+    _lanIntervalController.dispose();
     _lanTokenController.dispose();
     _cloudApiController.dispose();
     _cloudTokenController.dispose();
@@ -1476,7 +1480,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   }
 
   int get _lanPort => int.tryParse(_lanPortController.text.trim()) ?? 8787;
-  int get _cloudInterval => int.tryParse(_cloudIntervalController.text.trim())?.clamp(5, 3600).toInt() ?? 5;
+  int get _lanInterval => int.tryParse(_lanIntervalController.text.trim())?.clamp(5, 3600).toInt() ?? LanSyncSettings.defaultIntervalSeconds;
+  int get _cloudInterval => int.tryParse(_cloudIntervalController.text.trim())?.clamp(5, 3600).toInt() ?? 15;
 
   void _onSyncDraftChanged() {
     if (mounted) setState(() {});
@@ -1496,12 +1501,13 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         _cloudEnabled != cloudEnabled ||
         _lanHostController.text.trim() != lan.host.trim() ||
         _lanPortController.text.trim() != lan.port.toString() ||
+        _lanIntervalController.text.trim() != lan.intervalSeconds.toString() ||
         _cloudApiController.text.trim() != cloud.apiBaseUrl.trim() ||
         _cloudTokenController.text.trim() != cloud.apiToken.trim() ||
         _cloudIntervalController.text.trim() != cloud.intervalSeconds.toString();
   }
 
-  void _resetSyncDraft() {
+  void _resetSyncDraft({String? status}) {
     final identity = widget.store.appIdentity;
     final lan = LanSyncSettings.load();
     final cloud = CloudSyncSettings.load();
@@ -1512,10 +1518,11 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       _cloudEnabled = identity.isCloudEnabled && cloud.isConfigured;
       _lanHostController.text = lan.host;
       _lanPortController.text = lan.port.toString();
+      _lanIntervalController.text = lan.intervalSeconds.toString();
       _cloudApiController.text = cloud.apiBaseUrl;
       _cloudTokenController.text = cloud.apiToken;
       _cloudIntervalController.text = cloud.intervalSeconds.toString();
-      _status = AppLocalizations.of(context).text('cancelled');
+      _status = status ?? AppLocalizations.of(context).text('cancelled');
     });
   }
 
@@ -1564,6 +1571,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           await LanSyncSettings(
             host: _lanHostController.text.trim().isEmpty ? migratedLan.host : _lanHostController.text.trim(),
             port: _lanPort,
+            intervalSeconds: _lanInterval,
             autoSyncEnabled: _lanEnabledForHost,
             hostModeEnabled: _lanEnabledForHost,
             setupComplete: _lanEnabledForHost,
@@ -1597,13 +1605,16 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           await lanSettings.copyWith(
             autoSyncEnabled: activeTransport == 'lan',
             hostModeEnabled: false,
+            intervalSeconds: _lanInterval,
           ).save();
           await cloudSettings.copyWith(
             autoSyncEnabled: activeTransport == 'cloud',
           ).save();
           await widget.store.setActiveSyncTransport(activeTransport);
         }
-        if (mounted) setState(() => _status = AppLocalizations.of(context).text('sync_settings_saved'));
+        if (mounted) {
+          _resetSyncDraft(status: AppLocalizations.of(context).text('sync_settings_saved'));
+        }
       });
 
   Future<void> _run(Future<void> Function() action) async {
@@ -2608,6 +2619,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     final cloud = CloudSyncSettings.load();
     _lanHostController.text = lan.host;
     _lanPortController.text = lan.port.toString();
+    _lanIntervalController.text = lan.intervalSeconds.toString();
     _lanTokenController.text = lan.secret.trim();
     _cloudApiController.text = cloud.apiBaseUrl;
     _cloudPairingCodeController.clear();
@@ -2767,6 +2779,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                     _readOnlyTransportLine(context, tr.text('host_ip_address'), lan.host.isEmpty ? '—' : lan.host, Icons.dns_outlined),
                     _readOnlyTransportLine(context, tr.text('port'), '${lan.port}', Icons.tag_outlined),
                     _readOnlyTransportLine(context, tr.text('pairing_token'), lan.secret.trim().isEmpty ? '—' : '••••••••', Icons.vpn_key_outlined),
+                    _readOnlyTransportLine(context, tr.text('sync_interval'), tr.format('seconds_count', {'count': '${lan.intervalSeconds}'}), Icons.timer_outlined),
                   ],
           ),
           const Divider(height: 20),
@@ -3015,7 +3028,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         children: [
           Expanded(
             child: OutlinedButton.icon(
-              onPressed: _busy || !changed ? null : _resetSyncDraft,
+              onPressed: _busy || !changed ? null : () => _resetSyncDraft(),
               icon: const Icon(Icons.close_outlined),
               label: Text(tr.text('cancel')),
             ),
@@ -3509,6 +3522,16 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           TextField(controller: _lanHostController, decoration: InputDecoration(labelText: AppLocalizations.of(context).text('manual_host_ip_optional'), border: const OutlineInputBorder())),
         if (showHostIp) const SizedBox(height: 12),
         TextField(controller: _lanPortController, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: AppLocalizations.of(context).text('port'), border: const OutlineInputBorder())),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _lanIntervalController,
+          keyboardType: TextInputType.number,
+          decoration: InputDecoration(
+            labelText: AppLocalizations.of(context).text('auto_sync_interval_seconds'),
+            helperText: AppLocalizations.of(context).text('sync_interval_range_hint'),
+            border: const OutlineInputBorder(),
+          ),
+        ),
         const SizedBox(height: 12),
         if (!forHost) ...[
           TextField(

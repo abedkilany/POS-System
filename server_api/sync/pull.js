@@ -134,6 +134,33 @@ export default async function handler(req, res) {
       });
     }
 
+    if (sinceSequence > 0) {
+      const sequenceWindowRows = await sql`
+        select coalesce(min(nullif(sequence, 0)), 0) as earliest_sequence,
+               coalesce(max(sequence), 0) as latest_sequence
+        from sync_events
+        where store_id = ${storeId}
+          and branch_id = ${branchId}
+      `;
+      const earliestSequence = Number(sequenceWindowRows[0]?.earliest_sequence || 0);
+      const latestSequence = Number(sequenceWindowRows[0]?.latest_sequence || 0);
+      if (earliestSequence > 0 && sinceSequence < earliestSequence - 1) {
+        await markDevicePullSeen(req, { storeId, branchId });
+        return res.status(200).json({
+          ok: true,
+          changes: [],
+          hasMore: false,
+          nextCursor: null,
+          needsSnapshot: true,
+          earliestSequence,
+          latestSequence,
+          generatedAt: new Date().toISOString(),
+          generatedSequence: latestSequence,
+          source: 'sync_events_compacted',
+        });
+      }
+    }
+
     const cursorReceivedAt = cursor?.receivedAt ? safeIso(cursor.receivedAt) : null;
     const cursorCreatedAt = cursor?.createdAt ? safeIso(cursor.createdAt) : null;
     const cursorId = cursor?.id || '';

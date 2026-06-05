@@ -160,6 +160,10 @@ abstract class SyncTransportAdapter {
     void Function(double value, String label)? onProgress,
   });
 
+  /// Runs local post-sync maintenance after a successful sync orchestration.
+  /// Implementations should keep this best-effort and non-fatal.
+  Future<void> compactAfterSuccessfulSync() async {}
+
   Future<UnifiedSyncResult> syncNow({
     void Function(double value, String label)? onProgress,
   });
