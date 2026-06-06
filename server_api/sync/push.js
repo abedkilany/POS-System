@@ -38,6 +38,7 @@ const snapshotCollections = {
   customers: 'customer',
   sales: 'sale',
   suppliers: 'supplier',
+  supplierProductPrices: 'supplier_product_price',
   expenses: 'expense',
   categories: 'category',
   brands: 'brand',

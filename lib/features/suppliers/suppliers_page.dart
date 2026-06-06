@@ -4,6 +4,7 @@ import '../../core/localization/app_localizations.dart';
 import '../../core/utils/responsive.dart';
 import '../../data/app_store.dart';
 import '../../models/supplier.dart';
+import '../accounts/account_ledger_widgets.dart';
 import '../../widgets/app_section_header.dart';
 import '../../widgets/empty_state_card.dart';
 
@@ -58,13 +59,41 @@ class _SuppliersPageState extends State<SuppliersPage> {
                         return ListTile(
                           leading: const CircleAvatar(child: Icon(Icons.local_shipping_outlined)),
                           title: Text(supplier.name),
-                          subtitle: Text([supplier.phone, supplier.address, supplier.notes].where((e) => e.isNotEmpty).join(' • ')),
-                          trailing: Wrap(
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              IconButton(onPressed: () => _openSupplierForm(context, supplier: supplier), icon: const Icon(Icons.edit_outlined)),
-                              IconButton(onPressed: () => _deleteSupplier(context, supplier), icon: const Icon(Icons.delete_outline)),
+                              Text([supplier.phone, supplier.address, supplier.notes].where((e) => e.isNotEmpty).join(' • ')),
+                              const SizedBox(height: 4),
+                              Text(
+                                accountBalanceText(context, widget.store, 'supplier', supplier.id),
+                                style: TextStyle(color: accountBalanceColor(context, widget.store, 'supplier', supplier.id), fontWeight: FontWeight.w700),
+                              ),
                             ],
                           ),
+                          trailing: VentioResponsive.isMobile(context)
+                              ? PopupMenuButton<String>(
+                                  tooltip: tr.text('actions'),
+                                  onSelected: (value) {
+                                    if (value == 'ledger') showAccountLedgerSheet(context: context, store: widget.store, accountType: 'supplier', accountId: supplier.id, accountName: supplier.name);
+                                    if (value == 'payment') showAccountPaymentDialog(context: context, store: widget.store, accountType: 'supplier', accountId: supplier.id, accountName: supplier.name);
+                                    if (value == 'edit') _openSupplierForm(context, supplier: supplier);
+                                    if (value == 'delete') _deleteSupplier(context, supplier);
+                                  },
+                                  itemBuilder: (context) => [
+                                    PopupMenuItem(value: 'ledger', child: Text(tr.text('account_ledger'))),
+                                    PopupMenuItem(value: 'payment', child: Text(tr.text('pay_supplier'))),
+                                    PopupMenuItem(value: 'edit', child: Text(tr.text('edit'))),
+                                    PopupMenuItem(value: 'delete', child: Text(tr.text('delete'))),
+                                  ],
+                                )
+                              : Wrap(
+                                  children: [
+                                    IconButton(onPressed: () => showAccountLedgerSheet(context: context, store: widget.store, accountType: 'supplier', accountId: supplier.id, accountName: supplier.name), icon: const Icon(Icons.receipt_long_outlined), tooltip: tr.text('account_ledger')),
+                                    IconButton(onPressed: () => showAccountPaymentDialog(context: context, store: widget.store, accountType: 'supplier', accountId: supplier.id, accountName: supplier.name), icon: const Icon(Icons.payment_outlined), tooltip: tr.text('pay_supplier')),
+                                    IconButton(onPressed: () => _openSupplierForm(context, supplier: supplier), icon: const Icon(Icons.edit_outlined), tooltip: tr.text('edit')),
+                                    IconButton(onPressed: () => _deleteSupplier(context, supplier), icon: const Icon(Icons.delete_outline), tooltip: tr.text('delete')),
+                                  ],
+                                ),
                         );
                       },
                     ),

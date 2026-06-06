@@ -13,11 +13,13 @@ import '../../core/services/local_database_service.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../core/utils/responsive.dart';
 import '../../data/app_store.dart';
+import '../../models/customer.dart';
 import '../../models/product.dart';
 import '../../models/sale.dart';
 import '../../models/sale_item.dart';
 import '../../widgets/app_section_header.dart';
 import '../../widgets/empty_state_card.dart';
+import '../barcode/barcode_scanner_page.dart';
 
 
 enum _BarcodeAddResult {
@@ -42,6 +44,8 @@ class _SalesPageState extends State<SalesPage> {
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _barcodeController = TextEditingController();
   final TextEditingController _discountController = TextEditingController();
+  final TextEditingController _paidAmountController = TextEditingController();
+  final TextEditingController _paymentExchangeRateController = TextEditingController();
   final FocusNode _barcodeFocusNode = FocusNode();
 
   static const String _quickPagesStorageKey = 'sale_quick_product_pages_v1';
@@ -50,6 +54,8 @@ class _SalesPageState extends State<SalesPage> {
   final List<_QuickProductPage> _quickPages = [];
   String _selectedCustomerId = AppStore.walkInCustomerId;
   String _paymentMethod = 'Cash';
+  String _invoiceCurrency = 'USD';
+  String _paymentCurrency = 'USD';
   String _discountCurrency = 'USD';
   String _search = '';
   List<_DraftSaleItem>? _heldCart;
@@ -66,6 +72,10 @@ class _SalesPageState extends State<SalesPage> {
   void initState() {
     super.initState();
     _selectedCustomerId = AppStore.walkInCustomerId;
+    _invoiceCurrency = widget.store.storeProfile.defaultSaleInvoiceCurrency;
+    _paymentCurrency = widget.store.storeProfile.defaultSalePaymentCurrency;
+    _discountCurrency = widget.store.storeProfile.defaultSaleInvoiceCurrency;
+    _paymentExchangeRateController.text = widget.store.storeProfile.usdToLbpRate.toStringAsFixed(0);
     _loadQuickProductPages();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _manualBarcodeInput) return;
@@ -79,6 +89,8 @@ class _SalesPageState extends State<SalesPage> {
     _searchController.dispose();
     _barcodeController.dispose();
     _discountController.dispose();
+    _paidAmountController.dispose();
+    _paymentExchangeRateController.dispose();
     _barcodeFocusNode.dispose();
     _scannerController.dispose();
     super.dispose();
@@ -99,6 +111,58 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
   double get _total => (_subtotal - _discount).clamp(0, double.infinity).toDouble();
   double get _itemsCount => _cart.fold<double>(0, (sum, item) => sum + item.quantity);
 
+
+  bool get _isWalkInCustomer => widget.store.sanitizeSelectedCustomerId(_selectedCustomerId) == AppStore.walkInCustomerId;
+  bool get _isCashPayment => _paymentMethod == 'Cash';
+  bool get _isCreditPayment => _paymentMethod == 'Credit';
+  bool get _showsCashReceived => !_isCashPayment;
+  double get _saleExchangeRate {
+    final value = double.tryParse(_paymentExchangeRateController.text.trim()) ?? widget.store.storeProfile.usdToLbpRate;
+    return value <= 0 ? widget.store.storeProfile.usdToLbpRate : value;
+  }
+  double get _invoiceTotal => _currencyFromUsd(_total, _invoiceCurrency);
+  double get _cashReceivedInPaymentCurrency => (double.tryParse(_paidAmountController.text.trim()) ?? 0).clamp(0, double.infinity).toDouble();
+  double get _cashReceivedAmount => _convertCurrencyAmount(_cashReceivedInPaymentCurrency, _paymentCurrency, _invoiceCurrency).clamp(0, _invoiceTotal).toDouble();
+  String get _derivedPaymentStatus {
+    if (_isCreditPayment) return _cashReceivedAmount > 0 ? 'partial' : 'credit';
+    return 'paid';
+  }
+  double get _derivedPaidAmount => _isCreditPayment ? _cashReceivedAmount : _invoiceTotal;
+
+  double _currencyFromUsd(double usdAmount, String currency) => currency.toUpperCase() == 'LBP' ? usdAmount * _saleExchangeRate : usdAmount;
+  double _convertCurrencyAmount(double amount, String fromCurrency, String toCurrency) {
+    final from = fromCurrency.toUpperCase();
+    final to = toCurrency.toUpperCase();
+    if (from == to) return amount;
+    if (from == 'LBP' && to == 'USD') return amount / _saleExchangeRate;
+    if (from == 'USD' && to == 'LBP') return amount * _saleExchangeRate;
+    return amount;
+  }
+
+  String _formatSaleCurrency(double amount, String currency) => formatCurrency(amount, currency: currency);
+
+  void _setSelectedCustomerId(String? value) {
+    final id = widget.store.sanitizeSelectedCustomerId(value);
+    setState(() {
+      _selectedCustomerId = id;
+      if (id == AppStore.walkInCustomerId && _paymentMethod == 'Credit') {
+        _paymentMethod = 'Cash';
+        _paidAmountController.clear();
+      }
+    });
+  }
+
+  void _setPaymentMethod(String value) {
+    setState(() {
+      _paymentMethod = (_isWalkInCustomer && value == 'Credit') ? 'Cash' : value;
+      if (_paymentMethod == 'Cash') {
+        _paidAmountController.clear();
+      } else if (_paidAmountController.text.trim().isEmpty) {
+        _paidAmountController.text = '0';
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
@@ -106,7 +170,7 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     final products = widget.store.products.where((product) => !product.trackStock || product.stock > 0).where((product) {
       if (_search.trim().isEmpty) return true;
       final q = _search.toLowerCase();
-      return product.name.toLowerCase().contains(q) || product.code.toLowerCase().contains(q) || product.category.toLowerCase().contains(q);
+      return product.name.toLowerCase().contains(q) || product.code.toLowerCase().contains(q) || product.barcode.toLowerCase().contains(q) || product.effectiveSaleUnits.any((unit) => unit.barcode.toLowerCase().contains(q)) || product.effectivePurchaseUnits.any((unit) => unit.barcode.toLowerCase().contains(q)) || product.category.toLowerCase().contains(q);
     }).toList();
 
     return LayoutBuilder(
@@ -121,6 +185,279 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
         return _buildDesktopSalesLayout(context, tr, products, sales, pagePadding);
       },
     );
+  }
+
+
+  Customer _selectedCustomer() {
+    final id = widget.store.sanitizeSelectedCustomerId(_selectedCustomerId);
+    return widget.store.customers.firstWhere(
+      (customer) => customer.id == id,
+      orElse: () => widget.store.walkInCustomer,
+    );
+  }
+
+  String _customerSearchText(Customer customer) {
+    final phone = customer.phone.trim();
+    final id = customer.id.trim();
+    if (customer.id == AppStore.walkInCustomerId) return customer.name;
+    return phone.isEmpty ? '#$id - ${customer.name}' : '#$id - ${customer.name} - $phone';
+  }
+
+  List<Customer> _customerSearchOptions(String query) {
+    final normalized = query.trim().toLowerCase();
+    final seen = <String>{};
+    final customers = <Customer>[];
+    for (final customer in [widget.store.walkInCustomer, ...widget.store.customers]) {
+      if (!seen.add(customer.id)) continue;
+      if (normalized.isEmpty ||
+          customer.name.toLowerCase().contains(normalized) ||
+          customer.phone.toLowerCase().contains(normalized) ||
+          customer.id.toLowerCase().contains(normalized)) {
+        customers.add(customer);
+      }
+    }
+    customers.sort((a, b) {
+      if (a.id == AppStore.walkInCustomerId) return -1;
+      if (b.id == AppStore.walkInCustomerId) return 1;
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    });
+    return customers.take(20).toList();
+  }
+
+  Widget _buildCustomerSelector(BuildContext context, AppLocalizations tr, {bool dense = false, void Function(void Function())? modalSetState}) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: RawAutocomplete<Customer>(
+            key: ValueKey('sale_customer_${_selectedCustomerId}_${widget.store.customers.length}'),
+            initialValue: TextEditingValue(text: _customerSearchText(_selectedCustomer())),
+            displayStringForOption: _customerSearchText,
+            optionsBuilder: (value) => _customerSearchOptions(value.text),
+            onSelected: (customer) {
+              _setSelectedCustomerId(customer.id);
+              modalSetState?.call(() {});
+            },
+            fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+              return TextFormField(
+                controller: controller,
+                focusNode: focusNode,
+                decoration: InputDecoration(
+                  labelText: tr.text('customer'),
+                  hintText: '${tr.text('search')} / phone / ID',
+                  isDense: dense,
+                  prefixIcon: const Icon(Icons.search),
+                ),
+                onTap: () => controller.selection = TextSelection(baseOffset: 0, extentOffset: controller.text.length),
+              );
+            },
+            optionsViewBuilder: (context, onSelected, options) {
+              final list = options.toList();
+              return Align(
+                alignment: AlignmentDirectional.topStart,
+                child: Material(
+                  elevation: 8,
+                  borderRadius: BorderRadius.circular(12),
+                  clipBehavior: Clip.antiAlias,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 280, maxWidth: 520),
+                    child: ListView.separated(
+                      padding: EdgeInsets.zero,
+                      shrinkWrap: true,
+                      itemCount: list.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (context, index) {
+                        final customer = list[index];
+                        final isWalkIn = customer.id == AppStore.walkInCustomerId;
+                        final phone = customer.phone.trim();
+                        return ListTile(
+                          dense: true,
+                          leading: Icon(isWalkIn ? Icons.person_outline : Icons.badge_outlined),
+                          title: Text(isWalkIn ? customer.name : '#${customer.id} - ${customer.name}', maxLines: 1, overflow: TextOverflow.ellipsis),
+                          subtitle: isWalkIn || phone.isEmpty ? null : Text(phone, maxLines: 1, overflow: TextOverflow.ellipsis),
+                          onTap: () => onSelected(customer),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        const SizedBox(width: 8),
+        IconButton.filledTonal(
+          onPressed: () async {
+            final id = await _showQuickCustomerDialog(context, tr);
+            if (id == null || !mounted) return;
+            _setSelectedCustomerId(id);
+            modalSetState?.call(() {});
+          },
+          icon: const Icon(Icons.person_add_alt_1),
+          tooltip: tr.text('add_customer'),
+        ),
+      ],
+    );
+  }
+
+
+  Widget _buildPaymentMethodChips(AppLocalizations tr, {void Function(void Function())? modalSetState}) {
+    final methods = <MapEntry<String, String>>[
+      MapEntry('Cash', tr.text('payment_cash')),
+      if (!_isWalkInCustomer) MapEntry('Credit', tr.text('credit_unpaid')),
+      MapEntry('Card', tr.text('payment_card')),
+      MapEntry('Wish', tr.text('payment_wish')),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(tr.text('payment_method'), style: Theme.of(context).textTheme.labelLarge),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final method in methods)
+              ChoiceChip(
+                label: Text(method.value),
+                selected: _paymentMethod == method.key,
+                onSelected: (_) {
+                  _setPaymentMethod(method.key);
+                  modalSetState?.call(() {});
+                },
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPaymentCurrencySwitch(AppLocalizations tr, {void Function(void Function())? modalSetState}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(tr.text('payment_currency'), style: Theme.of(context).textTheme.labelLarge),
+        const SizedBox(height: 8),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final fullWidth = constraints.maxWidth < 420;
+            final children = [
+              ChoiceChip(
+                label: const Text('USD'),
+                selected: _paymentCurrency == 'USD',
+                onSelected: (_) {
+                  setState(() => _paymentCurrency = 'USD');
+                  modalSetState?.call(() {});
+                },
+              ),
+              ChoiceChip(
+                label: const Text('LBP'),
+                selected: _paymentCurrency == 'LBP',
+                onSelected: (_) {
+                  setState(() => _paymentCurrency = 'LBP');
+                  modalSetState?.call(() {});
+                },
+              ),
+            ];
+            if (!fullWidth) {
+              return Wrap(spacing: 8, runSpacing: 8, children: children);
+            }
+            return Row(
+              children: [
+                Expanded(child: children[0]),
+                const SizedBox(width: 8),
+                Expanded(child: children[1]),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCashReceivedField(AppLocalizations tr, {bool dense = false, void Function(void Function())? modalSetState}) {
+    return TextFormField(
+      controller: _paidAmountController,
+      decoration: InputDecoration(labelText: '${tr.text('paid_amount')} ($_paymentCurrency)', isDense: dense),
+      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}$'))],
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      onChanged: (_) {
+        setState(() {});
+        modalSetState?.call(() {});
+      },
+    );
+  }
+
+  Future<String?> _showQuickCustomerDialog(BuildContext context, AppLocalizations tr) async {
+    final nameController = TextEditingController();
+    final phoneController = TextEditingController();
+    final addressController = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+    try {
+      final customer = await showDialog<Customer>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(tr.text('add_customer')),
+          content: SizedBox(
+            width: 420,
+            child: Form(
+              key: formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextFormField(
+                    controller: nameController,
+                    autofocus: true,
+                    decoration: InputDecoration(labelText: tr.text('customer_name')),
+                    validator: (value) => value == null || value.trim().isEmpty ? tr.text('required_field') : null,
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(controller: phoneController, decoration: InputDecoration(labelText: tr.text('phone'))),
+                  const SizedBox(height: 12),
+                  TextFormField(controller: addressController, decoration: InputDecoration(labelText: tr.text('address'))),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: Text(tr.text('cancel'))),
+            FilledButton(
+              onPressed: () {
+                if (!formKey.currentState!.validate()) return;
+                Navigator.pop(
+                  dialogContext,
+                  Customer(
+                    id: DateTime.now().microsecondsSinceEpoch.toString(),
+                    name: nameController.text.trim(),
+                    phone: phoneController.text.trim(),
+                    address: addressController.text.trim(),
+                  ),
+                );
+              },
+              child: Text(tr.text('save')),
+            ),
+          ],
+        ),
+      );
+      if (customer == null) return null;
+      if (!context.mounted) return null;
+      final messenger = ScaffoldMessenger.of(context);
+      final createdMessage = tr.text('customer_created_selected');
+      await widget.store.addOrUpdateCustomer(customer);
+      if (!context.mounted) return null;
+      messenger.showSnackBar(SnackBar(content: Text(createdMessage)));
+      return customer.id;
+    } catch (_) {
+      if (context.mounted) {
+        final messenger = ScaffoldMessenger.of(context);
+        messenger.showSnackBar(SnackBar(content: Text(tr.text('customer_save_failed'))));
+      }
+      return null;
+    } finally {
+      nameController.dispose();
+      phoneController.dispose();
+      addressController.dispose();
+    }
   }
 
 
@@ -149,8 +486,6 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
               ],
             ),
           ),
-          const SizedBox(height: 12),
-          _buildDesktopInvoiceSummaryBar(context, tr),
         ],
       ),
     );
@@ -166,94 +501,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
             _buildBarcodeStation(context, tr, products: products),
             const SizedBox(height: 12),
             Expanded(child: _buildCart(context, tr, showTotals: false, showActions: false)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDesktopInvoiceSummaryBar(BuildContext context, AppLocalizations tr) {
-    final customerName = widget.store.resolveCustomerName(_selectedCustomerId);
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Expanded(
-              flex: 3,
-              child: DropdownButtonFormField<String>(
-                initialValue: widget.store.sanitizeSelectedCustomerId(_selectedCustomerId),
-                items: widget.store.customers.map((customer) => DropdownMenuItem<String>(value: customer.id, child: Text(customer.name))).toList(),
-                decoration: InputDecoration(labelText: tr.text('customer'), isDense: true),
-                onChanged: (value) => setState(() => _selectedCustomerId = widget.store.sanitizeSelectedCustomerId(value)),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              flex: 2,
-              child: TextFormField(
-                controller: _discountController,
-                decoration: InputDecoration(labelText: tr.text('discount'), isDense: true),
-                inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}$'))],
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                onChanged: (_) => setState(() {}),
-              ),
-            ),
-            const SizedBox(width: 12),
-            SizedBox(
-              width: 110,
-              child: DropdownButtonFormField<String>(
-                initialValue: _discountCurrency,
-                decoration: InputDecoration(labelText: tr.text('currency'), isDense: true),
-                items: const [
-                  DropdownMenuItem(value: 'USD', child: Text('USD')),
-                  DropdownMenuItem(value: 'LBP', child: Text('LBP')),
-                ],
-                onChanged: (value) => setState(() => _discountCurrency = value ?? 'USD'),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              flex: 2,
-              child: DropdownButtonFormField<String>(
-                initialValue: _paymentMethod,
-                decoration: InputDecoration(labelText: tr.text('payment'), isDense: true),
-                items: [
-                  DropdownMenuItem(value: 'Cash', child: Text(tr.text('payment_cash'))),
-                  DropdownMenuItem(value: 'Card', child: Text(tr.text('payment_card'))),
-                  DropdownMenuItem(value: 'Transfer', child: Text(tr.text('payment_transfer'))),
-                  DropdownMenuItem(value: 'Mixed', child: Text(tr.text('payment_mixed'))),
-                ],
-                onChanged: (value) => setState(() => _paymentMethod = value ?? 'Cash'),
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              flex: 3,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text('$customerName • ${_paymentMethodLabel(tr, _paymentMethod)}', maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.titleSmall),
-                  const SizedBox(height: 4),
-                  Text('${_formatQuantity(_itemsCount)} ${tr.text('items_count')} | ${formatUsdReferenceAmount(_total, widget.store.storeProfile)}', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
-                ],
-              ),
-            ),
-            const SizedBox(width: 12),
-            FilledButton.icon(
-              onPressed: _cart.isEmpty ? null : () => _saveCurrentInvoice(printAfterSave: true),
-              icon: const Icon(Icons.point_of_sale),
-              label: Text(tr.text('complete_sale_print')),
-            ),
-            const SizedBox(width: 8),
-            OutlinedButton.icon(
-              onPressed: _cart.isEmpty ? null : () => _saveCurrentInvoice(printAfterSave: false),
-              icon: const Icon(Icons.save_outlined),
-              label: Text(tr.text('save_only')),
-            ),
+            const SizedBox(height: 12),
+            _buildSaleTotalBar(context, tr),
           ],
         ),
       ),
@@ -719,6 +968,7 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     final tr = AppLocalizations.of(context);
     final products = widget.store.products.where((product) => !product.trackStock || product.stock > 0).toList();
     final nameController = TextEditingController(text: page.slots[slotIndex].shortName ?? '');
+    final quickSearchController = TextEditingController();
     Product? selected = page.slots[slotIndex].productId == null ? null : _productById(page.slots[slotIndex].productId!);
     var query = '';
     final result = await showModalBottomSheet<_QuickProductSlot>(
@@ -729,7 +979,7 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
           final filtered = products.where((product) {
             if (query.trim().isEmpty) return true;
             final q = query.toLowerCase();
-            return product.name.toLowerCase().contains(q) || product.code.toLowerCase().contains(q) || product.category.toLowerCase().contains(q);
+            return product.name.toLowerCase().contains(q) || product.code.toLowerCase().contains(q) || product.barcode.toLowerCase().contains(q) || product.effectiveSaleUnits.any((unit) => unit.barcode.toLowerCase().contains(q)) || product.effectivePurchaseUnits.any((unit) => unit.barcode.toLowerCase().contains(q)) || product.category.toLowerCase().contains(q);
           }).toList();
           return SafeArea(
             child: Padding(
@@ -756,7 +1006,21 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                     ),
                     const SizedBox(height: 10),
                     TextField(
-                      decoration: InputDecoration(prefixIcon: const Icon(Icons.search), labelText: tr.text('search_product')),
+                      controller: quickSearchController,
+                      decoration: InputDecoration(
+                        prefixIcon: const Icon(Icons.search),
+                        labelText: tr.text('search_product'),
+                        suffixIcon: IconButton(
+                          tooltip: tr.text('scan_with_camera'),
+                          onPressed: () async {
+                            final code = await _scanCodeWithCameraOnce();
+                            if (code == null) return;
+                            quickSearchController.text = code;
+                            setSheetState(() => query = code);
+                          },
+                          icon: const Icon(Icons.camera_alt_outlined),
+                        ),
+                      ),
                       onChanged: (value) => setSheetState(() => query = value),
                     ),
                     const SizedBox(height: 10),
@@ -841,19 +1105,27 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
 
   Widget _buildMobileSalesLayout(BuildContext context, AppLocalizations tr, List<Product> products, double pagePadding) {
     return SafeArea(
-      child: SingleChildScrollView(
-        padding: EdgeInsets.all(pagePadding),
-        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _buildMobileSaleControls(context, tr, products),
-            const SizedBox(height: 8),
-            _buildMobileInvoiceSummary(context, tr),
-            const SizedBox(height: 8),
-            _buildCart(context, tr, compactActions: true, expandCartList: false),
-          ],
-        ),
+      child: Column(
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
+              padding: EdgeInsets.all(pagePadding),
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _buildMobileSaleControls(context, tr, products),
+                  const SizedBox(height: 8),
+                  _buildCart(context, tr, compactActions: true, showTotals: false, showActions: false, expandCartList: false),
+                ],
+              ),
+            ),
+          ),
+          Padding(
+            padding: EdgeInsets.fromLTRB(pagePadding, 0, pagePadding, pagePadding),
+            child: _buildMobileInvoiceSummary(context, tr),
+          ),
+        ],
       ),
     );
   }
@@ -881,10 +1153,7 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
               children: [
                 _MobileSaleAction(icon: Icons.search, label: tr.text('search'), onTap: () => _showProductSearchSheet(products)),
                 _MobileSaleAction(icon: Icons.grid_view_rounded, label: tr.text('quick_products'), onTap: () => _showQuickProductsSheet(products)),
-                _MobileSaleAction(icon: Icons.person_outline, label: tr.text('customer'), onTap: _showCustomerSheet),
-                _MobileSaleAction(icon: Icons.percent, label: tr.text('discount'), onTap: _showDiscountSheet),
                 _MobileSaleAction(icon: Icons.receipt_long_outlined, label: tr.text('recent_invoices'), onTap: _showInvoicesSheet),
-                _MobileSaleAction(icon: Icons.more_horiz, label: tr.text('more'), onTap: _showCheckoutSheet),
               ],
             ),
           ],
@@ -894,40 +1163,62 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
   }
 
   Widget _buildMobileInvoiceSummary(BuildContext context, AppLocalizations tr) {
-    final customerName = widget.store.resolveCustomerName(_selectedCustomerId);
+    return _buildSaleTotalBar(context, tr, compact: true);
+  }
+
+  Widget _buildSaleTotalBar(BuildContext context, AppLocalizations tr, {bool compact = false}) {
+    final totalText = formatUsdReferenceAmount(_total, widget.store.storeProfile);
+    final hasDiscount = _discount > 0;
+    final content = compact
+        ? Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Expanded(child: Text('${_formatQuantity(_itemsCount)} ${tr.text('items_count')}', style: Theme.of(context).textTheme.bodyMedium)),
+                  Text(totalText, style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900)),
+                ],
+              ),
+              if (hasDiscount) ...[
+                const SizedBox(height: 4),
+                Text('${tr.text('discount')}: ${formatUsdReferenceAmount(_discount, widget.store.storeProfile)}', style: Theme.of(context).textTheme.bodySmall),
+              ],
+              const SizedBox(height: 10),
+              FilledButton.icon(
+                onPressed: _cart.isEmpty ? null : () => _openPaymentPage(printAfterSave: false),
+                icon: const Icon(Icons.payments_outlined),
+                label: Text(tr.text('continue_payment')),
+              ),
+            ],
+          )
+        : Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(tr.text('total'), style: Theme.of(context).textTheme.bodyMedium),
+                    const SizedBox(height: 2),
+                    Text(totalText, style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900)),
+                    if (hasDiscount)
+                      Text('${tr.text('discount')}: ${formatUsdReferenceAmount(_discount, widget.store.storeProfile)}', style: Theme.of(context).textTheme.bodySmall),
+                  ],
+                ),
+              ),
+              FilledButton.icon(
+                onPressed: _cart.isEmpty ? null : () => _openPaymentPage(printAfterSave: false),
+                icon: const Icon(Icons.payments_outlined),
+                label: Text(tr.text('continue_payment')),
+              ),
+            ],
+          );
     return Card(
       margin: EdgeInsets.zero,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text('$customerName • ${_paymentMethodLabel(tr, _paymentMethod)}', maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.titleSmall),
-            const SizedBox(height: 6),
-            Row(
-              children: [
-                Expanded(child: Text('${_formatQuantity(_itemsCount)} ${tr.text('items_count')}', style: Theme.of(context).textTheme.bodyMedium)),
-                Text(formatUsdReferenceAmount(_total, widget.store.storeProfile), style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
-              ],
-            ),
-          ],
-        ),
+        padding: EdgeInsets.symmetric(horizontal: compact ? 14 : 18, vertical: compact ? 12 : 14),
+        child: content,
       ),
     );
-  }
-
-  String _paymentMethodLabel(AppLocalizations tr, String method) {
-    switch (method) {
-      case 'Card':
-        return tr.text('payment_card');
-      case 'Transfer':
-        return tr.text('payment_transfer');
-      case 'Mixed':
-        return tr.text('payment_mixed');
-      case 'Cash':
-      default:
-        return tr.text('payment_cash');
-    }
   }
 
 
@@ -1254,8 +1545,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
             cartContent,
             if (showTotals) ...[
               const Divider(height: 24),
-              _totalLine(tr.text('subtotal'), formatUsdReferenceAmount(_subtotal, widget.store.storeProfile)),
-              _totalLine(tr.text('discount'), formatUsdReferenceAmount(_discount, widget.store.storeProfile)),
+              _totalLine(tr.text('subtotal'), _formatSaleCurrency(_currencyFromUsd(_subtotal, _invoiceCurrency), _invoiceCurrency)),
+              _totalLine(tr.text('discount'), _formatSaleCurrency(_currencyFromUsd(_discount, _invoiceCurrency), _invoiceCurrency)),
               if (_discount > _subtotal)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 6),
@@ -1265,14 +1556,14 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                   ),
                 ),
               const SizedBox(height: 8),
-              _totalLine(tr.text('total'), formatUsdReferenceAmount(_total, widget.store.storeProfile), isBold: true),
+              _totalLine(tr.text('total'), _formatSaleCurrency(_invoiceTotal, _invoiceCurrency), isBold: true),
             ],
             if (showActions) ...[
               const SizedBox(height: 12),
               LayoutBuilder(
                 builder: (context, constraints) {
-                  final primary = FilledButton.icon(onPressed: _cart.isEmpty ? null : () => _saveCurrentInvoice(printAfterSave: true), icon: const Icon(Icons.point_of_sale), label: Text(tr.text('complete_sale_print')));
-                  final secondary = OutlinedButton.icon(onPressed: _cart.isEmpty ? null : () => _saveCurrentInvoice(printAfterSave: false), icon: const Icon(Icons.save_outlined), label: Text(tr.text('save_only')));
+                  final primary = FilledButton.icon(onPressed: _cart.isEmpty ? null : () => _openPaymentPage(printAfterSave: true), icon: const Icon(Icons.payments_outlined), label: Text(tr.text('continue_payment')));
+                  final secondary = OutlinedButton.icon(onPressed: _cart.isEmpty ? null : () => _openPaymentPage(printAfterSave: false), icon: const Icon(Icons.payments_outlined), label: Text(tr.text('continue_payment')));
                   if (constraints.maxWidth < 460) {
                     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [primary, const SizedBox(height: 8), secondary]);
                   }
@@ -1294,6 +1585,22 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [Text(title), Text(value, style: style)],
       ),
+    );
+  }
+
+  Future<void> _showInvoicesSheet() async {
+    final tr = AppLocalizations.of(context);
+    final sales = widget.store.sales;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (sheetContext) {
+        return SizedBox(
+          height: MediaQuery.sizeOf(sheetContext).height * 0.85,
+          child: _buildInvoicesPanel(sheetContext, tr, sales),
+        );
+      },
     );
   }
 
@@ -1688,6 +1995,14 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     );
   }
 
+  Future<String?> _scanCodeWithCameraOnce() async {
+    final code = await Navigator.of(context).push<String>(
+      MaterialPageRoute(builder: (_) => const BarcodeScannerPage()),
+    );
+    final trimmed = code?.trim();
+    return trimmed == null || trimmed.isEmpty ? null : trimmed;
+  }
+
   void _showProductSearchSheet(List<Product> products) {
     final tr = AppLocalizations.of(context);
     final controller = TextEditingController(text: _search);
@@ -1700,7 +2015,7 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
           final filteredProducts = products.where((product) {
             if (query.trim().isEmpty) return true;
             final q = query.toLowerCase();
-            return product.name.toLowerCase().contains(q) || product.code.toLowerCase().contains(q) || product.category.toLowerCase().contains(q);
+            return product.name.toLowerCase().contains(q) || product.code.toLowerCase().contains(q) || product.barcode.toLowerCase().contains(q) || product.effectiveSaleUnits.any((unit) => unit.barcode.toLowerCase().contains(q)) || product.effectivePurchaseUnits.any((unit) => unit.barcode.toLowerCase().contains(q)) || product.category.toLowerCase().contains(q);
           }).toList();
           return SafeArea(
             child: Padding(
@@ -1715,7 +2030,20 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                     TextField(
                       controller: controller,
                       autofocus: true,
-                      decoration: InputDecoration(prefixIcon: const Icon(Icons.search), labelText: tr.text('search_product')),
+                      decoration: InputDecoration(
+                        prefixIcon: const Icon(Icons.search),
+                        labelText: tr.text('search_product'),
+                        suffixIcon: IconButton(
+                          tooltip: tr.text('scan_with_camera'),
+                          onPressed: () async {
+                            final code = await _scanCodeWithCameraOnce();
+                            if (code == null) return;
+                            controller.text = code;
+                            setModalState(() => query = code);
+                          },
+                          icon: const Icon(Icons.camera_alt_outlined),
+                        ),
+                      ),
                       onChanged: (value) => setModalState(() => query = value),
                     ),
                     const SizedBox(height: 12),
@@ -1752,192 +2080,6 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     ).whenComplete(controller.dispose);
   }
 
-  void _showCustomerSheet() {
-    final tr = AppLocalizations.of(context);
-    showModalBottomSheet<void>(
-      context: context,
-      builder: (sheetContext) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: [
-            Padding(padding: const EdgeInsets.all(16), child: Text(tr.text('customer'), style: Theme.of(context).textTheme.titleLarge)),
-            ...widget.store.customers.map((customer) {
-              final selectedCustomerId = widget.store.sanitizeSelectedCustomerId(_selectedCustomerId);
-              final isSelected = customer.id == selectedCustomerId;
-              return ListTile(
-                leading: Icon(isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked),
-                title: Text(customer.name),
-                selected: isSelected,
-                onTap: () {
-                  setState(() => _selectedCustomerId = widget.store.sanitizeSelectedCustomerId(customer.id));
-                  Navigator.pop(sheetContext);
-                },
-              );
-            }),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showDiscountSheet() {
-    final tr = AppLocalizations.of(context);
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (sheetContext) => SafeArea(
-        child: Padding(
-          padding: EdgeInsets.only(left: 16, right: 16, top: 16, bottom: MediaQuery.viewInsetsOf(sheetContext).bottom + 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(tr.text('discount'), style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _discountController,
-                autofocus: true,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}$'))],
-                decoration: InputDecoration(labelText: tr.text('discount')),
-                onChanged: (_) => setState(() {}),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                initialValue: _discountCurrency,
-                decoration: InputDecoration(labelText: tr.text('currency')),
-                items: const [
-                  DropdownMenuItem(value: 'USD', child: Text('USD')),
-                  DropdownMenuItem(value: 'LBP', child: Text('LBP')),
-                ],
-                onChanged: (value) => setState(() => _discountCurrency = value ?? 'USD'),
-              ),
-              const SizedBox(height: 12),
-              FilledButton(
-                onPressed: () {
-                  setState(() {});
-                  Navigator.pop(sheetContext);
-                  FocusScope.of(context).unfocus();
-                },
-                child: Text(tr.text('save')),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _showInvoicesSheet() {
-    final tr = AppLocalizations.of(context);
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (sheetContext) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: SizedBox(
-            height: MediaQuery.sizeOf(sheetContext).height * 0.76,
-            child: _buildInvoicesPanel(sheetContext, tr, widget.store.sales),
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _showCheckoutSheet() {
-    final tr = AppLocalizations.of(context);
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (sheetContext) => StatefulBuilder(
-        builder: (context, setModalState) => SafeArea(
-          child: Padding(
-            padding: EdgeInsets.only(
-              left: 16,
-              right: 16,
-              top: 16,
-              bottom: MediaQuery.viewInsetsOf(sheetContext).bottom + 16,
-            ),
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(tr.text('complete_sale'), style: Theme.of(context).textTheme.titleLarge),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    initialValue: widget.store.sanitizeSelectedCustomerId(_selectedCustomerId),
-                    items: widget.store.customers.map((customer) => DropdownMenuItem<String>(value: customer.id, child: Text(customer.name))).toList(),
-                    decoration: InputDecoration(labelText: tr.text('customer')),
-                    onChanged: (value) => setState(() => _selectedCustomerId = widget.store.sanitizeSelectedCustomerId(value)),
-                  ),
-                  const SizedBox(height: 10),
-                  TextFormField(
-                    controller: _discountController,
-                    decoration: InputDecoration(labelText: tr.text('discount')),
-                    inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}$'))],
-                    keyboardType: TextInputType.number,
-                    onChanged: (_) {
-                      setState(() {});
-                      setModalState(() {});
-                    },
-                  ),
-                  const SizedBox(height: 10),
-                  DropdownButtonFormField<String>(
-                    initialValue: _discountCurrency,
-                    decoration: InputDecoration(labelText: tr.text('discount_currency')),
-                    items: const [
-                      DropdownMenuItem(value: 'USD', child: Text('USD')),
-                      DropdownMenuItem(value: 'LBP', child: Text('LBP')),
-                    ],
-                    onChanged: (value) {
-                      setState(() => _discountCurrency = value ?? 'USD');
-                      setModalState(() {});
-                    },
-                  ),
-                  const SizedBox(height: 10),
-                  DropdownButtonFormField<String>(
-                    initialValue: _paymentMethod,
-                    decoration: InputDecoration(labelText: tr.text('payment')),
-                    items: [
-                      DropdownMenuItem(value: 'Cash', child: Text(tr.text('cash'))),
-                      DropdownMenuItem(value: 'Card', child: Text(tr.text('card'))),
-                      DropdownMenuItem(value: 'Transfer', child: Text(tr.text('transfer'))),
-                      DropdownMenuItem(value: 'Mixed', child: Text(tr.text('mixed'))),
-                    ],
-                    onChanged: (value) => setState(() => _paymentMethod = value ?? 'Cash'),
-                  ),
-                  const SizedBox(height: 14),
-                  _totalLine(tr.text('subtotal'), formatUsdReferenceAmount(_subtotal, widget.store.storeProfile)),
-                  _totalLine(tr.text('discount'), formatUsdReferenceAmount(_discount, widget.store.storeProfile)),
-                  _totalLine(tr.text('total'), formatUsdReferenceAmount(_total, widget.store.storeProfile), isBold: true),
-                  const SizedBox(height: 14),
-                  FilledButton.icon(
-                    onPressed: _cart.isEmpty ? null : () {
-                      Navigator.pop(sheetContext);
-                      _saveCurrentInvoice(printAfterSave: true);
-                    },
-                    icon: const Icon(Icons.point_of_sale),
-                    label: Text(tr.text('complete_sale_print')),
-                  ),
-                  const SizedBox(height: 8),
-                  OutlinedButton.icon(
-                    onPressed: _cart.isEmpty ? null : () {
-                      Navigator.pop(sheetContext);
-                      _saveCurrentInvoice(printAfterSave: false);
-                    },
-                    icon: const Icon(Icons.save_outlined),
-                    label: Text(tr.text('save_only')),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 
   Future<void> _cancelSale(BuildContext context, Sale sale) async {
     final tr = AppLocalizations.of(context);
@@ -2073,6 +2215,107 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     }
   }
 
+
+  Future<void> _openPaymentPage({required bool printAfterSave}) async {
+    if (_cart.isEmpty) return;
+    _invoiceCurrency = widget.store.storeProfile.defaultSaleInvoiceCurrency;
+    _discountCurrency = _invoiceCurrency;
+    _paymentCurrency = widget.store.storeProfile.defaultSalePaymentCurrency;
+    _paymentExchangeRateController.text = widget.store.storeProfile.usdToLbpRate.toStringAsFixed(0);
+    if (_paymentMethod == 'Cash') {
+      _paidAmountController.clear();
+    } else if (_paidAmountController.text.trim().isEmpty) {
+      _paidAmountController.text = '0';
+    }
+
+    final originalMethod = _paymentMethod;
+    final originalPaymentCurrency = _paymentCurrency;
+    final originalCash = _paidAmountController.text;
+    final originalCustomerId = _selectedCustomerId;
+    final originalDiscount = _discountController.text;
+    final originalDiscountCurrency = _discountCurrency;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final pageTr = AppLocalizations.of(context);
+          final invoiceTotal = _invoiceTotal;
+          final cashInInvoice = _cashReceivedAmount;
+          final paidInInvoice = _derivedPaidAmount;
+          final remaining = (invoiceTotal - paidInInvoice).clamp(0, double.infinity).toDouble();
+          final nonCashOrCredit = (invoiceTotal - cashInInvoice).clamp(0, double.infinity).toDouble();
+          return AlertDialog(
+            title: Text(pageTr.text('payment_page')),
+            content: SizedBox(
+              width: 520,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _buildCustomerSelector(context, pageTr, modalSetState: setDialogState),
+                    const SizedBox(height: 16),
+                    _buildPaymentMethodChips(pageTr, modalSetState: setDialogState),
+                    const SizedBox(height: 16),
+                    _buildPaymentCurrencySwitch(pageTr, modalSetState: setDialogState),
+                    if (_showsCashReceived) ...[
+                      const SizedBox(height: 16),
+                      _buildCashReceivedField(pageTr, modalSetState: setDialogState),
+                    ],
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: _discountController,
+                      decoration: InputDecoration(labelText: pageTr.text('discount')),
+                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}$'))],
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      onChanged: (_) {
+                        setState(() => _discountCurrency = _invoiceCurrency);
+                        setDialogState(() {});
+                      },
+                    ),
+                    const Divider(height: 28),
+                    _totalLine(pageTr.text('total'), _formatSaleCurrency(invoiceTotal, _invoiceCurrency), isBold: true),
+                    if (_showsCashReceived)
+                      _totalLine(pageTr.text('cash_received_amount'), _formatSaleCurrency(cashInInvoice, _invoiceCurrency)),
+                    if (_isCreditPayment)
+                      _totalLine(pageTr.text('remaining_debt'), _formatSaleCurrency(remaining, _invoiceCurrency), isBold: true)
+                    else if (!_isCashPayment)
+                      _totalLine(pageTr.text('non_cash_amount'), _formatSaleCurrency(nonCashOrCredit, _invoiceCurrency), isBold: true)
+                    else
+                      _totalLine(pageTr.text('paid_amount'), _formatSaleCurrency(invoiceTotal, _invoiceCurrency), isBold: true),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: Text(pageTr.text('cancel'))),
+              FilledButton.icon(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                icon: const Icon(Icons.check_circle_outline),
+                label: Text(pageTr.text('confirm_payment')),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    if (confirmed == true) {
+      await _saveCurrentInvoice(printAfterSave: printAfterSave);
+    } else if (mounted) {
+      setState(() {
+        _paymentMethod = originalMethod;
+        _paymentCurrency = originalPaymentCurrency;
+        _paidAmountController.text = originalCash;
+        _selectedCustomerId = originalCustomerId;
+        _discountController.text = originalDiscount;
+        _discountCurrency = originalDiscountCurrency;
+      });
+    }
+  }
+
+
   Future<void> _saveCurrentInvoice({required bool printAfterSave}) async {
     if (_cart.isEmpty) return;
     if (_discount > _subtotal) {
@@ -2080,15 +2323,37 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
       return;
     }
 
+    if (_isWalkInCustomer && _paymentMethod == 'Credit') {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('walk_in_cash_only'))));
+      return;
+    }
+
+    final cashReceivedAmount = _showsCashReceived ? _cashReceivedAmount : (_isCashPayment ? _invoiceTotal : 0.0);
+    if (_showsCashReceived && cashReceivedAmount > _invoiceTotal) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('invalid_cash_received_amount'))));
+      return;
+    }
+    final paidAmount = _derivedPaidAmount;
+    final paymentStatus = _derivedPaymentStatus;
+
     late final Sale sale;
     try {
       sale = await widget.store.createSale(
         customerName: widget.store.resolveCustomerName(_selectedCustomerId),
+        customerId: _selectedCustomerId,
         discount: _discount,
         originalDiscount: double.tryParse(_discountController.text.trim()) ?? 0,
         discountCurrency: _discountCurrency,
         discountExchangeRateAtEntry: widget.store.storeProfile.usdToLbpRate,
         paymentMethod: _paymentMethod,
+        paymentStatus: paymentStatus,
+        invoiceCurrency: _invoiceCurrency,
+        paymentCurrency: _paymentCurrency,
+        exchangeRateAtPayment: _saleExchangeRate,
+        paidAmount: paidAmount,
+        cashReceivedAmount: cashReceivedAmount,
+        paidAmountInPaymentCurrency: _isCreditPayment ? _cashReceivedInPaymentCurrency : _convertCurrencyAmount(paidAmount, _invoiceCurrency, _paymentCurrency),
+        cashReceivedAmountInPaymentCurrency: _cashReceivedInPaymentCurrency,
         items: _cart
             .map(
               (item) => SaleItem(
@@ -2115,6 +2380,13 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     setState(() {
       _cart.clear();
       _discountController.clear();
+      _paidAmountController.clear();
+      _selectedCustomerId = AppStore.walkInCustomerId;
+      _paymentMethod = 'Cash';
+      _invoiceCurrency = widget.store.storeProfile.defaultSaleInvoiceCurrency;
+      _paymentCurrency = widget.store.storeProfile.defaultSalePaymentCurrency;
+      _discountCurrency = widget.store.storeProfile.defaultSaleInvoiceCurrency;
+      _paymentExchangeRateController.text = widget.store.storeProfile.usdToLbpRate.toStringAsFixed(0);
       _searchController.clear();
       _barcodeController.clear();
       _search = '';

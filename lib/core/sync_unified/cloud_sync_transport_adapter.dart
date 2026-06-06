@@ -108,7 +108,7 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
     DateTime? minSnapshotUpdatedAt,
     void Function(double value, String label)? onProgress,
   }) async {
-    await _service.store.ensureHostCloudBootstrapSnapshotQueued(force: true);
+    await _service.publishBootstrapSnapshotToCloud(_settings, force: true, onProgress: onProgress);
     final effectiveSettings = _settingsWithUnifiedCursor();
     final result = await _service.syncNow(
       effectiveSettings,

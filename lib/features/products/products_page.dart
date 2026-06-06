@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
@@ -15,6 +14,7 @@ import '../../models/catalog_item.dart';
 import '../../models/product.dart';
 import '../../models/store_profile.dart';
 import '../../models/supplier.dart';
+import '../../models/supplier_product_price.dart';
 import '../../widgets/app_section_header.dart';
 import '../../widgets/empty_state_card.dart';
 import '../barcode/barcode_scanner_page.dart';
@@ -31,6 +31,25 @@ class ProductsPage extends StatefulWidget {
 class _ProductsPageState extends State<ProductsPage> {
   String query = '';
   String categoryFilter = 'All';
+  final TextEditingController _searchController = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _scanProductSearchBarcode() async {
+    final code = await Navigator.of(context).push<String>(
+      MaterialPageRoute(builder: (_) => const BarcodeScannerPage()),
+    );
+    if (!mounted || code == null || code.trim().isEmpty) return;
+    setState(() {
+      query = code.trim();
+      _searchController.text = query;
+    });
+  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -72,7 +91,16 @@ class _ProductsPageState extends State<ProductsPage> {
           LayoutBuilder(
             builder: (context, constraints) {
               final searchField = TextField(
-                decoration: InputDecoration(hintText: tr.text('search_products_pro'), prefixIcon: const Icon(Icons.search)),
+                controller: _searchController,
+                decoration: InputDecoration(
+                  hintText: tr.text('search_products_pro'),
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: IconButton(
+                    tooltip: tr.text('scan_with_camera'),
+                    onPressed: _scanProductSearchBarcode,
+                    icon: const Icon(Icons.camera_alt_outlined),
+                  ),
+                ),
                 onChanged: (value) => setState(() => query = value),
               );
               final categoryField = DropdownButtonFormField<String>(
@@ -120,6 +148,8 @@ class _ProductsPageState extends State<ProductsPage> {
           product.nameAr.toLowerCase().contains(value) ||
           product.code.toLowerCase().contains(value) ||
           product.barcode.toLowerCase().contains(value) ||
+          product.effectiveSaleUnits.any((unit) => unit.barcode.toLowerCase().contains(value)) ||
+          product.effectivePurchaseUnits.any((unit) => unit.barcode.toLowerCase().contains(value)) ||
           product.category.toLowerCase().contains(value) ||
           product.brand.toLowerCase().contains(value) ||
           product.supplier.toLowerCase().contains(value);
@@ -163,6 +193,9 @@ class _ProductsPageState extends State<ProductsPage> {
     if (result == null) return;
     try {
       await widget.store.addOrUpdateProduct(result.product);
+      if (result.supplierPriceSave != null) {
+        await result.supplierPriceSave!();
+      }
       if (result.addToQuickProducts) {
         await _addProductToQuickProducts(result.product, tr);
       }
@@ -239,7 +272,7 @@ class _ProductTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final subtitle = [product.code, product.barcode, product.category, product.brand, product.supplier].where((e) => e.trim().isNotEmpty).join(' • ');
+    final subtitle = [product.code, product.barcode, product.category, product.brand].where((e) => e.trim().isNotEmpty).join(' • ');
     final lastPurchase = store.lastPurchasePriceForProduct(product.id);
     final avgPurchase = store.averagePurchaseCostForProduct(product.id);
     final supplierCount = store.supplierCountForProduct(product.id);
@@ -316,10 +349,11 @@ class _ProductTile extends StatelessWidget {
 }
 
 class _ProductFormResult {
-  const _ProductFormResult({required this.product, required this.addToQuickProducts});
+  const _ProductFormResult({required this.product, required this.addToQuickProducts, this.supplierPriceSave});
 
   final Product product;
   final bool addToQuickProducts;
+  final Future<void> Function()? supplierPriceSave;
 }
 
 class _ProductDialog extends StatefulWidget {
@@ -347,7 +381,6 @@ class _ProductDialogState extends State<_ProductDialog> {
   String priceCurrency = 'USD';
   String costCurrency = 'USD';
   String brand = '';
-  String supplier = '';
   String unit = 'pcs';
   ProductQuantityType quantityType = ProductQuantityType.countable;
   late List<_SaleUnitDraft> saleUnitDrafts;
@@ -355,11 +388,15 @@ class _ProductDialogState extends State<_ProductDialog> {
   bool isActive = true;
   bool addToQuickProducts = false;
   String imagePath = '';
+  late final String _productId;
+  late List<SupplierProductPrice> supplierPriceDrafts;
 
   @override
   void initState() {
     super.initState();
     final product = widget.product;
+    _productId = product?.id ?? DateTime.now().microsecondsSinceEpoch.toString();
+    supplierPriceDrafts = product == null ? <SupplierProductPrice>[] : widget.store.supplierProductPricesForProduct(product.id).toList();
     barcodeController = TextEditingController(text: product?.barcode ?? '');
     codeController = TextEditingController(text: product?.code ?? _generateUniqueSku());
     nameEnController = TextEditingController(text: product?.nameEn.isNotEmpty == true ? product!.nameEn : product?.name ?? '');
@@ -374,7 +411,6 @@ class _ProductDialogState extends State<_ProductDialog> {
     imagePath = product?.imagePath ?? '';
     category = product?.category ?? (widget.store.categories.isNotEmpty ? widget.store.categories.first.code.isNotEmpty ? widget.store.categories.first.code : widget.store.categories.first.nameEn : 'General');
     brand = product?.brand ?? '';
-    supplier = product?.supplier ?? '';
     unit = product?.unit ?? (widget.store.units.isNotEmpty ? widget.store.units.first.code : 'pcs');
     quantityType = product?.quantityType ?? ProductQuantityType.countable;
     saleUnitDrafts = (product?.saleUnits ?? const []).map(_SaleUnitDraft.fromSaleUnit).toList();
@@ -396,11 +432,6 @@ class _ProductDialogState extends State<_ProductDialog> {
     super.dispose();
   }
 
-  bool get _canUseCameraScanner =>
-      kIsWeb ||
-      defaultTargetPlatform == TargetPlatform.android ||
-      defaultTargetPlatform == TargetPlatform.iOS;
-
   Future<void> _scanBarcodeWithCamera() async {
     final code = await Navigator.of(context).push<String>(
       MaterialPageRoute(builder: (_) => const BarcodeScannerPage()),
@@ -415,8 +446,12 @@ class _ProductDialogState extends State<_ProductDialog> {
     final width = math.min(MediaQuery.sizeOf(context).width - 32, 760).toDouble();
     return AlertDialog(
       title: Text(widget.product == null ? tr.text('add_product') : tr.text('edit_product')),
-      content: SizedBox(
-        width: width,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 24),
+      content: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: width,
+          maxHeight: MediaQuery.sizeOf(context).height * 0.78,
+        ),
         child: Form(
           key: _formKey,
           child: SingleChildScrollView(
@@ -451,12 +486,11 @@ class _ProductDialogState extends State<_ProductDialog> {
                                 onPressed: _copyBarcode,
                                 icon: const Icon(Icons.copy_outlined),
                               ),
-                              if (_canUseCameraScanner)
-                                IconButton(
-                                  tooltip: tr.text('scan_with_camera'),
-                                  onPressed: _scanBarcodeWithCamera,
-                                  icon: const Icon(Icons.camera_alt_outlined),
-                                ),
+                              IconButton(
+                                tooltip: tr.text('scan_with_camera'),
+                                onPressed: _scanBarcodeWithCamera,
+                                icon: const Icon(Icons.camera_alt_outlined),
+                              ),
                             ],
                           ),
                         ),
@@ -478,13 +512,6 @@ class _ProductDialogState extends State<_ProductDialog> {
                         onChanged: (value) => setState(() => brand = value),
                         onAdd: () => _addCatalogItem(context, 'brand'),
                         onManage: () => _manageCatalogItems(context, 'brand'),
-                      ),
-                      _SupplierDropdown(
-                        value: supplier,
-                        suppliers: widget.store.suppliers,
-                        onChanged: (value) => setState(() => supplier = value),
-                        onAdd: () => _addSupplier(context),
-                        onManage: () {},
                       ),
                       _CatalogDropdown(
                         label: tr.text('unit'),
@@ -521,12 +548,25 @@ class _ProductDialogState extends State<_ProductDialog> {
                 _ProductFormSection(
                   icon: Icons.payments_outlined,
                   title: tr.text('pricing'),
-                  initiallyExpanded: true,
                   children: [
                     _ResponsiveFields(children: [
                       _MoneyField(controller: priceController, currency: priceCurrency, label: tr.text('sale_price'), currencyLabel: tr.text('price_currency'), validator: _nonNegativeNumber, onCurrencyChanged: (value) => setState(() => priceCurrency = value)),
                       _MoneyField(controller: costController, currency: costCurrency, label: tr.text('cost_price'), currencyLabel: tr.text('cost_currency'), validator: _nonNegativeNumber, onCurrencyChanged: (value) => setState(() => costCurrency = value)),
                     ]),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                _ProductFormSection(
+                  icon: Icons.local_shipping_outlined,
+                  title: tr.text('supplier_prices') == 'supplier_prices' ? 'Supplier Prices' : tr.text('supplier_prices'),
+                  children: [
+                    _SupplierPricesEditor(
+                      prices: supplierPriceDrafts,
+                      productId: _productId,
+                      suppliers: widget.store.suppliers,
+                      storeProfile: widget.store.storeProfile,
+                      onChanged: (items) => setState(() => supplierPriceDrafts = items),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -603,8 +643,9 @@ class _ProductDialogState extends State<_ProductDialog> {
       context,
       _ProductFormResult(
         addToQuickProducts: addToQuickProducts,
+        supplierPriceSave: () => _saveSupplierPriceDrafts(_productId),
         product: Product(
-        id: widget.product?.id ?? DateTime.now().microsecondsSinceEpoch.toString(),
+        id: _productId,
         name: nameEn.isNotEmpty ? nameEn : nameAr,
         nameEn: nameEn,
         nameAr: nameAr,
@@ -612,7 +653,7 @@ class _ProductDialogState extends State<_ProductDialog> {
         barcode: barcodeController.text.trim(),
         category: category.trim(),
         brand: brand.trim(),
-        supplier: supplier.trim(),
+        supplier: '',
         description: descriptionController.text.trim(),
         price: usdPrice,
         originalPrice: originalPrice,
@@ -646,6 +687,19 @@ class _ProductDialogState extends State<_ProductDialog> {
     );
   }
 
+  Future<void> _saveSupplierPriceDrafts(String productId) async {
+    final activeDraftIds = supplierPriceDrafts.map((item) => item.id).toSet();
+    final existing = widget.store.supplierProductPricesForProduct(productId);
+    for (final item in supplierPriceDrafts) {
+      await widget.store.addOrUpdateSupplierProductPrice(item.copyWith(productId: productId));
+    }
+    for (final item in existing) {
+      if (!activeDraftIds.contains(item.id)) {
+        await widget.store.deleteSupplierProductPrice(item.id);
+      }
+    }
+  }
+
   Future<void> _addCatalogItem(BuildContext context, String type) async {
     final item = await showDialog<CatalogItem>(context: context, builder: (_) => _CatalogItemDialog(type: type));
     if (item == null) return;
@@ -667,15 +721,6 @@ class _ProductDialogState extends State<_ProductDialog> {
       builder: (_) => _CatalogManagerDialog(store: widget.store, type: type),
     );
     setState(() {});
-  }
-
-  Future<void> _addSupplier(BuildContext context) async {
-    final supplierName = await showDialog<String>(context: context, builder: (_) => const _QuickSupplierDialog());
-    if (supplierName == null || supplierName.trim().isEmpty) return;
-    await widget.store.addOrUpdateSupplier(
-      Supplier(id: DateTime.now().microsecondsSinceEpoch.toString(), name: supplierName.trim(), nameEn: supplierName.trim(), nameAr: '', phone: '', address: '', notes: ''),
-    );
-    setState(() => supplier = supplierName.trim());
   }
 
   String _resolvedSku() => codeController.text.trim().isEmpty ? _generateUniqueSku() : codeController.text.trim();
@@ -710,6 +755,479 @@ class _ProductDialogState extends State<_ProductDialog> {
   String? _nonNegativeInteger(String? value) {
     final number = int.tryParse((value ?? '').trim());
     return number == null || number < 0 ? AppLocalizations.of(context).text('invalid_number') : null;
+  }
+}
+
+
+class _SupplierPricesEditor extends StatelessWidget {
+  const _SupplierPricesEditor({
+    required this.prices,
+    required this.productId,
+    required this.suppliers,
+    required this.storeProfile,
+    required this.onChanged,
+  });
+
+  final List<SupplierProductPrice> prices;
+  final String productId;
+  final List<Supplier> suppliers;
+  final StoreProfile storeProfile;
+  final ValueChanged<List<SupplierProductPrice>> onChanged;
+
+  String _supplierName(String id) {
+    for (final supplier in suppliers) {
+      if (supplier.id == id) return supplier.name.trim().isNotEmpty ? supplier.name : supplier.nameEn;
+    }
+    return id;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final canAdd = suppliers.isNotEmpty;
+    final rows = prices.where((item) => !item.isDeleted).toList()
+      ..sort((a, b) {
+        if (a.isPreferred != b.isPreferred) return a.isPreferred ? -1 : 1;
+        return _supplierName(a.supplierId).toLowerCase().compareTo(_supplierName(b.supplierId).toLowerCase());
+      });
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final description = Text(
+              'Keep official purchase prices per supplier. Purchase history remains available separately.',
+              style: Theme.of(context).textTheme.bodySmall,
+            );
+            final actions = Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: canAdd ? () => _importCsv(context) : null,
+                  icon: const Icon(Icons.upload_file_outlined),
+                  label: const Text('CSV'),
+                ),
+                FilledButton.icon(
+                  onPressed: canAdd ? () => _openEditor(context) : null,
+                  icon: const Icon(Icons.add),
+                  label: const Text('Add'),
+                ),
+              ],
+            );
+            if (constraints.maxWidth < 460) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [description, const SizedBox(height: 8), actions],
+              );
+            }
+            return Row(
+              children: [
+                Expanded(child: description),
+                const SizedBox(width: 8),
+                actions,
+              ],
+            );
+          },
+        ),
+        if (!canAdd) ...[
+          const SizedBox(height: 8),
+          const Text('Add suppliers first to manage supplier prices.'),
+        ],
+        const SizedBox(height: 12),
+        if (rows.isNotEmpty)
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text([
+                if (rows.any((item) => item.isPreferred)) 'Preferred: ${_supplierName(rows.firstWhere((item) => item.isPreferred).supplierId)}',
+                'Best price: ${_supplierName((rows.toList()..sort((a, b) => a.cost.compareTo(b.cost))).first.supplierId)}',
+                if (rows.any((item) => item.leadTimeDays != null))
+                  'Fastest: ${_supplierName((rows.where((item) => item.leadTimeDays != null).toList()..sort((a, b) => a.leadTimeDays!.compareTo(b.leadTimeDays!))).first.supplierId)}',
+              ].join(' • ')),
+            ),
+          ),
+        if (rows.isNotEmpty) const SizedBox(height: 8),
+        if (rows.isEmpty)
+          const Card(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('No supplier prices yet.'),
+            ),
+          )
+        else
+          ...rows.map((item) => _buildSupplierPriceCard(context, item)),
+      ],
+    );
+  }
+
+  Widget _buildSupplierPriceCard(BuildContext context, SupplierProductPrice item) {
+    final subtitle = [
+      formatCurrency(item.cost, currency: item.currency),
+      if (item.isPreferred) 'Preferred',
+      if (item.supplierSku.trim().isNotEmpty) 'SKU: ${item.supplierSku.trim()}',
+      if (item.minOrderQty != null) 'Min: ${item.minOrderQty}',
+      if (item.leadTimeDays != null) '${item.leadTimeDays} days',
+      if (item.priceHistory.isNotEmpty) 'History: ${item.priceHistory.length}',
+      if (item.notes.trim().isNotEmpty) item.notes.trim(),
+    ].join(' • ');
+    final actions = Wrap(
+      spacing: 4,
+      children: [
+        IconButton(
+          tooltip: 'Edit',
+          onPressed: () => _openEditor(context, item: item),
+          icon: const Icon(Icons.edit_outlined),
+        ),
+        IconButton(
+          tooltip: 'Delete',
+          onPressed: () {
+            onChanged(prices.where((row) => row.id != item.id).toList());
+          },
+          icon: const Icon(Icons.delete_outline),
+        ),
+      ],
+    );
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          if (constraints.maxWidth < 420) {
+            return Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(item.isPreferred ? Icons.star : Icons.local_shipping_outlined),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text(_supplierName(item.supplierId), style: const TextStyle(fontWeight: FontWeight.w700))),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(subtitle),
+                  const SizedBox(height: 4),
+                  Align(alignment: AlignmentDirectional.centerEnd, child: actions),
+                ],
+              ),
+            );
+          }
+          return ListTile(
+            leading: Icon(item.isPreferred ? Icons.star : Icons.local_shipping_outlined),
+            title: Text(_supplierName(item.supplierId)),
+            subtitle: Text(subtitle),
+            trailing: actions,
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _importCsv(BuildContext context) async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['csv'],
+      withData: true,
+    );
+    final file = result?.files.single;
+    final bytes = file?.bytes;
+    if (bytes == null || bytes.isEmpty) return;
+    final text = utf8.decode(bytes, allowMalformed: true);
+    final lines = const LineSplitter().convert(text).where((line) => line.trim().isNotEmpty).toList();
+    if (lines.isEmpty) return;
+    final updated = List<SupplierProductPrice>.from(prices);
+    final now = DateTime.now();
+    for (final rawLine in lines.skip(1)) {
+      final cols = rawLine.split(',').map((item) => item.trim()).toList();
+      if (cols.length < 2) continue;
+      final supplierKey = cols[0].toLowerCase();
+      Supplier? supplier;
+      for (final candidate in suppliers) {
+        final name = (candidate.name.trim().isNotEmpty ? candidate.name : candidate.nameEn).toLowerCase();
+        if (candidate.id.toLowerCase() == supplierKey || name == supplierKey) {
+          supplier = candidate;
+          break;
+        }
+      }
+      if (supplier == null) continue;
+      final supplierRow = supplier;
+      final cost = double.tryParse(cols[1]);
+      if (cost == null || cost < 0) continue;
+      final currency = cols.length > 2 && cols[2].toUpperCase() == 'LBP' ? 'LBP' : 'USD';
+      final supplierSku = cols.length > 3 ? cols[3] : '';
+      final minQty = cols.length > 4 && cols[4].isNotEmpty ? double.tryParse(cols[4]) : null;
+      final leadDays = cols.length > 5 && cols[5].isNotEmpty ? int.tryParse(cols[5]) : null;
+      final notes = cols.length > 6 ? cols.sublist(6).join(',').trim() : '';
+      final existingIndex = updated.indexWhere((item) => !item.isDeleted && item.supplierId == supplierRow.id && item.productId == productId);
+      final existing = existingIndex == -1 ? null : updated[existingIndex];
+      final row = SupplierProductPrice(
+        id: existing?.id ?? 'spp_${now.microsecondsSinceEpoch}_${updated.length}',
+        productId: productId,
+        supplierId: supplierRow.id,
+        cost: cost,
+        currency: currency,
+        isPreferred: existing?.isPreferred ?? updated.where((item) => !item.isDeleted).isEmpty,
+        supplierSku: supplierSku,
+        minOrderQty: minQty,
+        leadTimeDays: leadDays,
+        notes: notes,
+        priceHistory: existing?.priceHistory ?? const [],
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+        deviceId: existing?.deviceId ?? '',
+        syncStatus: existing?.syncStatus ?? 'pending',
+        storeId: existing?.storeId ?? '',
+        branchId: existing?.branchId ?? '',
+        version: existing?.version ?? 1,
+        lastModifiedByDeviceId: existing?.lastModifiedByDeviceId ?? '',
+      );
+      if (existingIndex == -1) {
+        updated.add(row);
+      } else {
+        updated[existingIndex] = row;
+      }
+    }
+    onChanged(updated);
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('CSV import completed.')));
+    }
+  }
+
+  Future<void> _openEditor(BuildContext context, {SupplierProductPrice? item}) async {
+    final result = await showDialog<SupplierProductPrice>(
+      context: context,
+      builder: (_) => _SupplierPriceDialog(
+        suppliers: suppliers,
+        productId: productId,
+        existingPrices: prices,
+        price: item,
+      ),
+    );
+    if (result == null) return;
+    final updated = <SupplierProductPrice>[];
+    var replaced = false;
+    for (final row in prices) {
+      if (row.id == result.id) {
+        updated.add(result);
+        replaced = true;
+      } else if (result.isPreferred && row.productId == result.productId && row.id != result.id) {
+        updated.add(row.copyWith(isPreferred: false, updatedAt: DateTime.now()));
+      } else {
+        updated.add(row);
+      }
+    }
+    if (!replaced) {
+      if (result.isPreferred) {
+        for (var i = 0; i < updated.length; i++) {
+          updated[i] = updated[i].copyWith(isPreferred: false, updatedAt: DateTime.now());
+        }
+      }
+      updated.add(result);
+    }
+    onChanged(updated);
+  }
+}
+
+class _SupplierPriceDialog extends StatefulWidget {
+  const _SupplierPriceDialog({required this.suppliers, required this.productId, required this.existingPrices, this.price});
+
+  final List<Supplier> suppliers;
+  final String productId;
+  final List<SupplierProductPrice> existingPrices;
+  final SupplierProductPrice? price;
+
+  @override
+  State<_SupplierPriceDialog> createState() => _SupplierPriceDialogState();
+}
+
+class _SupplierPriceDialogState extends State<_SupplierPriceDialog> {
+  final _formKey = GlobalKey<FormState>();
+  late String supplierId;
+  late String currency;
+  late bool isPreferred;
+  late final TextEditingController costController;
+  late final TextEditingController supplierSkuController;
+  late final TextEditingController minOrderQtyController;
+  late final TextEditingController leadTimeDaysController;
+  late final TextEditingController notesController;
+
+  @override
+  void initState() {
+    super.initState();
+    supplierId = widget.price?.supplierId ?? (widget.suppliers.isNotEmpty ? widget.suppliers.first.id : '');
+    currency = widget.price?.currency ?? 'USD';
+    isPreferred = widget.price?.isPreferred ?? false;
+    costController = TextEditingController(text: widget.price?.cost.toString() ?? '');
+    supplierSkuController = TextEditingController(text: widget.price?.supplierSku ?? '');
+    minOrderQtyController = TextEditingController(text: widget.price?.minOrderQty?.toString() ?? '');
+    leadTimeDaysController = TextEditingController(text: widget.price?.leadTimeDays?.toString() ?? '');
+    notesController = TextEditingController(text: widget.price?.notes ?? '');
+  }
+
+  @override
+  void dispose() {
+    costController.dispose();
+    supplierSkuController.dispose();
+    minOrderQtyController.dispose();
+    leadTimeDaysController.dispose();
+    notesController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final dialogWidth = math.min(MediaQuery.sizeOf(context).width - 32, 420).toDouble();
+    return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 24),
+      title: Text(widget.price == null ? 'Add Supplier Price' : 'Edit Supplier Price'),
+      content: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: dialogWidth,
+          maxHeight: MediaQuery.sizeOf(context).height * 0.72,
+        ),
+        child: Form(
+          key: _formKey,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+              DropdownButtonFormField<String>(
+                initialValue: supplierId.isEmpty ? null : supplierId,
+                decoration: const InputDecoration(labelText: 'Supplier'),
+                items: widget.suppliers
+                    .map((supplier) => DropdownMenuItem(
+                          value: supplier.id,
+                          child: Text(supplier.name.trim().isNotEmpty ? supplier.name : supplier.nameEn),
+                        ))
+                    .toList(),
+                onChanged: (value) => setState(() => supplierId = value ?? ''),
+                validator: (value) => value == null || value.trim().isEmpty ? 'Required' : null,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: costController,
+                decoration: const InputDecoration(labelText: 'Cost'),
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                validator: (value) {
+                  final number = double.tryParse((value ?? '').trim());
+                  return number == null || number < 0 ? 'Invalid number' : null;
+                },
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: currency,
+                decoration: const InputDecoration(labelText: 'Currency'),
+                items: const [
+                  DropdownMenuItem(value: 'USD', child: Text('USD')),
+                  DropdownMenuItem(value: 'LBP', child: Text('LBP')),
+                ],
+                onChanged: (value) => setState(() => currency = value ?? 'USD'),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: supplierSkuController,
+                decoration: const InputDecoration(labelText: 'Supplier SKU / Code (optional)'),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: minOrderQtyController,
+                decoration: const InputDecoration(labelText: 'Minimum order quantity (optional)'),
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                validator: (value) {
+                  if ((value ?? '').trim().isEmpty) return null;
+                  final number = double.tryParse((value ?? '').trim());
+                  return number == null || number < 0 ? 'Invalid number' : null;
+                },
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: leadTimeDaysController,
+                decoration: const InputDecoration(labelText: 'Lead time days (optional)'),
+                keyboardType: TextInputType.number,
+                validator: (value) {
+                  if ((value ?? '').trim().isEmpty) return null;
+                  final number = int.tryParse((value ?? '').trim());
+                  return number == null || number < 0 ? 'Invalid number' : null;
+                },
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: notesController,
+                decoration: const InputDecoration(labelText: 'Notes'),
+                minLines: 1,
+                maxLines: 3,
+              ),
+              const SizedBox(height: 8),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Preferred supplier'),
+                value: isPreferred,
+                onChanged: (value) => setState(() => isPreferred = value),
+              ),
+              if ((widget.price?.priceHistory.isNotEmpty ?? false)) ...[
+                const Divider(),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('Price history', style: Theme.of(context).textTheme.titleSmall),
+                ),
+                const SizedBox(height: 4),
+                ...widget.price!.priceHistory.reversed.take(5).map((entry) => Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        '${entry.oldCost} → ${entry.newCost} ${entry.currency} • ${entry.source}',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    )),
+              ],
+              ],
+            ),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        FilledButton(onPressed: _save, child: const Text('Save')),
+      ],
+    );
+  }
+
+  void _save() {
+    if (!_formKey.currentState!.validate()) return;
+    final now = DateTime.now();
+    final duplicate = widget.existingPrices.any((item) =>
+        item.id != widget.price?.id &&
+        !item.isDeleted &&
+        item.productId == widget.productId &&
+        item.supplierId == supplierId);
+    if (duplicate) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('This supplier already has a price for this product.')));
+      return;
+    }
+    Navigator.pop(
+      context,
+      SupplierProductPrice(
+        id: widget.price?.id ?? 'spp_${now.microsecondsSinceEpoch}',
+        productId: widget.productId,
+        supplierId: supplierId,
+        cost: double.tryParse(costController.text.trim()) ?? 0,
+        currency: currency,
+        isPreferred: isPreferred,
+        supplierSku: supplierSkuController.text.trim(),
+        minOrderQty: minOrderQtyController.text.trim().isEmpty ? null : double.tryParse(minOrderQtyController.text.trim()),
+        leadTimeDays: leadTimeDaysController.text.trim().isEmpty ? null : int.tryParse(leadTimeDaysController.text.trim()),
+        notes: notesController.text.trim(),
+        priceHistory: widget.price?.priceHistory ?? const [],
+        createdAt: widget.price?.createdAt ?? now,
+        updatedAt: now,
+        deletedAt: widget.price?.deletedAt,
+        deviceId: widget.price?.deviceId ?? '',
+        syncStatus: widget.price?.syncStatus ?? 'pending',
+        storeId: widget.price?.storeId ?? '',
+        branchId: widget.price?.branchId ?? '',
+        version: widget.price?.version ?? 1,
+        lastModifiedByDeviceId: widget.price?.lastModifiedByDeviceId ?? '',
+      ),
+    );
   }
 }
 
@@ -753,6 +1271,15 @@ class _SaleUnitsEditor extends StatelessWidget {
   final List<_SaleUnitDraft> saleUnits;
   final StoreProfile storeProfile;
   final ValueChanged<List<_SaleUnitDraft>> onChanged;
+
+  Future<void> _scanUnitBarcode(BuildContext context, _SaleUnitDraft unit) async {
+    final code = await Navigator.of(context).push<String>(
+      MaterialPageRoute(builder: (_) => const BarcodeScannerPage()),
+    );
+    if (code == null || code.trim().isEmpty) return;
+    unit.barcode = code.trim();
+    onChanged(List<_SaleUnitDraft>.from(saleUnits));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -838,8 +1365,16 @@ class _SaleUnitsEditor extends StatelessWidget {
                           onChanged: (value) => unit.priceCurrency = value ?? 'USD',
                         ),
                         TextFormField(
+                          key: ValueKey('unit-barcode-${unit.id}-${unit.barcode}'),
                           initialValue: unit.barcode,
-                          decoration: InputDecoration(labelText: tr.text('unit_barcode')),
+                          decoration: InputDecoration(
+                            labelText: tr.text('unit_barcode'),
+                            suffixIcon: IconButton(
+                              tooltip: tr.text('scan_with_camera'),
+                              onPressed: () => _scanUnitBarcode(context, unit),
+                              icon: const Icon(Icons.camera_alt_outlined),
+                            ),
+                          ),
                           onChanged: (value) => unit.barcode = value,
                         ),
                       ]),
@@ -856,19 +1391,17 @@ class _SaleUnitsEditor extends StatelessWidget {
 
 
 class _ProductFormSection extends StatelessWidget {
-  const _ProductFormSection({required this.icon, required this.title, required this.children, this.initiallyExpanded = false});
+  const _ProductFormSection({required this.icon, required this.title, required this.children});
 
   final IconData icon;
   final String title;
   final List<Widget> children;
-  final bool initiallyExpanded;
 
   @override
   Widget build(BuildContext context) {
     return Card(
       margin: EdgeInsets.zero,
       child: ExpansionTile(
-        initiallyExpanded: initiallyExpanded,
         leading: Icon(icon),
         title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
@@ -933,26 +1466,49 @@ class _ProductImagePicker extends StatelessWidget {
         border: Border.all(color: Theme.of(context).dividerColor),
         borderRadius: BorderRadius.circular(12),
       ),
-      child: Row(
-        children: [
-          CircleAvatar(
-            radius: 28,
-            child: Icon(hasImage ? Icons.image_outlined : Icons.add_photo_alternate_outlined),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final info = Row(
+            children: [
+              CircleAvatar(
+                radius: 28,
+                child: Icon(hasImage ? Icons.image_outlined : Icons.add_photo_alternate_outlined),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(tr.text('product_image'), style: const TextStyle(fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 4),
+                    Text(hasImage ? imagePath.split('/').last : tr.text('product_image_help'), maxLines: 2, overflow: TextOverflow.ellipsis),
+                  ],
+                ),
+              ),
+            ],
+          );
+          final actions = Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: [
+              TextButton.icon(onPressed: onPick, icon: const Icon(Icons.photo_camera_outlined), label: Text(tr.text('choose'))),
+              if (onClear != null) IconButton(onPressed: onClear, icon: const Icon(Icons.close)),
+            ],
+          );
+          if (constraints.maxWidth < 420) {
+            return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(tr.text('product_image'), style: const TextStyle(fontWeight: FontWeight.w700)),
-                const SizedBox(height: 4),
-                Text(hasImage ? imagePath.split('/').last : tr.text('product_image_help'), maxLines: 2, overflow: TextOverflow.ellipsis),
-              ],
-            ),
-          ),
-          TextButton.icon(onPressed: onPick, icon: const Icon(Icons.photo_camera_outlined), label: Text(tr.text('choose'))),
-          if (onClear != null) IconButton(onPressed: onClear, icon: const Icon(Icons.close)),
-        ],
+              children: [info, const SizedBox(height: 8), actions],
+            );
+          }
+          return Row(
+            children: [
+              Expanded(child: info),
+              const SizedBox(width: 8),
+              actions,
+            ],
+          );
+        },
       ),
     );
   }
@@ -1005,35 +1561,6 @@ class _CatalogDropdown extends StatelessWidget {
               }
               return DropdownMenuItem(value: raw, child: Text(match?.displayName(language) ?? raw));
             }).toList(),
-            onChanged: (newValue) => onChanged(newValue ?? ''),
-          ),
-        ),
-        IconButton(onPressed: onAdd, icon: const Icon(Icons.add_circle_outline)),
-        IconButton(onPressed: onManage, icon: const Icon(Icons.tune_outlined)),
-      ],
-    );
-  }
-}
-
-class _SupplierDropdown extends StatelessWidget {
-  const _SupplierDropdown({required this.value, required this.suppliers, required this.onChanged, required this.onAdd, required this.onManage});
-  final String value;
-  final List<Supplier> suppliers;
-  final ValueChanged<String> onChanged;
-  final VoidCallback onAdd;
-  final VoidCallback onManage;
-
-  @override
-  Widget build(BuildContext context) {
-    final tr = AppLocalizations.of(context);
-    final values = <String>{...suppliers.map((item) => item.name).where((e) => e.trim().isNotEmpty), if (value.trim().isNotEmpty) value}.toList();
-    return Row(
-      children: [
-        Expanded(
-          child: DropdownButtonFormField<String>(
-            initialValue: value.trim().isEmpty ? null : value,
-            decoration: InputDecoration(labelText: tr.text('supplier')),
-            items: values.map((item) => DropdownMenuItem(value: item, child: Text(item))).toList(),
             onChanged: (newValue) => onChanged(newValue ?? ''),
           ),
         ),
@@ -1170,29 +1697,3 @@ class _CatalogManagerDialogState extends State<_CatalogManagerDialog> {
     );
   }
 }
-
-class _QuickSupplierDialog extends StatefulWidget {
-  const _QuickSupplierDialog();
-  @override
-  State<_QuickSupplierDialog> createState() => _QuickSupplierDialogState();
-}
-
-
-class _QuickSupplierDialogState extends State<_QuickSupplierDialog> {
-  final controller = TextEditingController();
-  @override
-  void dispose() { controller.dispose(); super.dispose(); }
-  @override
-  Widget build(BuildContext context) {
-    final tr = AppLocalizations.of(context);
-    return AlertDialog(
-      title: Text(tr.text('add_supplier')),
-      content: TextField(controller: controller, decoration: InputDecoration(labelText: tr.text('supplier_name'))),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: Text(tr.text('cancel'))),
-        FilledButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: Text(tr.text('save'))),
-      ],
-    );
-  }
-}
-

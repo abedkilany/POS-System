@@ -21,6 +21,7 @@ dependencies:
   printing: ^5.14.2
   file_picker: ^8.1.2
   crypto: ^3.0.6
+  archive: ^4.0.9
   pointycastle: ^3.9.1
   http: ^1.2.2
   mobile_scanner: ^7.1.4

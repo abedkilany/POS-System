@@ -31,13 +31,22 @@ class UnifiedSyncFactory {
     );
   }
 
-  static bool get isLanSetupComplete => LanSyncSettings.load().setupComplete;
+  static bool get isLanSetupComplete {
+    final settings = LanSyncSettings.load();
+    return settings.setupComplete && settings.isHost;
+  }
   static bool get isLanHost => LanSyncSettings.load().isHost;
+  static bool isLanHostActive(AppStore store) {
+    final identity = store.appIdentity;
+    final settings = LanSyncSettings.load();
+    return identity.isHost && settings.setupComplete && settings.isHost;
+  }
   static bool get isCloudConfigured => CloudSyncSettings.load().isConfigured;
   static bool cloudCanCheck(AppStore store) {
     final identity = store.appIdentity;
+    final settings = CloudSyncSettings.load();
     final allowed = identity.isHost ? identity.isCloudEnabled : identity.isClient && identity.activeSyncTransportNormalized == 'cloud';
-    return allowed && CloudSyncSettings.load().isConfigured;
+    return allowed && settings.isConfigured;
   }
 }
 
@@ -263,6 +272,10 @@ class UnifiedAutoCloudSyncController {
         final staleClient = store.appIdentity.isClient &&
             cursor != null &&
             now.difference(cursor.toUtc()) > const Duration(days: 7);
+        await store.recoverStaleInProgressSyncQueue(target: 'cloud');
+        await store.recoverStaleInProgressSyncQueue(target: 'cloud_host');
+        await store.retryFailedSyncQueue(target: 'cloud');
+        await store.retryFailedSyncQueue(target: 'cloud_host');
         final engine = UnifiedSyncFactory.cloudEngine(store, settings: settings);
         if (staleClient && !hasOutgoingWork) {
           final repair = await engine.rebuildFromHostSnapshot();

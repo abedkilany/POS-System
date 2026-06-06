@@ -40,3 +40,21 @@ Each browser has its own local identity. To connect multiple devices to the same
 ## Host-authoritative sync
 
 See `SYNC_ARCHITECTURE_V2_HOST_AUTHORITY.md` for the new data flow and setup rules.
+
+## Ventio 56 - Phase 3 account UI
+
+Applied on top of phase 2 invoice-account linking:
+
+- Added reusable account ledger widgets for customers and suppliers.
+- Added current balance indicators on Customers and Suppliers pages.
+- Added account statement bottom sheet per customer/supplier.
+- Added independent payments:
+  - Receive payment from customer.
+  - Pay supplier.
+- Added accounting report cards:
+  - Customer receivables.
+  - Supplier payables.
+  - Today cash in/out movement.
+- Added top customer debts and supplier payables report sections.
+
+No database schema change was required in this phase because phase 1 already introduced AccountTransaction storage and phase 2 linked invoices to it.

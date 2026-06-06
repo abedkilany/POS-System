@@ -1,3 +1,11 @@
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '25mb',
+    },
+  },
+};
+
 import health from '../server_api/health.js';
 import deviceRevoke from '../server_api/sync/device-revoke.js';
 import deviceWipeAck from '../server_api/sync/device-wipe-ack.js';
@@ -20,6 +28,7 @@ import requestsPull from '../server_api/sync/requests/pull.js';
 import requestsStatus from '../server_api/sync/requests/status.js';
 import requestsPush from '../server_api/sync/requests/push.js';
 import maintenance from '../server_api/sync/maintenance.js';
+import bootstrapSnapshot from '../server_api/sync/bootstrap-snapshot.js';
 
 const routes = new Map([
   ['health', health],
@@ -39,6 +48,7 @@ const routes = new Map([
   ['sync/pull', pull],
   ['sync/push', push],
   ['sync/maintenance', maintenance],
+  ['sync/bootstrap-snapshot', bootstrapSnapshot],
   ['sync/recovery/claim', recoveryClaim],
   ['sync/requests/ack', requestsAck],
   ['sync/requests/pull', requestsPull],

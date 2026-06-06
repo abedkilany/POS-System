@@ -45,6 +45,34 @@ class _DatabasePageState extends State<DatabasePage> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _requireDatabasePassword());
   }
 
+  String _displayKey(String key) {
+    switch (key) {
+      case 'supplier_product_prices_v1':
+        return 'Supplier Product Prices';
+      case 'products_v4':
+        return 'Products';
+      case 'customers_v4':
+        return 'Customers';
+      case 'suppliers_v4':
+        return 'Suppliers';
+      case 'sales_v4':
+        return 'Sales';
+      case 'purchases_v1':
+        return 'Purchases';
+      case 'expenses_v4':
+        return 'Expenses';
+      case 'stock_movements_v1':
+        return 'Stock Movements';
+      case 'product_categories_v1':
+        return 'Product Categories';
+      case 'product_brands_v1':
+        return 'Product Brands';
+      case 'product_units_v1':
+        return 'Product Units';
+    }
+    return key;
+  }
+
   void _reload() {
     final entries = LocalDatabaseService.allEntries();
     final keys = entries.keys.toList()..sort();
@@ -61,7 +89,10 @@ class _DatabasePageState extends State<DatabasePage> {
   @override
   Widget build(BuildContext context) {
     final allKeys = _entries.keys.toList()..sort();
-    final keys = allKeys.where((key) => key.toLowerCase().contains(_tableQuery.trim().toLowerCase())).toList(growable: false);
+    final normalizedTableQuery = _tableQuery.trim().toLowerCase();
+    final keys = allKeys
+        .where((key) => key.toLowerCase().contains(normalizedTableQuery) || _displayKey(key).toLowerCase().contains(normalizedTableQuery))
+        .toList(growable: false);
     final raw = _selectedKey.isEmpty ? '' : (_entries[_selectedKey] ?? '');
     final decoded = _decode(raw);
     final rows = _rowsFor(decoded);
@@ -82,24 +113,30 @@ class _DatabasePageState extends State<DatabasePage> {
 
     if (!_databaseUnlocked) return _buildLockedView();
 
-    return Row(
-      children: [
-        if (!_sidebarCollapsed) _buildSidebar(keys),
-        if (!_sidebarCollapsed) const VerticalDivider(width: 1),
-        Expanded(
-          child: Column(
-            children: [
-              _buildToolbar(decoded, pageStart, pageEnd, totalRecords, safePage, pageCount),
-              const Divider(height: 1),
-              Expanded(
-                child: _selectedMode == 'structure'
-                    ? _buildStructureView(columns, rows.length, raw)
-                    : _buildDataView(decoded, columns, visibleRows),
-              ),
-            ],
-          ),
-        ),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 720;
+        final content = Column(
+          children: [
+            if (compact) _buildMobileTableSelector(keys),
+            _buildToolbar(decoded, pageStart, pageEnd, totalRecords, safePage, pageCount),
+            const Divider(height: 1),
+            Expanded(
+              child: _selectedMode == 'structure'
+                  ? _buildStructureView(columns, rows.length, raw)
+                  : _buildDataView(decoded, columns, visibleRows),
+            ),
+          ],
+        );
+        if (compact) return content;
+        return Row(
+          children: [
+            if (!_sidebarCollapsed) _buildSidebar(keys),
+            if (!_sidebarCollapsed) const VerticalDivider(width: 1),
+            Expanded(child: content),
+          ],
+        );
+      },
     );
   }
 
@@ -225,6 +262,78 @@ Widget _buildLockedView() {
     });
   }
 
+  Widget _buildMobileTableSelector(List<String> keys) {
+    final value = keys.contains(_selectedKey) ? _selectedKey : null;
+    return Material(
+      color: Theme.of(context).colorScheme.surface,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.storage_outlined),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Database',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+                  ),
+                ),
+                IconButton(onPressed: _reload, icon: const Icon(Icons.refresh), tooltip: 'Refresh'),
+                IconButton(
+                  onPressed: _selectedKey.isEmpty ? null : _confirmDeleteKey,
+                  icon: Icon(Icons.delete_forever_outlined, color: Theme.of(context).colorScheme.error),
+                  tooltip: 'Delete selected table/key',
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              decoration: InputDecoration(
+                hintText: 'Search tables...',
+                prefixIcon: const Icon(Icons.search),
+                isDense: true,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              onChanged: (value) => setState(() => _tableQuery = value),
+            ),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String>(
+              initialValue: value,
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: 'Selected table',
+                isDense: true,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              items: [
+                for (final key in keys)
+                  DropdownMenuItem<String>(
+                    value: key,
+                    child: Text(_displayKey(key), maxLines: 1, overflow: TextOverflow.ellipsis),
+                  ),
+              ],
+              onChanged: (key) {
+                if (key == null) return;
+                setState(() {
+                  _selectedKey = key;
+                  _page = 0;
+                  _selectedRowIndexes.clear();
+                  _sortColumn = null;
+                  _sortAscending = true;
+                });
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildSidebar(List<String> keys) {
     return Container(
       width: 310,
@@ -275,7 +384,7 @@ Widget _buildLockedView() {
                       dense: true,
                       contentPadding: const EdgeInsets.symmetric(horizontal: 8),
                       leading: const Icon(Icons.table_chart_outlined, size: 20),
-                      title: Text(key, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontWeight: selected ? FontWeight.w700 : FontWeight.w500)),
+                      title: Text(_displayKey(key), maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontWeight: selected ? FontWeight.w700 : FontWeight.w500)),
                       trailing: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                         decoration: BoxDecoration(color: Theme.of(context).colorScheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(999)),
@@ -310,104 +419,114 @@ Widget _buildLockedView() {
   }
 
   Widget _buildToolbar(dynamic decoded, int start, int end, int total, int safePage, int pageCount) {
-    return Container(
-      height: 104,
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-      child: Column(
-        children: [
-          Row(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 720;
+        final searchField = SizedBox(
+          width: compact ? double.infinity : 360,
+          child: TextField(
+            decoration: InputDecoration(
+              hintText: 'Search records...',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: _recordQuery.isEmpty ? null : IconButton(onPressed: () => setState(() => _recordQuery = ''), icon: const Icon(Icons.close)),
+              isDense: true,
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            onChanged: (value) => setState(() {
+              _recordQuery = value;
+              _page = 0;
+              _selectedRowIndexes.clear();
+            }),
+          ),
+        );
+        final pageControls = Wrap(
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 6,
+          runSpacing: 4,
+          children: [
+            IconButton(onPressed: safePage > 0 ? () => setState(() => _page--) : null, icon: const Icon(Icons.chevron_left)),
+            IconButton(onPressed: safePage < pageCount - 1 ? () => setState(() => _page++) : null, icon: const Icon(Icons.chevron_right)),
+            Text('${start + (total == 0 ? 0 : 1)} - $end of $total'),
+            DropdownButton<int>(
+              value: _pageSize,
+              items: const [25, 50, 100].map((value) => DropdownMenuItem<int>(value: value, child: Text('$value'))).toList(),
+              onChanged: (value) => setState(() {
+                _pageSize = value ?? 50;
+                _page = 0;
+              }),
+            ),
+            const Text('per page'),
+          ],
+        );
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              IconButton(
-                onPressed: () => setState(() => _sidebarCollapsed = !_sidebarCollapsed),
-                icon: Icon(_sidebarCollapsed ? Icons.keyboard_double_arrow_right : Icons.keyboard_double_arrow_left),
-                tooltip: _sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar',
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Table: $_selectedKey', maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
-                    Text('$total records', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
-                  ],
-                ),
-              ),
-              OutlinedButton.icon(onPressed: _reload, icon: const Icon(Icons.refresh), label: const Text('Refresh')),
-              const SizedBox(width: 8),
-              OutlinedButton.icon(onPressed: () => _openRawEditor(), icon: const Icon(Icons.view_column_outlined), label: const Text('Columns')),
-              const SizedBox(width: 8),
-              FilledButton.icon(onPressed: decoded is List ? () => _openRowEditor() : null, icon: const Icon(Icons.add), label: const Text('Add record')),
-              const SizedBox(width: 8),
-              if (_selectedRowIndexes.isNotEmpty)
-                FilledButton.icon(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: Theme.of(context).colorScheme.error,
-                    foregroundColor: Theme.of(context).colorScheme.onError,
+              Row(
+                children: [
+                  if (!compact)
+                    IconButton(
+                      onPressed: () => setState(() => _sidebarCollapsed = !_sidebarCollapsed),
+                      icon: Icon(_sidebarCollapsed ? Icons.keyboard_double_arrow_right : Icons.keyboard_double_arrow_left),
+                      tooltip: _sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar',
+                    ),
+                  if (!compact) const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Table: ${_displayKey(_selectedKey)}', maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+                        Text('$total records', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                      ],
+                    ),
                   ),
-                  onPressed: () => _deleteSelectedRows(),
-                  icon: const Icon(Icons.delete_outline),
-                  label: Text('Delete (${_selectedRowIndexes.length})'),
-                ),
-              const SizedBox(width: 4),
-              PopupMenuButton<String>(
-                onSelected: (value) {
-                  if (value == 'raw') _openRawEditor();
-                  if (value == 'delete') _confirmDeleteKey();
-                  if (value == '25') setState(() => _pageSize = 25);
-                  if (value == '50') setState(() => _pageSize = 50);
-                  if (value == '100') setState(() => _pageSize = 100);
-                },
-                itemBuilder: (context) => const [
-                  PopupMenuItem(value: 'raw', child: Text('Edit Raw JSON')),
-                  PopupMenuItem(value: 'delete', child: Text('Delete selected table/key')),
-                  PopupMenuDivider(),
-                  PopupMenuItem(value: '25', child: Text('25 rows per page')),
-                  PopupMenuItem(value: '50', child: Text('50 rows per page')),
-                  PopupMenuItem(value: '100', child: Text('100 rows per page')),
+                  PopupMenuButton<String>(
+                    onSelected: (value) {
+                      if (value == 'refresh') _reload();
+                      if (value == 'columns') _openRawEditor();
+                      if (value == 'add') _openRowEditor();
+                      if (value == 'deleteSelected') _deleteSelectedRows();
+                      if (value == 'raw') _openRawEditor();
+                      if (value == 'delete') _confirmDeleteKey();
+                      if (value == '25') setState(() => _pageSize = 25);
+                      if (value == '50') setState(() => _pageSize = 50);
+                      if (value == '100') setState(() => _pageSize = 100);
+                    },
+                    itemBuilder: (context) => [
+                      const PopupMenuItem(value: 'refresh', child: Text('Refresh')),
+                      const PopupMenuItem(value: 'columns', child: Text('Columns')),
+                      PopupMenuItem(enabled: decoded is List, value: 'add', child: const Text('Add record')),
+                      if (_selectedRowIndexes.isNotEmpty) PopupMenuItem(value: 'deleteSelected', child: Text('Delete selected (${_selectedRowIndexes.length})')),
+                      const PopupMenuDivider(),
+                      const PopupMenuItem(value: 'raw', child: Text('Edit Raw JSON')),
+                      const PopupMenuItem(value: 'delete', child: Text('Delete selected table/key')),
+                      const PopupMenuDivider(),
+                      const PopupMenuItem(value: '25', child: Text('25 rows per page')),
+                      const PopupMenuItem(value: '50', child: Text('50 rows per page')),
+                      const PopupMenuItem(value: '100', child: Text('100 rows per page')),
+                    ],
+                  ),
                 ],
               ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              SizedBox(
-                width: 360,
-                child: TextField(
-                  decoration: InputDecoration(
-                    hintText: 'Search records...',
-                    prefixIcon: const Icon(Icons.search),
-                    suffixIcon: _recordQuery.isEmpty ? null : IconButton(onPressed: () => setState(() => _recordQuery = ''), icon: const Icon(Icons.close)),
-                    isDense: true,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                  ),
-                  onChanged: (value) => setState(() {
-                    _recordQuery = value;
-                    _page = 0;
-                    _selectedRowIndexes.clear();
-                  }),
+              const SizedBox(height: 8),
+              if (compact) ...[
+                searchField,
+                const SizedBox(height: 8),
+                Align(alignment: AlignmentDirectional.centerStart, child: pageControls),
+              ] else
+                Row(
+                  children: [
+                    searchField,
+                    const Spacer(),
+                    pageControls,
+                  ],
                 ),
-              ),
-              const Spacer(),
-              IconButton(onPressed: safePage > 0 ? () => setState(() => _page--) : null, icon: const Icon(Icons.chevron_left)),
-              IconButton(onPressed: safePage < pageCount - 1 ? () => setState(() => _page++) : null, icon: const Icon(Icons.chevron_right)),
-              const SizedBox(width: 16),
-              Text('${start + (total == 0 ? 0 : 1)} - $end of $total'),
-              const SizedBox(width: 16),
-              DropdownButton<int>(
-                value: _pageSize,
-                items: const [25, 50, 100].map((value) => DropdownMenuItem<int>(value: value, child: Text('$value'))).toList(),
-                onChanged: (value) => setState(() {
-                  _pageSize = value ?? 50;
-                  _page = 0;
-                }),
-              ),
-              const SizedBox(width: 6),
-              const Text('per page'),
             ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -503,7 +622,7 @@ Widget _buildLockedView() {
           child: SingleChildScrollView(
             controller: _verticalTableController,
             child: ConstrainedBox(
-              constraints: BoxConstraints(minWidth: MediaQuery.of(context).size.width - (_sidebarCollapsed ? 0 : 310)),
+              constraints: BoxConstraints(minWidth: MediaQuery.of(context).size.width.clamp(320.0, double.infinity).toDouble() - (_sidebarCollapsed || MediaQuery.of(context).size.width < 720 ? 0 : 310)),
               child: table,
             ),
           ),
@@ -519,22 +638,25 @@ Widget _buildLockedView() {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Text('Structure: $_selectedKey', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+            Text('Structure: ${_displayKey(_selectedKey)}', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
             const SizedBox(height: 8),
             Text('$rowCount records • ${raw.length} raw characters'),
             const Divider(height: 28),
-            DataTable(
-              columns: const [
-                DataColumn(label: Text('column')),
-                DataColumn(label: Text('type')),
-              ],
-              rows: [
-                for (final column in columns)
-                  DataRow(cells: [
-                    DataCell(Text(column)),
-                    DataCell(Text(_columnType(column, _rowsFor(_decode(raw))))),
-                  ]),
-              ],
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: DataTable(
+                columns: const [
+                  DataColumn(label: Text('column')),
+                  DataColumn(label: Text('type')),
+                ],
+                rows: [
+                  for (final column in columns)
+                    DataRow(cells: [
+                      DataCell(Text(column)),
+                      DataCell(Text(_columnType(column, _rowsFor(_decode(raw))))),
+                    ]),
+                ],
+              ),
             ),
           ],
         ),

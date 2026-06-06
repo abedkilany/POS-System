@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
-
 import '../../core/localization/app_localizations.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/utils/currency_utils.dart';
@@ -11,6 +9,9 @@ import '../../models/purchase.dart';
 import '../../models/purchase_item.dart';
 import '../../models/store_profile.dart';
 import '../../models/supplier.dart';
+import '../../models/supplier_product_price.dart';
+import '../../models/user_role.dart';
+import '../barcode/barcode_scanner_page.dart';
 
 class PurchasesPage extends StatefulWidget {
   const PurchasesPage({super.key, required this.store});
@@ -22,12 +23,62 @@ class PurchasesPage extends StatefulWidget {
 }
 
 class _PurchasesPageState extends State<PurchasesPage> {
+  final TextEditingController _searchController = TextEditingController();
+  String _statusFilter = 'all';
+  String _sortMode = 'newest';
   String _formatQuantity(double value) => value % 1 == 0 ? value.toStringAsFixed(0) : value.toStringAsFixed(3).replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
+
+  String _formatShortDate(DateTime date) {
+    final local = date.toLocal();
+    final day = local.day.toString().padLeft(2, '0');
+    final month = local.month.toString().padLeft(2, '0');
+    return '$day/$month/${local.year}';
+  }
+
+  Future<String?> _scanBarcodeWithCamera() async {
+    final code = await Navigator.of(context).push<String>(
+      MaterialPageRoute(builder: (_) => const BarcodeScannerPage()),
+    );
+    final trimmed = code?.trim();
+    return trimmed == null || trimmed.isEmpty ? null : trimmed;
+  }
 
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final purchases = widget.store.purchases;
+    final allPurchases = widget.store.purchases;
+    final query = _searchController.text.toLowerCase().trim();
+    var purchases = allPurchases.where((p) {
+      final matchesSearch = query.isEmpty ||
+          p.purchaseNo.toLowerCase().contains(query) ||
+          p.supplierName.toLowerCase().contains(query) ||
+          p.items.any((item) => item.productName.toLowerCase().contains(query));
+      final matchesStatus = _statusFilter == 'all' ||
+          (_statusFilter == 'draft' && !p.isReceived && !p.isCancelled) ||
+          (_statusFilter == 'received' && p.isReceived) ||
+          (_statusFilter == 'cancelled' && p.isCancelled);
+      return matchesSearch && matchesStatus;
+    }).toList();
+    purchases.sort((a, b) {
+      switch (_sortMode) {
+        case 'oldest':
+          return a.date.compareTo(b.date);
+        case 'highest':
+          return b.subtotal.compareTo(a.subtotal);
+        case 'lowest':
+          return a.subtotal.compareTo(b.subtotal);
+        case 'supplier':
+          return a.supplierName.toLowerCase().compareTo(b.supplierName.toLowerCase());
+        case 'newest':
+        default:
+          return b.date.compareTo(a.date);
+      }
+    });
+    final now = DateTime.now();
+    final monthlyPurchases = allPurchases.where((p) => !p.isCancelled && p.date.year == now.year && p.date.month == now.month).toList();
+    final monthlyTotal = monthlyPurchases.fold<double>(0, (sum, p) => sum + p.subtotal);
+    final draftTotal = allPurchases.where((p) => !p.isCancelled && !p.isReceived).fold<double>(0, (sum, p) => sum + p.subtotal);
+    final averagePurchase = monthlyPurchases.isEmpty ? 0.0 : monthlyTotal / monthlyPurchases.length;
     return ListView(
       padding: VentioResponsive.pageInsets(context),
       children: [
@@ -56,9 +107,62 @@ class _PurchasesPageState extends State<PurchasesPage> {
           runSpacing: 12,
           children: [
             _MetricCard(label: tr.text('purchase_total'), value: formatUsdReferenceAmount(widget.store.totalPurchasesAmount, widget.store.storeProfile), icon: Icons.shopping_cart_checkout),
-            _MetricCard(label: tr.text('pending_purchases'), value: '${widget.store.pendingPurchaseCount}', icon: Icons.pending_actions),
-            _MetricCard(label: tr.text('received_purchases'), value: '${purchases.where((p) => p.isReceived).length}', icon: Icons.done_all),
+            _MetricCard(label: tr.text('purchases_this_month'), value: formatUsdReferenceAmount(monthlyTotal, widget.store.storeProfile), icon: Icons.calendar_month_outlined),
+            _MetricCard(label: tr.text('draft_purchases'), value: formatUsdReferenceAmount(draftTotal, widget.store.storeProfile), icon: Icons.pending_actions),
+            _MetricCard(label: tr.text('avg_purchase'), value: formatUsdReferenceAmount(averagePurchase, widget.store.storeProfile), icon: Icons.insights_outlined),
           ],
+        ),
+        const SizedBox(height: 16),
+        TextField(
+          controller: _searchController,
+          onChanged: (_) => setState(() {}),
+          decoration: InputDecoration(
+            prefixIcon: const Icon(Icons.search),
+            hintText: tr.text('search_purchase_supplier_product'),
+            border: const OutlineInputBorder(),
+            suffixIcon: query.isEmpty
+                ? null
+                : IconButton(
+                    tooltip: tr.text('clear_search'),
+                    icon: const Icon(Icons.close),
+                    onPressed: () {
+                      _searchController.clear();
+                      setState(() {});
+                    },
+                  ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxWidth < 620;
+            final filters = Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ChoiceChip(label: Text('${tr.text('all')} (${allPurchases.length})'), selected: _statusFilter == 'all', onSelected: (_) => setState(() => _statusFilter = 'all')),
+                ChoiceChip(label: Text('${tr.text('draft')} (${allPurchases.where((p) => !p.isReceived && !p.isCancelled).length})'), selected: _statusFilter == 'draft', onSelected: (_) => setState(() => _statusFilter = 'draft')),
+                ChoiceChip(label: Text('${tr.text('received')} (${allPurchases.where((p) => p.isReceived).length})'), selected: _statusFilter == 'received', onSelected: (_) => setState(() => _statusFilter = 'received')),
+                ChoiceChip(label: Text('${tr.text('cancelled')} (${allPurchases.where((p) => p.isCancelled).length})'), selected: _statusFilter == 'cancelled', onSelected: (_) => setState(() => _statusFilter = 'cancelled')),
+              ],
+            );
+            final sorter = DropdownButtonFormField<String>(
+              initialValue: _sortMode,
+              decoration: InputDecoration(labelText: tr.text('sort_by'), border: const OutlineInputBorder()),
+              items: [
+                DropdownMenuItem(value: 'newest', child: Text(tr.text('newest_first'))),
+                DropdownMenuItem(value: 'oldest', child: Text(tr.text('oldest_first'))),
+                DropdownMenuItem(value: 'highest', child: Text(tr.text('highest_amount'))),
+                DropdownMenuItem(value: 'lowest', child: Text(tr.text('lowest_amount'))),
+                DropdownMenuItem(value: 'supplier', child: Text(tr.text('supplier_name_sort'))),
+              ],
+              onChanged: (value) => setState(() => _sortMode = value ?? 'newest'),
+            );
+            if (compact) {
+              return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [filters, const SizedBox(height: 12), sorter]);
+            }
+            return Row(children: [Expanded(child: filters), SizedBox(width: 220, child: sorter)]);
+          },
         ),
         const SizedBox(height: 16),
         Card(
@@ -70,8 +174,13 @@ class _PurchasesPageState extends State<PurchasesPage> {
                       _PurchaseTile(
                         purchase: purchase,
                         storeProfile: widget.store.storeProfile,
+                        onTap: () => _showPurchaseDetails(context, purchase),
                         onReceive: purchase.status == 'Draft' ? () => _receivePurchase(context, purchase.id) : null,
-                        onCancel: !purchase.isCancelled ? () => _cancelPurchase(context, purchase.id) : null,
+                        onCancel: purchase.isReceived ? () => _cancelPurchase(context, purchase.id) : null,
+                        onDeleteDraft: !purchase.isReceived && !purchase.isCancelled ? () => _deleteDraftPurchase(context, purchase.id) : null,
+                        onPermanentDelete: purchase.isCancelled && widget.store.hasPermission(AppPermission.databaseManage) ? () => _permanentlyDeletePurchase(context, purchase.id) : null,
+                        onDuplicate: () => _openPurchaseDialog(context, template: purchase),
+                        formatDate: _formatShortDate,
                       ),
                       const Divider(height: 1),
                     ],
@@ -94,21 +203,87 @@ class _PurchasesPageState extends State<PurchasesPage> {
     }
   }
 
+  Future<void> _deleteDraftPurchase(BuildContext context, String id) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(AppLocalizations.of(context).text('delete_draft_purchase')),
+        content: Text(AppLocalizations.of(context).text('delete_draft_purchase_desc')),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(AppLocalizations.of(context).text('cancel'))),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(AppLocalizations.of(context).text('delete'))),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await widget.store.deleteDraftPurchase(id);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('purchase_deleted'))));
+      setState(() {});
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
+
+  Future<void> _permanentlyDeletePurchase(BuildContext context, String id) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(AppLocalizations.of(context).text('permanently_delete_purchase')),
+        content: Text(AppLocalizations.of(context).text('permanently_delete_purchase_desc')),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(AppLocalizations.of(context).text('cancel'))),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(AppLocalizations.of(context).text('permanently_delete'))),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await widget.store.permanentlyDeleteCancelledPurchase(id);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('purchase_permanently_deleted'))));
+      setState(() {});
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
+
   Future<void> _cancelPurchase(BuildContext context, String id) async {
+    final reasonController = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text(AppLocalizations.of(context).text('cancel_purchase')),
-        content: Text(AppLocalizations.of(context).text('cancel_purchase_desc')),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(AppLocalizations.of(context).text('cancel_purchase_desc')),
+            const SizedBox(height: 12),
+            TextField(
+              controller: reasonController,
+              maxLines: 2,
+              decoration: InputDecoration(labelText: AppLocalizations.of(context).text('cancel_reason_optional')),
+            ),
+          ],
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: Text(AppLocalizations.of(context).text('cancel'))),
           FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(AppLocalizations.of(context).text('confirm'))),
         ],
       ),
     );
-    if (ok != true) return;
+    if (ok != true) {
+      reasonController.dispose();
+      return;
+    }
+    final reason = reasonController.text.trim();
+    reasonController.dispose();
     try {
-      await widget.store.cancelPurchase(id);
+      await widget.store.cancelPurchase(id, reason: reason);
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('purchase_cancelled'))));
       setState(() {});
@@ -118,37 +293,175 @@ class _PurchasesPageState extends State<PurchasesPage> {
     }
   }
 
-  Future<void> _openPurchaseDialog(BuildContext context) async {
+  Future<void> _showPurchaseDetails(BuildContext context, Purchase purchase) async {
+    final tr = AppLocalizations.of(context);
+    final statusText = purchase.isCancelled
+        ? tr.text('cancelled')
+        : purchase.isReceived
+            ? tr.text('received')
+            : tr.text('draft');
+    final statusColor = purchase.isCancelled ? Colors.red : purchase.isReceived ? Colors.green : Colors.orange;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (sheetContext) {
+        return DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.78,
+          minChildSize: 0.45,
+          maxChildSize: 0.95,
+          builder: (context, controller) => Material(
+            clipBehavior: Clip.antiAlias,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+            child: ListView(
+              controller: controller,
+              padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
+              children: [
+                Row(
+                  children: [
+                    Expanded(child: Text(purchase.purchaseNo, style: Theme.of(context).textTheme.titleLarge)),
+                    IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    Chip(label: Text(purchase.supplierName.isEmpty ? '-' : purchase.supplierName), avatar: const Icon(Icons.local_shipping_outlined, size: 18)),
+                    Chip(label: Text(statusText), avatar: Icon(Icons.circle, size: 14, color: statusColor)),
+                    Chip(label: Text('${purchase.items.length} ${tr.text('items')}')),
+                    Chip(label: Text('${_formatQuantity(purchase.totalUnits)} ${tr.text('units')}')),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Card(
+                  child: Padding(
+                    padding: VentioResponsive.cardInsets(context),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _DetailRow(label: tr.text('date'), value: _formatShortDate(purchase.date)),
+                        if (purchase.cancelledAt != null) _DetailRow(label: tr.text('cancelled_at'), value: _formatShortDate(purchase.cancelledAt!)),
+                        if (purchase.cancelReason.trim().isNotEmpty) _DetailRow(label: tr.text('cancel_reason'), value: purchase.cancelReason.trim()),
+                        if (purchase.isCancelled) _DetailRow(label: tr.text('reversal_status'), value: purchase.reversalApplied ? tr.text('reversal_applied') : tr.text('reversal_not_applied')),
+                        _DetailRow(label: tr.text('final_total'), value: formatUsdReferenceAmount(purchase.subtotal, widget.store.storeProfile)),
+                        if (purchase.note.trim().isNotEmpty) _DetailRow(label: tr.text('notes'), value: purchase.note.trim()),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(tr.text('items'), style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 8),
+                ...purchase.items.map((item) => Card(
+                      child: ListTile(
+                        title: Text(item.productName),
+                        subtitle: Text('${_formatQuantity(item.quantity)} ${item.purchaseUnitName.isEmpty ? tr.text('unit') : item.purchaseUnitName} • ${formatCurrency(item.originalUnitCost ?? item.unitCost, currency: item.unitCostCurrency)}'),
+                        trailing: Text(formatUsdReferenceAmount(item.lineTotal, widget.store.storeProfile)),
+                      ),
+                    )),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.end,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _openPurchaseDialog(context, template: purchase);
+                      },
+                      icon: const Icon(Icons.copy_all_outlined),
+                      label: Text(tr.text('duplicate_purchase')),
+                    ),
+                    if (!purchase.isReceived && !purchase.isCancelled)
+                      FilledButton.icon(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          _receivePurchase(context, purchase.id);
+                        },
+                        icon: const Icon(Icons.download_done),
+                        label: Text(tr.text('receive')),
+                      ),
+                    if (purchase.isReceived)
+                      OutlinedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          _cancelPurchase(context, purchase.id);
+                        },
+                        icon: const Icon(Icons.cancel_outlined),
+                        label: Text(tr.text('cancel_purchase')),
+                      ),
+                    if (!purchase.isReceived && !purchase.isCancelled)
+                      OutlinedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          _deleteDraftPurchase(context, purchase.id);
+                        },
+                        icon: const Icon(Icons.delete_outline),
+                        label: Text(tr.text('delete_draft_purchase')),
+                      ),
+                    if (purchase.isCancelled && widget.store.hasPermission(AppPermission.databaseManage))
+                      OutlinedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          _permanentlyDeletePurchase(context, purchase.id);
+                        },
+                        icon: const Icon(Icons.delete_forever_outlined),
+                        label: Text(tr.text('permanently_delete')),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _openPurchaseDialog(BuildContext context, {Purchase? template}) async {
     final tr = AppLocalizations.of(context);
     final formKey = GlobalKey<FormState>();
-    final items = <PurchaseItem>[];
+    final items = template == null ? <PurchaseItem>[] : List<PurchaseItem>.of(template.items);
     var purchaseProducts = widget.store.products.where((product) => product.trackStock && product.isActive).toList();
-    String supplierId = widget.store.suppliers.isNotEmpty ? widget.store.suppliers.first.id : '';
-    String supplierName = widget.store.suppliers.isNotEmpty ? widget.store.suppliers.first.name : '';
+    String supplierId = template?.supplierId ?? (widget.store.suppliers.isNotEmpty ? widget.store.suppliers.first.id : '');
+    String supplierName = template?.supplierName ?? (widget.store.suppliers.isNotEmpty ? widget.store.suppliers.first.name : '');
+    if (supplierId.isNotEmpty && !widget.store.suppliers.any((supplier) => supplier.id == supplierId)) {
+      supplierId = widget.store.suppliers.isNotEmpty ? widget.store.suppliers.first.id : '';
+      supplierName = widget.store.suppliers.isNotEmpty ? widget.store.suppliers.first.name : supplierName;
+    }
     Product? selectedProduct = purchaseProducts.isNotEmpty ? purchaseProducts.first : null;
     ProductSaleUnit? selectedUnit = selectedProduct?.effectivePurchaseUnits.first;
     final qtyController = TextEditingController(text: '1');
     final costController = TextEditingController();
-    final barcodeController = TextEditingController();
     final productSearchController = TextEditingController();
-    final scannerController = MobileScannerController(detectionSpeed: DetectionSpeed.noDuplicates);
+    final paidAmountController = TextEditingController();
+    String paymentStatus = 'paid';
     String costCurrency = selectedProduct?.costCurrency ?? widget.store.storeProfile.defaultProductCurrency;
-    bool receiveNow = true;
-    bool scannerActive = false;
-    String productSearchQuery = '';
-    String? lastScannedCode;
-    DateTime? lastScannedAt;
+    bool receiveNow = false;
+
+    SupplierProductPrice? selectedSupplierPriceFor(Product product) {
+      return supplierId.isEmpty ? null : widget.store.supplierProductPriceFor(productId: product.id, supplierId: supplierId);
+    }
 
     PurchaseItem? suggestedPurchaseItem(Product product) {
       return supplierId.isEmpty ? null : widget.store.lastPurchaseItemFor(productId: product.id, supplierId: supplierId);
     }
 
     double suggestedBaseCost(Product product) {
+      final supplierPrice = selectedSupplierPriceFor(product);
+      if (supplierPrice != null) {
+        return toUsdReferencePrice(supplierPrice.cost, supplierPrice.currency, widget.store.storeProfile);
+      }
       return suggestedPurchaseItem(product)?.unitCostPerBase ?? widget.store.lastPurchasePriceForProduct(product.id) ?? product.usdCost;
     }
 
     String suggestedCostCurrency(Product product) {
-      return suggestedPurchaseItem(product)?.unitCostCurrency ?? widget.store.lastPurchaseItemForProduct(product.id)?.unitCostCurrency ?? product.costCurrency;
+      final supplierPrice = selectedSupplierPriceFor(product);
+      return supplierPrice?.currency ?? suggestedPurchaseItem(product)?.unitCostCurrency ?? widget.store.lastPurchaseItemForProduct(product.id)?.unitCostCurrency ?? product.costCurrency;
     }
 
     void applySuggestedSupplierPrice() {
@@ -170,6 +483,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
     String priceHintForSelectedProduct() {
       final product = selectedProduct;
       if (product == null) return '';
+      final configuredSupplierPrice = supplierId.isEmpty ? null : widget.store.supplierProductPriceFor(productId: product.id, supplierId: supplierId);
       final supplierPrice = supplierId.isEmpty
           ? null
           : widget.store.lastPurchasePriceFor(productId: product.id, supplierId: supplierId);
@@ -177,6 +491,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
       final avg = widget.store.averagePurchaseCostForProduct(product.id);
       final supplierCount = widget.store.supplierCountForProduct(product.id);
       final parts = <String>[];
+      if (configuredSupplierPrice != null) parts.add('${tr.text('supplier_price')}: ${formatCurrency(configuredSupplierPrice.cost, currency: configuredSupplierPrice.currency)}');
       if (supplierPrice != null) parts.add('${tr.text('supplier_last_base')}: ${formatUsdReferenceAmount(supplierPrice, widget.store.storeProfile)}');
       if (lastGeneral != null) parts.add('${tr.text('last_base')}: ${formatUsdReferenceAmount(lastGeneral, widget.store.storeProfile)}');
       if (avg > 0) parts.add('${tr.text('avg_base')}: ${formatUsdReferenceAmount(avg, widget.store.storeProfile)}');
@@ -294,7 +609,21 @@ class _PurchasesPageState extends State<PurchasesPage> {
               const SizedBox(height: 16),
               TextField(controller: nameController, decoration: InputDecoration(labelText: tr.text('product_name')), autofocus: true),
               const SizedBox(height: 12),
-              TextField(controller: barcodeQuickController, decoration: InputDecoration(labelText: tr.text('barcode'))),
+              TextField(
+                controller: barcodeQuickController,
+                decoration: InputDecoration(
+                  labelText: tr.text('barcode'),
+                  suffixIcon: IconButton(
+                    tooltip: tr.text('scan_with_camera'),
+                    onPressed: () async {
+                      final code = await _scanBarcodeWithCamera();
+                      if (code == null) return;
+                      barcodeQuickController.text = code;
+                    },
+                    icon: const Icon(Icons.camera_alt_outlined),
+                  ),
+                ),
+              ),
               const SizedBox(height: 16),
               FilledButton.icon(
                 icon: const Icon(Icons.save_outlined),
@@ -447,6 +776,65 @@ class _PurchasesPageState extends State<PurchasesPage> {
       }
     }
 
+    Future<void> updateSupplierPricesFromItemsIfNeeded(BuildContext promptContext, List<PurchaseItem> purchaseItems) async {
+      if (supplierId.trim().isEmpty || purchaseItems.isEmpty) return;
+      final latestByProduct = <String, PurchaseItem>{};
+      for (final item in purchaseItems) {
+        latestByProduct[item.productId] = item;
+      }
+      final updates = <SupplierProductPrice>[];
+      for (final item in latestByProduct.values) {
+        final productId = item.productId.trim();
+        if (productId.isEmpty) continue;
+        final existing = widget.store.supplierProductPriceFor(productId: productId, supplierId: supplierId);
+        final newCurrency = item.unitCostCurrency.toUpperCase() == 'LBP' ? 'LBP' : 'USD';
+        final newBaseCost = newCurrency == 'LBP' && item.originalUnitCost != null
+            ? item.originalUnitCost! / (item.conversionToBase <= 0 ? 1 : item.conversionToBase)
+            : item.unitCostPerBase;
+        final hasChanged = existing == null ||
+            (existing.cost - newBaseCost).abs() > 0.0001 ||
+            existing.currency.toUpperCase() != newCurrency;
+        if (!hasChanged) continue;
+        updates.add(SupplierProductPrice(
+          id: existing?.id ?? '',
+          productId: productId,
+          supplierId: supplierId,
+          cost: newBaseCost,
+          currency: newCurrency,
+          isPreferred: existing?.isPreferred ?? widget.store.supplierProductPricesForProduct(productId).isEmpty,
+          supplierSku: existing?.supplierSku ?? '',
+          minOrderQty: existing?.minOrderQty,
+          leadTimeDays: existing?.leadTimeDays,
+          notes: existing?.notes ?? '',
+          priceHistory: existing?.priceHistory ?? const [],
+          createdAt: existing?.createdAt,
+          updatedAt: DateTime.now(),
+          deviceId: existing?.deviceId ?? '',
+          syncStatus: existing?.syncStatus ?? 'pending',
+          storeId: existing?.storeId ?? '',
+          branchId: existing?.branchId ?? '',
+          version: existing?.version ?? 1,
+          lastModifiedByDeviceId: existing?.lastModifiedByDeviceId ?? '',
+        ));
+      }
+      if (updates.isEmpty) return;
+      final shouldUpdate = await showDialog<bool>(
+        context: promptContext,
+        builder: (context) => AlertDialog(
+          title: Text(tr.text('update_supplier_prices')),
+          content: Text(tr.text('update_supplier_prices_desc')),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('no'))),
+            FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(tr.text('yes'))),
+          ],
+        ),
+      );
+      if (shouldUpdate != true) return;
+      for (final price in updates) {
+        await widget.store.addOrUpdateSupplierProductPrice(price);
+      }
+    }
+
     void addPurchaseLine(Product product, ProductSaleUnit unit, double qty, double enteredCost, String currency, StateSetter setDialogState) {
       if (qty <= 0) { showPurchaseError(tr.text('invalid_purchase_quantity')); return; }
       if (enteredCost < 0) { showPurchaseError(tr.text('unit_cost_required')); return; }
@@ -471,48 +859,165 @@ class _PurchasesPageState extends State<PurchasesPage> {
       setDialogState(() {});
     }
 
-    bool handleBarcode(String rawCode, StateSetter setDialogState) {
-      final code = rawCode.trim();
-      if (code.isEmpty) return false;
-      final now = DateTime.now();
-      if (lastScannedCode == code && lastScannedAt != null && now.difference(lastScannedAt!) < const Duration(milliseconds: 900)) {
-        return true;
-      }
-      lastScannedCode = code;
-      lastScannedAt = now;
+    bool productMatchesPurchaseSearch(Product product, String query) {
+      final q = query.toLowerCase().trim();
+      if (q.isEmpty) return true;
+      return product.name.toLowerCase().contains(q) ||
+          product.code.toLowerCase().contains(q) ||
+          product.barcode.toLowerCase().contains(q) ||
+          product.effectivePurchaseUnits.any((unit) => unit.name.toLowerCase().contains(q) || unit.barcode.toLowerCase().contains(q)) ||
+          product.effectiveSaleUnits.any((unit) => unit.name.toLowerCase().contains(q) || unit.barcode.toLowerCase().contains(q));
+    }
 
-      Product? matchedProduct;
-      ProductSaleUnit? matchedUnit;
+    ({Product product, ProductSaleUnit unit})? findPurchaseProductByBarcode(String rawCode) {
+      final code = rawCode.trim();
+      if (code.isEmpty) return null;
       for (final product in purchaseProducts) {
         final unitMatch = product.purchaseUnitForBarcode(code);
-        if (unitMatch != null) {
-          matchedProduct = product;
-          matchedUnit = unitMatch;
-          break;
-        }
+        if (unitMatch != null) return (product: product, unit: unitMatch);
         if (product.code.trim() == code || product.barcode.trim() == code) {
-          matchedProduct = product;
-          matchedUnit = product.effectivePurchaseUnits.first;
-          break;
+          return (product: product, unit: product.effectivePurchaseUnits.first);
         }
       }
+      return null;
+    }
 
-      if (matchedProduct == null || matchedUnit == null) {
-        BarcodeFeedbackService.playError(force: true);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('barcode_not_registered_purchase'))));
-        return false;
+    Future<void> choosePurchaseProduct(StateSetter setDialogState, {bool scanFirst = false}) async {
+      if (scanFirst) {
+        final code = await _scanBarcodeWithCamera();
+        if (code == null) return;
+        final match = findPurchaseProductByBarcode(code);
+        if (match == null) {
+          BarcodeFeedbackService.playError(force: true);
+          showPurchaseError(tr.text('barcode_not_registered_purchase'));
+          return;
+        }
+        selectedProduct = match.product;
+        selectedUnit = match.unit;
+        productSearchController.text = match.product.name;
+        applySuggestedSupplierPrice();
+        BarcodeFeedbackService.play(force: true);
+        setDialogState(() {});
+        return;
       }
 
-      selectedProduct = matchedProduct;
-      selectedUnit = matchedUnit;
-      final currency = suggestedCostCurrency(matchedProduct);
-      final suggested = fromUsdReferencePrice(suggestedBaseCost(matchedProduct) * matchedUnit.conversionToBase, currency, widget.store.storeProfile);
-      addPurchaseLine(matchedProduct, matchedUnit, 1, suggested, currency, setDialogState);
-      costController.text = suggested.toStringAsFixed(currency == 'LBP' ? 0 : 2);
-      costCurrency = currency;
-      barcodeController.clear();
-      BarcodeFeedbackService.play(force: true);
-      return true;
+      final pickerController = TextEditingController(text: productSearchController.text.trim());
+      var pickerQuery = pickerController.text.trim();
+      final picked = await showModalBottomSheet<({Product product, ProductSaleUnit unit})>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        builder: (pickerContext) => StatefulBuilder(
+          builder: (pickerContext, setPickerState) {
+            final matches = purchaseProducts.where((product) => productMatchesPurchaseSearch(product, pickerQuery)).take(80).toList();
+            final height = MediaQuery.sizeOf(pickerContext).height * 0.82;
+            return Padding(
+              padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(pickerContext).bottom),
+              child: Material(
+                clipBehavior: Clip.antiAlias,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+                child: SafeArea(
+                  top: false,
+                  child: SizedBox(
+                    height: height,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
+                          child: Row(
+                            children: [
+                              Expanded(child: Text(tr.text('search_product'), style: Theme.of(pickerContext).textTheme.titleLarge)),
+                              IconButton(
+                                tooltip: tr.text('cancel'),
+                                onPressed: () => Navigator.pop(pickerContext),
+                                icon: const Icon(Icons.close),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                          child: TextField(
+                            controller: pickerController,
+                            autofocus: true,
+                            decoration: InputDecoration(
+                              labelText: tr.text('search_product'),
+                              prefixIcon: const Icon(Icons.search),
+                              suffixIcon: IconButton(
+                                tooltip: tr.text('scan_with_camera'),
+                                icon: const Icon(Icons.camera_alt_outlined),
+                                onPressed: () async {
+                                  final code = await _scanBarcodeWithCamera();
+                                  if (code == null) return;
+                                  final match = findPurchaseProductByBarcode(code);
+                                  if (match == null) {
+                                    BarcodeFeedbackService.playError(force: true);
+                                    showPurchaseError(tr.text('barcode_not_registered_purchase'));
+                                    return;
+                                  }
+                                  if (pickerContext.mounted) Navigator.pop(pickerContext, match);
+                                },
+                              ),
+                            ),
+                            onChanged: (value) => setPickerState(() => pickerQuery = value),
+                          ),
+                        ),
+                        Expanded(
+                          child: matches.isEmpty
+                              ? Center(child: Text(tr.text('no_products')))
+                              : ListView.separated(
+                                  keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+                                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                                  itemCount: matches.length,
+                                  separatorBuilder: (_, __) => const Divider(height: 1),
+                                  itemBuilder: (context, index) {
+                                    final product = matches[index];
+                                    final unit = product.effectivePurchaseUnits.first;
+                                    final configuredPrice = supplierId.isEmpty ? null : widget.store.supplierProductPriceFor(productId: product.id, supplierId: supplierId);
+                                    final subtitleParts = <String>[
+                                      if (product.code.trim().isNotEmpty) product.code.trim(),
+                                      if (product.barcode.trim().isNotEmpty) product.barcode.trim(),
+                                      '${tr.text('stock')}: ${_formatQuantity(product.stock)}',
+                                      if (configuredPrice != null) '${tr.text('supplier_price')}: ${formatCurrency(configuredPrice.cost, currency: configuredPrice.currency)}',
+                                    ];
+                                    return ListTile(
+                                      leading: const Icon(Icons.inventory_2_outlined),
+                                      title: Text(product.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                                      subtitle: Text(subtitleParts.join(' • '), maxLines: 2, overflow: TextOverflow.ellipsis),
+                                      trailing: const Icon(Icons.chevron_right),
+                                      onTap: () => Navigator.pop(pickerContext, (product: product, unit: unit)),
+                                    );
+                                  },
+                                ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+                          child: OutlinedButton.icon(
+                            icon: const Icon(Icons.add_box_outlined),
+                            label: Text(tr.text('add_product')),
+                            onPressed: () async {
+                              Navigator.pop(pickerContext);
+                              await createQuickProduct(setDialogState);
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      );
+      pickerController.dispose();
+      if (picked == null) return;
+      selectedProduct = picked.product;
+      selectedUnit = picked.unit;
+      productSearchController.text = picked.product.name;
+      applySuggestedSupplierPrice();
+      setDialogState(() {});
     }
 
     await showModalBottomSheet<void>(
@@ -525,12 +1030,6 @@ class _PurchasesPageState extends State<PurchasesPage> {
         builder: (context, setDialogState) {
           final total = items.fold<double>(0, (sum, item) => sum + item.lineTotal);
           final units = selectedProduct?.effectivePurchaseUnits ?? const <ProductSaleUnit>[];
-          final filteredProducts = productSearchQuery.trim().isEmpty
-              ? purchaseProducts
-              : purchaseProducts.where((product) {
-                  final q = productSearchQuery.toLowerCase().trim();
-                  return product.name.toLowerCase().contains(q) || product.code.toLowerCase().contains(q) || product.barcode.toLowerCase().contains(q);
-                }).toList();
           if (selectedUnit != null && !units.any((unit) => unit.id == selectedUnit!.id)) {
             selectedUnit = units.isNotEmpty ? units.first : null;
             applySuggestedSupplierPrice();
@@ -553,7 +1052,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                     padding: const EdgeInsets.fromLTRB(24, 20, 16, 12),
                     child: Row(
                       children: [
-                        Expanded(child: Text(tr.text('new_purchase'), style: Theme.of(context).textTheme.headlineSmall)),
+                        Expanded(child: Text(template == null ? tr.text('new_purchase') : tr.text('duplicate_purchase_draft'), style: Theme.of(context).textTheme.headlineSmall)),
                         IconButton(
                           tooltip: tr.text('cancel'),
                           onPressed: () async {
@@ -646,6 +1145,25 @@ class _PurchasesPageState extends State<PurchasesPage> {
                             subtitle: Text(tr.text('receive_now_desc')),
                           ),
                           const SizedBox(height: 8),
+                          DropdownButtonFormField<String>(
+                            initialValue: paymentStatus,
+                            decoration: InputDecoration(labelText: tr.text('payment_status')),
+                            items: [
+                              DropdownMenuItem(value: 'paid', child: Text(tr.text('cash_paid'))),
+                              DropdownMenuItem(value: 'credit', child: Text(tr.text('credit_unpaid'))),
+                              DropdownMenuItem(value: 'partial', child: Text(tr.text('partial_payment'))),
+                            ],
+                            onChanged: (value) => setDialogState(() => paymentStatus = value ?? 'paid'),
+                          ),
+                          if (paymentStatus == 'partial') ...[
+                            SizedBox(height: gap),
+                            TextFormField(
+                              controller: paidAmountController,
+                              decoration: InputDecoration(labelText: tr.text('paid_amount')),
+                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            ),
+                          ],
+                          const SizedBox(height: 8),
                           Wrap(
                             spacing: 8,
                             runSpacing: 8,
@@ -658,145 +1176,124 @@ class _PurchasesPageState extends State<PurchasesPage> {
                       );
                     }
 
-                    Widget barcodeSection() {
-                      return sectionCard(
-                        title: tr.text('scan_purchase_item'),
-                        icon: Icons.qr_code_scanner,
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: TextFormField(
-                                  controller: barcodeController,
-                                  decoration: InputDecoration(labelText: tr.text('purchase_barcode'), hintText: tr.text('scan_purchase_barcode_hint')),
-                                  onFieldSubmitted: (value) => handleBarcode(value, setDialogState),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              IconButton.filledTonal(
-                                tooltip: scannerActive ? tr.text('stop_scanner') : tr.text('start_scanner'),
-                                onPressed: () => setDialogState(() => scannerActive = !scannerActive),
-                                icon: Icon(scannerActive ? Icons.videocam_off_outlined : Icons.camera_alt_outlined),
-                              ),
-                              const SizedBox(width: 8),
-                              FilledButton.icon(
-                                onPressed: () => handleBarcode(barcodeController.text, setDialogState),
-                                icon: const Icon(Icons.keyboard_return),
-                                label: Text(tr.text('add')),
-                              ),
-                            ],
-                          ),
-                          if (scannerActive) ...[
-                            SizedBox(height: gap),
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(16),
-                              child: SizedBox(
-                                height: VentioResponsive.adaptiveWidth(context, mobile: 180, tablet: 220, desktop: 240),
-                                child: MobileScanner(
-                                  controller: scannerController,
-                                  onDetect: (capture) {
-                                    for (final barcode in capture.barcodes) {
-                                      final code = barcode.rawValue?.trim();
-                                      if (code != null && code.isNotEmpty) {
-                                        handleBarcode(code, setDialogState);
-                                        break;
-                                      }
-                                    }
-                                  },
-                                ),
-                              ),
-                            ),
-                          ],
-                        ],
-                      );
-                    }
-
                     Widget productEntrySection() {
                       final conversion = selectedUnitConversionSummary();
+                      final selectedProductTitle = selectedProduct?.name ?? tr.text('product');
+                      final selectedProductSubtitle = selectedProduct == null
+                          ? tr.text('scan_purchase_barcode_hint')
+                          : [
+                              if (selectedProduct!.code.trim().isNotEmpty) selectedProduct!.code.trim(),
+                              if (selectedProduct!.barcode.trim().isNotEmpty) selectedProduct!.barcode.trim(),
+                              '${tr.text('stock')}: ${_formatQuantity(selectedProduct!.stock)}',
+                            ].join(' • ');
                       return sectionCard(
                         title: tr.text('add_product'),
                         icon: Icons.add_box_outlined,
                         children: [
-                          TextFormField(
-                            controller: productSearchController,
-                            decoration: InputDecoration(labelText: tr.text('search_product'), prefixIcon: const Icon(Icons.search)),
-                            onChanged: (value) => setDialogState(() => productSearchQuery = value),
-                          ),
-                          SizedBox(height: gap),
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: DropdownButtonFormField<String>(
-                                  initialValue: selectedProduct != null && filteredProducts.any((p) => p.id == selectedProduct!.id) ? selectedProduct?.id : null,
-                                  decoration: InputDecoration(labelText: tr.text('product')),
-                                  items: filteredProducts.map((product) => DropdownMenuItem(value: product.id, child: Text(product.name))).toList(),
-                                  onChanged: (value) {
-                                    final matches = purchaseProducts.where((p) => p.id == value).toList();
-                                    selectedProduct = matches.isEmpty ? null : matches.first;
-                                    selectedUnit = selectedProduct?.effectivePurchaseUnits.first;
-                                    applySuggestedSupplierPrice();
-                                    setDialogState(() {});
-                                  },
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              IconButton.filledTonal(
-                                tooltip: tr.text('add_product'),
-                                onPressed: () => createQuickProduct(setDialogState),
-                                icon: const Icon(Icons.add_box_outlined),
-                              ),
-                            ],
-                          ),
-                          SizedBox(height: gap),
-                          Wrap(
-                            spacing: 12,
-                            runSpacing: 12,
-                            children: [
-                              SizedBox(
-                                width: desktopLayout ? 190 : VentioResponsive.clampToScreen(context, 220, min: 150, horizontalPadding: 80),
-                                child: DropdownButtonFormField<String>(
-                                  initialValue: selectedUnit?.id,
-                                  decoration: InputDecoration(labelText: tr.text('purchase_unit')),
-                                  items: units.map((unit) => DropdownMenuItem(value: unit.id, child: Text('${unit.name} × ${_formatQuantity(unit.conversionToBase)}'))).toList(),
-                                  onChanged: (value) {
-                                    final matches = units.where((unit) => unit.id == value).toList();
-                                    selectedUnit = matches.isEmpty ? null : matches.first;
-                                    applySuggestedSupplierPrice();
-                                    setDialogState(() {});
-                                  },
-                                ),
-                              ),
-                              SizedBox(
-                                width: desktopLayout ? 110 : 130,
-                                child: TextFormField(
-                                  controller: qtyController,
-                                  decoration: InputDecoration(labelText: tr.text('quantity')),
-                                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                                  onChanged: (_) => setDialogState(() {}),
-                                ),
-                              ),
-                              SizedBox(
-                                width: desktopLayout ? 180 : VentioResponsive.clampToScreen(context, 220, min: 150, horizontalPadding: 80),
-                                child: TextFormField(
-                                  controller: costController,
-                                  decoration: InputDecoration(labelText: tr.text('unit_cost'), helperText: priceHintForSelectedProduct().isEmpty ? null : priceHintForSelectedProduct()),
-                                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                                ),
-                              ),
-                              SizedBox(
-                                width: 120,
-                                child: DropdownButtonFormField<String>(
-                                  initialValue: costCurrency,
-                                  decoration: InputDecoration(labelText: tr.text('currency')),
-                                  items: const [
-                                    DropdownMenuItem(value: 'USD', child: Text('USD')),
-                                    DropdownMenuItem(value: 'LBP', child: Text('LBP')),
+                          InkWell(
+                            borderRadius: BorderRadius.circular(16),
+                            onTap: () => choosePurchaseProduct(setDialogState),
+                            child: InputDecorator(
+                              decoration: InputDecoration(
+                                labelText: tr.text('search_product'),
+                                prefixIcon: const Icon(Icons.search),
+                                suffixIcon: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      tooltip: tr.text('scan_with_camera'),
+                                      onPressed: () => choosePurchaseProduct(setDialogState, scanFirst: true),
+                                      icon: const Icon(Icons.camera_alt_outlined),
+                                    ),
+                                    IconButton(
+                                      tooltip: tr.text('add_product'),
+                                      onPressed: () => createQuickProduct(setDialogState),
+                                      icon: const Icon(Icons.add_box_outlined),
+                                    ),
                                   ],
-                                  onChanged: (value) => setDialogState(() => costCurrency = value ?? 'USD'),
                                 ),
                               ),
-                            ],
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(selectedProductTitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+                                  if (selectedProductSubtitle.isNotEmpty) ...[
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      selectedProductSubtitle,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: Theme.of(context).textTheme.bodySmall,
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          ),
+                          SizedBox(height: gap),
+                          LayoutBuilder(
+                            builder: (context, fieldConstraints) {
+                              final oneColumn = fieldConstraints.maxWidth < 520;
+                              final unitField = DropdownButtonFormField<String>(
+                                initialValue: selectedUnit?.id,
+                                decoration: InputDecoration(labelText: tr.text('purchase_unit')),
+                                items: units.map((unit) => DropdownMenuItem(value: unit.id, child: Text('${unit.name} × ${_formatQuantity(unit.conversionToBase)}'))).toList(),
+                                onChanged: (value) {
+                                  final matches = units.where((unit) => unit.id == value).toList();
+                                  selectedUnit = matches.isEmpty ? null : matches.first;
+                                  applySuggestedSupplierPrice();
+                                  setDialogState(() {});
+                                },
+                              );
+                              final qtyField = TextFormField(
+                                controller: qtyController,
+                                decoration: InputDecoration(labelText: tr.text('quantity')),
+                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                onChanged: (_) => setDialogState(() {}),
+                              );
+                              final costField = TextFormField(
+                                controller: costController,
+                                decoration: InputDecoration(labelText: tr.text('unit_cost'), helperText: priceHintForSelectedProduct().isEmpty ? null : priceHintForSelectedProduct()),
+                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                              );
+                              final currencyField = DropdownButtonFormField<String>(
+                                initialValue: costCurrency,
+                                decoration: InputDecoration(labelText: tr.text('currency')),
+                                items: const [
+                                  DropdownMenuItem(value: 'USD', child: Text('USD')),
+                                  DropdownMenuItem(value: 'LBP', child: Text('LBP')),
+                                ],
+                                onChanged: (value) => setDialogState(() => costCurrency = value ?? 'USD'),
+                              );
+                              if (oneColumn) {
+                                return Column(
+                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                  children: [
+                                    unitField,
+                                    SizedBox(height: gap),
+                                    Row(
+                                      children: [
+                                        Expanded(child: qtyField),
+                                        SizedBox(width: gap),
+                                        SizedBox(width: 120, child: currencyField),
+                                      ],
+                                    ),
+                                    SizedBox(height: gap),
+                                    costField,
+                                  ],
+                                );
+                              }
+                              return Wrap(
+                                spacing: 12,
+                                runSpacing: 12,
+                                children: [
+                                  SizedBox(width: 220, child: unitField),
+                                  SizedBox(width: 120, child: qtyField),
+                                  SizedBox(width: 190, child: costField),
+                                  SizedBox(width: 120, child: currencyField),
+                                ],
+                              );
+                            },
                           ),
                           if (conversion.isNotEmpty) ...[
                             SizedBox(height: gap),
@@ -894,7 +1391,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
 
                     final leftPanel = Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [supplierSection(), SizedBox(height: gap), barcodeSection(), SizedBox(height: gap), productEntrySection()],
+                      children: [supplierSection(), SizedBox(height: gap), productEntrySection()],
                     );
                     final rightPanel = Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -928,37 +1425,78 @@ class _PurchasesPageState extends State<PurchasesPage> {
                   ),
                   const Divider(height: 1),
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 12, 24, 16),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            '${tr.text('total')}: ${formatUsdReferenceAmount(total, widget.store.storeProfile)}',
-                            style: Theme.of(context).textTheme.titleMedium,
-                          ),
-                        ),
-                        TextButton(
+                    padding: EdgeInsets.fromLTRB(
+                      VentioResponsive.pagePadding(context),
+                      12,
+                      VentioResponsive.pagePadding(context),
+                      16,
+                    ),
+                    child: LayoutBuilder(
+                      builder: (context, footerConstraints) {
+                        final compactFooter = footerConstraints.maxWidth < 520;
+                        final totalText = Text(
+                          '${tr.text('total')}: ${formatUsdReferenceAmount(total, widget.store.storeProfile)}',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        );
+                        final cancelButton = TextButton(
                           onPressed: () async {
                             if (await confirmDiscardIfNeeded(dialogContext) && dialogContext.mounted) Navigator.pop(dialogContext);
                           },
                           child: Text(tr.text('cancel')),
-                        ),
-                        const SizedBox(width: 12),
-                        FilledButton.icon(
+                        );
+                        final saveButton = FilledButton.icon(
                           onPressed: items.isEmpty ? null : () async {
                             if (!(formKey.currentState?.validate() ?? false)) return;
                             try {
-                              await widget.store.createPurchase(supplierId: supplierId, supplierName: supplierName, items: List.of(items), receiveNow: receiveNow);
+                              final purchaseItems = List<PurchaseItem>.of(items);
+                              final paidAmount = paymentStatus == 'partial' ? (double.tryParse(paidAmountController.text.trim()) ?? 0) : null;
+                              if (paymentStatus == 'partial' && (paidAmount == null || paidAmount <= 0 || paidAmount > total)) {
+                                ScaffoldMessenger.of(dialogContext).showSnackBar(const SnackBar(content: Text('Invalid paid amount.')));
+                                return;
+                              }
+                              await widget.store.createPurchase(supplierId: supplierId, supplierName: supplierName, items: purchaseItems, receiveNow: receiveNow, paymentStatus: paymentStatus, paidAmount: paidAmount);
+                              if (dialogContext.mounted) {
+                                await updateSupplierPricesFromItemsIfNeeded(dialogContext, purchaseItems);
+                              }
                               if (dialogContext.mounted) Navigator.pop(dialogContext);
-                              if (mounted) setState(() {});
+                              if (!mounted) return;
+                              ScaffoldMessenger.of(this.context).showSnackBar(
+                                SnackBar(content: Text(template == null ? tr.text('purchase_saved') : tr.text('duplicate_purchase_saved_as_draft'))),
+                              );
+                              setState(() {});
                             } catch (error) {
                               if (dialogContext.mounted) ScaffoldMessenger.of(dialogContext).showSnackBar(SnackBar(content: Text(error.toString())));
                             }
                           },
                           icon: const Icon(Icons.save_outlined),
                           label: Text(tr.text('save')),
-                        ),
-                      ],
+                        );
+                        if (compactFooter) {
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              totalText,
+                              const SizedBox(height: 10),
+                              Row(
+                                children: [
+                                  Expanded(child: cancelButton),
+                                  const SizedBox(width: 12),
+                                  Expanded(child: saveButton),
+                                ],
+                              ),
+                            ],
+                          );
+                        }
+                        return Row(
+                          children: [
+                            Expanded(child: totalText),
+                            cancelButton,
+                            const SizedBox(width: 12),
+                            saveButton,
+                          ],
+                        );
+                      },
                     ),
                   ),
                 ],
@@ -972,9 +1510,8 @@ class _PurchasesPageState extends State<PurchasesPage> {
     );
     qtyController.dispose();
     costController.dispose();
-    barcodeController.dispose();
     productSearchController.dispose();
-    scannerController.dispose();
+    paidAmountController.dispose();
   }
 }
 
@@ -998,32 +1535,127 @@ class _MetricCard extends StatelessWidget {
       );
 }
 
+
+class _DetailRow extends StatelessWidget {
+  const _DetailRow({required this.label, required this.value});
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(width: 110, child: Text(label, style: Theme.of(context).textTheme.bodySmall)),
+          const SizedBox(width: 12),
+          Expanded(child: Text(value, style: Theme.of(context).textTheme.bodyMedium)),
+        ],
+      ),
+    );
+  }
+}
+
 class _PurchaseTile extends StatelessWidget {
-  const _PurchaseTile({required this.purchase, required this.storeProfile, this.onReceive, this.onCancel});
+  const _PurchaseTile({
+    required this.purchase,
+    required this.storeProfile,
+    required this.formatDate,
+    this.onTap,
+    this.onReceive,
+    this.onCancel,
+    this.onDeleteDraft,
+    this.onPermanentDelete,
+    this.onDuplicate,
+  });
+
   final Purchase purchase;
   final StoreProfile storeProfile;
-  final VoidCallback? onReceive, onCancel;
+  final String Function(DateTime date) formatDate;
+  final VoidCallback? onTap, onReceive, onCancel, onDeleteDraft, onPermanentDelete, onDuplicate;
+
+  String _formatQuantity(double value) => value % 1 == 0 ? value.toStringAsFixed(0) : value.toStringAsFixed(3).replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
 
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
+    final isCompact = MediaQuery.sizeOf(context).width < 520;
     final statusText = purchase.isCancelled
         ? tr.text('cancelled')
         : purchase.isReceived
             ? tr.text('received')
             : tr.text('draft');
-    return ListTile(
-      leading: CircleAvatar(child: Icon(purchase.isReceived ? Icons.inventory : purchase.isCancelled ? Icons.cancel_outlined : Icons.pending_actions)),
-      title: Text('${purchase.purchaseNo} • ${purchase.supplierName}'),
-      subtitle: Text('$statusText • ${purchase.totalUnits} ${tr.text('units')} • ${purchase.date.toLocal().toString().split('.').first}'),
-      trailing: Wrap(
-        spacing: 6,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          Text(formatUsdReferenceAmount(purchase.subtotal, storeProfile)),
-          if (onReceive != null) IconButton(tooltip: AppLocalizations.of(context).text('receive'), onPressed: onReceive, icon: const Icon(Icons.download_done)),
-          if (onCancel != null) IconButton(tooltip: AppLocalizations.of(context).text('cancel'), onPressed: onCancel, icon: const Icon(Icons.cancel_outlined)),
-        ],
+    final statusColor = purchase.isCancelled ? Colors.red : purchase.isReceived ? Colors.green : Colors.orange;
+    final statusIcon = purchase.isCancelled ? Icons.cancel_outlined : purchase.isReceived ? Icons.inventory_2_outlined : Icons.pending_actions;
+    final amount = formatUsdReferenceAmount(purchase.subtotal, storeProfile);
+    final supplier = purchase.supplierName.trim().isEmpty ? '-' : purchase.supplierName.trim();
+    final summary = '${purchase.items.length} ${tr.text('items')} • ${_formatQuantity(purchase.totalUnits)} ${tr.text('units')} • ${formatDate(purchase.date)}';
+
+    final actionsMenu = PopupMenuButton<String>(
+      tooltip: tr.text('actions'),
+      onSelected: (value) {
+        if (value == 'duplicate') onDuplicate?.call();
+        if (value == 'receive') onReceive?.call();
+        if (value == 'cancel') onCancel?.call();
+        if (value == 'delete_draft') onDeleteDraft?.call();
+        if (value == 'permanent_delete') onPermanentDelete?.call();
+      },
+      itemBuilder: (context) => [
+        PopupMenuItem(value: 'duplicate', child: ListTile(leading: const Icon(Icons.copy_all_outlined), title: Text(tr.text('duplicate_purchase')))),
+        if (onReceive != null) PopupMenuItem(value: 'receive', child: ListTile(leading: const Icon(Icons.download_done), title: Text(tr.text('receive')))),
+        if (onCancel != null) PopupMenuItem(value: 'cancel', child: ListTile(leading: const Icon(Icons.cancel_outlined), title: Text(tr.text('cancel_purchase')))),
+        if (onDeleteDraft != null) PopupMenuItem(value: 'delete_draft', child: ListTile(leading: const Icon(Icons.delete_outline), title: Text(tr.text('delete_draft_purchase')))),
+        if (onPermanentDelete != null) PopupMenuItem(value: 'permanent_delete', child: ListTile(leading: const Icon(Icons.delete_forever_outlined), title: Text(tr.text('permanently_delete')))),
+      ],
+    );
+
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 8, 12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              CircleAvatar(child: Icon(statusIcon)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(purchase.purchaseNo, style: Theme.of(context).textTheme.titleMedium),
+                    const SizedBox(height: 2),
+                    Text(supplier, maxLines: 1, overflow: TextOverflow.ellipsis),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(color: statusColor.withValues(alpha: .12), borderRadius: BorderRadius.circular(12)),
+                          child: Text(statusText, style: TextStyle(color: statusColor)),
+                        ),
+                        Text(summary, style: Theme.of(context).textTheme.bodySmall),
+                      ],
+                    ),
+                    if (isCompact) ...[
+                      const SizedBox(height: 8),
+                      Text(amount, style: Theme.of(context).textTheme.titleMedium),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              if (!isCompact) Text(amount, style: Theme.of(context).textTheme.titleMedium),
+              actionsMenu,
+            ],
+          ),
+        ),
       ),
     );
   }

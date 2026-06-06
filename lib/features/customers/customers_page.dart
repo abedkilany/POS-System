@@ -4,6 +4,7 @@ import '../../core/localization/app_localizations.dart';
 import '../../core/utils/responsive.dart';
 import '../../data/app_store.dart';
 import '../../models/customer.dart';
+import '../accounts/account_ledger_widgets.dart';
 import '../../widgets/app_section_header.dart';
 import '../../widgets/empty_state_card.dart';
 
@@ -58,13 +59,41 @@ class _CustomersPageState extends State<CustomersPage> {
                         return ListTile(
                           leading: const CircleAvatar(child: Icon(Icons.person_outline)),
                           title: Text(customer.name),
-                          subtitle: Text('${customer.phone} • ${customer.address}'),
-                          trailing: Wrap(
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              IconButton(onPressed: () => _openCustomerForm(context, customer: customer), icon: const Icon(Icons.edit_outlined)),
-                              IconButton(onPressed: () => _deleteCustomer(context, customer), icon: const Icon(Icons.delete_outline)),
+                              Text('${customer.phone} • ${customer.address}'),
+                              const SizedBox(height: 4),
+                              Text(
+                                accountBalanceText(context, widget.store, 'customer', customer.id),
+                                style: TextStyle(color: accountBalanceColor(context, widget.store, 'customer', customer.id), fontWeight: FontWeight.w700),
+                              ),
                             ],
                           ),
+                          trailing: VentioResponsive.isMobile(context)
+                              ? PopupMenuButton<String>(
+                                  tooltip: tr.text('actions'),
+                                  onSelected: (value) {
+                                    if (value == 'ledger') showAccountLedgerSheet(context: context, store: widget.store, accountType: 'customer', accountId: customer.id, accountName: customer.name);
+                                    if (value == 'payment') showAccountPaymentDialog(context: context, store: widget.store, accountType: 'customer', accountId: customer.id, accountName: customer.name);
+                                    if (value == 'edit') _openCustomerForm(context, customer: customer);
+                                    if (value == 'delete') _deleteCustomer(context, customer);
+                                  },
+                                  itemBuilder: (context) => [
+                                    PopupMenuItem(value: 'ledger', child: Text(tr.text('account_ledger'))),
+                                    PopupMenuItem(value: 'payment', child: Text(tr.text('receive_payment'))),
+                                    PopupMenuItem(value: 'edit', child: Text(tr.text('edit'))),
+                                    PopupMenuItem(value: 'delete', child: Text(tr.text('delete'))),
+                                  ],
+                                )
+                              : Wrap(
+                                  children: [
+                                    IconButton(onPressed: () => showAccountLedgerSheet(context: context, store: widget.store, accountType: 'customer', accountId: customer.id, accountName: customer.name), icon: const Icon(Icons.receipt_long_outlined), tooltip: tr.text('account_ledger')),
+                                    IconButton(onPressed: () => showAccountPaymentDialog(context: context, store: widget.store, accountType: 'customer', accountId: customer.id, accountName: customer.name), icon: const Icon(Icons.payments_outlined), tooltip: tr.text('receive_payment')),
+                                    IconButton(onPressed: () => _openCustomerForm(context, customer: customer), icon: const Icon(Icons.edit_outlined), tooltip: tr.text('edit')),
+                                    IconButton(onPressed: () => _deleteCustomer(context, customer), icon: const Icon(Icons.delete_outline), tooltip: tr.text('delete')),
+                                  ],
+                                ),
                         );
                       },
                     ),

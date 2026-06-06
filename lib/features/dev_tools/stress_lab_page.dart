@@ -10,6 +10,7 @@ import '../../core/services/cloud_sync_service.dart';
 import '../../core/services/local_database_service.dart';
 import '../../core/sync_unified/sync_unified.dart';
 import '../../data/app_store.dart';
+import '../../models/catalog_item.dart';
 import '../../models/customer.dart';
 import '../../models/expense.dart';
 import '../../models/product.dart';
@@ -665,6 +666,33 @@ class _StressLabPageState extends State<StressLabPage> {
         'activeHash=${_hashHex(active.isEmpty ? all : active)} deletedCount=${deleted.length} deletedHash=${_hashHex(deleted)} sample=${_sampleIds(all)}');
   }
 
+  String _catalogDigestKey(CatalogItem item) {
+    String normalize(String value) => value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+    final code = normalize(item.code);
+    final nameEn = normalize(item.nameEn);
+    final nameAr = normalize(item.nameAr);
+    final deleted = item.isDeleted ? 'deleted' : 'active';
+    // Catalog IDs for categories/brands/units may be generated locally on each
+    // device. Diagnostics must compare the business identity, not the local ID,
+    // otherwise healthy sync can report false hash mismatches.
+    return '$code|$nameEn|$nameAr|$deleted';
+  }
+
+  void _logCatalogDigest(String label, Iterable<CatalogItem> items) {
+    final allItems = items.toList();
+    final all = allItems.map(_catalogDigestKey).toList();
+    final active = allItems.where((item) => !item.isDeleted).map(_catalogDigestKey).toList();
+    final deleted = allItems.where((item) => item.isDeleted).map(_catalogDigestKey).toList();
+    final sample = allItems.map((item) {
+      final code = item.code.trim().isEmpty ? '-' : item.code.trim();
+      final en = item.nameEn.trim().isEmpty ? '-' : item.nameEn.trim();
+      final ar = item.nameAr.trim().isEmpty ? '-' : item.nameAr.trim();
+      return '$code:$en:$ar';
+    }).toList();
+    _addLog('$label count=${all.length} hash=${_hashHex(all)} activeCount=${active.length} '
+        'activeHash=${_hashHex(active)} deletedCount=${deleted.length} deletedHash=${_hashHex(deleted)} sample=${_sampleIds(sample)} note=business-key-hash');
+  }
+
   Future<void> _compareDeviceState() async {
     if (_running) return;
     setState(() {
@@ -682,10 +710,10 @@ class _StressLabPageState extends State<StressLabPage> {
       _logEntityDigest('COMPARE_PURCHASES', store.purchases.map((item) => item.id), activeIds: store.purchases.where((item) => !item.isDeleted).map((item) => item.id));
       _logEntityDigest('COMPARE_EXPENSES', store.expenses.map((item) => item.id), activeIds: store.expenses.where((item) => !item.isDeleted).map((item) => item.id));
       _logEntityDigest('COMPARE_STOCK_MOVEMENTS', store.stockMovements.map((item) => item.id));
-      _logEntityDigest('COMPARE_CATEGORIES', store.categories.map((item) => item.id));
-      _logEntityDigest('COMPARE_BRANDS', store.brands.map((item) => item.id));
-      _logEntityDigest('COMPARE_UNITS', store.units.map((item) => item.id));
-      _addLog('COMPARE_DEVICE_STATE_DONE note=Run this on each device and compare count/hash lines. Different hashes mean different IDs.');
+      _logCatalogDigest('COMPARE_CATEGORIES', store.categories);
+      _logCatalogDigest('COMPARE_BRANDS', store.brands);
+      _logCatalogDigest('COMPARE_UNITS', store.units);
+      _addLog('COMPARE_DEVICE_STATE_DONE note=Run this on each device and compare count/hash lines. Catalog hashes use business fields, not local IDs.');
       _setStatus('Device state comparison logged', progress: 1);
     } finally {
       if (mounted) setState(() => _running = false);

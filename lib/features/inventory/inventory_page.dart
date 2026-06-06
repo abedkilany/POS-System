@@ -5,6 +5,7 @@ import '../../core/utils/responsive.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../data/app_store.dart';
 import '../../widgets/summary_card.dart';
+import '../barcode/barcode_scanner_page.dart';
 
 class InventoryPage extends StatefulWidget {
   const InventoryPage({super.key, required this.store});
@@ -17,12 +18,25 @@ class InventoryPage extends StatefulWidget {
 
 class _InventoryPageState extends State<InventoryPage> with SingleTickerProviderStateMixin {
   String query = '';
+  final TextEditingController _searchController = TextEditingController();
   late final TabController _tabController = TabController(length: 3, vsync: this);
 
   @override
   void dispose() {
+    _searchController.dispose();
     _tabController.dispose();
     super.dispose();
+  }
+
+  Future<void> _scanInventorySearchBarcode() async {
+    final code = await Navigator.of(context).push<String>(
+      MaterialPageRoute(builder: (_) => const BarcodeScannerPage()),
+    );
+    if (!mounted || code == null || code.trim().isEmpty) return;
+    setState(() {
+      query = code.trim();
+      _searchController.text = query;
+    });
   }
 
   @override
@@ -30,7 +44,7 @@ class _InventoryPageState extends State<InventoryPage> with SingleTickerProvider
     final tr = AppLocalizations.of(context);
     final products = widget.store.stockTrackedProducts.where((item) {
       final value = query.toLowerCase();
-      return item.name.toLowerCase().contains(value) || item.code.toLowerCase().contains(value) || item.category.toLowerCase().contains(value);
+      return item.name.toLowerCase().contains(value) || item.code.toLowerCase().contains(value) || item.barcode.toLowerCase().contains(value) || item.effectiveSaleUnits.any((unit) => unit.barcode.toLowerCase().contains(value)) || item.effectivePurchaseUnits.any((unit) => unit.barcode.toLowerCase().contains(value)) || item.category.toLowerCase().contains(value);
     }).toList();
 
     return Column(
@@ -46,7 +60,7 @@ class _InventoryPageState extends State<InventoryPage> with SingleTickerProvider
           child: TabBarView(
             controller: _tabController,
             children: [
-              _InventoryOverview(store: widget.store, products: products, query: query, onQuery: (value) => setState(() => query = value), onAdjust: _openAdjustmentDialog),
+              _InventoryOverview(store: widget.store, products: products, query: query, searchController: _searchController, onScanBarcode: _scanInventorySearchBarcode, onQuery: (value) => setState(() => query = value), onAdjust: _openAdjustmentDialog),
               _MovementsList(store: widget.store),
               _WasteLossReport(store: widget.store),
             ],
@@ -129,11 +143,13 @@ class _InventoryPageState extends State<InventoryPage> with SingleTickerProvider
 }
 
 class _InventoryOverview extends StatelessWidget {
-  const _InventoryOverview({required this.store, required this.products, required this.query, required this.onQuery, required this.onAdjust});
+  const _InventoryOverview({required this.store, required this.products, required this.query, required this.searchController, required this.onScanBarcode, required this.onQuery, required this.onAdjust});
 
   final AppStore store;
   final List<dynamic> products;
   final String query;
+  final TextEditingController searchController;
+  final VoidCallback onScanBarcode;
   final ValueChanged<String> onQuery;
   final ValueChanged<String> onAdjust;
 
@@ -155,7 +171,16 @@ class _InventoryOverview extends StatelessWidget {
         ),
         const SizedBox(height: 20),
         TextField(
-          decoration: InputDecoration(hintText: tr.text('search_inventory'), prefixIcon: const Icon(Icons.search)),
+          controller: searchController,
+          decoration: InputDecoration(
+            hintText: tr.text('search_inventory'),
+            prefixIcon: const Icon(Icons.search),
+            suffixIcon: IconButton(
+              tooltip: tr.text('scan_with_camera'),
+              onPressed: onScanBarcode,
+              icon: const Icon(Icons.camera_alt_outlined),
+            ),
+          ),
           onChanged: onQuery,
         ),
         const SizedBox(height: 16),

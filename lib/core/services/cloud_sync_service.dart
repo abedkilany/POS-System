@@ -24,6 +24,7 @@ class CloudSyncSettings {
   static const _apiBaseUrlKey = 'cloud_api_base_url';
   static const _apiTokenKey = 'cloud_api_token';
   static const _lastPullCursorKey = 'cloud_last_pull_cursor';
+  static const _enabledKey = 'cloud_sync_enabled';
 
   static Future<void> clearSavedPullCursor() async {
     await LocalDatabaseService.deleteString(_lastPullCursorKey);
@@ -96,6 +97,7 @@ class CloudSyncSettings {
     final base = LocalDatabaseService.getString(_apiBaseUrlKey);
     final token = LocalDatabaseService.getString(_apiTokenKey) ?? '';
     final cursorRaw = LocalDatabaseService.getString(_lastPullCursorKey) ?? '';
+    final enabledRaw = LocalDatabaseService.getString(_enabledKey);
     final autoRaw = LocalDatabaseService.getString(_autoSyncKey);
     final intervalRaw = LocalDatabaseService.getString(_intervalKey);
     final currentOrigin = kIsWeb ? Uri.base.origin : '';
@@ -108,7 +110,7 @@ class CloudSyncSettings {
       }
     }
     return CloudSyncSettings(
-      enabled: true,
+      enabled: enabledRaw == null ? true : enabledRaw == 'true',
       apiBaseUrl: normalizedBaseUrl,
       apiToken: token,
       lastPullCursor: DateTime.tryParse(cursorRaw),
@@ -121,6 +123,7 @@ class CloudSyncSettings {
     final normalizedBaseUrl = normalizeApiBaseUrl(apiBaseUrl, fallback: kIsWeb ? Uri.base.origin : '');
     await LocalDatabaseService.setString(_apiBaseUrlKey, normalizedBaseUrl);
     await LocalDatabaseService.setString(_apiTokenKey, apiToken.trim());
+    await LocalDatabaseService.setString(_enabledKey, enabled ? 'true' : 'false');
     await LocalDatabaseService.setString(_autoSyncKey, autoSyncEnabled ? 'true' : 'false');
     await LocalDatabaseService.setString(_intervalKey, intervalSeconds.toString());
     if (lastPullCursor == null) {
@@ -360,8 +363,17 @@ class CloudSyncService {
     if (!settings.hasDeploymentToken || settings.apiBaseUrl.trim().isEmpty) return const CloudPairingCodeResult(ok: false, message: 'Cloud API URL and Host deployment token are required.');
     try {
       if (transport == 'cloud') {
-        await store.ensureHostCloudBootstrapSnapshotQueued(force: true);
-        await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
+        // Pairing must never fail or bloat the local DB just because the
+        // bootstrap snapshot publish hit a Cloud/Vercel/Neon limit. The QR/code
+        // is created first-class; the snapshot endpoint is best-effort and can
+        // be retried by Sync Now / recovery flows without creating a local
+        // restore_snapshot SyncChange.
+        try {
+          await publishBootstrapSnapshotToCloud(settings, force: true);
+          await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
+        } catch (error) {
+          debugPrint('Cloud bootstrap snapshot publish skipped during pairing: $error');
+        }
       }
       final response = await _client
           .post(
@@ -662,8 +674,8 @@ class CloudSyncService {
         }
       }
 
-      onProgress?.call(0.95, 'Publishing recovered Host snapshot...');
-      await store.ensureHostCloudBootstrapSnapshotQueued(force: true);
+      onProgress?.call(0.90, 'Publishing recovered Host snapshot...');
+      await publishBootstrapSnapshotToCloud(settings, force: true, onProgress: onProgress);
       await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
       await sendHostHeartbeat(settings);
       onProgress?.call(1.0, 'Store recovered.');
@@ -1285,6 +1297,42 @@ class CloudSyncService {
     }
   }
 
+
+  Future<int> publishBootstrapSnapshotToCloud(
+    CloudSyncSettings settings, {
+    bool force = false,
+    void Function(double value, String label)? onProgress,
+  }) async {
+    final identity = store.appIdentity;
+    if (!identity.isHost || !identity.isCloudEnabled || !settings.hasDeploymentToken) return 0;
+    await store.removeLegacyCloudBootstrapSnapshotQueue();
+    final chunks = store.exportCloudBootstrapSnapshotChunks(maxItemsPerChunk: 50);
+    if (chunks.isEmpty) return 0;
+
+    for (var i = 0; i < chunks.length; i += 1) {
+      final chunk = Map<String, dynamic>.from(chunks[i]);
+      chunk['force'] = force && i == 0;
+      final response = await _client
+          .post(
+            settings.endpoint('/api/sync/bootstrap-snapshot'),
+            headers: _headers(settings),
+            body: jsonEncode(chunk),
+          )
+          .timeout(const Duration(seconds: 30));
+      if (response.statusCode == 409) {
+        if (!force) {
+          throw StateError('Another Cloud bootstrap snapshot is already in progress. Try again after it finishes or use force rebuild.');
+        }
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw StateError('Cloud bootstrap snapshot failed: ${response.statusCode} ${response.body}');
+      }
+      onProgress?.call((0.10 + ((i + 1) / chunks.length) * 0.70).clamp(0.10, 0.80).toDouble(), 'Publishing snapshot chunk ${i + 1}/${chunks.length}...');
+    }
+    return chunks.length;
+  }
+
+
   Future<int> _pushPendingToEndpoint(CloudSyncSettings settings, String target, String path) async {
     final identity = store.appIdentity;
     var totalPushed = 0;
@@ -1295,9 +1343,11 @@ class CloudSyncService {
     // timeout could leave the Host appearing idle while Cloud clients are still
     // missing data. Push in small acknowledged batches and mark only the batch
     // currently being sent as in-progress.
-    const batchSize = 50;
+    const batchSize = 20;
 
     while (true) {
+      await store.recoverStaleInProgressSyncQueue(target: target);
+      await store.retryFailedSyncQueue(target: target);
       final pending = _syncCore.pendingChangesForTarget(target).take(batchSize).toList(growable: false);
       final pendingIds = _syncCore.changeIds(pending);
       if (pending.isEmpty) break;
@@ -1424,15 +1474,14 @@ class CloudSyncService {
     );
     if (changes.isEmpty) return 0;
 
-    // Safety-critical ordering is centralized in UnifiedSyncCoreService:
-    // apply Client drafts on Host, verify local persistence, then publish the
-    // re-stamped authoritative Host events to Cloud before ACKing relay rows.
+    // Accept Client drafts on the Host first. Once local Host persistence is
+    // verified, ACK the relay request immediately; the Client must not stay
+    // pending just because the Host -> Cloud publish later times out.
     final accepted = await _syncCore.acceptClientChangesOnHost(
       changes,
       mirrorToCloud: true,
       verifyApplied: true,
     );
-    await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
 
     final ackIds = accepted.ackIds;
     final ack = await _client
@@ -1451,6 +1500,11 @@ class CloudSyncService {
     if (ack.statusCode < 200 || ack.statusCode >= 300) {
       throw StateError('Cloud request ACK failed: ${ack.statusCode} ${ack.body}');
     }
+
+    // Publish the newly authoritative Host events after ACK. If this upload
+    // fails, the Host keeps those cloud queue rows retryable without trapping
+    // the already-accepted Client request in submitted/pending state.
+    await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
     return changes.length;
   }
 
