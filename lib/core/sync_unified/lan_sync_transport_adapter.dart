@@ -209,6 +209,7 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
       message: result.message,
       error: _errorFor(result.ok, result.message),
       contract: UnifiedPairingClaimContract(snapshotAvailable: result.ok),
+      initialDataReady: result.ok,
     );
   }
 

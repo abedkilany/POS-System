@@ -172,11 +172,11 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
   }
 
   bool _cloudPairingDownloadedInitialData(UnifiedPairingClaimResult result) {
-    final message = result.message.toLowerCase();
-    if (message.contains('will download') || message.contains('being prepared') || message.contains('waiting')) {
-      return false;
-    }
-    return message.contains('downloaded') || message.contains('please sign in');
+    // Do not parse human-readable messages here. Older logic used
+    // message.contains('downloaded'), which incorrectly treated
+    // "not downloaded yet" as success and sent Web/Client devices to Login
+    // before the first Store snapshot was imported.
+    return result.ok && result.initialDataReady;
   }
 
   String _friendlyErrorMessage(Object error, {required String fallback}) {

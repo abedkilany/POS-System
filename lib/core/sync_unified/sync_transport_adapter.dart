@@ -72,12 +72,17 @@ class UnifiedPairingClaimResult extends UnifiedSyncResult {
     required super.message,
     this.identity,
     this.contract,
+    this.initialDataReady = true,
     super.data = const <String, dynamic>{},
     super.error = UnifiedSyncError.none,
   });
 
   final AppIdentity? identity;
   final UnifiedPairingClaimContract? contract;
+
+  /// True only after the Client has downloaded/imported the first Store data.
+  /// Pairing-code claim alone is not enough to send the user to Login.
+  final bool initialDataReady;
 }
 
 

@@ -368,16 +368,18 @@ class CloudSyncService {
     if (!settings.hasDeploymentToken || settings.apiBaseUrl.trim().isEmpty) return const CloudPairingCodeResult(ok: false, message: 'Cloud API URL and Host deployment token are required.');
     try {
       if (transport == 'cloud') {
-        // Pairing must never fail or bloat the local DB just because the
-        // bootstrap snapshot publish hit a Cloud/Vercel/Neon limit. The QR/code
-        // is created first-class; the snapshot endpoint is best-effort and can
-        // be retried by Sync Now / recovery flows without creating a local
-        // restore_snapshot SyncChange.
+        // Cloud pairing is a provisioning transaction: the Host must publish a
+        // fresh bootstrap snapshot before issuing a single-use code. Otherwise
+        // the code can become Used while the Client still has no users/store
+        // data and gets sent back to Connect to Store.
         try {
           await publishBootstrapSnapshotToCloud(settings, force: true);
           await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
         } catch (error) {
-          debugPrint('Cloud bootstrap snapshot publish skipped during pairing: $error');
+          return CloudPairingCodeResult(
+            ok: false,
+            message: 'Could not prepare initial Store data for pairing. Keep the Host online, run Sync Now, then create a new pairing code. Details: $error',
+          );
         }
       }
       final response = await _client
