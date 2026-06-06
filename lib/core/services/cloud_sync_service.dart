@@ -306,10 +306,15 @@ class CloudPairingStatusResult {
 }
 
 class CloudPairingClaimResult {
-  const CloudPairingClaimResult({required this.ok, required this.message, this.identity});
+  const CloudPairingClaimResult({required this.ok, required this.message, this.identity, this.initialDataReady = true});
   final bool ok;
   final String message;
   final AppIdentity? identity;
+
+  /// Pairing-code claim can succeed before the first Host snapshot is available.
+  /// Keep Connect to Store open until this becomes true so the Client is not
+  /// sent to Login without users/store data.
+  final bool initialDataReady;
 }
 
 class CloudStoreRecoveryResult {
@@ -549,17 +554,19 @@ class CloudSyncService {
           ok: true,
           message: appliedInitialData
               ? 'Device paired successfully. Initial Store data was downloaded. Please sign in.'
-              : 'Device paired successfully. Waiting for Host snapshot. Keep the Host online; Store data will download automatically.',
+              : 'Device paired successfully, but initial Store data was not downloaded yet. Keep the Host online, run Sync Now on the Host, then tap Retry Download Store Data.',
           identity: identity,
+          initialDataReady: appliedInitialData,
         );
       }
-      return CloudPairingClaimResult(ok: true, message: 'Device paired successfully. Please sign in.', identity: identity);
+      return CloudPairingClaimResult(ok: true, message: 'Device paired successfully. Please sign in.', identity: identity, initialDataReady: true);
     } catch (error) {
       if (deviceRegistered) {
         return CloudPairingClaimResult(
           ok: true,
-          message: 'Device paired successfully. Initial Store data will download automatically when the Host is online.',
+          message: 'Device paired successfully, but initial Store data was not downloaded yet. Keep the Host online, run Sync Now on the Host, then tap Retry Download Store Data.',
           identity: store.appIdentity,
+          initialDataReady: false,
         );
       }
       return const CloudPairingClaimResult(ok: false, message: 'Could not connect this device. Check the pairing code and try again.');

@@ -2671,6 +2671,9 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     _cloudPairingCodeController.clear();
     _clearExpectedPairingTarget();
     var dialogMode = mode;
+    var dialogBusy = false;
+    var dialogStatus = '';
+    var cloudPairedAwaitingInitialData = false;
     final saved = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
@@ -2722,6 +2725,27 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                         ),
                       ),
                       const SizedBox(height: 16),
+                      if (dialogStatus.trim().isNotEmpty) ...[
+                        Card.outlined(
+                          margin: EdgeInsets.zero,
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(
+                                  cloudPairedAwaitingInitialData ? Icons.info_outline : Icons.sync_problem_outlined,
+                                  size: 20,
+                                  color: Theme.of(context).colorScheme.primary,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(child: Text(dialogStatus, style: Theme.of(context).textTheme.bodySmall)),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
                       if (isLan) ...[
                         TextField(controller: _lanHostController, decoration: InputDecoration(labelText: tr.text('host_ip_address'), border: const OutlineInputBorder())),
                         const SizedBox(height: 12),
@@ -2738,49 +2762,107 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                 ),
               ),
               actions: [
-                TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: Text(tr.text('cancel'))),
+                TextButton(onPressed: dialogBusy ? null : () => Navigator.of(dialogContext).pop(false), child: Text(tr.text('cancel'))),
+                if (cloudPairedAwaitingInitialData)
+                  OutlinedButton.icon(
+                    onPressed: dialogBusy
+                        ? null
+                        : () async {
+                            setDialogState(() {
+                              dialogBusy = true;
+                              dialogStatus = 'Retrying initial Store data download...';
+                            });
+                            try {
+                              final retry = await CloudSyncService(widget.store).rebuildFromCloudHostSnapshot(
+                                CloudSyncSettings.load().copyWith(enabled: true, clearLastPullCursor: true),
+                              );
+                              if (retry.ok && retry.restoredSnapshot) {
+                                await CloudProvisioningStatus.markComplete(message: 'Initial Store data downloaded.');
+                                if (dialogContext.mounted) Navigator.of(dialogContext).pop(true);
+                                return;
+                              }
+                              setDialogState(() {
+                                dialogStatus = retry.message;
+                              });
+                            } catch (error) {
+                              setDialogState(() {
+                                dialogStatus = 'Initial Store data download failed: $error';
+                              });
+                            } finally {
+                              if (dialogContext.mounted) {
+                                setDialogState(() => dialogBusy = false);
+                              }
+                            }
+                          },
+                    icon: const Icon(Icons.download_outlined),
+                    label: const Text('Retry Download Store Data'),
+                  ),
                 FilledButton(
-                  onPressed: () async {
-                    if (isLan) {
-                      final host = _lanHostController.text.trim();
-                      final token = _lanTokenController.text.trim();
-                      if (host.isEmpty || token.isEmpty) return;
-                      if (widget.store.appIdentity.isClient && widget.store.appIdentity.hostDeviceId.trim().isNotEmpty) {
-                        _validateExpectedPairingTarget(widget.store.appIdentity);
-                      }
-                      await LanSyncSettings.load().copyWith(
-                        host: host,
-                        port: _lanPort,
-                        secret: token,
-                        mode: LanSyncDeviceMode.client,
-                        setupComplete: true,
-                        hostModeEnabled: false,
-                        autoSyncEnabled: widget.store.appIdentity.activeSyncTransportNormalized == 'lan',
-                      ).save();
-                    } else {
-                      final apiUrl = _cloudApiController.text.trim();
-                      final code = _cloudPairingCodeController.text.trim();
-                      if (apiUrl.isEmpty || code.isEmpty) return;
-                      final previousIdentity = widget.store.appIdentity;
-                      final previousActive = previousIdentity.activeSyncTransportNormalized;
-                      final settings = CloudSyncSettings.load().copyWith(
-                        enabled: true,
-                        apiBaseUrl: CloudSyncSettings.normalizeApiBaseUrl(apiUrl, fallback: kIsWeb ? Uri.base.origin : ''),
-                        autoSyncEnabled: previousActive == 'cloud',
-                      );
-                      await settings.save();
-                      final result = await CloudSyncService(widget.store).claimPairingCode(settings, code);
-                      if (!result.ok) throw Exception(result.message);
-                      final claimedIdentity = result.identity ?? widget.store.appIdentity;
-                      _validateExpectedPairingTarget(claimedIdentity);
-                      _validateAgainstExistingClientIdentity(previousIdentity, claimedIdentity);
-                      if (previousActive == 'lan') {
-                        await widget.store.setActiveSyncTransport('lan');
-                      }
-                    }
-                    if (dialogContext.mounted) Navigator.of(dialogContext).pop(true);
-                  },
-                  child: Text(tr.text('save')),
+                  onPressed: dialogBusy
+                      ? null
+                      : () async {
+                          setDialogState(() {
+                            dialogBusy = true;
+                            dialogStatus = '';
+                            cloudPairedAwaitingInitialData = false;
+                          });
+                          try {
+                            if (isLan) {
+                              final host = _lanHostController.text.trim();
+                              final token = _lanTokenController.text.trim();
+                              if (host.isEmpty || token.isEmpty) return;
+                              if (widget.store.appIdentity.isClient && widget.store.appIdentity.hostDeviceId.trim().isNotEmpty) {
+                                _validateExpectedPairingTarget(widget.store.appIdentity);
+                              }
+                              await LanSyncSettings.load().copyWith(
+                                host: host,
+                                port: _lanPort,
+                                secret: token,
+                                mode: LanSyncDeviceMode.client,
+                                setupComplete: true,
+                                hostModeEnabled: false,
+                                autoSyncEnabled: widget.store.appIdentity.activeSyncTransportNormalized == 'lan',
+                              ).save();
+                            } else {
+                              final apiUrl = _cloudApiController.text.trim();
+                              final code = _cloudPairingCodeController.text.trim();
+                              if (apiUrl.isEmpty || code.isEmpty) return;
+                              final previousIdentity = widget.store.appIdentity;
+                              final previousActive = previousIdentity.activeSyncTransportNormalized;
+                              final settings = CloudSyncSettings.load().copyWith(
+                                enabled: true,
+                                apiBaseUrl: CloudSyncSettings.normalizeApiBaseUrl(apiUrl, fallback: kIsWeb ? Uri.base.origin : ''),
+                                autoSyncEnabled: previousActive == 'cloud',
+                              );
+                              await settings.save();
+                              final result = await CloudSyncService(widget.store).claimPairingCode(settings, code);
+                              if (!result.ok) throw Exception(result.message);
+                              final claimedIdentity = result.identity ?? widget.store.appIdentity;
+                              _validateExpectedPairingTarget(claimedIdentity);
+                              _validateAgainstExistingClientIdentity(previousIdentity, claimedIdentity);
+                              if (previousActive == 'lan') {
+                                await widget.store.setActiveSyncTransport('lan');
+                              }
+                              if (!result.initialDataReady) {
+                                setDialogState(() {
+                                  cloudPairedAwaitingInitialData = true;
+                                  dialogStatus = result.message;
+                                });
+                                return;
+                              }
+                            }
+                            if (dialogContext.mounted) Navigator.of(dialogContext).pop(true);
+                          } catch (error) {
+                            setDialogState(() {
+                              dialogStatus = _simpleSyncError(error, fallback: error.toString());
+                            });
+                          } finally {
+                            if (dialogContext.mounted) {
+                              setDialogState(() => dialogBusy = false);
+                            }
+                          }
+                        },
+                  child: dialogBusy ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : Text(tr.text('save')),
                 ),
               ],
             );
