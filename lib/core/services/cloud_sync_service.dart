@@ -376,10 +376,7 @@ class CloudSyncService {
           await publishBootstrapSnapshotToCloud(settings, force: true);
           await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
         } catch (error) {
-          return CloudPairingCodeResult(
-            ok: false,
-            message: 'Could not prepare initial Store data for pairing. Keep the Host online, run Sync Now, then create a new pairing code. Details: $error',
-          );
+          debugPrint('Pairing bootstrap warning: $error');
         }
       }
       final response = await _client
