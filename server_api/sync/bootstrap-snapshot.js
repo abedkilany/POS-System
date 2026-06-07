@@ -13,6 +13,7 @@ const collectionTypes = {
   units: 'unit',
   purchases: 'purchase',
   stockMovements: 'stock_movement',
+  accountTransactions: 'account_transaction',
   roles: 'role',
   users: 'user',
 };

@@ -520,7 +520,7 @@ class CloudSyncService {
         // request through the normal Host-authoritative Cloud relay.
         var appliedInitialData = false;
         var initialPull = await syncNow(settings.copyWith(clearLastPullCursor: true));
-        appliedInitialData = initialPull.ok && (initialPull.pulled > 0 || initialPull.restoredSnapshot);
+        appliedInitialData = initialPull.ok && (initialPull.pulled > 0 || initialPull.restoredSnapshot) && !store.needsInitialAdminSetup;
 
         var request = const CloudSyncResult(ok: true, message: 'Initial pull used existing Cloud snapshot.');
         if (!appliedInitialData) {
@@ -533,7 +533,7 @@ class CloudSyncService {
             if (attempt > 0) await Future<void>.delayed(const Duration(seconds: 3));
             await CloudProvisioningStatus.markAttempted(DateTime.now().toUtc());
             initialPull = await syncNow(retrySettings, minSnapshotUpdatedAt: requestedAt);
-            appliedInitialData = initialPull.ok && (initialPull.pulled > 0 || initialPull.restoredSnapshot);
+            appliedInitialData = initialPull.ok && (initialPull.pulled > 0 || initialPull.restoredSnapshot) && !store.needsInitialAdminSetup;
             if (appliedInitialData) break;
             retrySettings = CloudSyncSettings.load().copyWith(clearLastPullCursor: attempt == 0 ? true : false);
           }
@@ -1655,7 +1655,7 @@ class CloudSyncService {
         onProgress?.call(0.96, 'Cleaning up after Cloud sync...');
         await store.cleanupSoftDeletedRecords();
       }
-      if (store.appIdentity.isClient && (restoredSnapshot || pulled > 0)) {
+      if (store.appIdentity.isClient && (restoredSnapshot || pulled > 0) && !store.needsInitialAdminSetup) {
         await CloudProvisioningStatus.markComplete(message: 'Initial Store data downloaded.');
       }
       return CloudSyncResult(
@@ -1809,7 +1809,7 @@ class CloudSyncService {
         onProgress?.call(0.97, 'Running Client sync log maintenance...');
         await store.compactClientSyncedSyncHistoryForMaintenance();
       }
-      if (store.appIdentity.isClient && (restoredSnapshot || pulled > 0)) {
+      if (store.appIdentity.isClient && (restoredSnapshot || pulled > 0) && !store.needsInitialAdminSetup) {
         await CloudProvisioningStatus.markComplete(message: 'Initial Store data downloaded.');
       }
       onProgress?.call(1.0, 'Cloud sync completed.');
