@@ -528,8 +528,13 @@ class CloudSyncService {
         // new Host sync tick. If no snapshot is available yet, request a fresh
         // Host snapshot and poll a few times while the Host processes the
         // request through the normal Host-authoritative Cloud relay.
+        //
+        // IMPORTANT: reload settings from disk after updateAppIdentityDuringSetup
+        // so that the new deviceToken is visible to isConfigured/hasDeviceCredentials.
+        // The `settings` variable captured earlier in this method does not carry
+        // the token that the server just issued.
         var appliedInitialData = false;
-        var initialPull = await syncNow(settings.copyWith(clearLastPullCursor: true));
+        var initialPull = await syncNow(CloudSyncSettings.load().copyWith(clearLastPullCursor: true));
         appliedInitialData = initialPull.ok && (initialPull.pulled > 0 || initialPull.restoredSnapshot);
 
         var request = const CloudSyncResult(ok: true, message: 'Initial pull used existing Cloud snapshot.');
@@ -538,14 +543,19 @@ class CloudSyncService {
         }
 
         if (request.ok && !appliedInitialData) {
-          var retrySettings = settings.copyWith(clearLastPullCursor: true);
+          // Always load settings fresh from disk inside the retry loop.
+          // The first attempt clears the pull cursor so we re-pull the full
+          // Host snapshot; subsequent attempts keep whatever cursor the
+          // previous pull wrote so we do not re-apply already-seen events.
           for (var attempt = 0; attempt < 6; attempt += 1) {
             if (attempt > 0) await Future<void>.delayed(const Duration(seconds: 3));
             await CloudProvisioningStatus.markAttempted(DateTime.now().toUtc());
+            final retrySettings = CloudSyncSettings.load().copyWith(
+              clearLastPullCursor: attempt == 0,
+            );
             initialPull = await syncNow(retrySettings, minSnapshotUpdatedAt: requestedAt);
             appliedInitialData = initialPull.ok && (initialPull.pulled > 0 || initialPull.restoredSnapshot);
             if (appliedInitialData) break;
-            retrySettings = CloudSyncSettings.load().copyWith(clearLastPullCursor: attempt == 0 ? true : false);
           }
         }
 

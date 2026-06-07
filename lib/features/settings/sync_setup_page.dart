@@ -146,18 +146,16 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       _status = message;
       _statusType = _SetupStatus.success;
     });
+    // onDone is the single source of truth for navigation.
+    // Do NOT add a second navigator.pop() here — doing so causes a double-pop
+    // that removes the LoginGatePage from the stack when onDone has already
+    // popped SyncSetupPage. The login gate's setState() after push() is
+    // sufficient to refresh the screen once we return.
     try {
       await widget.onDone();
     } catch (_) {
       // Pairing has already succeeded. Navigation cleanup must never turn a
       // successful connection into an error message for the user.
-    }
-    if (!mounted) return;
-    try {
-      final navigator = Navigator.of(context);
-      if (navigator.canPop()) navigator.pop();
-    } catch (_) {
-      // Best-effort fallback only. The login gate will refresh after onDone.
     }
   }
 
@@ -168,6 +166,19 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       _qrStatus = _ClientPairingState.connected;
       _status = AppLocalizations.of(context).text('device_connected_waiting_store_data');
       _statusType = _SetupStatus.warning;
+    });
+    // Pairing succeeded but the initial snapshot is not ready yet.
+    // Close this page so the LoginGatePage can display the dedicated
+    // _PairedWaitingForDataScreen (which has a proper "Retry" button).
+    // The device is now registered as a Client; the identity is persisted —
+    // the user will NOT be asked to enter the pairing code again.
+    Future.microtask(() async {
+      try {
+        await widget.onDone();
+      } catch (_) {
+        // Navigation is best-effort. LoginGatePage will re-evaluate on its
+        // next rebuild and show the correct waiting screen automatically.
+      }
     });
   }
 
