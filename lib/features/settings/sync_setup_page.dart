@@ -176,7 +176,9 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
     // message.contains('downloaded'), which incorrectly treated
     // "not downloaded yet" as success and sent Web/Client devices to Login
     // before the first Store snapshot was imported.
-    return result.ok && result.initialDataReady;
+    // Pairing is considered successful once claim succeeds.
+    // Initial snapshot may continue downloading in background.
+    return result.ok;
   }
 
   String _friendlyErrorMessage(Object error, {required String fallback}) {
