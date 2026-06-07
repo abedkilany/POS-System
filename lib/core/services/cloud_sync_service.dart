@@ -536,7 +536,7 @@ class CloudSyncService {
 
         var request = const CloudSyncResult(ok: true, message: 'Initial pull used existing Cloud snapshot.');
         if (!appliedInitialData) {
-          request = await requestFreshHostSnapshot(settings, requestedAt: requestedAt);
+          request = await requestFreshHostSnapshot(CloudSyncSettings.load(), requestedAt: requestedAt);
         }
 
         if (request.ok && !appliedInitialData) {
