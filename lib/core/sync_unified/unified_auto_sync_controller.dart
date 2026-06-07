@@ -31,22 +31,13 @@ class UnifiedSyncFactory {
     );
   }
 
-  static bool get isLanSetupComplete {
-    final settings = LanSyncSettings.load();
-    return settings.setupComplete && settings.isHost;
-  }
+  static bool get isLanSetupComplete => LanSyncSettings.load().setupComplete;
   static bool get isLanHost => LanSyncSettings.load().isHost;
-  static bool isLanHostActive(AppStore store) {
-    final identity = store.appIdentity;
-    final settings = LanSyncSettings.load();
-    return identity.isHost && settings.setupComplete && settings.isHost;
-  }
   static bool get isCloudConfigured => CloudSyncSettings.load().isConfigured;
   static bool cloudCanCheck(AppStore store) {
     final identity = store.appIdentity;
-    final settings = CloudSyncSettings.load();
     final allowed = identity.isHost ? identity.isCloudEnabled : identity.isClient && identity.activeSyncTransportNormalized == 'cloud';
-    return allowed && settings.isConfigured;
+    return allowed && CloudSyncSettings.load().isConfigured;
   }
 }
 

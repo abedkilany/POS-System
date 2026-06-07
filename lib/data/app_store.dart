@@ -2528,18 +2528,13 @@ class AppStore extends ChangeNotifier {
 
   Future<int> clearLocalOnlyPendingSyncChanges() async {
     requirePermission(AppPermission.settingsManage);
-    final identity = appIdentity;
-    final syncIsOff = identity.syncMode == SyncMode.localOnly ||
-        identity.activeSyncTransportNormalized == 'local';
-    final invalidChangeIds = syncIsOff
-        ? _syncQueue.where((item) => item.isPending).map((item) => item.changeId).toSet()
-        : _syncChanges
-            .where((change) =>
-                !change.isSynced &&
-                change.entityType == 'app_identity' &&
-                change.operation == 'update')
-            .map((change) => change.id)
-            .toSet();
+    final invalidChangeIds = _syncChanges
+        .where((change) =>
+            !change.isSynced &&
+            change.entityType == 'app_identity' &&
+            change.operation == 'update')
+        .map((change) => change.id)
+        .toSet();
     if (invalidChangeIds.isEmpty) return 0;
 
     final beforeQueue = _syncQueue.length;
@@ -2882,14 +2877,8 @@ class AppStore extends ChangeNotifier {
     try {
       final decoded = jsonDecode(raw) as Map<String, dynamic>;
       final mode = decoded['mode']?.toString() ?? '';
-      final setupComplete = decoded['setupComplete'] as bool? ?? false;
       final hostModeEnabled = decoded['hostModeEnabled'] as bool? ?? false;
-      final autoSyncEnabled = decoded['autoSyncEnabled'] as bool? ?? true;
-      // Strict LAN Host check: old databases may keep mode=host or
-      // hostModeEnabled=true after the user disables LAN. Do not treat that
-      // stale configuration as an active sync target unless LAN is fully
-      // enabled and setup is complete.
-      return setupComplete && hostModeEnabled && autoSyncEnabled && mode == 'host';
+      return mode == 'host' || hostModeEnabled;
     } catch (_) {
       return false;
     }
@@ -2907,10 +2896,8 @@ class AppStore extends ChangeNotifier {
     // - Web/remote desktop clients cannot reach LAN directly, so they send drafts
     //   to a Cloud relay inbox. The Host later pulls that inbox, applies the
     //   changes, and republishes them as authoritative sync_events.
-    final isLanHost = identity.isHost &&
-        identity.activeSyncTransportNormalized == 'lan' &&
-        identity.syncMode == SyncMode.lanOnly &&
-        _isLanHostConfigured;
+    final isLanHost = _isLanHostConfigured ||
+        (identity.isHost && identity.syncMode == SyncMode.lanOnly);
     final target = identity.isHost && identity.isCloudEnabled
         ? 'cloud'
         : isLanHost

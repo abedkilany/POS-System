@@ -55,12 +55,6 @@ class AppIdentity {
   bool get isMarketplaceEnabled => syncMode == SyncMode.marketplaceEnabled;
   String get activeSyncTransportNormalized {
     final normalized = activeSyncTransport.trim().toLowerCase();
-
-    // localOnly is authoritative. Old databases may still contain a stale
-    // activeSyncTransport/transportType value (lan/cloud) after disabling all
-    // sync channels. Never let that stale value make the device look active.
-    if (syncMode == SyncMode.localOnly) return 'local';
-
     if (normalized == 'lan' || normalized == 'cloud') return normalized;
     return syncMode == SyncMode.lanOnly ? 'lan' : (isCloudEnabled ? 'cloud' : 'local');
   }
@@ -137,10 +131,6 @@ class AppIdentity {
     final recoveryRaw = (json['recoveryKey']?.toString() ?? '').trim();
     final activeRaw = (json['activeSyncTransport']?.toString() ?? '').trim().toLowerCase();
     final transportRaw = (json['transportType']?.toString() ?? '').trim().toLowerCase();
-    final decodedSyncMode = enumByName(SyncMode.values, json['syncMode']?.toString(), SyncMode.localOnly);
-    final decodedActiveTransport = decodedSyncMode == SyncMode.localOnly
-        ? 'local'
-        : (activeRaw.isNotEmpty ? activeRaw : transportRaw);
 
     return AppIdentity(
       storeId: json['storeId']?.toString() ?? '',
@@ -150,7 +140,7 @@ class AppIdentity {
       platform: enumByName(AppPlatformType.values, json['platform']?.toString(), AppPlatformType.unknown),
       deviceRole: enumByName(DeviceRole.values, json['deviceRole']?.toString(), DeviceRole.standalone),
       appRole: enumByName(AppRole.values, json['appRole']?.toString(), AppRole.store),
-      syncMode: decodedSyncMode,
+      syncMode: enumByName(SyncMode.values, json['syncMode']?.toString(), SyncMode.localOnly),
       createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? '') ?? now,
       updatedAt: DateTime.tryParse(json['updatedAt']?.toString() ?? '') ?? now,
       hostDeviceId: json['hostDeviceId']?.toString() ?? '',
@@ -158,7 +148,7 @@ class AppIdentity {
       deviceToken: json['deviceToken']?.toString() ?? json['device_token']?.toString() ?? '',
       storeEpoch: (json['storeEpoch'] as num?)?.toInt() ?? 1,
       recoveryKey: recoveryRaw.isNotEmpty ? recoveryRaw.toUpperCase() : _recoveryKey(),
-      activeSyncTransport: decodedActiveTransport,
+      activeSyncTransport: activeRaw.isNotEmpty ? activeRaw : transportRaw,
     );
   }
 

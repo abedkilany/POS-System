@@ -24,7 +24,6 @@ class CloudSyncSettings {
   static const _apiBaseUrlKey = 'cloud_api_base_url';
   static const _apiTokenKey = 'cloud_api_token';
   static const _lastPullCursorKey = 'cloud_last_pull_cursor';
-  static const _enabledKey = 'cloud_sync_enabled';
 
   static Future<void> clearSavedPullCursor() async {
     await LocalDatabaseService.deleteString(_lastPullCursorKey);
@@ -97,7 +96,6 @@ class CloudSyncSettings {
     final base = LocalDatabaseService.getString(_apiBaseUrlKey);
     final token = LocalDatabaseService.getString(_apiTokenKey) ?? '';
     final cursorRaw = LocalDatabaseService.getString(_lastPullCursorKey) ?? '';
-    final enabledRaw = LocalDatabaseService.getString(_enabledKey);
     final autoRaw = LocalDatabaseService.getString(_autoSyncKey);
     final intervalRaw = LocalDatabaseService.getString(_intervalKey);
     final currentOrigin = kIsWeb ? Uri.base.origin : '';
@@ -110,7 +108,7 @@ class CloudSyncSettings {
       }
     }
     return CloudSyncSettings(
-      enabled: enabledRaw == null ? true : enabledRaw == 'true',
+      enabled: true,
       apiBaseUrl: normalizedBaseUrl,
       apiToken: token,
       lastPullCursor: DateTime.tryParse(cursorRaw),
@@ -123,7 +121,6 @@ class CloudSyncSettings {
     final normalizedBaseUrl = normalizeApiBaseUrl(apiBaseUrl, fallback: kIsWeb ? Uri.base.origin : '');
     await LocalDatabaseService.setString(_apiBaseUrlKey, normalizedBaseUrl);
     await LocalDatabaseService.setString(_apiTokenKey, apiToken.trim());
-    await LocalDatabaseService.setString(_enabledKey, enabled ? 'true' : 'false');
     await LocalDatabaseService.setString(_autoSyncKey, autoSyncEnabled ? 'true' : 'false');
     await LocalDatabaseService.setString(_intervalKey, intervalSeconds.toString());
     if (lastPullCursor == null) {
@@ -306,15 +303,10 @@ class CloudPairingStatusResult {
 }
 
 class CloudPairingClaimResult {
-  const CloudPairingClaimResult({required this.ok, required this.message, this.identity, this.initialDataReady = true});
+  const CloudPairingClaimResult({required this.ok, required this.message, this.identity});
   final bool ok;
   final String message;
   final AppIdentity? identity;
-
-  /// Pairing-code claim can succeed before the first Host snapshot is available.
-  /// Keep Connect to Store open until this becomes true so the Client is not
-  /// sent to Login without users/store data.
-  final bool initialDataReady;
 }
 
 class CloudStoreRecoveryResult {
@@ -368,15 +360,16 @@ class CloudSyncService {
     if (!settings.hasDeploymentToken || settings.apiBaseUrl.trim().isEmpty) return const CloudPairingCodeResult(ok: false, message: 'Cloud API URL and Host deployment token are required.');
     try {
       if (transport == 'cloud') {
-        // Cloud pairing is a provisioning transaction: the Host must publish a
-        // fresh bootstrap snapshot before issuing a single-use code. Otherwise
-        // the code can become Used while the Client still has no users/store
-        // data and gets sent back to Connect to Store.
+        // Pairing must never fail or bloat the local DB just because the
+        // bootstrap snapshot publish hit a Cloud/Vercel/Neon limit. The QR/code
+        // is created first-class; the snapshot endpoint is best-effort and can
+        // be retried by Sync Now / recovery flows without creating a local
+        // restore_snapshot SyncChange.
         try {
           await publishBootstrapSnapshotToCloud(settings, force: true);
           await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
         } catch (error) {
-          debugPrint('Pairing bootstrap warning: $error');
+          debugPrint('Cloud bootstrap snapshot publish skipped during pairing: $error');
         }
       }
       final response = await _client
@@ -525,13 +518,8 @@ class CloudSyncService {
         // new Host sync tick. If no snapshot is available yet, request a fresh
         // Host snapshot and poll a few times while the Host processes the
         // request through the normal Host-authoritative Cloud relay.
-        //
-        // IMPORTANT: reload settings from disk after updateAppIdentityDuringSetup
-        // so that the new deviceToken is visible to isConfigured/hasDeviceCredentials.
-        // The `settings` variable captured earlier in this method does not carry
-        // the token that the server just issued.
         var appliedInitialData = false;
-        var initialPull = await syncNow(CloudSyncSettings.load().copyWith(clearLastPullCursor: true));
+        var initialPull = await syncNow(settings.copyWith(clearLastPullCursor: true));
         appliedInitialData = initialPull.ok && (initialPull.pulled > 0 || initialPull.restoredSnapshot);
 
         var request = const CloudSyncResult(ok: true, message: 'Initial pull used existing Cloud snapshot.');
@@ -540,19 +528,14 @@ class CloudSyncService {
         }
 
         if (request.ok && !appliedInitialData) {
-          // Always load settings fresh from disk inside the retry loop.
-          // The first attempt clears the pull cursor so we re-pull the full
-          // Host snapshot; subsequent attempts keep whatever cursor the
-          // previous pull wrote so we do not re-apply already-seen events.
+          var retrySettings = settings.copyWith(clearLastPullCursor: true);
           for (var attempt = 0; attempt < 6; attempt += 1) {
             if (attempt > 0) await Future<void>.delayed(const Duration(seconds: 3));
             await CloudProvisioningStatus.markAttempted(DateTime.now().toUtc());
-            final retrySettings = CloudSyncSettings.load().copyWith(
-              clearLastPullCursor: attempt == 0,
-            );
             initialPull = await syncNow(retrySettings, minSnapshotUpdatedAt: requestedAt);
             appliedInitialData = initialPull.ok && (initialPull.pulled > 0 || initialPull.restoredSnapshot);
             if (appliedInitialData) break;
+            retrySettings = CloudSyncSettings.load().copyWith(clearLastPullCursor: attempt == 0 ? true : false);
           }
         }
 
@@ -563,19 +546,17 @@ class CloudSyncService {
           ok: true,
           message: appliedInitialData
               ? 'Device paired successfully. Initial Store data was downloaded. Please sign in.'
-              : 'Device paired successfully, but initial Store data was not downloaded yet. Keep the Host online, run Sync Now on the Host, then tap Retry Download Store Data.',
+              : 'Device paired successfully. Waiting for Host snapshot. Keep the Host online; Store data will download automatically.',
           identity: identity,
-          initialDataReady: appliedInitialData,
         );
       }
-      return CloudPairingClaimResult(ok: true, message: 'Device paired successfully. Please sign in.', identity: identity, initialDataReady: true);
+      return CloudPairingClaimResult(ok: true, message: 'Device paired successfully. Please sign in.', identity: identity);
     } catch (error) {
       if (deviceRegistered) {
         return CloudPairingClaimResult(
           ok: true,
-          message: 'Device paired successfully, but initial Store data was not downloaded yet. Keep the Host online, run Sync Now on the Host, then tap Retry Download Store Data.',
+          message: 'Device paired successfully. Initial Store data will download automatically when the Host is online.',
           identity: store.appIdentity,
-          initialDataReady: false,
         );
       }
       return const CloudPairingClaimResult(ok: false, message: 'Could not connect this device. Check the pairing code and try again.');

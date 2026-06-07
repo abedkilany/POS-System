@@ -172,9 +172,8 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
         branchId: result.identity?.branchId ?? '',
         hostDeviceId: result.identity?.hostDeviceId ?? '',
         deviceToken: result.identity?.deviceToken ?? '',
-        snapshotAvailable: result.ok && result.initialDataReady,
+        snapshotAvailable: result.ok,
       ),
-      initialDataReady: result.initialDataReady,
     );
   }
 

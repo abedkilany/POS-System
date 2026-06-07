@@ -1591,7 +1591,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
             identity.copyWith(
               deviceRole: DeviceRole.host,
               syncMode: _cloudEnabled ? SyncMode.cloudConnected : (_lanEnabledForHost ? SyncMode.lanOnly : SyncMode.localOnly),
-              activeSyncTransport: _cloudEnabled ? 'cloud' : (_lanEnabledForHost ? 'lan' : 'local'),
             ),
             source: 'sync settings save',
           );
@@ -2347,18 +2346,10 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     final color = Theme.of(context).colorScheme;
     final identity = widget.store.appIdentity;
     final isHost = _deviceRole == DeviceRole.host;
-    final lan = LanSyncSettings.load();
-    final cloud = CloudSyncSettings.load();
-    final lanActive = isHost
-        ? (_lanEnabledForHost && lan.setupComplete && lan.isHost)
-        : (identity.syncMode == SyncMode.lanOnly && identity.activeSyncTransportNormalized == 'lan' && lan.setupComplete && lan.isClient);
-    final cloudActive = isHost
-        ? (_cloudEnabled && identity.isCloudEnabled && cloud.enabled && cloud.isConfigured)
-        : (identity.syncMode == SyncMode.cloudConnected && identity.activeSyncTransportNormalized == 'cloud' && cloud.enabled && cloud.isConfigured);
-    final syncActive = lanActive || cloudActive;
-    final visiblePendingCount = syncActive ? widget.store.pendingSyncCount : 0;
+    final lanActive = isHost ? _lanEnabledForHost : identity.syncMode == SyncMode.lanOnly;
+    final cloudActive = isHost ? _cloudEnabled : identity.syncMode == SyncMode.cloudConnected;
     final hostActionLabel = tr.text('sync_now');
-    final allGood = visiblePendingCount == 0 && (syncActive || !isHost);
+    final allGood = widget.store.pendingSyncCount == 0 && (lanActive || cloudActive || !isHost);
 
     return Card(
       elevation: 0,
@@ -2491,7 +2482,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
               icon: const Icon(Icons.network_check_outlined),
               label: Text(tr.text('test_connection')),
             ),
-            if ((lanActive || cloudActive) && widget.store.pendingSyncCount > 0)
+            if (widget.store.pendingSyncCount > 0)
               OutlinedButton.icon(
                 onPressed: _busy ? null : _clearInvalidPendingChanges,
                 icon: const Icon(Icons.cleaning_services_outlined),
@@ -2555,8 +2546,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   Widget _syncOverviewCard(BuildContext context, {required bool allGood, required bool isHost, required bool lanActive, required bool cloudActive}) {
     final tr = AppLocalizations.of(context);
     final color = Theme.of(context).colorScheme;
-    final syncActive = lanActive || cloudActive;
-    final visiblePendingCount = syncActive ? widget.store.pendingSyncCount : 0;
     final accent = allGood ? Colors.green : color.primary;
     return Container(
       width: double.infinity,
@@ -2597,14 +2586,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
               _compactStatusChip(context, Icons.dns_outlined, isHost ? tr.text('host_device') : tr.text('client_device'), color.primary),
               _compactStatusChip(context, Icons.lan_outlined, '${tr.text('lan')}: ${lanActive ? tr.text('connection_state_active') : tr.text('off')}', lanActive ? Colors.green : color.onSurfaceVariant),
               _compactStatusChip(context, Icons.cloud_outlined, '${tr.text('cloud')}: ${cloudActive ? tr.text('connection_state_active') : tr.text('off')}', cloudActive ? Colors.green : color.onSurfaceVariant),
-              _compactStatusChip(
-                context,
-                Icons.storage_outlined,
-                syncActive
-                    ? '${tr.text('pending_changes')}: $visiblePendingCount'
-                    : '${tr.text('pending_changes')}: 0',
-                visiblePendingCount == 0 ? Colors.green : color.error,
-              ),
+              _compactStatusChip(context, Icons.storage_outlined, '${tr.text('pending_changes')}: ${widget.store.pendingSyncCount}', widget.store.pendingSyncCount == 0 ? Colors.green : color.error),
             ],
           );
           if (compact) {
@@ -2671,9 +2653,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     _cloudPairingCodeController.clear();
     _clearExpectedPairingTarget();
     var dialogMode = mode;
-    var dialogBusy = false;
-    var dialogStatus = '';
-    var cloudPairedAwaitingInitialData = false;
     final saved = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
@@ -2725,27 +2704,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                         ),
                       ),
                       const SizedBox(height: 16),
-                      if (dialogStatus.trim().isNotEmpty) ...[
-                        Card.outlined(
-                          margin: EdgeInsets.zero,
-                          child: Padding(
-                            padding: const EdgeInsets.all(12),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Icon(
-                                  cloudPairedAwaitingInitialData ? Icons.info_outline : Icons.sync_problem_outlined,
-                                  size: 20,
-                                  color: Theme.of(context).colorScheme.primary,
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(child: Text(dialogStatus, style: Theme.of(context).textTheme.bodySmall)),
-                              ],
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                      ],
                       if (isLan) ...[
                         TextField(controller: _lanHostController, decoration: InputDecoration(labelText: tr.text('host_ip_address'), border: const OutlineInputBorder())),
                         const SizedBox(height: 12),
@@ -2762,107 +2720,49 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                 ),
               ),
               actions: [
-                TextButton(onPressed: dialogBusy ? null : () => Navigator.of(dialogContext).pop(false), child: Text(tr.text('cancel'))),
-                if (cloudPairedAwaitingInitialData)
-                  OutlinedButton.icon(
-                    onPressed: dialogBusy
-                        ? null
-                        : () async {
-                            setDialogState(() {
-                              dialogBusy = true;
-                              dialogStatus = 'Retrying initial Store data download...';
-                            });
-                            try {
-                              final retry = await CloudSyncService(widget.store).rebuildFromCloudHostSnapshot(
-                                CloudSyncSettings.load().copyWith(enabled: true, clearLastPullCursor: true),
-                              );
-                              if (retry.ok && retry.restoredSnapshot) {
-                                await CloudProvisioningStatus.markComplete(message: 'Initial Store data downloaded.');
-                                if (dialogContext.mounted) Navigator.of(dialogContext).pop(true);
-                                return;
-                              }
-                              setDialogState(() {
-                                dialogStatus = retry.message;
-                              });
-                            } catch (error) {
-                              setDialogState(() {
-                                dialogStatus = 'Initial Store data download failed: $error';
-                              });
-                            } finally {
-                              if (dialogContext.mounted) {
-                                setDialogState(() => dialogBusy = false);
-                              }
-                            }
-                          },
-                    icon: const Icon(Icons.download_outlined),
-                    label: const Text('Retry Download Store Data'),
-                  ),
+                TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: Text(tr.text('cancel'))),
                 FilledButton(
-                  onPressed: dialogBusy
-                      ? null
-                      : () async {
-                          setDialogState(() {
-                            dialogBusy = true;
-                            dialogStatus = '';
-                            cloudPairedAwaitingInitialData = false;
-                          });
-                          try {
-                            if (isLan) {
-                              final host = _lanHostController.text.trim();
-                              final token = _lanTokenController.text.trim();
-                              if (host.isEmpty || token.isEmpty) return;
-                              if (widget.store.appIdentity.isClient && widget.store.appIdentity.hostDeviceId.trim().isNotEmpty) {
-                                _validateExpectedPairingTarget(widget.store.appIdentity);
-                              }
-                              await LanSyncSettings.load().copyWith(
-                                host: host,
-                                port: _lanPort,
-                                secret: token,
-                                mode: LanSyncDeviceMode.client,
-                                setupComplete: true,
-                                hostModeEnabled: false,
-                                autoSyncEnabled: widget.store.appIdentity.activeSyncTransportNormalized == 'lan',
-                              ).save();
-                            } else {
-                              final apiUrl = _cloudApiController.text.trim();
-                              final code = _cloudPairingCodeController.text.trim();
-                              if (apiUrl.isEmpty || code.isEmpty) return;
-                              final previousIdentity = widget.store.appIdentity;
-                              final previousActive = previousIdentity.activeSyncTransportNormalized;
-                              final settings = CloudSyncSettings.load().copyWith(
-                                enabled: true,
-                                apiBaseUrl: CloudSyncSettings.normalizeApiBaseUrl(apiUrl, fallback: kIsWeb ? Uri.base.origin : ''),
-                                autoSyncEnabled: previousActive == 'cloud',
-                              );
-                              await settings.save();
-                              final result = await CloudSyncService(widget.store).claimPairingCode(settings, code);
-                              if (!result.ok) throw Exception(result.message);
-                              final claimedIdentity = result.identity ?? widget.store.appIdentity;
-                              _validateExpectedPairingTarget(claimedIdentity);
-                              _validateAgainstExistingClientIdentity(previousIdentity, claimedIdentity);
-                              if (previousActive == 'lan') {
-                                await widget.store.setActiveSyncTransport('lan');
-                              }
-                              if (!result.initialDataReady) {
-                                setDialogState(() {
-                                  cloudPairedAwaitingInitialData = true;
-                                  dialogStatus = result.message;
-                                });
-                                return;
-                              }
-                            }
-                            if (dialogContext.mounted) Navigator.of(dialogContext).pop(true);
-                          } catch (error) {
-                            setDialogState(() {
-                              dialogStatus = _simpleSyncError(error, fallback: error.toString());
-                            });
-                          } finally {
-                            if (dialogContext.mounted) {
-                              setDialogState(() => dialogBusy = false);
-                            }
-                          }
-                        },
-                  child: dialogBusy ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : Text(tr.text('save')),
+                  onPressed: () async {
+                    if (isLan) {
+                      final host = _lanHostController.text.trim();
+                      final token = _lanTokenController.text.trim();
+                      if (host.isEmpty || token.isEmpty) return;
+                      if (widget.store.appIdentity.isClient && widget.store.appIdentity.hostDeviceId.trim().isNotEmpty) {
+                        _validateExpectedPairingTarget(widget.store.appIdentity);
+                      }
+                      await LanSyncSettings.load().copyWith(
+                        host: host,
+                        port: _lanPort,
+                        secret: token,
+                        mode: LanSyncDeviceMode.client,
+                        setupComplete: true,
+                        hostModeEnabled: false,
+                        autoSyncEnabled: widget.store.appIdentity.activeSyncTransportNormalized == 'lan',
+                      ).save();
+                    } else {
+                      final apiUrl = _cloudApiController.text.trim();
+                      final code = _cloudPairingCodeController.text.trim();
+                      if (apiUrl.isEmpty || code.isEmpty) return;
+                      final previousIdentity = widget.store.appIdentity;
+                      final previousActive = previousIdentity.activeSyncTransportNormalized;
+                      final settings = CloudSyncSettings.load().copyWith(
+                        enabled: true,
+                        apiBaseUrl: CloudSyncSettings.normalizeApiBaseUrl(apiUrl, fallback: kIsWeb ? Uri.base.origin : ''),
+                        autoSyncEnabled: previousActive == 'cloud',
+                      );
+                      await settings.save();
+                      final result = await CloudSyncService(widget.store).claimPairingCode(settings, code);
+                      if (!result.ok) throw Exception(result.message);
+                      final claimedIdentity = result.identity ?? widget.store.appIdentity;
+                      _validateExpectedPairingTarget(claimedIdentity);
+                      _validateAgainstExistingClientIdentity(previousIdentity, claimedIdentity);
+                      if (previousActive == 'lan') {
+                        await widget.store.setActiveSyncTransport('lan');
+                      }
+                    }
+                    if (dialogContext.mounted) Navigator.of(dialogContext).pop(true);
+                  },
+                  child: Text(tr.text('save')),
                 ),
               ],
             );
@@ -4695,23 +4595,7 @@ class _SystemStatusPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final tr = AppLocalizations.of(context);
     final identity = store.appIdentity;
-    final lanSettings = LanSyncSettings.load();
-    final cloudSettings = CloudSyncSettings.load();
-
-    final lanActive = identity.isHost
-        ? lanSettings.setupComplete && lanSettings.isHost && lanSettings.hostModeEnabled
-        : identity.isClient &&
-            identity.activeSyncTransportNormalized == 'lan' &&
-            lanSettings.setupComplete &&
-            lanSettings.isClient &&
-            lanSettings.autoSyncEnabled;
-    final cloudActive = identity.isCloudEnabled && cloudSettings.enabled && cloudSettings.isConfigured;
-    final syncActive = lanActive || cloudActive;
-
-    String stateLabel(bool active) => tr.text(active ? 'connection_state_active' : 'connection_state_disabled');
-
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -4725,18 +4609,15 @@ class _SystemStatusPanel extends StatelessWidget {
           Row(children: [
             Icon(Icons.verified_user_outlined, color: Theme.of(context).colorScheme.primary),
             const SizedBox(width: 8),
-            Text(tr.text('system_status'), style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+            Text(AppLocalizations.of(context).text('system_status'), style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
           ]),
           const SizedBox(height: 12),
-          _StatusBullet(label: tr.text(identity.isHost ? 'host_device' : 'client_device')),
-          _StatusBullet(label: '${tr.text('connection_lan')}: ${stateLabel(lanActive)}', active: lanActive),
-          _StatusBullet(label: '${tr.text('connection_cloud')}: ${stateLabel(cloudActive)}', active: cloudActive),
-          _StatusBullet(label: '${tr.text('connection_sync_health')}: ${stateLabel(syncActive)}', active: syncActive),
+          _StatusBullet(label: AppLocalizations.of(context).text(identity.isHost ? 'host_device' : 'client_device')),
+          _StatusBullet(label: '${AppLocalizations.of(context).text('connection_lan')}: ${AppLocalizations.of(context).text('connection_state_active')}'),
+          _StatusBullet(label: '${AppLocalizations.of(context).text('connection_cloud')}: ${AppLocalizations.of(context).text(identity.isCloudEnabled ? 'connection_state_active' : 'connection_state_disabled')}'),
+          _StatusBullet(label: '${AppLocalizations.of(context).text('connection_sync_health')}: ${AppLocalizations.of(context).text('connection_state_active')}'),
           const Divider(height: 22),
-          Text(
-            syncActive ? tr.text('all_systems_are_running_smoothly') : '${tr.text('sync')}: ${tr.text('connection_state_disabled')}',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
-          ),
+          Text(AppLocalizations.of(context).text('all_systems_are_running_smoothly'), style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
         ],
       ),
     );
@@ -4744,17 +4625,15 @@ class _SystemStatusPanel extends StatelessWidget {
 }
 
 class _StatusBullet extends StatelessWidget {
-  const _StatusBullet({required this.label, this.active = true});
+  const _StatusBullet({required this.label});
   final String label;
-  final bool active;
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Row(children: [
-        Icon(Icons.circle, size: 9, color: active ? Colors.green.shade600 : colorScheme.onSurfaceVariant.withValues(alpha: 0.55)),
+        Icon(Icons.circle, size: 9, color: Colors.green.shade600),
         const SizedBox(width: 10),
         Expanded(child: Text(label, style: Theme.of(context).textTheme.bodyMedium)),
       ]),

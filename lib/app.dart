@@ -12,7 +12,6 @@ import 'core/sync_unified/sync_device_state.dart';
 import 'core/services/cloud_sync_service.dart';
 import 'core/services/lan_sync_service.dart';
 import 'data/app_store.dart';
-import 'models/app_identity.dart';
 import 'models/user_role.dart';
 import 'features/accounting/accounting_page.dart';
 import 'features/customers/customers_page.dart';
@@ -413,74 +412,31 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     return _t('connection_role_local_desc');
   }
 
-  bool _lanSyncActuallyEnabled() {
-    final identity = widget.store.appIdentity;
-    final settings = LanSyncSettings.load();
-    if (identity.isHost) {
-      return identity.activeSyncTransportNormalized == 'lan' &&
-          identity.syncMode == SyncMode.lanOnly &&
-          settings.setupComplete &&
-          settings.isHost &&
-          settings.hostModeEnabled &&
-          settings.autoSyncEnabled;
-    }
-    return identity.isClient &&
-        identity.activeSyncTransportNormalized == 'lan' &&
-        identity.syncMode == SyncMode.lanOnly &&
-        settings.setupComplete &&
-        settings.isClient &&
-        settings.autoSyncEnabled;
-  }
-
-  bool _cloudSyncActuallyEnabled() {
-    final identity = widget.store.appIdentity;
-    final settings = CloudSyncSettings.load();
-    final hasSavedCloudSettings = settings.apiBaseUrl.trim().isNotEmpty &&
-        (settings.hasDeploymentToken || settings.hasDeviceCredentials);
-    if (identity.isHost) {
-      return identity.activeSyncTransportNormalized == 'cloud' &&
-          identity.syncMode == SyncMode.cloudConnected &&
-          settings.enabled &&
-          hasSavedCloudSettings;
-    }
-    return identity.isClient &&
-        identity.activeSyncTransportNormalized == 'cloud' &&
-        identity.syncMode == SyncMode.cloudConnected &&
-        settings.enabled &&
-        hasSavedCloudSettings;
-  }
-
-  bool _syncActuallyEnabled() => _lanSyncActuallyEnabled() || _cloudSyncActuallyEnabled();
-
-  int _visiblePendingChanges() {
-    if (!_syncActuallyEnabled()) return 0;
-    final identity = widget.store.appIdentity;
-    return identity.isClient ? widget.store.activeClientPendingSyncCount : widget.store.pendingSyncCount;
-  }
-
   String _activeTransportLabel() {
     final identity = widget.store.appIdentity;
     if (identity.isHost) {
-      final lan = _lanSyncActuallyEnabled() ? _t('connection_lan') : '';
-      final cloud = _cloudSyncActuallyEnabled() ? _t('connection_cloud') : '';
+      final lan = UnifiedSyncFactory.isLanSetupComplete ? _t('connection_lan') : '';
+      final cloud = UnifiedSyncFactory.cloudCanCheck(widget.store) ? _t('connection_cloud') : '';
       final parts = [lan, cloud].where((part) => part.trim().isNotEmpty).toList(growable: false);
       if (parts.isEmpty) return _t('local');
       return parts.join(' + ');
     }
-    if (_lanSyncActuallyEnabled()) return _t('connection_lan');
-    if (_cloudSyncActuallyEnabled()) return _t('connection_cloud');
+    final active = identity.activeSyncTransportNormalized;
+    if (active == 'lan') return _t('connection_lan');
+    if (active == 'cloud') return _t('connection_cloud');
     return _t('local');
   }
 
   bool _isActiveTransport(_TransportSnapshot snapshot) {
     final identity = widget.store.appIdentity;
     if (identity.isHost) {
-      if (snapshot.label == _t('connection_lan')) return _lanSyncActuallyEnabled();
-      if (snapshot.label == _t('connection_cloud')) return _cloudSyncActuallyEnabled();
+      if (snapshot.label == _t('connection_lan')) return UnifiedSyncFactory.isLanSetupComplete;
+      if (snapshot.label == _t('connection_cloud')) return UnifiedSyncFactory.cloudCanCheck(widget.store);
       return true;
     }
-    if (snapshot.label == _t('connection_lan')) return _lanSyncActuallyEnabled();
-    if (snapshot.label == _t('connection_cloud')) return _cloudSyncActuallyEnabled();
+    final active = identity.activeSyncTransportNormalized;
+    if (snapshot.label == _t('connection_lan')) return active == 'lan';
+    if (snapshot.label == _t('connection_cloud')) return active == 'cloud';
     return true;
   }
 
@@ -496,7 +452,12 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     final identity = widget.store.appIdentity;
     final settings = LanSyncSettings.load();
     final hasSavedLanSettings = settings.host.trim().isNotEmpty || settings.secret.trim().isNotEmpty;
-    final lanEnabledForRole = _lanSyncActuallyEnabled();
+    final lanEnabledForRole = identity.isHost
+        ? settings.setupComplete && settings.isHost
+        : identity.isClient &&
+            identity.activeSyncTransportNormalized == 'lan' &&
+            settings.setupComplete &&
+            settings.isClient;
 
     if (!lanEnabledForRole) {
       return _TransportSnapshot(
@@ -546,7 +507,9 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     final settings = CloudSyncSettings.load();
     final provisioning = identity.isClient && identity.activeSyncTransportNormalized == 'cloud' && CloudProvisioningStatus.isPending;
     final hasSavedCloudSettings = settings.apiBaseUrl.trim().isNotEmpty && (settings.hasDeploymentToken || settings.hasDeviceCredentials);
-    final cloudEnabledForRole = _cloudSyncActuallyEnabled();
+    final cloudEnabledForRole = identity.isHost
+        ? identity.isCloudEnabled && hasSavedCloudSettings
+        : identity.isClient && identity.activeSyncTransportNormalized == 'cloud' && hasSavedCloudSettings;
 
     if (!cloudEnabledForRole) {
       return _TransportSnapshot(
@@ -614,7 +577,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
 
   _TransportSnapshot _readSyncHealthStatus() {
     final identity = widget.store.appIdentity;
-    final pending = _visiblePendingChanges();
+    final pending = identity.isClient ? widget.store.activeClientPendingSyncCount : widget.store.pendingSyncCount;
     final lastSuccessfulSync = SyncDeviceStateStore.lastSuccessfulSyncAt(identity);
 
     if (identity.isClient && identity.activeSyncTransportNormalized == 'cloud' && CloudProvisioningStatus.isPending) {
@@ -635,8 +598,15 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
       );
     }
 
-    final lanEnabled = _lanSyncActuallyEnabled();
-    final cloudEnabled = _cloudSyncActuallyEnabled();
+    final lanSettings = LanSyncSettings.load();
+    final cloudSettings = CloudSyncSettings.load();
+    final hasSavedCloudSettings = cloudSettings.apiBaseUrl.trim().isNotEmpty && (cloudSettings.hasDeploymentToken || cloudSettings.hasDeviceCredentials);
+    final lanEnabled = identity.isHost
+        ? lanSettings.setupComplete && lanSettings.isHost
+        : identity.isClient && identity.activeSyncTransportNormalized == 'lan' && lanSettings.setupComplete && lanSettings.isClient;
+    final cloudEnabled = identity.isHost
+        ? identity.isCloudEnabled && hasSavedCloudSettings
+        : identity.isClient && identity.activeSyncTransportNormalized == 'cloud' && hasSavedCloudSettings;
 
     if (!lanEnabled && !cloudEnabled) {
       return _TransportSnapshot(
@@ -682,7 +652,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
       cloud: _TransportSnapshot(label: _t('connection_cloud'), state: _TransportState.checking, message: _t('connection_cloud_checking')),
       syncHealth: _TransportSnapshot(label: _t('connection_sync_health'), state: _TransportState.checking, message: _t('connection_sync_checking')),
       activeTransportLabel: _activeTransportLabel(),
-      pendingChanges: _visiblePendingChanges(),
+      pendingChanges: widget.store.appIdentity.isClient ? widget.store.activeClientPendingSyncCount : widget.store.pendingSyncCount,
     );
     if (mounted) setState(() => _snapshot = checking);
 
@@ -698,7 +668,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
         cloud: cloud,
         syncHealth: syncHealth,
         activeTransportLabel: _activeTransportLabel(),
-        pendingChanges: _visiblePendingChanges(),
+        pendingChanges: widget.store.appIdentity.isClient ? widget.store.activeClientPendingSyncCount : widget.store.pendingSyncCount,
       );
     });
   }
@@ -757,7 +727,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     final identity = widget.store.appIdentity;
     if (identity.isHost) {
       final candidates = <_TransportSnapshot>[];
-      if (UnifiedSyncFactory.isLanHostActive(widget.store)) candidates.add(_snapshot.lan);
+      if (UnifiedSyncFactory.isLanSetupComplete) candidates.add(_snapshot.lan);
       if (UnifiedSyncFactory.cloudCanCheck(widget.store)) candidates.add(_snapshot.cloud);
       if (candidates.isEmpty) return _snapshot.lan;
       if (candidates.any((item) => item.state == _TransportState.checking)) {
