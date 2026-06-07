@@ -136,27 +136,9 @@ class _LoginGatePageState extends State<LoginGatePage> {
     }
   }
 
-  // Returns true when the device has already completed pairing (has a valid
-  // deviceToken) but the initial Host snapshot has not yet been applied to
-  // local storage (users list is still empty). This state must be shown as a
-  // "waiting for store data" screen, NOT as the first-time-setup login screen.
-  bool get _isPairedButMissingStoreData {
-    final identity = widget.store.appIdentity;
-    return identity.isClient &&
-        identity.deviceToken.trim().isNotEmpty &&
-        widget.store.needsInitialAdminSetup;
-  }
-
   @override
   Widget build(BuildContext context) {
     if (widget.store.activeUser != null) return widget.child;
-
-    // A paired-but-unprovisioned Client must never land on the first-time
-    // admin-setup screen or see the "Connect to Store" button — the device is
-    // already paired. Show a dedicated waiting/retry screen instead.
-    if (_isPairedButMissingStoreData) {
-      return _PairedWaitingForDataScreen(store: widget.store);
-    }
 
     if (_showRegister && !kIsWeb && widget.store.needsInitialAdminSetup) {
       return _InitialAdminSetupCard(
@@ -329,13 +311,9 @@ class _LoginGatePageState extends State<LoginGatePage> {
                                               builder: (_) => SyncSetupPage(
                                                 store: widget.store,
                                                 onDone: () async {
-                                                  // SyncSetupPage calls onDone when pairing is
-                                                  // complete. We do NOT pop here because
-                                                  // _finishSuccessfulConnection in SyncSetupPage
-                                                  // has already removed itself from the stack via
-                                                  // this callback. A setState() after the push()
-                                                  // call below is all that is needed to re-evaluate
-                                                  // the login gate condition.
+                                                  if (Navigator.of(context).canPop()) {
+                                                    Navigator.of(context).pop();
+                                                  }
                                                 },
                                               ),
                                             ),
@@ -507,151 +485,6 @@ class _InitialAdminSetupCardState extends State<_InitialAdminSetupCard> {
                             ),
                           ),
                         ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Shown when this Client device has already paired (has a deviceToken) but
-/// the Host snapshot has not yet arrived. The user can retry the download
-/// without losing their pairing or being forced to re-enter the pairing code.
-class _PairedWaitingForDataScreen extends StatefulWidget {
-  const _PairedWaitingForDataScreen({required this.store});
-  final AppStore store;
-
-  @override
-  State<_PairedWaitingForDataScreen> createState() =>
-      _PairedWaitingForDataScreenState();
-}
-
-class _PairedWaitingForDataScreenState
-    extends State<_PairedWaitingForDataScreen> {
-  bool _retrying = false;
-  String _statusMessage = '';
-  bool _statusIsError = false;
-
-  Future<void> _retryDownload() async {
-    if (_retrying) return;
-    setState(() {
-      _retrying = true;
-      _statusMessage = '';
-      _statusIsError = false;
-    });
-    try {
-      final identity = widget.store.appIdentity;
-      final transport = identity.activeSyncTransportNormalized;
-      final result = transport == 'cloud'
-          ? await UnifiedSyncFactory.cloudEngine(widget.store).syncNow()
-          : await UnifiedSyncFactory.lanEngine(widget.store).syncNow();
-      if (!mounted) return;
-      if (result.ok && !widget.store.needsInitialAdminSetup) {
-        // Data arrived — rebuild triggers LoginGatePage to show login form.
-        setState(() {});
-      } else {
-        setState(() {
-          _statusMessage = result.message.trim().isNotEmpty
-              ? result.message
-              : AppLocalizations.of(context)
-                  .text('device_connected_waiting_store_data');
-          _statusIsError = !result.ok;
-        });
-      }
-    } catch (error) {
-      if (mounted) {
-        setState(() {
-          _statusMessage = error.toString();
-          _statusIsError = true;
-        });
-      }
-    } finally {
-      if (mounted) setState(() => _retrying = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final tr = AppLocalizations.of(context);
-    final color = Theme.of(context).colorScheme;
-    return Scaffold(
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: VentioResponsive.pageInsets(context),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxWidth: VentioResponsive.clampToScreen(context, 460,
-                    min: 280, horizontalPadding: 32),
-              ),
-              child: Card(
-                margin: EdgeInsets.zero,
-                child: Padding(
-                  padding: VentioResponsive.pageInsets(context),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      CircleAvatar(
-                        radius: 34,
-                        backgroundColor: color.secondaryContainer,
-                        child: Icon(Icons.cloud_download_outlined,
-                            size: 34, color: color.onSecondaryContainer),
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        tr.text('device_connected_waiting_store_data'),
-                        style: Theme.of(context).textTheme.titleLarge,
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        tr.text('pairing_state_refresh_failed'),
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      ),
-                      if (_statusMessage.isNotEmpty) ...[
-                        const SizedBox(height: 12),
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: _statusIsError
-                                ? color.errorContainer
-                                : color.surfaceContainerHighest,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text(
-                            _statusMessage,
-                            style: TextStyle(
-                              color: _statusIsError
-                                  ? color.onErrorContainer
-                                  : color.onSurfaceVariant,
-                            ),
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 20),
-                      SizedBox(
-                        width: double.infinity,
-                        child: FilledButton.icon(
-                          onPressed: _retrying ? null : _retryDownload,
-                          icon: _retrying
-                              ? const SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 2),
-                                )
-                              : const Icon(Icons.refresh),
-                          label: Text(tr.text('check_resume_status')),
-                        ),
                       ),
                     ],
                   ),
