@@ -3,6 +3,7 @@ import 'dart:convert';
 import '../../core/services/local_database_service.dart';
 import '../../core/services/maintenance_storage_info.dart';
 import '../../core/storage/sqlite/sqlite_migration_manager.dart';
+import '../../core/storage/sqlite/sync_sqlite_store.dart';
 import '../../data/app_store.dart';
 import 'maintenance_models.dart';
 
@@ -14,7 +15,7 @@ class MaintenanceService {
   Future<MaintenanceSummary> runHealthCheck({bool deep = false}) async {
     final storage = await getMaintenanceStorageInfo();
     final sqliteCounts = await _sqliteTableCounts();
-    final migrationMeta = await _readMigrationMeta();
+    final migrationMeta = await _readMigrationMeta(repairIfPossible: true);
     final counts = <String, int>{
       'products': sqliteCounts['products'] ?? store.products.length,
       'customers': sqliteCounts['customers'] ?? store.customers.length,
@@ -34,7 +35,7 @@ class MaintenanceService {
 
     final issues = <MaintenanceIssue>[
       _databaseLocationIssue(storage, migrationMeta),
-      _migrationIssue(migrationMeta),
+      _migrationIssue(migrationMeta, storage),
       _localKeysIssue(counts['localDatabaseKeys'] ?? 0),
       if (deep) ...[
         ..._duplicateIssues(),
@@ -116,22 +117,28 @@ class MaintenanceService {
     );
   }
 
-  MaintenanceIssue _migrationIssue(Map<String, String> migrationMeta) {
+  MaintenanceIssue _migrationIssue(Map<String, String> migrationMeta, MaintenanceStorageInfo storage) {
     final syncMigrated = migrationMeta['sqlite_phase2_sync_migrated'] == 'true';
     final businessMigrated = migrationMeta['sqlite_phase3_business_migrated'] == 'true';
     final typedTablesMigrated = migrationMeta['sqlite_phase3_typed_tables_migrated'] == 'true';
+    final validationPassed = migrationMeta['sqlite_phase3_validation_passed'] == 'true';
+    final sqliteAuthoritative = LocalDatabaseService.isSqliteAuthoritative && storage.exists;
     final ok = syncMigrated && businessMigrated && typedTablesMigrated;
+    final isFalseWarningOnly = !ok && sqliteAuthoritative && validationPassed && typedTablesMigrated;
     return MaintenanceIssue(
       id: 'sqlite_migration_status',
       title: 'SQLite migration status',
-      severity: ok ? MaintenanceSeverity.ok : MaintenanceSeverity.warning,
-      message: ok
+      severity: ok || isFalseWarningOnly ? MaintenanceSeverity.ok : MaintenanceSeverity.warning,
+      message: ok || isFalseWarningOnly
           ? 'SQLite migration is complete: sync data, business data, and typed entity tables are active.'
           : 'SQLite migration metadata is incomplete. Keep Hive available until migration finishes.',
       details: {
         'sqlite_phase2_sync_migrated': syncMigrated,
         'sqlite_phase3_business_migrated': businessMigrated,
         'sqlite_phase3_typed_tables_migrated': typedTablesMigrated,
+        'sqlite_phase3_validation_passed': validationPassed,
+        'sqliteAuthoritative': sqliteAuthoritative,
+        'falseWarningRepaired': isFalseWarningOnly,
         'migrationMeta': migrationMeta,
       },
     );
@@ -298,15 +305,36 @@ class MaintenanceService {
     return row?.read<int>('row_count') ?? 0;
   }
 
-  Future<Map<String, String>> _readMigrationMeta() async {
+  Future<Map<String, String>> _readMigrationMeta({bool repairIfPossible = false}) async {
     final db = SqliteMigrationManager.database;
     if (db == null) return const <String, String>{};
-    final rows = await db.customSelect(
+    var rows = await db.customSelect(
       'SELECT key, value FROM migration_meta'
     ).get();
-    return <String, String>{
+    var meta = <String, String>{
       for (final row in rows) row.read<String>('key'): row.read<String>('value'),
     };
+
+    // Some builds correctly moved to authoritative SQLite but did not write the
+    // phase-2 sync metadata on the fresh/validated SQLite startup path. Repair
+    // that missing flag only after phase-3 typed tables are validated, so a real
+    // failed Hive → SQLite migration still stays visible as a warning.
+    if (repairIfPossible &&
+        LocalDatabaseService.isSqliteAuthoritative &&
+        meta['sqlite_phase3_validation_passed'] == 'true' &&
+        meta['sqlite_phase3_business_migrated'] == 'true' &&
+        meta['sqlite_phase3_typed_tables_migrated'] == 'true' &&
+        meta['sqlite_phase2_sync_migrated'] != 'true') {
+      await SyncSqliteStore.markSyncMigrationCompleted(db);
+      rows = await db.customSelect(
+        'SELECT key, value FROM migration_meta'
+      ).get();
+      meta = <String, String>{
+        for (final row in rows) row.read<String>('key'): row.read<String>('value'),
+      };
+    }
+
+    return meta;
   }
 
   int _countDuplicates(Iterable<String> values) {

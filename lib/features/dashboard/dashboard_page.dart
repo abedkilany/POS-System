@@ -20,6 +20,8 @@ class DashboardPage extends StatelessWidget {
       return sale.date.year == now.year && sale.date.month == now.month && sale.date.day == now.day;
     }).toList();
     final todayTotal = todaySales.fold<double>(0, (sum, sale) => sum + sale.total);
+    final now = DateTime.now();
+    final autoCorrectionsToday = store.stockMovements.where((movement) => movement.type == 'auto_correction' && movement.date.year == now.year && movement.date.month == now.month && movement.date.day == now.day).length;
 
     return ListView(
       padding: VentioResponsive.pageInsets(context),
@@ -34,6 +36,7 @@ class DashboardPage extends StatelessWidget {
             SummaryCard(title: tr.text('net_profit'), value: formatUsdReferenceAmount(store.estimateProfit(), store.storeProfile), icon: Icons.trending_up_outlined),
             SummaryCard(title: tr.text('product_count'), value: '${store.products.length}', icon: Icons.inventory_2_outlined),
             SummaryCard(title: tr.text('low_stock_alerts'), value: '${store.lowStockCount}', icon: Icons.warning_amber_rounded),
+            SummaryCard(title: tr.text('auto_inventory_corrections_today'), value: '$autoCorrectionsToday', icon: Icons.inventory_outlined),
           ],
         ),
         const SizedBox(height: 20),

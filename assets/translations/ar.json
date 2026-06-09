@@ -1062,5 +1062,8 @@
   "transfer_stock": "نقل المخزون",
   "from_warehouse": "من مستودع",
   "to_warehouse": "إلى مستودع",
-  "available": "المتاح"
+  "available": "المتاح",
+  "auto_inventory_corrections": "تصحيحات المخزون التلقائية",
+  "auto_inventory_corrections_today": "تصحيحات تلقائية اليوم",
+  "no_auto_inventory_corrections": "لا توجد تصحيحات مخزون تلقائية"
 }

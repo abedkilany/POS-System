@@ -56,6 +56,7 @@ class _ProductsPageState extends State<ProductsPage> {
     final tr = AppLocalizations.of(context);
     final products = _filteredProducts(widget.store.products);
     final categories = <String>{'All', ...widget.store.products.map((p) => p.category).where((e) => e.trim().isNotEmpty)}.toList()..sort();
+    final productRows = products.map((product) => _ProductRowData.fromStore(product, widget.store, widget.store.storeProfile)).toList(growable: false);
 
     return Padding(
       padding: VentioResponsive.pageInsets(context),
@@ -117,19 +118,26 @@ class _ProductsPageState extends State<ProductsPage> {
           ),
           const SizedBox(height: 16),
           Expanded(
-            child: products.isEmpty
+            child: productRows.isEmpty
                 ? EmptyStateCard(icon: Icons.inventory_2_outlined, title: tr.text('no_products'), subtitle: tr.text('no_products_desc'))
-                : ListView.separated(
-                    itemCount: products.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 10),
-                    itemBuilder: (context, index) {
-                      final product = products[index];
-                      return _ProductTile(
-                        product: product,
-                        store: widget.store,
-                        storeProfile: widget.store.storeProfile,
-                        onEdit: widget.store.canManageProducts ? () => _openProductForm(context, product: product) : null,
-                        onDelete: widget.store.canDeleteOrCancel ? () => _deleteProduct(context, product) : null,
+                : LayoutBuilder(
+                    builder: (context, constraints) {
+                      final rowExtent = constraints.maxWidth < 620 ? 158.0 : 94.0;
+                      return ListView.builder(
+                        itemExtent: rowExtent,
+                        itemCount: productRows.length,
+                        itemBuilder: (context, index) {
+                          final row = productRows[index];
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: _ProductTile(
+                              row: row,
+                              compact: constraints.maxWidth < 620,
+                              onEdit: widget.store.canManageProducts ? () => _openProductForm(context, product: row.product) : null,
+                              onDelete: widget.store.canDeleteOrCancel ? () => _deleteProduct(context, row.product) : null,
+                            ),
+                          );
+                        },
                       );
                     },
                   ),
@@ -262,16 +270,87 @@ class _ProductsPageState extends State<ProductsPage> {
 }
 
 class _ProductTile extends StatelessWidget {
-  const _ProductTile({required this.product, required this.store, required this.storeProfile, this.onEdit, this.onDelete});
+  const _ProductTile({required this.row, required this.compact, this.onEdit, this.onDelete});
 
-  final Product product;
-  final AppStore store;
-  final StoreProfile storeProfile;
+  final _ProductRowData row;
+  final bool compact;
   final VoidCallback? onEdit;
   final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
+    final product = row.product;
+    return Card(
+      child: compact
+          ? Padding(
+              padding: VentioResponsive.cardInsets(context),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  CircleAvatar(child: Icon(product.isActive ? Icons.inventory_2_outlined : Icons.block_outlined)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(product.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)),
+                        if (row.subtitle.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(row.subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+                        ],
+                        const SizedBox(height: 8),
+                        Text(row.meta, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.labelLarge),
+                        if (row.purchaseMeta.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(row.purchaseMeta, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall),
+                        ],
+                        const Spacer(),
+                        Row(
+                          children: [
+                            IconButton(onPressed: onEdit, icon: const Icon(Icons.edit_outlined), tooltip: AppLocalizations.of(context).text('edit')),
+                            IconButton(onPressed: onDelete, icon: const Icon(Icons.delete_outline), tooltip: AppLocalizations.of(context).text('delete')),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            )
+          : ListTile(
+            leading: CircleAvatar(child: Icon(product.isActive ? Icons.inventory_2_outlined : Icons.block_outlined)),
+            title: Text(product.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)),
+            subtitle: Text([row.subtitle, row.purchaseMeta].where((item) => item.trim().isNotEmpty).join('\n'), maxLines: 2, overflow: TextOverflow.ellipsis),
+            trailing: Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
+                  child: Text(row.meta),
+                ),
+                IconButton(onPressed: onEdit, icon: const Icon(Icons.edit_outlined)),
+                IconButton(onPressed: onDelete, icon: const Icon(Icons.delete_outline)),
+              ],
+            ),
+          ),
+    );
+  }
+}
+
+class _ProductRowData {
+  const _ProductRowData({
+    required this.product,
+    required this.subtitle,
+    required this.meta,
+    required this.purchaseMeta,
+  });
+
+  final Product product;
+  final String subtitle;
+  final String meta;
+  final String purchaseMeta;
+
+  factory _ProductRowData.fromStore(Product product, AppStore store, StoreProfile storeProfile) {
     final subtitle = [product.code, product.barcode, product.category, product.brand].where((e) => e.trim().isNotEmpty).join(' • ');
     final lastPurchase = store.lastPurchasePriceForProduct(product.id);
     final avgPurchase = store.averagePurchaseCostForProduct(product.id);
@@ -284,67 +363,7 @@ class _ProductTile extends StatelessWidget {
       if (avgPurchase > 0) 'Avg cost ${formatUsdReferenceAmount(avgPurchase, storeProfile)}',
       if (supplierCount > 0) '$supplierCount suppliers',
     ].join(' • ');
-    return Card(
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          if (constraints.maxWidth < 620) {
-            return Padding(
-              padding: VentioResponsive.cardInsets(context),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  CircleAvatar(child: Icon(product.isActive ? Icons.inventory_2_outlined : Icons.block_outlined)),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(product.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)),
-                        if (subtitle.isNotEmpty) ...[
-                          const SizedBox(height: 4),
-                          Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis),
-                        ],
-                        const SizedBox(height: 8),
-                        Text(meta, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.labelLarge),
-                        if (purchaseMeta.isNotEmpty) ...[
-                          const SizedBox(height: 4),
-                          Text(purchaseMeta, maxLines: 2, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall),
-                        ],
-                        const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 4,
-                          children: [
-                            IconButton(onPressed: onEdit, icon: const Icon(Icons.edit_outlined), tooltip: AppLocalizations.of(context).text('edit')),
-                            IconButton(onPressed: onDelete, icon: const Icon(Icons.delete_outline), tooltip: AppLocalizations.of(context).text('delete')),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            );
-          }
-
-          return ListTile(
-            leading: CircleAvatar(child: Icon(product.isActive ? Icons.inventory_2_outlined : Icons.block_outlined)),
-            title: Text(product.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)),
-            subtitle: Text([subtitle, purchaseMeta].where((item) => item.trim().isNotEmpty).join('\n'), maxLines: 2, overflow: TextOverflow.ellipsis),
-            trailing: Wrap(
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
-                  child: Text(meta),
-                ),
-                IconButton(onPressed: onEdit, icon: const Icon(Icons.edit_outlined)),
-                IconButton(onPressed: onDelete, icon: const Icon(Icons.delete_outline)),
-              ],
-            ),
-          );
-        },
-      ),
-    );
+    return _ProductRowData(product: product, subtitle: subtitle, meta: meta, purchaseMeta: purchaseMeta);
   }
 }
 

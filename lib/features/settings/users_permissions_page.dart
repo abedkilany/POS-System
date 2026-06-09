@@ -156,6 +156,23 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
   }
 
   Future<void> _deleteRole(UserRole role) async {
+    final tr = AppLocalizations.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(tr.text('confirm_delete')),
+        content: Text('${tr.text('delete_confirm_message')} ${role.name}?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: Text(tr.text('cancel'))),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: FilledButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.error),
+            child: Text(tr.text('delete')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
     try {
       await widget.store.deleteRole(role.id);
       if (mounted) setState(() {});
@@ -275,6 +292,23 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
   }
 
   Future<void> _deleteUser(AppUser user) async {
+    final tr = AppLocalizations.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(tr.text('confirm_delete')),
+        content: Text('${tr.text('delete_confirm_message')} ${user.fullName} (${user.username})?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: Text(tr.text('cancel'))),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: FilledButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.error),
+            child: Text(tr.text('delete')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
     try {
       await widget.store.deleteUser(user.id);
       if (mounted) setState(() {});

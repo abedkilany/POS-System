@@ -125,6 +125,18 @@ class BusinessDataIntegrityResult {
   final int problemCount;
 }
 
+class _ProductPurchaseMetrics {
+  const _ProductPurchaseMetrics({
+    this.lastCost,
+    this.averageCost = 0,
+    this.supplierCount = 0,
+  });
+
+  final double? lastCost;
+  final double averageCost;
+  final int supplierCount;
+}
+
 class AppStore extends ChangeNotifier {
   static const String walkInCustomerId = 'walk_in';
   static const String walkInCustomerName = 'Walk-in Customer';
@@ -191,6 +203,11 @@ class AppStore extends ChangeNotifier {
   final Map<String, double> _accountBalanceCache = <String, double>{};
   final Map<String, List<AccountTransaction>> _accountTransactionsByAccountCache = <String, List<AccountTransaction>>{};
   bool _accountLedgerCacheDirty = true;
+  final Map<String, Map<String, double>> _warehouseStockByProductCache = <String, Map<String, double>>{};
+  bool _warehouseStockCacheDirty = true;
+  final Map<String, List<SupplierPurchasePrice>> _purchaseHistoryByProductCache = <String, List<SupplierPurchasePrice>>{};
+  final Map<String, _ProductPurchaseMetrics> _purchaseMetricsByProductCache = <String, _ProductPurchaseMetrics>{};
+  bool _purchaseInsightsCacheDirty = true;
   final List<SyncChange> _syncChanges = [];
   final List<SyncQueueItem> _syncQueue = [];
   final List<SyncChange> _sqliteDirtySyncChanges = [];
@@ -262,27 +279,54 @@ class AppStore extends ChangeNotifier {
     ));
   }
 
-  double stockForWarehouse(String productId, String warehouseId) {
-    final wid = warehouseId.trim().isEmpty ? Warehouse.defaultId : warehouseId.trim();
-    final result = warehouseStockForProduct(productId);
-    return result[wid] ?? 0;
+  void _invalidateDerivedDataCaches() {
+    _warehouseStockCacheDirty = true;
+    _purchaseInsightsCacheDirty = true;
   }
 
-  Map<String, double> warehouseStockForProduct(String productId) {
+  @override
+  void notifyListeners() {
+    _invalidateDerivedDataCaches();
+    super.notifyListeners();
+  }
+
+  void _ensureWarehouseStockCache() {
+    if (!_warehouseStockCacheDirty) return;
     _ensureDefaultWarehouse();
-    final result = <String, double>{for (final warehouse in warehouses) warehouse.id: 0};
-    for (final movement in _stockMovements.where((item) => item.productId == productId)) {
-      result[movement.warehouseId] = (result[movement.warehouseId] ?? 0) + movement.quantity;
+    final warehouseIds = _warehouses.where((item) => !item.isDeleted).map((item) => item.id).toList(growable: false);
+    _warehouseStockByProductCache.clear();
+    for (final product in _products.where((item) => !item.isDeleted)) {
+      _warehouseStockByProductCache[product.id] = <String, double>{for (final id in warehouseIds) id: 0};
     }
-    final product = _findProductById(productId);
-    if (product != null) {
+
+    for (final movement in _stockMovements) {
+      final productId = movement.productId.trim();
+      if (productId.isEmpty) continue;
+      final wid = movement.warehouseId.trim().isEmpty ? Warehouse.defaultId : movement.warehouseId.trim();
+      final result = _warehouseStockByProductCache.putIfAbsent(productId, () => <String, double>{for (final id in warehouseIds) id: 0});
+      result[wid] = (result[wid] ?? 0) + movement.quantity;
+    }
+
+    for (final product in _products.where((item) => !item.isDeleted)) {
+      final result = _warehouseStockByProductCache.putIfAbsent(product.id, () => <String, double>{for (final id in warehouseIds) id: 0});
       final assigned = result.values.fold<double>(0, (sum, value) => sum + value);
       final unassignedLegacyStock = product.stock - assigned;
       if (unassignedLegacyStock != 0) {
         result[Warehouse.defaultId] = (result[Warehouse.defaultId] ?? 0) + unassignedLegacyStock;
       }
     }
-    return result;
+    _warehouseStockCacheDirty = false;
+  }
+
+  double stockForWarehouse(String productId, String warehouseId) {
+    _ensureWarehouseStockCache();
+    final wid = warehouseId.trim().isEmpty ? Warehouse.defaultId : warehouseId.trim();
+    return _warehouseStockByProductCache[productId]?[wid] ?? 0;
+  }
+
+  Map<String, double> warehouseStockForProduct(String productId) {
+    _ensureWarehouseStockCache();
+    return Map.unmodifiable(_warehouseStockByProductCache[productId] ?? const <String, double>{});
   }
   List<AccountTransaction> get accountTransactions => List.unmodifiable(_accountTransactions.where((item) => !item.isDeleted).toList().reversed);
 
@@ -669,11 +713,16 @@ class AppStore extends ChangeNotifier {
   double get totalPurchasesAmount => purchases.where((item) => !item.isCancelled).fold<double>(0, (sum, purchase) => sum + purchase.subtotal);
   int get pendingPurchaseCount => purchases.where((item) => item.status.toLowerCase() == 'draft').length;
 
-  List<SupplierPurchasePrice> purchasePriceHistoryForProduct(String productId) {
-    final history = <SupplierPurchasePrice>[];
+  void _ensurePurchaseInsightsCache() {
+    if (!_purchaseInsightsCacheDirty) return;
+    _purchaseHistoryByProductCache.clear();
+    _purchaseMetricsByProductCache.clear();
+
     for (final purchase in _purchases.where((item) => !item.isDeleted && !item.isCancelled)) {
-      for (final item in purchase.items.where((line) => line.productId == productId)) {
-        history.add(SupplierPurchasePrice(
+      for (final item in purchase.items) {
+        final productId = item.productId.trim();
+        if (productId.isEmpty) continue;
+        (_purchaseHistoryByProductCache[productId] ??= <SupplierPurchasePrice>[]).add(SupplierPurchasePrice(
           productId: item.productId,
           productName: item.productName,
           supplierId: purchase.supplierId,
@@ -686,13 +735,36 @@ class AppStore extends ChangeNotifier {
         ));
       }
     }
-    history.sort((a, b) => b.date.compareTo(a.date));
-    return List.unmodifiable(history);
+
+    for (final entry in _purchaseHistoryByProductCache.entries) {
+      final history = entry.value..sort((a, b) => b.date.compareTo(a.date));
+      double totalQty = 0;
+      double totalCost = 0;
+      final suppliers = <String>{};
+      for (final row in history) {
+        totalQty += row.quantity;
+        totalCost += row.quantity * row.unitCost;
+        if (row.supplierId.trim().isNotEmpty) suppliers.add(row.supplierId);
+      }
+      _purchaseMetricsByProductCache[entry.key] = _ProductPurchaseMetrics(
+        lastCost: history.isEmpty ? null : history.first.unitCost,
+        averageCost: totalQty <= 0 ? 0 : totalCost / totalQty,
+        supplierCount: suppliers.length,
+      );
+    }
+
+    _purchaseInsightsCacheDirty = false;
+  }
+
+  List<SupplierPurchasePrice> purchasePriceHistoryForProduct(String productId) {
+    _ensurePurchaseInsightsCache();
+    return List.unmodifiable(_purchaseHistoryByProductCache[productId] ?? const <SupplierPurchasePrice>[]);
   }
 
   List<SupplierPurchasePrice> supplierPriceComparisonForProduct(String productId) {
+    _ensurePurchaseInsightsCache();
     final latestBySupplier = <String, SupplierPurchasePrice>{};
-    for (final entry in purchasePriceHistoryForProduct(productId)) {
+    for (final entry in _purchaseHistoryByProductCache[productId] ?? const <SupplierPurchasePrice>[]) {
       latestBySupplier.putIfAbsent(entry.supplierId, () => entry);
     }
     final prices = latestBySupplier.values.toList()..sort((a, b) => a.unitCost.compareTo(b.unitCost));
@@ -700,15 +772,16 @@ class AppStore extends ChangeNotifier {
   }
 
   double? lastPurchasePriceFor({required String productId, required String supplierId}) {
-    for (final entry in purchasePriceHistoryForProduct(productId)) {
+    _ensurePurchaseInsightsCache();
+    for (final entry in _purchaseHistoryByProductCache[productId] ?? const <SupplierPurchasePrice>[]) {
       if (entry.supplierId == supplierId) return entry.unitCost;
     }
     return null;
   }
 
   double? lastPurchasePriceForProduct(String productId) {
-    final history = purchasePriceHistoryForProduct(productId);
-    return history.isEmpty ? null : history.first.unitCost;
+    _ensurePurchaseInsightsCache();
+    return _purchaseMetricsByProductCache[productId]?.lastCost;
   }
 
   PurchaseItem? lastPurchaseItemFor({required String productId, required String supplierId}) {
@@ -734,13 +807,8 @@ class AppStore extends ChangeNotifier {
   }
 
   double averagePurchaseCostForProduct(String productId) {
-    double totalQty = 0;
-    double totalCost = 0;
-    for (final entry in purchasePriceHistoryForProduct(productId)) {
-      totalQty += entry.quantity;
-      totalCost += entry.quantity * entry.unitCost;
-    }
-    return totalQty <= 0 ? 0 : totalCost / totalQty;
+    _ensurePurchaseInsightsCache();
+    return _purchaseMetricsByProductCache[productId]?.averageCost ?? 0;
   }
 
   void _seedSupplierProductPricesFromPurchaseHistory() {
@@ -858,7 +926,10 @@ class AppStore extends ChangeNotifier {
     return 'spp_${cleanProductId}_$cleanSupplierId';
   }
 
-  int supplierCountForProduct(String productId) => supplierPriceComparisonForProduct(productId).length;
+  int supplierCountForProduct(String productId) {
+    _ensurePurchaseInsightsCache();
+    return _purchaseMetricsByProductCache[productId]?.supplierCount ?? 0;
+  }
 
   List<SupplierProductPrice> supplierProductPricesForProduct(String productId) {
     final rows = _supplierProductPrices
@@ -3944,9 +4015,11 @@ class AppStore extends ChangeNotifier {
 
   Future<void> deleteCustomer(String id) async {
     requirePermission(AppPermission.customersManage);
-    if (id == walkInCustomerId) return;
     final index = _customers.indexWhere((item) => item.id == id);
     if (index == -1) return;
+    final customer = _customers[index];
+    final isWalkIn = customer.id == walkInCustomerId || customer.name.trim().toLowerCase() == walkInCustomerName.toLowerCase();
+    if (isWalkIn) return;
     final now = DateTime.now();
     _customers[index] = _withSyncMeta<Customer>(_customers[index].copyWith(deletedAt: now), now, clearDeletedAt: false);
     _recordSyncChange(entityType: 'customer', entityId: id, operation: 'delete', payload: _customers[index].toJson());
@@ -4878,9 +4951,6 @@ class AppStore extends ChangeNotifier {
       if (product == null) {
         throw ArgumentError('Product not found: ${item.productName}');
       }
-      if (product.trackStock && product.stock < item.effectiveBaseQuantity) {
-        throw StateError('Not enough stock for ${product.name}.');
-      }
     }
 
     _invoiceCounter += 1;
@@ -4952,14 +5022,43 @@ class AppStore extends ChangeNotifier {
     _sales.add(sale);
     _recordSyncChange(entityType: 'sale', entityId: sale.id, operation: 'create', payload: sale.toJson());
 
-    for (final item in saleItems) {
+    for (var lineIndex = 0; lineIndex < saleItems.length; lineIndex += 1) {
+      final item = saleItems[lineIndex];
       final index = _products.indexWhere((product) => product.id == item.productId);
-      final product = _products[index];
+      var product = _products[index];
       if (!product.trackStock) continue;
+
+      final shortage = item.effectiveBaseQuantity - product.stock;
+      if (shortage > 0) {
+        final correctedStock = product.stock + shortage;
+        product = _withSyncMeta<Product>(product.copyWith(stock: correctedStock), now);
+        _products[index] = product;
+        _addStockMovement(StockMovement(
+          id: '${sale.id}-${item.productId}-auto-correction-$lineIndex',
+          productId: item.productId,
+          productName: item.productName,
+          type: 'auto_correction',
+          quantity: shortage,
+          date: now,
+          referenceId: sale.id,
+          referenceNo: sale.invoiceNo,
+          reason: 'Automatic inventory correction before sale',
+          adjustmentCategory: 'auto_sale_correction',
+          notes: 'Created automatically because available stock was insufficient during POS sale.',
+          unitCost: item.unitCostPerBase,
+          createdAt: now,
+          updatedAt: now,
+          deviceId: _deviceId,
+          storeId: appIdentity.storeId,
+          branchId: appIdentity.branchId,
+          lastModifiedByDeviceId: _deviceId,
+        ), recordSync: true);
+      }
+
       final updatedProduct = _withSyncMeta<Product>(product.copyWith(stock: product.stock - item.effectiveBaseQuantity), now);
       _products[index] = updatedProduct;
       _addStockMovement(StockMovement(
-        id: '${sale.id}-${item.productId}-sale',
+        id: '${sale.id}-${item.productId}-sale-$lineIndex',
         productId: item.productId,
         productName: item.productName,
         type: 'sale',
@@ -6574,6 +6673,100 @@ class AppStore extends ChangeNotifier {
         return a.createdAt.compareTo(b.createdAt);
       });
     var changed = false;
+    var saveAllBusinessData = false;
+    var storeProfileChanged = false;
+    var productsChanged = false;
+    var customersChanged = false;
+    var salesChanged = false;
+    var saleQuotationsChanged = false;
+    var deliveryNotesChanged = false;
+    var billsOfMaterialsChanged = false;
+    var manufacturingOrdersChanged = false;
+    var suppliersChanged = false;
+    var supplierProductPricesChanged = false;
+    var categoriesChanged = false;
+    var brandsChanged = false;
+    var unitsChanged = false;
+    var expensesChanged = false;
+    var purchasesChanged = false;
+    var stockMovementsChanged = false;
+    var warehousesChanged = false;
+    var accountTransactionsChanged = false;
+    var rolesUsersChanged = false;
+
+    void markEntityDirty(SyncChange change) {
+      switch (change.entityType) {
+        case 'system':
+          if (change.operation == 'reset_store_data' || change.operation == 'restore_snapshot') {
+            saveAllBusinessData = true;
+            rolesUsersChanged = true;
+          }
+          break;
+        case 'store_profile':
+          storeProfileChanged = true;
+          break;
+        case 'app_identity':
+          saveAllBusinessData = true;
+          break;
+        case 'role':
+        case 'user':
+          rolesUsersChanged = true;
+          break;
+        case 'product':
+          productsChanged = true;
+          break;
+        case 'customer':
+          customersChanged = true;
+          break;
+        case 'sale':
+          salesChanged = true;
+          break;
+        case 'sale_quotation':
+          saleQuotationsChanged = true;
+          break;
+        case 'delivery_note':
+          deliveryNotesChanged = true;
+          break;
+        case 'bill_of_materials':
+          billsOfMaterialsChanged = true;
+          break;
+        case 'manufacturing_order':
+          manufacturingOrdersChanged = true;
+          break;
+        case 'supplier':
+          suppliersChanged = true;
+          break;
+        case 'supplier_product_price':
+          supplierProductPricesChanged = true;
+          break;
+        case 'category':
+          categoriesChanged = true;
+          break;
+        case 'brand':
+          brandsChanged = true;
+          break;
+        case 'unit':
+          unitsChanged = true;
+          break;
+        case 'expense':
+          expensesChanged = true;
+          break;
+        case 'purchase':
+          purchasesChanged = true;
+          break;
+        case 'stock_movement':
+          stockMovementsChanged = true;
+          productsChanged = true;
+          break;
+        case 'warehouse':
+          warehousesChanged = true;
+          break;
+        case 'account_transaction':
+          accountTransactionsChanged = true;
+          break;
+      }
+    }
+
     for (final change in sorted) {
       if (_isReplayOrDuplicateSyncEvent(
         change,
@@ -6589,6 +6782,7 @@ class AppStore extends ChangeNotifier {
         continue;
       }
       await _applySyncChangePayload(change);
+      markEntityDirty(change);
       final shouldMirrorToCloud = mirrorToCloud && _shouldMirrorRemoteChangeToCloud(change);
 
       // Host-authority sync note:
@@ -6649,8 +6843,34 @@ class AppStore extends ChangeNotifier {
     if (changed) {
       _ensureCatalogDefaults();
       _normalizeCustomers();
-      await _saveRolesAndUsers();
-      await _saveSyncStateOnly();
+      if (saveAllBusinessData) {
+        await _saveAll();
+      } else {
+        await Future.wait([
+          if (rolesUsersChanged) _saveRolesAndUsers(),
+          _saveDirty(
+            products: productsChanged,
+            customers: customersChanged,
+            sales: salesChanged,
+            saleQuotations: saleQuotationsChanged,
+            deliveryNotes: deliveryNotesChanged,
+            billsOfMaterials: billsOfMaterialsChanged,
+            manufacturingOrders: manufacturingOrdersChanged,
+            suppliers: suppliersChanged,
+            supplierProductPrices: supplierProductPricesChanged,
+            expenses: expensesChanged,
+            purchases: purchasesChanged,
+            stockMovements: stockMovementsChanged,
+            warehouses: warehousesChanged,
+            accountTransactions: accountTransactionsChanged,
+            storeProfile: storeProfileChanged,
+            categories: categoriesChanged,
+            brands: brandsChanged,
+            units: unitsChanged,
+            sync: true,
+          ),
+        ]);
+      }
       notifyListeners();
     }
   }

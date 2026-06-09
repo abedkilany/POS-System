@@ -25,6 +25,8 @@ class _CustomersPageState extends State<CustomersPage> {
     final tr = AppLocalizations.of(context);
     final customers = widget.store.customers.where((customer) {
       final value = query.toLowerCase();
+      final isWalkIn = customer.id == AppStore.walkInCustomerId || customer.name.trim().toLowerCase() == AppStore.walkInCustomerName.toLowerCase();
+      if (isWalkIn) return false;
       return customer.name.toLowerCase().contains(value) || customer.phone.toLowerCase().contains(value);
     }).toList();
 
@@ -106,6 +108,22 @@ class _CustomersPageState extends State<CustomersPage> {
 
   Future<void> _deleteCustomer(BuildContext context, Customer customer) async {
     final tr = AppLocalizations.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(tr.text('confirm_delete')),
+        content: Text('${tr.text('delete_confirm_message')} ${customer.name}?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: Text(tr.text('cancel'))),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: FilledButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.error),
+            child: Text(tr.text('delete')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
     await widget.store.deleteCustomer(customer.id);
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('customer_deleted').replaceAll('{name}', customer.name))));

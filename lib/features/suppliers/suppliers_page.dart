@@ -106,6 +106,22 @@ class _SuppliersPageState extends State<SuppliersPage> {
 
   Future<void> _deleteSupplier(BuildContext context, Supplier supplier) async {
     final tr = AppLocalizations.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(tr.text('confirm_delete')),
+        content: Text('${tr.text('delete_confirm_message')} ${supplier.name}?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: Text(tr.text('cancel'))),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: FilledButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.error),
+            child: Text(tr.text('delete')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
     await widget.store.deleteSupplier(supplier.id);
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('supplier_deleted').replaceAll('{name}', supplier.name))));

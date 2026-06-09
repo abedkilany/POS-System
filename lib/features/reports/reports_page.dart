@@ -35,6 +35,7 @@ class ReportsPage extends StatelessWidget {
     }
     final topProductLines = topProducts.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
     final lowStock = store.stockTrackedProducts.where((product) => product.stock <= product.lowStockThreshold).toList();
+    final autoCorrections = stockMovements.where((movement) => movement.type == 'auto_correction').toList();
     final customerReceivables = store.customers.fold<double>(0, (sum, customer) {
       final balance = store.accountBalance('customer', customer.id);
       return balance > 0 ? sum + balance : sum;
@@ -81,6 +82,7 @@ class ReportsPage extends StatelessWidget {
               ReportCard(title: tr.text('inventory_value_report'), subtitle: '${tr.text('inventory_value')}: ${formatUsdReferenceAmount(store.inventoryRetailValue, store.storeProfile)}'),
               ReportCard(title: tr.text('inventory_health_report'), subtitle: '${tr.text('products_below_limit')}: ${store.lowStockCount}'),
               ReportCard(title: tr.text('stock_movement_report'), subtitle: '${tr.text('stock_in')}: $movementIn • ${tr.text('stock_out')}: $movementOut'),
+              ReportCard(title: tr.text('auto_inventory_corrections'), subtitle: '${autoCorrections.length}'),
               ReportCard(title: tr.text('customer_receivables'), subtitle: formatUsdReferenceAmount(customerReceivables, store.storeProfile)),
               ReportCard(title: tr.text('supplier_payables'), subtitle: formatUsdReferenceAmount(supplierPayables, store.storeProfile)),
               ReportCard(title: tr.text('today_cash_movement'), subtitle: '${tr.text('cash_in')}: ${formatUsdReferenceAmount(todayCashIn, store.storeProfile)} • ${tr.text('cash_out')}: ${formatUsdReferenceAmount(todayCashOut, store.storeProfile)}'),
@@ -116,6 +118,12 @@ class ReportsPage extends StatelessWidget {
             title: tr.text('stock_alerts'),
             empty: tr.text('no_low_stock_products'),
             children: lowStock.map((product) => ListTile(dense: true, leading: const Icon(Icons.warning_amber_outlined), title: Text(product.name), subtitle: Text(product.code), trailing: Text('${product.stock}'))).toList(),
+          ),
+          const SizedBox(height: 16),
+          _ReportSection(
+            title: tr.text('auto_inventory_corrections'),
+            empty: tr.text('no_auto_inventory_corrections'),
+            children: autoCorrections.take(12).map((movement) => ListTile(dense: true, leading: const Icon(Icons.warning_amber_outlined), title: Text(movement.productName), subtitle: Text('${movement.referenceNo} • ${movement.date.toLocal()}'.split('.').first), trailing: Text('+${movement.quantity}'))).toList(),
           ),
           const SizedBox(height: 16),
           _ReportSection(

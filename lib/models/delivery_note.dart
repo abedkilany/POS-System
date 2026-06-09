@@ -12,7 +12,7 @@ class DeliveryNote {
     required this.items,
     this.customerId = '',
     this.note = '',
-    DateTime? deliveredAt,
+    this.deliveredAt,
     DateTime? createdAt,
     DateTime? updatedAt,
     this.deletedAt,
@@ -22,8 +22,7 @@ class DeliveryNote {
     this.branchId = '',
     this.version = 1,
     this.lastModifiedByDeviceId = '',
-  })  : deliveredAt = deliveredAt,
-        createdAt = createdAt ?? updatedAt ?? date,
+  })  : createdAt = createdAt ?? updatedAt ?? date,
         updatedAt = updatedAt ?? createdAt ?? date;
 
   final String id, deliveryNo, saleId, invoiceNo, customerName, customerId, status, note;

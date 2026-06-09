@@ -1062,5 +1062,8 @@
   "transfer_stock": "Transfer stock",
   "from_warehouse": "From warehouse",
   "to_warehouse": "To warehouse",
-  "available": "Available"
+  "available": "Available",
+  "auto_inventory_corrections": "Auto inventory corrections",
+  "auto_inventory_corrections_today": "Auto corrections today",
+  "no_auto_inventory_corrections": "No automatic inventory corrections"
 }

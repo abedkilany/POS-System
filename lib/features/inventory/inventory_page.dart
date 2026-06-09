@@ -171,6 +171,8 @@ class _InventoryOverview extends StatelessWidget {
                   SummaryCard(title: tr.text('total_units'), value: '${store.totalUnitsInStock}', icon: Icons.layers_outlined),
                   SummaryCard(title: tr.text('low_stock_alerts'), value: '${store.lowStockCount}', icon: Icons.warning_amber_rounded),
                   SummaryCard(title: tr.text('inventory_value'), value: formatUsdReferenceAmount(store.inventoryRetailValue, store.storeProfile), icon: Icons.payments_outlined),
+                  SummaryCard(title: 'Auto Corrections', value: '${store.stockMovements.where((m) => m.type == 'auto_correction').length}', icon: Icons.notifications_active_outlined),
+
                 ],
               ),
               const SizedBox(height: 20),
@@ -211,23 +213,32 @@ class _InventoryOverview extends StatelessWidget {
               end: pageInsets.right,
               bottom: pageInsets.bottom,
             ),
-            sliver: SliverList(
-              delegate: SliverChildBuilderDelegate(
-                (context, index) {
-                  if (index.isOdd) return const Divider(height: 1);
-                  final product = products[index ~/ 2];
-                  return Card(
-                    margin: EdgeInsets.zero,
-                    shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
-                    child: _InventoryProductTile(
-                      product: product,
-                      store: store,
-                      onAdjust: onAdjust,
-                    ),
-                  );
-                },
-                childCount: products.length * 2 - 1,
-              ),
+            sliver: SliverLayoutBuilder(
+              builder: (context, constraints) {
+                final compact = constraints.crossAxisExtent < 620;
+                return SliverFixedExtentList(
+                  itemExtent: compact ? 128 : 82,
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
+                      final product = products[index];
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 1),
+                        child: Card(
+                          margin: EdgeInsets.zero,
+                          shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
+                          child: _InventoryProductTile(
+                            product: product,
+                            store: store,
+                            compact: compact,
+                            onAdjust: onAdjust,
+                          ),
+                        ),
+                      );
+                    },
+                    childCount: products.length,
+                  ),
+                );
+              },
             ),
           ),
       ],
@@ -236,45 +247,49 @@ class _InventoryOverview extends StatelessWidget {
 }
 
 class _InventoryProductTile extends StatelessWidget {
-  const _InventoryProductTile({required this.product, required this.store, required this.onAdjust});
+  const _InventoryProductTile({required this.product, required this.store, required this.compact, required this.onAdjust});
 
   final Product product;
   final AppStore store;
+  final bool compact;
   final ValueChanged<String> onAdjust;
 
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final isLow = product.trackStock && product.stock <= product.lowStockThreshold;
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final meta = Wrap(
-          spacing: 8,
-          runSpacing: 6,
-          crossAxisAlignment: WrapCrossAlignment.center,
+    final meta = Wrap(
+      spacing: 8,
+      runSpacing: 6,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Text(formatUsdReferenceAmount(product.price, store.storeProfile)),
+        Chip(avatar: isLow ? const Icon(Icons.priority_high, size: 16) : null, label: Text('${tr.text('stock')}: ${product.stock}')),
+        TextButton.icon(onPressed: () => onAdjust(product.id), icon: const Icon(Icons.tune), label: Text(tr.text('adjust'))),
+      ],
+    );
+    if (compact) {
+      return ListTile(
+        leading: CircleAvatar(child: Icon(isLow ? Icons.warning_amber_rounded : Icons.inventory_2_outlined)),
+        title: Text(product.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(formatUsdReferenceAmount(product.price, store.storeProfile)),
-            Chip(avatar: isLow ? const Icon(Icons.priority_high, size: 16) : null, label: Text('${tr.text('stock')}: ${product.stock}')),
-            TextButton.icon(onPressed: () => onAdjust(product.id), icon: const Icon(Icons.tune), label: Text(tr.text('adjust'))),
+            Text('${product.code} • ${product.category}', maxLines: 1, overflow: TextOverflow.ellipsis),
+            const SizedBox(height: 6),
+            meta,
           ],
-        );
-        if (constraints.maxWidth < 620) {
-          return ListTile(
-            leading: CircleAvatar(child: Icon(isLow ? Icons.warning_amber_rounded : Icons.inventory_2_outlined)),
-            title: Text(product.name),
-            subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('${product.code} • ${product.category}'), const SizedBox(height: 6), meta]),
-          );
-        }
-        return ListTile(
-          leading: CircleAvatar(child: Icon(isLow ? Icons.warning_amber_rounded : Icons.inventory_2_outlined)),
-          title: Text(product.name),
-          subtitle: Text('${product.code} • ${product.category}'),
-          trailing: ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: VentioResponsive.clampToScreen(context, 360, min: 180, horizontalPadding: 120)),
-            child: Align(alignment: AlignmentDirectional.centerEnd, child: meta),
-          ),
-        );
-      },
+        ),
+      );
+    }
+    return ListTile(
+      leading: CircleAvatar(child: Icon(isLow ? Icons.warning_amber_rounded : Icons.inventory_2_outlined)),
+      title: Text(product.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+      subtitle: Text('${product.code} • ${product.category}', maxLines: 1, overflow: TextOverflow.ellipsis),
+      trailing: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: VentioResponsive.clampToScreen(context, 360, min: 180, horizontalPadding: 120)),
+        child: Align(alignment: AlignmentDirectional.centerEnd, child: meta),
+      ),
     );
   }
 }
@@ -409,33 +424,58 @@ class _WarehousesTabState extends State<_WarehousesTab> {
     final tr = AppLocalizations.of(context);
     final warehouses = widget.store.warehouses;
     final products = widget.store.stockTrackedProducts;
-    return ListView(
+    final stockRowsByWarehouse = <String, List<_WarehouseProductStock>>{
+      for (final warehouse in warehouses) warehouse.id: <_WarehouseProductStock>[],
+    };
+    for (final product in products) {
+      for (final entry in widget.store.warehouseStockForProduct(product.id).entries) {
+        if (entry.value != 0) {
+          (stockRowsByWarehouse[entry.key] ??= <_WarehouseProductStock>[]).add(_WarehouseProductStock(product: product, stock: entry.value));
+        }
+      }
+    }
+    return ListView.builder(
       padding: VentioResponsive.pageInsets(context),
-      children: [
-        Wrap(spacing: 12, runSpacing: 12, children: [
-          FilledButton.icon(onPressed: _createWarehouse, icon: const Icon(Icons.add_business_outlined), label: Text(tr.text('create_warehouse'))),
-          OutlinedButton.icon(onPressed: warehouses.length < 2 ? null : _transferStock, icon: const Icon(Icons.swap_horiz), label: Text(tr.text('transfer_stock'))),
-        ]),
-        const SizedBox(height: 16),
-        for (final warehouse in warehouses) Card(
+      itemCount: warehouses.length + 1,
+      itemBuilder: (context, index) {
+        if (index == 0) {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: Wrap(spacing: 12, runSpacing: 12, children: [
+              FilledButton.icon(onPressed: _createWarehouse, icon: const Icon(Icons.add_business_outlined), label: Text(tr.text('create_warehouse'))),
+              OutlinedButton.icon(onPressed: warehouses.length < 2 ? null : _transferStock, icon: const Icon(Icons.swap_horiz), label: Text(tr.text('transfer_stock'))),
+            ]),
+          );
+        }
+        final warehouse = warehouses[index - 1];
+        final rows = stockRowsByWarehouse[warehouse.id] ?? const <_WarehouseProductStock>[];
+        return Card(
+          margin: const EdgeInsets.only(bottom: 8),
           child: ExpansionTile(
             leading: const CircleAvatar(child: Icon(Icons.warehouse_outlined)),
             title: Text(warehouse.name),
             subtitle: Text([if (warehouse.code.isNotEmpty) warehouse.code, if (warehouse.location.isNotEmpty) warehouse.location].join(' • ')),
             children: [
-              for (final product in products.where((product) => widget.store.stockForWarehouse(product.id, warehouse.id) != 0).take(100))
+              for (final row in rows.take(100))
                 ListTile(
                   dense: true,
-                  title: Text(product.name),
-                  trailing: Text('${widget.store.stockForWarehouse(product.id, warehouse.id)}'),
+                  title: Text(row.product.name),
+                  trailing: Text('${row.stock}'),
                 ),
-              if (!products.any((product) => widget.store.stockForWarehouse(product.id, warehouse.id) != 0)) Padding(padding: const EdgeInsets.all(16), child: Text(tr.text('no_inventory_items'))),
+              if (rows.isEmpty) Padding(padding: const EdgeInsets.all(16), child: Text(tr.text('no_inventory_items'))),
             ],
           ),
-        ),
-      ],
+        );
+      },
     );
   }
+}
+
+class _WarehouseProductStock {
+  const _WarehouseProductStock({required this.product, required this.stock});
+
+  final Product product;
+  final double stock;
 }
 
 class _MovementsList extends StatelessWidget {

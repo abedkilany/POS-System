@@ -24,6 +24,7 @@ import '../barcode/barcode_scanner_page.dart';
 
 enum _BarcodeAddResult {
   added,
+  autoCorrected,
   empty,
   notAllowed,
   notFound,
@@ -167,7 +168,7 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final sales = widget.store.sales;
-    final products = widget.store.products.where((product) => !product.trackStock || product.stock > 0).where((product) {
+    final products = widget.store.products.where((product) => product.isActive && !product.isDeleted).where((product) {
       if (_search.trim().isEmpty) return true;
       final q = _search.toLowerCase();
       return product.name.toLowerCase().contains(q) || product.code.toLowerCase().contains(q) || product.barcode.toLowerCase().contains(q) || product.effectiveSaleUnits.any((unit) => unit.barcode.toLowerCase().contains(q)) || product.effectivePurchaseUnits.any((unit) => unit.barcode.toLowerCase().contains(q)) || product.category.toLowerCase().contains(q);
@@ -879,7 +880,7 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
 
   Product? _productById(String id) {
     for (final product in widget.store.products) {
-      if (product.id == id && (!product.trackStock || product.stock > 0)) return product;
+      if (product.id == id && product.isActive && !product.isDeleted) return product;
     }
     return null;
   }
@@ -967,7 +968,7 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
   Future<void> _configureQuickSlot(_QuickProductPage page, int slotIndex) async {
     if (slotIndex < 0 || slotIndex >= page.slots.length) return;
     final tr = AppLocalizations.of(context);
-    final products = widget.store.products.where((product) => !product.trackStock || product.stock > 0).toList();
+    final products = widget.store.products.where((product) => product.isActive && !product.isDeleted).toList();
     final nameController = TextEditingController(text: page.slots[slotIndex].shortName ?? '');
     final quickSearchController = TextEditingController();
     Product? selected = page.slots[slotIndex].productId == null ? null : _productById(page.slots[slotIndex].productId!);
@@ -1459,7 +1460,7 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                   SizedBox(width: 42, child: Text(_formatQuantity(item.quantity), textAlign: TextAlign.center)),
                   IconButton(
                     tooltip: tr.text('increase_qty'),
-                    onPressed: (!item.product.trackStock || item.baseQuantity + item.conversionToBase <= item.product.stock) ? () => _changeCartQuantity(index, item.quantity + 1) : null,
+                    onPressed: () => _changeCartQuantity(index, item.quantity + 1),
                     icon: const Icon(Icons.add_circle_outline),
                   ),
                   IconButton(
@@ -1473,12 +1474,24 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                 return InkWell(
                   onTap: () => _showQuantitySheet(index),
                   borderRadius: BorderRadius.circular(12),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: item.needsAutoCorrection ? Theme.of(context).colorScheme.errorContainer.withValues(alpha: 0.55) : null,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(item.product.name, style: Theme.of(context).textTheme.titleSmall),
+                        Row(
+                          children: [
+                            if (item.needsAutoCorrection) ...[
+                              Icon(Icons.warning_amber_rounded, size: 18, color: Theme.of(context).colorScheme.onErrorContainer),
+                              const SizedBox(width: 6),
+                            ],
+                            Expanded(child: Text(item.product.name, style: Theme.of(context).textTheme.titleSmall)),
+                          ],
+                        ),
                         const SizedBox(height: 4),
                         Text('${item.product.code} • ${formatUsdReferenceAmount(item.unitPrice, widget.store.storeProfile)} • ${_formatQuantity(item.quantity)} ${item.unitName} • ${_stockAvailabilityLabel(item.product, tr, includeUnit: true)}'),
                         Align(alignment: AlignmentDirectional.centerEnd, child: actions),
@@ -1488,7 +1501,10 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                 );
               }
               return ListTile(
-                contentPadding: EdgeInsets.zero,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                tileColor: item.needsAutoCorrection ? Theme.of(context).colorScheme.errorContainer.withValues(alpha: 0.55) : null,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                leading: item.needsAutoCorrection ? Icon(Icons.warning_amber_rounded, color: Theme.of(context).colorScheme.onErrorContainer) : null,
                 title: Text(item.product.name),
                 subtitle: Text('${item.product.code} • ${formatUsdReferenceAmount(item.unitPrice, widget.store.storeProfile)} • ${_formatQuantity(item.quantity)} ${item.unitName} • ${_stockAvailabilityLabel(item.product, tr, includeUnit: true)}'),
                 onTap: () => _showQuantitySheet(index),
@@ -1680,13 +1696,16 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
   void _changeCartQuantity(int index, double quantity) {
     if (index < 0 || index >= _cart.length) return;
     final item = _cart[index];
-    final maxUnitQuantity = item.product.trackStock ? item.product.stock / item.conversionToBase : double.infinity;
     final minQuantity = item.product.allowsDecimalQuantity ? 0.001 : 1.0;
     final rounded = item.product.allowsDecimalQuantity ? quantity : quantity.roundToDouble();
-    final cleanQuantity = rounded.clamp(minQuantity, maxUnitQuantity).toDouble();
+    final cleanQuantity = rounded < minQuantity ? minQuantity : rounded;
+    final willNeedCorrection = item.product.trackStock && cleanQuantity * item.conversionToBase > item.product.stock;
     setState(() {
       _cart[index] = item.copyWith(quantity: cleanQuantity);
     });
+    if (willNeedCorrection) {
+      unawaited(BarcodeFeedbackService.playError(force: true));
+    }
   }
 
   Future<void> _showQuantitySheet(int index) async {
@@ -1722,7 +1741,7 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                       child: OutlinedButton.icon(
                         onPressed: () {
                           final current = double.tryParse(controller.text) ?? item.quantity;
-                          controller.text = _formatQuantity((current - 1).clamp(1, item.product.trackStock ? item.product.stock / item.conversionToBase : double.infinity).toDouble());
+                          controller.text = _formatQuantity((current - 1) < 1 ? 1 : (current - 1));
                           controller.selection = TextSelection.fromPosition(TextPosition(offset: controller.text.length));
                         },
                         icon: const Icon(Icons.remove),
@@ -1734,7 +1753,7 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                       child: OutlinedButton.icon(
                         onPressed: () {
                           final current = double.tryParse(controller.text) ?? item.quantity;
-                          controller.text = _formatQuantity((current + 1).clamp(1, item.product.trackStock ? item.product.stock / item.conversionToBase : double.infinity).toDouble());
+                          controller.text = _formatQuantity((current + 1) < 1 ? 1 : (current + 1));
                           controller.selection = TextSelection.fromPosition(TextPosition(offset: controller.text.length));
                         },
                         icon: const Icon(Icons.add),
@@ -2121,7 +2140,6 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
   }
 
   _BarcodeAddResult _addProduct(Product product, {ProductSaleUnit? saleUnit, bool showBarcodeFeedback = false}) {
-    final tr = AppLocalizations.of(context);
     if (!widget.store.canSell) {
       if (showBarcodeFeedback) {
         _showBarcodeAddFeedback(_BarcodeAddResult.notAllowed);
@@ -2133,34 +2151,25 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     }
 
     final selectedUnit = saleUnit ?? product.effectiveSaleUnits.first;
-    final conversionToBase = selectedUnit.conversionToBase <= 0 ? 1.0 : selectedUnit.conversionToBase;
-
-    if (product.trackStock && product.stock < conversionToBase) {
-      if (showBarcodeFeedback) {
-        _showBarcodeAddFeedback(_BarcodeAddResult.outOfStock);
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('barcode_out_of_stock'))));
-      }
-      _restoreScannerMode();
-      return _BarcodeAddResult.outOfStock;
-    }
 
     final existingIndex = _cart.indexWhere((item) => item.product.id == product.id && item.unitName == (selectedUnit.name.trim().isNotEmpty ? selectedUnit.name : product.unit));
     var result = _BarcodeAddResult.added;
     setState(() {
       if (existingIndex == -1) {
         _cart.insert(0, _DraftSaleItem(product: product, quantity: 1, saleUnit: selectedUnit));
-      } else if (!product.trackStock || _cart[existingIndex].baseQuantity + conversionToBase <= product.stock) {
-        _cart[existingIndex] = _cart[existingIndex].copyWith(quantity: _cart[existingIndex].quantity + 1);
       } else {
-        result = _BarcodeAddResult.stockLimitReached;
+        _cart[existingIndex] = _cart[existingIndex].copyWith(quantity: _cart[existingIndex].quantity + 1);
+      }
+      final cartItem = _cart[existingIndex == -1 ? 0 : existingIndex];
+      if (cartItem.needsAutoCorrection) {
+        result = _BarcodeAddResult.autoCorrected;
       }
     });
 
     if (showBarcodeFeedback) {
       _showBarcodeAddFeedback(result);
-    } else if (result == _BarcodeAddResult.stockLimitReached) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('stock_limit_reached'))));
+    } else if (result == _BarcodeAddResult.autoCorrected) {
+      unawaited(BarcodeFeedbackService.playError(force: true));
     }
 
     _restoreScannerMode();
@@ -2191,13 +2200,6 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
       return _BarcodeAddResult.notFound;
     }
 
-    if (product.trackStock && product.stock <= 0) {
-      _barcodeController.clear();
-      _showBarcodeAddFeedback(_BarcodeAddResult.outOfStock);
-      _restoreScannerMode();
-      return _BarcodeAddResult.outOfStock;
-    }
-
     _barcodeController.clear();
     return _addProduct(product, saleUnit: saleUnit, showBarcodeFeedback: true);
   }
@@ -2210,6 +2212,9 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
       case _BarcodeAddResult.added:
         unawaited(BarcodeFeedbackService.play(force: true));
         messenger.showSnackBar(SnackBar(content: Text(tr.text('barcode_product_added'))));
+        return;
+      case _BarcodeAddResult.autoCorrected:
+        unawaited(BarcodeFeedbackService.playError(force: true));
         return;
       case _BarcodeAddResult.notFound:
         unawaited(BarcodeFeedbackService.playError(force: true));
@@ -2522,6 +2527,7 @@ class _DraftSaleItem {
   double get baseQuantity => quantity * conversionToBase;
   String get unitName => saleUnit.name.trim().isNotEmpty ? saleUnit.name : product.unit;
   double get lineTotal => quantity * unitPrice;
+  bool get needsAutoCorrection => product.trackStock && baseQuantity > product.stock;
 
   _DraftSaleItem copyWith({Product? product, double? quantity, ProductSaleUnit? saleUnit}) {
     return _DraftSaleItem(product: product ?? this.product, quantity: quantity ?? this.quantity, saleUnit: saleUnit ?? this.saleUnit);

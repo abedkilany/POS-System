@@ -174,6 +174,10 @@ class SyncSqliteStore {
     if (syncSequence != null && syncSequence.trim().isNotEmpty) {
       await saveSyncSequence(db, syncSequence);
     }
+    await markSyncMigrationCompleted(db);
+  }
+
+  static Future<void> markSyncMigrationCompleted(VentioDriftDatabase db) async {
     await db.customInsert(
       'INSERT OR REPLACE INTO migration_meta (key, value, updated_at) VALUES (?, ?, ?)',
       variables: <Variable<Object>>[

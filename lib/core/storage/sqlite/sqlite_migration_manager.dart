@@ -73,6 +73,7 @@ class SqliteMigrationManager {
         );
       }
       _database = db;
+      await SyncSqliteStore.markSyncMigrationCompleted(db);
       _initialized = true;
       _lastError = null;
       return const SqliteMigrationStatus(
@@ -113,6 +114,7 @@ class SqliteMigrationManager {
       await db.initializeFoundation();
       _database = db;
       await BusinessSqliteStore.markFreshInstallValidated(db);
+      await SyncSqliteStore.markSyncMigrationCompleted(db);
       final runId = 'fresh_${DateTime.now().toUtc().millisecondsSinceEpoch}';
       final now = DateTime.now().toUtc().toIso8601String();
       await db.customInsert(
