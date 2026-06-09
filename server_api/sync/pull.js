@@ -47,6 +47,19 @@ export default async function handler(req, res) {
   try {
     await sql`alter table sync_events add column if not exists store_epoch integer not null default 1`;
     await sql`alter table sync_events add column if not exists sequence integer not null default 0`;
+    await sql`create table if not exists bootstrap_snapshot_sections (
+      store_id text not null,
+      branch_id text not null default 'main',
+      job_id text not null,
+      section text not null,
+      entity_type text not null default '',
+      status text not null default 'uploading',
+      total_chunks integer not null default 0,
+      received_chunks integer not null default 0,
+      completed_at timestamptz,
+      updated_at timestamptz not null default now(),
+      primary key (store_id, branch_id, job_id, section)
+    )`;
     await ensureDeviceAuthColumns();
     if (req.method !== 'GET') return res.status(405).json({ ok: false, error: 'Method not allowed' });
 
@@ -79,6 +92,19 @@ export default async function handler(req, res) {
               and operation <> 'delete'
               and entity_type <> 'stock_movement'
               and (${loginBootstrapOnly} = false or entity_type in ('store_profile', 'role', 'user'))
+              and (
+                ${loginBootstrapOnly} = true
+                or not exists (select 1 from bootstrap_snapshot_sections where store_id = ${storeId} and branch_id = ${branchId})
+                or entity_type in (
+                  select entity_type from (
+                    select distinct on (section) section, entity_type, status, updated_at
+                    from bootstrap_snapshot_sections
+                    where store_id = ${storeId} and branch_id = ${branchId}
+                    order by section, updated_at desc
+                  ) latest_sections
+                  where status = 'completed' and coalesce(entity_type, '') <> ''
+                )
+              )
               and (${minSnapshotUpdatedAt}::timestamptz is null or updated_at >= ${minSnapshotUpdatedAt})
               and (
                 updated_at > ${cursorUpdatedAt}
@@ -96,6 +122,19 @@ export default async function handler(req, res) {
               and operation <> 'delete'
               and entity_type <> 'stock_movement'
               and (${loginBootstrapOnly} = false or entity_type in ('store_profile', 'role', 'user'))
+              and (
+                ${loginBootstrapOnly} = true
+                or not exists (select 1 from bootstrap_snapshot_sections where store_id = ${storeId} and branch_id = ${branchId})
+                or entity_type in (
+                  select entity_type from (
+                    select distinct on (section) section, entity_type, status, updated_at
+                    from bootstrap_snapshot_sections
+                    where store_id = ${storeId} and branch_id = ${branchId}
+                    order by section, updated_at desc
+                  ) latest_sections
+                  where status = 'completed' and coalesce(entity_type, '') <> ''
+                )
+              )
               and (${minSnapshotUpdatedAt}::timestamptz is null or updated_at >= ${minSnapshotUpdatedAt})
             order by updated_at asc, entity_type asc, entity_id asc
             limit ${limit + 1}
@@ -111,6 +150,24 @@ export default async function handler(req, res) {
           and received_at <= ${watermark}::timestamptz
       `;
       const watermarkSequence = Number(sequenceRows[0]?.max_sequence || 0);
+      const sectionStatusRows = await sql`
+        with latest_sections as (
+          select distinct on (section) section, status
+          from bootstrap_snapshot_sections
+          where store_id = ${storeId} and branch_id = ${branchId}
+          order by section, updated_at desc
+        )
+        select
+          count(*) filter (where section not in ('_meta', 'roles', 'users')) as business_sections,
+          count(*) filter (where status <> 'completed') as incomplete_sections,
+          jsonb_object_agg(section, status) as sections
+        from latest_sections
+      `;
+      const sectionStatus = sectionStatusRows[0] || {};
+      const businessSections = Number(sectionStatus.business_sections || 0);
+      const incompleteSections = Number(sectionStatus.incomplete_sections || 0);
+      const allSnapshotSectionsComplete = loginBootstrapOnly || (businessSections > 0 && incompleteSections === 0);
+
       const changes = pageRows.map((row) => ({
         id: `snapshot-${row.entity_type}-${row.entity_id}-${asIso(row.updated_at)}`,
         storeId: row.store_id,
@@ -135,6 +192,8 @@ export default async function handler(req, res) {
         generatedAt: hasMore ? null : watermark,
         generatedSequence: hasMore ? null : watermarkSequence,
         source: 'entity_snapshots',
+        allSnapshotSectionsComplete,
+        snapshotSections: sectionStatus.sections || {},
       });
     }
 

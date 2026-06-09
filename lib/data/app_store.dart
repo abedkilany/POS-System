@@ -5225,9 +5225,22 @@ class AppStore extends ChangeNotifier {
     addPayload('roles', 0, {'items': _roles.map((item) => item.toJson()).toList()});
     addPayload('users', 0, {'items': _users.map((item) => item.toJson()).toList()});
 
+    final sectionTotals = <String, int>{};
+    final sectionSeen = <String, int>{};
+    for (final chunk in chunks) {
+      final collection = (chunk['collection'] ?? '').toString();
+      sectionTotals[collection] = (sectionTotals[collection] ?? 0) + 1;
+    }
+    final allSections = sectionTotals.keys.toList(growable: false);
     for (var i = 0; i < chunks.length; i += 1) {
+      final collection = (chunks[i]['collection'] ?? '').toString();
+      final sectionIndex = sectionSeen[collection] ?? 0;
+      sectionSeen[collection] = sectionIndex + 1;
       chunks[i]['totalChunks'] = chunks.length;
       chunks[i]['ordinal'] = i;
+      chunks[i]['sectionChunkIndex'] = sectionIndex;
+      chunks[i]['sectionTotalChunks'] = sectionTotals[collection] ?? 1;
+      chunks[i]['allSections'] = allSections;
     }
     return chunks;
   }
@@ -5330,9 +5343,22 @@ class AppStore extends ChangeNotifier {
       }
     });
 
+    final sectionTotals = <String, int>{};
+    final sectionSeen = <String, int>{};
+    for (final chunk in chunks) {
+      final collection = (chunk['collection'] ?? '').toString();
+      sectionTotals[collection] = (sectionTotals[collection] ?? 0) + 1;
+    }
+    final allSections = sectionTotals.keys.toList(growable: false);
     for (var i = 0; i < chunks.length; i += 1) {
+      final collection = (chunks[i]['collection'] ?? '').toString();
+      final sectionIndex = sectionSeen[collection] ?? 0;
+      sectionSeen[collection] = sectionIndex + 1;
       chunks[i]['totalChunks'] = chunks.length;
       chunks[i]['ordinal'] = i;
+      chunks[i]['sectionChunkIndex'] = sectionIndex;
+      chunks[i]['sectionTotalChunks'] = sectionTotals[collection] ?? 1;
+      chunks[i]['allSections'] = allSections;
     }
     return chunks;
   }

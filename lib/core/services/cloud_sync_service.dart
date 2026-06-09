@@ -671,6 +671,7 @@ class CloudSyncService {
       var pageCursor = '';
       var pulled = 0;
       var restoredSnapshot = false;
+      var allSnapshotSectionsComplete = true;
       const maxPages = 200;
       for (var page = 0; page < maxPages; page += 1) {
         final query = <String, String>{
@@ -684,6 +685,9 @@ class CloudSyncService {
           return CloudStoreRecoveryResult(ok: false, message: 'Store identity recovered, but snapshot download failed: ${pull.statusCode} ${pull.body}', identity: store.appIdentity);
         }
         final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
+        if ((decodedPull['source'] ?? '').toString() == 'entity_snapshots') {
+          allSnapshotSectionsComplete = allSnapshotSectionsComplete && decodedPull['allSnapshotSectionsComplete'] == true;
+        }
         if (decodedPull['needsSnapshot'] == true) {
           await CloudSyncSettings.clearSavedPullCursor();
           return CloudStoreRecoveryResult(
@@ -1662,6 +1666,7 @@ class CloudSyncService {
       var finalPullSequence = 0;
       var pageCount = 0;
       var restoredSnapshot = false;
+      var allSnapshotSectionsComplete = true;
       const maxPagesPerRun = 200;
 
       while (true) {
@@ -1690,6 +1695,9 @@ class CloudSyncService {
         }
 
         final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
+        if ((decodedPull['source'] ?? '').toString() == 'entity_snapshots') {
+          allSnapshotSectionsComplete = allSnapshotSectionsComplete && decodedPull['allSnapshotSectionsComplete'] == true;
+        }
         if (decodedPull['needsSnapshot'] == true) {
           await CloudSyncSettings.clearSavedPullCursor();
           return CloudSyncResult(
@@ -1721,17 +1729,23 @@ class CloudSyncService {
         }
       }
 
-      onProgress?.call(0.90, 'Saving Cloud sync cursor...');
-      if (finalPullCursor != null) {
-        await settings.copyWith(lastPullCursor: finalPullCursor).save();
-        await _recordDeviceSyncState('cloud', finalPullCursor, sequence: finalPullSequence, settings: settings);
+      final initialSnapshotStillUploading = initialCursor == null && restoredSnapshot && !allSnapshotSectionsComplete;
+      if (initialSnapshotStillUploading) {
+        onProgress?.call(0.90, 'Waiting for Host to finish uploading store sections...');
+        await CloudProvisioningStatus.markPending(message: 'Host is still uploading store data. Download will continue automatically.');
+      } else {
+        onProgress?.call(0.90, 'Saving Cloud sync cursor...');
+        if (finalPullCursor != null) {
+          await settings.copyWith(lastPullCursor: finalPullCursor).save();
+          await _recordDeviceSyncState('cloud', finalPullCursor, sequence: finalPullSequence, settings: settings);
+        }
       }
 
       if (pulled > 0) {
         onProgress?.call(0.96, 'Cleaning up after Cloud sync...');
         await store.cleanupSoftDeletedRecords();
       }
-      if (store.appIdentity.isClient && (restoredSnapshot || pulled > 0) && !store.needsInitialAdminSetup) {
+      if (store.appIdentity.isClient && (restoredSnapshot || pulled > 0) && !store.needsInitialAdminSetup && !initialSnapshotStillUploading) {
         await CloudProvisioningStatus.markComplete(message: 'Initial Store data downloaded.');
       }
       return CloudSyncResult(
@@ -1811,6 +1825,7 @@ class CloudSyncService {
       var finalPullSequence = 0;
       var pageCount = 0;
       var restoredSnapshot = false;
+      var allSnapshotSectionsComplete = true;
       const maxPagesPerRun = 200;
 
       while (true) {
@@ -1840,6 +1855,9 @@ class CloudSyncService {
         }
 
         final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
+        if ((decodedPull['source'] ?? '').toString() == 'entity_snapshots') {
+          allSnapshotSectionsComplete = allSnapshotSectionsComplete && decodedPull['allSnapshotSectionsComplete'] == true;
+        }
         if (decodedPull['needsSnapshot'] == true) {
           await CloudSyncSettings.clearSavedPullCursor();
           return CloudSyncResult(
@@ -1871,10 +1889,16 @@ class CloudSyncService {
         }
       }
 
-      onProgress?.call(0.90, 'Saving Cloud sync cursor...');
-      if (finalPullCursor != null) {
-        await settings.copyWith(lastPullCursor: finalPullCursor).save();
-        await _recordDeviceSyncState('cloud', finalPullCursor, sequence: finalPullSequence, settings: settings);
+      final initialSnapshotStillUploading = initialCursor == null && restoredSnapshot && !allSnapshotSectionsComplete;
+      if (initialSnapshotStillUploading) {
+        onProgress?.call(0.90, 'Waiting for Host to finish uploading store sections...');
+        await CloudProvisioningStatus.markPending(message: 'Host is still uploading store data. Download will continue automatically.');
+      } else {
+        onProgress?.call(0.90, 'Saving Cloud sync cursor...');
+        if (finalPullCursor != null) {
+          await settings.copyWith(lastPullCursor: finalPullCursor).save();
+          await _recordDeviceSyncState('cloud', finalPullCursor, sequence: finalPullSequence, settings: settings);
+        }
       }
 
       if (pulled > 0) {
@@ -1885,7 +1909,7 @@ class CloudSyncService {
         onProgress?.call(0.97, 'Running Client sync log maintenance...');
         await store.compactClientSyncedSyncHistoryForMaintenance();
       }
-      if (store.appIdentity.isClient && (restoredSnapshot || pulled > 0) && !store.needsInitialAdminSetup) {
+      if (store.appIdentity.isClient && (restoredSnapshot || pulled > 0) && !store.needsInitialAdminSetup && !initialSnapshotStillUploading) {
         await CloudProvisioningStatus.markComplete(message: 'Initial Store data downloaded.');
       }
       onProgress?.call(1.0, 'Cloud sync completed.');

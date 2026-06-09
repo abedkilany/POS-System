@@ -10,6 +10,7 @@ const collectionTypes = {
   billsOfMaterials: 'bill_of_materials',
   manufacturingOrders: 'manufacturing_order',
   suppliers: 'supplier',
+  warehouses: 'warehouse',
   supplierProductPrices: 'supplier_product_price',
   expenses: 'expense',
   categories: 'category',
@@ -82,6 +83,20 @@ async function ensureTables() {
     updated_at timestamptz not null default now(),
     primary key (store_id, branch_id, job_id)
   )`;
+  await sql`create table if not exists bootstrap_snapshot_sections (
+    store_id text not null,
+    branch_id text not null default 'main',
+    job_id text not null,
+    section text not null,
+    entity_type text not null default '',
+    status text not null default 'uploading',
+    total_chunks integer not null default 0,
+    received_chunks integer not null default 0,
+    completed_at timestamptz,
+    updated_at timestamptz not null default now(),
+    primary key (store_id, branch_id, job_id, section)
+  )`;
+  await sql`create index if not exists idx_bootstrap_snapshot_sections_latest on bootstrap_snapshot_sections (store_id, branch_id, section, updated_at desc)`;
   await sql`alter table entity_snapshots add column if not exists branch_id text not null default 'main'`;
   await sql`create unique index if not exists idx_entity_snapshots_unique on entity_snapshots (store_id, branch_id, entity_type, entity_id)`;
 }
@@ -132,8 +147,10 @@ export default async function handler(req, res) {
     const collection = String(body.collection || '').trim();
     const ordinal = Number(body.ordinal || 0);
     const totalChunks = Math.max(Number(body.totalChunks || body.total_chunks || 1), 1);
+    const sectionTotalChunks = Math.max(Number(body.sectionTotalChunks || body.section_total_chunks || 1), 1);
     const force = body.force === true || String(body.force || '').toLowerCase() === 'true';
     const preserveExisting = body.preserveExisting === true || String(body.preserveExisting || body.preserve_existing || '').toLowerCase() === 'true';
+    const allSections = Array.isArray(body.allSections || body.all_sections) ? (body.allSections || body.all_sections).map((item) => String(item || '').trim()).filter(Boolean) : [];
     const updatedAt = new Date(body.generatedAt || Date.now()).toISOString();
 
     if (!jobId) return res.status(400).json({ ok: false, error: 'Missing snapshot jobId.' });
@@ -159,6 +176,7 @@ export default async function handler(req, res) {
       }
       if (!preserveExisting) {
         await sql`delete from entity_snapshots where store_id = ${storeId} and branch_id = ${branchId}`;
+        await sql`delete from bootstrap_snapshot_sections where store_id = ${storeId} and branch_id = ${branchId}`;
       }
       await sql`
         insert into bootstrap_snapshot_jobs (store_id, branch_id, job_id, device_id, status, total_chunks, received_chunks)
@@ -166,7 +184,49 @@ export default async function handler(req, res) {
         on conflict (store_id, branch_id, job_id) do update set
           status = 'uploading', total_chunks = excluded.total_chunks, updated_at = now()
       `;
+
+      if (allSections.length) {
+        const sectionRows = allSections.map((section) => ({
+          store_id: storeId,
+          branch_id: branchId,
+          job_id: jobId,
+          section,
+          entity_type: section === '_meta' ? 'store_profile' : (collectionTypes[section] || ''),
+          status: 'pending',
+          total_chunks: 0,
+          received_chunks: 0,
+        }));
+        await sql`
+          insert into bootstrap_snapshot_sections (store_id, branch_id, job_id, section, entity_type, status, total_chunks, received_chunks, updated_at)
+          select store_id, branch_id, job_id, section, entity_type, status, total_chunks, received_chunks, now()
+          from jsonb_to_recordset(${JSON.stringify(sectionRows)}::jsonb) as x(
+            store_id text,
+            branch_id text,
+            job_id text,
+            section text,
+            entity_type text,
+            status text,
+            total_chunks integer,
+            received_chunks integer
+          )
+          on conflict (store_id, branch_id, job_id, section) do update set
+            entity_type = excluded.entity_type,
+            status = case when bootstrap_snapshot_sections.status = 'completed' then 'completed' else 'pending' end,
+            updated_at = now()
+        `;
+      }
     }
+
+    const entityTypeForSection = collection === '_meta' ? 'store_profile' : (collectionTypes[collection] || '');
+    await sql`
+      insert into bootstrap_snapshot_sections (store_id, branch_id, job_id, section, entity_type, status, total_chunks, received_chunks, updated_at)
+      values (${storeId}, ${branchId}, ${jobId}, ${collection}, ${entityTypeForSection}, 'uploading', ${sectionTotalChunks}, 0, now())
+      on conflict (store_id, branch_id, job_id, section) do update set
+        entity_type = excluded.entity_type,
+        status = 'uploading',
+        total_chunks = greatest(bootstrap_snapshot_sections.total_chunks, excluded.total_chunks),
+        updated_at = now()
+    `;
 
     const payload = decodePayload(body);
     if (collection === '_meta') {
@@ -197,8 +257,18 @@ export default async function handler(req, res) {
       where store_id = ${storeId} and branch_id = ${branchId} and job_id = ${jobId}
       returning status, received_chunks, total_chunks
     `;
+    const sectionRows = await sql`
+      update bootstrap_snapshot_sections
+      set received_chunks = least(total_chunks, received_chunks + 1),
+          status = case when received_chunks + 1 >= total_chunks then 'completed' else 'uploading' end,
+          completed_at = case when received_chunks + 1 >= total_chunks then coalesce(completed_at, now()) else completed_at end,
+          updated_at = now()
+      where store_id = ${storeId} and branch_id = ${branchId} and job_id = ${jobId} and section = ${collection}
+      returning status, received_chunks, total_chunks
+    `;
     const job = rows[0] || { status: 'uploading', received_chunks: ordinal + 1, total_chunks: totalChunks };
-    return res.status(200).json({ ok: true, jobId, status: job.status, receivedChunks: job.received_chunks, totalChunks: job.total_chunks });
+    const sectionJob = sectionRows[0] || { status: 'uploading', received_chunks: 1, total_chunks: sectionTotalChunks };
+    return res.status(200).json({ ok: true, jobId, status: job.status, receivedChunks: job.received_chunks, totalChunks: job.total_chunks, section: collection, sectionStatus: sectionJob.status, sectionReceivedChunks: sectionJob.received_chunks, sectionTotalChunks: sectionJob.total_chunks });
   } catch (error) {
     sendError(res, error);
   }
