@@ -149,20 +149,65 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
 }
 
 
-class _CloudProvisioningPage extends StatelessWidget {
-  const _CloudProvisioningPage();
+class _CloudProvisioningPage extends StatefulWidget {
+  const _CloudProvisioningPage({this.onChanged});
+
+  final VoidCallback? onChanged;
+
+  @override
+  State<_CloudProvisioningPage> createState() => _CloudProvisioningPageState();
+}
+
+class _CloudProvisioningPageState extends State<_CloudProvisioningPage> {
+  Timer? _refreshTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      widget.onChanged?.call();
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
+
+  bool _isComplete(Map<String, String> sections, Iterable<String> names) {
+    return names.every((name) => sections[name] == 'completed');
+  }
+
+  bool _hasAny(Map<String, String> sections, Iterable<String> names) {
+    return names.any(sections.containsKey);
+  }
+
+  String _stageStatus(Map<String, String> sections, Iterable<String> names) {
+    final values = names.where(sections.containsKey).map((name) => sections[name] ?? '').toList(growable: false);
+    if (values.isEmpty) return 'Waiting';
+    if (values.every((value) => value == 'completed')) return 'Completed';
+    if (values.any((value) => value == 'uploading')) return 'Downloading';
+    if (values.any((value) => value == 'pending')) return 'Waiting for Host';
+    return values.join(', ');
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final stages = const <String>[
-      'Login settings and users',
-      'Catalogs and warehouses',
-      'Products, customers and suppliers',
-      'Inventory movements',
-      'Sales and purchases',
-      'Accounting and reports',
+    final sections = CloudProvisioningStatus.sections;
+    final stages = <_ProvisioningStageView>[
+      const _ProvisioningStageView('Login settings and users', ['roles', 'users'], forceComplete: true),
+      const _ProvisioningStageView('Catalogs and warehouses', ['categories', 'brands', 'units', 'warehouses']),
+      const _ProvisioningStageView('Products, customers and suppliers', ['products', 'customers', 'suppliers', 'supplierProductPrices']),
+      const _ProvisioningStageView('Inventory movements', ['stockMovements', 'billsOfMaterials', 'manufacturingOrders']),
+      const _ProvisioningStageView('Sales and purchases', ['sales', 'saleQuotations', 'deliveryNotes', 'purchases']),
+      const _ProvisioningStageView('Accounting and reports', ['expenses', 'accountTransactions']),
     ];
+    final completedCount = stages.where((stage) => stage.forceComplete || _isComplete(sections, stage.sections)).length;
+    final progress = stages.isEmpty ? null : (completedCount / stages.length).clamp(0.05, 1.0).toDouble();
+
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 560),
@@ -184,16 +229,44 @@ class _CloudProvisioningPage extends StatelessWidget {
                   style: theme.textTheme.bodyMedium,
                 ),
                 const SizedBox(height: 20),
-                const LinearProgressIndicator(),
+                LinearProgressIndicator(value: CloudProvisioningStatus.allSectionsComplete ? 1 : progress),
                 const SizedBox(height: 20),
-                for (var i = 0; i < stages.length; i += 1)
+                for (final stage in stages)
                   Padding(
                     padding: const EdgeInsets.symmetric(vertical: 4),
                     child: Row(
                       children: [
-                        Icon(i == 0 ? Icons.check_circle : Icons.radio_button_unchecked, size: 20, color: i == 0 ? Colors.green : theme.colorScheme.outline),
+                        Builder(
+                          builder: (_) {
+                            final complete = stage.forceComplete || _isComplete(sections, stage.sections);
+                            final started = _hasAny(sections, stage.sections);
+                            final icon = complete
+                                ? Icons.check_circle
+                                : started
+                                    ? Icons.downloading_outlined
+                                    : Icons.radio_button_unchecked;
+                            final color = complete
+                                ? Colors.green
+                                : started
+                                    ? theme.colorScheme.primary
+                                    : theme.colorScheme.outline;
+                            return Icon(icon, size: 20, color: color);
+                          },
+                        ),
                         const SizedBox(width: 10),
-                        Expanded(child: Text(stages[i])),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(stage.label),
+                              if (!stage.forceComplete)
+                                Text(
+                                  _stageStatus(sections, stage.sections),
+                                  style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                                ),
+                            ],
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -210,6 +283,14 @@ class _CloudProvisioningPage extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ProvisioningStageView {
+  const _ProvisioningStageView(this.label, this.sections, {this.forceComplete = false});
+
+  final String label;
+  final List<String> sections;
+  final bool forceComplete;
 }
 
 class _ShellItem {
@@ -382,7 +463,7 @@ class _MainShellState extends State<MainShell> {
             ),
           ),
           body: CloudProvisioningStatus.isPending && widget.store.appIdentity.isClient && widget.store.appIdentity.activeSyncTransportNormalized == 'cloud'
-              ? const _CloudProvisioningPage()
+              ? _CloudProvisioningPage(onChanged: () => setState(() {}))
               : resolvedItems[selectedIndex].page,
         );
       },

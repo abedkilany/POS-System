@@ -227,10 +227,26 @@ class CloudProvisioningStatus {
   static const _messageKey = 'cloud_initial_provisioning_message_v1';
   static const _requestedAtKey = 'cloud_initial_provisioning_requested_at_v1';
   static const _lastAttemptAtKey = 'cloud_initial_provisioning_last_attempt_at_v1';
+  static const _sectionsKey = 'cloud_initial_provisioning_sections_v1';
+  static const _allSectionsCompleteKey = 'cloud_initial_provisioning_all_sections_complete_v1';
 
   static bool get isPending => LocalDatabaseService.getString(_stateKey) == 'pending';
 
   static String get message => LocalDatabaseService.getString(_messageKey) ?? 'Initial Store data is downloading from the Host.';
+
+  static Map<String, String> get sections {
+    final raw = LocalDatabaseService.getString(_sectionsKey);
+    if (raw == null || raw.trim().isEmpty) return const <String, String>{};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return const <String, String>{};
+      return decoded.map((key, value) => MapEntry(key.toString(), value.toString()));
+    } catch (_) {
+      return const <String, String>{};
+    }
+  }
+
+  static bool get allSectionsComplete => LocalDatabaseService.getString(_allSectionsCompleteKey) == 'true';
 
   static DateTime? get requestedAt => DateTime.tryParse(LocalDatabaseService.getString(_requestedAtKey) ?? '');
 
@@ -243,6 +259,19 @@ class CloudProvisioningStatus {
     await LocalDatabaseService.setString(_requestedAtKey, (requestedAt ?? now).toIso8601String());
   }
 
+  static Future<void> updateSnapshotSections(Map<String, dynamic>? value, {bool? allComplete}) async {
+    if (value != null) {
+      final normalized = <String, String>{};
+      for (final entry in value.entries) {
+        normalized[entry.key.toString()] = entry.value.toString();
+      }
+      await LocalDatabaseService.setString(_sectionsKey, jsonEncode(normalized));
+    }
+    if (allComplete != null) {
+      await LocalDatabaseService.setString(_allSectionsCompleteKey, allComplete ? 'true' : 'false');
+    }
+  }
+
   static Future<void> markAttempted([DateTime? value]) async {
     await LocalDatabaseService.setString(_lastAttemptAtKey, (value ?? DateTime.now().toUtc()).toIso8601String());
   }
@@ -250,6 +279,7 @@ class CloudProvisioningStatus {
   static Future<void> markComplete({String message = 'Initial Store data downloaded.'}) async {
     await LocalDatabaseService.setString(_stateKey, 'complete');
     await LocalDatabaseService.setString(_messageKey, message);
+    await LocalDatabaseService.setString(_allSectionsCompleteKey, 'true');
     await LocalDatabaseService.deleteString(_lastAttemptAtKey);
   }
 
@@ -258,6 +288,8 @@ class CloudProvisioningStatus {
     await LocalDatabaseService.deleteString(_messageKey);
     await LocalDatabaseService.deleteString(_requestedAtKey);
     await LocalDatabaseService.deleteString(_lastAttemptAtKey);
+    await LocalDatabaseService.deleteString(_sectionsKey);
+    await LocalDatabaseService.deleteString(_allSectionsCompleteKey);
   }
 }
 
@@ -686,7 +718,12 @@ class CloudSyncService {
         }
         final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
         if ((decodedPull['source'] ?? '').toString() == 'entity_snapshots') {
-          allSnapshotSectionsComplete = allSnapshotSectionsComplete && decodedPull['allSnapshotSectionsComplete'] == true;
+          final pageAllSectionsComplete = decodedPull['allSnapshotSectionsComplete'] == true;
+          allSnapshotSectionsComplete = allSnapshotSectionsComplete && pageAllSectionsComplete;
+          await CloudProvisioningStatus.updateSnapshotSections(
+            decodedPull['snapshotSections'] is Map<String, dynamic> ? decodedPull['snapshotSections'] as Map<String, dynamic> : null,
+            allComplete: pageAllSectionsComplete,
+          );
         }
         if (decodedPull['needsSnapshot'] == true) {
           await CloudSyncSettings.clearSavedPullCursor();
@@ -1696,7 +1733,12 @@ class CloudSyncService {
 
         final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
         if ((decodedPull['source'] ?? '').toString() == 'entity_snapshots') {
-          allSnapshotSectionsComplete = allSnapshotSectionsComplete && decodedPull['allSnapshotSectionsComplete'] == true;
+          final pageAllSectionsComplete = decodedPull['allSnapshotSectionsComplete'] == true;
+          allSnapshotSectionsComplete = allSnapshotSectionsComplete && pageAllSectionsComplete;
+          await CloudProvisioningStatus.updateSnapshotSections(
+            decodedPull['snapshotSections'] is Map<String, dynamic> ? decodedPull['snapshotSections'] as Map<String, dynamic> : null,
+            allComplete: pageAllSectionsComplete,
+          );
         }
         if (decodedPull['needsSnapshot'] == true) {
           await CloudSyncSettings.clearSavedPullCursor();
@@ -1856,7 +1898,12 @@ class CloudSyncService {
 
         final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
         if ((decodedPull['source'] ?? '').toString() == 'entity_snapshots') {
-          allSnapshotSectionsComplete = allSnapshotSectionsComplete && decodedPull['allSnapshotSectionsComplete'] == true;
+          final pageAllSectionsComplete = decodedPull['allSnapshotSectionsComplete'] == true;
+          allSnapshotSectionsComplete = allSnapshotSectionsComplete && pageAllSectionsComplete;
+          await CloudProvisioningStatus.updateSnapshotSections(
+            decodedPull['snapshotSections'] is Map<String, dynamic> ? decodedPull['snapshotSections'] as Map<String, dynamic> : null,
+            allComplete: pageAllSectionsComplete,
+          );
         }
         if (decodedPull['needsSnapshot'] == true) {
           await CloudSyncSettings.clearSavedPullCursor();
