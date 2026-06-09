@@ -607,6 +607,8 @@ class _TransactionRow extends StatelessWidget {
         return tr.text('payment_card');
       case 'wish':
         return tr.text('payment_wish');
+      case 'check':
+        return tr.text('payment_check');
       default:
         return method;
     }
@@ -654,25 +656,28 @@ class _AccountingMetrics {
   final double todayCashOut;
 
   factory _AccountingMetrics.fromStore(AppStore store) {
-    final customerReceivables = store.customers.fold<double>(0, (sum, customer) {
+    final customers = store.customers;
+    final suppliers = store.suppliers;
+    final accountTransactions = store.accountTransactions;
+    final customerReceivables = customers.fold<double>(0, (sum, customer) {
       final balance = store.accountBalance('customer', customer.id);
       return balance > 0 ? sum + balance : sum;
     });
-    final customerCredits = store.customers.fold<double>(0, (sum, customer) {
+    final customerCredits = customers.fold<double>(0, (sum, customer) {
       final balance = store.accountBalance('customer', customer.id);
       return balance < 0 ? sum + balance.abs() : sum;
     });
-    final supplierPayables = store.suppliers.fold<double>(0, (sum, supplier) {
+    final supplierPayables = suppliers.fold<double>(0, (sum, supplier) {
       final balance = store.accountBalance('supplier', supplier.id);
       return balance < 0 ? sum + balance.abs() : sum;
     });
-    final supplierAdvances = store.suppliers.fold<double>(0, (sum, supplier) {
+    final supplierAdvances = suppliers.fold<double>(0, (sum, supplier) {
       final balance = store.accountBalance('supplier', supplier.id);
       return balance > 0 ? sum + balance : sum;
     });
     final today = DateTime.now();
-    final todayCashIn = store.accountTransactions.where((txn) => _sameDay(txn.date, today) && _isCashIn(txn)).fold<double>(0, (sum, txn) => sum + _cashAmount(txn));
-    final todayCashOut = store.accountTransactions.where((txn) => _sameDay(txn.date, today) && _isCashOut(txn)).fold<double>(0, (sum, txn) => sum + _cashAmount(txn));
+    final todayCashIn = accountTransactions.where((txn) => _sameDay(txn.date, today) && _isCashIn(txn)).fold<double>(0, (sum, txn) => sum + _cashAmount(txn));
+    final todayCashOut = accountTransactions.where((txn) => _sameDay(txn.date, today) && _isCashOut(txn)).fold<double>(0, (sum, txn) => sum + _cashAmount(txn));
     return _AccountingMetrics(
       customerReceivables: customerReceivables,
       customerCredits: customerCredits,

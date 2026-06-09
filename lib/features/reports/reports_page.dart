@@ -16,13 +16,17 @@ class ReportsPage extends StatelessWidget {
     final tr = AppLocalizations.of(context);
     final totalExpenses = store.totalExpensesAmount;
     final estimatedProfit = store.estimateProfit();
-    final activeSales = store.sales.where((sale) => !sale.isCancelled).toList();
+    final sales = store.sales;
+    final purchases = store.purchases;
+    final stockMovements = store.stockMovements;
+    final accountTransactions = store.accountTransactions;
+    final activeSales = sales.where((sale) => !sale.isCancelled).toList();
     final today = DateTime.now();
     final todaySales = activeSales.where((sale) => sale.date.year == today.year && sale.date.month == today.month && sale.date.day == today.day).fold<double>(0, (sum, sale) => sum + sale.total);
     final monthSales = activeSales.where((sale) => sale.date.year == today.year && sale.date.month == today.month).fold<double>(0, (sum, sale) => sum + sale.total);
-    final monthPurchases = store.purchases.where((purchase) => !purchase.isCancelled && purchase.date.year == today.year && purchase.date.month == today.month).fold<double>(0, (sum, purchase) => sum + purchase.subtotal);
-    final movementIn = store.stockMovements.where((item) => item.quantity > 0).fold<double>(0, (sum, item) => sum + item.quantity);
-    final movementOut = store.stockMovements.where((item) => item.quantity < 0).fold<double>(0, (sum, item) => sum + item.quantity.abs());
+    final monthPurchases = purchases.where((purchase) => !purchase.isCancelled && purchase.date.year == today.year && purchase.date.month == today.month).fold<double>(0, (sum, purchase) => sum + purchase.subtotal);
+    final movementIn = stockMovements.where((item) => item.quantity > 0).fold<double>(0, (sum, item) => sum + item.quantity);
+    final movementOut = stockMovements.where((item) => item.quantity < 0).fold<double>(0, (sum, item) => sum + item.quantity.abs());
     final topProducts = <String, double>{};
     for (final sale in activeSales) {
       for (final item in sale.items) {
@@ -39,15 +43,15 @@ class ReportsPage extends StatelessWidget {
       final balance = store.accountBalance('supplier', supplier.id);
       return balance < 0 ? sum + balance.abs() : sum;
     });
-    final todayPaymentReceived = store.accountTransactions.where((txn) => txn.type == 'paymentReceived' && txn.date.year == today.year && txn.date.month == today.month && txn.date.day == today.day).fold<double>(0, (sum, txn) => sum + txn.credit);
-    final todayPaymentPaid = store.accountTransactions.where((txn) => txn.type == 'paymentPaid' && txn.date.year == today.year && txn.date.month == today.month && txn.date.day == today.day).fold<double>(0, (sum, txn) => sum + txn.debit);
-    final todayPaymentReversalsIn = store.accountTransactions.where((txn) => txn.type == 'paymentReversal' && txn.accountType == 'supplier' && txn.date.year == today.year && txn.date.month == today.month && txn.date.day == today.day).fold<double>(0, (sum, txn) => sum + txn.credit);
-    final todayPaymentReversalsOut = store.accountTransactions.where((txn) => txn.type == 'paymentReversal' && txn.accountType == 'customer' && txn.date.year == today.year && txn.date.month == today.month && txn.date.day == today.day).fold<double>(0, (sum, txn) => sum + txn.debit);
+    final todayPaymentReceived = accountTransactions.where((txn) => txn.type == 'paymentReceived' && txn.date.year == today.year && txn.date.month == today.month && txn.date.day == today.day).fold<double>(0, (sum, txn) => sum + txn.credit);
+    final todayPaymentPaid = accountTransactions.where((txn) => txn.type == 'paymentPaid' && txn.date.year == today.year && txn.date.month == today.month && txn.date.day == today.day).fold<double>(0, (sum, txn) => sum + txn.debit);
+    final todayPaymentReversalsIn = accountTransactions.where((txn) => txn.type == 'paymentReversal' && txn.accountType == 'supplier' && txn.date.year == today.year && txn.date.month == today.month && txn.date.day == today.day).fold<double>(0, (sum, txn) => sum + txn.credit);
+    final todayPaymentReversalsOut = accountTransactions.where((txn) => txn.type == 'paymentReversal' && txn.accountType == 'customer' && txn.date.year == today.year && txn.date.month == today.month && txn.date.day == today.day).fold<double>(0, (sum, txn) => sum + txn.debit);
     final todayCashIn = todayPaymentReceived + todayPaymentReversalsIn;
     final todayCashOut = todayPaymentPaid + todayPaymentReversalsOut;
     final todayCashInByMethod = <String, double>{};
     final todayCashOutByMethod = <String, double>{};
-    for (final txn in store.accountTransactions.where((txn) => txn.date.year == today.year && txn.date.month == today.month && txn.date.day == today.day)) {
+    for (final txn in accountTransactions.where((txn) => txn.date.year == today.year && txn.date.month == today.month && txn.date.day == today.day)) {
       final method = txn.paymentMethod.trim().isEmpty ? tr.text('not_specified') : txn.paymentMethod.trim();
       if (txn.type == 'paymentReceived') todayCashInByMethod[method] = (todayCashInByMethod[method] ?? 0) + txn.credit;
       if (txn.type == 'paymentPaid') todayCashOutByMethod[method] = (todayCashOutByMethod[method] ?? 0) + txn.debit;
@@ -117,7 +121,7 @@ class ReportsPage extends StatelessWidget {
           _ReportSection(
             title: tr.text('recent_stock_movements'),
             empty: tr.text('no_stock_movements'),
-            children: store.stockMovements.take(8).map((movement) => ListTile(dense: true, leading: Icon(movement.quantity >= 0 ? Icons.add_circle_outline : Icons.remove_circle_outline), title: Text(movement.productName), subtitle: Text('${movement.type} • ${movement.referenceNo}'), trailing: Text(movement.quantity > 0 ? '+${movement.quantity}' : '${movement.quantity}'))).toList(),
+            children: stockMovements.take(8).map((movement) => ListTile(dense: true, leading: Icon(movement.quantity >= 0 ? Icons.add_circle_outline : Icons.remove_circle_outline), title: Text(movement.productName), subtitle: Text('${movement.type} • ${movement.referenceNo}'), trailing: Text(movement.quantity > 0 ? '+${movement.quantity}' : '${movement.quantity}'))).toList(),
           ),
         ],
       ),

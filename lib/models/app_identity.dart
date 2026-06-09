@@ -55,8 +55,12 @@ class AppIdentity {
   bool get isMarketplaceEnabled => syncMode == SyncMode.marketplaceEnabled;
   String get activeSyncTransportNormalized {
     final normalized = activeSyncTransport.trim().toLowerCase();
-    if (normalized == 'lan' || normalized == 'cloud') return normalized;
-    return syncMode == SyncMode.lanOnly ? 'lan' : (isCloudEnabled ? 'cloud' : 'local');
+    if (normalized == 'lan' || normalized == 'cloud' || normalized == 'local') return normalized;
+    // LAN must be enabled by the current Sync settings, not inferred from the
+    // legacy syncMode value. An old Host/Client identity may still carry
+    // syncMode=lanOnly after LAN was disabled, so never treat lanOnly alone as
+    // an active transport.
+    return isCloudEnabled ? 'cloud' : 'local';
   }
   String get transportType => activeSyncTransportNormalized;
 
@@ -113,10 +117,10 @@ class AppIdentity {
         'hostDeviceId': hostDeviceId,
         'cloudTenantId': cloudTenantId,
         'deviceToken': deviceToken,
-        'transportType': transportType,
+        'transportType': activeSyncTransport.trim().toLowerCase(),
         'storeEpoch': storeEpoch,
         'recoveryKey': recoveryKey,
-        'activeSyncTransport': activeSyncTransportNormalized,
+        'activeSyncTransport': activeSyncTransport.trim().toLowerCase(),
       };
 
   factory AppIdentity.fromJson(Map<String, dynamic> json) {

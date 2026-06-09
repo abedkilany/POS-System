@@ -260,6 +260,7 @@ class _PaymentDialogState extends State<_PaymentDialog> {
                   DropdownMenuItem(value: 'Cash', child: Text(tr.text('payment_cash'))),
                   DropdownMenuItem(value: 'Card', child: Text(tr.text('payment_card'))),
                   DropdownMenuItem(value: 'Wish', child: Text(tr.text('payment_wish'))),
+                  DropdownMenuItem(value: 'Check', child: Text(tr.text('payment_check'))),
                 ],
                 onChanged: (value) => setState(() => paymentMethod = value ?? 'Cash'),
               ),

@@ -189,6 +189,25 @@ void main() {
       expect(store.sales.length, 1);
     });
 
+    test('returns a sale, restores stock, and records a sale return movement', () async {
+      final store = await readyStore();
+      await store.addOrUpdateProduct(product(stock: 5, price: 10, cost: 4));
+
+      final sale = await store.createSale(
+        customerName: 'Bob',
+        items: const [SaleItem(productId: 'p1', productName: 'Coffee', unitPrice: 10, quantity: 2)],
+      );
+
+      expect(store.products.single.stock, 3);
+      await store.returnSale(sale.id);
+
+      expect(store.sales.single.status, 'Returned');
+      expect(store.sales.single.isCancelled, isTrue);
+      expect(store.totalSalesAmount, 0);
+      expect(store.products.single.stock, 5);
+      expect(store.stockMovements.where((m) => m.type == 'sale_return'), isNotEmpty);
+    });
+
     test('handles purchase draft, receive, cancel, and manual stock adjustment', () async {
       final store = await readyStore();
       await store.addOrUpdateProduct(product(stock: 2, cost: 5));
@@ -228,6 +247,28 @@ void main() {
       expect(store.purchases.single.isCancelled, isTrue);
       expect(store.totalPurchasesAmount, 0);
       expect(store.products.single.stock, 0);
+    });
+
+    test('returns received purchase and reverses stock with return movement', () async {
+      final store = await readyStore();
+      await store.addOrUpdateProduct(product());
+      final draft = await store.createPurchase(
+        supplierId: 's1',
+        supplierName: 'Supplier',
+        items: const [PurchaseItem(productId: 'p1', productName: 'Coffee', quantity: 5, unitCost: 8)],
+        receiveNow: true,
+      );
+      expect(store.products.single.stock, 5);
+
+      await store.returnPurchase(draft.id, reason: 'damaged goods');
+
+      expect(store.purchases.single.status, 'Returned');
+      expect(store.purchases.single.isReturned, isTrue);
+      expect(store.purchases.single.isCancelled, isTrue);
+      expect(store.totalPurchasesAmount, 0);
+      expect(store.products.single.stock, 0);
+      expect(store.stockMovements.where((movement) => movement.type == 'purchase_return'), isNotEmpty);
+      expect(store.accountTransactions.where((entry) => entry.type == 'purchaseReturn'), isNotEmpty);
     });
   });
 

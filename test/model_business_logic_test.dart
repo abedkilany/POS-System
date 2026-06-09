@@ -123,6 +123,8 @@ void main() {
       expect(purchase.isReceived, isFalse);
       expect(purchase.copyWith(status: 'Received').isReceived, isTrue);
       expect(purchase.copyWith(status: 'Cancelled').isCancelled, isTrue);
+      expect(purchase.copyWith(status: 'Returned').isReturned, isTrue);
+      expect(purchase.copyWith(status: 'Returned').subtotal, 0);
     });
   });
 

@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 
 import '../../core/services/cloud_sync_service.dart';
 import '../../core/services/local_database_service.dart';
+import '../../core/services/lan_sync_service.dart';
 import '../../core/sync_unified/sync_unified.dart';
 import '../../data/app_store.dart';
 import '../../models/catalog_item.dart';
@@ -83,11 +84,25 @@ class _StressLabPageState extends State<StressLabPage> {
     });
   }
 
+
+  String _effectiveSyncTransport() {
+    final identity = store.appIdentity;
+    final lan = LanSyncSettings.load();
+    final cloud = CloudSyncSettings.load();
+    final cloudActive = cloud.isConfigured && (identity.isCloudEnabled || identity.activeSyncTransportNormalized == 'cloud');
+    final lanHostActive = identity.isHost && lan.setupComplete && lan.isHost;
+    final lanClientActive = identity.isClient && lan.setupComplete && lan.isClient && identity.activeSyncTransportNormalized == 'lan';
+    if (cloudActive) return 'cloud';
+    if (lanHostActive || lanClientActive) return 'lan';
+    return 'local';
+  }
+
   String _roleLabel() {
     final identity = store.appIdentity;
-    if (identity.isHost) return 'HOST';
-    if (identity.isClient && identity.activeSyncTransportNormalized == 'cloud') return 'CLIENT_CLOUD';
-    if (identity.isClient && identity.activeSyncTransportNormalized == 'lan') return 'CLIENT_LAN';
+    final transport = _effectiveSyncTransport();
+    if (identity.isHost) return transport == 'cloud' ? 'HOST_CLOUD' : transport == 'lan' ? 'HOST_LAN' : 'HOST_LOCAL';
+    if (identity.isClient && transport == 'cloud') return 'CLIENT_CLOUD';
+    if (identity.isClient && transport == 'lan') return 'CLIENT_LAN';
     return 'LOCAL_${identity.deviceRole.name.toUpperCase()}';
   }
 
@@ -96,7 +111,7 @@ class _StressLabPageState extends State<StressLabPage> {
     final rejectedQueue = store.syncQueue.where((item) => item.status.toLowerCase() == 'rejected').length;
     final failedQueue = store.syncQueue.where((item) => item.status.toLowerCase() == 'failed').length;
     return '$label role=${_roleLabel()} device=${identity.deviceId} store=${identity.storeId} branch=${identity.branchId} '
-        'transport=${identity.activeSyncTransportNormalized} epoch=${identity.storeEpoch} seq=${store.currentSyncSequence} '
+        'transport=${_effectiveSyncTransport()} identityTransport=${identity.activeSyncTransportNormalized} epoch=${identity.storeEpoch} seq=${store.currentSyncSequence} '
         'products=${store.products.length} customers=${store.customers.length} suppliers=${store.suppliers.length} '
         'sales=${store.sales.length} purchases=${store.purchases.length} expenses=${store.expenses.length} stockMovements=${store.stockMovements.length} '
         'pendingQueue=${store.pendingSyncQueue.length} pendingChanges=${store.pendingSyncChanges.length} '
@@ -320,14 +335,15 @@ class _StressLabPageState extends State<StressLabPage> {
     final identity = store.appIdentity;
     _setStatus('Running active sync...', progress: 0.84);
     _addLog(_snapshotLine('BEFORE_SYNC'));
-    await _measure('Active sync role=${_roleLabel()} transport=${identity.activeSyncTransportNormalized}', () async {
+    final effectiveTransport = _effectiveSyncTransport();
+    await _measure('Active sync role=${_roleLabel()} transport=$effectiveTransport', () async {
       // Important diagnostic fix:
       // A Host must never run the LAN client push/pull/rebuild flow. Its LAN role
       // is to keep serving local clients. When Cloud is enabled, the Host's
       // active sync responsibility is to publish its authoritative changes to
       // Cloud so Cloud clients can pull the complete store state.
       if (identity.isHost) {
-        if (identity.isCloudEnabled || CloudSyncSettings.load().isConfigured) {
+        if (effectiveTransport == 'cloud') {
           _addLog('Host active sync route: Cloud host push/pull. LAN host will not run client pull.');
           final result = await UnifiedSyncFactory.cloudEngine(store, enabled: true).syncNow(onProgress: (value, label) {
             _setStatus('Host Cloud Sync: $label', progress: 0.84 + 0.10 * value);
@@ -337,13 +353,18 @@ class _StressLabPageState extends State<StressLabPage> {
           return;
         }
 
-        _addLog('Host active sync route: LAN host only. No LAN client pull will run on Host.');
-        final result = await UnifiedSyncFactory.lanEngine(store).registerCurrentHost(transportName: 'lan');
-        _addLog('Sync result ok=${result.ok} message=${result.message} cursor=${result.cursor.value} source=${result.cursor.source}');
+        if (effectiveTransport == 'lan') {
+          _addLog('Host active sync route: LAN host only. No LAN client pull will run on Host.');
+          final result = await UnifiedSyncFactory.lanEngine(store).registerCurrentHost(transportName: 'lan');
+          _addLog('Sync result ok=${result.ok} message=${result.message} cursor=${result.cursor.value} source=${result.cursor.source}');
+          return;
+        }
+
+        _addLog('Host active sync route: local/offline. LAN is disabled and Cloud is not configured; no sync transport will run.');
         return;
       }
 
-      final transport = identity.activeSyncTransportNormalized;
+      final transport = effectiveTransport;
       final engine = transport == 'cloud'
           ? UnifiedSyncFactory.cloudEngine(store)
           : transport == 'lan'
@@ -626,13 +647,36 @@ class _StressLabPageState extends State<StressLabPage> {
     final pendingChanges = store.pendingSyncChanges.length;
     final changes = store.syncChanges.length;
     final queue = store.syncQueue.length;
+    final logicalBytes = _logicalDatabaseBytes();
+    final backupBytes = store.exportBackupJson().length;
+
     final syncHealth = pendingQueue == 0 && pendingChanges == 0 && failedQueue == 0 && rejectedQueue == 0 ? 'PASS' : 'FAIL';
-    final dbBloat = changes <= 250 && queue == 0 ? 'PASS' : 'FAIL';
+
+    // DB_BLOAT used to treat every retained SyncChange above 250 as database
+    // bloat. That rule was valid for the old Hive/JSON storage path, where the
+    // full sync history was serialized back into one large value. After the
+    // SQLite migration, synced authoritative history is stored row-by-row and
+    // does not indicate JSON/DB bloat by itself.
+    //
+    // What still indicates real bloat in the stress lab:
+    // 1) legacy LocalDatabaseService keys growing close to the full backup size
+    //    (means large typed entities are being mirrored as JSON again), or
+    // 2) stale queue rows that remain although there is no pending/failed work.
+    final legacyJsonBloat = logicalBytes > 1024 * 1024 && logicalBytes > (backupBytes / 2);
+    final staleQueueBloat = queue > 0 && pendingQueue == 0 && failedQueue == 0 && rejectedQueue == 0;
+    final dbBloat = !legacyJsonBloat && !staleQueueBloat ? 'PASS' : 'FAIL';
+    final dbBloatReason = legacyJsonBloat
+        ? 'legacy_json_cache'
+        : staleQueueBloat
+            ? 'stale_queue_rows'
+            : 'none';
+
     final dataHealth = store.products.isNotEmpty && store.sales.isNotEmpty ? 'PASS' : 'WARN';
     _addLog('$label SYNC_HEALTH=$syncHealth DB_BLOAT=$dbBloat DATA_HEALTH=$dataHealth '
         'products=${store.products.length} customers=${store.customers.length} suppliers=${store.suppliers.length} sales=${store.sales.length} '
         'purchases=${store.purchases.length} expenses=${store.expenses.length} stockMovements=${store.stockMovements.length} '
-        'allChanges=$changes allQueue=$queue pendingQueue=$pendingQueue pendingChanges=$pendingChanges rejectedQueue=$rejectedQueue failedQueue=$failedQueue');
+        'allChanges=$changes allQueue=$queue pendingQueue=$pendingQueue pendingChanges=$pendingChanges rejectedQueue=$rejectedQueue failedQueue=$failedQueue '
+        'logicalDbBytes=$logicalBytes backupBytes=$backupBytes dbBloatReason=$dbBloatReason');
   }
 
 
@@ -980,7 +1024,7 @@ class _StressLabPageState extends State<StressLabPage> {
                     const SizedBox(height: 8),
                     Text('Temporary real-app simulation. Uses the real AppStore services, stock logic, sync queue, and active sync transport. Log stays in memory until Clear Log is pressed.'),
                     const SizedBox(height: 8),
-                    Text('Role: ${_roleLabel()} • Device: ${identity.deviceId} • Transport: ${identity.activeSyncTransportNormalized} • Epoch: ${identity.storeEpoch}'),
+                    Text('Role: ${_roleLabel()} • Device: ${identity.deviceId} • Transport: ${_effectiveSyncTransport()} • Epoch: ${identity.storeEpoch}'),
                     const SizedBox(height: 12),
                     Wrap(
                       spacing: 12,

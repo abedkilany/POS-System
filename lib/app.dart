@@ -19,10 +19,14 @@ import 'features/database/database_page.dart';
 import 'features/dashboard/dashboard_page.dart';
 import 'features/expenses/expenses_page.dart';
 import 'features/inventory/inventory_page.dart';
+import 'features/inventory/manufacturing_page.dart';
+import 'features/maintenance/maintenance_page.dart';
 import 'features/products/products_page.dart';
 import 'features/purchases/purchases_page.dart';
 import 'features/reports/reports_page.dart';
 import 'features/sales/sales_page.dart';
+import 'features/sales/quotations_page.dart';
+import 'features/sales/delivery_notes_page.dart';
 import 'features/security/login_gate_page.dart';
 import 'features/settings/settings_page.dart';
 import 'features/dev_tools/stress_lab_page.dart';
@@ -203,6 +207,9 @@ class _MainShellState extends State<MainShell> {
         _ShellItem(label: tr.text('suppliers'), icon: Icons.local_shipping_outlined, selectedIcon: Icons.local_shipping, page: SuppliersPage(store: widget.store)),
       if (widget.store.hasPermission(AppPermission.salesCreate) || widget.store.hasPermission(AppPermission.salesCancel))
         _ShellItem(label: tr.text('sales'), icon: Icons.receipt_long_outlined, selectedIcon: Icons.receipt_long, page: SalesPage(store: widget.store)),
+      if (widget.store.hasPermission(AppPermission.salesCreate))
+        _ShellItem(label: 'Quotations', icon: Icons.request_quote_outlined, selectedIcon: Icons.request_quote, page: QuotationsPage(store: widget.store)),
+        _ShellItem(label: 'Delivery Notes', icon: Icons.local_shipping_outlined, selectedIcon: Icons.local_shipping, page: DeliveryNotesPage(store: widget.store)),
       if (widget.store.hasPermission(AppPermission.suppliersManage))
         _ShellItem(label: tr.text('purchases'), icon: Icons.add_shopping_cart_outlined, selectedIcon: Icons.add_shopping_cart, page: PurchasesPage(store: widget.store)),
       if (widget.store.hasPermission(AppPermission.expensesManage))
@@ -210,10 +217,14 @@ class _MainShellState extends State<MainShell> {
       if (widget.store.hasPermission(AppPermission.reportsView) || widget.store.hasPermission(AppPermission.customersManage) || widget.store.hasPermission(AppPermission.suppliersManage))
         _ShellItem(label: tr.text('accounting'), icon: Icons.account_balance_wallet_outlined, selectedIcon: Icons.account_balance_wallet, page: AccountingPage(store: widget.store)),
       _ShellItem(label: tr.text('inventory'), icon: Icons.warehouse_outlined, selectedIcon: Icons.warehouse, page: InventoryPage(store: widget.store)),
+      if (widget.store.hasPermission(AppPermission.productsEdit))
+        _ShellItem(label: 'Manufacturing', icon: Icons.precision_manufacturing_outlined, selectedIcon: Icons.precision_manufacturing, page: ManufacturingPage(store: widget.store)),
       if (widget.store.hasPermission(AppPermission.reportsView))
         _ShellItem(label: tr.text('reports'), icon: Icons.bar_chart_outlined, selectedIcon: Icons.bar_chart, page: ReportsPage(store: widget.store)),
       if (widget.store.hasPermission(AppPermission.databaseManage))
         _ShellItem(label: tr.text('database'), icon: Icons.storage_outlined, selectedIcon: Icons.storage, page: DatabasePage(store: widget.store)),
+      if (widget.store.hasPermission(AppPermission.databaseManage))
+        _ShellItem(label: 'Maintenance', icon: Icons.health_and_safety_outlined, selectedIcon: Icons.health_and_safety, page: MaintenancePage(store: widget.store)),
       _ShellItem(label: tr.text('settings'), icon: Icons.settings_outlined, selectedIcon: Icons.settings, page: SettingsPage(store: widget.store, onLocaleChanged: widget.onLocaleChanged, onThemeModeChanged: widget.onThemeModeChanged, themeMode: widget.themeMode, onSyncSettingsChanged: widget.onSyncSettingsChanged)),
       if (widget.store.isStressLabEnabled)
         _ShellItem(label: 'Stress Lab', icon: Icons.science_outlined, selectedIcon: Icons.science, page: StressLabPage(store: widget.store)),

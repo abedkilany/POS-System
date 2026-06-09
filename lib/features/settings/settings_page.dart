@@ -1591,6 +1591,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
             identity.copyWith(
               deviceRole: DeviceRole.host,
               syncMode: _cloudEnabled ? SyncMode.cloudConnected : (_lanEnabledForHost ? SyncMode.lanOnly : SyncMode.localOnly),
+              activeSyncTransport: _cloudEnabled ? 'cloud' : (_lanEnabledForHost ? 'lan' : 'local'),
             ),
             source: 'sync settings save',
           );

@@ -2,7 +2,6 @@
 import 'dart:async';
 
 import '../../data/app_store.dart';
-import '../../models/app_identity.dart';
 import '../services/cloud_sync_service.dart';
 import '../services/lan_sync_service.dart';
 import 'cloud_sync_transport_adapter.dart';
@@ -66,7 +65,7 @@ class UnifiedAutoLanSyncController {
     final identity = store.appIdentity;
     if (identity.isHost) return settings.setupComplete && settings.isHost;
     if (identity.isClient) {
-      return (identity.syncMode == SyncMode.lanOnly || identity.activeSyncTransportNormalized == 'lan') && settings.setupComplete && settings.isClient;
+      return identity.activeSyncTransportNormalized == 'lan' && settings.setupComplete && settings.isClient;
     }
     return false;
   }

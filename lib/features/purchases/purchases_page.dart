@@ -55,8 +55,9 @@ class _PurchasesPageState extends State<PurchasesPage> {
           p.items.any((item) => item.productName.toLowerCase().contains(query));
       final matchesStatus = _statusFilter == 'all' ||
           (_statusFilter == 'draft' && !p.isReceived && !p.isCancelled) ||
-          (_statusFilter == 'received' && p.isReceived) ||
-          (_statusFilter == 'cancelled' && p.isCancelled);
+          (_statusFilter == 'received' && p.isReceived && !p.isReturned) ||
+          (_statusFilter == 'returned' && p.isReturned) ||
+          (_statusFilter == 'cancelled' && p.status.toLowerCase() == 'cancelled');
       return matchesSearch && matchesStatus;
     }).toList();
     purchases.sort((a, b) {
@@ -142,8 +143,9 @@ class _PurchasesPageState extends State<PurchasesPage> {
               children: [
                 ChoiceChip(label: Text('${tr.text('all')} (${allPurchases.length})'), selected: _statusFilter == 'all', onSelected: (_) => setState(() => _statusFilter = 'all')),
                 ChoiceChip(label: Text('${tr.text('draft')} (${allPurchases.where((p) => !p.isReceived && !p.isCancelled).length})'), selected: _statusFilter == 'draft', onSelected: (_) => setState(() => _statusFilter = 'draft')),
-                ChoiceChip(label: Text('${tr.text('received')} (${allPurchases.where((p) => p.isReceived).length})'), selected: _statusFilter == 'received', onSelected: (_) => setState(() => _statusFilter = 'received')),
-                ChoiceChip(label: Text('${tr.text('cancelled')} (${allPurchases.where((p) => p.isCancelled).length})'), selected: _statusFilter == 'cancelled', onSelected: (_) => setState(() => _statusFilter = 'cancelled')),
+                ChoiceChip(label: Text('${tr.text('received')} (${allPurchases.where((p) => p.isReceived && !p.isReturned).length})'), selected: _statusFilter == 'received', onSelected: (_) => setState(() => _statusFilter = 'received')),
+                ChoiceChip(label: Text('${tr.text('returned')} (${allPurchases.where((p) => p.isReturned).length})'), selected: _statusFilter == 'returned', onSelected: (_) => setState(() => _statusFilter = 'returned')),
+                ChoiceChip(label: Text('${tr.text('cancelled')} (${allPurchases.where((p) => p.status.toLowerCase() == 'cancelled').length})'), selected: _statusFilter == 'cancelled', onSelected: (_) => setState(() => _statusFilter = 'cancelled')),
               ],
             );
             final sorter = DropdownButtonFormField<String>(
@@ -176,9 +178,9 @@ class _PurchasesPageState extends State<PurchasesPage> {
                         storeProfile: widget.store.storeProfile,
                         onTap: () => _showPurchaseDetails(context, purchase),
                         onReceive: purchase.status == 'Draft' ? () => _receivePurchase(context, purchase.id) : null,
-                        onCancel: purchase.isReceived ? () => _cancelPurchase(context, purchase.id) : null,
+                        onCancel: purchase.isReceived && !purchase.isReturned ? () => _returnPurchase(context, purchase.id) : null,
                         onDeleteDraft: !purchase.isReceived && !purchase.isCancelled ? () => _deleteDraftPurchase(context, purchase.id) : null,
-                        onPermanentDelete: purchase.isCancelled && widget.store.hasPermission(AppPermission.databaseManage) ? () => _permanentlyDeletePurchase(context, purchase.id) : null,
+                        onPermanentDelete: purchase.status.toLowerCase() == 'cancelled' && widget.store.hasPermission(AppPermission.databaseManage) ? () => _permanentlyDeletePurchase(context, purchase.id) : null,
                         onDuplicate: () => _openPurchaseDialog(context, template: purchase),
                         formatDate: _formatShortDate,
                       ),
@@ -251,22 +253,22 @@ class _PurchasesPageState extends State<PurchasesPage> {
     }
   }
 
-  Future<void> _cancelPurchase(BuildContext context, String id) async {
+  Future<void> _returnPurchase(BuildContext context, String id) async {
     final reasonController = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(AppLocalizations.of(context).text('cancel_purchase')),
+        title: Text(AppLocalizations.of(context).text('return_purchase')),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(AppLocalizations.of(context).text('cancel_purchase_desc')),
+            Text(AppLocalizations.of(context).text('return_purchase_desc')),
             const SizedBox(height: 12),
             TextField(
               controller: reasonController,
               maxLines: 2,
-              decoration: InputDecoration(labelText: AppLocalizations.of(context).text('cancel_reason_optional')),
+              decoration: InputDecoration(labelText: AppLocalizations.of(context).text('return_reason_optional')),
             ),
           ],
         ),
@@ -283,9 +285,9 @@ class _PurchasesPageState extends State<PurchasesPage> {
     final reason = reasonController.text.trim();
     reasonController.dispose();
     try {
-      await widget.store.cancelPurchase(id, reason: reason);
+      await widget.store.returnPurchase(id, reason: reason);
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('purchase_cancelled'))));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('purchase_returned_stock_reversed'))));
       setState(() {});
     } catch (error) {
       if (!context.mounted) return;
@@ -295,12 +297,14 @@ class _PurchasesPageState extends State<PurchasesPage> {
 
   Future<void> _showPurchaseDetails(BuildContext context, Purchase purchase) async {
     final tr = AppLocalizations.of(context);
-    final statusText = purchase.isCancelled
-        ? tr.text('cancelled')
-        : purchase.isReceived
+    final statusText = purchase.isReturned
+        ? tr.text('returned')
+        : purchase.status.toLowerCase() == 'cancelled'
+            ? tr.text('cancelled')
+            : purchase.isReceived
             ? tr.text('received')
             : tr.text('draft');
-    final statusColor = purchase.isCancelled ? Colors.red : purchase.isReceived ? Colors.green : Colors.orange;
+    final statusColor = purchase.isReturned ? Colors.blueGrey : purchase.status.toLowerCase() == 'cancelled' ? Colors.red : purchase.isReceived ? Colors.green : Colors.orange;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -385,14 +389,14 @@ class _PurchasesPageState extends State<PurchasesPage> {
                         icon: const Icon(Icons.download_done),
                         label: Text(tr.text('receive')),
                       ),
-                    if (purchase.isReceived)
+                    if (purchase.isReceived && !purchase.isReturned)
                       OutlinedButton.icon(
                         onPressed: () {
                           Navigator.pop(context);
-                          _cancelPurchase(context, purchase.id);
+                          _returnPurchase(context, purchase.id);
                         },
-                        icon: const Icon(Icons.cancel_outlined),
-                        label: Text(tr.text('cancel_purchase')),
+                        icon: const Icon(Icons.assignment_return_outlined),
+                        label: Text(tr.text('return_purchase')),
                       ),
                     if (!purchase.isReceived && !purchase.isCancelled)
                       OutlinedButton.icon(
@@ -440,6 +444,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
     final productSearchController = TextEditingController();
     final paidAmountController = TextEditingController();
     String paymentStatus = 'paid';
+    String paymentMethod = 'Cash';
     String costCurrency = selectedProduct?.costCurrency ?? widget.store.storeProfile.defaultProductCurrency;
     bool receiveNow = false;
 
@@ -1155,6 +1160,20 @@ class _PurchasesPageState extends State<PurchasesPage> {
                             ],
                             onChanged: (value) => setDialogState(() => paymentStatus = value ?? 'paid'),
                           ),
+                          if (paymentStatus != 'credit') ...[
+                            const SizedBox(height: 8),
+                            DropdownButtonFormField<String>(
+                              initialValue: paymentMethod,
+                              decoration: InputDecoration(labelText: tr.text('payment_method')),
+                              items: [
+                                DropdownMenuItem(value: 'Cash', child: Text(tr.text('payment_cash'))),
+                                DropdownMenuItem(value: 'Card', child: Text(tr.text('payment_card'))),
+                                DropdownMenuItem(value: 'Wish', child: Text(tr.text('payment_wish'))),
+                                DropdownMenuItem(value: 'Check', child: Text(tr.text('payment_check'))),
+                              ],
+                              onChanged: (value) => setDialogState(() => paymentMethod = value ?? 'Cash'),
+                            ),
+                          ],
                           if (paymentStatus == 'partial') ...[
                             SizedBox(height: gap),
                             TextFormField(
@@ -1454,7 +1473,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                 ScaffoldMessenger.of(dialogContext).showSnackBar(const SnackBar(content: Text('Invalid paid amount.')));
                                 return;
                               }
-                              await widget.store.createPurchase(supplierId: supplierId, supplierName: supplierName, items: purchaseItems, receiveNow: receiveNow, paymentStatus: paymentStatus, paidAmount: paidAmount);
+                              await widget.store.createPurchase(supplierId: supplierId, supplierName: supplierName, items: purchaseItems, receiveNow: receiveNow, paymentStatus: paymentStatus, paymentMethod: paymentMethod, paidAmount: paidAmount);
                               if (dialogContext.mounted) {
                                 await updateSupplierPricesFromItemsIfNeeded(dialogContext, purchaseItems);
                               }
@@ -1581,13 +1600,15 @@ class _PurchaseTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final isCompact = MediaQuery.sizeOf(context).width < 520;
-    final statusText = purchase.isCancelled
-        ? tr.text('cancelled')
-        : purchase.isReceived
+    final statusText = purchase.isReturned
+        ? tr.text('returned')
+        : purchase.status.toLowerCase() == 'cancelled'
+            ? tr.text('cancelled')
+            : purchase.isReceived
             ? tr.text('received')
             : tr.text('draft');
-    final statusColor = purchase.isCancelled ? Colors.red : purchase.isReceived ? Colors.green : Colors.orange;
-    final statusIcon = purchase.isCancelled ? Icons.cancel_outlined : purchase.isReceived ? Icons.inventory_2_outlined : Icons.pending_actions;
+    final statusColor = purchase.isReturned ? Colors.blueGrey : purchase.status.toLowerCase() == 'cancelled' ? Colors.red : purchase.isReceived ? Colors.green : Colors.orange;
+    final statusIcon = purchase.isReturned ? Icons.assignment_return_outlined : purchase.status.toLowerCase() == 'cancelled' ? Icons.cancel_outlined : purchase.isReceived ? Icons.inventory_2_outlined : Icons.pending_actions;
     final amount = formatUsdReferenceAmount(purchase.subtotal, storeProfile);
     final supplier = purchase.supplierName.trim().isEmpty ? '-' : purchase.supplierName.trim();
     final summary = '${purchase.items.length} ${tr.text('items')} • ${_formatQuantity(purchase.totalUnits)} ${tr.text('units')} • ${formatDate(purchase.date)}';
@@ -1597,14 +1618,14 @@ class _PurchaseTile extends StatelessWidget {
       onSelected: (value) {
         if (value == 'duplicate') onDuplicate?.call();
         if (value == 'receive') onReceive?.call();
-        if (value == 'cancel') onCancel?.call();
+        if (value == 'return') onCancel?.call();
         if (value == 'delete_draft') onDeleteDraft?.call();
         if (value == 'permanent_delete') onPermanentDelete?.call();
       },
       itemBuilder: (context) => [
         PopupMenuItem(value: 'duplicate', child: ListTile(leading: const Icon(Icons.copy_all_outlined), title: Text(tr.text('duplicate_purchase')))),
         if (onReceive != null) PopupMenuItem(value: 'receive', child: ListTile(leading: const Icon(Icons.download_done), title: Text(tr.text('receive')))),
-        if (onCancel != null) PopupMenuItem(value: 'cancel', child: ListTile(leading: const Icon(Icons.cancel_outlined), title: Text(tr.text('cancel_purchase')))),
+        if (onCancel != null) PopupMenuItem(value: 'return', child: ListTile(leading: const Icon(Icons.assignment_return_outlined), title: Text(tr.text('return_purchase')))),
         if (onDeleteDraft != null) PopupMenuItem(value: 'delete_draft', child: ListTile(leading: const Icon(Icons.delete_outline), title: Text(tr.text('delete_draft_purchase')))),
         if (onPermanentDelete != null) PopupMenuItem(value: 'permanent_delete', child: ListTile(leading: const Icon(Icons.delete_forever_outlined), title: Text(tr.text('permanently_delete')))),
       ],

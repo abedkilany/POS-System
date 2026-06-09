@@ -307,6 +307,7 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
       if (!_isWalkInCustomer) MapEntry('Credit', tr.text('credit_unpaid')),
       MapEntry('Card', tr.text('payment_card')),
       MapEntry('Wish', tr.text('payment_wish')),
+      MapEntry('Check', tr.text('payment_check')),
     ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1653,9 +1654,14 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                                     label: Text(tr.text('share_pdf')),
                                   ),
                                   OutlinedButton.icon(
-                                    onPressed: (!sale.isCancelled && widget.store.canDeleteOrCancel) ? () => _cancelSale(context, sale) : null,
+                                    onPressed: (!sale.isCancelled && widget.store.deliveryNoteForSale(sale.id) == null) ? () => _createDeliveryNote(context, sale) : null,
+                                    icon: const Icon(Icons.local_shipping_outlined),
+                                    label: const Text('Delivery note'),
+                                  ),
+                                  OutlinedButton.icon(
+                                    onPressed: (!sale.isCancelled && widget.store.canDeleteOrCancel) ? () => _returnSale(context, sale) : null,
                                     icon: const Icon(Icons.assignment_return_outlined),
-                                    label: Text(tr.text('cancel_return')),
+                                    label: Text(tr.text('return_sale')),
                                   ),
                                 ],
                               ),
@@ -2081,25 +2087,36 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
   }
 
 
-  Future<void> _cancelSale(BuildContext context, Sale sale) async {
+  Future<void> _createDeliveryNote(BuildContext context, Sale sale) async {
+    try {
+      final note = await widget.store.createDeliveryNoteFromSale(sale.id);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Delivery note ${note.deliveryNo} created')));
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
+
+  Future<void> _returnSale(BuildContext context, Sale sale) async {
     final tr = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text(tr.text('confirm_delete')),
-        content: Text(tr.text('cancel_return_confirm').replaceAll('{invoice}', sale.invoiceNo)),
+        title: Text(tr.text('return_sale')),
+        content: Text(tr.text('return_sale_confirm').replaceAll('{invoice}', sale.invoiceNo)),
         actions: [
           TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: Text(tr.text('cancel'))),
-          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: Text(tr.text('cancel_invoice'))),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: Text(tr.text('confirm_return_sale'))),
         ],
       ),
     );
 
     if (confirmed != true) return;
 
-    await widget.store.cancelSale(sale.id);
+    await widget.store.returnSale(sale.id);
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('invoice_cancelled_stock_restored'))));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('sale_returned_stock_restored'))));
     }
   }
 

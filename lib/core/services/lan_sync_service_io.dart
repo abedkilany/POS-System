@@ -345,7 +345,7 @@ class LanSyncSettings {
     return const LanSyncSettings(
       host: '192.168.1.100',
       port: 8787,
-      autoSyncEnabled: true,
+      autoSyncEnabled: false,
       hostModeEnabled: false,
     );
   }
