@@ -148,6 +148,70 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
   }
 }
 
+
+class _CloudProvisioningPage extends StatelessWidget {
+  const _CloudProvisioningPage();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final stages = const <String>[
+      'Login settings and users',
+      'Catalogs and warehouses',
+      'Products, customers and suppliers',
+      'Inventory movements',
+      'Sales and purchases',
+      'Accounting and reports',
+    ];
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 560),
+        child: Card(
+          margin: const EdgeInsets.all(24),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Icon(Icons.cloud_sync_outlined, size: 48, color: theme.colorScheme.primary),
+                const SizedBox(height: 16),
+                Text('Preparing your store data', textAlign: TextAlign.center, style: theme.textTheme.headlineSmall),
+                const SizedBox(height: 8),
+                Text(
+                  CloudProvisioningStatus.message,
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodyMedium,
+                ),
+                const SizedBox(height: 20),
+                const LinearProgressIndicator(),
+                const SizedBox(height: 20),
+                for (var i = 0; i < stages.length; i += 1)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      children: [
+                        Icon(i == 0 ? Icons.check_circle : Icons.radio_button_unchecked, size: 20, color: i == 0 ? Colors.green : theme.colorScheme.outline),
+                        const SizedBox(width: 10),
+                        Expanded(child: Text(stages[i])),
+                      ],
+                    ),
+                  ),
+                const SizedBox(height: 12),
+                Text(
+                  'You can keep this device online. The app will open automatically when provisioning finishes.',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ShellItem {
   const _ShellItem({required this.label, required this.icon, required this.selectedIcon, required this.page});
 
@@ -317,7 +381,9 @@ class _MainShellState extends State<MainShell> {
               ),
             ),
           ),
-          body: resolvedItems[selectedIndex].page,
+          body: CloudProvisioningStatus.isPending && widget.store.appIdentity.isClient && widget.store.appIdentity.activeSyncTransportNormalized == 'cloud'
+              ? const _CloudProvisioningPage()
+              : resolvedItems[selectedIndex].page,
         );
       },
     );

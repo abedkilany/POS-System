@@ -5183,6 +5183,56 @@ class AppStore extends ChangeNotifier {
       };
 
 
+  List<Map<String, dynamic>> exportCloudLoginBootstrapSnapshotChunks() {
+    final identity = appIdentity;
+    final generatedAt = DateTime.now().toIso8601String();
+    final jobId = '${DateTime.now().microsecondsSinceEpoch}-$_deviceId-login-bootstrap';
+
+    String encodeCompressed(Map<String, dynamic> payload) {
+      final bytes = utf8.encode(jsonEncode(payload));
+      final compressed = GZipEncoder().encode(bytes);
+      return base64Encode(compressed);
+    }
+
+    final chunks = <Map<String, dynamic>>[];
+
+    void addPayload(String collection, int index, Map<String, dynamic> payload) {
+      chunks.add({
+        'jobId': jobId,
+        'storeId': identity.storeId,
+        'branchId': identity.branchId,
+        'deviceId': _deviceId,
+        'collection': collection,
+        'chunkIndex': index,
+        'encoding': 'gzip+base64+json',
+        'payload': encodeCompressed(payload),
+        'generatedAt': generatedAt,
+        'storeEpoch': identity.storeEpoch,
+      });
+    }
+
+    addPayload('_meta', 0, {
+      'version': 14,
+      'generatedAt': generatedAt,
+      'schemaVersion': 17,
+      'invoiceCounter': _invoiceCounter,
+      'purchaseCounter': _purchaseCounter,
+      'storeProfile': _storeProfile.toJson(),
+      'appIdentity': identity.toJson(),
+      'storeEpoch': identity.storeEpoch,
+      'syncGeneratedSequence': _syncChanges.isEmpty ? 0 : _syncChanges.map((item) => item.sequence).reduce((a, b) => a > b ? a : b),
+    });
+    addPayload('roles', 0, {'items': _roles.map((item) => item.toJson()).toList()});
+    addPayload('users', 0, {'items': _users.map((item) => item.toJson()).toList()});
+
+    for (var i = 0; i < chunks.length; i += 1) {
+      chunks[i]['totalChunks'] = chunks.length;
+      chunks[i]['ordinal'] = i;
+    }
+    return chunks;
+  }
+
+
   List<Map<String, dynamic>> exportCloudBootstrapSnapshotChunks({
     int maxItemsPerChunk = 250,
     int maxEncodedPayloadBytes = 900 * 1024,
@@ -5191,25 +5241,28 @@ class AppStore extends ChangeNotifier {
     final generatedAt = DateTime.now().toIso8601String();
     final jobId = '${DateTime.now().microsecondsSinceEpoch}-$_deviceId-bootstrap';
     final collections = <String, List<dynamic>>{
+      // Login-critical records must be published before heavy business data.
+      // A new Cloud Client can leave Connect to Store as soon as these chunks
+      // are available, then continue the remaining snapshot after login.
+      'roles': _roles.map((item) => item.toJson()).toList(),
+      'users': _users.map((item) => item.toJson()).toList(),
+      'categories': _categories.map((item) => item.toJson()).toList(),
+      'brands': _brands.map((item) => item.toJson()).toList(),
+      'units': _units.map((item) => item.toJson()).toList(),
+      'warehouses': _warehouses.map((item) => item.toJson()).toList(),
       'products': _products.map((item) => item.toJson()).toList(),
       'customers': _customers.map((item) => item.toJson()).toList(),
+      'suppliers': _suppliers.map((item) => item.toJson()).toList(),
+      'supplierProductPrices': _supplierProductPrices.map((item) => item.toJson()).toList(),
       'sales': _sales.map((item) => item.toJson()).toList(),
       'saleQuotations': _saleQuotations.map((item) => item.toJson()).toList(),
       'deliveryNotes': _deliveryNotes.map((item) => item.toJson()).toList(),
       'billsOfMaterials': _billsOfMaterials.map((item) => item.toJson()).toList(),
       'manufacturingOrders': _manufacturingOrders.map((item) => item.toJson()).toList(),
-      'suppliers': _suppliers.map((item) => item.toJson()).toList(),
-      'supplierProductPrices': _supplierProductPrices.map((item) => item.toJson()).toList(),
       'expenses': _expenses.map((item) => item.toJson()).toList(),
-      'categories': _categories.map((item) => item.toJson()).toList(),
-      'brands': _brands.map((item) => item.toJson()).toList(),
-      'units': _units.map((item) => item.toJson()).toList(),
       'purchases': _purchases.map((item) => item.toJson()).toList(),
       'stockMovements': _stockMovements.map((item) => item.toJson()).toList(),
-      'warehouses': _warehouses.map((item) => item.toJson()).toList(),
       'accountTransactions': _accountTransactions.map((item) => item.toJson()).toList(),
-      'roles': _roles.map((item) => item.toJson()).toList(),
-      'users': _users.map((item) => item.toJson()).toList(),
     };
 
     String encodeCompressed(Map<String, dynamic> payload) {

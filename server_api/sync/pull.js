@@ -59,6 +59,8 @@ export default async function handler(req, res) {
     const limit = Math.min(Math.max(Number(req.query.limit || 1000), 1), 5000);
     const cursor = decodeCursor(req.query.cursor);
     const minSnapshotUpdatedAt = req.query.min_snapshot_updated_at ? safeIso(String(req.query.min_snapshot_updated_at)) : null;
+    const bootstrapMode = String(req.query.bootstrap || req.query.bootstrap_mode || '').trim().toLowerCase();
+    const loginBootstrapOnly = bootstrapMode === 'login';
 
     // First-time/new-device pull: return the latest materialized state in
     // stable pages. The cursor also carries a high-water mark so events created
@@ -76,6 +78,7 @@ export default async function handler(req, res) {
               and branch_id = ${branchId}
               and operation <> 'delete'
               and entity_type <> 'stock_movement'
+              and (${loginBootstrapOnly} = false or entity_type in ('store_profile', 'role', 'user'))
               and (${minSnapshotUpdatedAt}::timestamptz is null or updated_at >= ${minSnapshotUpdatedAt})
               and (
                 updated_at > ${cursorUpdatedAt}
@@ -92,6 +95,7 @@ export default async function handler(req, res) {
               and branch_id = ${branchId}
               and operation <> 'delete'
               and entity_type <> 'stock_movement'
+              and (${loginBootstrapOnly} = false or entity_type in ('store_profile', 'role', 'user'))
               and (${minSnapshotUpdatedAt}::timestamptz is null or updated_at >= ${minSnapshotUpdatedAt})
             order by updated_at asc, entity_type asc, entity_id asc
             limit ${limit + 1}

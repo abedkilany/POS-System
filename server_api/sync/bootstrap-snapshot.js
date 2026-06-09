@@ -5,6 +5,10 @@ const collectionTypes = {
   products: 'product',
   customers: 'customer',
   sales: 'sale',
+  saleQuotations: 'sale_quotation',
+  deliveryNotes: 'delivery_note',
+  billsOfMaterials: 'bill_of_materials',
+  manufacturingOrders: 'manufacturing_order',
   suppliers: 'supplier',
   supplierProductPrices: 'supplier_product_price',
   expenses: 'expense',
@@ -82,6 +86,28 @@ async function ensureTables() {
   await sql`create unique index if not exists idx_entity_snapshots_unique on entity_snapshots (store_id, branch_id, entity_type, entity_id)`;
 }
 
+
+async function upsertSnapshotsBatch(rows) {
+  if (!rows.length) return;
+  await sql`
+    insert into entity_snapshots (store_id, branch_id, entity_type, entity_id, payload, operation, updated_at)
+    select store_id, branch_id, entity_type, entity_id, payload, operation, updated_at::timestamptz
+    from jsonb_to_recordset(${JSON.stringify(rows)}::jsonb) as x(
+      store_id text,
+      branch_id text,
+      entity_type text,
+      entity_id text,
+      payload jsonb,
+      operation text,
+      updated_at text
+    )
+    on conflict (store_id, branch_id, entity_type, entity_id) do update set
+      payload = excluded.payload,
+      operation = excluded.operation,
+      updated_at = excluded.updated_at
+  `;
+}
+
 async function upsertSnapshot({ storeId, branchId, entityType, entityId, operation, payload, updatedAt }) {
   await sql`
     insert into entity_snapshots (store_id, branch_id, entity_type, entity_id, payload, operation, updated_at)
@@ -107,6 +133,7 @@ export default async function handler(req, res) {
     const ordinal = Number(body.ordinal || 0);
     const totalChunks = Math.max(Number(body.totalChunks || body.total_chunks || 1), 1);
     const force = body.force === true || String(body.force || '').toLowerCase() === 'true';
+    const preserveExisting = body.preserveExisting === true || String(body.preserveExisting || body.preserve_existing || '').toLowerCase() === 'true';
     const updatedAt = new Date(body.generatedAt || Date.now()).toISOString();
 
     if (!jobId) return res.status(400).json({ ok: false, error: 'Missing snapshot jobId.' });
@@ -130,7 +157,9 @@ export default async function handler(req, res) {
       if (force) {
         await sql`update bootstrap_snapshot_jobs set status = 'cancelled', updated_at = now() where store_id = ${storeId} and branch_id = ${branchId} and status in ('building', 'uploading') and job_id <> ${jobId}`;
       }
-      await sql`delete from entity_snapshots where store_id = ${storeId} and branch_id = ${branchId}`;
+      if (!preserveExisting) {
+        await sql`delete from entity_snapshots where store_id = ${storeId} and branch_id = ${branchId}`;
+      }
       await sql`
         insert into bootstrap_snapshot_jobs (store_id, branch_id, job_id, device_id, status, total_chunks, received_chunks)
         values (${storeId}, ${branchId}, ${jobId}, ${deviceId}, 'uploading', ${totalChunks}, 0)
@@ -148,10 +177,16 @@ export default async function handler(req, res) {
       const entityType = collectionTypes[collection];
       if (!entityType) return res.status(400).json({ ok: false, error: `Unsupported snapshot collection: ${collection}` });
       const items = Array.isArray(payload.items) ? payload.items : [];
-      for (let i = 0; i < items.length; i += 1) {
-        const item = items[i];
-        await upsertSnapshot({ storeId, branchId, entityType, entityId: idOf(item, `${collection}-${ordinal}-${i}`), operation: 'upsert', payload: item, updatedAt });
-      }
+      const rows = items.map((item, i) => ({
+        store_id: storeId,
+        branch_id: branchId || 'main',
+        entity_type: entityType,
+        entity_id: idOf(item, `${collection}-${ordinal}-${i}`),
+        payload: item || {},
+        operation: 'upsert',
+        updated_at: updatedAt,
+      }));
+      await upsertSnapshotsBatch(rows);
     }
 
     const rows = await sql`

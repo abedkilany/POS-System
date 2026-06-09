@@ -359,19 +359,6 @@ class CloudSyncService {
     if (!identity.isHost) return const CloudPairingCodeResult(ok: false, message: 'Only the Host can create pairing codes.');
     if (!settings.hasDeploymentToken || settings.apiBaseUrl.trim().isEmpty) return const CloudPairingCodeResult(ok: false, message: 'Cloud API URL and Host deployment token are required.');
     try {
-      if (transport == 'cloud') {
-        // Pairing must never fail or bloat the local DB just because the
-        // bootstrap snapshot publish hit a Cloud/Vercel/Neon limit. The QR/code
-        // is created first-class; the snapshot endpoint is best-effort and can
-        // be retried by Sync Now / recovery flows without creating a local
-        // restore_snapshot SyncChange.
-        try {
-          await publishBootstrapSnapshotToCloud(settings, force: true);
-          await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
-        } catch (error) {
-          debugPrint('Cloud bootstrap snapshot publish skipped during pairing: $error');
-        }
-      }
       final response = await _client
           .post(
             settings.endpoint('/api/sync/pairing/create'),
@@ -391,14 +378,32 @@ class CloudSyncService {
         return CloudPairingCodeResult(ok: false, message: 'Pairing code failed: ${response.statusCode} ${response.body}');
       }
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      final ok = decoded['ok'] == true;
+      if (ok && transport == 'cloud') {
+        // Never block the Host QR/code on a large snapshot upload. Publish the
+        // tiny login bootstrap first in the background, then continue with the
+        // full staged snapshot so new Clients can leave Connect to Store quickly
+        // and finish provisioning after Login.
+        unawaited(_publishPairingBootstrapInBackground(settings));
+      }
       return CloudPairingCodeResult(
-        ok: decoded['ok'] == true,
-        message: decoded['ok'] == true ? 'Pairing code created.' : (decoded['error']?.toString() ?? 'Pairing code failed.'),
+        ok: ok,
+        message: ok ? 'Pairing code created.' : (decoded['error']?.toString() ?? 'Pairing code failed.'),
         code: decoded['code']?.toString() ?? '',
         expiresAt: DateTime.tryParse(decoded['expiresAt']?.toString() ?? ''),
       );
     } catch (error) {
       return CloudPairingCodeResult(ok: false, message: 'Pairing code failed: $error');
+    }
+  }
+
+  Future<void> _publishPairingBootstrapInBackground(CloudSyncSettings settings) async {
+    try {
+      await publishLoginBootstrapSnapshotToCloud(settings, force: true);
+      await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
+      await publishBootstrapSnapshotToCloud(settings, force: true);
+    } catch (error) {
+      debugPrint('Cloud pairing background bootstrap publish failed: $error');
     }
   }
 
@@ -435,6 +440,53 @@ class CloudSyncService {
       );
     } catch (error) {
       return CloudPairingStatusResult(ok: false, status: 'invalid', message: 'Pairing status failed: $error');
+    }
+  }
+
+
+  Future<CloudSyncResult> _pullLoginBootstrap(CloudSyncSettings settings, {DateTime? minSnapshotUpdatedAt}) async {
+    final identity = store.appIdentity;
+    try {
+      await registerCurrentDevice(settings, transport: 'cloud');
+      var pageCursor = '';
+      var pulled = 0;
+      const maxPages = 10;
+      for (var page = 0; page < maxPages; page += 1) {
+        final query = <String, String>{
+          'store_id': identity.storeId,
+          'branch_id': identity.branchId,
+          'limit': '250',
+          'bootstrap': 'login',
+        };
+        if (minSnapshotUpdatedAt != null) {
+          query['min_snapshot_updated_at'] = minSnapshotUpdatedAt.toIso8601String();
+        }
+        if (pageCursor.isNotEmpty) query['cursor'] = pageCursor;
+
+        final pull = await _client
+            .get(settings.endpoint('/api/sync/pull', query), headers: _headers(settings))
+            .timeout(const Duration(seconds: 30));
+        if (pull.statusCode < 200 || pull.statusCode >= 300) {
+          return CloudSyncResult(ok: false, message: 'Cloud login bootstrap failed: ${pull.statusCode} ${pull.body}');
+        }
+        final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
+        final changes = _syncCore.filterOutLocalEchoes(
+          _syncCore.decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
+        );
+        pulled += await _syncCore.applyAuthoritativeChanges(changes);
+        final hasMore = decodedPull['hasMore'] == true;
+        pageCursor = (decodedPull['nextCursor'] ?? '').toString();
+        if (!hasMore) break;
+        if (pageCursor.isEmpty) {
+          return const CloudSyncResult(ok: false, message: 'Cloud login bootstrap pagination failed: missing next cursor.');
+        }
+      }
+      // Do not save the global Cloud pull cursor here. This is only a partial
+      // login bootstrap; leaving the cursor empty lets the post-login
+      // provisioning sync download the complete snapshot from the beginning.
+      return CloudSyncResult(ok: true, pulled: pulled, restoredSnapshot: pulled > 0, message: 'Cloud login bootstrap pulled $pulled login record(s).');
+    } catch (error) {
+      return CloudSyncResult(ok: false, message: 'Cloud login bootstrap failed: $error');
     }
   }
 
@@ -500,53 +552,41 @@ class CloudSyncService {
       deviceRegistered = true;
 
       if (identity.syncMode == SyncMode.cloudConnected || identity.syncMode == SyncMode.marketplaceEnabled) {
-        // Pairing and provisioning are separate lifecycle steps. A valid pairing
-        // code must permanently register this device as a Client even when the
-        // Host has not published the initial snapshot yet. The background Cloud
-        // sync controller can continue retrying the provisioning/download step
-        // after the user returns to Login.
+        // Pairing and provisioning are separate lifecycle steps. For large
+        // stores, do not block Connect to Store on the full business snapshot.
+        // Pull only login-critical records (store settings/profile, roles and
+        // users), then let the normal background provisioning download the rest
+        // after the user reaches Login.
         final requestedAt = DateTime.now().toUtc();
         await CloudProvisioningStatus.markPending(
           requestedAt: requestedAt,
-          message: 'Device paired. Initial Store data is being prepared by the Host.',
+          message: 'Login data is ready. Remaining Store data is downloading in stages.',
         );
 
-        // Bootstrap must be treated as a real provisioning step, not only as
-        // a successful pairing-code claim. First try to pull the current Cloud
-        // materialized snapshot immediately. If the Host has already published
-        // its store data, this lets the Client continue without waiting for a
-        // new Host sync tick. If no snapshot is available yet, request a fresh
-        // Host snapshot and poll a few times while the Host processes the
-        // request through the normal Host-authoritative Cloud relay.
-        var appliedInitialData = false;
-        var initialPull = await syncNow(settings.copyWith(clearLastPullCursor: true));
-        appliedInitialData = initialPull.ok && (initialPull.pulled > 0 || initialPull.restoredSnapshot) && !store.needsInitialAdminSetup;
+        var loginReady = false;
+        var initialPull = await _pullLoginBootstrap(settings.copyWith(clearLastPullCursor: true));
+        loginReady = initialPull.ok && (initialPull.pulled > 0 || !store.needsInitialAdminSetup) && !store.needsInitialAdminSetup;
 
-        var request = const CloudSyncResult(ok: true, message: 'Initial pull used existing Cloud snapshot.');
-        if (!appliedInitialData) {
+        var request = const CloudSyncResult(ok: true, message: 'Login bootstrap used existing Cloud snapshot.');
+        if (!loginReady) {
           request = await requestFreshHostSnapshot(settings, requestedAt: requestedAt);
         }
 
-        if (request.ok && !appliedInitialData) {
-          var retrySettings = settings.copyWith(clearLastPullCursor: true);
+        if (request.ok && !loginReady) {
           for (var attempt = 0; attempt < 6; attempt += 1) {
             if (attempt > 0) await Future<void>.delayed(const Duration(seconds: 3));
             await CloudProvisioningStatus.markAttempted(DateTime.now().toUtc());
-            initialPull = await syncNow(retrySettings, minSnapshotUpdatedAt: requestedAt);
-            appliedInitialData = initialPull.ok && (initialPull.pulled > 0 || initialPull.restoredSnapshot) && !store.needsInitialAdminSetup;
-            if (appliedInitialData) break;
-            retrySettings = CloudSyncSettings.load().copyWith(clearLastPullCursor: attempt == 0 ? true : false);
+            initialPull = await _pullLoginBootstrap(settings.copyWith(clearLastPullCursor: true), minSnapshotUpdatedAt: requestedAt);
+            loginReady = initialPull.ok && (initialPull.pulled > 0 || !store.needsInitialAdminSetup) && !store.needsInitialAdminSetup;
+            if (loginReady) break;
           }
         }
 
-        if (appliedInitialData) {
-          await CloudProvisioningStatus.markComplete(message: 'Initial Store data downloaded.');
-        }
         return CloudPairingClaimResult(
           ok: true,
-          message: appliedInitialData
-              ? 'Device paired successfully. Initial Store data was downloaded. Please sign in.'
-              : 'Device paired successfully. Waiting for Host snapshot. Keep the Host online; Store data will download automatically.',
+          message: loginReady
+              ? 'Device paired successfully. Login data downloaded. Please sign in; remaining Store data will continue downloading.'
+              : 'Device paired successfully. Waiting for Host login data. Keep the Host online; Store data will download automatically.',
           identity: identity,
         );
       }
@@ -1295,6 +1335,42 @@ class CloudSyncService {
   }
 
 
+  Future<int> publishLoginBootstrapSnapshotToCloud(
+    CloudSyncSettings settings, {
+    bool force = false,
+    void Function(double value, String label)? onProgress,
+  }) async {
+    final identity = store.appIdentity;
+    if (!identity.isHost || !identity.isCloudEnabled || !settings.hasDeploymentToken) return 0;
+    await store.removeLegacyCloudBootstrapSnapshotQueue();
+    final chunks = store.exportCloudLoginBootstrapSnapshotChunks();
+    if (chunks.isEmpty) return 0;
+
+    for (var i = 0; i < chunks.length; i += 1) {
+      final chunk = Map<String, dynamic>.from(chunks[i]);
+      chunk['force'] = force && i == 0;
+      chunk['preserveExisting'] = true;
+      final response = await _client
+          .post(
+            settings.endpoint('/api/sync/bootstrap-snapshot'),
+            headers: _headers(settings),
+            body: jsonEncode(chunk),
+          )
+          .timeout(const Duration(seconds: 20));
+      if (response.statusCode == 409) {
+        if (!force) {
+          throw StateError('Another Cloud bootstrap snapshot is already in progress. Try again after it finishes or use force rebuild.');
+        }
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw StateError('Cloud login bootstrap snapshot failed: ${response.statusCode} ${response.body}');
+      }
+      onProgress?.call((0.10 + ((i + 1) / chunks.length) * 0.70).clamp(0.10, 0.80).toDouble(), 'Publishing login bootstrap ${i + 1}/${chunks.length}...');
+    }
+    return chunks.length;
+  }
+
+
   Future<int> publishBootstrapSnapshotToCloud(
     CloudSyncSettings settings, {
     bool force = false,
@@ -1303,7 +1379,7 @@ class CloudSyncService {
     final identity = store.appIdentity;
     if (!identity.isHost || !identity.isCloudEnabled || !settings.hasDeploymentToken) return 0;
     await store.removeLegacyCloudBootstrapSnapshotQueue();
-    final chunks = store.exportCloudBootstrapSnapshotChunks(maxItemsPerChunk: 50);
+    final chunks = store.exportCloudBootstrapSnapshotChunks(maxItemsPerChunk: 300);
     if (chunks.isEmpty) return 0;
 
     for (var i = 0; i < chunks.length; i += 1) {
