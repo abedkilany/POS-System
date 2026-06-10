@@ -20,7 +20,14 @@ migrate_working_dir/
 windows/flutter/ephemeral/
 *.pdb
 /windows/
-/android/
+
+# Android source is tracked; generated and local Android files are ignored.
+/android/.gradle/
+/android/local.properties
+/android/**/build/
+/android/app/debug/
+/android/app/profile/
+/android/app/release/
 # The .vscode folder contains launch configuration and tasks you configure in
 # VS Code which you may wish to be included in version control, so this line
 # is commented out by default.
