@@ -142,6 +142,8 @@
   "cancellation_reversal": "Cancellation / reversal",
   "cancelled": "Cancelled",
   "cancelled_at": "Cancelled at",
+  "camera_scanner_not_supported": "Camera scanning is not supported on this device.",
+  "camera_scanner_not_supported_desc": "Use a USB barcode scanner or enter the code manually. Camera scanning is available on Android, iOS, macOS, and Web.",
   "card": "Card",
   "cart": "Cart",
   "cart_held_successfully": "Cart held successfully",

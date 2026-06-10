@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
@@ -11,7 +12,8 @@ class BarcodeScannerPage extends StatefulWidget {
   const BarcodeScannerPage({
     super.key,
     this.title = 'Scan barcode',
-    this.helpText = 'Point the camera at the product barcode. The code will be filled automatically.',
+    this.helpText =
+        'Point the camera at the product barcode. The code will be filled automatically.',
     this.formats,
   });
 
@@ -19,41 +21,49 @@ class BarcodeScannerPage extends StatefulWidget {
   final String helpText;
   final List<BarcodeFormat>? formats;
 
+  static bool get isSupportedPlatform =>
+      kIsWeb ||
+      defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS ||
+      defaultTargetPlatform == TargetPlatform.macOS;
+
   @override
   State<BarcodeScannerPage> createState() => _BarcodeScannerPageState();
 }
 
 class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
-  late final MobileScannerController _controller;
+  MobileScannerController? _controller;
 
   bool _handled = false;
 
   @override
   void initState() {
     super.initState();
+    if (!BarcodeScannerPage.isSupportedPlatform) return;
     _controller = MobileScannerController(
       detectionSpeed: DetectionSpeed.noDuplicates,
-      formats: widget.formats ?? const [
-        BarcodeFormat.aztec,
-        BarcodeFormat.codabar,
-        BarcodeFormat.code128,
-        BarcodeFormat.code39,
-        BarcodeFormat.code93,
-        BarcodeFormat.dataMatrix,
-        BarcodeFormat.ean13,
-        BarcodeFormat.ean8,
-        BarcodeFormat.itf14,
-        BarcodeFormat.pdf417,
-        BarcodeFormat.qrCode,
-        BarcodeFormat.upcA,
-        BarcodeFormat.upcE,
-      ],
+      formats: widget.formats ??
+          const [
+            BarcodeFormat.aztec,
+            BarcodeFormat.codabar,
+            BarcodeFormat.code128,
+            BarcodeFormat.code39,
+            BarcodeFormat.code93,
+            BarcodeFormat.dataMatrix,
+            BarcodeFormat.ean13,
+            BarcodeFormat.ean8,
+            BarcodeFormat.itf14,
+            BarcodeFormat.pdf417,
+            BarcodeFormat.qrCode,
+            BarcodeFormat.upcA,
+            BarcodeFormat.upcE,
+          ],
     );
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _controller?.dispose();
     super.dispose();
   }
 
@@ -72,18 +82,53 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
+    final controller = _controller;
+    if (!BarcodeScannerPage.isSupportedPlatform || controller == null) {
+      return Scaffold(
+        appBar: AppBar(
+          title: Text(widget.title == 'Scan barcode'
+              ? tr.text('scan_barcode_title')
+              : widget.title),
+        ),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.no_photography_outlined, size: 48),
+                const SizedBox(height: 16),
+                Text(
+                  tr.text('camera_scanner_not_supported'),
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  tr.text('camera_scanner_not_supported_desc'),
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.title == 'Scan barcode' ? AppLocalizations.of(context).text('scan_barcode_title') : widget.title),
+        title: Text(widget.title == 'Scan barcode'
+            ? AppLocalizations.of(context).text('scan_barcode_title')
+            : widget.title),
         actions: [
           IconButton(
             tooltip: tr.text('flash'),
-            onPressed: () => _controller.toggleTorch(),
+            onPressed: () => controller.toggleTorch(),
             icon: const Icon(Icons.flash_on_outlined),
           ),
           IconButton(
             tooltip: tr.text('switch_camera'),
-            onPressed: () => _controller.switchCamera(),
+            onPressed: () => controller.switchCamera(),
             icon: const Icon(Icons.cameraswitch_outlined),
           ),
         ],
@@ -91,7 +136,7 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
       body: Stack(
         fit: StackFit.expand,
         children: [
-          MobileScanner(controller: _controller, onDetect: _handleDetect),
+          MobileScanner(controller: controller, onDetect: _handleDetect),
           IgnorePointer(
             child: Center(
               child: LayoutBuilder(
@@ -119,11 +164,13 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
             right: 16,
             bottom: 24,
             child: Card(
-              color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.90),
+              color:
+                  Theme.of(context).colorScheme.surface.withValues(alpha: 0.90),
               child: Padding(
                 padding: VentioResponsive.cardInsets(context),
                 child: Text(
-                  widget.helpText == 'Point the camera at the product barcode. The code will be filled automatically.'
+                  widget.helpText ==
+                          'Point the camera at the product barcode. The code will be filled automatically.'
                       ? AppLocalizations.of(context).text('scan_barcode_help')
                       : widget.helpText,
                   textAlign: TextAlign.center,

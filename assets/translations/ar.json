@@ -142,6 +142,8 @@
   "cancellation_reversal": "إلغاء / عكس",
   "cancelled": "ملغاة",
   "cancelled_at": "تاريخ الإلغاء",
+  "camera_scanner_not_supported": "مسح الكاميرا غير مدعوم على هذا الجهاز.",
+  "camera_scanner_not_supported_desc": "استخدم قارئ باركود USB أو أدخل الكود يدوياً. مسح الكاميرا متاح على Android و iOS و macOS والويب.",
   "card": "بطاقة",
   "cart": "السلة",
   "cart_held_successfully": "تم تعليق السلة بنجاح",
