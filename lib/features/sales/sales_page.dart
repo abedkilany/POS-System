@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../core/localization/app_localizations.dart';
+import '../../core/shortcuts/app_shortcuts.dart';
 import '../../core/services/barcode_feedback_service.dart';
 import '../../core/services/invoice_pdf_service.dart';
 import '../../core/services/local_database_service.dart';
@@ -48,8 +49,13 @@ class _SalesPageState extends State<SalesPage> {
   final TextEditingController _paidAmountController = TextEditingController();
   final TextEditingController _paymentExchangeRateController = TextEditingController();
   final FocusNode _barcodeFocusNode = FocusNode();
+  final FocusNode _shortcutFocusNode = FocusNode(debugLabel: 'sale_shortcuts');
+  final FocusNode _paymentShortcutFocusNode = FocusNode(debugLabel: 'sale_payment_shortcuts');
+  final FocusNode _discountFocusNode = FocusNode(debugLabel: 'sale_payment_discount');
+  final FocusNode _cashReceivedFocusNode = FocusNode(debugLabel: 'sale_payment_cash_received');
 
   static const String _quickPagesStorageKey = 'sale_quick_product_pages_v1';
+  static const String _heldSalesStorageKey = 'sale_held_carts_v1';
 
   final List<_DraftSaleItem> _cart = [];
   final List<_QuickProductPage> _quickPages = [];
@@ -59,7 +65,7 @@ class _SalesPageState extends State<SalesPage> {
   String _paymentCurrency = 'USD';
   String _discountCurrency = 'USD';
   String _search = '';
-  List<_DraftSaleItem>? _heldCart;
+  final List<_HeldSaleCart> _heldCarts = [];
   final MobileScannerController _scannerController = MobileScannerController(detectionSpeed: DetectionSpeed.noDuplicates);
   bool _scannerActive = false;
   bool _manualBarcodeInput = false;
@@ -78,6 +84,7 @@ class _SalesPageState extends State<SalesPage> {
     _discountCurrency = widget.store.storeProfile.defaultSaleInvoiceCurrency;
     _paymentExchangeRateController.text = widget.store.storeProfile.usdToLbpRate.toStringAsFixed(0);
     _loadQuickProductPages();
+    _loadHeldSaleCarts();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _manualBarcodeInput) return;
       _barcodeFocusNode.requestFocus();
@@ -93,6 +100,10 @@ class _SalesPageState extends State<SalesPage> {
     _paidAmountController.dispose();
     _paymentExchangeRateController.dispose();
     _barcodeFocusNode.dispose();
+    _shortcutFocusNode.dispose();
+    _paymentShortcutFocusNode.dispose();
+    _discountFocusNode.dispose();
+    _cashReceivedFocusNode.dispose();
     _scannerController.dispose();
     super.dispose();
   }
@@ -142,6 +153,123 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
 
   String _formatSaleCurrency(double amount, String currency) => formatCurrency(amount, currency: currency);
 
+
+  bool _handleSaleShortcutKey(KeyEvent event, List<Product> visibleProducts) {
+    if (event is! KeyDownEvent) return false;
+    final keyName = SaleShortcutSettings.keyNameForLogicalKey(event.logicalKey);
+    if (keyName == null) return false;
+    final action = SaleShortcutSettings.load().saleActionForKey(keyName);
+    if (action == null) return false;
+    _executeSaleShortcut(action, visibleProducts);
+    return true;
+  }
+
+  Future<void> _executeSaleShortcut(SaleShortcutAction action, List<Product> visibleProducts) async {
+    final tr = AppLocalizations.of(context);
+    switch (action) {
+      case SaleShortcutAction.focusBarcode:
+        _restoreScannerMode();
+        break;
+      case SaleShortcutAction.searchProduct:
+        _showProductSearchSheet(visibleProducts);
+        break;
+      case SaleShortcutAction.holdCart:
+        if (_cart.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('shortcut_cart_empty'))));
+          return;
+        }
+        await _holdCurrentCart();
+        break;
+      case SaleShortcutAction.restoreHeldCarts:
+        await _showHeldCartsDialog();
+        break;
+      case SaleShortcutAction.openPayment:
+        if (_cart.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('shortcut_cart_empty'))));
+          return;
+        }
+        await _openPaymentPage(printAfterSave: false);
+        break;
+      case SaleShortcutAction.clearCart:
+        await _confirmClearCart();
+        break;
+    }
+  }
+
+  bool _handlePaymentShortcutKey(KeyEvent event, BuildContext dialogContext, void Function(void Function()) setDialogState) {
+    if (event is! KeyDownEvent) return false;
+    final keyName = SaleShortcutSettings.keyNameForLogicalKey(event.logicalKey);
+    if (keyName == null) return false;
+    final action = SaleShortcutSettings.load().paymentActionForKey(keyName);
+    if (action == null) return false;
+    switch (action) {
+      case SalePaymentShortcutAction.confirmPayment:
+        Navigator.pop(dialogContext, true);
+        return true;
+      case SalePaymentShortcutAction.cancelPayment:
+        Navigator.pop(dialogContext, false);
+        return true;
+      case SalePaymentShortcutAction.focusDiscount:
+        _discountFocusNode.requestFocus();
+        return true;
+      case SalePaymentShortcutAction.focusCashReceived:
+        if (_showsCashReceived) {
+          _cashReceivedFocusNode.requestFocus();
+        }
+        return true;
+      case SalePaymentShortcutAction.toggleCash:
+        _setPaymentMethod('Cash');
+        setDialogState(() {});
+        return true;
+      case SalePaymentShortcutAction.toggleCard:
+        _setPaymentMethod('Card');
+        setDialogState(() {});
+        return true;
+      case SalePaymentShortcutAction.toggleCredit:
+        _setPaymentMethod('Credit');
+        setDialogState(() {});
+        return true;
+    }
+  }
+
+  Widget _buildPaymentShortcutGuide(BuildContext context, AppLocalizations tr) {
+    final settings = SaleShortcutSettings.load();
+    final chips = <Widget>[];
+    for (final action in SalePaymentShortcutAction.values) {
+      final keyName = settings.keyForPaymentAction(action);
+      if (keyName == null || keyName == SaleShortcutSettings.noneKey) continue;
+      chips.add(Padding(
+        padding: const EdgeInsetsDirectional.only(end: 6, bottom: 6),
+        child: Chip(
+          visualDensity: VisualDensity.compact,
+          label: Text('$keyName ${tr.text(action.labelKey)}'),
+        ),
+      ));
+    }
+    if (chips.isEmpty) return const SizedBox.shrink();
+    return Wrap(children: chips);
+  }
+
+  Future<void> _confirmClearCart() async {
+    if (_cart.isEmpty) return;
+    final tr = AppLocalizations.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(tr.text('clear_cart')),
+        content: Text(tr.text('confirm_clear_cart')),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: Text(tr.text('cancel'))),
+          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: Text(tr.text('clear'))),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      setState(() => _cart.clear());
+      _restoreScannerMode();
+    }
+  }
+
   void _setSelectedCustomerId(String? value) {
     final id = widget.store.sanitizeSelectedCustomerId(value);
     setState(() {
@@ -174,17 +302,22 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
       return product.name.toLowerCase().contains(q) || product.code.toLowerCase().contains(q) || product.barcode.toLowerCase().contains(q) || product.effectiveSaleUnits.any((unit) => unit.barcode.toLowerCase().contains(q)) || product.effectivePurchaseUnits.any((unit) => unit.barcode.toLowerCase().contains(q)) || product.category.toLowerCase().contains(q);
     }).toList();
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final isWide = constraints.maxWidth > 980;
-        final pagePadding = VentioResponsive.pagePadding(context);
+    return Focus(
+      focusNode: _shortcutFocusNode,
+      autofocus: true,
+      onKeyEvent: (node, event) => _handleSaleShortcutKey(event, products) ? KeyEventResult.handled : KeyEventResult.ignored,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final isWide = constraints.maxWidth > 980;
+          final pagePadding = VentioResponsive.pagePadding(context);
 
-        if (!isWide) {
-          return _buildMobileSalesLayout(context, tr, products, pagePadding);
-        }
+          if (!isWide) {
+            return _buildMobileSalesLayout(context, tr, products, pagePadding);
+          }
 
-        return _buildDesktopSalesLayout(context, tr, products, sales, pagePadding);
-      },
+          return _buildDesktopSalesLayout(context, tr, products, sales, pagePadding);
+        },
+      ),
     );
   }
 
@@ -379,6 +512,7 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
 
   Widget _buildCashReceivedField(AppLocalizations tr, {bool dense = false, void Function(void Function())? modalSetState}) {
     return TextFormField(
+      focusNode: _cashReceivedFocusNode,
       controller: _paidAmountController,
       decoration: InputDecoration(labelText: '${tr.text('paid_amount')} ($_paymentCurrency)', isDense: dense),
       inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}$'))],
@@ -463,6 +597,34 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
   }
 
 
+
+  Widget _buildShortcutGuide(BuildContext context, AppLocalizations tr) {
+    final settings = SaleShortcutSettings.load();
+    final chips = <Widget>[];
+    for (final action in SaleShortcutAction.values) {
+      final keyName = settings.keyForSaleAction(action);
+      if (keyName == null || keyName == SaleShortcutSettings.noneKey) continue;
+      chips.add(Chip(
+        visualDensity: VisualDensity.compact,
+        avatar: const Icon(Icons.keyboard_outlined, size: 16),
+        label: Text('$keyName ${tr.text(action.labelKey)}'),
+      ));
+    }
+    if (chips.isEmpty) {
+      return Align(
+        alignment: AlignmentDirectional.centerStart,
+        child: Text(tr.text('shortcuts_disabled_for_page'), style: Theme.of(context).textTheme.bodySmall),
+      );
+    }
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(children: [
+        Text('${tr.text('shortcut_guide')}: ', style: Theme.of(context).textTheme.bodySmall),
+        ...chips.expand((chip) => [chip, const SizedBox(width: 6)]),
+      ]),
+    );
+  }
+
   Widget _buildDesktopSalesLayout(BuildContext context, AppLocalizations tr, List<Product> products, List<Sale> sales, double pagePadding) {
     return Padding(
       padding: EdgeInsets.all(pagePadding),
@@ -477,6 +639,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
               label: Text(tr.text('recent_invoices')),
             ),
           ),
+          const SizedBox(height: 8),
+          _buildShortcutGuide(context, tr),
           const SizedBox(height: 12),
           Expanded(
             child: Row(
@@ -1243,6 +1407,182 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     SystemChannels.textInput.invokeMethod('TextInput.hide');
   }
 
+  Future<void> _loadHeldSaleCarts() async {
+    final raw = LocalDatabaseService.getString(_heldSalesStorageKey);
+    if (raw == null || raw.trim().isEmpty) return;
+    try {
+      final decoded = jsonDecode(raw) as List<dynamic>;
+      final carts = decoded
+          .map((item) => _HeldSaleCart.fromJson(Map<String, dynamic>.from(item as Map)))
+          .where((cart) => cart.items.isNotEmpty)
+          .toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      if (!mounted) return;
+      setState(() {
+        _heldCarts
+          ..clear()
+          ..addAll(carts);
+      });
+    } catch (_) {
+      // Ignore malformed local drafts rather than blocking the sales page.
+    }
+  }
+
+  Future<void> _saveHeldSaleCarts() async {
+    await LocalDatabaseService.setString(_heldSalesStorageKey, jsonEncode(_heldCarts.map((cart) => cart.toJson()).toList()));
+  }
+
+  String _defaultHeldCartName() {
+    final now = DateTime.now();
+    final hour = now.hour.toString().padLeft(2, '0');
+    final minute = now.minute.toString().padLeft(2, '0');
+    return 'Hold ${_heldCarts.length + 1} - $hour:$minute';
+  }
+
+  Future<void> _holdCurrentCart() async {
+    if (_cart.isEmpty) return;
+    final tr = AppLocalizations.of(context);
+    final nameController = TextEditingController(text: _defaultHeldCartName());
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(tr.text('hold_cart')),
+        content: TextField(
+          controller: nameController,
+          autofocus: true,
+          decoration: InputDecoration(labelText: tr.text('hold_cart_name')),
+          textInputAction: TextInputAction.done,
+          onSubmitted: (value) => Navigator.of(context).pop(value),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(), child: Text(tr.text('cancel'))),
+          FilledButton(onPressed: () => Navigator.of(context).pop(nameController.text), child: Text(tr.text('hold'))),
+        ],
+      ),
+    );
+    nameController.dispose();
+    if (name == null) return;
+
+    final trimmedName = name.trim().isEmpty ? _defaultHeldCartName() : name.trim();
+    final cart = _HeldSaleCart(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      name: trimmedName,
+      createdAt: DateTime.now(),
+      items: _cart.map(_HeldSaleItem.fromDraft).toList(),
+    );
+    setState(() {
+      _heldCarts.insert(0, cart);
+      _cart.clear();
+    });
+    await _saveHeldSaleCarts();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('cart_held_successfully'))));
+    _restoreScannerMode();
+  }
+
+  Future<void> _restoreHeldCart(_HeldSaleCart heldCart) async {
+    if (_cart.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('hold_current_cart_first'))));
+      return;
+    }
+    final restored = <_DraftSaleItem>[];
+    final missingNames = <String>[];
+    for (final item in heldCart.items) {
+      Product? product;
+      for (final candidate in widget.store.products) {
+        if (candidate.id == item.productId && candidate.isActive && !candidate.isDeleted) {
+          product = candidate;
+          break;
+        }
+      }
+      if (product == null) {
+        missingNames.add(item.productName);
+        continue;
+      }
+      ProductSaleUnit? saleUnit;
+      for (final unit in product.effectiveSaleUnits) {
+        if (unit.id == item.saleUnitId) {
+          saleUnit = unit;
+          break;
+        }
+      }
+      restored.add(_DraftSaleItem(product: product, quantity: item.quantity, saleUnit: saleUnit ?? item.saleUnit));
+    }
+    if (restored.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('held_cart_products_missing'))));
+      return;
+    }
+    setState(() {
+      _cart
+        ..clear()
+        ..addAll(restored);
+      _heldCarts.removeWhere((cart) => cart.id == heldCart.id);
+    });
+    await _saveHeldSaleCarts();
+    if (!mounted) return;
+    Navigator.of(context).maybePop();
+    final tr = AppLocalizations.of(context);
+    final message = missingNames.isEmpty ? tr.text('cart_restored_successfully') : '${tr.text('cart_restored_with_missing_products')}: ${missingNames.join(', ')}';
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    _restoreScannerMode();
+  }
+
+  Future<void> _deleteHeldCart(_HeldSaleCart heldCart) async {
+    setState(() => _heldCarts.removeWhere((cart) => cart.id == heldCart.id));
+    await _saveHeldSaleCarts();
+  }
+
+  Future<void> _showHeldCartsDialog() async {
+    final tr = AppLocalizations.of(context);
+    await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('${tr.text('held_carts')} (${_heldCarts.length})'),
+          content: SizedBox(
+            width: 420,
+            child: _heldCarts.isEmpty
+                ? Text(tr.text('no_held_carts'))
+                : ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: _heldCarts.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final cart = _heldCarts[index];
+                      return ListTile(
+                        leading: const Icon(Icons.pause_circle_outline),
+                        title: Text(cart.name),
+                        subtitle: Text('${cart.items.length} ${tr.text('items')} • ${_formatHeldCartTime(cart.createdAt)}'),
+                        trailing: IconButton(
+                          tooltip: tr.text('delete'),
+                          icon: const Icon(Icons.delete_outline),
+                          onPressed: () async {
+                            await _deleteHeldCart(cart);
+                            setDialogState(() {});
+                          },
+                        ),
+                        onTap: () => _restoreHeldCart(cart),
+                      );
+                    },
+                  ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(context).pop(), child: Text(tr.text('close'))),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatHeldCartTime(DateTime value) {
+    final hour = value.hour.toString().padLeft(2, '0');
+    final minute = value.minute.toString().padLeft(2, '0');
+    final day = value.day.toString().padLeft(2, '0');
+    final month = value.month.toString().padLeft(2, '0');
+    return '$day/$month $hour:$minute';
+  }
+
   bool get _canUseCameraScanner =>
       kIsWeb ||
       defaultTargetPlatform == TargetPlatform.android ||
@@ -1358,7 +1698,10 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
             readOnly: false,
             showCursor: _manualBarcodeInput,
             enableInteractiveSelection: _manualBarcodeInput,
-            keyboardType: _manualBarcodeInput ? TextInputType.text : TextInputType.none,
+            // Keep TextInputType.text in both modes so a physical keyboard / USB
+            // barcode scanner can type into the field even when the touch
+            // keyboard is intentionally hidden in scanner mode.
+            keyboardType: TextInputType.text,
             textInputAction: TextInputAction.done,
             onTap: () {
               if (!_manualBarcodeInput) {
@@ -1551,11 +1894,11 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                 Text(tr.text('cart'), style: Theme.of(context).textTheme.titleLarge),
                 Chip(label: Text('${tr.text('items')}: ${_formatQuantity(_itemsCount)}')),
                 if (_cart.isNotEmpty)
-                  TextButton.icon(onPressed: () => setState(() => _cart.clear()), icon: const Icon(Icons.delete_sweep_outlined), label: Text(tr.text('clear_cart'))),
+                  TextButton.icon(onPressed: _confirmClearCart, icon: const Icon(Icons.delete_sweep_outlined), label: Text(tr.text('clear_cart'))),
                 if (_cart.isNotEmpty)
-                  TextButton.icon(onPressed: () => setState(() { _heldCart = List<_DraftSaleItem>.from(_cart); _cart.clear(); }), icon: const Icon(Icons.pause_circle_outline), label: Text(tr.text('hold'))),
-                if (_heldCart != null && _cart.isEmpty)
-                  TextButton.icon(onPressed: () => setState(() { _cart.addAll(_heldCart!); _heldCart = null; }), icon: const Icon(Icons.play_circle_outline), label: Text(tr.text('restore'))),
+                  TextButton.icon(onPressed: _holdCurrentCart, icon: const Icon(Icons.pause_circle_outline), label: Text(tr.text('hold'))),
+                if (_heldCarts.isNotEmpty)
+                  TextButton.icon(onPressed: _showHeldCartsDialog, icon: const Icon(Icons.playlist_add_check_circle_outlined), label: Text('${tr.text('restore')} (${_heldCarts.length})')),
               ],
             ),
             const SizedBox(height: 8),
@@ -2267,7 +2610,11 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
           final paidInInvoice = _derivedPaidAmount;
           final remaining = (invoiceTotal - paidInInvoice).clamp(0, double.infinity).toDouble();
           final nonCashOrCredit = (invoiceTotal - cashInInvoice).clamp(0, double.infinity).toDouble();
-          return AlertDialog(
+          return Focus(
+            focusNode: _paymentShortcutFocusNode,
+            autofocus: true,
+            onKeyEvent: (node, event) => _handlePaymentShortcutKey(event, dialogContext, setDialogState) ? KeyEventResult.handled : KeyEventResult.ignored,
+            child: AlertDialog(
             title: Text(pageTr.text('payment_page')),
             content: SizedBox(
               width: 520,
@@ -2276,6 +2623,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    _buildPaymentShortcutGuide(context, pageTr),
+                    const SizedBox(height: 8),
                     _buildCustomerSelector(context, pageTr, modalSetState: setDialogState),
                     const SizedBox(height: 16),
                     _buildPaymentMethodChips(pageTr, modalSetState: setDialogState),
@@ -2287,6 +2636,7 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                     ],
                     const SizedBox(height: 16),
                     TextFormField(
+                      focusNode: _discountFocusNode,
                       controller: _discountController,
                       decoration: InputDecoration(labelText: pageTr.text('discount')),
                       inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}$'))],
@@ -2318,6 +2668,7 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                 label: Text(pageTr.text('confirm_payment')),
               ),
             ],
+            ),
           );
         },
       ),
@@ -2512,6 +2863,67 @@ String _formatQuantity(double value) {
   }
   if (text.endsWith('.')) text = text.substring(0, text.length - 1);
   return text;
+}
+
+
+class _HeldSaleCart {
+  const _HeldSaleCart({required this.id, required this.name, required this.createdAt, required this.items});
+
+  final String id;
+  final String name;
+  final DateTime createdAt;
+  final List<_HeldSaleItem> items;
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'createdAt': createdAt.toIso8601String(),
+        'items': items.map((item) => item.toJson()).toList(),
+      };
+
+  factory _HeldSaleCart.fromJson(Map<String, dynamic> json) => _HeldSaleCart(
+        id: json['id'] as String? ?? DateTime.now().microsecondsSinceEpoch.toString(),
+        name: json['name'] as String? ?? 'Hold',
+        createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ?? DateTime.now(),
+        items: (json['items'] as List<dynamic>? ?? const [])
+            .map((item) => _HeldSaleItem.fromJson(Map<String, dynamic>.from(item as Map)))
+            .where((item) => item.quantity > 0 && item.productId.isNotEmpty)
+            .toList(),
+      );
+}
+
+class _HeldSaleItem {
+  const _HeldSaleItem({required this.productId, required this.productName, required this.quantity, required this.saleUnitId, required this.saleUnit});
+
+  final String productId;
+  final String productName;
+  final double quantity;
+  final String saleUnitId;
+  final ProductSaleUnit saleUnit;
+
+  factory _HeldSaleItem.fromDraft(_DraftSaleItem item) => _HeldSaleItem(
+        productId: item.product.id,
+        productName: item.product.name,
+        quantity: item.quantity,
+        saleUnitId: item.saleUnit.id,
+        saleUnit: item.saleUnit,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'productId': productId,
+        'productName': productName,
+        'quantity': quantity,
+        'saleUnitId': saleUnitId,
+        'saleUnit': saleUnit.toJson(),
+      };
+
+  factory _HeldSaleItem.fromJson(Map<String, dynamic> json) => _HeldSaleItem(
+        productId: json['productId'] as String? ?? '',
+        productName: json['productName'] as String? ?? '',
+        quantity: (json['quantity'] as num? ?? 0).toDouble(),
+        saleUnitId: json['saleUnitId'] as String? ?? 'base',
+        saleUnit: ProductSaleUnit.fromJson(Map<String, dynamic>.from(json['saleUnit'] as Map? ?? const {})),
+      );
 }
 
 class _DraftSaleItem {

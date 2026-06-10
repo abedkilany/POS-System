@@ -18,6 +18,7 @@ import '../models/customer.dart';
 import '../models/delivery_note.dart';
 import '../models/manufacturing.dart';
 import '../models/expense.dart';
+import '../models/inventory_count.dart';
 import '../models/product.dart';
 import '../models/purchase.dart';
 import '../models/purchase_item.dart';
@@ -153,6 +154,7 @@ class AppStore extends ChangeNotifier {
   static const _expensesKey = 'expenses_v4';
   static const _purchasesKey = 'purchases_v1';
   static const _stockMovementsKey = 'stock_movements_v1';
+  static const _inventoryCountsKey = 'inventory_counts_v1';
   static const _warehousesKey = 'warehouses_v1';
   static const _accountTransactionsKey = 'account_transactions_v1';
   static const _purchaseCounterKey = 'purchase_counter_v1';
@@ -198,6 +200,7 @@ class AppStore extends ChangeNotifier {
   final List<Expense> _expenses = [];
   final List<Purchase> _purchases = [];
   final List<StockMovement> _stockMovements = [];
+  final List<InventoryCountSession> _inventoryCounts = [];
   final List<Warehouse> _warehouses = [];
   final List<AccountTransaction> _accountTransactions = [];
   final Map<String, double> _accountBalanceCache = <String, double>{};
@@ -255,6 +258,16 @@ class AppStore extends ChangeNotifier {
   List<Expense> get expenses => List.unmodifiable(_expenses.where((item) => !item.isDeleted).toList().reversed);
   List<Purchase> get purchases => List.unmodifiable(_purchases.where((item) => !item.isDeleted).toList().reversed);
   List<StockMovement> get stockMovements => List.unmodifiable(_stockMovements.toList().reversed);
+  List<StockMovement> get autoCorrectionMovements => List.unmodifiable(_stockMovements.where((movement) => movement.type == 'auto_correction').toList().reversed);
+  List<StockMovement> get pendingAutoCorrectionMovements => List.unmodifiable(_stockMovements.where((movement) => movement.type == 'auto_correction' && !movement.isReviewed).toList().reversed);
+  int get pendingAutoCorrectionCount => pendingAutoCorrectionMovements.length;
+  List<InventoryCountSession> get inventoryCountSessions => List.unmodifiable(_inventoryCounts.toList().reversed);
+  InventoryCountSession? get activeInventoryCountSession {
+    for (final session in _inventoryCounts.reversed) {
+      if (session.isOpen) return session;
+    }
+    return null;
+  }
   List<Warehouse> get warehouses => List.unmodifiable(_warehouses.where((item) => !item.isDeleted && item.isActive));
 
   Warehouse get defaultWarehouse {
@@ -1194,6 +1207,9 @@ class AppStore extends ChangeNotifier {
     _stockMovements
       ..clear()
       ..addAll(_loadStockMovements());
+    _inventoryCounts
+      ..clear()
+      ..addAll(_loadInventoryCounts());
     _warehouses
       ..clear()
       ..addAll(_loadWarehouses());
@@ -1258,6 +1274,7 @@ class AppStore extends ChangeNotifier {
         _decodeDeferredList<Expense>(_expensesKey, Expense.fromJson),
         _decodeDeferredList<Purchase>(_purchasesKey, Purchase.fromJson),
         _decodeDeferredList<StockMovement>(_stockMovementsKey, StockMovement.fromJson),
+        _decodeDeferredList<InventoryCountSession>(_inventoryCountsKey, InventoryCountSession.fromJson),
         _decodeDeferredList<Warehouse>(_warehousesKey, Warehouse.fromJson),
         _decodeDeferredList<AccountTransaction>(_accountTransactionsKey, AccountTransaction.fromJson),
         _decodeDeferredList<SyncChange>(_syncChangesKey, SyncChange.fromJson),
@@ -1300,18 +1317,21 @@ class AppStore extends ChangeNotifier {
       _stockMovements
         ..clear()
         ..addAll(results[11].cast<StockMovement>());
+      _inventoryCounts
+        ..clear()
+        ..addAll(results[12].cast<InventoryCountSession>());
       _warehouses
         ..clear()
-        ..addAll(results[12].cast<Warehouse>());
+        ..addAll(results[13].cast<Warehouse>());
       _accountTransactions
         ..clear()
-        ..addAll(results[13].cast<AccountTransaction>());
+        ..addAll(results[14].cast<AccountTransaction>());
       _syncChanges
         ..clear()
-        ..addAll(results[14].cast<SyncChange>());
+        ..addAll(results[15].cast<SyncChange>());
       _syncQueue
         ..clear()
-        ..addAll(results[15].cast<SyncQueueItem>());
+        ..addAll(results[16].cast<SyncQueueItem>());
       _ensureDefaultWarehouse();
 
       _normalizeCustomers();
@@ -1490,6 +1510,14 @@ class AppStore extends ChangeNotifier {
     return decoded.map((item) => StockMovement.fromJson(Map<String, dynamic>.from(item as Map))).toList();
   }
 
+
+
+  List<InventoryCountSession> _loadInventoryCounts() {
+    final raw = LocalDatabaseService.getString(_inventoryCountsKey);
+    if (raw == null || raw.isEmpty) return <InventoryCountSession>[];
+    final decoded = jsonDecode(raw) as List<dynamic>;
+    return decoded.map((item) => InventoryCountSession.fromJson(Map<String, dynamic>.from(item as Map))).toList();
+  }
 
   List<Warehouse> _loadWarehouses() {
     final raw = LocalDatabaseService.getString(_warehousesKey);
@@ -2768,6 +2796,7 @@ class AppStore extends ChangeNotifier {
       LocalDatabaseService.setString(_expensesKey, jsonEncode(_expenses.map((item) => item.toJson()).toList())),
       LocalDatabaseService.setString(_purchasesKey, jsonEncode(_purchases.map((item) => item.toJson()).toList())),
       LocalDatabaseService.setString(_stockMovementsKey, jsonEncode(_stockMovements.map((item) => item.toJson()).toList())),
+      LocalDatabaseService.setString(_inventoryCountsKey, jsonEncode(_inventoryCounts.map((item) => item.toJson()).toList())),
       LocalDatabaseService.setString(_warehousesKey, jsonEncode(_warehouses.map((item) => item.toJson()).toList())),
       LocalDatabaseService.setString(_accountTransactionsKey, jsonEncode(_accountTransactions.map((item) => item.toJson()).toList())),
       LocalDatabaseService.setString(_syncChangesKey, jsonEncode(_syncChanges.map((item) => item.toJson()).toList())),
@@ -2797,6 +2826,7 @@ class AppStore extends ChangeNotifier {
     bool expenses = false,
     bool purchases = false,
     bool stockMovements = false,
+    bool inventoryCounts = false,
     bool warehouses = false,
     bool accountTransactions = false,
     bool storeProfile = false,
@@ -2821,6 +2851,7 @@ class AppStore extends ChangeNotifier {
         expenses: expenses,
         purchases: purchases,
         stockMovements: stockMovements,
+        inventoryCounts: inventoryCounts,
         warehouses: warehouses,
         accountTransactions: accountTransactions,
         storeProfile: storeProfile,
@@ -2849,6 +2880,7 @@ class AppStore extends ChangeNotifier {
     if (expenses) writes.add(LocalDatabaseService.setString(_expensesKey, jsonEncode(_expenses.map((item) => item.toJson()).toList())));
     if (purchases) writes.add(LocalDatabaseService.setString(_purchasesKey, jsonEncode(_purchases.map((item) => item.toJson()).toList())));
     if (stockMovements) writes.add(LocalDatabaseService.setString(_stockMovementsKey, jsonEncode(_stockMovements.map((item) => item.toJson()).toList())));
+    if (inventoryCounts) writes.add(LocalDatabaseService.setString(_inventoryCountsKey, jsonEncode(_inventoryCounts.map((item) => item.toJson()).toList())));
     if (warehouses) writes.add(LocalDatabaseService.setString(_warehousesKey, jsonEncode(_warehouses.map((item) => item.toJson()).toList())));
     if (accountTransactions) writes.add(LocalDatabaseService.setString(_accountTransactionsKey, jsonEncode(_accountTransactions.map((item) => item.toJson()).toList())));
     if (storeProfile) writes.add(LocalDatabaseService.setString(_storeProfileKey, jsonEncode(_storeProfile.toJson())));
@@ -2880,6 +2912,7 @@ class AppStore extends ChangeNotifier {
     bool expenses = false,
     bool purchases = false,
     bool stockMovements = false,
+    bool inventoryCounts = false,
     bool warehouses = false,
     bool accountTransactions = false,
     bool storeProfile = false,
@@ -2926,6 +2959,7 @@ class AppStore extends ChangeNotifier {
     if (expenses) writes.add(persistRows(_expensesKey));
     if (purchases) writes.add(persistRows(_purchasesKey));
     if (stockMovements) writes.add(persistRows(_stockMovementsKey));
+    if (inventoryCounts) writes.add(LocalDatabaseService.setString(_inventoryCountsKey, jsonEncode(_inventoryCounts.map((item) => item.toJson()).toList())));
     if (warehouses) writes.add(LocalDatabaseService.setString(_warehousesKey, jsonEncode(_warehouses.map((item) => item.toJson()).toList())));
     if (accountTransactions) writes.add(persistRows(_accountTransactionsKey));
 
@@ -4534,6 +4568,150 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
+
+
+  String _actorName() => _activeUser?.fullName.trim().isNotEmpty == true ? _activeUser!.fullName.trim() : (_activeUser?.username ?? currentRole);
+
+  double _stockAt(String productId, DateTime at) {
+    final productIndex = _products.indexWhere((item) => item.id == productId);
+    var stock = productIndex == -1 ? 0.0 : _products[productIndex].stock;
+    for (final movement in _stockMovements) {
+      if (movement.productId == productId && movement.date.isAfter(at)) {
+        stock -= movement.quantity;
+      }
+    }
+    return stock;
+  }
+
+  int movementCountAfterInventoryLine(InventoryCountLine line) {
+    final countedAt = line.countedAt;
+    if (countedAt == null) return 0;
+    return _stockMovements.where((movement) => movement.productId == line.productId && movement.date.isAfter(countedAt) && movement.type != 'count_adjustment').length;
+  }
+
+  Future<InventoryCountSession> createInventoryCountSession({String notes = ''}) async {
+    requirePermission(AppPermission.productsEdit);
+    if (activeInventoryCountSession != null) throw StateError('There is already an open inventory count session.');
+    final now = DateTime.now();
+    final warehouse = defaultWarehouse;
+    final session = InventoryCountSession(
+      id: now.microsecondsSinceEpoch.toString(),
+      countNo: 'CNT-${now.microsecondsSinceEpoch}',
+      createdAt: now,
+      createdBy: _actorName(),
+      warehouseId: warehouse.id,
+      warehouseName: warehouse.name,
+      notes: notes.trim(),
+      lines: _products.where((product) => product.trackStock && !product.isDeleted).map((product) => InventoryCountLine(
+        productId: product.id,
+        productName: product.name,
+        productCode: product.code,
+        snapshotStock: product.stock,
+      )).toList(),
+    );
+    _inventoryCounts.add(session);
+    await _saveDirty(inventoryCounts: true);
+    notifyListeners();
+    return session;
+  }
+
+  Future<void> countInventoryLine({required String sessionId, required String productId, required double countedQty, String note = ''}) async {
+    requirePermission(AppPermission.productsEdit);
+    if (countedQty < 0) throw ArgumentError('Counted quantity cannot be negative.');
+    final sessionIndex = _inventoryCounts.indexWhere((session) => session.id == sessionId);
+    if (sessionIndex == -1) throw ArgumentError('Inventory count session not found.');
+    final session = _inventoryCounts[sessionIndex];
+    if (!session.isOpen) throw StateError('Only open inventory count sessions can be edited.');
+    final lineIndex = session.lines.indexWhere((line) => line.productId == productId);
+    if (lineIndex == -1) throw ArgumentError('Product is not part of this count session.');
+    final now = DateTime.now();
+    final lines = List<InventoryCountLine>.from(session.lines);
+    lines[lineIndex] = lines[lineIndex].copyWith(countedQty: countedQty, countedAt: now, countedBy: _actorName(), note: note.trim());
+    _inventoryCounts[sessionIndex] = session.copyWith(lines: lines, updatedAt: now);
+    await _saveDirty(inventoryCounts: true);
+    notifyListeners();
+  }
+
+  Future<void> approveInventoryCount(String sessionId) async {
+    requirePermission(AppPermission.productsEdit);
+    final sessionIndex = _inventoryCounts.indexWhere((session) => session.id == sessionId);
+    if (sessionIndex == -1) throw ArgumentError('Inventory count session not found.');
+    final session = _inventoryCounts[sessionIndex];
+    if (!session.isOpen) throw StateError('Only open inventory count sessions can be approved.');
+    final countedLines = session.lines.where((line) => line.isCounted).toList();
+    if (countedLines.isEmpty) throw StateError('No counted products to approve.');
+    final now = DateTime.now();
+    for (final line in countedLines) {
+      final productIndex = _products.indexWhere((product) => product.id == line.productId);
+      if (productIndex == -1) continue;
+      final product = _products[productIndex];
+      if (!product.trackStock) continue;
+      final theoreticalAtCount = _stockAt(line.productId, line.countedAt ?? session.createdAt);
+      final delta = (line.countedQty ?? theoreticalAtCount) - theoreticalAtCount;
+      if (delta.abs() < 0.000001) continue;
+      _products[productIndex] = _withSyncMeta<Product>(product.copyWith(stock: product.stock + delta), now);
+      _addStockMovement(StockMovement(
+        id: '${session.id}-${line.productId}-count-adjustment',
+        productId: line.productId,
+        productName: line.productName,
+        type: 'count_adjustment',
+        quantity: delta,
+        date: now,
+        referenceId: session.id,
+        referenceNo: session.countNo,
+        reason: 'Inventory count adjustment',
+        adjustmentCategory: delta < 0 ? 'stock_count_shortage' : 'stock_count_overage',
+        notes: 'Counted at ${line.countedAt?.toIso8601String() ?? session.createdAt.toIso8601String()}. Theoretical at count: $theoreticalAtCount. Counted: ${line.countedQty}.',
+        unitCost: product.usdCost,
+        createdAt: now,
+        updatedAt: now,
+        deviceId: _deviceId,
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        lastModifiedByDeviceId: _deviceId,
+      ), recordSync: true);
+    }
+    _inventoryCounts[sessionIndex] = session.copyWith(status: 'approved', approvedAt: now, approvedBy: _actorName(), updatedAt: now);
+    await _saveDirty(products: true, stockMovements: true, inventoryCounts: true, sync: true);
+    notifyListeners();
+  }
+
+  Future<void> cancelInventoryCount(String sessionId) async {
+    requirePermission(AppPermission.productsEdit);
+    final sessionIndex = _inventoryCounts.indexWhere((session) => session.id == sessionId);
+    if (sessionIndex == -1) throw ArgumentError('Inventory count session not found.');
+    final session = _inventoryCounts[sessionIndex];
+    if (!session.isOpen) return;
+    final now = DateTime.now();
+    _inventoryCounts[sessionIndex] = session.copyWith(status: 'cancelled', updatedAt: now);
+    await _saveDirty(inventoryCounts: true);
+    notifyListeners();
+  }
+
+  Future<void> reviewAutoCorrection(String movementId, {String note = ''}) async {
+    requirePermission(AppPermission.productsEdit);
+    final index = _stockMovements.indexWhere((movement) => movement.id == movementId);
+    if (index == -1) throw ArgumentError('Stock movement not found.');
+    final movement = _stockMovements[index];
+    if (movement.type != 'auto_correction') throw StateError('Only automatic corrections can be reviewed here.');
+    if (movement.isReviewed) return;
+    final now = DateTime.now();
+    final reviewer = _activeUser?.fullName.trim().isNotEmpty == true ? _activeUser!.fullName.trim() : (_activeUser?.username ?? currentRole);
+    final updated = movement.copyWith(
+      reviewedAt: now,
+      reviewedBy: reviewer,
+      reviewNote: note.trim(),
+      updatedAt: now,
+      syncStatus: 'pending',
+      version: movement.version + 1,
+      lastModifiedByDeviceId: _deviceId,
+    );
+    _stockMovements[index] = updated;
+    _recordSyncChange(entityType: 'stock_movement', entityId: updated.id, operation: 'review', payload: updated.toJson());
+    await _saveDirty(stockMovements: true, sync: true);
+    notifyListeners();
+  }
+
   Future<void> adjustStock({required String productId, required double quantityDelta, required String reason, String adjustmentCategory = 'other', String notes = '', String evidenceRef = ''}) async {
     requirePermission(AppPermission.productsEdit);
     if (quantityDelta == 0) return;
@@ -5268,6 +5446,7 @@ class AppStore extends ChangeNotifier {
         'expenses': _expenses.map((item) => includeDeviceAndSyncState ? item.toJson() : _businessBackupJson(item)).toList(),
         'purchases': _purchases.map((item) => includeDeviceAndSyncState ? item.toJson() : _businessBackupJson(item)).toList(),
         'stockMovements': _stockMovements.map((item) => includeDeviceAndSyncState ? item.toJson() : _businessBackupJson(item)).toList(),
+        'inventoryCounts': _inventoryCounts.map((item) => item.toJson()).toList(),
         'warehouses': _warehouses.map((item) => includeDeviceAndSyncState ? item.toJson() : _businessBackupJson(item)).toList(),
         'accountTransactions': _accountTransactions.map((item) => includeDeviceAndSyncState ? item.toJson() : _businessBackupJson(item)).toList(),
         if (includeDeviceAndSyncState) 'deviceId': _deviceId,
@@ -5374,6 +5553,7 @@ class AppStore extends ChangeNotifier {
       'expenses': _expenses.map((item) => item.toJson()).toList(),
       'purchases': _purchases.map((item) => item.toJson()).toList(),
       'stockMovements': _stockMovements.map((item) => item.toJson()).toList(),
+      'inventoryCounts': _inventoryCounts.map((item) => item.toJson()).toList(),
       'accountTransactions': _accountTransactions.map((item) => item.toJson()).toList(),
     };
 

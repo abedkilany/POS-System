@@ -23,6 +23,9 @@ class StockMovement {
     this.branchId = '',
     this.version = 1,
     this.lastModifiedByDeviceId = '',
+    this.reviewedAt,
+    this.reviewedBy = '',
+    this.reviewNote = '',
   })  : createdAt = createdAt ?? updatedAt ?? date,
         updatedAt = updatedAt ?? createdAt ?? date;
 
@@ -32,11 +35,15 @@ class StockMovement {
   final double unitCost;
   final DateTime date, createdAt, updatedAt;
   final String deviceId, syncStatus, storeId, branchId, lastModifiedByDeviceId;
+  final DateTime? reviewedAt;
+  final String reviewedBy, reviewNote;
   final int version;
+
+  bool get isReviewed => reviewedAt != null;
 
   double get value => quantity.abs() * unitCost;
 
-  StockMovement copyWith({String? productName, String? type, double? quantity, DateTime? date, String? referenceId, String? referenceNo, String? reason, String? adjustmentCategory, String? notes, String? evidenceRef, String? warehouseId, String? warehouseName, double? unitCost, DateTime? createdAt, DateTime? updatedAt, String? deviceId, String? syncStatus, String? storeId, String? branchId, int? version, String? lastModifiedByDeviceId}) => StockMovement(
+  StockMovement copyWith({String? productName, String? type, double? quantity, DateTime? date, String? referenceId, String? referenceNo, String? reason, String? adjustmentCategory, String? notes, String? evidenceRef, String? warehouseId, String? warehouseName, double? unitCost, DateTime? createdAt, DateTime? updatedAt, String? deviceId, String? syncStatus, String? storeId, String? branchId, int? version, String? lastModifiedByDeviceId, DateTime? reviewedAt, bool clearReviewedAt = false, String? reviewedBy, String? reviewNote}) => StockMovement(
         id: id,
         productId: productId,
         productName: productName ?? this.productName,
@@ -60,6 +67,9 @@ class StockMovement {
         branchId: branchId ?? this.branchId,
         version: version ?? this.version,
         lastModifiedByDeviceId: lastModifiedByDeviceId ?? this.lastModifiedByDeviceId,
+        reviewedAt: clearReviewedAt ? null : (reviewedAt ?? this.reviewedAt),
+        reviewedBy: reviewedBy ?? this.reviewedBy,
+        reviewNote: reviewNote ?? this.reviewNote,
       );
 
   Map<String, dynamic> toJson() => {
@@ -86,6 +96,9 @@ class StockMovement {
         'branchId': branchId,
         'version': version,
         'lastModifiedByDeviceId': lastModifiedByDeviceId,
+        'reviewedAt': reviewedAt?.toIso8601String(),
+        'reviewedBy': reviewedBy,
+        'reviewNote': reviewNote,
       };
 
   factory StockMovement.fromJson(Map<String, dynamic> json) {
@@ -114,6 +127,9 @@ class StockMovement {
       branchId: json['branchId']?.toString() ?? '',
       version: (json['version'] as num? ?? 1).toInt(),
       lastModifiedByDeviceId: json['lastModifiedByDeviceId']?.toString() ?? json['deviceId']?.toString() ?? '',
+      reviewedAt: DateTime.tryParse(json['reviewedAt']?.toString() ?? ''),
+      reviewedBy: json['reviewedBy']?.toString() ?? '',
+      reviewNote: json['reviewNote']?.toString() ?? '',
     );
   }
 }

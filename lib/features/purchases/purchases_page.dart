@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../core/localization/app_localizations.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../core/services/barcode_feedback_service.dart';
+import '../../core/shortcuts/app_shortcuts.dart';
 import '../../data/app_store.dart';
 import '../../models/product.dart';
 import '../../models/purchase.dart';
@@ -24,6 +26,8 @@ class PurchasesPage extends StatefulWidget {
 
 class _PurchasesPageState extends State<PurchasesPage> {
   final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
+  final FocusNode _pageShortcutFocusNode = FocusNode();
   String _statusFilter = 'all';
   String _sortMode = 'newest';
   String _formatQuantity(double value) => value % 1 == 0 ? value.toStringAsFixed(0) : value.toStringAsFixed(3).replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
@@ -41,6 +45,98 @@ class _PurchasesPageState extends State<PurchasesPage> {
     );
     final trimmed = code?.trim();
     return trimmed == null || trimmed.isEmpty ? null : trimmed;
+  }
+
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _searchFocusNode.dispose();
+    _pageShortcutFocusNode.dispose();
+    super.dispose();
+  }
+
+  KeyEventResult _handlePurchasesShortcutKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    final keyName = SaleShortcutSettings.keyNameForLogicalKey(event.logicalKey);
+    if (keyName == null) return KeyEventResult.ignored;
+    final action = SaleShortcutSettings.load().purchasesActionForKey(keyName);
+    if (action == null) return KeyEventResult.ignored;
+    _executePurchasesShortcut(action);
+    return KeyEventResult.handled;
+  }
+
+  Future<void> _executePurchasesShortcut(PurchasesShortcutAction action) async {
+    switch (action) {
+      case PurchasesShortcutAction.newPurchase:
+        await _openPurchaseDialog(context);
+        break;
+      case PurchasesShortcutAction.focusSearch:
+        _searchFocusNode.requestFocus();
+        break;
+      case PurchasesShortcutAction.filterAll:
+        setState(() => _statusFilter = 'all');
+        break;
+      case PurchasesShortcutAction.filterDraft:
+        setState(() => _statusFilter = 'draft');
+        break;
+      case PurchasesShortcutAction.filterReceived:
+        setState(() => _statusFilter = 'received');
+        break;
+      case PurchasesShortcutAction.clearSearch:
+        if (_searchController.text.isNotEmpty) {
+          _searchController.clear();
+          setState(() {});
+        } else {
+          _searchFocusNode.unfocus();
+        }
+        break;
+    }
+  }
+
+  Widget _buildPurchasesShortcutGuide(BuildContext context, AppLocalizations tr) {
+    final settings = SaleShortcutSettings.load();
+    final chips = <Widget>[];
+    for (final action in PurchasesShortcutAction.values) {
+      final keyName = settings.keyForPurchasesAction(action);
+      if (keyName == null || keyName == SaleShortcutSettings.noneKey) continue;
+      chips.add(Chip(
+        visualDensity: VisualDensity.compact,
+        avatar: const Icon(Icons.keyboard_outlined, size: 16),
+        label: Text('$keyName ${tr.text(action.labelKey)}'),
+      ));
+    }
+    if (chips.isEmpty) {
+      return Align(
+        alignment: AlignmentDirectional.centerStart,
+        child: Text(tr.text('shortcuts_disabled_for_page'), style: Theme.of(context).textTheme.bodySmall),
+      );
+    }
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(children: [
+        Text('${tr.text('shortcut_guide')}: ', style: Theme.of(context).textTheme.bodySmall),
+        ...chips.expand((chip) => [chip, const SizedBox(width: 6)]),
+      ]),
+    );
+  }
+
+  Widget _buildPurchaseDialogShortcutGuide(BuildContext context, AppLocalizations tr) {
+    final settings = SaleShortcutSettings.load();
+    final chips = <Widget>[];
+    for (final action in PurchaseDialogShortcutAction.values) {
+      final keyName = settings.keyForPurchaseDialogAction(action);
+      if (keyName == null || keyName == SaleShortcutSettings.noneKey) continue;
+      chips.add(Padding(
+        padding: const EdgeInsetsDirectional.only(end: 6, bottom: 6),
+        child: Chip(
+          visualDensity: VisualDensity.compact,
+          label: Text('$keyName ${tr.text(action.labelKey)}'),
+        ),
+      ));
+    }
+    if (chips.isEmpty) return const SizedBox.shrink();
+    return Wrap(children: chips);
   }
 
   @override
@@ -80,9 +176,13 @@ class _PurchasesPageState extends State<PurchasesPage> {
     final monthlyTotal = monthlyPurchases.fold<double>(0, (sum, p) => sum + p.subtotal);
     final draftTotal = allPurchases.where((p) => !p.isCancelled && !p.isReceived).fold<double>(0, (sum, p) => sum + p.subtotal);
     final averagePurchase = monthlyPurchases.isEmpty ? 0.0 : monthlyTotal / monthlyPurchases.length;
-    return ListView(
-      padding: VentioResponsive.pageInsets(context),
-      children: [
+    return Focus(
+      focusNode: _pageShortcutFocusNode,
+      autofocus: true,
+      onKeyEvent: _handlePurchasesShortcutKey,
+      child: ListView(
+        padding: VentioResponsive.pageInsets(context),
+        children: [
         LayoutBuilder(builder: (context, constraints) {
           final compact = constraints.maxWidth < 650;
           final title = Column(
@@ -102,6 +202,8 @@ class _PurchasesPageState extends State<PurchasesPage> {
               ? Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [title, const SizedBox(height: 12), button])
               : Row(children: [Expanded(child: title), button]);
         }),
+        const SizedBox(height: 8),
+        _buildPurchasesShortcutGuide(context, tr),
         const SizedBox(height: 16),
         Wrap(
           spacing: 12,
@@ -116,6 +218,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
         const SizedBox(height: 16),
         TextField(
           controller: _searchController,
+          focusNode: _searchFocusNode,
           onChanged: (_) => setState(() {}),
           decoration: InputDecoration(
             prefixIcon: const Icon(Icons.search),
@@ -190,6 +293,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                 ),
         ),
       ],
+      ),
     );
   }
 
@@ -443,6 +547,10 @@ class _PurchasesPageState extends State<PurchasesPage> {
     final costController = TextEditingController();
     final productSearchController = TextEditingController();
     final paidAmountController = TextEditingController();
+    final dialogShortcutFocusNode = FocusNode();
+    final qtyFocusNode = FocusNode();
+    final costFocusNode = FocusNode();
+    final paidAmountFocusNode = FocusNode();
     String paymentStatus = 'paid';
     String paymentMethod = 'Cash';
     String costCurrency = selectedProduct?.costCurrency ?? widget.store.storeProfile.defaultProductCurrency;
@@ -864,6 +972,15 @@ class _PurchasesPageState extends State<PurchasesPage> {
       setDialogState(() {});
     }
 
+    void addSelectedPurchaseLine(StateSetter setDialogState) {
+      final product = selectedProduct;
+      final unit = selectedUnit;
+      if (product == null || unit == null) return;
+      final qty = double.tryParse(qtyController.text.trim()) ?? 0;
+      final enteredCost = double.tryParse(costController.text.trim()) ?? -1;
+      addPurchaseLine(product, unit, qty, enteredCost, costCurrency, setDialogState);
+    }
+
     bool productMatchesPurchaseSearch(Product product, String query) {
       final q = query.toLowerCase().trim();
       if (q.isEmpty) return true;
@@ -1025,6 +1142,70 @@ class _PurchasesPageState extends State<PurchasesPage> {
       setDialogState(() {});
     }
 
+    Future<void> savePurchaseFromDialog(BuildContext dialogContext) async {
+      if (items.isEmpty) return;
+      if (!(formKey.currentState?.validate() ?? false)) return;
+      try {
+        final purchaseItems = List<PurchaseItem>.of(items);
+        final total = items.fold<double>(0, (sum, item) => sum + item.lineTotal);
+        final paidAmount = paymentStatus == 'partial' ? (double.tryParse(paidAmountController.text.trim()) ?? 0) : null;
+        if (paymentStatus == 'partial' && (paidAmount == null || paidAmount <= 0 || paidAmount > total)) {
+          ScaffoldMessenger.of(dialogContext).showSnackBar(const SnackBar(content: Text('Invalid paid amount.')));
+          return;
+        }
+        await widget.store.createPurchase(supplierId: supplierId, supplierName: supplierName, items: purchaseItems, receiveNow: receiveNow, paymentStatus: paymentStatus, paymentMethod: paymentMethod, paidAmount: paidAmount);
+        if (dialogContext.mounted) {
+          await updateSupplierPricesFromItemsIfNeeded(dialogContext, purchaseItems);
+        }
+        if (dialogContext.mounted) Navigator.pop(dialogContext);
+        if (!mounted) return;
+        ScaffoldMessenger.of(this.context).showSnackBar(
+          SnackBar(content: Text(template == null ? tr.text('purchase_saved') : tr.text('duplicate_purchase_saved_as_draft'))),
+        );
+        setState(() {});
+      } catch (error) {
+        if (dialogContext.mounted) ScaffoldMessenger.of(dialogContext).showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    }
+
+    Future<void> cancelPurchaseDialog(BuildContext dialogContext) async {
+      if (await confirmDiscardIfNeeded(dialogContext) && dialogContext.mounted) Navigator.pop(dialogContext);
+    }
+
+    KeyEventResult handlePurchaseDialogShortcutKey(KeyEvent event, BuildContext dialogContext, StateSetter setDialogState) {
+      if (event is! KeyDownEvent) return KeyEventResult.ignored;
+      final keyName = SaleShortcutSettings.keyNameForLogicalKey(event.logicalKey);
+      if (keyName == null) return KeyEventResult.ignored;
+      final action = SaleShortcutSettings.load().purchaseDialogActionForKey(keyName);
+      if (action == null) return KeyEventResult.ignored;
+      switch (action) {
+        case PurchaseDialogShortcutAction.chooseProduct:
+          choosePurchaseProduct(setDialogState);
+          return KeyEventResult.handled;
+        case PurchaseDialogShortcutAction.addLine:
+          addSelectedPurchaseLine(setDialogState);
+          return KeyEventResult.handled;
+        case PurchaseDialogShortcutAction.savePurchase:
+          savePurchaseFromDialog(dialogContext);
+          return KeyEventResult.handled;
+        case PurchaseDialogShortcutAction.cancelPurchase:
+          cancelPurchaseDialog(dialogContext);
+          return KeyEventResult.handled;
+        case PurchaseDialogShortcutAction.toggleReceiveNow:
+          setDialogState(() => receiveNow = !receiveNow);
+          return KeyEventResult.handled;
+        case PurchaseDialogShortcutAction.focusQuantity:
+          qtyFocusNode.requestFocus();
+          return KeyEventResult.handled;
+        case PurchaseDialogShortcutAction.focusCost:
+          costFocusNode.requestFocus();
+          return KeyEventResult.handled;
+        case PurchaseDialogShortcutAction.focusPaidAmount:
+          paidAmountFocusNode.requestFocus();
+          return KeyEventResult.handled;
+      }
+    }
+
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -1041,7 +1222,11 @@ class _PurchasesPageState extends State<PurchasesPage> {
           }
           final dialogWidth = VentioResponsive.modalMaxWidth(context, 1220);
           final dialogHeight = MediaQuery.sizeOf(context).height * 0.88;
-          return SafeArea(
+          return Focus(
+            focusNode: dialogShortcutFocusNode,
+            autofocus: true,
+            onKeyEvent: (node, event) => handlePurchaseDialogShortcutKey(event, dialogContext, setDialogState),
+            child: SafeArea(
             top: false,
             child: Center(
               child: ConstrainedBox(
@@ -1060,13 +1245,15 @@ class _PurchasesPageState extends State<PurchasesPage> {
                         Expanded(child: Text(template == null ? tr.text('new_purchase') : tr.text('duplicate_purchase_draft'), style: Theme.of(context).textTheme.headlineSmall)),
                         IconButton(
                           tooltip: tr.text('cancel'),
-                          onPressed: () async {
-                            if (await confirmDiscardIfNeeded(dialogContext) && dialogContext.mounted) Navigator.pop(dialogContext);
-                          },
+                          onPressed: () => cancelPurchaseDialog(dialogContext),
                           icon: const Icon(Icons.close),
                         ),
                       ],
                     ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+                    child: _buildPurchaseDialogShortcutGuide(context, tr),
                   ),
                   const Divider(height: 1),
                   Expanded(
@@ -1178,6 +1365,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                             SizedBox(height: gap),
                             TextFormField(
                               controller: paidAmountController,
+                              focusNode: paidAmountFocusNode,
                               decoration: InputDecoration(labelText: tr.text('paid_amount')),
                               keyboardType: const TextInputType.numberWithOptions(decimal: true),
                             ),
@@ -1266,12 +1454,14 @@ class _PurchasesPageState extends State<PurchasesPage> {
                               );
                               final qtyField = TextFormField(
                                 controller: qtyController,
+                                focusNode: qtyFocusNode,
                                 decoration: InputDecoration(labelText: tr.text('quantity')),
                                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
                                 onChanged: (_) => setDialogState(() {}),
                               );
                               final costField = TextFormField(
                                 controller: costController,
+                                focusNode: costFocusNode,
                                 decoration: InputDecoration(labelText: tr.text('unit_cost'), helperText: priceHintForSelectedProduct().isEmpty ? null : priceHintForSelectedProduct()),
                                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
                               );
@@ -1322,11 +1512,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                           FilledButton.icon(
                             onPressed: selectedProduct == null || selectedUnit == null
                                 ? null
-                                : () {
-                                    final qty = double.tryParse(qtyController.text.trim()) ?? 0;
-                                    final enteredCost = double.tryParse(costController.text.trim()) ?? -1;
-                                    addPurchaseLine(selectedProduct!, selectedUnit!, qty, enteredCost, costCurrency, setDialogState);
-                                  },
+                                : () => addSelectedPurchaseLine(setDialogState),
                             icon: const Icon(Icons.add),
                             label: Text(tr.text('add_product_to_purchase')),
                           ),
@@ -1458,35 +1644,11 @@ class _PurchasesPageState extends State<PurchasesPage> {
                           style: Theme.of(context).textTheme.titleMedium,
                         );
                         final cancelButton = TextButton(
-                          onPressed: () async {
-                            if (await confirmDiscardIfNeeded(dialogContext) && dialogContext.mounted) Navigator.pop(dialogContext);
-                          },
+                          onPressed: () => cancelPurchaseDialog(dialogContext),
                           child: Text(tr.text('cancel')),
                         );
                         final saveButton = FilledButton.icon(
-                          onPressed: items.isEmpty ? null : () async {
-                            if (!(formKey.currentState?.validate() ?? false)) return;
-                            try {
-                              final purchaseItems = List<PurchaseItem>.of(items);
-                              final paidAmount = paymentStatus == 'partial' ? (double.tryParse(paidAmountController.text.trim()) ?? 0) : null;
-                              if (paymentStatus == 'partial' && (paidAmount == null || paidAmount <= 0 || paidAmount > total)) {
-                                ScaffoldMessenger.of(dialogContext).showSnackBar(const SnackBar(content: Text('Invalid paid amount.')));
-                                return;
-                              }
-                              await widget.store.createPurchase(supplierId: supplierId, supplierName: supplierName, items: purchaseItems, receiveNow: receiveNow, paymentStatus: paymentStatus, paymentMethod: paymentMethod, paidAmount: paidAmount);
-                              if (dialogContext.mounted) {
-                                await updateSupplierPricesFromItemsIfNeeded(dialogContext, purchaseItems);
-                              }
-                              if (dialogContext.mounted) Navigator.pop(dialogContext);
-                              if (!mounted) return;
-                              ScaffoldMessenger.of(this.context).showSnackBar(
-                                SnackBar(content: Text(template == null ? tr.text('purchase_saved') : tr.text('duplicate_purchase_saved_as_draft'))),
-                              );
-                              setState(() {});
-                            } catch (error) {
-                              if (dialogContext.mounted) ScaffoldMessenger.of(dialogContext).showSnackBar(SnackBar(content: Text(error.toString())));
-                            }
-                          },
+                          onPressed: items.isEmpty ? null : () => savePurchaseFromDialog(dialogContext),
                           icon: const Icon(Icons.save_outlined),
                           label: Text(tr.text('save')),
                         );
@@ -1523,6 +1685,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                 ),
               ),
             ),
+          ),
           );
         },
       ),
@@ -1531,6 +1694,10 @@ class _PurchasesPageState extends State<PurchasesPage> {
     costController.dispose();
     productSearchController.dispose();
     paidAmountController.dispose();
+    dialogShortcutFocusNode.dispose();
+    qtyFocusNode.dispose();
+    costFocusNode.dispose();
+    paidAmountFocusNode.dispose();
   }
 }
 

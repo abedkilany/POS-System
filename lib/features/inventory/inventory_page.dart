@@ -20,7 +20,7 @@ class InventoryPage extends StatefulWidget {
 class _InventoryPageState extends State<InventoryPage> with SingleTickerProviderStateMixin {
   String query = '';
   final TextEditingController _searchController = TextEditingController();
-  late final TabController _tabController = TabController(length: 4, vsync: this);
+  late final TabController _tabController = TabController(length: 6, vsync: this);
 
   @override
   void dispose() {
@@ -51,7 +51,14 @@ class _InventoryPageState extends State<InventoryPage> with SingleTickerProvider
           color: Theme.of(context).colorScheme.surface,
           child: TabBar(
             controller: _tabController,
-            tabs: [Tab(text: tr.text('inventory_overview')), Tab(text: tr.text('warehouses')), Tab(text: tr.text('stock_movements')), Tab(text: tr.text('waste_loss_report'))],
+            tabs: [
+              Tab(text: tr.text('inventory_overview')),
+              Tab(text: tr.text('warehouses')),
+              Tab(text: tr.text('stock_movements')),
+              Tab(text: tr.text('auto_corrections')),
+              Tab(text: tr.text('stock_count')),
+              Tab(text: tr.text('waste_loss_report')),
+            ],
           ),
         ),
         Expanded(
@@ -61,6 +68,8 @@ class _InventoryPageState extends State<InventoryPage> with SingleTickerProvider
               _InventoryOverview(store: widget.store, products: products, query: query, searchController: _searchController, onScanBarcode: _scanInventorySearchBarcode, onQuery: (value) => setState(() => query = value), onAdjust: _openAdjustmentDialog),
               _WarehousesTab(store: widget.store),
               _MovementsList(store: widget.store),
+              _AutoCorrectionsTab(store: widget.store),
+              _StockCountTab(store: widget.store),
               _WasteLossReport(store: widget.store),
             ],
           ),
@@ -171,7 +180,7 @@ class _InventoryOverview extends StatelessWidget {
                   SummaryCard(title: tr.text('total_units'), value: '${store.totalUnitsInStock}', icon: Icons.layers_outlined),
                   SummaryCard(title: tr.text('low_stock_alerts'), value: '${store.lowStockCount}', icon: Icons.warning_amber_rounded),
                   SummaryCard(title: tr.text('inventory_value'), value: formatUsdReferenceAmount(store.inventoryRetailValue, store.storeProfile), icon: Icons.payments_outlined),
-                  SummaryCard(title: 'Auto Corrections', value: '${store.stockMovements.where((m) => m.type == 'auto_correction').length}', icon: Icons.notifications_active_outlined),
+                  SummaryCard(title: tr.text('pending_auto_corrections'), value: '${store.pendingAutoCorrectionCount}', icon: Icons.notifications_active_outlined),
 
                 ],
               ),
@@ -515,6 +524,322 @@ class _MovementsList extends StatelessWidget {
   }
 }
 
+
+
+class _AutoCorrectionsTab extends StatefulWidget {
+  const _AutoCorrectionsTab({required this.store});
+
+  final AppStore store;
+
+  @override
+  State<_AutoCorrectionsTab> createState() => _AutoCorrectionsTabState();
+}
+
+class _AutoCorrectionsTabState extends State<_AutoCorrectionsTab> {
+  bool showReviewed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    final allCorrections = widget.store.autoCorrectionMovements;
+    final pending = widget.store.pendingAutoCorrectionMovements;
+    final corrections = showReviewed ? allCorrections : pending;
+    final totalQty = corrections.fold<double>(0, (sum, item) => sum + item.quantity.abs());
+    final totalValue = corrections.fold<double>(0, (sum, item) => sum + item.value);
+
+    return ListView(
+      padding: VentioResponsive.pageInsets(context),
+      children: [
+        Wrap(
+          spacing: 16,
+          runSpacing: 16,
+          children: [
+            SummaryCard(title: tr.text('pending_auto_corrections'), value: '${pending.length}', icon: Icons.notifications_active_outlined),
+            SummaryCard(title: tr.text('auto_corrections'), value: '${allCorrections.length}', icon: Icons.inventory_outlined),
+            SummaryCard(title: tr.text('quantity'), value: totalQty.toStringAsFixed(totalQty.truncateToDouble() == totalQty ? 0 : 2), icon: Icons.add_box_outlined),
+            SummaryCard(title: tr.text('estimated_value'), value: formatUsdReferenceAmount(totalValue, widget.store.storeProfile), icon: Icons.payments_outlined),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Card(
+          child: SwitchListTile(
+            value: showReviewed,
+            onChanged: (value) => setState(() => showReviewed = value),
+            title: Text(tr.text('show_reviewed_corrections')),
+            subtitle: Text(tr.text('show_reviewed_corrections_desc')),
+            secondary: const Icon(Icons.history_outlined),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Card(
+          child: corrections.isEmpty
+              ? Padding(
+                  padding: VentioResponsive.pageInsets(context),
+                  child: Text(showReviewed ? tr.text('no_auto_corrections') : tr.text('no_pending_auto_corrections')),
+                )
+              : Column(
+                  children: [
+                    ListTile(
+                      leading: const CircleAvatar(child: Icon(Icons.fact_check_outlined)),
+                      title: Text(tr.text('auto_corrections_need_review'), style: Theme.of(context).textTheme.titleMedium),
+                      subtitle: Text(tr.text('auto_corrections_need_review_desc')),
+                    ),
+                    const Divider(height: 1),
+                    for (final movement in corrections) ...[
+                      ListTile(
+                        leading: CircleAvatar(
+                          child: Icon(movement.isReviewed ? Icons.check_circle_outline : Icons.warning_amber_rounded),
+                        ),
+                        title: Text(movement.productName),
+                        subtitle: Text([
+                          '${tr.text('quantity')}: +${movement.quantity}',
+                          if (movement.referenceNo.isNotEmpty) '${tr.text('invoice')}: ${movement.referenceNo}',
+                          movement.date.toLocal().toString().split('.').first,
+                          if (movement.deviceId.isNotEmpty) '${tr.text('device')}: ${movement.deviceId}',
+                          if (movement.reviewedBy.isNotEmpty) '${tr.text('reviewed_by')}: ${movement.reviewedBy}',
+                        ].join(' • ')),
+                        isThreeLine: true,
+                        trailing: movement.isReviewed
+                            ? const Icon(Icons.done_all_outlined)
+                            : FilledButton.icon(
+                                onPressed: () => _reviewMovement(movement.id),
+                                icon: const Icon(Icons.check),
+                                label: Text(tr.text('mark_reviewed')),
+                              ),
+                      ),
+                      const Divider(height: 1),
+                    ],
+                  ],
+                ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _reviewMovement(String id) async {
+    final tr = AppLocalizations.of(context);
+    try {
+      await widget.store.reviewAutoCorrection(id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('auto_correction_marked_reviewed'))));
+        setState(() {});
+      }
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
+}
+
+
+class _StockCountTab extends StatefulWidget {
+  const _StockCountTab({required this.store});
+
+  final AppStore store;
+
+  @override
+  State<_StockCountTab> createState() => _StockCountTabState();
+}
+
+class _StockCountTabState extends State<_StockCountTab> {
+  String query = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    final sessions = widget.store.inventoryCountSessions;
+    final active = widget.store.activeInventoryCountSession;
+    final products = widget.store.stockTrackedProducts.where((product) {
+      if (active == null) return true;
+      final needle = query.trim().toLowerCase();
+      if (needle.isEmpty) return true;
+      return product.name.toLowerCase().contains(needle) || product.code.toLowerCase().contains(needle);
+    }).toList();
+
+    return ListView(
+      padding: VentioResponsive.pageInsets(context),
+      children: [
+        Wrap(
+          spacing: 16,
+          runSpacing: 16,
+          children: [
+            SummaryCard(title: tr.text('stock_count_sessions'), value: '${sessions.length}', icon: Icons.assignment_outlined),
+            SummaryCard(title: tr.text('open_stock_count'), value: active == null ? '0' : '1', icon: Icons.pending_actions_outlined),
+            if (active != null) SummaryCard(title: tr.text('counted_products'), value: '${active.countedLines}/${active.totalLines}', icon: Icons.fact_check_outlined),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(tr.text('stock_count'), style: Theme.of(context).textTheme.titleLarge),
+                const SizedBox(height: 8),
+                Text(tr.text('stock_count_desc')),
+                const SizedBox(height: 16),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    FilledButton.icon(
+                      onPressed: active == null ? _startCount : null,
+                      icon: const Icon(Icons.add_task_outlined),
+                      label: Text(tr.text('start_stock_count')),
+                    ),
+                    if (active != null) ...[
+                      FilledButton.icon(
+                        onPressed: active.countedLines == 0 ? null : () => _approveCount(active.id),
+                        icon: const Icon(Icons.verified_outlined),
+                        label: Text(tr.text('approve_stock_count')),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: () => _cancelCount(active.id),
+                        icon: const Icon(Icons.cancel_outlined),
+                        label: Text(tr.text('cancel')),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (active != null) ...[
+          const SizedBox(height: 16),
+          TextField(
+            decoration: InputDecoration(prefixIcon: const Icon(Icons.search), labelText: tr.text('search_products')),
+            onChanged: (value) => setState(() => query = value),
+          ),
+          const SizedBox(height: 12),
+          Card(
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const CircleAvatar(child: Icon(Icons.inventory_2_outlined)),
+                  title: Text('${tr.text('active_stock_count')} • ${active.countNo}'),
+                  subtitle: Text('${tr.text('started_at')}: ${active.createdAt.toLocal().toString().split('.').first}'),
+                ),
+                const Divider(height: 1),
+                for (final product in products.take(200)) _StockCountProductTile(store: widget.store, sessionId: active.id, product: product),
+              ],
+            ),
+          ),
+        ],
+        const SizedBox(height: 16),
+        Card(
+          child: Column(
+            children: [
+              ListTile(
+                leading: const Icon(Icons.history_outlined),
+                title: Text(tr.text('previous_stock_counts')),
+              ),
+              const Divider(height: 1),
+              if (sessions.isEmpty)
+                Padding(padding: const EdgeInsets.all(16), child: Text(tr.text('no_stock_counts')))
+              else
+                for (final session in sessions.take(20))
+                  ListTile(
+                    leading: Icon(session.isApproved ? Icons.verified_outlined : session.isOpen ? Icons.pending_actions_outlined : Icons.cancel_outlined),
+                    title: Text(session.countNo),
+                    subtitle: Text('${tr.text('status')}: ${session.status} • ${tr.text('counted_products')}: ${session.countedLines}/${session.totalLines}'),
+                    trailing: Text(session.createdAt.toLocal().toString().split(' ').first),
+                  ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _startCount() async {
+    try {
+      await widget.store.createInventoryCountSession();
+      if (mounted) setState(() {});
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
+
+  Future<void> _approveCount(String id) async {
+    try {
+      await widget.store.approveInventoryCount(id);
+      if (mounted) setState(() {});
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
+
+  Future<void> _cancelCount(String id) async {
+    try {
+      await widget.store.cancelInventoryCount(id);
+      if (mounted) setState(() {});
+    } catch (error) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
+}
+
+class _StockCountProductTile extends StatelessWidget {
+  const _StockCountProductTile({required this.store, required this.sessionId, required this.product});
+
+  final AppStore store;
+  final String sessionId;
+  final Product product;
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    final session = store.activeInventoryCountSession;
+    final matchingLines = session?.lines.where((item) => item.productId == product.id).toList() ?? const [];
+    final line = matchingLines.isEmpty ? null : matchingLines.first;
+    final movementsAfter = line == null ? 0 : store.movementCountAfterInventoryLine(line);
+    return ListTile(
+      title: Text(product.name),
+      subtitle: Text([
+        '${tr.text('system_stock')}: ${product.stock}',
+        if (line?.isCounted == true) '${tr.text('counted')}: ${line!.countedQty}',
+        if (line?.countedAt != null) '${tr.text('counted_at')}: ${line!.countedAt!.toLocal().toString().split('.').first}',
+        if (movementsAfter > 0) '⚠ ${tr.text('movements_after_count')}: $movementsAfter',
+      ].join(' • ')),
+      isThreeLine: true,
+      trailing: FilledButton(
+        onPressed: () => _enterCount(context),
+        child: Text(line?.isCounted == true ? tr.text('recount') : tr.text('count')),
+      ),
+    );
+  }
+
+  Future<void> _enterCount(BuildContext context) async {
+    final tr = AppLocalizations.of(context);
+    final controller = TextEditingController();
+    final value = await showDialog<double>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('${tr.text('count')} • ${product.name}'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: InputDecoration(labelText: tr.text('actual_quantity')),
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: Text(tr.text('cancel'))),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, double.tryParse(controller.text.trim())),
+            child: Text(tr.text('save')),
+          ),
+        ],
+      ),
+    );
+    if (value == null) return;
+    try {
+      await store.countInventoryLine(sessionId: sessionId, productId: product.id, countedQty: value);
+    } catch (error) {
+      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
+}
 
 class _WasteLossReport extends StatelessWidget {
   const _WasteLossReport({required this.store});

@@ -13,6 +13,7 @@ import '../../core/services/barcode_feedback_service.dart';
 import '../../core/services/cloud_sync_service.dart';
 import '../../core/services/lan_sync_service.dart';
 import '../../core/services/local_database_service.dart';
+import '../../core/shortcuts/app_shortcuts.dart';
 import '../../core/sync_unified/sync_device_state.dart';
 import '../../core/sync_unified/sync_unified.dart';
 
@@ -33,6 +34,7 @@ class SettingsPage extends StatelessWidget {
   final AppStore store;
   final Future<void> Function()? onSyncSettingsChanged;
 
+
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
@@ -42,6 +44,7 @@ class SettingsPage extends StatelessWidget {
       _SettingsNavData(icon: Icons.sync_outlined, label: tr.text('sync'), description: tr.text('sync_nav_desc')),
       _SettingsNavData(icon: Icons.backup_outlined, label: tr.text('backup_restore'), description: tr.text('backup_preview_desc')),
       _SettingsNavData(icon: Icons.admin_panel_settings_outlined, label: tr.text('users_permissions'), description: tr.text('users_permissions_desc')),
+      _SettingsNavData(icon: Icons.keyboard_command_key_outlined, label: tr.text('keyboard_shortcuts'), description: tr.text('keyboard_shortcuts_desc')),
     ];
 
     return DefaultTabController(
@@ -55,6 +58,7 @@ class SettingsPage extends StatelessWidget {
             _settingsList(context, _syncCards(context)),
             _settingsList(context, _backupCards(context)),
             _settingsList(context, _adminCards(context)),
+            _settingsList(context, _shortcutCards(context)),
           ];
 
           if (!isWide) {
@@ -204,6 +208,11 @@ class SettingsPage extends StatelessWidget {
       ),
     ];
   }
+
+
+  List<Widget> _shortcutCards(BuildContext context) => [
+        const _KeyboardShortcutsSettingsCard(),
+      ];
 
   List<Widget> _syncCards(BuildContext context) => [
         _UnifiedSyncSettingsCard(store: store, onSyncSettingsChanged: onSyncSettingsChanged),
@@ -4855,6 +4864,251 @@ class _SecureRecoveryLine extends StatelessWidget {
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+
+class _KeyboardShortcutsSettingsCard extends StatefulWidget {
+  const _KeyboardShortcutsSettingsCard();
+
+  @override
+  State<_KeyboardShortcutsSettingsCard> createState() => _KeyboardShortcutsSettingsCardState();
+}
+
+class _KeyboardShortcutsSettingsCardState extends State<_KeyboardShortcutsSettingsCard> {
+  late SaleShortcutSettings _settings;
+
+  @override
+  void initState() {
+    super.initState();
+    _settings = SaleShortcutSettings.load();
+  }
+
+  String _keyLabel(AppLocalizations tr, String keyName) {
+    if (keyName == SaleShortcutSettings.noneKey) return tr.text('shortcut_none');
+    return keyName;
+  }
+
+  Future<void> _setSaleShortcut(SaleShortcutAction action, String keyName) async {
+    final tr = AppLocalizations.of(context);
+    if (_settings.isSaleKeyUsedByAnotherAction(keyName, action)) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('shortcut_key_already_used'))));
+      return;
+    }
+    final next = _settings.copyWithSaleActionKey(action, keyName);
+    setState(() => _settings = next);
+    await next.save();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('shortcuts_saved'))));
+  }
+
+  Future<void> _setPaymentShortcut(SalePaymentShortcutAction action, String keyName) async {
+    final tr = AppLocalizations.of(context);
+    if (_settings.isPaymentKeyUsedByAnotherAction(keyName, action)) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('shortcut_key_already_used'))));
+      return;
+    }
+    final next = _settings.copyWithPaymentActionKey(action, keyName);
+    setState(() => _settings = next);
+    await next.save();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('shortcuts_saved'))));
+  }
+
+  Future<void> _setPurchasesShortcut(PurchasesShortcutAction action, String keyName) async {
+    final tr = AppLocalizations.of(context);
+    if (_settings.isPurchasesKeyUsedByAnotherAction(keyName, action)) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('shortcut_key_already_used'))));
+      return;
+    }
+    final next = _settings.copyWithPurchasesActionKey(action, keyName);
+    setState(() => _settings = next);
+    await next.save();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('shortcuts_saved'))));
+  }
+
+  Future<void> _setPurchaseDialogShortcut(PurchaseDialogShortcutAction action, String keyName) async {
+    final tr = AppLocalizations.of(context);
+    if (_settings.isPurchaseDialogKeyUsedByAnotherAction(keyName, action)) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('shortcut_key_already_used'))));
+      return;
+    }
+    final next = _settings.copyWithPurchaseDialogActionKey(action, keyName);
+    setState(() => _settings = next);
+    await next.save();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('shortcuts_saved'))));
+  }
+
+  Future<void> _resetDefaults() async {
+    final next = SaleShortcutSettings.defaults();
+    setState(() => _settings = next);
+    await next.save();
+  }
+
+  Widget _shortcutDropdown({
+    required BuildContext context,
+    required String? value,
+    required ValueChanged<String> onChanged,
+  }) {
+    final tr = AppLocalizations.of(context);
+    return DropdownButtonFormField<String>(
+      initialValue: value ?? SaleShortcutSettings.noneKey,
+      decoration: const InputDecoration(isDense: true),
+      items: [
+        for (final keyName in SaleShortcutSettings.availableKeys)
+          DropdownMenuItem(value: keyName, child: Text(_keyLabel(tr, keyName))),
+      ],
+      onChanged: (value) {
+        if (value == null) return;
+        onChanged(value);
+      },
+    );
+  }
+
+  Widget _buildSaleShortcuts(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(tr.text('sale_page'), style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        Text(tr.text('keyboard_shortcuts_sale_hint'), style: Theme.of(context).textTheme.bodySmall),
+        const SizedBox(height: 12),
+        for (final action in SaleShortcutAction.values) ...[
+          Row(
+            children: [
+              Expanded(child: Text(tr.text(action.labelKey))),
+              SizedBox(
+                width: 160,
+                child: _shortcutDropdown(
+                  context: context,
+                  value: _settings.saleBindings[action],
+                  onChanged: (value) => _setSaleShortcut(action, value),
+                ),
+              ),
+            ],
+          ),
+          const Divider(height: 18),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildPaymentShortcuts(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(tr.text('shortcut_page_sale_payment'), style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        Text(tr.text('keyboard_shortcuts_payment_hint'), style: Theme.of(context).textTheme.bodySmall),
+        const SizedBox(height: 12),
+        for (final action in SalePaymentShortcutAction.values) ...[
+          Row(
+            children: [
+              Expanded(child: Text(tr.text(action.labelKey))),
+              SizedBox(
+                width: 160,
+                child: _shortcutDropdown(
+                  context: context,
+                  value: _settings.paymentBindings[action],
+                  onChanged: (value) => _setPaymentShortcut(action, value),
+                ),
+              ),
+            ],
+          ),
+          const Divider(height: 18),
+        ],
+      ],
+    );
+  }
+
+
+  Widget _buildPurchasesShortcuts(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(tr.text('purchases'), style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        Text(tr.text('keyboard_shortcuts_purchases_hint'), style: Theme.of(context).textTheme.bodySmall),
+        const SizedBox(height: 12),
+        for (final action in PurchasesShortcutAction.values) ...[
+          Row(
+            children: [
+              Expanded(child: Text(tr.text(action.labelKey))),
+              SizedBox(
+                width: 160,
+                child: _shortcutDropdown(
+                  context: context,
+                  value: _settings.purchasesBindings[action],
+                  onChanged: (value) => _setPurchasesShortcut(action, value),
+                ),
+              ),
+            ],
+          ),
+          const Divider(height: 18),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildPurchaseDialogShortcuts(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(tr.text('shortcut_page_purchase_dialog'), style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        Text(tr.text('keyboard_shortcuts_purchase_dialog_hint'), style: Theme.of(context).textTheme.bodySmall),
+        const SizedBox(height: 12),
+        for (final action in PurchaseDialogShortcutAction.values) ...[
+          Row(
+            children: [
+              Expanded(child: Text(tr.text(action.labelKey))),
+              SizedBox(
+                width: 160,
+                child: _shortcutDropdown(
+                  context: context,
+                  value: _settings.purchaseDialogBindings[action],
+                  onChanged: (value) => _setPurchaseDialogShortcut(action, value),
+                ),
+              ),
+            ],
+          ),
+          const Divider(height: 18),
+        ],
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    return _SectionCard(
+      icon: Icons.keyboard_command_key_outlined,
+      title: tr.text('keyboard_shortcuts'),
+      subtitle: tr.text('keyboard_shortcuts_desc'),
+      trailing: TextButton.icon(
+        onPressed: _resetDefaults,
+        icon: const Icon(Icons.restore_outlined),
+        label: Text(tr.text('restore_defaults')),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildSaleShortcuts(context),
+          const SizedBox(height: 18),
+          _buildPaymentShortcuts(context),
+          const SizedBox(height: 18),
+          _buildPurchasesShortcuts(context),
+          const SizedBox(height: 18),
+          _buildPurchaseDialogShortcuts(context),
         ],
       ),
     );

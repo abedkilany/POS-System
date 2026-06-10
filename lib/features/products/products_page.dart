@@ -50,13 +50,21 @@ class _ProductsPageState extends State<ProductsPage> {
     });
   }
 
-
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final products = _filteredProducts(widget.store.products);
-    final categories = <String>{'All', ...widget.store.products.map((p) => p.category).where((e) => e.trim().isNotEmpty)}.toList()..sort();
-    final productRows = products.map((product) => _ProductRowData.fromStore(product, widget.store, widget.store.storeProfile)).toList(growable: false);
+    final categories = <String>{
+      'All',
+      ...widget.store.products
+          .map((p) => p.category)
+          .where((e) => e.trim().isNotEmpty)
+    }.toList()
+      ..sort();
+    final productRows = products
+        .map((product) => _ProductRowData.fromStore(
+            product, widget.store, widget.store.storeProfile))
+        .toList(growable: false);
 
     return Padding(
       padding: VentioResponsive.pageInsets(context),
@@ -71,17 +79,23 @@ class _ProductsPageState extends State<ProductsPage> {
               alignment: WrapAlignment.end,
               children: [
                 OutlinedButton.icon(
-                  onPressed: widget.store.canManageProducts ? () => _openCatalogManager(context, 'category') : null,
+                  onPressed: widget.store.canManageProducts
+                      ? () => _openCatalogManager(context, 'category')
+                      : null,
                   icon: const Icon(Icons.category_outlined),
                   label: Text(tr.text('manage_categories')),
                 ),
                 OutlinedButton.icon(
-                  onPressed: widget.store.canManageProducts ? () => _openCatalogManager(context, 'unit') : null,
+                  onPressed: widget.store.canManageProducts
+                      ? () => _openCatalogManager(context, 'unit')
+                      : null,
                   icon: const Icon(Icons.straighten_outlined),
                   label: Text(tr.text('manage_units')),
                 ),
                 FilledButton.icon(
-                  onPressed: widget.store.canManageProducts ? () => _openProductForm(context) : null,
+                  onPressed: widget.store.canManageProducts
+                      ? () => _openProductForm(context)
+                      : null,
                   icon: const Icon(Icons.add),
                   label: Text(tr.text('add_product')),
                 ),
@@ -107,22 +121,44 @@ class _ProductsPageState extends State<ProductsPage> {
               final categoryField = DropdownButtonFormField<String>(
                 initialValue: categoryFilter,
                 decoration: InputDecoration(labelText: tr.text('category')),
-                items: categories.map((item) => DropdownMenuItem(value: item, child: Text(item == 'All' ? tr.text('all') : item))).toList(),
-                onChanged: (value) => setState(() => categoryFilter = value ?? 'All'),
+                items: categories
+                    .map((item) => DropdownMenuItem(
+                        value: item,
+                        child: Text(item == 'All' ? tr.text('all') : item)))
+                    .toList(),
+                onChanged: (value) =>
+                    setState(() => categoryFilter = value ?? 'All'),
               );
               if (constraints.maxWidth < 620) {
-                return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [searchField, const SizedBox(height: 12), categoryField]);
+                return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      searchField,
+                      const SizedBox(height: 12),
+                      categoryField
+                    ]);
               }
-              return Row(children: [Expanded(child: searchField), const SizedBox(width: 12), SizedBox(width: VentioResponsive.adaptiveWidth(context, mobile: 160, tablet: 200, desktop: 220), child: categoryField)]);
+              return Row(children: [
+                Expanded(child: searchField),
+                const SizedBox(width: 12),
+                SizedBox(
+                    width: VentioResponsive.adaptiveWidth(context,
+                        mobile: 160, tablet: 200, desktop: 220),
+                    child: categoryField)
+              ]);
             },
           ),
           const SizedBox(height: 16),
           Expanded(
             child: productRows.isEmpty
-                ? EmptyStateCard(icon: Icons.inventory_2_outlined, title: tr.text('no_products'), subtitle: tr.text('no_products_desc'))
+                ? EmptyStateCard(
+                    icon: Icons.inventory_2_outlined,
+                    title: tr.text('no_products'),
+                    subtitle: tr.text('no_products_desc'))
                 : LayoutBuilder(
                     builder: (context, constraints) {
-                      final rowExtent = constraints.maxWidth < 620 ? 158.0 : 94.0;
+                      final rowExtent =
+                          constraints.maxWidth < 620 ? 158.0 : 94.0;
                       return ListView.builder(
                         itemExtent: rowExtent,
                         itemCount: productRows.length,
@@ -133,8 +169,13 @@ class _ProductsPageState extends State<ProductsPage> {
                             child: _ProductTile(
                               row: row,
                               compact: constraints.maxWidth < 620,
-                              onEdit: widget.store.canManageProducts ? () => _openProductForm(context, product: row.product) : null,
-                              onDelete: widget.store.canDeleteOrCancel ? () => _deleteProduct(context, row.product) : null,
+                              onEdit: widget.store.canManageProducts
+                                  ? () => _openProductForm(context,
+                                      product: row.product)
+                                  : null,
+                              onDelete: widget.store.canDeleteOrCancel
+                                  ? () => _deleteProduct(context, row.product)
+                                  : null,
                             ),
                           );
                         },
@@ -156,12 +197,15 @@ class _ProductsPageState extends State<ProductsPage> {
           product.nameAr.toLowerCase().contains(value) ||
           product.code.toLowerCase().contains(value) ||
           product.barcode.toLowerCase().contains(value) ||
-          product.effectiveSaleUnits.any((unit) => unit.barcode.toLowerCase().contains(value)) ||
-          product.effectivePurchaseUnits.any((unit) => unit.barcode.toLowerCase().contains(value)) ||
+          product.effectiveSaleUnits
+              .any((unit) => unit.barcode.toLowerCase().contains(value)) ||
+          product.effectivePurchaseUnits
+              .any((unit) => unit.barcode.toLowerCase().contains(value)) ||
           product.category.toLowerCase().contains(value) ||
           product.brand.toLowerCase().contains(value) ||
           product.supplier.toLowerCase().contains(value);
-      final matchesCategory = categoryFilter == 'All' || product.category == categoryFilter;
+      final matchesCategory =
+          categoryFilter == 'All' || product.category == categoryFilter;
       return matchesQuery && matchesCategory;
     }).toList()
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
@@ -175,14 +219,17 @@ class _ProductsPageState extends State<ProductsPage> {
         title: Text(tr.text('confirm_delete')),
         content: Text('${tr.text('delete_confirm_message')} ${product.name}?'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('cancel'))),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(tr.text('delete'))),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(tr.text('cancel'))),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(tr.text('delete'))),
         ],
       ),
     );
     if (confirmed == true) await widget.store.deleteProduct(product.id);
   }
-
 
   Future<void> _openCatalogManager(BuildContext context, String type) async {
     await showDialog<void>(
@@ -192,7 +239,8 @@ class _ProductsPageState extends State<ProductsPage> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _openProductForm(BuildContext context, {Product? product}) async {
+  Future<void> _openProductForm(BuildContext context,
+      {Product? product}) async {
     final tr = AppLocalizations.of(context);
     final result = await showDialog<_ProductFormResult>(
       context: context,
@@ -208,21 +256,29 @@ class _ProductsPageState extends State<ProductsPage> {
         await _addProductToQuickProducts(result.product, tr);
       }
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(product == null ? tr.text('product_saved') : tr.text('product_updated'))));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(product == null
+                ? tr.text('product_saved')
+                : tr.text('product_updated'))));
       }
     } catch (error) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString().replaceFirst('Invalid argument(s): ', ''))));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(
+                error.toString().replaceFirst('Invalid argument(s): ', ''))));
       }
     }
   }
 
-  Future<void> _addProductToQuickProducts(Product product, AppLocalizations tr) async {
+  Future<void> _addProductToQuickProducts(
+      Product product, AppLocalizations tr) async {
     const storageKey = 'sale_quick_product_pages_v1';
     List<dynamic> pages;
     try {
       final raw = LocalDatabaseService.getString(storageKey);
-      pages = raw == null || raw.trim().isEmpty ? <dynamic>[] : jsonDecode(raw) as List<dynamic>;
+      pages = raw == null || raw.trim().isEmpty
+          ? <dynamic>[]
+          : jsonDecode(raw) as List<dynamic>;
     } catch (_) {
       pages = <dynamic>[];
     }
@@ -230,11 +286,15 @@ class _ProductsPageState extends State<ProductsPage> {
       pages = [
         {
           'name': tr.text('page') == 'page' ? 'Page 1' : '${tr.text('page')} 1',
-          'slots': List.generate(12, (_) => {'productId': null, 'shortName': null}),
+          'slots':
+              List.generate(12, (_) => {'productId': null, 'shortName': null}),
         }
       ];
     }
-    final shortName = (product.nameAr.trim().isNotEmpty ? product.nameAr.trim() : product.name.trim()).trim();
+    final shortName = (product.nameAr.trim().isNotEmpty
+            ? product.nameAr.trim()
+            : product.name.trim())
+        .trim();
     for (final page in pages) {
       if (page is! Map) continue;
       final slots = page['slots'];
@@ -250,9 +310,14 @@ class _ProductsPageState extends State<ProductsPage> {
       if (slots is! List) continue;
       for (var i = 0; i < slots.length; i++) {
         final slot = slots[i];
-        final isEmpty = slot is! Map || (slot['productId'] as String?)?.trim().isEmpty != false;
+        final isEmpty = slot is! Map ||
+            (slot['productId'] as String?)?.trim().isEmpty != false;
         if (isEmpty) {
-          slots[i] = {'productId': product.id, 'shortName': shortName.length > 14 ? shortName.substring(0, 14) : shortName};
+          slots[i] = {
+            'productId': product.id,
+            'shortName':
+                shortName.length > 14 ? shortName.substring(0, 14) : shortName
+          };
           await LocalDatabaseService.setString(storageKey, jsonEncode(pages));
           return;
         }
@@ -262,7 +327,11 @@ class _ProductsPageState extends State<ProductsPage> {
     if (first is Map) {
       final slots = first['slots'];
       if (slots is List) {
-        slots.add({'productId': product.id, 'shortName': shortName.length > 14 ? shortName.substring(0, 14) : shortName});
+        slots.add({
+          'productId': product.id,
+          'shortName':
+              shortName.length > 14 ? shortName.substring(0, 14) : shortName
+        });
       }
     }
     await LocalDatabaseService.setString(storageKey, jsonEncode(pages));
@@ -270,7 +339,8 @@ class _ProductsPageState extends State<ProductsPage> {
 }
 
 class _ProductTile extends StatelessWidget {
-  const _ProductTile({required this.row, required this.compact, this.onEdit, this.onDelete});
+  const _ProductTile(
+      {required this.row, required this.compact, this.onEdit, this.onDelete});
 
   final _ProductRowData row;
   final bool compact;
@@ -287,28 +357,50 @@ class _ProductTile extends StatelessWidget {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  CircleAvatar(child: Icon(product.isActive ? Icons.inventory_2_outlined : Icons.block_outlined)),
+                  CircleAvatar(
+                      child: Icon(product.isActive
+                          ? Icons.inventory_2_outlined
+                          : Icons.block_outlined)),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(product.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)),
+                        Text(product.name,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style:
+                                const TextStyle(fontWeight: FontWeight.w700)),
                         if (row.subtitle.isNotEmpty) ...[
                           const SizedBox(height: 4),
-                          Text(row.subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+                          Text(row.subtitle,
+                              maxLines: 1, overflow: TextOverflow.ellipsis),
                         ],
                         const SizedBox(height: 8),
-                        Text(row.meta, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.labelLarge),
+                        Text(row.meta,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.labelLarge),
                         if (row.purchaseMeta.isNotEmpty) ...[
                           const SizedBox(height: 4),
-                          Text(row.purchaseMeta, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall),
+                          Text(row.purchaseMeta,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodySmall),
                         ],
                         const Spacer(),
                         Row(
                           children: [
-                            IconButton(onPressed: onEdit, icon: const Icon(Icons.edit_outlined), tooltip: AppLocalizations.of(context).text('edit')),
-                            IconButton(onPressed: onDelete, icon: const Icon(Icons.delete_outline), tooltip: AppLocalizations.of(context).text('delete')),
+                            IconButton(
+                                onPressed: onEdit,
+                                icon: const Icon(Icons.edit_outlined),
+                                tooltip:
+                                    AppLocalizations.of(context).text('edit')),
+                            IconButton(
+                                onPressed: onDelete,
+                                icon: const Icon(Icons.delete_outline),
+                                tooltip: AppLocalizations.of(context)
+                                    .text('delete')),
                           ],
                         ),
                       ],
@@ -318,21 +410,36 @@ class _ProductTile extends StatelessWidget {
               ),
             )
           : ListTile(
-            leading: CircleAvatar(child: Icon(product.isActive ? Icons.inventory_2_outlined : Icons.block_outlined)),
-            title: Text(product.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)),
-            subtitle: Text([row.subtitle, row.purchaseMeta].where((item) => item.trim().isNotEmpty).join('\n'), maxLines: 2, overflow: TextOverflow.ellipsis),
-            trailing: Wrap(
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
-                  child: Text(row.meta),
-                ),
-                IconButton(onPressed: onEdit, icon: const Icon(Icons.edit_outlined)),
-                IconButton(onPressed: onDelete, icon: const Icon(Icons.delete_outline)),
-              ],
+              leading: CircleAvatar(
+                  child: Icon(product.isActive
+                      ? Icons.inventory_2_outlined
+                      : Icons.block_outlined)),
+              title: Text(product.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w700)),
+              subtitle: Text(
+                  [row.subtitle, row.purchaseMeta]
+                      .where((item) => item.trim().isNotEmpty)
+                      .join('\n'),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis),
+              trailing: Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
+                    child: Text(row.meta),
+                  ),
+                  IconButton(
+                      onPressed: onEdit, icon: const Icon(Icons.edit_outlined)),
+                  IconButton(
+                      onPressed: onDelete,
+                      icon: const Icon(Icons.delete_outline)),
+                ],
+              ),
             ),
-          ),
     );
   }
 }
@@ -350,8 +457,14 @@ class _ProductRowData {
   final String meta;
   final String purchaseMeta;
 
-  factory _ProductRowData.fromStore(Product product, AppStore store, StoreProfile storeProfile) {
-    final subtitle = [product.code, product.barcode, product.category, product.brand].where((e) => e.trim().isNotEmpty).join(' • ');
+  factory _ProductRowData.fromStore(
+      Product product, AppStore store, StoreProfile storeProfile) {
+    final subtitle = [
+      product.code,
+      product.barcode,
+      product.category,
+      product.brand
+    ].where((e) => e.trim().isNotEmpty).join(' • ');
     final lastPurchase = store.lastPurchasePriceForProduct(product.id);
     final avgPurchase = store.averagePurchaseCostForProduct(product.id);
     final supplierCount = store.supplierCountForProduct(product.id);
@@ -359,16 +472,25 @@ class _ProductRowData {
         ? '${product.stock} ${product.unit} • ${formatUsdReferenceAmount(product.price, storeProfile)}'
         : 'Non-stock / service • ${formatUsdReferenceAmount(product.price, storeProfile)}';
     final purchaseMeta = [
-      if (lastPurchase != null) 'Last cost ${formatUsdReferenceAmount(lastPurchase, storeProfile)}',
-      if (avgPurchase > 0) 'Avg cost ${formatUsdReferenceAmount(avgPurchase, storeProfile)}',
+      if (lastPurchase != null)
+        'Last cost ${formatUsdReferenceAmount(lastPurchase, storeProfile)}',
+      if (avgPurchase > 0)
+        'Avg cost ${formatUsdReferenceAmount(avgPurchase, storeProfile)}',
       if (supplierCount > 0) '$supplierCount suppliers',
     ].join(' • ');
-    return _ProductRowData(product: product, subtitle: subtitle, meta: meta, purchaseMeta: purchaseMeta);
+    return _ProductRowData(
+        product: product,
+        subtitle: subtitle,
+        meta: meta,
+        purchaseMeta: purchaseMeta);
   }
 }
 
 class _ProductFormResult {
-  const _ProductFormResult({required this.product, required this.addToQuickProducts, this.supplierPriceSave});
+  const _ProductFormResult(
+      {required this.product,
+      required this.addToQuickProducts,
+      this.supplierPriceSave});
 
   final Product product;
   final bool addToQuickProducts;
@@ -414,25 +536,47 @@ class _ProductDialogState extends State<_ProductDialog> {
   void initState() {
     super.initState();
     final product = widget.product;
-    _productId = product?.id ?? DateTime.now().microsecondsSinceEpoch.toString();
-    supplierPriceDrafts = product == null ? <SupplierProductPrice>[] : widget.store.supplierProductPricesForProduct(product.id).toList();
+    _productId =
+        product?.id ?? DateTime.now().microsecondsSinceEpoch.toString();
+    supplierPriceDrafts = product == null
+        ? <SupplierProductPrice>[]
+        : widget.store.supplierProductPricesForProduct(product.id).toList();
     barcodeController = TextEditingController(text: product?.barcode ?? '');
-    codeController = TextEditingController(text: product?.code ?? _generateUniqueSku());
-    nameEnController = TextEditingController(text: product?.nameEn.isNotEmpty == true ? product!.nameEn : product?.name ?? '');
+    codeController =
+        TextEditingController(text: product?.code ?? _generateUniqueSku());
+    nameEnController = TextEditingController(
+        text: product?.nameEn.isNotEmpty == true
+            ? product!.nameEn
+            : product?.name ?? '');
     nameArController = TextEditingController(text: product?.nameAr ?? '');
-    descriptionController = TextEditingController(text: product?.description ?? '');
-    priceCurrency = product?.originalCurrency ?? widget.store.storeProfile.defaultProductCurrency;
-    costCurrency = product?.costCurrency ?? widget.store.storeProfile.defaultProductCurrency;
-    priceController = TextEditingController(text: product?.originalPrice.toString() ?? '');
-    costController = TextEditingController(text: product?.originalCost.toString() ?? '');
-    stockController = TextEditingController(text: product?.stock.toString() ?? '');
-    lowStockController = TextEditingController(text: (product?.lowStockThreshold ?? 5).toString());
+    descriptionController =
+        TextEditingController(text: product?.description ?? '');
+    priceCurrency = product?.originalCurrency ??
+        widget.store.storeProfile.defaultProductCurrency;
+    costCurrency = product?.costCurrency ??
+        widget.store.storeProfile.defaultProductCurrency;
+    priceController =
+        TextEditingController(text: product?.originalPrice.toString() ?? '');
+    costController =
+        TextEditingController(text: product?.originalCost.toString() ?? '');
+    stockController =
+        TextEditingController(text: product?.stock.toString() ?? '');
+    lowStockController = TextEditingController(
+        text: (product?.lowStockThreshold ?? 5).toString());
     imagePath = product?.imagePath ?? '';
-    category = product?.category ?? (widget.store.categories.isNotEmpty ? widget.store.categories.first.code.isNotEmpty ? widget.store.categories.first.code : widget.store.categories.first.nameEn : 'General');
+    category = product?.category ??
+        (widget.store.categories.isNotEmpty
+            ? widget.store.categories.first.code.isNotEmpty
+                ? widget.store.categories.first.code
+                : widget.store.categories.first.nameEn
+            : 'General');
     brand = product?.brand ?? '';
-    unit = product?.unit ?? (widget.store.units.isNotEmpty ? widget.store.units.first.code : 'pcs');
+    unit = product?.unit ??
+        (widget.store.units.isNotEmpty ? widget.store.units.first.code : 'pcs');
     quantityType = product?.quantityType ?? ProductQuantityType.countable;
-    saleUnitDrafts = (product?.saleUnits ?? const []).map(_SaleUnitDraft.fromSaleUnit).toList();
+    saleUnitDrafts = (product?.saleUnits ?? const [])
+        .map(_SaleUnitDraft.fromSaleUnit)
+        .toList();
     trackStock = product?.trackStock ?? true;
     isActive = product?.isActive ?? true;
   }
@@ -462,9 +606,12 @@ class _ProductDialogState extends State<_ProductDialog> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final width = math.min(MediaQuery.sizeOf(context).width - 32, 760).toDouble();
+    final width =
+        math.min(MediaQuery.sizeOf(context).width - 32, 760).toDouble();
     return AlertDialog(
-      title: Text(widget.product == null ? tr.text('add_product') : tr.text('edit_product')),
+      title: Text(widget.product == null
+          ? tr.text('add_product')
+          : tr.text('edit_product')),
       insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 24),
       content: ConstrainedBox(
         constraints: BoxConstraints(
@@ -484,7 +631,9 @@ class _ProductDialogState extends State<_ProductDialog> {
                     _ProductImagePicker(
                       imagePath: imagePath,
                       onPick: _pickProductImage,
-                      onClear: imagePath.trim().isEmpty ? null : () => setState(() => imagePath = ''),
+                      onClear: imagePath.trim().isEmpty
+                          ? null
+                          : () => setState(() => imagePath = ''),
                     ),
                     const SizedBox(height: 12),
                     _ResponsiveFields(children: [
@@ -514,15 +663,24 @@ class _ProductDialogState extends State<_ProductDialog> {
                           ),
                         ),
                       ),
-                      TextFormField(controller: nameEnController, decoration: InputDecoration(labelText: '${tr.text('product_name_en')} *'), validator: (_) => _nameRequired()),
-                      TextFormField(controller: nameArController, decoration: InputDecoration(labelText: '${tr.text('product_name_ar')} *'), validator: (_) => _nameRequired()),
+                      TextFormField(
+                          controller: nameEnController,
+                          decoration: InputDecoration(
+                              labelText: '${tr.text('product_name_en')} *'),
+                          validator: (_) => _nameRequired()),
+                      TextFormField(
+                          controller: nameArController,
+                          decoration: InputDecoration(
+                              labelText: '${tr.text('product_name_ar')} *'),
+                          validator: (_) => _nameRequired()),
                       _CatalogDropdown(
                         label: tr.text('category'),
                         value: category,
                         items: widget.store.categories,
                         onChanged: (value) => setState(() => category = value),
                         onAdd: () => _addCatalogItem(context, 'category'),
-                        onManage: () => _manageCatalogItems(context, 'category'),
+                        onManage: () =>
+                            _manageCatalogItems(context, 'category'),
                       ),
                       _CatalogDropdown(
                         label: tr.text('brand'),
@@ -542,25 +700,41 @@ class _ProductDialogState extends State<_ProductDialog> {
                       ),
                       DropdownButtonFormField<ProductQuantityType>(
                         initialValue: quantityType,
-                        decoration: InputDecoration(labelText: tr.text('quantity_type')),
+                        decoration: InputDecoration(
+                            labelText: tr.text('quantity_type')),
                         items: [
-                          DropdownMenuItem(value: ProductQuantityType.countable, child: Text(tr.text('quantity_type_countable'))),
-                          DropdownMenuItem(value: ProductQuantityType.measurable, child: Text(tr.text('quantity_type_measurable'))),
+                          DropdownMenuItem(
+                              value: ProductQuantityType.countable,
+                              child: Text(tr.text('quantity_type_countable'))),
+                          DropdownMenuItem(
+                              value: ProductQuantityType.measurable,
+                              child: Text(tr.text('quantity_type_measurable'))),
                         ],
-                        onChanged: (value) => setState(() => quantityType = value ?? ProductQuantityType.countable),
+                        onChanged: (value) => setState(() => quantityType =
+                            value ?? ProductQuantityType.countable),
                       ),
                     ]),
                     const SizedBox(height: 12),
                     ExpansionTile(
                       tilePadding: EdgeInsets.zero,
                       title: Text(tr.text('advanced_sku')),
-                      subtitle: Text('${tr.text('auto_generated')}: ${codeController.text}'),
+                      subtitle: Text(
+                          '${tr.text('auto_generated')}: ${codeController.text}'),
                       children: [
-                        TextFormField(controller: codeController, decoration: InputDecoration(labelText: tr.text('sku_code')), validator: _uniqueSku),
+                        TextFormField(
+                            controller: codeController,
+                            decoration:
+                                InputDecoration(labelText: tr.text('sku_code')),
+                            validator: _uniqueSku),
                       ],
                     ),
                     const SizedBox(height: 12),
-                    TextFormField(controller: descriptionController, decoration: InputDecoration(labelText: tr.text('description')), minLines: 2, maxLines: 3),
+                    TextFormField(
+                        controller: descriptionController,
+                        decoration:
+                            InputDecoration(labelText: tr.text('description')),
+                        minLines: 2,
+                        maxLines: 3),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -569,22 +743,37 @@ class _ProductDialogState extends State<_ProductDialog> {
                   title: tr.text('pricing'),
                   children: [
                     _ResponsiveFields(children: [
-                      _MoneyField(controller: priceController, currency: priceCurrency, label: tr.text('sale_price'), currencyLabel: tr.text('price_currency'), validator: _nonNegativeNumber, onCurrencyChanged: (value) => setState(() => priceCurrency = value)),
-                      _MoneyField(controller: costController, currency: costCurrency, label: tr.text('cost_price'), currencyLabel: tr.text('cost_currency'), validator: _nonNegativeNumber, onCurrencyChanged: (value) => setState(() => costCurrency = value)),
+                      _MoneyField(
+                          controller: priceController,
+                          currency: priceCurrency,
+                          label: tr.text('sale_price'),
+                          currencyLabel: tr.text('price_currency'),
+                          validator: _nonNegativeNumber,
+                          onCurrencyChanged: (value) =>
+                              setState(() => priceCurrency = value)),
+                      _MoneyField(
+                          controller: costController,
+                          currency: costCurrency,
+                          label: tr.text('cost_price'),
+                          currencyLabel: tr.text('cost_currency'),
+                          validator: _nonNegativeNumber,
+                          onCurrencyChanged: (value) =>
+                              setState(() => costCurrency = value)),
                     ]),
                   ],
                 ),
                 const SizedBox(height: 12),
                 _ProductFormSection(
                   icon: Icons.local_shipping_outlined,
-                  title: tr.text('supplier_prices') == 'supplier_prices' ? 'Supplier Prices' : tr.text('supplier_prices'),
+                  title: tr.text('supplier_prices'),
                   children: [
                     _SupplierPricesEditor(
                       prices: supplierPriceDrafts,
                       productId: _productId,
                       suppliers: widget.store.suppliers,
                       storeProfile: widget.store.storeProfile,
-                      onChanged: (items) => setState(() => supplierPriceDrafts = items),
+                      onChanged: (items) =>
+                          setState(() => supplierPriceDrafts = items),
                     ),
                   ],
                 ),
@@ -593,10 +782,39 @@ class _ProductDialogState extends State<_ProductDialog> {
                   icon: Icons.warehouse_outlined,
                   title: tr.text('inventory_stock'),
                   children: [
-                    SwitchListTile(contentPadding: EdgeInsets.zero, title: Text(tr.text('track_quantity')), subtitle: Text(tr.text('track_quantity_help')), value: trackStock, onChanged: (value) => setState(() => trackStock = value)),
+                    SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(tr.text('track_quantity')),
+                        subtitle: Text(tr.text('track_quantity_help')),
+                        value: trackStock,
+                        onChanged: (value) =>
+                            setState(() => trackStock = value)),
                     _ResponsiveFields(children: [
-                      TextFormField(enabled: trackStock, controller: stockController, decoration: InputDecoration(labelText: tr.text('opening_stock'), helperText: trackStock ? null : tr.text('stock_ignored_non_stock')), keyboardType: const TextInputType.numberWithOptions(decimal: true), validator: trackStock ? (quantityType == ProductQuantityType.measurable ? _nonNegativeNumber : _nonNegativeInteger) : null),
-                      TextFormField(enabled: trackStock, controller: lowStockController, decoration: InputDecoration(labelText: tr.text('low_stock_alert'), helperText: trackStock ? null : tr.text('no_low_stock_alerts_non_stock')), keyboardType: TextInputType.number, validator: trackStock ? _nonNegativeInteger : null),
+                      TextFormField(
+                          enabled: trackStock,
+                          controller: stockController,
+                          decoration: InputDecoration(
+                              labelText: tr.text('opening_stock'),
+                              helperText: trackStock
+                                  ? null
+                                  : tr.text('stock_ignored_non_stock')),
+                          keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true),
+                          validator: trackStock
+                              ? (quantityType == ProductQuantityType.measurable
+                                  ? _nonNegativeNumber
+                                  : _nonNegativeInteger)
+                              : null),
+                      TextFormField(
+                          enabled: trackStock,
+                          controller: lowStockController,
+                          decoration: InputDecoration(
+                              labelText: tr.text('low_stock_alert'),
+                              helperText: trackStock
+                                  ? null
+                                  : tr.text('no_low_stock_alerts_non_stock')),
+                          keyboardType: TextInputType.number,
+                          validator: trackStock ? _nonNegativeInteger : null),
                     ]),
                   ],
                 ),
@@ -608,28 +826,41 @@ class _ProductDialogState extends State<_ProductDialog> {
                     _SaleUnitsEditor(
                       saleUnits: saleUnitDrafts,
                       storeProfile: widget.store.storeProfile,
-                      onChanged: (items) => setState(() => saleUnitDrafts = items),
+                      onChanged: (items) =>
+                          setState(() => saleUnitDrafts = items),
                     ),
                   ],
                 ),
                 const SizedBox(height: 12),
-                SwitchListTile(contentPadding: EdgeInsets.zero, title: Text(tr.text('add_to_quick_products')), subtitle: Text(tr.text('add_to_quick_products_help')), value: addToQuickProducts, onChanged: (value) => setState(() => addToQuickProducts = value)),
-                SwitchListTile(contentPadding: EdgeInsets.zero, title: Text(tr.text('active_product')), value: isActive, onChanged: (value) => setState(() => isActive = value)),
+                SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(tr.text('add_to_quick_products')),
+                    subtitle: Text(tr.text('add_to_quick_products_help')),
+                    value: addToQuickProducts,
+                    onChanged: (value) =>
+                        setState(() => addToQuickProducts = value)),
+                SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(tr.text('active_product')),
+                    value: isActive,
+                    onChanged: (value) => setState(() => isActive = value)),
               ],
             ),
           ),
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: Text(tr.text('cancel'))),
+        TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(tr.text('cancel'))),
         FilledButton(onPressed: _save, child: Text(tr.text('save'))),
       ],
     );
   }
 
-
   Future<void> _pickProductImage() async {
-    final result = await FilePicker.platform.pickFiles(type: FileType.image, allowMultiple: false);
+    final result = await FilePicker.platform
+        .pickFiles(type: FileType.image, allowMultiple: false);
     final file = result?.files.single;
     if (file == null) return;
     setState(() => imagePath = file.path ?? file.name);
@@ -641,7 +872,8 @@ class _ProductDialogState extends State<_ProductDialog> {
     if (code.isEmpty) return;
     await Clipboard.setData(ClipboardData(text: code));
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('barcode_copied'))));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(tr.text('barcode_copied'))));
   }
 
   void _generateBarcode() {
@@ -656,53 +888,63 @@ class _ProductDialogState extends State<_ProductDialog> {
     final originalPrice = double.tryParse(priceController.text.trim()) ?? 0;
     final originalCost = double.tryParse(costController.text.trim()) ?? 0;
     final rate = widget.store.storeProfile.usdToLbpRate;
-    final usdPrice = toUsdReferencePrice(originalPrice, priceCurrency, widget.store.storeProfile);
-    final usdCost = toUsdReferencePrice(originalCost, costCurrency, widget.store.storeProfile);
+    final usdPrice = toUsdReferencePrice(
+        originalPrice, priceCurrency, widget.store.storeProfile);
+    final usdCost = toUsdReferencePrice(
+        originalCost, costCurrency, widget.store.storeProfile);
     Navigator.pop(
       context,
       _ProductFormResult(
         addToQuickProducts: addToQuickProducts,
         supplierPriceSave: () => _saveSupplierPriceDrafts(_productId),
         product: Product(
-        id: _productId,
-        name: nameEn.isNotEmpty ? nameEn : nameAr,
-        nameEn: nameEn,
-        nameAr: nameAr,
-        code: _resolvedSku(),
-        barcode: barcodeController.text.trim(),
-        category: category.trim(),
-        brand: brand.trim(),
-        supplier: '',
-        description: descriptionController.text.trim(),
-        price: usdPrice,
-        originalPrice: originalPrice,
-        originalCurrency: priceCurrency,
-        usdPrice: usdPrice,
-        exchangeRateAtEntry: rate,
-        cost: usdCost,
-        originalCost: originalCost,
-        costCurrency: costCurrency,
-        usdCost: usdCost,
-        costExchangeRateAtEntry: rate,
-        stock: trackStock ? (double.tryParse(stockController.text.trim()) ?? 0) : 0,
-        lowStockThreshold: trackStock ? (int.tryParse(lowStockController.text.trim()) ?? 5) : 0,
-        unit: unit.trim().isEmpty ? 'pcs' : unit.trim(),
-        quantityType: quantityType,
-        saleUnits: saleUnitDrafts.map((item) => item.toSaleUnit(widget.store.storeProfile)).where((item) => item.name.trim().isNotEmpty && item.conversionToBase > 0).toList(),
-        trackStock: trackStock,
-        isActive: isActive,
-        createdAt: widget.product?.createdAt,
-        updatedAt: widget.product?.updatedAt,
-        deletedAt: widget.product?.deletedAt,
-        deviceId: widget.product?.deviceId ?? '',
-        syncStatus: widget.product?.syncStatus ?? 'pending',
-        storeId: widget.product?.storeId ?? '',
-        branchId: widget.product?.branchId ?? '',
-        version: widget.product?.version ?? 1,
-        lastModifiedByDeviceId: widget.product?.lastModifiedByDeviceId ?? '',
-        imagePath: imagePath.trim(),
+          id: _productId,
+          name: nameEn.isNotEmpty ? nameEn : nameAr,
+          nameEn: nameEn,
+          nameAr: nameAr,
+          code: _resolvedSku(),
+          barcode: barcodeController.text.trim(),
+          category: category.trim(),
+          brand: brand.trim(),
+          supplier: '',
+          description: descriptionController.text.trim(),
+          price: usdPrice,
+          originalPrice: originalPrice,
+          originalCurrency: priceCurrency,
+          usdPrice: usdPrice,
+          exchangeRateAtEntry: rate,
+          cost: usdCost,
+          originalCost: originalCost,
+          costCurrency: costCurrency,
+          usdCost: usdCost,
+          costExchangeRateAtEntry: rate,
+          stock: trackStock
+              ? (double.tryParse(stockController.text.trim()) ?? 0)
+              : 0,
+          lowStockThreshold: trackStock
+              ? (int.tryParse(lowStockController.text.trim()) ?? 5)
+              : 0,
+          unit: unit.trim().isEmpty ? 'pcs' : unit.trim(),
+          quantityType: quantityType,
+          saleUnits: saleUnitDrafts
+              .map((item) => item.toSaleUnit(widget.store.storeProfile))
+              .where((item) =>
+                  item.name.trim().isNotEmpty && item.conversionToBase > 0)
+              .toList(),
+          trackStock: trackStock,
+          isActive: isActive,
+          createdAt: widget.product?.createdAt,
+          updatedAt: widget.product?.updatedAt,
+          deletedAt: widget.product?.deletedAt,
+          deviceId: widget.product?.deviceId ?? '',
+          syncStatus: widget.product?.syncStatus ?? 'pending',
+          storeId: widget.product?.storeId ?? '',
+          branchId: widget.product?.branchId ?? '',
+          version: widget.product?.version ?? 1,
+          lastModifiedByDeviceId: widget.product?.lastModifiedByDeviceId ?? '',
+          imagePath: imagePath.trim(),
+        ),
       ),
-    ),
     );
   }
 
@@ -710,7 +952,8 @@ class _ProductDialogState extends State<_ProductDialog> {
     final activeDraftIds = supplierPriceDrafts.map((item) => item.id).toSet();
     final existing = widget.store.supplierProductPricesForProduct(productId);
     for (final item in supplierPriceDrafts) {
-      await widget.store.addOrUpdateSupplierProductPrice(item.copyWith(productId: productId));
+      await widget.store
+          .addOrUpdateSupplierProductPrice(item.copyWith(productId: productId));
     }
     for (final item in existing) {
       if (!activeDraftIds.contains(item.id)) {
@@ -720,17 +963,23 @@ class _ProductDialogState extends State<_ProductDialog> {
   }
 
   Future<void> _addCatalogItem(BuildContext context, String type) async {
-    final item = await showDialog<CatalogItem>(context: context, builder: (_) => _CatalogItemDialog(type: type));
+    final item = await showDialog<CatalogItem>(
+        context: context, builder: (_) => _CatalogItemDialog(type: type));
     if (item == null) return;
     if (type == 'category') {
       await widget.store.addOrUpdateCategory(item);
-      setState(() => category = item.nameEn.trim().isNotEmpty ? item.nameEn.trim() : item.nameAr.trim());
+      setState(() => category = item.nameEn.trim().isNotEmpty
+          ? item.nameEn.trim()
+          : item.nameAr.trim());
     } else if (type == 'brand') {
       await widget.store.addOrUpdateBrand(item);
-      setState(() => brand = item.nameEn.trim().isNotEmpty ? item.nameEn.trim() : item.nameAr.trim());
+      setState(() => brand = item.nameEn.trim().isNotEmpty
+          ? item.nameEn.trim()
+          : item.nameAr.trim());
     } else {
       await widget.store.addOrUpdateUnit(item);
-      setState(() => unit = item.code.trim().isNotEmpty ? item.code.trim() : item.nameEn.trim());
+      setState(() => unit =
+          item.code.trim().isNotEmpty ? item.code.trim() : item.nameEn.trim());
     }
   }
 
@@ -742,10 +991,15 @@ class _ProductDialogState extends State<_ProductDialog> {
     setState(() {});
   }
 
-  String _resolvedSku() => codeController.text.trim().isEmpty ? _generateUniqueSku() : codeController.text.trim();
+  String _resolvedSku() => codeController.text.trim().isEmpty
+      ? _generateUniqueSku()
+      : codeController.text.trim();
 
   String _generateUniqueSku() {
-    final used = widget.store.products.where((item) => item.id != widget.product?.id).map((item) => item.code.trim().toUpperCase()).toSet();
+    final used = widget.store.products
+        .where((item) => item.id != widget.product?.id)
+        .map((item) => item.code.trim().toUpperCase())
+        .toSet();
     var counter = widget.store.products.length + 1;
     while (true) {
       final candidate = 'PRD-${counter.toString().padLeft(5, '0')}';
@@ -757,26 +1011,36 @@ class _ProductDialogState extends State<_ProductDialog> {
   String? _uniqueSku(String? value) {
     final normalized = (value ?? '').trim().toLowerCase();
     if (normalized.isEmpty) return null;
-    final exists = widget.store.products.any((item) => item.id != widget.product?.id && item.code.trim().toLowerCase() == normalized);
-    return exists ? AppLocalizations.of(context).text('sku_already_exists') : null;
+    final exists = widget.store.products.any((item) =>
+        item.id != widget.product?.id &&
+        item.code.trim().toLowerCase() == normalized);
+    return exists
+        ? AppLocalizations.of(context).text('sku_already_exists')
+        : null;
   }
 
   String? _nameRequired() {
-    if (nameEnController.text.trim().isNotEmpty || nameArController.text.trim().isNotEmpty) return null;
+    if (nameEnController.text.trim().isNotEmpty ||
+        nameArController.text.trim().isNotEmpty) {
+      return null;
+    }
     return AppLocalizations.of(context).text('required');
   }
 
   String? _nonNegativeNumber(String? value) {
     final number = double.tryParse((value ?? '').trim());
-    return number == null || number < 0 ? AppLocalizations.of(context).text('invalid_number') : null;
+    return number == null || number < 0
+        ? AppLocalizations.of(context).text('invalid_number')
+        : null;
   }
 
   String? _nonNegativeInteger(String? value) {
     final number = int.tryParse((value ?? '').trim());
-    return number == null || number < 0 ? AppLocalizations.of(context).text('invalid_number') : null;
+    return number == null || number < 0
+        ? AppLocalizations.of(context).text('invalid_number')
+        : null;
   }
 }
-
 
 class _SupplierPricesEditor extends StatelessWidget {
   const _SupplierPricesEditor({
@@ -795,7 +1059,11 @@ class _SupplierPricesEditor extends StatelessWidget {
 
   String _supplierName(String id) {
     for (final supplier in suppliers) {
-      if (supplier.id == id) return supplier.name.trim().isNotEmpty ? supplier.name : supplier.nameEn;
+      if (supplier.id == id) {
+        return supplier.name.trim().isNotEmpty
+            ? supplier.name
+            : supplier.nameEn;
+      }
     }
     return id;
   }
@@ -806,7 +1074,9 @@ class _SupplierPricesEditor extends StatelessWidget {
     final rows = prices.where((item) => !item.isDeleted).toList()
       ..sort((a, b) {
         if (a.isPreferred != b.isPreferred) return a.isPreferred ? -1 : 1;
-        return _supplierName(a.supplierId).toLowerCase().compareTo(_supplierName(b.supplierId).toLowerCase());
+        return _supplierName(a.supplierId)
+            .toLowerCase()
+            .compareTo(_supplierName(b.supplierId).toLowerCase());
       });
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -858,7 +1128,8 @@ class _SupplierPricesEditor extends StatelessWidget {
             child: Padding(
               padding: const EdgeInsets.all(12),
               child: Text([
-                if (rows.any((item) => item.isPreferred)) 'Preferred: ${_supplierName(rows.firstWhere((item) => item.isPreferred).supplierId)}',
+                if (rows.any((item) => item.isPreferred))
+                  'Preferred: ${_supplierName(rows.firstWhere((item) => item.isPreferred).supplierId)}',
                 'Best price: ${_supplierName((rows.toList()..sort((a, b) => a.cost.compareTo(b.cost))).first.supplierId)}',
                 if (rows.any((item) => item.leadTimeDays != null))
                   'Fastest: ${_supplierName((rows.where((item) => item.leadTimeDays != null).toList()..sort((a, b) => a.leadTimeDays!.compareTo(b.leadTimeDays!))).first.supplierId)}',
@@ -879,7 +1150,8 @@ class _SupplierPricesEditor extends StatelessWidget {
     );
   }
 
-  Widget _buildSupplierPriceCard(BuildContext context, SupplierProductPrice item) {
+  Widget _buildSupplierPriceCard(
+      BuildContext context, SupplierProductPrice item) {
     final subtitle = [
       formatCurrency(item.cost, currency: item.currency),
       if (item.isPreferred) 'Preferred',
@@ -918,21 +1190,29 @@ class _SupplierPricesEditor extends StatelessWidget {
                 children: [
                   Row(
                     children: [
-                      Icon(item.isPreferred ? Icons.star : Icons.local_shipping_outlined),
+                      Icon(item.isPreferred
+                          ? Icons.star
+                          : Icons.local_shipping_outlined),
                       const SizedBox(width: 8),
-                      Expanded(child: Text(_supplierName(item.supplierId), style: const TextStyle(fontWeight: FontWeight.w700))),
+                      Expanded(
+                          child: Text(_supplierName(item.supplierId),
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.w700))),
                     ],
                   ),
                   const SizedBox(height: 6),
                   Text(subtitle),
                   const SizedBox(height: 4),
-                  Align(alignment: AlignmentDirectional.centerEnd, child: actions),
+                  Align(
+                      alignment: AlignmentDirectional.centerEnd,
+                      child: actions),
                 ],
               ),
             );
           }
           return ListTile(
-            leading: Icon(item.isPreferred ? Icons.star : Icons.local_shipping_outlined),
+            leading: Icon(
+                item.isPreferred ? Icons.star : Icons.local_shipping_outlined),
             title: Text(_supplierName(item.supplierId)),
             subtitle: Text(subtitle),
             trailing: actions,
@@ -952,7 +1232,10 @@ class _SupplierPricesEditor extends StatelessWidget {
     final bytes = file?.bytes;
     if (bytes == null || bytes.isEmpty) return;
     final text = utf8.decode(bytes, allowMalformed: true);
-    final lines = const LineSplitter().convert(text).where((line) => line.trim().isNotEmpty).toList();
+    final lines = const LineSplitter()
+        .convert(text)
+        .where((line) => line.trim().isNotEmpty)
+        .toList();
     if (lines.isEmpty) return;
     final updated = List<SupplierProductPrice>.from(prices);
     final now = DateTime.now();
@@ -962,7 +1245,10 @@ class _SupplierPricesEditor extends StatelessWidget {
       final supplierKey = cols[0].toLowerCase();
       Supplier? supplier;
       for (final candidate in suppliers) {
-        final name = (candidate.name.trim().isNotEmpty ? candidate.name : candidate.nameEn).toLowerCase();
+        final name = (candidate.name.trim().isNotEmpty
+                ? candidate.name
+                : candidate.nameEn)
+            .toLowerCase();
         if (candidate.id.toLowerCase() == supplierKey || name == supplierKey) {
           supplier = candidate;
           break;
@@ -972,20 +1258,29 @@ class _SupplierPricesEditor extends StatelessWidget {
       final supplierRow = supplier;
       final cost = double.tryParse(cols[1]);
       if (cost == null || cost < 0) continue;
-      final currency = cols.length > 2 && cols[2].toUpperCase() == 'LBP' ? 'LBP' : 'USD';
+      final currency =
+          cols.length > 2 && cols[2].toUpperCase() == 'LBP' ? 'LBP' : 'USD';
       final supplierSku = cols.length > 3 ? cols[3] : '';
-      final minQty = cols.length > 4 && cols[4].isNotEmpty ? double.tryParse(cols[4]) : null;
-      final leadDays = cols.length > 5 && cols[5].isNotEmpty ? int.tryParse(cols[5]) : null;
+      final minQty = cols.length > 4 && cols[4].isNotEmpty
+          ? double.tryParse(cols[4])
+          : null;
+      final leadDays =
+          cols.length > 5 && cols[5].isNotEmpty ? int.tryParse(cols[5]) : null;
       final notes = cols.length > 6 ? cols.sublist(6).join(',').trim() : '';
-      final existingIndex = updated.indexWhere((item) => !item.isDeleted && item.supplierId == supplierRow.id && item.productId == productId);
+      final existingIndex = updated.indexWhere((item) =>
+          !item.isDeleted &&
+          item.supplierId == supplierRow.id &&
+          item.productId == productId);
       final existing = existingIndex == -1 ? null : updated[existingIndex];
       final row = SupplierProductPrice(
-        id: existing?.id ?? 'spp_${now.microsecondsSinceEpoch}_${updated.length}',
+        id: existing?.id ??
+            'spp_${now.microsecondsSinceEpoch}_${updated.length}',
         productId: productId,
         supplierId: supplierRow.id,
         cost: cost,
         currency: currency,
-        isPreferred: existing?.isPreferred ?? updated.where((item) => !item.isDeleted).isEmpty,
+        isPreferred: existing?.isPreferred ??
+            updated.where((item) => !item.isDeleted).isEmpty,
         supplierSku: supplierSku,
         minOrderQty: minQty,
         leadTimeDays: leadDays,
@@ -1008,11 +1303,13 @@ class _SupplierPricesEditor extends StatelessWidget {
     }
     onChanged(updated);
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('CSV import completed.')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('CSV import completed.')));
     }
   }
 
-  Future<void> _openEditor(BuildContext context, {SupplierProductPrice? item}) async {
+  Future<void> _openEditor(BuildContext context,
+      {SupplierProductPrice? item}) async {
     final result = await showDialog<SupplierProductPrice>(
       context: context,
       builder: (_) => _SupplierPriceDialog(
@@ -1029,8 +1326,11 @@ class _SupplierPricesEditor extends StatelessWidget {
       if (row.id == result.id) {
         updated.add(result);
         replaced = true;
-      } else if (result.isPreferred && row.productId == result.productId && row.id != result.id) {
-        updated.add(row.copyWith(isPreferred: false, updatedAt: DateTime.now()));
+      } else if (result.isPreferred &&
+          row.productId == result.productId &&
+          row.id != result.id) {
+        updated
+            .add(row.copyWith(isPreferred: false, updatedAt: DateTime.now()));
       } else {
         updated.add(row);
       }
@@ -1038,7 +1338,8 @@ class _SupplierPricesEditor extends StatelessWidget {
     if (!replaced) {
       if (result.isPreferred) {
         for (var i = 0; i < updated.length; i++) {
-          updated[i] = updated[i].copyWith(isPreferred: false, updatedAt: DateTime.now());
+          updated[i] = updated[i]
+              .copyWith(isPreferred: false, updatedAt: DateTime.now());
         }
       }
       updated.add(result);
@@ -1048,7 +1349,11 @@ class _SupplierPricesEditor extends StatelessWidget {
 }
 
 class _SupplierPriceDialog extends StatefulWidget {
-  const _SupplierPriceDialog({required this.suppliers, required this.productId, required this.existingPrices, this.price});
+  const _SupplierPriceDialog(
+      {required this.suppliers,
+      required this.productId,
+      required this.existingPrices,
+      this.price});
 
   final List<Supplier> suppliers;
   final String productId;
@@ -1073,13 +1378,18 @@ class _SupplierPriceDialogState extends State<_SupplierPriceDialog> {
   @override
   void initState() {
     super.initState();
-    supplierId = widget.price?.supplierId ?? (widget.suppliers.isNotEmpty ? widget.suppliers.first.id : '');
+    supplierId = widget.price?.supplierId ??
+        (widget.suppliers.isNotEmpty ? widget.suppliers.first.id : '');
     currency = widget.price?.currency ?? 'USD';
     isPreferred = widget.price?.isPreferred ?? false;
-    costController = TextEditingController(text: widget.price?.cost.toString() ?? '');
-    supplierSkuController = TextEditingController(text: widget.price?.supplierSku ?? '');
-    minOrderQtyController = TextEditingController(text: widget.price?.minOrderQty?.toString() ?? '');
-    leadTimeDaysController = TextEditingController(text: widget.price?.leadTimeDays?.toString() ?? '');
+    costController =
+        TextEditingController(text: widget.price?.cost.toString() ?? '');
+    supplierSkuController =
+        TextEditingController(text: widget.price?.supplierSku ?? '');
+    minOrderQtyController = TextEditingController(
+        text: widget.price?.minOrderQty?.toString() ?? '');
+    leadTimeDaysController = TextEditingController(
+        text: widget.price?.leadTimeDays?.toString() ?? '');
     notesController = TextEditingController(text: widget.price?.notes ?? '');
   }
 
@@ -1095,10 +1405,12 @@ class _SupplierPriceDialogState extends State<_SupplierPriceDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final dialogWidth = math.min(MediaQuery.sizeOf(context).width - 32, 420).toDouble();
+    final dialogWidth =
+        math.min(MediaQuery.sizeOf(context).width - 32, 420).toDouble();
     return AlertDialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 24),
-      title: Text(widget.price == null ? 'Add Supplier Price' : 'Edit Supplier Price'),
+      title: Text(
+          widget.price == null ? 'Add Supplier Price' : 'Edit Supplier Price'),
       content: ConstrainedBox(
         constraints: BoxConstraints(
           maxWidth: dialogWidth,
@@ -1110,101 +1422,122 @@ class _SupplierPriceDialogState extends State<_SupplierPriceDialog> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-              DropdownButtonFormField<String>(
-                initialValue: supplierId.isEmpty ? null : supplierId,
-                decoration: const InputDecoration(labelText: 'Supplier'),
-                items: widget.suppliers
-                    .map((supplier) => DropdownMenuItem(
-                          value: supplier.id,
-                          child: Text(supplier.name.trim().isNotEmpty ? supplier.name : supplier.nameEn),
-                        ))
-                    .toList(),
-                onChanged: (value) => setState(() => supplierId = value ?? ''),
-                validator: (value) => value == null || value.trim().isEmpty ? 'Required' : null,
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: costController,
-                decoration: const InputDecoration(labelText: 'Cost'),
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                validator: (value) {
-                  final number = double.tryParse((value ?? '').trim());
-                  return number == null || number < 0 ? 'Invalid number' : null;
-                },
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                initialValue: currency,
-                decoration: const InputDecoration(labelText: 'Currency'),
-                items: const [
-                  DropdownMenuItem(value: 'USD', child: Text('USD')),
-                  DropdownMenuItem(value: 'LBP', child: Text('LBP')),
-                ],
-                onChanged: (value) => setState(() => currency = value ?? 'USD'),
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: supplierSkuController,
-                decoration: const InputDecoration(labelText: 'Supplier SKU / Code (optional)'),
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: minOrderQtyController,
-                decoration: const InputDecoration(labelText: 'Minimum order quantity (optional)'),
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                validator: (value) {
-                  if ((value ?? '').trim().isEmpty) return null;
-                  final number = double.tryParse((value ?? '').trim());
-                  return number == null || number < 0 ? 'Invalid number' : null;
-                },
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: leadTimeDaysController,
-                decoration: const InputDecoration(labelText: 'Lead time days (optional)'),
-                keyboardType: TextInputType.number,
-                validator: (value) {
-                  if ((value ?? '').trim().isEmpty) return null;
-                  final number = int.tryParse((value ?? '').trim());
-                  return number == null || number < 0 ? 'Invalid number' : null;
-                },
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: notesController,
-                decoration: const InputDecoration(labelText: 'Notes'),
-                minLines: 1,
-                maxLines: 3,
-              ),
-              const SizedBox(height: 8),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Preferred supplier'),
-                value: isPreferred,
-                onChanged: (value) => setState(() => isPreferred = value),
-              ),
-              if ((widget.price?.priceHistory.isNotEmpty ?? false)) ...[
-                const Divider(),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text('Price history', style: Theme.of(context).textTheme.titleSmall),
+                DropdownButtonFormField<String>(
+                  initialValue: supplierId.isEmpty ? null : supplierId,
+                  decoration: const InputDecoration(labelText: 'Supplier'),
+                  items: widget.suppliers
+                      .map((supplier) => DropdownMenuItem(
+                            value: supplier.id,
+                            child: Text(supplier.name.trim().isNotEmpty
+                                ? supplier.name
+                                : supplier.nameEn),
+                          ))
+                      .toList(),
+                  onChanged: (value) =>
+                      setState(() => supplierId = value ?? ''),
+                  validator: (value) =>
+                      value == null || value.trim().isEmpty ? 'Required' : null,
                 ),
-                const SizedBox(height: 4),
-                ...widget.price!.priceHistory.reversed.take(5).map((entry) => Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        '${entry.oldCost} → ${entry.newCost} ${entry.currency} • ${entry.source}',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    )),
-              ],
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: costController,
+                  decoration: const InputDecoration(labelText: 'Cost'),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  validator: (value) {
+                    final number = double.tryParse((value ?? '').trim());
+                    return number == null || number < 0
+                        ? 'Invalid number'
+                        : null;
+                  },
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue: currency,
+                  decoration: const InputDecoration(labelText: 'Currency'),
+                  items: const [
+                    DropdownMenuItem(value: 'USD', child: Text('USD')),
+                    DropdownMenuItem(value: 'LBP', child: Text('LBP')),
+                  ],
+                  onChanged: (value) =>
+                      setState(() => currency = value ?? 'USD'),
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: supplierSkuController,
+                  decoration: const InputDecoration(
+                      labelText: 'Supplier SKU / Code (optional)'),
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: minOrderQtyController,
+                  decoration: const InputDecoration(
+                      labelText: 'Minimum order quantity (optional)'),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  validator: (value) {
+                    if ((value ?? '').trim().isEmpty) return null;
+                    final number = double.tryParse((value ?? '').trim());
+                    return number == null || number < 0
+                        ? 'Invalid number'
+                        : null;
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: leadTimeDaysController,
+                  decoration: const InputDecoration(
+                      labelText: 'Lead time days (optional)'),
+                  keyboardType: TextInputType.number,
+                  validator: (value) {
+                    if ((value ?? '').trim().isEmpty) return null;
+                    final number = int.tryParse((value ?? '').trim());
+                    return number == null || number < 0
+                        ? 'Invalid number'
+                        : null;
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: notesController,
+                  decoration: const InputDecoration(labelText: 'Notes'),
+                  minLines: 1,
+                  maxLines: 3,
+                ),
+                const SizedBox(height: 8),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Preferred supplier'),
+                  value: isPreferred,
+                  onChanged: (value) => setState(() => isPreferred = value),
+                ),
+                if ((widget.price?.priceHistory.isNotEmpty ?? false)) ...[
+                  const Divider(),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('Price history',
+                        style: Theme.of(context).textTheme.titleSmall),
+                  ),
+                  const SizedBox(height: 4),
+                  ...widget.price!.priceHistory.reversed
+                      .take(5)
+                      .map((entry) => Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              '${entry.oldCost} → ${entry.newCost} ${entry.currency} • ${entry.source}',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          )),
+                ],
               ],
             ),
           ),
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel')),
         FilledButton(onPressed: _save, child: const Text('Save')),
       ],
     );
@@ -1219,7 +1552,9 @@ class _SupplierPriceDialogState extends State<_SupplierPriceDialog> {
         item.productId == widget.productId &&
         item.supplierId == supplierId);
     if (duplicate) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('This supplier already has a price for this product.')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content:
+              Text('This supplier already has a price for this product.')));
       return;
     }
     Navigator.pop(
@@ -1232,8 +1567,12 @@ class _SupplierPriceDialogState extends State<_SupplierPriceDialog> {
         currency: currency,
         isPreferred: isPreferred,
         supplierSku: supplierSkuController.text.trim(),
-        minOrderQty: minOrderQtyController.text.trim().isEmpty ? null : double.tryParse(minOrderQtyController.text.trim()),
-        leadTimeDays: leadTimeDaysController.text.trim().isEmpty ? null : int.tryParse(leadTimeDaysController.text.trim()),
+        minOrderQty: minOrderQtyController.text.trim().isEmpty
+            ? null
+            : double.tryParse(minOrderQtyController.text.trim()),
+        leadTimeDays: leadTimeDaysController.text.trim().isEmpty
+            ? null
+            : int.tryParse(leadTimeDaysController.text.trim()),
         notes: notesController.text.trim(),
         priceHistory: widget.price?.priceHistory ?? const [],
         createdAt: widget.price?.createdAt ?? now,
@@ -1251,7 +1590,13 @@ class _SupplierPriceDialogState extends State<_SupplierPriceDialog> {
 }
 
 class _SaleUnitDraft {
-  _SaleUnitDraft({required this.id, this.name = '', this.conversionToBase = '1', this.price = '', this.priceCurrency = 'USD', this.barcode = ''});
+  _SaleUnitDraft(
+      {required this.id,
+      this.name = '',
+      this.conversionToBase = '1',
+      this.price = '',
+      this.priceCurrency = 'USD',
+      this.barcode = ''});
 
   final String id;
   String name;
@@ -1261,7 +1606,9 @@ class _SaleUnitDraft {
   String barcode;
 
   factory _SaleUnitDraft.fromSaleUnit(ProductSaleUnit unit) => _SaleUnitDraft(
-        id: unit.id.trim().isNotEmpty ? unit.id : DateTime.now().microsecondsSinceEpoch.toString(),
+        id: unit.id.trim().isNotEmpty
+            ? unit.id
+            : DateTime.now().microsecondsSinceEpoch.toString(),
         name: unit.name,
         conversionToBase: unit.conversionToBase.toString(),
         price: unit.originalPrice.toString(),
@@ -1285,13 +1632,17 @@ class _SaleUnitDraft {
 }
 
 class _SaleUnitsEditor extends StatelessWidget {
-  const _SaleUnitsEditor({required this.saleUnits, required this.storeProfile, required this.onChanged});
+  const _SaleUnitsEditor(
+      {required this.saleUnits,
+      required this.storeProfile,
+      required this.onChanged});
 
   final List<_SaleUnitDraft> saleUnits;
   final StoreProfile storeProfile;
   final ValueChanged<List<_SaleUnitDraft>> onChanged;
 
-  Future<void> _scanUnitBarcode(BuildContext context, _SaleUnitDraft unit) async {
+  Future<void> _scanUnitBarcode(
+      BuildContext context, _SaleUnitDraft unit) async {
     final code = await Navigator.of(context).push<String>(
       MaterialPageRoute(builder: (_) => const BarcodeScannerPage()),
     );
@@ -1311,11 +1662,16 @@ class _SaleUnitsEditor extends StatelessWidget {
           children: [
             Row(
               children: [
-                Expanded(child: Text(tr.text('sale_units'), style: const TextStyle(fontWeight: FontWeight.w700))),
+                Expanded(
+                    child: Text(tr.text('sale_units'),
+                        style: const TextStyle(fontWeight: FontWeight.w700))),
                 TextButton.icon(
                   onPressed: () {
                     final next = List<_SaleUnitDraft>.from(saleUnits)
-                      ..add(_SaleUnitDraft(id: DateTime.now().microsecondsSinceEpoch.toString()));
+                      ..add(_SaleUnitDraft(
+                          id: DateTime.now()
+                              .microsecondsSinceEpoch
+                              .toString()));
                     onChanged(next);
                   },
                   icon: const Icon(Icons.add),
@@ -1338,10 +1694,16 @@ class _SaleUnitsEditor extends StatelessWidget {
                     children: [
                       Row(
                         children: [
-                          Expanded(child: Text(tr.format('unit_number', {'number': index + 1}), style: Theme.of(context).textTheme.labelLarge)),
+                          Expanded(
+                              child: Text(
+                                  tr.format(
+                                      'unit_number', {'number': index + 1}),
+                                  style:
+                                      Theme.of(context).textTheme.labelLarge)),
                           IconButton(
                             onPressed: () {
-                              final next = List<_SaleUnitDraft>.from(saleUnits)..removeAt(index);
+                              final next = List<_SaleUnitDraft>.from(saleUnits)
+                                ..removeAt(index);
                               onChanged(next);
                             },
                             icon: const Icon(Icons.delete_outline),
@@ -1351,40 +1713,54 @@ class _SaleUnitsEditor extends StatelessWidget {
                       _ResponsiveFields(children: [
                         TextFormField(
                           initialValue: unit.name,
-                          decoration: InputDecoration(labelText: tr.text('unit_name')),
+                          decoration:
+                              InputDecoration(labelText: tr.text('unit_name')),
                           onChanged: (value) => unit.name = value,
                         ),
                         TextFormField(
                           initialValue: unit.conversionToBase,
-                          decoration: InputDecoration(labelText: tr.text('conversion_to_base')),
-                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          decoration: InputDecoration(
+                              labelText: tr.text('conversion_to_base')),
+                          keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true),
                           validator: (value) {
-                            final number = double.tryParse((value ?? '').trim());
-                            return number == null || number <= 0 ? tr.text('invalid_number') : null;
+                            final number =
+                                double.tryParse((value ?? '').trim());
+                            return number == null || number <= 0
+                                ? tr.text('invalid_number')
+                                : null;
                           },
                           onChanged: (value) => unit.conversionToBase = value,
                         ),
                         TextFormField(
                           initialValue: unit.price,
-                          decoration: InputDecoration(labelText: tr.text('unit_sale_price')),
-                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          decoration: InputDecoration(
+                              labelText: tr.text('unit_sale_price')),
+                          keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true),
                           validator: (value) {
-                            final number = double.tryParse((value ?? '').trim());
-                            return number == null || number < 0 ? tr.text('invalid_number') : null;
+                            final number =
+                                double.tryParse((value ?? '').trim());
+                            return number == null || number < 0
+                                ? tr.text('invalid_number')
+                                : null;
                           },
                           onChanged: (value) => unit.price = value,
                         ),
                         DropdownButtonFormField<String>(
                           initialValue: unit.priceCurrency,
-                          decoration: InputDecoration(labelText: tr.text('price_currency')),
+                          decoration: InputDecoration(
+                              labelText: tr.text('price_currency')),
                           items: const [
                             DropdownMenuItem(value: 'USD', child: Text('USD')),
                             DropdownMenuItem(value: 'LBP', child: Text('LBP')),
                           ],
-                          onChanged: (value) => unit.priceCurrency = value ?? 'USD',
+                          onChanged: (value) =>
+                              unit.priceCurrency = value ?? 'USD',
                         ),
                         TextFormField(
-                          key: ValueKey('unit-barcode-${unit.id}-${unit.barcode}'),
+                          key: ValueKey(
+                              'unit-barcode-${unit.id}-${unit.barcode}'),
                           initialValue: unit.barcode,
                           decoration: InputDecoration(
                             labelText: tr.text('unit_barcode'),
@@ -1408,9 +1784,9 @@ class _SaleUnitsEditor extends StatelessWidget {
   }
 }
 
-
 class _ProductFormSection extends StatelessWidget {
-  const _ProductFormSection({required this.icon, required this.title, required this.children});
+  const _ProductFormSection(
+      {required this.icon, required this.title, required this.children});
 
   final IconData icon;
   final String title;
@@ -1431,7 +1807,13 @@ class _ProductFormSection extends StatelessWidget {
 }
 
 class _MoneyField extends StatelessWidget {
-  const _MoneyField({required this.controller, required this.currency, required this.label, required this.currencyLabel, required this.validator, required this.onCurrencyChanged});
+  const _MoneyField(
+      {required this.controller,
+      required this.currency,
+      required this.label,
+      required this.currencyLabel,
+      required this.validator,
+      required this.onCurrencyChanged});
 
   final TextEditingController controller;
   final String currency;
@@ -1468,7 +1850,8 @@ class _MoneyField extends StatelessWidget {
 }
 
 class _ProductImagePicker extends StatelessWidget {
-  const _ProductImagePicker({required this.imagePath, required this.onPick, this.onClear});
+  const _ProductImagePicker(
+      {required this.imagePath, required this.onPick, this.onClear});
 
   final String imagePath;
   final VoidCallback onPick;
@@ -1491,16 +1874,24 @@ class _ProductImagePicker extends StatelessWidget {
             children: [
               CircleAvatar(
                 radius: 28,
-                child: Icon(hasImage ? Icons.image_outlined : Icons.add_photo_alternate_outlined),
+                child: Icon(hasImage
+                    ? Icons.image_outlined
+                    : Icons.add_photo_alternate_outlined),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(tr.text('product_image'), style: const TextStyle(fontWeight: FontWeight.w700)),
+                    Text(tr.text('product_image'),
+                        style: const TextStyle(fontWeight: FontWeight.w700)),
                     const SizedBox(height: 4),
-                    Text(hasImage ? imagePath.split('/').last : tr.text('product_image_help'), maxLines: 2, overflow: TextOverflow.ellipsis),
+                    Text(
+                        hasImage
+                            ? imagePath.split('/').last
+                            : tr.text('product_image_help'),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis),
                   ],
                 ),
               ),
@@ -1510,8 +1901,12 @@ class _ProductImagePicker extends StatelessWidget {
             spacing: 8,
             runSpacing: 4,
             children: [
-              TextButton.icon(onPressed: onPick, icon: const Icon(Icons.photo_camera_outlined), label: Text(tr.text('choose'))),
-              if (onClear != null) IconButton(onPressed: onClear, icon: const Icon(Icons.close)),
+              TextButton.icon(
+                  onPressed: onPick,
+                  icon: const Icon(Icons.photo_camera_outlined),
+                  label: Text(tr.text('choose'))),
+              if (onClear != null)
+                IconButton(onPressed: onClear, icon: const Icon(Icons.close)),
             ],
           );
           if (constraints.maxWidth < 420) {
@@ -1540,19 +1935,32 @@ class _ResponsiveFields extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(builder: (context, constraints) {
       if (constraints.maxWidth < 620) {
-        return Column(children: children.map((child) => Padding(padding: const EdgeInsets.only(bottom: 12), child: child)).toList());
+        return Column(
+            children: children
+                .map((child) => Padding(
+                    padding: const EdgeInsets.only(bottom: 12), child: child))
+                .toList());
       }
       return Wrap(
         spacing: 12,
         runSpacing: 12,
-        children: children.map((child) => SizedBox(width: (constraints.maxWidth - 12) / 2, child: child)).toList(),
+        children: children
+            .map((child) =>
+                SizedBox(width: (constraints.maxWidth - 12) / 2, child: child))
+            .toList(),
       );
     });
   }
 }
 
 class _CatalogDropdown extends StatelessWidget {
-  const _CatalogDropdown({required this.label, required this.value, required this.items, required this.onChanged, required this.onAdd, required this.onManage});
+  const _CatalogDropdown(
+      {required this.label,
+      required this.value,
+      required this.items,
+      required this.onChanged,
+      required this.onAdd,
+      required this.onManage});
   final String label;
   final String value;
   final List<CatalogItem> items;
@@ -1563,7 +1971,12 @@ class _CatalogDropdown extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final language = AppLocalizations.of(context).locale.languageCode;
-    final values = <String>{...items.map((item) => item.code.isNotEmpty ? item.code : item.nameEn).where((e) => e.trim().isNotEmpty), if (value.trim().isNotEmpty) value}.toList();
+    final values = <String>{
+      ...items
+          .map((item) => item.code.isNotEmpty ? item.code : item.nameEn)
+          .where((e) => e.trim().isNotEmpty),
+      if (value.trim().isNotEmpty) value
+    }.toList();
     return Row(
       children: [
         Expanded(
@@ -1573,17 +1986,21 @@ class _CatalogDropdown extends StatelessWidget {
             items: values.map((raw) {
               CatalogItem? match;
               for (final item in items) {
-                if (item.code == raw || item.nameEn == raw || item.nameAr == raw) {
+                if (item.code == raw ||
+                    item.nameEn == raw ||
+                    item.nameAr == raw) {
                   match = item;
                   break;
                 }
               }
-              return DropdownMenuItem(value: raw, child: Text(match?.displayName(language) ?? raw));
+              return DropdownMenuItem(
+                  value: raw, child: Text(match?.displayName(language) ?? raw));
             }).toList(),
             onChanged: (newValue) => onChanged(newValue ?? ''),
           ),
         ),
-        IconButton(onPressed: onAdd, icon: const Icon(Icons.add_circle_outline)),
+        IconButton(
+            onPressed: onAdd, icon: const Icon(Icons.add_circle_outline)),
         IconButton(onPressed: onManage, icon: const Icon(Icons.tune_outlined)),
       ],
     );
@@ -1627,18 +2044,33 @@ class _CatalogItemDialogState extends State<_CatalogItemDialog> {
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          TextField(controller: enController, decoration: InputDecoration(labelText: tr.text('name_en'))),
+          TextField(
+              controller: enController,
+              decoration: InputDecoration(labelText: tr.text('name_en'))),
           const SizedBox(height: 12),
-          TextField(controller: arController, decoration: InputDecoration(labelText: tr.text('name_ar'))),
+          TextField(
+              controller: arController,
+              decoration: InputDecoration(labelText: tr.text('name_ar'))),
           const SizedBox(height: 12),
-          TextField(controller: codeController, decoration: InputDecoration(labelText: tr.text('code_optional'))),
+          TextField(
+              controller: codeController,
+              decoration: InputDecoration(labelText: tr.text('code_optional'))),
         ],
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: Text(tr.text('cancel'))),
+        TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(tr.text('cancel'))),
         FilledButton(
           onPressed: () {
-            Navigator.pop(context, CatalogItem(id: widget.item?.id ?? DateTime.now().microsecondsSinceEpoch.toString(), nameEn: enController.text.trim(), nameAr: arController.text.trim(), code: codeController.text.trim()));
+            Navigator.pop(
+                context,
+                CatalogItem(
+                    id: widget.item?.id ??
+                        DateTime.now().microsecondsSinceEpoch.toString(),
+                    nameEn: enController.text.trim(),
+                    nameAr: arController.text.trim(),
+                    code: codeController.text.trim()));
           },
           child: Text(tr.text('save')),
         ),
@@ -1646,7 +2078,6 @@ class _CatalogItemDialogState extends State<_CatalogItemDialog> {
     );
   }
 }
-
 
 class _CatalogManagerDialog extends StatefulWidget {
   const _CatalogManagerDialog({required this.store, required this.type});
@@ -1676,13 +2107,17 @@ class _CatalogManagerDialogState extends State<_CatalogManagerDialog> {
   }
 
   Future<void> _add(BuildContext context) async {
-    final result = await showDialog<CatalogItem>(context: context, builder: (_) => _CatalogItemDialog(type: widget.type));
+    final result = await showDialog<CatalogItem>(
+        context: context,
+        builder: (_) => _CatalogItemDialog(type: widget.type));
     if (result == null) return;
     await _saveItem(result);
   }
 
   Future<void> _edit(BuildContext context, CatalogItem item) async {
-    final result = await showDialog<CatalogItem>(context: context, builder: (_) => _CatalogItemDialog(type: widget.type, item: item));
+    final result = await showDialog<CatalogItem>(
+        context: context,
+        builder: (_) => _CatalogItemDialog(type: widget.type, item: item));
     if (result == null) return;
     await _saveItem(result);
   }
@@ -1692,7 +2127,11 @@ class _CatalogManagerDialogState extends State<_CatalogManagerDialog> {
     final tr = AppLocalizations.of(context);
     final language = tr.locale.languageCode;
     return AlertDialog(
-      title: Text(widget.type == 'category' ? tr.text('manage_categories') : widget.type == 'unit' ? tr.text('manage_units') : tr.text('manage_lookup_items')),
+      title: Text(widget.type == 'category'
+          ? tr.text('manage_categories')
+          : widget.type == 'unit'
+              ? tr.text('manage_units')
+              : tr.text('manage_lookup_items')),
       content: ResponsiveDialogBox(
         maxWidth: VentioResponsive.modalMaxWidth(context, 520),
         child: ListView.separated(
@@ -1703,15 +2142,24 @@ class _CatalogManagerDialogState extends State<_CatalogManagerDialog> {
             final item = _items[index];
             return ListTile(
               title: Text(item.displayName(language)),
-              subtitle: Text([item.nameEn, item.nameAr, item.code].where((value) => value.trim().isNotEmpty).join(' • ')),
-              trailing: IconButton(onPressed: () => _edit(context, item), icon: const Icon(Icons.edit_outlined)),
+              subtitle: Text([item.nameEn, item.nameAr, item.code]
+                  .where((value) => value.trim().isNotEmpty)
+                  .join(' • ')),
+              trailing: IconButton(
+                  onPressed: () => _edit(context, item),
+                  icon: const Icon(Icons.edit_outlined)),
             );
           },
         ),
       ),
       actions: [
-        TextButton.icon(onPressed: () => _add(context), icon: const Icon(Icons.add), label: Text(tr.text('add_lookup_item'))),
-        TextButton(onPressed: () => Navigator.pop(context), child: Text(tr.text('close'))),
+        TextButton.icon(
+            onPressed: () => _add(context),
+            icon: const Icon(Icons.add),
+            label: Text(tr.text('add_lookup_item'))),
+        TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(tr.text('close'))),
       ],
     );
   }
