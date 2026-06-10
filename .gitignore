@@ -12,14 +12,16 @@
 .swiftpm/
 migrate_working_dir/
 /ventio_brand_pack/
+/*.zip
 # IntelliJ related
 *.iml
 *.ipr
 *.iws
 .idea/
-windows/flutter/ephemeral/
 *.pdb
-/windows/
+
+# Windows source is tracked; generated Windows Flutter files are ignored.
+/windows/flutter/ephemeral/
 
 # Android source is tracked; generated and local Android files are ignored.
 /android/.gradle/
