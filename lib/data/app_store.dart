@@ -7106,7 +7106,6 @@ class AppStore extends ChangeNotifier {
       'expenses': _expenses.map((item) => item.toJson()).toList(),
       'purchases': _purchases.map((item) => item.toJson()).toList(),
       'stockMovements': _stockMovements.map((item) => item.toJson()).toList(),
-      'inventoryCounts': _inventoryCounts.map((item) => item.toJson()).toList(),
       'accountTransactions':
           _accountTransactions.map((item) => item.toJson()).toList(),
     };
