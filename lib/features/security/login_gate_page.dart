@@ -63,7 +63,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
         messenger.showSnackBar(SnackBar(content: Text(tr.text('client_resume_detected'))));
         setState(() {});
       } else {
-        messenger.showSnackBar(SnackBar(content: Text(result.message.isEmpty ? tr.text('client_still_suspended') : result.message)));
+        messenger.showSnackBar(SnackBar(content: Text(result.message.isEmpty ? tr.text('client_still_suspended') : localizeRuntimeMessage(result.message, tr))));
       }
     } catch (error) {
       if (mounted) messenger.showSnackBar(SnackBar(content: Text(error.toString())));

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/localization/app_localizations.dart';
 import '../../data/app_store.dart';
 import '../../models/delivery_note.dart';
 import '../../models/sale.dart';
@@ -13,17 +14,34 @@ class DeliveryNotesPage extends StatefulWidget {
 }
 
 class _DeliveryNotesPageState extends State<DeliveryNotesPage> {
+  String _statusLabel(AppLocalizations tr, String status) {
+    switch (status.toLowerCase()) {
+      case 'delivered':
+        return tr.text('delivered');
+      case 'pending':
+        return tr.text('connection_state_pending');
+      case 'cancelled':
+      case 'canceled':
+        return tr.text('cancelled');
+      default:
+        return status;
+    }
+  }
+
+  String _itemsCountLabel(AppLocalizations tr, int count) => '$count ${tr.text('items')}';
+
   Future<void> _createFromSale() async {
+    final tr = AppLocalizations.of(context);
     final sale = await showDialog<Sale>(
       context: context,
       builder: (context) {
         final sales = widget.store.sales.where((item) => !item.isCancelled && widget.store.deliveryNoteForSale(item.id) == null).toList();
         return AlertDialog(
-          title: const Text('Create delivery note'),
+          title: Text(tr.text('create_delivery_note')),
           content: SizedBox(
             width: 480,
             child: sales.isEmpty
-                ? const Text('No eligible invoices without delivery notes.')
+                ? Text(tr.text('no_eligible_delivery'))
                 : ListView.builder(
                     shrinkWrap: true,
                     itemCount: sales.length,
@@ -31,40 +49,42 @@ class _DeliveryNotesPageState extends State<DeliveryNotesPage> {
                       final sale = sales[index];
                       return ListTile(
                         title: Text(sale.invoiceNo),
-                        subtitle: Text('${sale.customerName} • ${sale.items.length} items'),
+                        subtitle: Text('${sale.customerName} • ${_itemsCountLabel(tr, sale.items.length)}'),
                         trailing: const Icon(Icons.chevron_right),
                         onTap: () => Navigator.of(context).pop(sale),
                       );
                     },
                   ),
           ),
-          actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Close'))],
+          actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: Text(tr.text('close')))],
         );
       },
     );
     if (sale == null) return;
     try {
       await widget.store.createDeliveryNoteFromSale(sale.id);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Delivery note created')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('delivery_note_created'))));
     } catch (error) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
     }
   }
 
   Future<void> _markDelivered(DeliveryNote note) async {
+    final tr = AppLocalizations.of(context);
     await widget.store.markDeliveryNoteDelivered(note.id);
-    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Delivery note marked as delivered')));
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('delivery_note_delivered'))));
   }
 
   Future<void> _delete(DeliveryNote note) async {
+    final tr = AppLocalizations.of(context);
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete delivery note?'),
-        content: Text('Delete ${note.deliveryNo}?'),
+        title: Text(tr.text('delete_delivery_note')),
+        content: Text(tr.format('delete_delivery_note_question', {'deliveryNo': note.deliveryNo})),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Delete')),
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: Text(tr.text('cancel'))),
+          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: Text(tr.text('delete'))),
         ],
       ),
     );
@@ -73,15 +93,16 @@ class _DeliveryNotesPageState extends State<DeliveryNotesPage> {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     final notes = widget.store.deliveryNotes;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Delivery Notes'),
-        actions: [IconButton(onPressed: _createFromSale, icon: const Icon(Icons.add), tooltip: 'Create from invoice')],
+        title: Text(tr.text('delivery_notes')),
+        actions: [IconButton(onPressed: _createFromSale, icon: const Icon(Icons.add), tooltip: tr.text('create_delivery_note'))],
       ),
-      floatingActionButton: FloatingActionButton.extended(onPressed: _createFromSale, icon: const Icon(Icons.local_shipping_outlined), label: const Text('Create')),
+      floatingActionButton: FloatingActionButton.extended(onPressed: _createFromSale, icon: const Icon(Icons.local_shipping_outlined), label: Text(tr.text('create_delivery_note'))),
       body: notes.isEmpty
-          ? const Center(child: Text('No delivery notes yet.'))
+          ? Center(child: Text(tr.text('no_delivery_notes')))
           : ListView.separated(
               padding: const EdgeInsets.all(16),
               itemCount: notes.length,
@@ -92,12 +113,12 @@ class _DeliveryNotesPageState extends State<DeliveryNotesPage> {
                   child: ExpansionTile(
                     leading: CircleAvatar(child: Icon(note.isDelivered ? Icons.check : Icons.local_shipping_outlined)),
                     title: Text(note.deliveryNo),
-                    subtitle: Text('${note.customerName} • ${note.invoiceNo} • ${note.status}'),
+                    subtitle: Text('${note.customerName} • ${note.invoiceNo} • ${_statusLabel(tr, note.status)}'),
                     childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                     children: [
                       Align(
                         alignment: AlignmentDirectional.centerStart,
-                        child: Text('Date: ${note.date.toLocal().toString().split('.').first}'),
+                        child: Text('${tr.text('date')}: ${note.date.toLocal().toString().split('.').first}'),
                       ),
                       const SizedBox(height: 8),
                       for (final item in note.items)
@@ -110,9 +131,9 @@ class _DeliveryNotesPageState extends State<DeliveryNotesPage> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.end,
                         children: [
-                          TextButton.icon(onPressed: note.isDelivered ? null : () => _markDelivered(note), icon: const Icon(Icons.done_all), label: const Text('Delivered')),
+                          TextButton.icon(onPressed: note.isDelivered ? null : () => _markDelivered(note), icon: const Icon(Icons.done_all), label: Text(tr.text('delivered'))),
                           const SizedBox(width: 8),
-                          TextButton.icon(onPressed: () => _delete(note), icon: const Icon(Icons.delete_outline), label: const Text('Delete')),
+                          TextButton.icon(onPressed: () => _delete(note), icon: const Icon(Icons.delete_outline), label: Text(tr.text('delete'))),
                         ],
                       ),
                     ],

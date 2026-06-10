@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/localization/app_localizations.dart';
 import '../../data/app_store.dart';
 import '../../models/customer.dart';
 import '../../models/product.dart';
@@ -18,6 +19,7 @@ class QuotationsPage extends StatefulWidget {
 
 class _QuotationsPageState extends State<QuotationsPage> {
   Future<void> _createQuotation() async {
+    final tr = AppLocalizations.of(context);
     final result = await showDialog<_QuotationDraft>(
       context: context,
       builder: (context) => _QuotationDialog(store: widget.store),
@@ -33,42 +35,48 @@ class _QuotationsPageState extends State<QuotationsPage> {
         note: result.note,
         validUntil: null,
       );
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Quotation saved')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('quotation_saved'))));
     } catch (error) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
     }
   }
 
   Future<void> _convertQuotation(SaleQuotation quotation) async {
+    final tr = AppLocalizations.of(context);
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Convert quotation'),
-        content: Text('Convert ${quotation.quotationNo} to a sale invoice? Stock will be deducted when the sale is created.'),
+        title: Text(tr.text('convert_quotation')),
+        content: Text(tr.format('convert_quotation_question', {'quotationNo': quotation.quotationNo})),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Convert')),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('cancel'))),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(tr.text('convert'))),
         ],
       ),
     );
     if (confirm != true) return;
     try {
       final sale = await widget.store.convertSaleQuotationToSale(quotation.id);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Created invoice ${sale.invoiceNo}')));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr.format('quotation_invoice_created', {'invoiceNo': sale.invoiceNo}))),
+        );
+      }
     } catch (error) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
     }
   }
 
   Future<void> _deleteQuotation(SaleQuotation quotation) async {
+    final tr = AppLocalizations.of(context);
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete quotation'),
-        content: Text('Delete ${quotation.quotationNo}?'),
+        title: Text(tr.text('delete_quotation')),
+        content: Text(tr.format('delete_quotation_question', {'quotationNo': quotation.quotationNo})),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete')),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('cancel'))),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(tr.text('delete'))),
         ],
       ),
     );
@@ -77,19 +85,20 @@ class _QuotationsPageState extends State<QuotationsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     final quotations = widget.store.saleQuotations;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Quotations'),
-        actions: [IconButton(onPressed: _createQuotation, icon: const Icon(Icons.add), tooltip: 'New quotation')],
+        title: Text(tr.text('quotations')),
+        actions: [IconButton(onPressed: _createQuotation, icon: const Icon(Icons.add), tooltip: tr.text('new_quotation'))],
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _createQuotation,
         icon: const Icon(Icons.add),
-        label: const Text('New quotation'),
+        label: Text(tr.text('new_quotation')),
       ),
       body: quotations.isEmpty
-          ? const EmptyStateCard(icon: Icons.request_quote_outlined, title: 'No quotations yet', subtitle: 'Create offers without changing stock, then convert accepted offers to sale invoices.')
+          ? EmptyStateCard(icon: Icons.request_quote_outlined, title: tr.text('no_quotations'), subtitle: tr.text('no_quotations_desc'))
           : ListView.separated(
               padding: const EdgeInsets.all(16),
               itemCount: quotations.length,
@@ -100,17 +109,17 @@ class _QuotationsPageState extends State<QuotationsPage> {
                   child: ListTile(
                     leading: Icon(quotation.isConverted ? Icons.check_circle_outline : Icons.request_quote_outlined),
                     title: Text('${quotation.quotationNo} • ${quotation.customerName}'),
-                    subtitle: Text('${quotation.status} • ${quotation.items.length} items • ${quotation.total.toStringAsFixed(2)} ${quotation.invoiceCurrency}'),
+                    subtitle: Text('${_localizedStatus(tr, quotation.status)} • ${quotation.items.length} ${tr.text('items')} • ${quotation.total.toStringAsFixed(2)} ${quotation.invoiceCurrency}'),
                     trailing: Wrap(
                       spacing: 8,
                       children: [
                         IconButton(
-                          tooltip: 'Convert to sale',
+                          tooltip: tr.text('convert_to_sale'),
                           onPressed: quotation.isConverted ? null : () => _convertQuotation(quotation),
                           icon: const Icon(Icons.receipt_long),
                         ),
                         IconButton(
-                          tooltip: 'Delete',
+                          tooltip: tr.text('delete'),
                           onPressed: quotation.isConverted ? null : () => _deleteQuotation(quotation),
                           icon: const Icon(Icons.delete_outline),
                         ),
@@ -121,6 +130,19 @@ class _QuotationsPageState extends State<QuotationsPage> {
               },
             ),
     );
+  }
+}
+
+String _localizedStatus(AppLocalizations tr, String status) {
+  switch (status.toLowerCase()) {
+    case 'draft':
+      return tr.text('draft');
+    case 'converted':
+      return tr.text('converted');
+    case 'cancelled':
+      return tr.text('cancelled');
+    default:
+      return status;
   }
 }
 
@@ -180,9 +202,10 @@ class _QuotationDialogState extends State<_QuotationDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     final customers = <Customer>[widget.store.walkInCustomer, ...widget.store.customers];
     return AlertDialog(
-      title: const Text('New quotation'),
+      title: Text(tr.text('new_quotation')),
       content: SizedBox(
         width: 720,
         child: SingleChildScrollView(
@@ -192,20 +215,20 @@ class _QuotationDialogState extends State<_QuotationDialog> {
             children: [
               DropdownButtonFormField<String>(
                 initialValue: _customerId,
-                decoration: const InputDecoration(labelText: 'Customer'),
+                decoration: InputDecoration(labelText: tr.text('customer')),
                 items: customers.map((customer) => DropdownMenuItem(value: customer.id, child: Text(customer.name))).toList(),
                 onChanged: (value) => setState(() => _customerId = value ?? AppStore.walkInCustomerId),
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
                 initialValue: _invoiceCurrency,
-                decoration: const InputDecoration(labelText: 'Currency'),
+                decoration: InputDecoration(labelText: tr.text('currency')),
                 items: const [DropdownMenuItem(value: 'USD', child: Text('USD')), DropdownMenuItem(value: 'LBP', child: Text('LBP'))],
                 onChanged: (value) => setState(() => _invoiceCurrency = value ?? 'USD'),
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
-                decoration: const InputDecoration(labelText: 'Add product'),
+                decoration: InputDecoration(labelText: tr.text('add_product')),
                 items: widget.store.products.map((product) => DropdownMenuItem(value: product.id, child: Text(product.name))).toList(),
                 onChanged: (value) {
                   Product? product;
@@ -222,22 +245,22 @@ class _QuotationDialogState extends State<_QuotationDialog> {
               ..._items.map((item) => ListTile(
                     dense: true,
                     title: Text(item.productName),
-                    subtitle: Text('${item.quantity.toStringAsFixed(0)} × ${item.unitPrice.toStringAsFixed(2)}'),
+                    subtitle: Text('${item.quantity.toStringAsFixed(0)} x ${item.unitPrice.toStringAsFixed(2)}'),
                     trailing: IconButton(
                       icon: const Icon(Icons.remove_circle_outline),
                       onPressed: () => setState(() => _items.remove(item)),
                     ),
                   )),
-              TextField(controller: _discountController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Discount'), onChanged: (_) => setState(() {})),
-              TextField(controller: _noteController, decoration: const InputDecoration(labelText: 'Note')),
+              TextField(controller: _discountController, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: tr.text('discount')), onChanged: (_) => setState(() {})),
+              TextField(controller: _noteController, decoration: InputDecoration(labelText: tr.text('notes'))),
               const SizedBox(height: 12),
-              Text('Total: ${_total.toStringAsFixed(2)} $_invoiceCurrency', style: Theme.of(context).textTheme.titleMedium),
+              Text('${tr.text('total')}: ${_total.toStringAsFixed(2)} $_invoiceCurrency', style: Theme.of(context).textTheme.titleMedium),
             ],
           ),
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        TextButton(onPressed: () => Navigator.pop(context), child: Text(tr.text('cancel'))),
         FilledButton(
           onPressed: _items.isEmpty
               ? null
@@ -245,7 +268,7 @@ class _QuotationDialogState extends State<_QuotationDialog> {
                   final customer = customers.firstWhere((item) => item.id == _customerId, orElse: () => widget.store.walkInCustomer);
                   Navigator.pop(context, _QuotationDraft(customerName: customer.name, customerId: customer.id, items: List<SaleItem>.from(_items), discount: _discount, invoiceCurrency: _invoiceCurrency, note: _noteController.text));
                 },
-          child: const Text('Save'),
+          child: Text(tr.text('save')),
         ),
       ],
     );

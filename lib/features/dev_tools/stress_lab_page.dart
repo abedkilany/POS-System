@@ -4,6 +4,8 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+
+import '../../core/localization/app_localizations.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/services/cloud_sync_service.dart';
@@ -29,6 +31,8 @@ class StressLabPage extends StatefulWidget {
 }
 
 class _StressLabPageState extends State<StressLabPage> {
+  String _t(String key) => AppLocalizations.of(context).text(key);
+  String _tf(String key, Map<String, Object?> values) => AppLocalizations.of(context).format(key, values);
   final _productsController = TextEditingController(text: '1000');
   final _customersController = TextEditingController(text: '500');
   final _suppliersController = TextEditingController(text: '100');
@@ -979,7 +983,7 @@ class _StressLabPageState extends State<StressLabPage> {
     final text = _log.join('\n');
     await Clipboard.setData(ClipboardData(text: text));
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Copied ${_log.length} log lines')));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_tf('copied_log_lines', {'count': _log.length}))));
   }
 
   Future<void> _clearLog() async {
@@ -1020,21 +1024,21 @@ class _StressLabPageState extends State<StressLabPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Ventio Stress Lab', style: Theme.of(context).textTheme.headlineSmall),
+                    Text(_t('ventio_stress_lab'), style: Theme.of(context).textTheme.headlineSmall),
                     const SizedBox(height: 8),
-                    Text('Temporary real-app simulation. Uses the real AppStore services, stock logic, sync queue, and active sync transport. Log stays in memory until Clear Log is pressed.'),
+                    Text(_t('stress_lab_description')),
                     const SizedBox(height: 8),
-                    Text('Role: ${_roleLabel()} • Device: ${identity.deviceId} • Transport: ${_effectiveSyncTransport()} • Epoch: ${identity.storeEpoch}'),
+                    Text(_tf('role_device_transport_epoch', {'role': _roleLabel(), 'device': identity.deviceId, 'transport': _effectiveSyncTransport(), 'epoch': identity.storeEpoch})),
                     const SizedBox(height: 12),
                     Wrap(
                       spacing: 12,
                       runSpacing: 12,
                       children: [
-                        _numberField('Products', _productsController),
-                        _numberField('Customers', _customersController),
-                        _numberField('Suppliers', _suppliersController),
-                        _numberField('Sales', _salesController),
-                        _numberField('Progress every', _progressEveryController),
+                        _numberField(_t('products'), _productsController),
+                        _numberField(_t('customers'), _customersController),
+                        _numberField(_t('suppliers'), _suppliersController),
+                        _numberField(_t('sales'), _salesController),
+                        _numberField(_t('progress_every'), _progressEveryController),
                       ],
                     ),
                     const SizedBox(height: 12),
@@ -1042,11 +1046,11 @@ class _StressLabPageState extends State<StressLabPage> {
                       spacing: 8,
                       runSpacing: 8,
                       children: [
-                        ActionChip(label: const Text('Small'), onPressed: _running ? null : () => _applyPreset(products: 100, customers: 50, suppliers: 10, sales: 50, progressEvery: 10)),
-                        ActionChip(label: const Text('Medium'), onPressed: _running ? null : () => _applyPreset(products: 1000, customers: 500, suppliers: 100, sales: 500, progressEvery: 25)),
-                        ActionChip(label: const Text('Heavy'), onPressed: _running ? null : () => _applyPreset(products: 3000, customers: 1500, suppliers: 300, sales: 1500, progressEvery: 50)),
-                        ActionChip(label: const Text('Sync Bloat'), onPressed: _running ? null : () => _applyPreset(products: 1500, customers: 750, suppliers: 150, sales: 750, progressEvery: 25)),
-                        ActionChip(label: const Text('Daily Ops'), onPressed: _running ? null : () => _applyPreset(products: 500, customers: 250, suppliers: 50, sales: 300, progressEvery: 20)),
+                        ActionChip(label: Text(_t('small')), onPressed: _running ? null : () => _applyPreset(products: 100, customers: 50, suppliers: 10, sales: 50, progressEvery: 10)),
+                        ActionChip(label: Text(_t('medium')), onPressed: _running ? null : () => _applyPreset(products: 1000, customers: 500, suppliers: 100, sales: 500, progressEvery: 25)),
+                        ActionChip(label: Text(_t('heavy')), onPressed: _running ? null : () => _applyPreset(products: 3000, customers: 1500, suppliers: 300, sales: 1500, progressEvery: 50)),
+                        ActionChip(label: Text(_t('sync_bloat')), onPressed: _running ? null : () => _applyPreset(products: 1500, customers: 750, suppliers: 150, sales: 750, progressEvery: 25)),
+                        ActionChip(label: Text(_t('daily_ops')), onPressed: _running ? null : () => _applyPreset(products: 500, customers: 250, suppliers: 50, sales: 300, progressEvery: 20)),
                       ],
                     ),
                     const SizedBox(height: 12),
@@ -1060,7 +1064,7 @@ class _StressLabPageState extends State<StressLabPage> {
                         FilledButton.icon(
                           onPressed: _running ? null : _runCompleteLab,
                           icon: const Icon(Icons.health_and_safety_outlined),
-                          label: const Text('Run Complete Lab'),
+                          label: Text(_t('run_complete_lab')),
                         ),
                         const SizedBox(height: 8),
                         Wrap(
@@ -1070,19 +1074,19 @@ class _StressLabPageState extends State<StressLabPage> {
                             OutlinedButton.icon(
                               onPressed: _log.isEmpty ? null : _copyLog,
                               icon: const Icon(Icons.copy),
-                              label: const Text('Copy Log'),
+                              label: Text(_t('copy_log')),
                             ),
                             OutlinedButton.icon(
                               onPressed: _running ? null : _clearLog,
                               icon: const Icon(Icons.clear_all),
-                              label: const Text('Clear Log'),
+                              label: Text(_t('clear_log')),
                             ),
                           ],
                         ),
                         const SizedBox(height: 8),
                         ExpansionTile(
                           tilePadding: EdgeInsets.zero,
-                          title: const Text('Advanced Diagnostics'),
+                          title: Text(_t('advanced_diagnostics')),
                           children: [
                             Align(
                               alignment: AlignmentDirectional.centerStart,
@@ -1093,57 +1097,57 @@ class _StressLabPageState extends State<StressLabPage> {
                                   OutlinedButton.icon(
                                     onPressed: _running ? null : _runFullSimulation,
                                     icon: const Icon(Icons.science),
-                                    label: const Text('Real App Stress'),
+                                    label: Text(_t('real_app_stress')),
                                   ),
                                   OutlinedButton.icon(
                                     onPressed: _running ? null : _runDailyOperationsTest,
                                     icon: const Icon(Icons.storefront),
-                                    label: const Text('Daily Operations'),
+                                    label: Text(_t('daily_operations')),
                                   ),
                                   OutlinedButton.icon(
                                     onPressed: _running ? null : _waitForAutoSyncCheck,
                                     icon: const Icon(Icons.timer),
-                                    label: const Text('Wait Auto Sync'),
+                                    label: Text(_t('wait_auto_sync')),
                                   ),
                                   OutlinedButton.icon(
                                     onPressed: _running ? null : _runAllDiagnostics,
                                     icon: const Icon(Icons.manage_search),
-                                    label: const Text('Run All Diagnostics'),
+                                    label: Text(_t('run_all_diagnostics')),
                                   ),
                                   OutlinedButton.icon(
                                     onPressed: _running ? null : _compareDeviceState,
                                     icon: const Icon(Icons.compare_arrows),
-                                    label: const Text('Compare State'),
+                                    label: Text(_t('compare_state')),
                                   ),
                                   OutlinedButton.icon(
                                     onPressed: _running ? null : _runSequenceAudit,
                                     icon: const Icon(Icons.format_list_numbered),
-                                    label: const Text('Sequence Audit'),
+                                    label: Text(_t('sequence_audit')),
                                   ),
                                   OutlinedButton.icon(
                                     onPressed: _running ? null : _runPendingAudit,
                                     icon: const Icon(Icons.pending_actions),
-                                    label: const Text('Pending Audit'),
+                                    label: Text(_t('pending_audit')),
                                   ),
                                   OutlinedButton.icon(
                                     onPressed: _running ? null : _runDatabaseSizeBreakdown,
                                     icon: const Icon(Icons.storage),
-                                    label: const Text('DB Size'),
+                                    label: Text(_t('db_size')),
                                   ),
                                   OutlinedButton.icon(
                                     onPressed: _running ? null : _runIntegrityCheck,
                                     icon: const Icon(Icons.verified_outlined),
-                                    label: const Text('Integrity'),
+                                    label: Text(_t('integrity')),
                                   ),
                                   OutlinedButton.icon(
                                     onPressed: _running ? null : _runActiveSync,
                                     icon: const Icon(Icons.sync),
-                                    label: const Text('Sync Now Only'),
+                                    label: Text(_t('sync_now_only')),
                                   ),
                                   OutlinedButton.icon(
                                     onPressed: _running ? null : _compactSyncedSyncHistory,
                                     icon: const Icon(Icons.cleaning_services_outlined),
-                                    label: const Text('Clean Sync Logs'),
+                                    label: Text(_t('clean_sync_logs')),
                                   ),
                                 ],
                               ),
@@ -1164,7 +1168,7 @@ class _StressLabPageState extends State<StressLabPage> {
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: _log.isEmpty
-                    ? const Center(child: Text('No log yet.'))
+                    ? Center(child: Text(_t('no_log_yet')))
                     : ListView.builder(
                         padding: const EdgeInsets.all(12),
                         itemCount: _log.length,

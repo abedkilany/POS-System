@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
+import '../../core/localization/app_localizations.dart';
+
 import '../../core/services/local_database_service.dart';
 import '../../data/app_store.dart';
 
@@ -15,6 +17,8 @@ class DatabasePage extends StatefulWidget {
 }
 
 class _DatabasePageState extends State<DatabasePage> {
+  String _t(String key) => AppLocalizations.of(context).text(key);
+  String _tf(String key, Map<String, Object?> values) => AppLocalizations.of(context).format(key, values);
   String _selectedKey = '';
   String _tableQuery = '';
   String _recordQuery = '';
@@ -149,17 +153,17 @@ class _DatabasePageState extends State<DatabasePage> {
     final confirmed = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
-            title: const Text('Delete records'),
-            content: Text('Delete ${_selectedRowIndexes.length} selected record(s)?'),
+            title: Text(_t('delete_records')),
+            content: Text(_tf('delete_selected_records_question', {'count': _selectedRowIndexes.length})),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+              TextButton(onPressed: () => Navigator.pop(context, false), child: Text(_t('cancel'))),
               FilledButton(
                 style: FilledButton.styleFrom(
                   backgroundColor: Theme.of(context).colorScheme.error,
                   foregroundColor: Theme.of(context).colorScheme.onError,
                 ),
                 onPressed: () => Navigator.pop(context, true),
-                child: const Text('Delete'),
+                child: Text(_t('delete')),
               ),
             ],
           ),
@@ -186,11 +190,11 @@ Widget _buildLockedView() {
               children: [
                 const Icon(Icons.lock_outline, size: 42),
                 const SizedBox(height: 12),
-                Text('Database locked', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
+                Text(_t('database_locked'), style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
                 const SizedBox(height: 8),
-                const Text('Enter the current admin password to open the database page.', textAlign: TextAlign.center),
+                Text(_t('database_password_hint'), textAlign: TextAlign.center),
                 const SizedBox(height: 18),
-                FilledButton.icon(onPressed: _requireDatabasePassword, icon: const Icon(Icons.password), label: const Text('Enter password')),
+                FilledButton.icon(onPressed: _requireDatabasePassword, icon: const Icon(Icons.password), label: Text(_t('enter_password'))),
               ],
             ),
           ),
@@ -209,18 +213,18 @@ Widget _buildLockedView() {
       barrierDismissible: false,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Database password'),
+          title: Text(_t('database_password')),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('Please enter your admin password to continue.'),
+              Text(_t('admin_password_required')),
               const SizedBox(height: 12),
               TextField(
                 controller: controller,
                 autofocus: true,
                 obscureText: true,
                 decoration: InputDecoration(
-                  labelText: 'Password',
+                  labelText: _t('password'),
                   border: const OutlineInputBorder(),
                   errorText: error,
                 ),
@@ -237,7 +241,7 @@ Widget _buildLockedView() {
             ],
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+            TextButton(onPressed: () => Navigator.pop(context, false), child: Text(_t('cancel'))),
             FilledButton(
               onPressed: () async {
                 final ok = await widget.store.verifyAdminPassword(controller.text);
@@ -248,7 +252,7 @@ Widget _buildLockedView() {
                   setDialogState(() => error = 'Wrong password');
                 }
               },
-              child: const Text('Unlock'),
+              child: Text(_t('unlock')),
             ),
           ],
         ),
@@ -277,24 +281,24 @@ Widget _buildLockedView() {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Database',
+                    _t('database_page'),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
                   ),
                 ),
-                IconButton(onPressed: _reload, icon: const Icon(Icons.refresh), tooltip: 'Refresh'),
+                IconButton(onPressed: _reload, icon: const Icon(Icons.refresh), tooltip: _t('refresh')),
                 IconButton(
                   onPressed: _selectedKey.isEmpty ? null : _confirmDeleteKey,
                   icon: Icon(Icons.delete_forever_outlined, color: Theme.of(context).colorScheme.error),
-                  tooltip: 'Delete selected table/key',
+                  tooltip: _t('delete_selected_table_key'),
                 ),
               ],
             ),
             const SizedBox(height: 8),
             TextField(
               decoration: InputDecoration(
-                hintText: 'Search tables...',
+                hintText: _t('search_tables'),
                 prefixIcon: const Icon(Icons.search),
                 isDense: true,
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
@@ -306,7 +310,7 @@ Widget _buildLockedView() {
               initialValue: value,
               isExpanded: true,
               decoration: InputDecoration(
-                labelText: 'Selected table',
+                labelText: _t('selected_table'),
                 isDense: true,
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
               ),
@@ -350,8 +354,8 @@ Widget _buildLockedView() {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Database', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
-                    Text('Manage your database records', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                    Text(_t('database_page'), style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
+                    Text(_t('manage_database_records'), style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
                   ],
                 ),
               ),
@@ -360,7 +364,7 @@ Widget _buildLockedView() {
           const SizedBox(height: 18),
           TextField(
             decoration: InputDecoration(
-              hintText: 'Search tables...',
+              hintText: _t('search_tables'),
               suffixIcon: const Icon(Icons.search),
               isDense: true,
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
@@ -405,11 +409,11 @@ Widget _buildLockedView() {
           ),
           Row(
             children: [
-              IconButton(onPressed: _reload, icon: const Icon(Icons.refresh), tooltip: 'Refresh'),
+              IconButton(onPressed: _reload, icon: const Icon(Icons.refresh), tooltip: _t('refresh')),
               IconButton(
                 onPressed: _selectedKey.isEmpty ? null : _confirmDeleteKey,
                 icon: Icon(Icons.delete_forever_outlined, color: Theme.of(context).colorScheme.error),
-                tooltip: 'Delete selected table/key',
+                tooltip: _t('delete_selected_table_key'),
               ),
             ],
           ),
@@ -426,7 +430,7 @@ Widget _buildLockedView() {
           width: compact ? double.infinity : 360,
           child: TextField(
             decoration: InputDecoration(
-              hintText: 'Search records...',
+              hintText: _t('search_records'),
               prefixIcon: const Icon(Icons.search),
               suffixIcon: _recordQuery.isEmpty ? null : IconButton(onPressed: () => setState(() => _recordQuery = ''), icon: const Icon(Icons.close)),
               isDense: true,
@@ -446,7 +450,7 @@ Widget _buildLockedView() {
           children: [
             IconButton(onPressed: safePage > 0 ? () => setState(() => _page--) : null, icon: const Icon(Icons.chevron_left)),
             IconButton(onPressed: safePage < pageCount - 1 ? () => setState(() => _page++) : null, icon: const Icon(Icons.chevron_right)),
-            Text('${start + (total == 0 ? 0 : 1)} - $end of $total'),
+            Text(_tf('page_range', {'start': start + (total == 0 ? 0 : 1), 'end': end, 'total': total})),
             DropdownButton<int>(
               value: _pageSize,
               items: const [25, 50, 100].map((value) => DropdownMenuItem<int>(value: value, child: Text('$value'))).toList(),
@@ -455,7 +459,7 @@ Widget _buildLockedView() {
                 _page = 0;
               }),
             ),
-            const Text('per page'),
+            Text(_t('per_page')),
           ],
         );
         return Padding(
@@ -470,15 +474,15 @@ Widget _buildLockedView() {
                     IconButton(
                       onPressed: () => setState(() => _sidebarCollapsed = !_sidebarCollapsed),
                       icon: Icon(_sidebarCollapsed ? Icons.keyboard_double_arrow_right : Icons.keyboard_double_arrow_left),
-                      tooltip: _sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar',
+                      tooltip: _sidebarCollapsed ? _t('expand_sidebar') : _t('collapse_sidebar'),
                     ),
                   if (!compact) const SizedBox(width: 8),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Table: ${_displayKey(_selectedKey)}', maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
-                        Text('$total records', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                        Text(_tf('table_name', {'name': _displayKey(_selectedKey)}), maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+                        Text(_tf('records_count', {'count': total}), style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
                       ],
                     ),
                   ),
@@ -495,17 +499,17 @@ Widget _buildLockedView() {
                       if (value == '100') setState(() => _pageSize = 100);
                     },
                     itemBuilder: (context) => [
-                      const PopupMenuItem(value: 'refresh', child: Text('Refresh')),
-                      const PopupMenuItem(value: 'columns', child: Text('Columns')),
-                      PopupMenuItem(enabled: decoded is List, value: 'add', child: const Text('Add record')),
-                      if (_selectedRowIndexes.isNotEmpty) PopupMenuItem(value: 'deleteSelected', child: Text('Delete selected (${_selectedRowIndexes.length})')),
+                      PopupMenuItem(value: 'refresh', child: Text(_t('refresh'))),
+                      PopupMenuItem(value: 'columns', child: Text(_t('columns'))),
+                      PopupMenuItem(enabled: decoded is List, value: 'add', child: Text(_t('add_record'))),
+                      if (_selectedRowIndexes.isNotEmpty) PopupMenuItem(value: 'deleteSelected', child: Text(_tf('delete_selected_records_count', {'count': _selectedRowIndexes.length}))),
                       const PopupMenuDivider(),
-                      const PopupMenuItem(value: 'raw', child: Text('Edit Raw JSON')),
-                      const PopupMenuItem(value: 'delete', child: Text('Delete selected table/key')),
+                      PopupMenuItem(value: 'raw', child: Text(_t('edit_raw_json'))),
+                      PopupMenuItem(value: 'delete', child: Text(_t('delete_selected_table_key'))),
                       const PopupMenuDivider(),
-                      const PopupMenuItem(value: '25', child: Text('25 rows per page')),
-                      const PopupMenuItem(value: '50', child: Text('50 rows per page')),
-                      const PopupMenuItem(value: '100', child: Text('100 rows per page')),
+                      PopupMenuItem(value: '25', child: Text(_tf('rows_per_page', {'count': 25}))),
+                      PopupMenuItem(value: '50', child: Text(_tf('rows_per_page', {'count': 50}))),
+                      PopupMenuItem(value: '100', child: Text(_tf('rows_per_page', {'count': 100}))),
                     ],
                   ),
                 ],
@@ -531,8 +535,8 @@ Widget _buildLockedView() {
   }
 
   Widget _buildDataView(dynamic decoded, List<String> columns, List<Map<String, dynamic>> visibleRows) {
-    if (_selectedKey.isEmpty) return const Center(child: Text('No database keys found.'));
-    if (visibleRows.isEmpty) return const Center(child: Text('No records in this table/key.'));
+    if (_selectedKey.isEmpty) return Center(child: Text(_t('no_database_keys_found')));
+    if (visibleRows.isEmpty) return Center(child: Text(_t('no_records_in_table')));
 
     final sortColumnIndex = _sortColumn == null ? null : columns.indexOf(_sortColumn!);
     final table = DataTable(
@@ -569,7 +573,7 @@ Widget _buildLockedView() {
               ],
             ),
           ),
-        const DataColumn(label: Text('actions')),
+        DataColumn(label: Text(_t('actions'))),
       ],
       rows: visibleRows.map((row) {
         final rowIndex = row['_db_index'] as int? ?? -1;
@@ -596,9 +600,9 @@ Widget _buildLockedView() {
             DataCell(Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                IconButton(tooltip: 'Edit record', icon: const Icon(Icons.edit_outlined, size: 20), onPressed: () => _openRowEditor(rowIndex: rowIndex, row: row)),
+                IconButton(tooltip: _t('edit_record'), icon: const Icon(Icons.edit_outlined, size: 20), onPressed: () => _openRowEditor(rowIndex: rowIndex, row: row)),
                 IconButton(
-                  tooltip: 'Delete record',
+                  tooltip: _t('delete_record'),
                   icon: Icon(Icons.delete_outline, size: 20, color: Theme.of(context).colorScheme.error),
                   onPressed: decoded is List && rowIndex >= 0 ? () => _confirmDeleteRow(rowIndex) : null,
                 ),
@@ -638,16 +642,16 @@ Widget _buildLockedView() {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Text('Structure: ${_displayKey(_selectedKey)}', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+            Text(_tf('structure_name', {'name': _displayKey(_selectedKey)}), style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
             const SizedBox(height: 8),
-            Text('$rowCount records • ${raw.length} raw characters'),
+            Text('${_tf('records_count', {'count': rowCount})} • ${_tf('raw_characters_count', {'count': raw.length})}'),
             const Divider(height: 28),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: DataTable(
-                columns: const [
-                  DataColumn(label: Text('column')),
-                  DataColumn(label: Text('type')),
+                columns: [
+                  DataColumn(label: Text(_t('column'))),
+                  DataColumn(label: Text(_t('type'))),
                 ],
                 rows: [
                   for (final column in columns)
@@ -786,8 +790,8 @@ Widget _buildLockedView() {
         title: Text(column),
         content: TextField(controller: controller, autofocus: true, minLines: 1, maxLines: 8, decoration: const InputDecoration(border: OutlineInputBorder())),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Save')),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(_t('cancel'))),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(_t('save'))),
         ],
       ),
     );
@@ -821,7 +825,7 @@ Widget _buildLockedView() {
     final saved = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(isNew ? 'Add record' : 'Edit record'),
+        title: Text(isNew ? _t('add_record') : _t('edit_record')),
         content: SizedBox(
           width: 760,
           child: SingleChildScrollView(
@@ -837,8 +841,8 @@ Widget _buildLockedView() {
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(isNew ? 'Add record' : 'Save')),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(_t('cancel'))),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(isNew ? _t('add_record') : _t('save'))),
         ],
       ),
     );
@@ -877,7 +881,7 @@ Widget _buildLockedView() {
     await LocalDatabaseService.setString(_selectedKey, value);
     _reload();
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Database saved. Restart/reload the app if another screen does not update immediately.')));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_t('database_saved_restart'))));
   }
 
   Future<void> _openRawEditor() async {
@@ -885,11 +889,11 @@ Widget _buildLockedView() {
     final saved = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Raw JSON: $_selectedKey'),
+        title: Text(_tf('raw_json_name', {'name': _selectedKey})),
         content: SizedBox(width: 900, child: TextField(controller: controller, minLines: 18, maxLines: 24, decoration: const InputDecoration(border: OutlineInputBorder()))),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Save raw')),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(_t('cancel'))),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(_t('save_raw'))),
         ],
       ),
     );
@@ -901,17 +905,17 @@ Widget _buildLockedView() {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete record'),
-        content: const Text('Delete this record from the selected database key?'),
+        title: Text(_t('delete_record')),
+        content: Text(_t('delete_record_question')),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(_t('cancel'))),
           FilledButton(
                 style: FilledButton.styleFrom(
                   backgroundColor: Theme.of(context).colorScheme.error,
                   foregroundColor: Theme.of(context).colorScheme.onError,
                 ),
                 onPressed: () => Navigator.pop(context, true),
-                child: const Text('Delete'),
+                child: Text(_t('delete')),
               ),
         ],
       ),
@@ -927,11 +931,11 @@ Widget _buildLockedView() {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete database key'),
-        content: Text('Delete the full key "$_selectedKey" from local database?'),
+        title: Text(_t('delete_database_key')),
+        content: Text(_tf('delete_database_key_question', {'key': _selectedKey})),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete key')),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(_t('cancel'))),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(_t('delete_key'))),
         ],
       ),
     );

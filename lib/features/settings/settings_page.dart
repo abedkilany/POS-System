@@ -311,7 +311,7 @@ class SettingsPage extends StatelessWidget {
                 children: [
                   Text(tr.text('data_management'), style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(height: 4),
-                  Text(isHost ? tr.text('data_management_desc') : 'Client maintenance affects only this device and is never synced to other devices.'),
+                  Text(isHost ? tr.text('data_management_desc') : tr.text('client_maintenance_desc')),
                 ],
               ),
             ),
@@ -531,13 +531,13 @@ class SettingsPage extends StatelessWidget {
                     Navigator.pop(
                       dialogContext,
                       StoreProfile(
-                        name: nameController.text.trim().isEmpty ? 'My Store' : nameController.text.trim(),
+                        name: nameController.text.trim().isEmpty ? tr.text('my_store') : nameController.text.trim(),
                         phone: phoneController.text.trim(),
                         address: addressController.text.trim(),
                         // Keep the legacy currency value for backward compatibility only.
                         // Currency selection is now managed exclusively from Financial Settings.
                         currency: profile.currency,
-                        footerNote: footerController.text.trim().isEmpty ? 'Thank you for shopping with us.' : footerController.text.trim(),
+                        footerNote: footerController.text.trim().isEmpty ? tr.text('default_invoice_footer') : footerController.text.trim(),
                         usdToLbpRate: profile.usdToLbpRate,
                         priceDisplayMode: profile.priceDisplayMode,
                         defaultProductCurrency: profile.defaultProductCurrency,
@@ -630,7 +630,7 @@ class SettingsPage extends StatelessWidget {
     if (ok != true) return;
     final filename = 'ventio_recovery_${identity.storeId}_${DateTime.now().millisecondsSinceEpoch}.json';
     try {
-      await downloadTextFile(filename: filename, content: store.exportRecoveryFileJson(cloudApiUrl: cloud.apiBaseUrl));
+      await downloadTextFile(filename: filename, content: store.exportRecoveryFileJson(cloudApiUrl: cloud.apiBaseUrl), dialogTitle: tr.text('save_recovery_file'), cancelMessage: tr.text('file_save_cancelled'));
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('recovery_file_downloaded'))));
       }
@@ -676,7 +676,7 @@ class SettingsPage extends StatelessWidget {
     final filename = 'store_backup_${DateTime.now().millisecondsSinceEpoch}.json';
 
     try {
-      await downloadTextFile(filename: filename, content: store.exportBackupJson());
+      await downloadTextFile(filename: filename, content: store.exportBackupJson(), dialogTitle: tr.text('save_backup_file'), cancelMessage: tr.text('file_save_cancelled'));
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('backup_file_downloaded'))));
       }
@@ -728,7 +728,7 @@ class SettingsPage extends StatelessWidget {
 
       final validation = store.validateBackupJson(raw);
       if (!validation.isValid || validation.summary == null) {
-        throw Exception(validation.errorMessage ?? 'Invalid backup file');
+        throw Exception(validation.errorMessage ?? tr.text('invalid_backup_file'));
       }
 
       if (!context.mounted) return;
@@ -738,7 +738,7 @@ class SettingsPage extends StatelessWidget {
       await store.importBackupJson(raw);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('backup_file_imported'))));
-        await _pushHostCriticalEventToCloud(context, 'Import Backup');
+        await _pushHostCriticalEventToCloud(context, tr.text('import_backup_action'));
       }
     } catch (_) {
       if (context.mounted) {
@@ -750,6 +750,7 @@ class SettingsPage extends StatelessWidget {
 
 
   Future<void> _recoverExistingStore(BuildContext context) async {
+    final tr = AppLocalizations.of(context);
     final cloud = CloudSyncSettings.load();
     final apiUrlController = TextEditingController(text: cloud.apiBaseUrl);
     final storeIdController = TextEditingController(text: store.appIdentity.storeId);
@@ -837,7 +838,7 @@ class SettingsPage extends StatelessWidget {
         recoveryKey: recoveryKeyController.text,
       );
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result.message)));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(localizeRuntimeMessage(result.message, tr))));
       }
     } catch (error) {
       if (context.mounted) {
@@ -944,12 +945,13 @@ class SettingsPage extends StatelessWidget {
     if (context.mounted) {
       Navigator.of(context, rootNavigator: true).pop();
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(result.ok ? '$actionName ${tr.text('cloud_push_success')}' : '$actionName ${tr.text('cloud_push_failed')}: ${result.message}')),
+        SnackBar(content: Text(result.ok ? '$actionName ${tr.text('cloud_push_success')}' : '$actionName ${tr.text('cloud_push_failed')}: ${localizeRuntimeMessage(result.message, tr)}')),
       );
     }
   }
 
   Future<void> _rebuildFromHost(BuildContext context) async {
+    final tr = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -965,7 +967,7 @@ class SettingsPage extends StatelessWidget {
     if (confirmed != true) return;
 
     final progress = ValueNotifier<_OperationProgress>(
-      const _OperationProgress(0.05, 'Preparing rebuild... 5%'),
+      _OperationProgress(0.05, tr.text('preparing_rebuild_percent')),
     );
     if (context.mounted) {
       showDialog(
@@ -996,10 +998,10 @@ class SettingsPage extends StatelessWidget {
     bool success = false;
 
     try {
-      progress.value = const _OperationProgress(0.20, 'Resetting local Client state... 20%');
+      progress.value = _OperationProgress(0.20, tr.text('resetting_local_client_state_percent'));
       await Future<void>.delayed(const Duration(milliseconds: 80));
       if (identity.syncMode == SyncMode.cloudConnected || identity.syncMode == SyncMode.marketplaceEnabled) {
-        progress.value = const _OperationProgress(0.40, 'Contacting Cloud Host snapshot... 40%');
+        progress.value = _OperationProgress(0.40, tr.text('contacting_cloud_host_snapshot_percent'));
         final result = await UnifiedSyncEngine(
           CloudSyncTransportAdapter(
             service: CloudSyncService(store),
@@ -1008,12 +1010,12 @@ class SettingsPage extends StatelessWidget {
         ).rebuildFromHostSnapshot(
           onProgress: (value, label) => progress.value = _OperationProgress(value, '$label ${(value * 100).round()}%'),
         );
-        progress.value = _OperationProgress(result.ok ? 1.0 : 0.90, result.ok ? 'Cloud rebuild completed... 100%' : 'Cloud rebuild failed while verifying... 90%');
-        message = result.message;
+        progress.value = _OperationProgress(result.ok ? 1.0 : 0.90, result.ok ? tr.text('cloud_rebuild_completed_percent') : tr.text('cloud_rebuild_failed_verifying_percent'));
+        message = localizeRuntimeMessage(result.message, tr);
         success = result.ok;
       } else {
         final settings = LanSyncSettings.load();
-        progress.value = const _OperationProgress(0.40, 'Contacting LAN Host... 40%');
+        progress.value = _OperationProgress(0.40, tr.text('contacting_lan_host_percent'));
         final result = await UnifiedSyncEngine(
           LanSyncTransportAdapter(
             service: LanSyncService(store),
@@ -1022,8 +1024,8 @@ class SettingsPage extends StatelessWidget {
         ).rebuildFromHostSnapshot(
           onProgress: (value, label) => progress.value = _OperationProgress(value, '$label ${(value * 100).round()}%'),
         );
-        progress.value = _OperationProgress(result.ok ? 1.0 : 0.90, result.ok ? 'LAN rebuild completed... 100%' : 'LAN rebuild failed while verifying... 90%');
-        message = result.message;
+        progress.value = _OperationProgress(result.ok ? 1.0 : 0.90, result.ok ? tr.text('lan_rebuild_completed_percent') : tr.text('lan_rebuild_failed_verifying_percent'));
+        message = localizeRuntimeMessage(result.message, tr);
         success = result.ok;
       }
       await Future<void>.delayed(const Duration(milliseconds: 150));
@@ -1745,7 +1747,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       port: _lanPort,
     );
     final result = await _lanEngine(current).createPairingCode(ttlMinutes: _pairingCodeLifetime.inMinutes);
-    if (!result.ok) throw StateError(result.message);
+    if (!result.ok) throw StateError(localizeRuntimeMessage(result.message, tr));
     final code = result.code;
     final expiresAt = result.expiresAt ?? DateTime.now().add(_pairingCodeLifetime);
     _lanTokenController.text = code;
@@ -1844,9 +1846,9 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       _latestCloudPairingExpiresAt != null &&
       _latestCloudPairingExpiresAt!.isAfter(DateTime.now());
 
-  String get _lanPairingButtonLabel => _hasActiveLanPairingCode ? 'Regenerate New LAN Code' : 'Generate LAN Code';
+  String get _lanPairingButtonLabel => _hasActiveLanPairingCode ? tr.text('regenerate_new_lan_code') : tr.text('generate_lan_code');
 
-  String get _cloudPairingButtonLabel => _hasActiveCloudPairingCode ? 'Regenerate New Cloud Code' : 'Generate Cloud Code';
+  String get _cloudPairingButtonLabel => _hasActiveCloudPairingCode ? tr.text('regenerate_new_cloud_code') : tr.text('generate_cloud_code');
 
   Future<void> _refreshCloudPairingStatus() async {
     final code = _latestCloudPairingCode.trim();
@@ -1918,19 +1920,19 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
 
 
   Future<void> _requestHostTransfer() => _run(() async {
-        await widget.store.requestHostTransfer(reason: 'User requested Host role from Sync Settings.');
+        await widget.store.requestHostTransfer(reason: tr.text('user_requested_host_role_reason'));
         final cloud = _cloudSettings(enabled: true);
         if (cloud.apiBaseUrl.trim().isNotEmpty) {
-          await CloudSyncService(widget.store).requestHostTransfer(cloud, reason: 'User requested Host role from Sync Settings.');
+          await CloudSyncService(widget.store).requestHostTransfer(cloud, reason: tr.text('user_requested_host_role_reason'));
         }
         if (mounted) {
-          setState(() => _status = 'Host transfer request created. Ask the current Host to approve this Device ID: ${widget.store.deviceId}');
+          setState(() => _status = tr.format('host_transfer_request_created', {'deviceId': widget.store.deviceId}));
         }
       });
 
   Future<void> _approveHostTransferFromUi() => _run(() async {
         final deviceId = _transferDeviceController.text.trim();
-        if (deviceId.isEmpty) throw StateError('Client Device ID is required.');
+        if (deviceId.isEmpty) throw StateError(tr.text('client_device_id_required'));
         final confirmed = await showDialog<bool>(
           context: context,
           barrierDismissible: false,
@@ -1947,13 +1949,13 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         final cloud = _cloudSettings(enabled: true);
         if (cloud.isConfigured) {
           final cloudResult = await CloudSyncService(widget.store).approveHostTransfer(cloud, deviceId);
-          if (!cloudResult.ok) throw StateError(cloudResult.message);
+          if (!cloudResult.ok) throw StateError(localizeRuntimeMessage(cloudResult.message, tr));
         }
         await widget.store.approveHostTransfer(deviceId);
         if (mounted) {
           setState(() {
             _deviceRole = DeviceRole.host;
-            _status = 'Host transfer approved. This device remains Host until the new Host activates.';
+            _status = tr.text('host_transfer_approved_wait_activation');
           });
         }
       });
@@ -1967,7 +1969,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         if (mounted) {
           setState(() {
             _deviceRole = DeviceRole.host;
-            _status = 'Host transfer activated. This device is now Host. Other Clients will switch after receiving HOST_CHANGED.';
+            _status = tr.text('host_transfer_activated_now_host');
           });
         }
       });
@@ -2074,23 +2076,23 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     final expectedBranch = _normalizedPairingId(_expectedPairingBranchId);
     final expectedHost = _normalizedPairingId(_expectedPairingHostDeviceId);
     final expectedTenant = _normalizedPairingId(_expectedPairingCloudTenantId);
-    if (expectedStore.isNotEmpty && actualStore != expectedStore) mismatches.add('Store ID');
-    if (expectedBranch.isNotEmpty && actualBranch != expectedBranch) mismatches.add('Branch ID');
-    if (expectedHost.isNotEmpty && actualHost != expectedHost) mismatches.add('Host ID');
-    if (expectedTenant.isNotEmpty && actualTenant.isNotEmpty && actualTenant != expectedTenant) mismatches.add('Tenant ID');
+    if (expectedStore.isNotEmpty && actualStore != expectedStore) mismatches.add(tr.text('store_id_label'));
+    if (expectedBranch.isNotEmpty && actualBranch != expectedBranch) mismatches.add(tr.text('branch_id_label'));
+    if (expectedHost.isNotEmpty && actualHost != expectedHost) mismatches.add(tr.text('host_id_label'));
+    if (expectedTenant.isNotEmpty && actualTenant.isNotEmpty && actualTenant != expectedTenant) mismatches.add(tr.text('tenant_id_label'));
     if (mismatches.isNotEmpty) {
-      throw Exception('Pairing data does not match this Store connection (${mismatches.join(', ')}). Scan the correct QR code or ask the Host for a new code.');
+      throw Exception(tr.format('pairing_data_mismatch', {'items': mismatches.join(', ')}));
     }
   }
 
   void _validateAgainstExistingClientIdentity(AppIdentity before, AppIdentity after) {
     if (!before.isClient || before.hostDeviceId.trim().isEmpty) return;
     final mismatches = <String>[];
-    if (_normalizedPairingId(before.storeId) != _normalizedPairingId(after.storeId)) mismatches.add('Store ID');
-    if (_normalizedPairingId(before.branchId) != _normalizedPairingId(after.branchId)) mismatches.add('Branch ID');
-    if (_normalizedPairingId(before.hostDeviceId) != _normalizedPairingId(after.hostDeviceId)) mismatches.add('Host ID');
+    if (_normalizedPairingId(before.storeId) != _normalizedPairingId(after.storeId)) mismatches.add(tr.text('store_id_label'));
+    if (_normalizedPairingId(before.branchId) != _normalizedPairingId(after.branchId)) mismatches.add(tr.text('branch_id_label'));
+    if (_normalizedPairingId(before.hostDeviceId) != _normalizedPairingId(after.hostDeviceId)) mismatches.add(tr.text('host_id_label'));
     if (mismatches.isNotEmpty) {
-      throw Exception('This connection belongs to a different Store (${mismatches.join(', ')}). Use the QR/code from the currently paired Host.');
+      throw Exception(tr.format('connection_different_store', {'items': mismatches.join(', ')}));
     }
   }
 
@@ -2140,7 +2142,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           throw StateError(tr.text('enable_cloud_before_pairing_code'));
         }
         final result = await _cloudEngine(enabled: _cloudEnabled).createPairingCode(ttlMinutes: _pairingCodeLifetime.inMinutes);
-        if (!result.ok) throw StateError(result.message);
+        if (!result.ok) throw StateError(localizeRuntimeMessage(result.message, tr));
         final expiresAt = result.expiresAt ?? DateTime.now().add(_pairingCodeLifetime);
         await LocalDatabaseService.setString(_cloudPairingCodeStorageKey, result.code);
         await LocalDatabaseService.setString(_cloudPairingExpiryStorageKey, expiresAt.toIso8601String());
@@ -2198,19 +2200,19 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         if (hostCloudEnabled || (!identity.isHost && identity.activeSyncTransportNormalized == 'cloud')) {
           final result = await _cloudEngine(enabled: true).syncNow(
             onProgress: (value, label) {
-              if (mounted) setState(() { _status = '${tr.text('connection_cloud')}: $label ${(value * 100).round()}%'; _statusProgress = value; });
+              if (mounted) setState(() { _status = '${tr.text('connection_cloud')}: ${localizeRuntimeMessage(label, tr)} ${(value * 100).round()}%'; _statusProgress = value; });
             },
           );
-          if (!result.ok) throw StateError(result.message);
+          if (!result.ok) throw StateError(localizeRuntimeMessage(result.message, tr));
           messages.add('${tr.text('connection_cloud')}: ${tr.text('sync_completed')}');
         }
         if (identity.isClient && identity.activeSyncTransportNormalized == 'lan') {
           final result = await _lanEngine().syncNow(
             onProgress: (value, label) {
-              if (mounted) setState(() { _status = '${tr.text('connection_lan')}: $label ${(value * 100).round()}%'; _statusProgress = value; });
+              if (mounted) setState(() { _status = '${tr.text('connection_lan')}: ${localizeRuntimeMessage(label, tr)} ${(value * 100).round()}%'; _statusProgress = value; });
             },
           );
-          if (!result.ok) throw StateError(result.message);
+          if (!result.ok) throw StateError(localizeRuntimeMessage(result.message, tr));
           messages.add('${tr.text('connection_lan')}: ${tr.text('sync_completed')}');
         } else if (hostLanEnabled) {
           messages.add('${tr.text('connection_lan')}: ${tr.text('lan_host_running')}');
@@ -2226,27 +2228,27 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     final trimmedName = name.trim();
     if (trimmedName.isNotEmpty) return trimmedName;
     final id = deviceId.trim();
-    if (id.length <= 8) return id.isEmpty ? 'Unknown Client' : id;
-    return 'Client ${id.substring(0, 4)}…${id.substring(id.length - 4)}';
+    if (id.length <= 8) return id.isEmpty ? tr.text('unknown_client') : id;
+    return '${tr.text('client_label')} ${id.substring(0, 4)}…${id.substring(id.length - 4)}';
   }
 
   String _formatShortDateTime(DateTime? value) {
-    if (value == null) return 'never';
+    if (value == null) return tr.text('never');
     final local = value.toLocal();
     String two(int n) => n.toString().padLeft(2, '0');
     return '${local.year}-${two(local.month)}-${two(local.day)} ${two(local.hour)}:${two(local.minute)}';
   }
 
   String _peerSyncStatus(HostPeerSyncState? peer) {
-    if (peer == null) return 'Not Configured';
+    if (peer == null) return tr.text('connection_state_not_configured');
     if (peer.lastAckSequence > 0 || peer.lastAckCursor != null || peer.lastAppliedHostCursor != null) {
-      return 'Synced';
+      return tr.text('synced');
     }
-    return 'Sync Pending';
+    return tr.text('sync_pending');
   }
 
   Future<void> _testPairedClientConnections() => _run(() async {
-        setState(() { _status = 'Testing paired Clients...'; _statusProgress = 0.15; });
+        setState(() { _status = tr.text('testing_paired_clients'); _statusProgress = 0.15; });
         final identity = widget.store.appIdentity;
         final lan = LanSyncSettings.load();
         final cloud = CloudSyncSettings.load();
@@ -2285,7 +2287,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
 
         if (ids.isEmpty) {
           setState(() {
-            _status = 'No paired Clients found. Pair a Client first, then run Test Connection again.';
+            _status = tr.text('no_paired_clients_found');
             _statusProgress = 1.0;
           });
           return;
@@ -2305,31 +2307,32 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           final parts = <String>[];
           if (cloudDevice != null) {
             if (cloudDevice.revoked) {
-              parts.add('Cloud Unauthorized');
+              parts.add(tr.text('cloud_unauthorized'));
             } else if (cloudDevice.online || cloudDevice.isOnline) {
-              parts.add('Cloud Active');
+              parts.add(tr.text('cloud_active'));
             } else {
-              parts.add('Cloud Pending');
+              parts.add(tr.text('cloud_pending'));
             }
           } else if ((_cloudEnabled || identity.isCloudEnabled) && cloud.isConfigured) {
-            parts.add(cloudReachable ? 'Cloud Not Configured' : 'Cloud Error${cloudProblem.isEmpty ? '' : ': $cloudProblem'}');
+            parts.add(cloudReachable ? tr.text('cloud_not_configured') : '${tr.text('cloud_error')}${cloudProblem.isEmpty ? '' : ': $cloudProblem'}');
           }
           if (lanToken.isNotEmpty) {
-            parts.add('LAN Active');
+            parts.add(tr.text('lan_active'));
           } else if (_lanEnabledForHost || (lan.setupComplete && lan.isHost)) {
-            parts.add('LAN Not Configured');
+            parts.add(tr.text('lan_not_configured'));
           }
+          final peerSynced = peer != null && (peer.lastAckSequence > 0 || peer.lastAckCursor != null || peer.lastAppliedHostCursor != null);
           final syncStatus = _peerSyncStatus(peer);
-          if (syncStatus == 'Synced' && parts.any((p) => p.contains('Active') || p.contains('Authorized'))) ready++;
+          if (peerSynced && ((cloudDevice != null && !cloudDevice.revoked && (cloudDevice.online || cloudDevice.isOnline)) || lanToken.isNotEmpty)) ready++;
           parts.add(syncStatus);
-          parts.add('Last Sync: ${_formatShortDateTime(peer?.lastAckCursor ?? peer?.lastAppliedHostCursor ?? peer?.updatedAt)}');
+          parts.add('${tr.text('last_sync')}: ${_formatShortDateTime(peer?.lastAckCursor ?? peer?.lastAppliedHostCursor ?? peer?.updatedAt)}');
           final label = _shortDeviceLabel(id, name: registryDevice?.deviceName ?? cloudDevice?.deviceName ?? '');
           lines.add('$label → ${parts.join(' | ')}');
         }
 
         final total = ids.length;
         setState(() {
-          _status = 'Paired Clients: $ready/$total ready • ${lines.join(' • ')}';
+          _status = '${tr.format('paired_clients_ready', {'ready': ready, 'total': total})} • ${lines.join(' • ')}';
           _statusProgress = 1.0;
         });
       });
@@ -2337,8 +2340,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   Future<void> _testCloudConnection() => _run(() async {
         setState(() { _status = tr.text('testing_cloud_connection'); _statusProgress = 0.25; });
         final result = await _cloudEngine(enabled: true).testConnection();
-        if (!result.ok) throw StateError(result.message);
-        setState(() { _status = '${tr.text('connection_cloud')}: ${result.message}'; _statusProgress = 1.0; });
+        if (!result.ok) throw StateError(localizeRuntimeMessage(result.message, tr));
+        setState(() { _status = '${tr.text('connection_cloud')}: ${localizeRuntimeMessage(result.message, tr)}'; _statusProgress = 1.0; });
       });
 
   Future<void> _testHostConnection() => _run(() async {
@@ -2346,7 +2349,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         final host = _lanHostController.text.trim().isEmpty ? lan.host : _lanHostController.text.trim();
         setState(() { _status = tr.text('testing_lan_connection'); _statusProgress = 0.25; });
         final result = await _lanEngine(lan.copyWith(host: host, port: _lanPort)).testConnection();
-        if (!result.ok) throw StateError(result.message);
+        if (!result.ok) throw StateError(localizeRuntimeMessage(result.message, tr));
         setState(() { _status = '${tr.text('connection_lan')}: ${tr.text('connection_ok')}'; _statusProgress = 1.0; });
       });
 
@@ -5148,7 +5151,7 @@ class _SystemIdentityCardState extends State<_SystemIdentityCard> {
                 onSubmitted: (_) {
                   final value = controller.text.trim().replaceAll(RegExp(r'\s+'), ' ');
                   if (value.isEmpty) {
-                    setDialogState(() => errorText = 'Device name cannot be empty.');
+                    setDialogState(() => errorText = tr.text('device_name_empty'));
                     return;
                   }
                   Navigator.of(dialogContext).pop(value);
@@ -5163,7 +5166,7 @@ class _SystemIdentityCardState extends State<_SystemIdentityCard> {
                   onPressed: () {
                     final value = controller.text.trim().replaceAll(RegExp(r'\s+'), ' ');
                     if (value.isEmpty) {
-                      setDialogState(() => errorText = 'Device name cannot be empty.');
+                      setDialogState(() => errorText = tr.text('device_name_empty'));
                       return;
                     }
                     Navigator.of(dialogContext).pop(value);

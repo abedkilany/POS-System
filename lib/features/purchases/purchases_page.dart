@@ -32,6 +32,12 @@ class _PurchasesPageState extends State<PurchasesPage> {
   String _sortMode = 'newest';
   String _formatQuantity(double value) => value % 1 == 0 ? value.toStringAsFixed(0) : value.toStringAsFixed(3).replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
 
+  @override
+  void initState() {
+    super.initState();
+    HardwareKeyboard.instance.addHandler(_handlePurchasesHardwareShortcutKey);
+  }
+
   String _formatShortDate(DateTime date) {
     final local = date.toLocal();
     final day = local.day.toString().padLeft(2, '0');
@@ -50,10 +56,16 @@ class _PurchasesPageState extends State<PurchasesPage> {
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handlePurchasesHardwareShortcutKey);
     _searchController.dispose();
     _searchFocusNode.dispose();
     _pageShortcutFocusNode.dispose();
     super.dispose();
+  }
+
+  bool _handlePurchasesHardwareShortcutKey(KeyEvent event) {
+    if (!mounted || ModalRoute.of(context)?.isCurrent != true) return false;
+    return _handlePurchasesShortcutKey(_pageShortcutFocusNode, event) == KeyEventResult.handled;
   }
 
   KeyEventResult _handlePurchasesShortcutKey(FocusNode node, KeyEvent event) {
@@ -1150,7 +1162,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
         final total = items.fold<double>(0, (sum, item) => sum + item.lineTotal);
         final paidAmount = paymentStatus == 'partial' ? (double.tryParse(paidAmountController.text.trim()) ?? 0) : null;
         if (paymentStatus == 'partial' && (paidAmount == null || paidAmount <= 0 || paidAmount > total)) {
-          ScaffoldMessenger.of(dialogContext).showSnackBar(const SnackBar(content: Text('Invalid paid amount.')));
+          ScaffoldMessenger.of(dialogContext).showSnackBar(SnackBar(content: Text(tr.text('invalid_paid_amount'))));
           return;
         }
         await widget.store.createPurchase(supplierId: supplierId, supplierName: supplierName, items: purchaseItems, receiveNow: receiveNow, paymentStatus: paymentStatus, paymentMethod: paymentMethod, paidAmount: paidAmount);
@@ -1206,14 +1218,27 @@ class _PurchasesPageState extends State<PurchasesPage> {
       }
     }
 
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      enableDrag: false,
-      isDismissible: false,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) {
+    BuildContext? activePurchaseDialogContext;
+    StateSetter? activePurchaseDialogSetState;
+    bool handlePurchaseDialogHardwareShortcut(KeyEvent event) {
+      final dialogContext = activePurchaseDialogContext;
+      final setDialogState = activePurchaseDialogSetState;
+      if (dialogContext == null || setDialogState == null || ModalRoute.of(dialogContext)?.isCurrent != true) return false;
+      return handlePurchaseDialogShortcutKey(event, dialogContext, setDialogState) == KeyEventResult.handled;
+    }
+
+    HardwareKeyboard.instance.addHandler(handlePurchaseDialogHardwareShortcut);
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        enableDrag: false,
+        isDismissible: false,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (context, setDialogState) {
+            activePurchaseDialogContext = dialogContext;
+            activePurchaseDialogSetState = setDialogState;
           final total = items.fold<double>(0, (sum, item) => sum + item.lineTotal);
           final units = selectedProduct?.effectivePurchaseUnits ?? const <ProductSaleUnit>[];
           if (selectedUnit != null && !units.any((unit) => unit.id == selectedUnit!.id)) {
@@ -1687,9 +1712,14 @@ class _PurchasesPageState extends State<PurchasesPage> {
             ),
           ),
           );
-        },
-      ),
-    );
+          },
+        ),
+      );
+    } finally {
+      HardwareKeyboard.instance.removeHandler(handlePurchaseDialogHardwareShortcut);
+      activePurchaseDialogContext = null;
+      activePurchaseDialogSetState = null;
+    }
     qtyController.dispose();
     costController.dispose();
     productSearchController.dispose();

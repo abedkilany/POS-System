@@ -85,6 +85,7 @@ class _SalesPageState extends State<SalesPage> {
     _paymentExchangeRateController.text = widget.store.storeProfile.usdToLbpRate.toStringAsFixed(0);
     _loadQuickProductPages();
     _loadHeldSaleCarts();
+    HardwareKeyboard.instance.addHandler(_handleSaleHardwareShortcutKey);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _manualBarcodeInput) return;
       _barcodeFocusNode.requestFocus();
@@ -94,6 +95,7 @@ class _SalesPageState extends State<SalesPage> {
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleSaleHardwareShortcutKey);
     _searchController.dispose();
     _barcodeController.dispose();
     _discountController.dispose();
@@ -153,6 +155,18 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
 
   String _formatSaleCurrency(double amount, String currency) => formatCurrency(amount, currency: currency);
 
+  List<Product> _visibleProducts() {
+    return widget.store.products.where((product) => product.isActive && !product.isDeleted).where((product) {
+      if (_search.trim().isEmpty) return true;
+      final q = _search.toLowerCase();
+      return product.name.toLowerCase().contains(q) || product.code.toLowerCase().contains(q) || product.barcode.toLowerCase().contains(q) || product.effectiveSaleUnits.any((unit) => unit.barcode.toLowerCase().contains(q)) || product.effectivePurchaseUnits.any((unit) => unit.barcode.toLowerCase().contains(q)) || product.category.toLowerCase().contains(q);
+    }).toList();
+  }
+
+  bool _handleSaleHardwareShortcutKey(KeyEvent event) {
+    if (!mounted || ModalRoute.of(context)?.isCurrent != true) return false;
+    return _handleSaleShortcutKey(event, _visibleProducts());
+  }
 
   bool _handleSaleShortcutKey(KeyEvent event, List<Product> visibleProducts) {
     if (event is! KeyDownEvent) return false;
@@ -296,11 +310,7 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final sales = widget.store.sales;
-    final products = widget.store.products.where((product) => product.isActive && !product.isDeleted).where((product) {
-      if (_search.trim().isEmpty) return true;
-      final q = _search.toLowerCase();
-      return product.name.toLowerCase().contains(q) || product.code.toLowerCase().contains(q) || product.barcode.toLowerCase().contains(q) || product.effectiveSaleUnits.any((unit) => unit.barcode.toLowerCase().contains(q)) || product.effectivePurchaseUnits.any((unit) => unit.barcode.toLowerCase().contains(q)) || product.category.toLowerCase().contains(q);
-    }).toList();
+    final products = _visibleProducts();
 
     return Focus(
       focusNode: _shortcutFocusNode,
@@ -2015,7 +2025,7 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                                   OutlinedButton.icon(
                                     onPressed: (!sale.isCancelled && widget.store.deliveryNoteForSale(sale.id) == null) ? () => _createDeliveryNote(context, sale) : null,
                                     icon: const Icon(Icons.local_shipping_outlined),
-                                    label: const Text('Delivery note'),
+                                    label: Text(tr.text('delivery_note')),
                                   ),
                                   OutlinedButton.icon(
                                     onPressed: (!sale.isCancelled && widget.store.canDeleteOrCancel) ? () => _returnSale(context, sale) : null,
@@ -2450,10 +2460,11 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
 
 
   Future<void> _createDeliveryNote(BuildContext context, Sale sale) async {
+    final tr = AppLocalizations.of(context);
     try {
-      final note = await widget.store.createDeliveryNoteFromSale(sale.id);
+      await widget.store.createDeliveryNoteFromSale(sale.id);
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Delivery note ${note.deliveryNo} created')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('delivery_note_created'))));
     } catch (error) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
@@ -2600,10 +2611,24 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     final originalDiscount = _discountController.text;
     final originalDiscountCurrency = _discountCurrency;
 
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) {
+    BuildContext? activePaymentDialogContext;
+    StateSetter? activePaymentDialogSetState;
+    bool handlePaymentHardwareShortcut(KeyEvent event) {
+      final dialogContext = activePaymentDialogContext;
+      final setDialogState = activePaymentDialogSetState;
+      if (dialogContext == null || setDialogState == null || ModalRoute.of(dialogContext)?.isCurrent != true) return false;
+      return _handlePaymentShortcutKey(event, dialogContext, setDialogState);
+    }
+
+    HardwareKeyboard.instance.addHandler(handlePaymentHardwareShortcut);
+    final bool? confirmed;
+    try {
+      confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (context, setDialogState) {
+            activePaymentDialogContext = dialogContext;
+            activePaymentDialogSetState = setDialogState;
           final pageTr = AppLocalizations.of(context);
           final invoiceTotal = _invoiceTotal;
           final cashInInvoice = _cashReceivedAmount;
@@ -2670,9 +2695,14 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
             ],
             ),
           );
-        },
-      ),
-    );
+          },
+        ),
+      );
+    } finally {
+      HardwareKeyboard.instance.removeHandler(handlePaymentHardwareShortcut);
+      activePaymentDialogContext = null;
+      activePaymentDialogSetState = null;
+    }
 
     if (confirmed == true) {
       await _saveCurrentInvoice(printAfterSave: printAfterSave);

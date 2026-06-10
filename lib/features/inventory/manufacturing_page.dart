@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../core/localization/app_localizations.dart';
+
 import '../../data/app_store.dart';
 import '../../models/manufacturing.dart';
 import '../../models/product.dart';
@@ -13,6 +15,8 @@ class ManufacturingPage extends StatefulWidget {
 }
 
 class _ManufacturingPageState extends State<ManufacturingPage> {
+  String _t(String key) => AppLocalizations.of(context).text(key);
+  String _tf(String key, Map<String, Object?> values) => AppLocalizations.of(context).format(key, values);
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
@@ -21,51 +25,51 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
         final boms = widget.store.billsOfMaterials;
         final orders = widget.store.manufacturingOrders;
         return Scaffold(
-          appBar: AppBar(title: const Text('Manufacturing')),
+          appBar: AppBar(title: Text(_t('manufacturing_page'))),
           floatingActionButton: FloatingActionButton.extended(
             onPressed: _showCreateBomDialog,
             icon: const Icon(Icons.add),
-            label: const Text('New BOM'),
+            label: Text(_t('new_bom')),
           ),
           body: ListView(
             padding: const EdgeInsets.all(16),
             children: [
               Row(
                 children: [
-                  Expanded(child: _SummaryCard(title: 'BOMs', value: boms.length.toString(), icon: Icons.account_tree_outlined)),
+                  Expanded(child: _SummaryCard(title: _t('boms'), value: boms.length.toString(), icon: Icons.account_tree_outlined)),
                   const SizedBox(width: 12),
-                  Expanded(child: _SummaryCard(title: 'Orders', value: orders.length.toString(), icon: Icons.precision_manufacturing_outlined)),
+                  Expanded(child: _SummaryCard(title: _t('orders'), value: orders.length.toString(), icon: Icons.precision_manufacturing_outlined)),
                 ],
               ),
               const SizedBox(height: 16),
-              Text('Bills of Materials', style: Theme.of(context).textTheme.titleLarge),
+              Text(_t('bills_of_materials'), style: Theme.of(context).textTheme.titleLarge),
               const SizedBox(height: 8),
               if (boms.isEmpty)
-                const Card(child: Padding(padding: EdgeInsets.all(24), child: Center(child: Text('No manufacturing recipes yet.'))))
+                Card(child: Padding(padding: const EdgeInsets.all(24), child: Center(child: Text(_t('no_manufacturing_recipes')))))
               else
                 ...boms.map((bom) => Card(
                       child: ListTile(
                         leading: const Icon(Icons.account_tree_outlined),
                         title: Text(bom.name),
-                        subtitle: Text('${bom.outputProductName} • output ${bom.outputQuantity} • components ${bom.components.length} • unit cost ${bom.unitCost.toStringAsFixed(2)}'),
+                        subtitle: Text(_tf('bom_subtitle', {'product': bom.outputProductName, 'output': bom.outputQuantity, 'components': bom.components.length, 'cost': bom.unitCost.toStringAsFixed(2)})),
                         trailing: FilledButton.icon(
                           onPressed: () => _showCompleteOrderDialog(bom),
                           icon: const Icon(Icons.play_arrow),
-                          label: const Text('Produce'),
+                          label: Text(_t('produce')),
                         ),
                       ),
                     )),
               const SizedBox(height: 24),
-              Text('Manufacturing Orders', style: Theme.of(context).textTheme.titleLarge),
+              Text(_t('manufacturing_orders'), style: Theme.of(context).textTheme.titleLarge),
               const SizedBox(height: 8),
               if (orders.isEmpty)
-                const Card(child: Padding(padding: EdgeInsets.all(24), child: Center(child: Text('No manufacturing orders yet.'))))
+                Card(child: Padding(padding: const EdgeInsets.all(24), child: Center(child: Text(_t('no_manufacturing_orders')))))
               else
                 ...orders.map((order) => Card(
                       child: ListTile(
                         leading: const Icon(Icons.precision_manufacturing_outlined),
                         title: Text(order.orderNo),
-                        subtitle: Text('${order.outputProductName} • qty ${order.quantity} • ${order.status}'),
+                        subtitle: Text(_tf('order_subtitle', {'product': order.outputProductName, 'qty': order.quantity, 'status': order.status})),
                       ),
                     )),
             ],
@@ -78,7 +82,7 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
   Future<void> _showCreateBomDialog() async {
     final products = widget.store.products.where((p) => p.trackStock).toList();
     if (products.length < 2) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Create at least two stock-tracked products first.')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_t('create_two_stock_products_first'))));
       return;
     }
     Product output = products.first;
@@ -91,18 +95,18 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text('New BOM'),
+          title: Text(_t('new_bom')),
           content: SizedBox(
             width: 520,
             child: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  TextField(controller: nameController, decoration: const InputDecoration(labelText: 'BOM name')),
+                  TextField(controller: nameController, decoration: InputDecoration(labelText: _t('bom_name'))),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
                     initialValue: output.id,
-                    decoration: const InputDecoration(labelText: 'Output product'),
+                    decoration: InputDecoration(labelText: _t('output_product')),
                     items: products.map((p) => DropdownMenuItem(value: p.id, child: Text(p.name))).toList(),
                     onChanged: (value) {
                       final selected = products.firstWhere((p) => p.id == value);
@@ -117,9 +121,9 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
                       });
                     },
                   ),
-                  TextField(controller: outputQtyController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Output quantity')),
+                  TextField(controller: outputQtyController, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: _t('output_quantity'))),
                   const SizedBox(height: 16),
-                  Align(alignment: Alignment.centerLeft, child: Text('Components', style: Theme.of(context).textTheme.titleMedium)),
+                  Align(alignment: Alignment.centerLeft, child: Text(_t('components'), style: Theme.of(context).textTheme.titleMedium)),
                   ...List.generate(componentProductIds.length, (index) {
                     return Row(
                       children: [
@@ -132,7 +136,7 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
                           ),
                         ),
                         const SizedBox(width: 8),
-                        Expanded(child: TextField(controller: componentQtyControllers[index], keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Qty'))),
+                        Expanded(child: TextField(controller: componentQtyControllers[index], keyboardType: TextInputType.number, decoration: InputDecoration(labelText: _t('qty')))),
                         IconButton(
                           onPressed: componentProductIds.length == 1 ? null : () => setDialogState(() { componentProductIds.removeAt(index); componentQtyControllers.removeAt(index); }),
                           icon: const Icon(Icons.delete_outline),
@@ -143,15 +147,15 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
                   TextButton.icon(
                     onPressed: () => setDialogState(() { componentProductIds.add(products.firstWhere((p) => p.id != output.id).id); componentQtyControllers.add(TextEditingController(text: '1')); }),
                     icon: const Icon(Icons.add),
-                    label: const Text('Add component'),
+                    label: Text(_t('add_component')),
                   ),
                 ],
               ),
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Save')),
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: Text(_t('cancel'))),
+            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: Text(_t('save'))),
           ],
         ),
       ),
@@ -180,11 +184,11 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text('Produce ${bom.outputProductName}'),
-        content: TextField(controller: qtyController, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Quantity to produce')),
+        title: Text(_tf('produce_product', {'product': bom.outputProductName})),
+        content: TextField(controller: qtyController, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: _t('quantity_to_produce'))),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Complete')),
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: Text(_t('cancel'))),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: Text(_t('complete'))),
         ],
       ),
     );

@@ -6,6 +6,8 @@ import 'dart:html' as html;
 Future<void> downloadTextFile({
   required String filename,
   required String content,
+  String? dialogTitle,
+  String? cancelMessage,
 }) async {
   final bytes = utf8.encode(content);
   final blob = html.Blob([bytes], 'application/json;charset=utf-8');

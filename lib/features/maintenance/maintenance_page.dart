@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/services/backup_download_service.dart';
 import '../../data/app_store.dart';
+import '../../core/localization/app_localizations.dart';
 import '../database/database_page.dart';
 import '../dev_tools/stress_lab_page.dart';
 import 'maintenance_models.dart';
@@ -66,30 +67,32 @@ class _MaintenancePageState extends State<MaintenancePage> {
     final timestamp = summary.generatedAt.toIso8601String().replaceAll(RegExp(r'[^0-9]'), '').substring(0, 14);
     final filename = 'ventio_technical_report_$timestamp.json';
 
+    final tr = AppLocalizations.of(context);
     try {
-      await downloadTextFile(filename: filename, content: report);
+      await downloadTextFile(filename: filename, content: report, dialogTitle: tr.text('technical_report_saved'), cancelMessage: tr.text('file_save_cancelled'));
       if (!mounted) return;
       setState(() => _lastDiagnosticReport = report);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Technical report saved: $filename')),
+        SnackBar(content: Text('${tr.text('technical_report_saved')}: $filename')),
       );
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error is StateError ? error.message : 'Could not save technical report.')),
+        SnackBar(content: Text(error is StateError ? localizeRuntimeMessage(error.message, tr) : tr.text('could_not_save_technical_report'))),
       );
     }
   }
 
   Future<void> _confirmAndRunRepair(MaintenanceRepairAction action) async {
+    final tr = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Run maintenance repair?'),
-        content: const Text('Ventio will run a safe repair action. Create a backup first if this is a production device.'),
+        title: Text(tr.text('run_maintenance_repair')),
+        content: Text(tr.text('maintenance_repair_confirm_desc')),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Run repair')),
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: Text(tr.text('cancel'))),
+          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: Text(tr.text('run_repair'))),
         ],
       ),
     );
@@ -99,12 +102,13 @@ class _MaintenancePageState extends State<MaintenancePage> {
     await _refresh();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('${result.title}: ${result.message}')),
+      SnackBar(content: Text('${_localizedMaintenanceRepairTitle(tr, result.title)}: ${_localizedMaintenanceRepairMessage(tr, result.message)}')),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     final summary = _summary;
 
     return RefreshIndicator(
@@ -119,7 +123,7 @@ class _MaintenancePageState extends State<MaintenancePage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Advanced Tools'),
+                  Text(tr.text('advanced_tools')),
                   SizedBox(height: 12),
                   Wrap(
                     spacing: 12,
@@ -128,12 +132,12 @@ class _MaintenancePageState extends State<MaintenancePage> {
                       FilledButton.icon(
                         onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => DatabasePage(store: widget.store))),
                         icon: Icon(Icons.storage_outlined),
-                        label: Text('Database Explorer'),
+                        label: Text(tr.text('database_explorer')),
                       ),
                       FilledButton.icon(
                         onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => StressLabPage(store: widget.store))),
                         icon: Icon(Icons.speed_outlined),
-                        label: Text('Stress Lab'),
+                        label: Text(tr.text('stress_lab')),
                       ),
                     ],
                   ),
@@ -150,16 +154,16 @@ class _MaintenancePageState extends State<MaintenancePage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Maintenance Center', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
+                    Text(tr.text('maintenance_center'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
                     const SizedBox(height: 4),
-                    Text('Simple health summary, database status, recommendations, and technical diagnostics.', style: Theme.of(context).textTheme.bodyMedium),
+                    Text(tr.text('maintenance_center_desc'), style: Theme.of(context).textTheme.bodyMedium),
                   ],
                 ),
               ),
               FilledButton.icon(
                 onPressed: _loading ? null : () => _refresh(deep: false),
                 icon: const Icon(Icons.refresh),
-                label: const Text('Quick check'),
+                label: Text(tr.text('quick_check')),
               ),
             ],
           ),
@@ -172,41 +176,41 @@ class _MaintenancePageState extends State<MaintenancePage> {
             _MaintenanceDashboard(summary: summary),
             const SizedBox(height: 16),
             _SectionCard(
-              title: 'Readable report',
+              title: tr.text('readable_report'),
               icon: Icons.summarize_outlined,
               children: [
-                _InfoRow(label: 'Status', value: summary.healthStatusLabel),
-                _InfoRow(label: 'Health score', value: '${summary.healthScore}/100'),
-                _InfoRow(label: 'Issues found', value: '${summary.criticalCount} critical, ${summary.warningCount} warnings, ${summary.infoCount} notes'),
-                _InfoRow(label: 'Database storage', value: summary.databaseExists ? 'Secure Ventio AppData storage' : 'Not created yet'),
-                _InfoRow(label: 'Database size', value: _formatBytes(summary.databaseSizeBytes)),
-                _InfoRow(label: 'Last check', value: _formatDateTime(summary.generatedAt)),
-                _InfoRow(label: 'Check type', value: _lastRunWasDeep ? 'Deep diagnostics' : 'Quick check'),
+                _InfoRow(label: tr.text('status'), value: _localizedMaintenanceHealthStatus(tr, summary)),
+                _InfoRow(label: tr.text('health_score'), value: '${summary.healthScore}/100'),
+                _InfoRow(label: tr.text('issues_found'), value: "${summary.criticalCount} ${tr.text('critical')}, ${summary.warningCount} ${tr.text('warnings')}, ${summary.infoCount} ${tr.text('notes')}"),
+                _InfoRow(label: tr.text('database_storage'), value: summary.databaseExists ? tr.text('secure_appdata_storage') : tr.text('not_created_yet')),
+                _InfoRow(label: tr.text('database_size'), value: _formatBytes(summary.databaseSizeBytes)),
+                _InfoRow(label: tr.text('last_check'), value: _formatDateTime(summary.generatedAt)),
+                _InfoRow(label: tr.text('check_type'), value: _lastRunWasDeep ? tr.text('deep_diagnostics') : tr.text('quick_check')),
               ],
             ),
             const SizedBox(height: 16),
             _SectionCard(
-              title: 'Recommendations',
+              title: tr.text('recommendations'),
               icon: Icons.lightbulb_outline,
               children: [
-                for (final recommendation in summary.recommendations) _RecommendationTile(text: recommendation),
+                for (final recommendation in summary.recommendations) _RecommendationTile(text: _localizedMaintenanceRecommendation(tr, recommendation)),
               ],
             ),
             const SizedBox(height: 16),
             _SectionCard(
-              title: 'Database',
+              title: tr.text('database'),
               icon: Icons.folder_outlined,
               children: [
-                _InfoRow(label: 'Platform', value: summary.platformLabel),
-                _InfoRow(label: 'Database directory', value: summary.databaseDirectoryPath),
-                _InfoRow(label: 'Database file', value: summary.databaseFilePath),
-                _InfoRow(label: 'Database exists', value: summary.databaseExists ? 'Yes' : 'No'),
-                _InfoRow(label: 'Database size', value: _formatBytes(summary.databaseSizeBytes)),
+                _InfoRow(label: tr.text('platform'), value: summary.platformLabel),
+                _InfoRow(label: tr.text('database_directory'), value: summary.databaseDirectoryPath),
+                _InfoRow(label: tr.text('database_file'), value: summary.databaseFilePath),
+                _InfoRow(label: tr.text('database_exists'), value: summary.databaseExists ? tr.text('yes') : tr.text('no')),
+                _InfoRow(label: tr.text('database_size'), value: _formatBytes(summary.databaseSizeBytes)),
               ],
             ),
             const SizedBox(height: 16),
             _SectionCard(
-              title: 'Data snapshot',
+              title: tr.text('data_snapshot'),
               icon: Icons.analytics_outlined,
               children: [
                 Wrap(
@@ -220,7 +224,7 @@ class _MaintenancePageState extends State<MaintenancePage> {
             ),
             const SizedBox(height: 16),
             _SectionCard(
-              title: 'Health checks',
+              title: tr.text('health_checks'),
               icon: Icons.fact_check_outlined,
               children: [
                 for (final issue in summary.issues) _HealthTile(issue: issue),
@@ -228,7 +232,7 @@ class _MaintenancePageState extends State<MaintenancePage> {
             ),
             const SizedBox(height: 16),
             _SectionCard(
-              title: 'Maintenance actions',
+              title: tr.text('maintenance_actions'),
               icon: Icons.build_outlined,
               children: [
                 Wrap(
@@ -238,22 +242,22 @@ class _MaintenancePageState extends State<MaintenancePage> {
                     FilledButton.icon(
                       onPressed: _exportDiagnosticReport,
                       icon: const Icon(Icons.description_outlined),
-                      label: const Text('Export technical report'),
+                      label: Text(tr.text('export_technical_report')),
                     ),
                     OutlinedButton.icon(
                       onPressed: () => _refresh(deep: false),
                       icon: const Icon(Icons.cleaning_services_outlined),
-                      label: const Text('Quick re-check'),
+                      label: Text(tr.text('quick_recheck')),
                     ),
                     OutlinedButton.icon(
                       onPressed: _loading ? null : () => _refresh(deep: true),
                       icon: const Icon(Icons.fact_check_outlined),
-                      label: const Text('Run deep diagnostics'),
+                      label: Text(tr.text('run_deep_diagnostics')),
                     ),
                     OutlinedButton.icon(
                       onPressed: () => _confirmAndRunRepair(MaintenanceRepairAction.repairMissingCloudQueue),
                       icon: const Icon(Icons.sync_problem_outlined),
-                      label: const Text('Repair cloud sync queue'),
+                      label: Text(tr.text('repair_cloud_sync_queue')),
                     ),
                   ],
                 ),
@@ -263,10 +267,10 @@ class _MaintenancePageState extends State<MaintenancePage> {
           if (_lastDiagnosticReport != null) ...[
             const SizedBox(height: 16),
             _SectionCard(
-              title: 'Technical report',
+              title: tr.text('technical_report'),
               icon: Icons.article_outlined,
               children: [
-                Text('This JSON is for developer/support use. The readable summary above is for daily maintenance.', style: Theme.of(context).textTheme.bodySmall),
+                Text(tr.text('technical_report_desc'), style: Theme.of(context).textTheme.bodySmall),
                 const SizedBox(height: 12),
                 SelectableText(_lastDiagnosticReport!, style: Theme.of(context).textTheme.bodySmall?.copyWith(fontFamily: 'monospace')),
               ],
@@ -286,66 +290,67 @@ class _MaintenanceDashboard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     final cards = [
       _DashboardCardData(
-        title: 'Database',
+        title: tr.text('database'),
         icon: Icons.storage_outlined,
         severity: summary.databaseExists ? MaintenanceSeverity.ok : MaintenanceSeverity.warning,
-        headline: summary.databaseExists ? 'Secure' : 'Not created',
-        subtitle: summary.databaseExists ? 'Stored in Ventio AppData storage.' : 'Save a change to create the database file.',
+        headline: summary.databaseExists ? tr.text('secure') : tr.text('not_created'),
+        subtitle: summary.databaseExists ? tr.text('stored_in_appdata') : tr.text('save_change_create_db'),
         metrics: [
-          _DashboardMetric('Size', _formatCompactBytes(summary.databaseSizeBytes)),
-          _DashboardMetric('Keys', '${summary.counts['localDatabaseKeys'] ?? 0}'),
+          _DashboardMetric(tr.text('size'), _formatCompactBytes(summary.databaseSizeBytes)),
+          _DashboardMetric(tr.text('keys'), '${summary.counts['localDatabaseKeys'] ?? 0}'),
         ],
       ),
       _DashboardCardData(
-        title: 'Inventory',
+        title: tr.text('inventory'),
         icon: Icons.inventory_2_outlined,
         severity: _highestSeverity(summary, const ['negative_stock', 'zero_cost_products', 'zero_price_products', 'duplicate_product_names']),
-        headline: _headlineFor(_highestSeverity(summary, const ['negative_stock', 'zero_cost_products', 'zero_price_products', 'duplicate_product_names'])),
-        subtitle: '${summary.counts['products'] ?? 0} products tracked.',
+        headline: _headlineFor(context, _highestSeverity(summary, const ['negative_stock', 'zero_cost_products', 'zero_price_products', 'duplicate_product_names'])),
+        subtitle: tr.format('products_tracked', {'count': summary.counts['products'] ?? 0}),
         metrics: [
-          _DashboardMetric('Products', '${summary.counts['products'] ?? 0}'),
-          _DashboardMetric('Movements', '${summary.counts['stockMovements'] ?? 0}'),
+          _DashboardMetric(tr.text('products'), '${summary.counts['products'] ?? 0}'),
+          _DashboardMetric(tr.text('movements'), '${summary.counts['stockMovements'] ?? 0}'),
         ],
       ),
       _DashboardCardData(
-        title: 'Accounting',
+        title: tr.text('accounting'),
         icon: Icons.account_balance_wallet_outlined,
         severity: _highestSeverity(summary, const ['overpaid_sales']),
-        headline: _headlineFor(_highestSeverity(summary, const ['overpaid_sales'])),
-        subtitle: '${summary.counts['accountTransactions'] ?? 0} account transactions found.',
+        headline: _headlineFor(context, _highestSeverity(summary, const ['overpaid_sales'])),
+        subtitle: tr.format('account_transactions_found', {'count': summary.counts['accountTransactions'] ?? 0}),
         metrics: [
-          _DashboardMetric('Expenses', '${summary.counts['expenses'] ?? 0}'),
-          _DashboardMetric('Transactions', '${summary.counts['accountTransactions'] ?? 0}'),
+          _DashboardMetric(tr.text('expenses'), '${summary.counts['expenses'] ?? 0}'),
+          _DashboardMetric(tr.text('transactions'), '${summary.counts['accountTransactions'] ?? 0}'),
         ],
       ),
       _DashboardCardData(
-        title: 'Sync',
+        title: tr.text('sync'),
         icon: Icons.sync_outlined,
         severity: _highestSeverity(summary, const ['data_conflicts', 'pending_sync_changes']),
-        headline: _headlineFor(_highestSeverity(summary, const ['data_conflicts', 'pending_sync_changes'])),
-        subtitle: 'Pending changes: ${(summary.counts['pendingSyncChanges'] ?? 0) + (summary.counts['pendingSyncQueue'] ?? 0)}.',
+        headline: _headlineFor(context, _highestSeverity(summary, const ['data_conflicts', 'pending_sync_changes'])),
+        subtitle: tr.format('pending_changes_count', {'count': (summary.counts['pendingSyncChanges'] ?? 0) + (summary.counts['pendingSyncQueue'] ?? 0)}),
         metrics: [
-          _DashboardMetric('Queue', '${summary.counts['pendingSyncQueue'] ?? 0}'),
-          _DashboardMetric('Conflicts', '${summary.counts['dataConflicts'] ?? 0}'),
+          _DashboardMetric(tr.text('queue'), '${summary.counts['pendingSyncQueue'] ?? 0}'),
+          _DashboardMetric(tr.text('conflicts'), '${summary.counts['dataConflicts'] ?? 0}'),
         ],
       ),
       _DashboardCardData(
-        title: 'Backups',
+        title: tr.text('backups'),
         icon: Icons.backup_outlined,
         severity: MaintenanceSeverity.info,
-        headline: 'Recommended',
-        subtitle: 'Create backups before updates, migration, or device changes.',
+        headline: tr.text('recommended'),
+        subtitle: tr.text('backup_recommendation_desc'),
         metrics: [
-          _DashboardMetric('Mode', 'Manual'),
-          _DashboardMetric('Status', 'Advised'),
+          _DashboardMetric(tr.text('mode'), tr.text('manual')),
+          _DashboardMetric(tr.text('status'), tr.text('advised')),
         ],
       ),
     ];
 
     return _SectionCard(
-      title: 'Maintenance Dashboard Pro',
+      title: tr.text('maintenance_dashboard_pro'),
       icon: Icons.dashboard_customize_outlined,
       children: [
         LayoutBuilder(
@@ -377,12 +382,13 @@ class _MaintenanceDashboard extends StatelessWidget {
     return MaintenanceSeverity.ok;
   }
 
-  static String _headlineFor(MaintenanceSeverity severity) {
+  static String _headlineFor(BuildContext context, MaintenanceSeverity severity) {
+    final tr = AppLocalizations.of(context);
     return switch (severity) {
-      MaintenanceSeverity.ok => 'Healthy',
-      MaintenanceSeverity.info => 'Notes',
-      MaintenanceSeverity.warning => 'Needs review',
-      MaintenanceSeverity.critical => 'Critical',
+      MaintenanceSeverity.ok => tr.text('healthy'),
+      MaintenanceSeverity.info => tr.text('notes'),
+      MaintenanceSeverity.warning => tr.text('needs_review'),
+      MaintenanceSeverity.critical => tr.text('critical'),
     };
   }
 
@@ -501,6 +507,7 @@ class _HealthOverviewCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     final isHealthy = summary.isHealthy;
     final icon = summary.criticalCount > 0
         ? Icons.error_outline
@@ -527,9 +534,9 @@ class _HealthOverviewCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Ventio is ${summary.healthStatusLabel}', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
+                      Text(tr.format('ventio_health_status', {'status': _localizedMaintenanceHealthStatus(tr, summary)}), style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
                       const SizedBox(height: 4),
-                      Text(isHealthy ? 'No maintenance problems need action right now.' : 'Review the warnings below before continuing production work.'),
+                      Text(isHealthy ? tr.text('no_maintenance_action_needed') : tr.text('review_warnings_before_production')),
                     ],
                   ),
                 ),
@@ -541,10 +548,10 @@ class _HealthOverviewCard extends StatelessWidget {
               spacing: 8,
               runSpacing: 8,
               children: [
-                _StatusChip(label: 'Critical', value: summary.criticalCount, icon: Icons.error_outline),
-                _StatusChip(label: 'Warnings', value: summary.warningCount, icon: Icons.warning_amber_outlined),
-                _StatusChip(label: 'Notes', value: summary.infoCount, icon: Icons.info_outline),
-                _StatusChip(label: 'Pending sync', value: (summary.counts['pendingSyncChanges'] ?? 0) + (summary.counts['pendingSyncQueue'] ?? 0), icon: Icons.sync_outlined),
+                _StatusChip(label: tr.text('critical'), value: summary.criticalCount, icon: Icons.error_outline),
+                _StatusChip(label: tr.text('warnings'), value: summary.warningCount, icon: Icons.warning_amber_outlined),
+                _StatusChip(label: tr.text('notes'), value: summary.infoCount, icon: Icons.info_outline),
+                _StatusChip(label: tr.text('pending_sync'), value: (summary.counts['pendingSyncChanges'] ?? 0) + (summary.counts['pendingSyncQueue'] ?? 0), icon: Icons.sync_outlined),
               ],
             ),
           ],
@@ -686,6 +693,7 @@ class _HealthTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     final icon = switch (issue.severity) {
       MaintenanceSeverity.ok => Icons.check_circle_outline,
       MaintenanceSeverity.warning => Icons.warning_amber_outlined,
@@ -701,9 +709,89 @@ class _HealthTile extends StatelessWidget {
     return ListTile(
       contentPadding: EdgeInsets.zero,
       leading: Icon(icon, color: color),
-      title: Text(issue.title),
-      subtitle: Text(issue.message),
+      title: Text(_localizedMaintenanceIssueTitle(tr, issue)),
+      subtitle: Text(_localizedMaintenanceIssueMessage(tr, issue)),
       trailing: issue.repairAction == null ? null : const Icon(Icons.build_circle_outlined),
     );
   }
+}
+
+String _localizedMaintenanceHealthStatus(AppLocalizations tr, MaintenanceSummary summary) {
+  if (summary.criticalCount > 0) return tr.text('maintenance_status_critical');
+  if (summary.warningCount > 0) return tr.text('maintenance_status_needs');
+  if (summary.infoCount > 0) return tr.text('maintenance_status_notes');
+  return tr.text('healthy');
+}
+
+String _localizedMaintenanceRecommendation(AppLocalizations tr, String recommendation) {
+  return switch (recommendation) {
+    'Run the app once, then run the health check again to confirm the SQLite database file is created.' => tr.text('maintenance_rec_create_db'),
+    'Add products to start inventory tracking.' => tr.text('maintenance_rec_add_products'),
+    'Create a first sale invoice to validate the sales workflow.' => tr.text('maintenance_rec_first_sale'),
+    'Open sync tools and complete pending synchronization when the network is available.' => tr.text('maintenance_rec_sync'),
+    'Review data conflicts before creating more invoices.' => tr.text('maintenance_rec_conflicts'),
+    'Create a fresh backup before major updates or device changes.' => tr.text('maintenance_rec_backup_fresh'),
+    'Create a backup after fixing any maintenance warnings.' => tr.text('maintenance_rec_backup_after'),
+    _ => recommendation,
+  };
+}
+
+String _localizedMaintenanceRepairTitle(AppLocalizations tr, String title) {
+  return switch (title) {
+    'Database re-check completed' => tr.text('maintenance_recheck_completed'),
+    'Cloud sync queue repair completed' => tr.text('maintenance_cloud_queue_repair_completed'),
+    _ => title,
+  };
+}
+
+String _localizedMaintenanceRepairMessage(AppLocalizations tr, String message) {
+  final count = _leadingCount(message);
+  if (message == 'No data was changed. The health check was refreshed only.') return tr.text('maintenance_recheck_no_changes');
+  if (message.startsWith('No missing Host')) return tr.text('maintenance_cloud_queue_repair_none');
+  if (count != null && message.contains('missing Host')) return tr.format('maintenance_cloud_queue_repair_count', {'count': count});
+  return localizeRuntimeMessage(message, tr);
+}
+
+String _localizedMaintenanceIssueTitle(AppLocalizations tr, MaintenanceIssue issue) {
+  return tr.text('maintenance_issue_${issue.id}_title');
+}
+
+String _localizedMaintenanceIssueMessage(AppLocalizations tr, MaintenanceIssue issue) {
+  switch (issue.id) {
+    case 'deep_diagnostics_skipped':
+      return tr.text('maintenance_issue_deep_diagnostics_skipped_message');
+    case 'database_location':
+      if (!issue.message.startsWith('SQLite database file found')) return tr.text('maintenance_issue_database_location_missing');
+      return issue.details['legacyHiveExists'] == true ? tr.text('maintenance_issue_database_location_found_hive') : tr.text('maintenance_issue_database_location_found_no_hive');
+    case 'sqlite_migration_status':
+      return issue.message.startsWith('SQLite migration is complete') ? tr.text('maintenance_issue_sqlite_migration_ok') : tr.text('maintenance_issue_sqlite_migration_warning');
+    case 'local_database_keys':
+      return tr.format('maintenance_issue_local_database_keys_message', {'count': _leadingCount(issue.message) ?? 0});
+    case 'duplicate_product_names':
+    case 'duplicate_customer_names':
+    case 'duplicate_supplier_names':
+    case 'negative_stock':
+    case 'zero_cost_products':
+    case 'zero_price_products':
+    case 'empty_sales':
+    case 'overpaid_sales':
+    case 'sale_items_missing_products':
+    case 'empty_purchases':
+    case 'data_conflicts':
+    case 'pending_sync_changes':
+      return _localizedMaintenanceCountIssue(tr, issue);
+    default:
+      return issue.message;
+  }
+}
+
+String _localizedMaintenanceCountIssue(AppLocalizations tr, MaintenanceIssue issue) {
+  final prefix = 'maintenance_issue_${issue.id}';
+  if (issue.message.startsWith('No ')) return tr.text('${prefix}_ok');
+  return tr.format('${prefix}_found', {'count': _leadingCount(issue.message) ?? 0});
+}
+
+int? _leadingCount(String value) {
+  final match = RegExp(r'^(\d+)').firstMatch(value.trim());
+  return match == null ? null : int.tryParse(match.group(1)!);
 }
