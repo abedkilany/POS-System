@@ -30,7 +30,12 @@ class _PurchasesPageState extends State<PurchasesPage> {
   final FocusNode _pageShortcutFocusNode = FocusNode();
   String _statusFilter = 'all';
   String _sortMode = 'newest';
-  String _formatQuantity(double value) => value % 1 == 0 ? value.toStringAsFixed(0) : value.toStringAsFixed(3).replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
+  String _formatQuantity(double value) => value % 1 == 0
+      ? value.toStringAsFixed(0)
+      : value
+          .toStringAsFixed(3)
+          .replaceFirst(RegExp(r'0+$'), '')
+          .replaceFirst(RegExp(r'\.$'), '');
 
   @override
   void initState() {
@@ -53,10 +58,10 @@ class _PurchasesPageState extends State<PurchasesPage> {
     return trimmed == null || trimmed.isEmpty ? null : trimmed;
   }
 
-
   @override
   void dispose() {
-    HardwareKeyboard.instance.removeHandler(_handlePurchasesHardwareShortcutKey);
+    HardwareKeyboard.instance
+        .removeHandler(_handlePurchasesHardwareShortcutKey);
     _searchController.dispose();
     _searchFocusNode.dispose();
     _pageShortcutFocusNode.dispose();
@@ -65,7 +70,8 @@ class _PurchasesPageState extends State<PurchasesPage> {
 
   bool _handlePurchasesHardwareShortcutKey(KeyEvent event) {
     if (!mounted || ModalRoute.of(context)?.isCurrent != true) return false;
-    return _handlePurchasesShortcutKey(_pageShortcutFocusNode, event) == KeyEventResult.handled;
+    return _handlePurchasesShortcutKey(_pageShortcutFocusNode, event) ==
+        KeyEventResult.handled;
   }
 
   KeyEventResult _handlePurchasesShortcutKey(FocusNode node, KeyEvent event) {
@@ -106,7 +112,8 @@ class _PurchasesPageState extends State<PurchasesPage> {
     }
   }
 
-  Widget _buildPurchasesShortcutGuide(BuildContext context, AppLocalizations tr) {
+  Widget _buildPurchasesShortcutGuide(
+      BuildContext context, AppLocalizations tr) {
     final settings = SaleShortcutSettings.load();
     final chips = <Widget>[];
     for (final action in PurchasesShortcutAction.values) {
@@ -121,19 +128,22 @@ class _PurchasesPageState extends State<PurchasesPage> {
     if (chips.isEmpty) {
       return Align(
         alignment: AlignmentDirectional.centerStart,
-        child: Text(tr.text('shortcuts_disabled_for_page'), style: Theme.of(context).textTheme.bodySmall),
+        child: Text(tr.text('shortcuts_disabled_for_page'),
+            style: Theme.of(context).textTheme.bodySmall),
       );
     }
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(children: [
-        Text('${tr.text('shortcut_guide')}: ', style: Theme.of(context).textTheme.bodySmall),
+        Text('${tr.text('shortcut_guide')}: ',
+            style: Theme.of(context).textTheme.bodySmall),
         ...chips.expand((chip) => [chip, const SizedBox(width: 6)]),
       ]),
     );
   }
 
-  Widget _buildPurchaseDialogShortcutGuide(BuildContext context, AppLocalizations tr) {
+  Widget _buildPurchaseDialogShortcutGuide(
+      BuildContext context, AppLocalizations tr) {
     final settings = SaleShortcutSettings.load();
     final chips = <Widget>[];
     for (final action in PurchaseDialogShortcutAction.values) {
@@ -165,7 +175,8 @@ class _PurchasesPageState extends State<PurchasesPage> {
           (_statusFilter == 'draft' && !p.isReceived && !p.isCancelled) ||
           (_statusFilter == 'received' && p.isReceived && !p.isReturned) ||
           (_statusFilter == 'returned' && p.isReturned) ||
-          (_statusFilter == 'cancelled' && p.status.toLowerCase() == 'cancelled');
+          (_statusFilter == 'cancelled' &&
+              p.status.toLowerCase() == 'cancelled');
       return matchesSearch && matchesStatus;
     }).toList();
     purchases.sort((a, b) {
@@ -177,17 +188,28 @@ class _PurchasesPageState extends State<PurchasesPage> {
         case 'lowest':
           return a.subtotal.compareTo(b.subtotal);
         case 'supplier':
-          return a.supplierName.toLowerCase().compareTo(b.supplierName.toLowerCase());
+          return a.supplierName
+              .toLowerCase()
+              .compareTo(b.supplierName.toLowerCase());
         case 'newest':
         default:
           return b.date.compareTo(a.date);
       }
     });
     final now = DateTime.now();
-    final monthlyPurchases = allPurchases.where((p) => !p.isCancelled && p.date.year == now.year && p.date.month == now.month).toList();
-    final monthlyTotal = monthlyPurchases.fold<double>(0, (sum, p) => sum + p.subtotal);
-    final draftTotal = allPurchases.where((p) => !p.isCancelled && !p.isReceived).fold<double>(0, (sum, p) => sum + p.subtotal);
-    final averagePurchase = monthlyPurchases.isEmpty ? 0.0 : monthlyTotal / monthlyPurchases.length;
+    final monthlyPurchases = allPurchases
+        .where((p) =>
+            !p.isCancelled &&
+            p.date.year == now.year &&
+            p.date.month == now.month)
+        .toList();
+    final monthlyTotal =
+        monthlyPurchases.fold<double>(0, (sum, p) => sum + p.subtotal);
+    final draftTotal = allPurchases
+        .where((p) => !p.isCancelled && !p.isReceived)
+        .fold<double>(0, (sum, p) => sum + p.subtotal);
+    final averagePurchase =
+        monthlyPurchases.isEmpty ? 0.0 : monthlyTotal / monthlyPurchases.length;
     return Focus(
       focusNode: _pageShortcutFocusNode,
       autofocus: true,
@@ -195,116 +217,189 @@ class _PurchasesPageState extends State<PurchasesPage> {
       child: ListView(
         padding: VentioResponsive.pageInsets(context),
         children: [
-        LayoutBuilder(builder: (context, constraints) {
-          final compact = constraints.maxWidth < 650;
-          final title = Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          LayoutBuilder(builder: (context, constraints) {
+            final compact = constraints.maxWidth < 650;
+            final title = Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(tr.text('purchases'),
+                    style: Theme.of(context).textTheme.headlineSmall),
+                const SizedBox(height: 4),
+                Text(tr.text('purchases_desc')),
+              ],
+            );
+            final button = FilledButton.icon(
+              onPressed: () => _openPurchaseDialog(context),
+              icon: const Icon(Icons.add_shopping_cart),
+              label: Text(tr.text('new_purchase')),
+            );
+            return compact
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [title, const SizedBox(height: 12), button])
+                : Row(children: [Expanded(child: title), button]);
+          }),
+          const SizedBox(height: 8),
+          _buildPurchasesShortcutGuide(context, tr),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
             children: [
-              Text(tr.text('purchases'), style: Theme.of(context).textTheme.headlineSmall),
-              const SizedBox(height: 4),
-              Text(tr.text('purchases_desc')),
+              _MetricCard(
+                  label: tr.text('purchase_total'),
+                  value: formatUsdReferenceAmount(
+                      widget.store.totalPurchasesAmount,
+                      widget.store.storeProfile),
+                  icon: Icons.shopping_cart_checkout),
+              _MetricCard(
+                  label: tr.text('purchases_this_month'),
+                  value: formatUsdReferenceAmount(
+                      monthlyTotal, widget.store.storeProfile),
+                  icon: Icons.calendar_month_outlined),
+              _MetricCard(
+                  label: tr.text('draft_purchases'),
+                  value: formatUsdReferenceAmount(
+                      draftTotal, widget.store.storeProfile),
+                  icon: Icons.pending_actions),
+              _MetricCard(
+                  label: tr.text('avg_purchase'),
+                  value: formatUsdReferenceAmount(
+                      averagePurchase, widget.store.storeProfile),
+                  icon: Icons.insights_outlined),
             ],
-          );
-          final button = FilledButton.icon(
-            onPressed: () => _openPurchaseDialog(context),
-            icon: const Icon(Icons.add_shopping_cart),
-            label: Text(tr.text('new_purchase')),
-          );
-          return compact
-              ? Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [title, const SizedBox(height: 12), button])
-              : Row(children: [Expanded(child: title), button]);
-        }),
-        const SizedBox(height: 8),
-        _buildPurchasesShortcutGuide(context, tr),
-        const SizedBox(height: 16),
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          children: [
-            _MetricCard(label: tr.text('purchase_total'), value: formatUsdReferenceAmount(widget.store.totalPurchasesAmount, widget.store.storeProfile), icon: Icons.shopping_cart_checkout),
-            _MetricCard(label: tr.text('purchases_this_month'), value: formatUsdReferenceAmount(monthlyTotal, widget.store.storeProfile), icon: Icons.calendar_month_outlined),
-            _MetricCard(label: tr.text('draft_purchases'), value: formatUsdReferenceAmount(draftTotal, widget.store.storeProfile), icon: Icons.pending_actions),
-            _MetricCard(label: tr.text('avg_purchase'), value: formatUsdReferenceAmount(averagePurchase, widget.store.storeProfile), icon: Icons.insights_outlined),
-          ],
-        ),
-        const SizedBox(height: 16),
-        TextField(
-          controller: _searchController,
-          focusNode: _searchFocusNode,
-          onChanged: (_) => setState(() {}),
-          decoration: InputDecoration(
-            prefixIcon: const Icon(Icons.search),
-            hintText: tr.text('search_purchase_supplier_product'),
-            border: const OutlineInputBorder(),
-            suffixIcon: query.isEmpty
-                ? null
-                : IconButton(
-                    tooltip: tr.text('clear_search'),
-                    icon: const Icon(Icons.close),
-                    onPressed: () {
-                      _searchController.clear();
-                      setState(() {});
-                    },
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _searchController,
+            focusNode: _searchFocusNode,
+            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(
+              prefixIcon: const Icon(Icons.search),
+              hintText: tr.text('search_purchase_supplier_product'),
+              border: const OutlineInputBorder(),
+              suffixIcon: query.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: tr.text('clear_search'),
+                      icon: const Icon(Icons.close),
+                      onPressed: () {
+                        _searchController.clear();
+                        setState(() {});
+                      },
+                    ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxWidth < 620;
+              final filters = Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ChoiceChip(
+                      label: Text('${tr.text('all')} (${allPurchases.length})'),
+                      selected: _statusFilter == 'all',
+                      onSelected: (_) => setState(() => _statusFilter = 'all')),
+                  ChoiceChip(
+                      label: Text(
+                          '${tr.text('draft')} (${allPurchases.where((p) => !p.isReceived && !p.isCancelled).length})'),
+                      selected: _statusFilter == 'draft',
+                      onSelected: (_) =>
+                          setState(() => _statusFilter = 'draft')),
+                  ChoiceChip(
+                      label: Text(
+                          '${tr.text('received')} (${allPurchases.where((p) => p.isReceived && !p.isReturned).length})'),
+                      selected: _statusFilter == 'received',
+                      onSelected: (_) =>
+                          setState(() => _statusFilter = 'received')),
+                  ChoiceChip(
+                      label: Text(
+                          '${tr.text('returned')} (${allPurchases.where((p) => p.isReturned).length})'),
+                      selected: _statusFilter == 'returned',
+                      onSelected: (_) =>
+                          setState(() => _statusFilter = 'returned')),
+                  ChoiceChip(
+                      label: Text(
+                          '${tr.text('cancelled')} (${allPurchases.where((p) => p.status.toLowerCase() == 'cancelled').length})'),
+                      selected: _statusFilter == 'cancelled',
+                      onSelected: (_) =>
+                          setState(() => _statusFilter = 'cancelled')),
+                ],
+              );
+              final sorter = DropdownButtonFormField<String>(
+                initialValue: _sortMode,
+                decoration: InputDecoration(
+                    labelText: tr.text('sort_by'),
+                    border: const OutlineInputBorder()),
+                items: [
+                  DropdownMenuItem(
+                      value: 'newest', child: Text(tr.text('newest_first'))),
+                  DropdownMenuItem(
+                      value: 'oldest', child: Text(tr.text('oldest_first'))),
+                  DropdownMenuItem(
+                      value: 'highest', child: Text(tr.text('highest_amount'))),
+                  DropdownMenuItem(
+                      value: 'lowest', child: Text(tr.text('lowest_amount'))),
+                  DropdownMenuItem(
+                      value: 'supplier',
+                      child: Text(tr.text('supplier_name_sort'))),
+                ],
+                onChanged: (value) =>
+                    setState(() => _sortMode = value ?? 'newest'),
+              );
+              if (compact) {
+                return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [filters, const SizedBox(height: 12), sorter]);
+              }
+              return Row(children: [
+                Expanded(child: filters),
+                SizedBox(width: 220, child: sorter)
+              ]);
+            },
+          ),
+          const SizedBox(height: 16),
+          Card(
+            child: purchases.isEmpty
+                ? Padding(
+                    padding: VentioResponsive.pageInsets(context),
+                    child: Text(tr.text('no_purchases_yet')))
+                : Column(
+                    children: [
+                      for (final purchase in purchases) ...[
+                        _PurchaseTile(
+                          purchase: purchase,
+                          storeProfile: widget.store.storeProfile,
+                          onTap: () => _showPurchaseDetails(context, purchase),
+                          onReceive: purchase.status == 'Draft'
+                              ? () => _receivePurchase(context, purchase.id)
+                              : null,
+                          onCancel: purchase.isReceived && !purchase.isReturned
+                              ? () => _returnPurchase(context, purchase.id)
+                              : null,
+                          onDeleteDraft: !purchase.isReceived &&
+                                  !purchase.isCancelled
+                              ? () => _deleteDraftPurchase(context, purchase.id)
+                              : null,
+                          onPermanentDelete:
+                              purchase.status.toLowerCase() == 'cancelled' &&
+                                      widget.store.hasPermission(
+                                          AppPermission.databaseManage)
+                                  ? () => _permanentlyDeletePurchase(
+                                      context, purchase.id)
+                                  : null,
+                          onDuplicate: () =>
+                              _openPurchaseDialog(context, template: purchase),
+                          formatDate: _formatShortDate,
+                        ),
+                        const Divider(height: 1),
+                      ],
+                    ],
                   ),
           ),
-        ),
-        const SizedBox(height: 12),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final compact = constraints.maxWidth < 620;
-            final filters = Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                ChoiceChip(label: Text('${tr.text('all')} (${allPurchases.length})'), selected: _statusFilter == 'all', onSelected: (_) => setState(() => _statusFilter = 'all')),
-                ChoiceChip(label: Text('${tr.text('draft')} (${allPurchases.where((p) => !p.isReceived && !p.isCancelled).length})'), selected: _statusFilter == 'draft', onSelected: (_) => setState(() => _statusFilter = 'draft')),
-                ChoiceChip(label: Text('${tr.text('received')} (${allPurchases.where((p) => p.isReceived && !p.isReturned).length})'), selected: _statusFilter == 'received', onSelected: (_) => setState(() => _statusFilter = 'received')),
-                ChoiceChip(label: Text('${tr.text('returned')} (${allPurchases.where((p) => p.isReturned).length})'), selected: _statusFilter == 'returned', onSelected: (_) => setState(() => _statusFilter = 'returned')),
-                ChoiceChip(label: Text('${tr.text('cancelled')} (${allPurchases.where((p) => p.status.toLowerCase() == 'cancelled').length})'), selected: _statusFilter == 'cancelled', onSelected: (_) => setState(() => _statusFilter = 'cancelled')),
-              ],
-            );
-            final sorter = DropdownButtonFormField<String>(
-              initialValue: _sortMode,
-              decoration: InputDecoration(labelText: tr.text('sort_by'), border: const OutlineInputBorder()),
-              items: [
-                DropdownMenuItem(value: 'newest', child: Text(tr.text('newest_first'))),
-                DropdownMenuItem(value: 'oldest', child: Text(tr.text('oldest_first'))),
-                DropdownMenuItem(value: 'highest', child: Text(tr.text('highest_amount'))),
-                DropdownMenuItem(value: 'lowest', child: Text(tr.text('lowest_amount'))),
-                DropdownMenuItem(value: 'supplier', child: Text(tr.text('supplier_name_sort'))),
-              ],
-              onChanged: (value) => setState(() => _sortMode = value ?? 'newest'),
-            );
-            if (compact) {
-              return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [filters, const SizedBox(height: 12), sorter]);
-            }
-            return Row(children: [Expanded(child: filters), SizedBox(width: 220, child: sorter)]);
-          },
-        ),
-        const SizedBox(height: 16),
-        Card(
-          child: purchases.isEmpty
-              ? Padding(padding: VentioResponsive.pageInsets(context), child: Text(tr.text('no_purchases_yet')))
-              : Column(
-                  children: [
-                    for (final purchase in purchases) ...[
-                      _PurchaseTile(
-                        purchase: purchase,
-                        storeProfile: widget.store.storeProfile,
-                        onTap: () => _showPurchaseDetails(context, purchase),
-                        onReceive: purchase.status == 'Draft' ? () => _receivePurchase(context, purchase.id) : null,
-                        onCancel: purchase.isReceived && !purchase.isReturned ? () => _returnPurchase(context, purchase.id) : null,
-                        onDeleteDraft: !purchase.isReceived && !purchase.isCancelled ? () => _deleteDraftPurchase(context, purchase.id) : null,
-                        onPermanentDelete: purchase.status.toLowerCase() == 'cancelled' && widget.store.hasPermission(AppPermission.databaseManage) ? () => _permanentlyDeletePurchase(context, purchase.id) : null,
-                        onDuplicate: () => _openPurchaseDialog(context, template: purchase),
-                        formatDate: _formatShortDate,
-                      ),
-                      const Divider(height: 1),
-                    ],
-                  ],
-                ),
-        ),
-      ],
+        ],
       ),
     );
   }
@@ -313,11 +408,14 @@ class _PurchasesPageState extends State<PurchasesPage> {
     try {
       await widget.store.receivePurchase(id);
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('purchase_received'))));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content:
+              Text(AppLocalizations.of(context).text('purchase_received'))));
       setState(() {});
     } catch (error) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.toString())));
     }
   }
 
@@ -326,10 +424,15 @@ class _PurchasesPageState extends State<PurchasesPage> {
       context: context,
       builder: (context) => AlertDialog(
         title: Text(AppLocalizations.of(context).text('delete_draft_purchase')),
-        content: Text(AppLocalizations.of(context).text('delete_draft_purchase_desc')),
+        content: Text(
+            AppLocalizations.of(context).text('delete_draft_purchase_desc')),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(AppLocalizations.of(context).text('cancel'))),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(AppLocalizations.of(context).text('delete'))),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(AppLocalizations.of(context).text('cancel'))),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(AppLocalizations.of(context).text('delete'))),
         ],
       ),
     );
@@ -337,23 +440,34 @@ class _PurchasesPageState extends State<PurchasesPage> {
     try {
       await widget.store.deleteDraftPurchase(id);
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('purchase_deleted'))));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content:
+              Text(AppLocalizations.of(context).text('purchase_deleted'))));
       setState(() {});
     } catch (error) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.toString())));
     }
   }
 
-  Future<void> _permanentlyDeletePurchase(BuildContext context, String id) async {
+  Future<void> _permanentlyDeletePurchase(
+      BuildContext context, String id) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(AppLocalizations.of(context).text('permanently_delete_purchase')),
-        content: Text(AppLocalizations.of(context).text('permanently_delete_purchase_desc')),
+        title: Text(
+            AppLocalizations.of(context).text('permanently_delete_purchase')),
+        content: Text(AppLocalizations.of(context)
+            .text('permanently_delete_purchase_desc')),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(AppLocalizations.of(context).text('cancel'))),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(AppLocalizations.of(context).text('permanently_delete'))),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(AppLocalizations.of(context).text('cancel'))),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(
+                  AppLocalizations.of(context).text('permanently_delete'))),
         ],
       ),
     );
@@ -361,11 +475,14 @@ class _PurchasesPageState extends State<PurchasesPage> {
     try {
       await widget.store.permanentlyDeleteCancelledPurchase(id);
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('purchase_permanently_deleted'))));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(AppLocalizations.of(context)
+              .text('purchase_permanently_deleted'))));
       setState(() {});
     } catch (error) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.toString())));
     }
   }
 
@@ -384,13 +501,19 @@ class _PurchasesPageState extends State<PurchasesPage> {
             TextField(
               controller: reasonController,
               maxLines: 2,
-              decoration: InputDecoration(labelText: AppLocalizations.of(context).text('return_reason_optional')),
+              decoration: InputDecoration(
+                  labelText: AppLocalizations.of(context)
+                      .text('return_reason_optional')),
             ),
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(AppLocalizations.of(context).text('cancel'))),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(AppLocalizations.of(context).text('confirm'))),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(AppLocalizations.of(context).text('cancel'))),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(AppLocalizations.of(context).text('confirm'))),
         ],
       ),
     );
@@ -403,24 +526,34 @@ class _PurchasesPageState extends State<PurchasesPage> {
     try {
       await widget.store.returnPurchase(id, reason: reason);
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('purchase_returned_stock_reversed'))));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(AppLocalizations.of(context)
+              .text('purchase_returned_stock_reversed'))));
       setState(() {});
     } catch (error) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.toString())));
     }
   }
 
-  Future<void> _showPurchaseDetails(BuildContext context, Purchase purchase) async {
+  Future<void> _showPurchaseDetails(
+      BuildContext context, Purchase purchase) async {
     final tr = AppLocalizations.of(context);
     final statusText = purchase.isReturned
         ? tr.text('returned')
         : purchase.status.toLowerCase() == 'cancelled'
             ? tr.text('cancelled')
             : purchase.isReceived
-            ? tr.text('received')
-            : tr.text('draft');
-    final statusColor = purchase.isReturned ? Colors.blueGrey : purchase.status.toLowerCase() == 'cancelled' ? Colors.red : purchase.isReceived ? Colors.green : Colors.orange;
+                ? tr.text('received')
+                : tr.text('draft');
+    final statusColor = purchase.isReturned
+        ? Colors.blueGrey
+        : purchase.status.toLowerCase() == 'cancelled'
+            ? Colors.red
+            : purchase.isReceived
+                ? Colors.green
+                : Colors.orange;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -440,8 +573,12 @@ class _PurchasesPageState extends State<PurchasesPage> {
               children: [
                 Row(
                   children: [
-                    Expanded(child: Text(purchase.purchaseNo, style: Theme.of(context).textTheme.titleLarge)),
-                    IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
+                    Expanded(
+                        child: Text(purchase.purchaseNo,
+                            style: Theme.of(context).textTheme.titleLarge)),
+                    IconButton(
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.close)),
                   ],
                 ),
                 const SizedBox(height: 8),
@@ -449,10 +586,22 @@ class _PurchasesPageState extends State<PurchasesPage> {
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    Chip(label: Text(purchase.supplierName.isEmpty ? '-' : purchase.supplierName), avatar: const Icon(Icons.local_shipping_outlined, size: 18)),
-                    Chip(label: Text(statusText), avatar: Icon(Icons.circle, size: 14, color: statusColor)),
-                    Chip(label: Text('${purchase.items.length} ${tr.text('items')}')),
-                    Chip(label: Text('${_formatQuantity(purchase.totalUnits)} ${tr.text('units')}')),
+                    Chip(
+                        label: Text(purchase.supplierName.isEmpty
+                            ? '-'
+                            : purchase.supplierName),
+                        avatar: const Icon(Icons.local_shipping_outlined,
+                            size: 18)),
+                    Chip(
+                        label: Text(statusText),
+                        avatar:
+                            Icon(Icons.circle, size: 14, color: statusColor)),
+                    Chip(
+                        label: Text(
+                            '${purchase.items.length} ${tr.text('items')}')),
+                    Chip(
+                        label: Text(
+                            '${_formatQuantity(purchase.totalUnits)} ${tr.text('units')}')),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -462,24 +611,46 @@ class _PurchasesPageState extends State<PurchasesPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        _DetailRow(label: tr.text('date'), value: _formatShortDate(purchase.date)),
-                        if (purchase.cancelledAt != null) _DetailRow(label: tr.text('cancelled_at'), value: _formatShortDate(purchase.cancelledAt!)),
-                        if (purchase.cancelReason.trim().isNotEmpty) _DetailRow(label: tr.text('cancel_reason'), value: purchase.cancelReason.trim()),
-                        if (purchase.isCancelled) _DetailRow(label: tr.text('reversal_status'), value: purchase.reversalApplied ? tr.text('reversal_applied') : tr.text('reversal_not_applied')),
-                        _DetailRow(label: tr.text('final_total'), value: formatUsdReferenceAmount(purchase.subtotal, widget.store.storeProfile)),
-                        if (purchase.note.trim().isNotEmpty) _DetailRow(label: tr.text('notes'), value: purchase.note.trim()),
+                        _DetailRow(
+                            label: tr.text('date'),
+                            value: _formatShortDate(purchase.date)),
+                        if (purchase.cancelledAt != null)
+                          _DetailRow(
+                              label: tr.text('cancelled_at'),
+                              value: _formatShortDate(purchase.cancelledAt!)),
+                        if (purchase.cancelReason.trim().isNotEmpty)
+                          _DetailRow(
+                              label: tr.text('cancel_reason'),
+                              value: purchase.cancelReason.trim()),
+                        if (purchase.isCancelled)
+                          _DetailRow(
+                              label: tr.text('reversal_status'),
+                              value: purchase.reversalApplied
+                                  ? tr.text('reversal_applied')
+                                  : tr.text('reversal_not_applied')),
+                        _DetailRow(
+                            label: tr.text('final_total'),
+                            value: formatUsdReferenceAmount(
+                                purchase.subtotal, widget.store.storeProfile)),
+                        if (purchase.note.trim().isNotEmpty)
+                          _DetailRow(
+                              label: tr.text('notes'),
+                              value: purchase.note.trim()),
                       ],
                     ),
                   ),
                 ),
                 const SizedBox(height: 12),
-                Text(tr.text('items'), style: Theme.of(context).textTheme.titleMedium),
+                Text(tr.text('items'),
+                    style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 8),
                 ...purchase.items.map((item) => Card(
                       child: ListTile(
                         title: Text(item.productName),
-                        subtitle: Text('${_formatQuantity(item.quantity)} ${item.purchaseUnitName.isEmpty ? tr.text('unit') : item.purchaseUnitName} • ${formatCurrency(item.originalUnitCost ?? item.unitCost, currency: item.unitCostCurrency)}'),
-                        trailing: Text(formatUsdReferenceAmount(item.lineTotal, widget.store.storeProfile)),
+                        subtitle: Text(
+                            '${_formatQuantity(item.quantity)} ${item.purchaseUnitName.isEmpty ? tr.text('unit') : item.purchaseUnitName} • ${formatCurrency(item.originalUnitCost ?? item.unitCost, currency: item.unitCostCurrency)}'),
+                        trailing: Text(formatUsdReferenceAmount(
+                            item.lineTotal, widget.store.storeProfile)),
                       ),
                     )),
                 const SizedBox(height: 12),
@@ -523,7 +694,9 @@ class _PurchasesPageState extends State<PurchasesPage> {
                         icon: const Icon(Icons.delete_outline),
                         label: Text(tr.text('delete_draft_purchase')),
                       ),
-                    if (purchase.isCancelled && widget.store.hasPermission(AppPermission.databaseManage))
+                    if (purchase.isCancelled &&
+                        widget.store
+                            .hasPermission(AppPermission.databaseManage))
                       OutlinedButton.icon(
                         onPressed: () {
                           Navigator.pop(context);
@@ -542,19 +715,37 @@ class _PurchasesPageState extends State<PurchasesPage> {
     );
   }
 
-  Future<void> _openPurchaseDialog(BuildContext context, {Purchase? template}) async {
+  Future<void> _openPurchaseDialog(BuildContext context,
+      {Purchase? template}) async {
     final tr = AppLocalizations.of(context);
     final formKey = GlobalKey<FormState>();
-    final items = template == null ? <PurchaseItem>[] : List<PurchaseItem>.of(template.items);
-    var purchaseProducts = widget.store.products.where((product) => product.trackStock && product.isActive).toList();
-    String supplierId = template?.supplierId ?? (widget.store.suppliers.isNotEmpty ? widget.store.suppliers.first.id : '');
-    String supplierName = template?.supplierName ?? (widget.store.suppliers.isNotEmpty ? widget.store.suppliers.first.name : '');
-    if (supplierId.isNotEmpty && !widget.store.suppliers.any((supplier) => supplier.id == supplierId)) {
-      supplierId = widget.store.suppliers.isNotEmpty ? widget.store.suppliers.first.id : '';
-      supplierName = widget.store.suppliers.isNotEmpty ? widget.store.suppliers.first.name : supplierName;
+    final items = template == null
+        ? <PurchaseItem>[]
+        : List<PurchaseItem>.of(template.items);
+    var purchaseProducts = widget.store.products
+        .where((product) => product.trackStock && product.isActive)
+        .toList();
+    String supplierId = template?.supplierId ??
+        (widget.store.suppliers.isNotEmpty
+            ? widget.store.suppliers.first.id
+            : '');
+    String supplierName = template?.supplierName ??
+        (widget.store.suppliers.isNotEmpty
+            ? widget.store.suppliers.first.name
+            : '');
+    if (supplierId.isNotEmpty &&
+        !widget.store.suppliers.any((supplier) => supplier.id == supplierId)) {
+      supplierId = widget.store.suppliers.isNotEmpty
+          ? widget.store.suppliers.first.id
+          : '';
+      supplierName = widget.store.suppliers.isNotEmpty
+          ? widget.store.suppliers.first.name
+          : supplierName;
     }
-    Product? selectedProduct = purchaseProducts.isNotEmpty ? purchaseProducts.first : null;
-    ProductSaleUnit? selectedUnit = selectedProduct?.effectivePurchaseUnits.first;
+    Product? selectedProduct =
+        purchaseProducts.isNotEmpty ? purchaseProducts.first : null;
+    ProductSaleUnit? selectedUnit =
+        selectedProduct?.effectivePurchaseUnits.first;
     final qtyController = TextEditingController(text: '1');
     final costController = TextEditingController();
     final productSearchController = TextEditingController();
@@ -565,28 +756,43 @@ class _PurchasesPageState extends State<PurchasesPage> {
     final paidAmountFocusNode = FocusNode();
     String paymentStatus = 'paid';
     String paymentMethod = 'Cash';
-    String costCurrency = selectedProduct?.costCurrency ?? widget.store.storeProfile.defaultProductCurrency;
+    String costCurrency = selectedProduct?.costCurrency ??
+        widget.store.storeProfile.defaultProductCurrency;
     bool receiveNow = false;
 
     SupplierProductPrice? selectedSupplierPriceFor(Product product) {
-      return supplierId.isEmpty ? null : widget.store.supplierProductPriceFor(productId: product.id, supplierId: supplierId);
+      return supplierId.isEmpty
+          ? null
+          : widget.store.supplierProductPriceFor(
+              productId: product.id, supplierId: supplierId);
     }
 
     PurchaseItem? suggestedPurchaseItem(Product product) {
-      return supplierId.isEmpty ? null : widget.store.lastPurchaseItemFor(productId: product.id, supplierId: supplierId);
+      return supplierId.isEmpty
+          ? null
+          : widget.store.lastPurchaseItemFor(
+              productId: product.id, supplierId: supplierId);
     }
 
     double suggestedBaseCost(Product product) {
       final supplierPrice = selectedSupplierPriceFor(product);
       if (supplierPrice != null) {
-        return toUsdReferencePrice(supplierPrice.cost, supplierPrice.currency, widget.store.storeProfile);
+        return toUsdReferencePrice(supplierPrice.cost, supplierPrice.currency,
+            widget.store.storeProfile);
       }
-      return suggestedPurchaseItem(product)?.unitCostPerBase ?? widget.store.lastPurchasePriceForProduct(product.id) ?? product.usdCost;
+      return suggestedPurchaseItem(product)?.unitCostPerBase ??
+          widget.store.lastPurchasePriceForProduct(product.id) ??
+          product.usdCost;
     }
 
     String suggestedCostCurrency(Product product) {
       final supplierPrice = selectedSupplierPriceFor(product);
-      return supplierPrice?.currency ?? suggestedPurchaseItem(product)?.unitCostCurrency ?? widget.store.lastPurchaseItemForProduct(product.id)?.unitCostCurrency ?? product.costCurrency;
+      return supplierPrice?.currency ??
+          suggestedPurchaseItem(product)?.unitCostCurrency ??
+          widget.store
+              .lastPurchaseItemForProduct(product.id)
+              ?.unitCostCurrency ??
+          product.costCurrency;
     }
 
     void applySuggestedSupplierPrice() {
@@ -598,8 +804,10 @@ class _PurchasesPageState extends State<PurchasesPage> {
       }
       costCurrency = suggestedCostCurrency(product);
       final suggested = suggestedBaseCost(product) * unit.conversionToBase;
-      final displayCost = fromUsdReferencePrice(suggested, costCurrency, widget.store.storeProfile);
-      costController.text = displayCost.toStringAsFixed(costCurrency == 'LBP' ? 0 : 2);
+      final displayCost = fromUsdReferencePrice(
+          suggested, costCurrency, widget.store.storeProfile);
+      costController.text =
+          displayCost.toStringAsFixed(costCurrency == 'LBP' ? 0 : 2);
     }
 
     selectedUnit = selectedProduct?.effectivePurchaseUnits.first;
@@ -608,24 +816,45 @@ class _PurchasesPageState extends State<PurchasesPage> {
     String priceHintForSelectedProduct() {
       final product = selectedProduct;
       if (product == null) return '';
-      final configuredSupplierPrice = supplierId.isEmpty ? null : widget.store.supplierProductPriceFor(productId: product.id, supplierId: supplierId);
+      final configuredSupplierPrice = supplierId.isEmpty
+          ? null
+          : widget.store.supplierProductPriceFor(
+              productId: product.id, supplierId: supplierId);
       final supplierPrice = supplierId.isEmpty
           ? null
-          : widget.store.lastPurchasePriceFor(productId: product.id, supplierId: supplierId);
+          : widget.store.lastPurchasePriceFor(
+              productId: product.id, supplierId: supplierId);
       final lastGeneral = widget.store.lastPurchasePriceForProduct(product.id);
       final avg = widget.store.averagePurchaseCostForProduct(product.id);
       final supplierCount = widget.store.supplierCountForProduct(product.id);
       final parts = <String>[];
-      if (configuredSupplierPrice != null) parts.add('${tr.text('supplier_price')}: ${formatCurrency(configuredSupplierPrice.cost, currency: configuredSupplierPrice.currency)}');
-      if (supplierPrice != null) parts.add('${tr.text('supplier_last_base')}: ${formatUsdReferenceAmount(supplierPrice, widget.store.storeProfile)}');
-      if (lastGeneral != null) parts.add('${tr.text('last_base')}: ${formatUsdReferenceAmount(lastGeneral, widget.store.storeProfile)}');
-      if (avg > 0) parts.add('${tr.text('avg_base')}: ${formatUsdReferenceAmount(avg, widget.store.storeProfile)}');
-      if (supplierCount > 0) parts.add('$supplierCount ${tr.text(supplierCount == 1 ? 'supplier' : 'suppliers')}');
+      if (configuredSupplierPrice != null) {
+        parts.add(
+            '${tr.text('supplier_price')}: ${formatCurrency(configuredSupplierPrice.cost, currency: configuredSupplierPrice.currency)}');
+      }
+      if (supplierPrice != null) {
+        parts.add(
+            '${tr.text('supplier_last_base')}: ${formatUsdReferenceAmount(supplierPrice, widget.store.storeProfile)}');
+      }
+      if (lastGeneral != null) {
+        parts.add(
+            '${tr.text('last_base')}: ${formatUsdReferenceAmount(lastGeneral, widget.store.storeProfile)}');
+      }
+      if (avg > 0) {
+        parts.add(
+            '${tr.text('avg_base')}: ${formatUsdReferenceAmount(avg, widget.store.storeProfile)}');
+      }
+      if (supplierCount > 0) {
+        parts.add(
+            '$supplierCount ${tr.text(supplierCount == 1 ? 'supplier' : 'suppliers')}');
+      }
       return parts.join(' • ');
     }
 
     String unitConversionSummary(PurchaseItem item) {
-      final unitName = item.purchaseUnitName.isEmpty ? tr.text('unit') : item.purchaseUnitName;
+      final unitName = item.purchaseUnitName.isEmpty
+          ? tr.text('unit')
+          : item.purchaseUnitName;
       return '${_formatQuantity(item.quantity)} $unitName = ${_formatQuantity(item.baseQuantity)} ${tr.text('base')} ${tr.text(item.baseQuantity == 1 ? 'unit' : 'units')}';
     }
 
@@ -637,7 +866,8 @@ class _PurchasesPageState extends State<PurchasesPage> {
     }
 
     void showPurchaseError(String message) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
     }
 
     Future<bool> confirmDiscardIfNeeded(BuildContext confirmContext) async {
@@ -648,8 +878,12 @@ class _PurchasesPageState extends State<PurchasesPage> {
               title: Text(tr.text('discard_purchase_title')),
               content: Text(tr.text('discard_purchase_message')),
               actions: [
-                TextButton(onPressed: () => Navigator.pop(alertContext, false), child: Text(tr.text('keep_editing'))),
-                FilledButton(onPressed: () => Navigator.pop(alertContext, true), child: Text(tr.text('discard'))),
+                TextButton(
+                    onPressed: () => Navigator.pop(alertContext, false),
+                    child: Text(tr.text('keep_editing'))),
+                FilledButton(
+                    onPressed: () => Navigator.pop(alertContext, true),
+                    child: Text(tr.text('discard'))),
               ],
             ),
           ) ??
@@ -674,11 +908,18 @@ class _PurchasesPageState extends State<PurchasesPage> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(tr.text('add_supplier'), style: Theme.of(sheetContext).textTheme.titleLarge),
+              Text(tr.text('add_supplier'),
+                  style: Theme.of(sheetContext).textTheme.titleLarge),
               const SizedBox(height: 16),
-              TextField(controller: nameController, decoration: InputDecoration(labelText: tr.text('supplier_name')), autofocus: true),
+              TextField(
+                  controller: nameController,
+                  decoration:
+                      InputDecoration(labelText: tr.text('supplier_name')),
+                  autofocus: true),
               const SizedBox(height: 12),
-              TextField(controller: phoneController, decoration: InputDecoration(labelText: tr.text('phone'))),
+              TextField(
+                  controller: phoneController,
+                  decoration: InputDecoration(labelText: tr.text('phone'))),
               const SizedBox(height: 16),
               FilledButton.icon(
                 icon: const Icon(Icons.save_outlined),
@@ -686,13 +927,15 @@ class _PurchasesPageState extends State<PurchasesPage> {
                 onPressed: () {
                   final name = nameController.text.trim();
                   if (name.isEmpty) return;
-                  Navigator.pop(sheetContext, Supplier(
-                    id: 'supplier_${DateTime.now().microsecondsSinceEpoch}',
-                    name: name,
-                    phone: phoneController.text.trim(),
-                    address: '',
-                    notes: '',
-                  ));
+                  Navigator.pop(
+                      sheetContext,
+                      Supplier(
+                        id: 'supplier_${DateTime.now().microsecondsSinceEpoch}',
+                        name: name,
+                        phone: phoneController.text.trim(),
+                        address: '',
+                        notes: '',
+                      ));
                 },
               ),
             ],
@@ -730,9 +973,14 @@ class _PurchasesPageState extends State<PurchasesPage> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(tr.text('add_product'), style: Theme.of(sheetContext).textTheme.titleLarge),
+              Text(tr.text('add_product'),
+                  style: Theme.of(sheetContext).textTheme.titleLarge),
               const SizedBox(height: 16),
-              TextField(controller: nameController, decoration: InputDecoration(labelText: tr.text('product_name')), autofocus: true),
+              TextField(
+                  controller: nameController,
+                  decoration:
+                      InputDecoration(labelText: tr.text('product_name')),
+                  autofocus: true),
               const SizedBox(height: 12),
               TextField(
                 controller: barcodeQuickController,
@@ -757,19 +1005,21 @@ class _PurchasesPageState extends State<PurchasesPage> {
                   final name = nameController.text.trim();
                   if (name.isEmpty) return;
                   final now = DateTime.now().microsecondsSinceEpoch;
-                  Navigator.pop(sheetContext, Product(
-                    id: 'product_$now',
-                    name: name,
-                    code: 'PRD-$now',
-                    barcode: barcodeQuickController.text.trim(),
-                    price: 0,
-                    cost: 0,
-                    stock: 0,
-                    category: 'General',
-                    unit: tr.text('unit'),
-                    trackStock: true,
-                    isActive: true,
-                  ));
+                  Navigator.pop(
+                      sheetContext,
+                      Product(
+                        id: 'product_$now',
+                        name: name,
+                        code: 'PRD-$now',
+                        barcode: barcodeQuickController.text.trim(),
+                        price: 0,
+                        cost: 0,
+                        stock: 0,
+                        category: 'General',
+                        unit: tr.text('unit'),
+                        trackStock: true,
+                        isActive: true,
+                      ));
                 },
               ),
             ],
@@ -783,7 +1033,9 @@ class _PurchasesPageState extends State<PurchasesPage> {
         await widget.store.addOrUpdateProduct(created);
         selectedProduct = created;
         selectedUnit = created.effectivePurchaseUnits.first;
-        purchaseProducts = widget.store.products.where((product) => product.trackStock && product.isActive).toList();
+        purchaseProducts = widget.store.products
+            .where((product) => product.trackStock && product.isActive)
+            .toList();
         applySuggestedSupplierPrice();
         setDialogState(() {});
       } catch (error) {
@@ -791,15 +1043,23 @@ class _PurchasesPageState extends State<PurchasesPage> {
       }
     }
 
-
-    Future<void> editPurchaseLine(PurchaseItem item, StateSetter setDialogState) async {
-      final productMatches = purchaseProducts.where((p) => p.id == item.productId).toList();
+    Future<void> editPurchaseLine(
+        PurchaseItem item, StateSetter setDialogState) async {
+      final productMatches =
+          purchaseProducts.where((p) => p.id == item.productId).toList();
       if (productMatches.isEmpty) return;
       final product = productMatches.first;
-      ProductSaleUnit editUnit = product.effectivePurchaseUnits.firstWhere((unit) => unit.id == item.purchaseUnitId, orElse: () => product.effectivePurchaseUnits.first);
+      ProductSaleUnit editUnit = product.effectivePurchaseUnits.firstWhere(
+          (unit) => unit.id == item.purchaseUnitId,
+          orElse: () => product.effectivePurchaseUnits.first);
       String editCurrency = item.unitCostCurrency;
-      final editQtyController = TextEditingController(text: _formatQuantity(item.quantity));
-      final editCostController = TextEditingController(text: (item.originalUnitCost ?? fromUsdReferencePrice(item.unitCost, editCurrency, widget.store.storeProfile)).toStringAsFixed(editCurrency == 'LBP' ? 0 : 2));
+      final editQtyController =
+          TextEditingController(text: _formatQuantity(item.quantity));
+      final editCostController = TextEditingController(
+          text: (item.originalUnitCost ??
+                  fromUsdReferencePrice(
+                      item.unitCost, editCurrency, widget.store.storeProfile))
+              .toStringAsFixed(editCurrency == 'LBP' ? 0 : 2));
       final updated = await showModalBottomSheet<PurchaseItem>(
         context: context,
         isScrollControlled: true,
@@ -809,10 +1069,12 @@ class _PurchasesPageState extends State<PurchasesPage> {
         builder: (editContext) => StatefulBuilder(
           builder: (editContext, setEditState) {
             return Padding(
-              padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(editContext).bottom),
+              padding: EdgeInsets.only(
+                  bottom: MediaQuery.viewInsetsOf(editContext).bottom),
               child: Material(
                 clipBehavior: Clip.antiAlias,
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(24)),
                 child: SafeArea(
                   top: false,
                   child: Padding(
@@ -824,7 +1086,11 @@ class _PurchasesPageState extends State<PurchasesPage> {
                         children: [
                           Row(
                             children: [
-                              Expanded(child: Text(tr.text('edit_purchase_line'), style: Theme.of(editContext).textTheme.titleLarge)),
+                              Expanded(
+                                  child: Text(tr.text('edit_purchase_line'),
+                                      style: Theme.of(editContext)
+                                          .textTheme
+                                          .titleLarge)),
                               IconButton(
                                 tooltip: tr.text('cancel'),
                                 icon: const Icon(Icons.close),
@@ -835,48 +1101,98 @@ class _PurchasesPageState extends State<PurchasesPage> {
                           const SizedBox(height: 12),
                           DropdownButtonFormField<String>(
                             initialValue: editUnit.id,
-                            decoration: InputDecoration(labelText: tr.text('purchase_unit')),
-                            items: product.effectivePurchaseUnits.map((unit) => DropdownMenuItem(value: unit.id, child: Text('${unit.name} × ${_formatQuantity(unit.conversionToBase)}'))).toList(),
+                            decoration: InputDecoration(
+                                labelText: tr.text('purchase_unit')),
+                            items: product.effectivePurchaseUnits
+                                .map((unit) => DropdownMenuItem(
+                                    value: unit.id,
+                                    child: Text(
+                                        '${unit.name} × ${_formatQuantity(unit.conversionToBase)}')))
+                                .toList(),
                             onChanged: (value) {
-                              final matches = product.effectivePurchaseUnits.where((unit) => unit.id == value).toList();
-                              if (matches.isNotEmpty) setEditState(() => editUnit = matches.first);
+                              final matches = product.effectivePurchaseUnits
+                                  .where((unit) => unit.id == value)
+                                  .toList();
+                              if (matches.isNotEmpty) {
+                                setEditState(() => editUnit = matches.first);
+                              }
                             },
                           ),
                           const SizedBox(height: 12),
-                          TextFormField(controller: editQtyController, decoration: InputDecoration(labelText: tr.text('quantity')), keyboardType: const TextInputType.numberWithOptions(decimal: true)),
+                          TextFormField(
+                              controller: editQtyController,
+                              decoration: InputDecoration(
+                                  labelText: tr.text('quantity')),
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                      decimal: true)),
                           const SizedBox(height: 12),
-                          TextFormField(controller: editCostController, decoration: InputDecoration(labelText: tr.text('unit_cost')), keyboardType: const TextInputType.numberWithOptions(decimal: true)),
+                          TextFormField(
+                              controller: editCostController,
+                              decoration: InputDecoration(
+                                  labelText: tr.text('unit_cost')),
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                      decimal: true)),
                           const SizedBox(height: 12),
                           DropdownButtonFormField<String>(
                             initialValue: editCurrency,
-                            decoration: InputDecoration(labelText: tr.text('currency')),
-                            items: const [DropdownMenuItem(value: 'USD', child: Text('USD')), DropdownMenuItem(value: 'LBP', child: Text('LBP'))],
-                            onChanged: (value) => setEditState(() => editCurrency = value ?? 'USD'),
+                            decoration:
+                                InputDecoration(labelText: tr.text('currency')),
+                            items: const [
+                              DropdownMenuItem(
+                                  value: 'USD', child: Text('USD')),
+                              DropdownMenuItem(value: 'LBP', child: Text('LBP'))
+                            ],
+                            onChanged: (value) => setEditState(
+                                () => editCurrency = value ?? 'USD'),
                           ),
                           const SizedBox(height: 20),
                           Row(
                             children: [
-                              Expanded(child: TextButton(onPressed: () => Navigator.pop(editContext), child: Text(tr.text('cancel')))),
+                              Expanded(
+                                  child: TextButton(
+                                      onPressed: () =>
+                                          Navigator.pop(editContext),
+                                      child: Text(tr.text('cancel')))),
                               const SizedBox(width: 12),
                               Expanded(
                                 child: FilledButton(
                                   onPressed: () {
-                                    final qty = double.tryParse(editQtyController.text.trim()) ?? 0;
-                                    final enteredCost = double.tryParse(editCostController.text.trim()) ?? -1;
-                                    if (qty <= 0 || enteredCost < 0 || editUnit.conversionToBase <= 0) return;
-                                    if (!product.allowsDecimalQuantity && qty % 1 != 0) return;
-                                    Navigator.pop(editContext, PurchaseItem(
-                                      productId: product.id,
-                                      productName: product.name,
-                                      quantity: qty,
-                                      purchaseUnitId: editUnit.id,
-                                      purchaseUnitName: editUnit.name,
-                                      conversionToBase: editUnit.conversionToBase,
-                                      unitCost: toUsdReferencePrice(enteredCost, editCurrency, widget.store.storeProfile),
-                                      originalUnitCost: enteredCost,
-                                      unitCostCurrency: editCurrency,
-                                      exchangeRateAtEntry: widget.store.storeProfile.usdToLbpRate,
-                                    ));
+                                    final qty = double.tryParse(
+                                            editQtyController.text.trim()) ??
+                                        0;
+                                    final enteredCost = double.tryParse(
+                                            editCostController.text.trim()) ??
+                                        -1;
+                                    if (qty <= 0 ||
+                                        enteredCost < 0 ||
+                                        editUnit.conversionToBase <= 0) {
+                                      return;
+                                    }
+                                    if (!product.allowsDecimalQuantity &&
+                                        qty % 1 != 0) {
+                                      return;
+                                    }
+                                    Navigator.pop(
+                                        editContext,
+                                        PurchaseItem(
+                                          productId: product.id,
+                                          productName: product.name,
+                                          quantity: qty,
+                                          purchaseUnitId: editUnit.id,
+                                          purchaseUnitName: editUnit.name,
+                                          conversionToBase:
+                                              editUnit.conversionToBase,
+                                          unitCost: toUsdReferencePrice(
+                                              enteredCost,
+                                              editCurrency,
+                                              widget.store.storeProfile),
+                                          originalUnitCost: enteredCost,
+                                          unitCostCurrency: editCurrency,
+                                          exchangeRateAtEntry: widget
+                                              .store.storeProfile.usdToLbpRate,
+                                        ));
                                   },
                                   child: Text(tr.text('save')),
                                 ),
@@ -901,7 +1217,8 @@ class _PurchasesPageState extends State<PurchasesPage> {
       }
     }
 
-    Future<void> updateSupplierPricesFromItemsIfNeeded(BuildContext promptContext, List<PurchaseItem> purchaseItems) async {
+    Future<void> updateSupplierPricesFromItemsIfNeeded(
+        BuildContext promptContext, List<PurchaseItem> purchaseItems) async {
       if (supplierId.trim().isEmpty || purchaseItems.isEmpty) return;
       final latestByProduct = <String, PurchaseItem>{};
       for (final item in purchaseItems) {
@@ -911,11 +1228,15 @@ class _PurchasesPageState extends State<PurchasesPage> {
       for (final item in latestByProduct.values) {
         final productId = item.productId.trim();
         if (productId.isEmpty) continue;
-        final existing = widget.store.supplierProductPriceFor(productId: productId, supplierId: supplierId);
-        final newCurrency = item.unitCostCurrency.toUpperCase() == 'LBP' ? 'LBP' : 'USD';
-        final newBaseCost = newCurrency == 'LBP' && item.originalUnitCost != null
-            ? item.originalUnitCost! / (item.conversionToBase <= 0 ? 1 : item.conversionToBase)
-            : item.unitCostPerBase;
+        final existing = widget.store.supplierProductPriceFor(
+            productId: productId, supplierId: supplierId);
+        final newCurrency =
+            item.unitCostCurrency.toUpperCase() == 'LBP' ? 'LBP' : 'USD';
+        final newBaseCost =
+            newCurrency == 'LBP' && item.originalUnitCost != null
+                ? item.originalUnitCost! /
+                    (item.conversionToBase <= 0 ? 1 : item.conversionToBase)
+                : item.unitCostPerBase;
         final hasChanged = existing == null ||
             (existing.cost - newBaseCost).abs() > 0.0001 ||
             existing.currency.toUpperCase() != newCurrency;
@@ -926,7 +1247,8 @@ class _PurchasesPageState extends State<PurchasesPage> {
           supplierId: supplierId,
           cost: newBaseCost,
           currency: newCurrency,
-          isPreferred: existing?.isPreferred ?? widget.store.supplierProductPricesForProduct(productId).isEmpty,
+          isPreferred: existing?.isPreferred ??
+              widget.store.supplierProductPricesForProduct(productId).isEmpty,
           supplierSku: existing?.supplierSku ?? '',
           minOrderQty: existing?.minOrderQty,
           leadTimeDays: existing?.leadTimeDays,
@@ -949,8 +1271,12 @@ class _PurchasesPageState extends State<PurchasesPage> {
           title: Text(tr.text('update_supplier_prices')),
           content: Text(tr.text('update_supplier_prices_desc')),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('no'))),
-            FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(tr.text('yes'))),
+            TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: Text(tr.text('no'))),
+            FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: Text(tr.text('yes'))),
           ],
         ),
       );
@@ -960,15 +1286,26 @@ class _PurchasesPageState extends State<PurchasesPage> {
       }
     }
 
-    void addPurchaseLine(Product product, ProductSaleUnit unit, double qty, double enteredCost, String currency, StateSetter setDialogState) {
-      if (qty <= 0) { showPurchaseError(tr.text('invalid_purchase_quantity')); return; }
-      if (enteredCost < 0) { showPurchaseError(tr.text('unit_cost_required')); return; }
-      if (unit.conversionToBase <= 0) { showPurchaseError(tr.text('invalid_purchase_unit_conversion')); return; }
+    void addPurchaseLine(Product product, ProductSaleUnit unit, double qty,
+        double enteredCost, String currency, StateSetter setDialogState) {
+      if (qty <= 0) {
+        showPurchaseError(tr.text('invalid_purchase_quantity'));
+        return;
+      }
+      if (enteredCost < 0) {
+        showPurchaseError(tr.text('unit_cost_required'));
+        return;
+      }
+      if (unit.conversionToBase <= 0) {
+        showPurchaseError(tr.text('invalid_purchase_unit_conversion'));
+        return;
+      }
       if (!product.allowsDecimalQuantity && qty % 1 != 0) {
         showPurchaseError(tr.text('countable_whole_quantity_required'));
         return;
       }
-      final cost = toUsdReferencePrice(enteredCost, currency, widget.store.storeProfile);
+      final cost =
+          toUsdReferencePrice(enteredCost, currency, widget.store.storeProfile);
       items.add(PurchaseItem(
         productId: product.id,
         productName: product.name,
@@ -990,7 +1327,8 @@ class _PurchasesPageState extends State<PurchasesPage> {
       if (product == null || unit == null) return;
       final qty = double.tryParse(qtyController.text.trim()) ?? 0;
       final enteredCost = double.tryParse(costController.text.trim()) ?? -1;
-      addPurchaseLine(product, unit, qty, enteredCost, costCurrency, setDialogState);
+      addPurchaseLine(
+          product, unit, qty, enteredCost, costCurrency, setDialogState);
     }
 
     bool productMatchesPurchaseSearch(Product product, String query) {
@@ -999,11 +1337,16 @@ class _PurchasesPageState extends State<PurchasesPage> {
       return product.name.toLowerCase().contains(q) ||
           product.code.toLowerCase().contains(q) ||
           product.barcode.toLowerCase().contains(q) ||
-          product.effectivePurchaseUnits.any((unit) => unit.name.toLowerCase().contains(q) || unit.barcode.toLowerCase().contains(q)) ||
-          product.effectiveSaleUnits.any((unit) => unit.name.toLowerCase().contains(q) || unit.barcode.toLowerCase().contains(q));
+          product.effectivePurchaseUnits.any((unit) =>
+              unit.name.toLowerCase().contains(q) ||
+              unit.barcode.toLowerCase().contains(q)) ||
+          product.effectiveSaleUnits.any((unit) =>
+              unit.name.toLowerCase().contains(q) ||
+              unit.barcode.toLowerCase().contains(q));
     }
 
-    ({Product product, ProductSaleUnit unit})? findPurchaseProductByBarcode(String rawCode) {
+    ({Product product, ProductSaleUnit unit})? findPurchaseProductByBarcode(
+        String rawCode) {
       final code = rawCode.trim();
       if (code.isEmpty) return null;
       for (final product in purchaseProducts) {
@@ -1016,7 +1359,8 @@ class _PurchasesPageState extends State<PurchasesPage> {
       return null;
     }
 
-    Future<void> choosePurchaseProduct(StateSetter setDialogState, {bool scanFirst = false}) async {
+    Future<void> choosePurchaseProduct(StateSetter setDialogState,
+        {bool scanFirst = false}) async {
       if (scanFirst) {
         final code = await _scanBarcodeWithCamera();
         if (code == null) return;
@@ -1035,21 +1379,29 @@ class _PurchasesPageState extends State<PurchasesPage> {
         return;
       }
 
-      final pickerController = TextEditingController(text: productSearchController.text.trim());
+      final pickerController =
+          TextEditingController(text: productSearchController.text.trim());
       var pickerQuery = pickerController.text.trim();
-      final picked = await showModalBottomSheet<({Product product, ProductSaleUnit unit})>(
+      final picked =
+          await showModalBottomSheet<({Product product, ProductSaleUnit unit})>(
         context: context,
         isScrollControlled: true,
         useSafeArea: true,
         builder: (pickerContext) => StatefulBuilder(
           builder: (pickerContext, setPickerState) {
-            final matches = purchaseProducts.where((product) => productMatchesPurchaseSearch(product, pickerQuery)).take(80).toList();
+            final matches = purchaseProducts
+                .where((product) =>
+                    productMatchesPurchaseSearch(product, pickerQuery))
+                .take(80)
+                .toList();
             final height = MediaQuery.sizeOf(pickerContext).height * 0.82;
             return Padding(
-              padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(pickerContext).bottom),
+              padding: EdgeInsets.only(
+                  bottom: MediaQuery.viewInsetsOf(pickerContext).bottom),
               child: Material(
                 clipBehavior: Clip.antiAlias,
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(24)),
                 child: SafeArea(
                   top: false,
                   child: SizedBox(
@@ -1061,7 +1413,11 @@ class _PurchasesPageState extends State<PurchasesPage> {
                           padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
                           child: Row(
                             children: [
-                              Expanded(child: Text(tr.text('search_product'), style: Theme.of(pickerContext).textTheme.titleLarge)),
+                              Expanded(
+                                  child: Text(tr.text('search_product'),
+                                      style: Theme.of(pickerContext)
+                                          .textTheme
+                                          .titleLarge)),
                               IconButton(
                                 tooltip: tr.text('cancel'),
                                 onPressed: () => Navigator.pop(pickerContext),
@@ -1084,43 +1440,66 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                 onPressed: () async {
                                   final code = await _scanBarcodeWithCamera();
                                   if (code == null) return;
-                                  final match = findPurchaseProductByBarcode(code);
+                                  final match =
+                                      findPurchaseProductByBarcode(code);
                                   if (match == null) {
-                                    BarcodeFeedbackService.playError(force: true);
-                                    showPurchaseError(tr.text('barcode_not_registered_purchase'));
+                                    BarcodeFeedbackService.playError(
+                                        force: true);
+                                    showPurchaseError(tr.text(
+                                        'barcode_not_registered_purchase'));
                                     return;
                                   }
-                                  if (pickerContext.mounted) Navigator.pop(pickerContext, match);
+                                  if (pickerContext.mounted) {
+                                    Navigator.pop(pickerContext, match);
+                                  }
                                 },
                               ),
                             ),
-                            onChanged: (value) => setPickerState(() => pickerQuery = value),
+                            onChanged: (value) =>
+                                setPickerState(() => pickerQuery = value),
                           ),
                         ),
                         Expanded(
                           child: matches.isEmpty
                               ? Center(child: Text(tr.text('no_products')))
                               : ListView.separated(
-                                  keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-                                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                                  keyboardDismissBehavior:
+                                      ScrollViewKeyboardDismissBehavior.onDrag,
+                                  padding:
+                                      const EdgeInsets.fromLTRB(12, 0, 12, 12),
                                   itemCount: matches.length,
-                                  separatorBuilder: (_, __) => const Divider(height: 1),
+                                  separatorBuilder: (_, __) =>
+                                      const Divider(height: 1),
                                   itemBuilder: (context, index) {
                                     final product = matches[index];
-                                    final unit = product.effectivePurchaseUnits.first;
-                                    final configuredPrice = supplierId.isEmpty ? null : widget.store.supplierProductPriceFor(productId: product.id, supplierId: supplierId);
+                                    final unit =
+                                        product.effectivePurchaseUnits.first;
+                                    final configuredPrice = supplierId.isEmpty
+                                        ? null
+                                        : widget.store.supplierProductPriceFor(
+                                            productId: product.id,
+                                            supplierId: supplierId);
                                     final subtitleParts = <String>[
-                                      if (product.code.trim().isNotEmpty) product.code.trim(),
-                                      if (product.barcode.trim().isNotEmpty) product.barcode.trim(),
+                                      if (product.code.trim().isNotEmpty)
+                                        product.code.trim(),
+                                      if (product.barcode.trim().isNotEmpty)
+                                        product.barcode.trim(),
                                       '${tr.text('stock')}: ${_formatQuantity(product.stock)}',
-                                      if (configuredPrice != null) '${tr.text('supplier_price')}: ${formatCurrency(configuredPrice.cost, currency: configuredPrice.currency)}',
+                                      if (configuredPrice != null)
+                                        '${tr.text('supplier_price')}: ${formatCurrency(configuredPrice.cost, currency: configuredPrice.currency)}',
                                     ];
                                     return ListTile(
-                                      leading: const Icon(Icons.inventory_2_outlined),
-                                      title: Text(product.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-                                      subtitle: Text(subtitleParts.join(' • '), maxLines: 2, overflow: TextOverflow.ellipsis),
+                                      leading: const Icon(
+                                          Icons.inventory_2_outlined),
+                                      title: Text(product.name,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis),
+                                      subtitle: Text(subtitleParts.join(' • '),
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis),
                                       trailing: const Icon(Icons.chevron_right),
-                                      onTap: () => Navigator.pop(pickerContext, (product: product, unit: unit)),
+                                      onTap: () => Navigator.pop(pickerContext,
+                                          (product: product, unit: unit)),
                                     );
                                   },
                                 ),
@@ -1159,36 +1538,61 @@ class _PurchasesPageState extends State<PurchasesPage> {
       if (!(formKey.currentState?.validate() ?? false)) return;
       try {
         final purchaseItems = List<PurchaseItem>.of(items);
-        final total = items.fold<double>(0, (sum, item) => sum + item.lineTotal);
-        final paidAmount = paymentStatus == 'partial' ? (double.tryParse(paidAmountController.text.trim()) ?? 0) : null;
-        if (paymentStatus == 'partial' && (paidAmount == null || paidAmount <= 0 || paidAmount > total)) {
-          ScaffoldMessenger.of(dialogContext).showSnackBar(SnackBar(content: Text(tr.text('invalid_paid_amount'))));
+        final total =
+            items.fold<double>(0, (sum, item) => sum + item.lineTotal);
+        final paidAmount = paymentStatus == 'partial'
+            ? (double.tryParse(paidAmountController.text.trim()) ?? 0)
+            : null;
+        if (paymentStatus == 'partial' &&
+            (paidAmount == null || paidAmount <= 0 || paidAmount > total)) {
+          ScaffoldMessenger.of(dialogContext).showSnackBar(
+              SnackBar(content: Text(tr.text('invalid_paid_amount'))));
           return;
         }
-        await widget.store.createPurchase(supplierId: supplierId, supplierName: supplierName, items: purchaseItems, receiveNow: receiveNow, paymentStatus: paymentStatus, paymentMethod: paymentMethod, paidAmount: paidAmount);
+        await widget.store.createPurchase(
+            supplierId: supplierId,
+            supplierName: supplierName,
+            items: purchaseItems,
+            receiveNow: receiveNow,
+            paymentStatus: paymentStatus,
+            paymentMethod: paymentMethod,
+            paidAmount: paidAmount);
         if (dialogContext.mounted) {
-          await updateSupplierPricesFromItemsIfNeeded(dialogContext, purchaseItems);
+          await updateSupplierPricesFromItemsIfNeeded(
+              dialogContext, purchaseItems);
         }
         if (dialogContext.mounted) Navigator.pop(dialogContext);
         if (!mounted) return;
         ScaffoldMessenger.of(this.context).showSnackBar(
-          SnackBar(content: Text(template == null ? tr.text('purchase_saved') : tr.text('duplicate_purchase_saved_as_draft'))),
+          SnackBar(
+              content: Text(template == null
+                  ? tr.text('purchase_saved')
+                  : tr.text('duplicate_purchase_saved_as_draft'))),
         );
         setState(() {});
       } catch (error) {
-        if (dialogContext.mounted) ScaffoldMessenger.of(dialogContext).showSnackBar(SnackBar(content: Text(error.toString())));
+        if (dialogContext.mounted) {
+          ScaffoldMessenger.of(dialogContext)
+              .showSnackBar(SnackBar(content: Text(error.toString())));
+        }
       }
     }
 
     Future<void> cancelPurchaseDialog(BuildContext dialogContext) async {
-      if (await confirmDiscardIfNeeded(dialogContext) && dialogContext.mounted) Navigator.pop(dialogContext);
+      if (await confirmDiscardIfNeeded(dialogContext) &&
+          dialogContext.mounted) {
+        Navigator.pop(dialogContext);
+      }
     }
 
-    KeyEventResult handlePurchaseDialogShortcutKey(KeyEvent event, BuildContext dialogContext, StateSetter setDialogState) {
+    KeyEventResult handlePurchaseDialogShortcutKey(KeyEvent event,
+        BuildContext dialogContext, StateSetter setDialogState) {
       if (event is! KeyDownEvent) return KeyEventResult.ignored;
-      final keyName = SaleShortcutSettings.keyNameForLogicalKey(event.logicalKey);
+      final keyName =
+          SaleShortcutSettings.keyNameForLogicalKey(event.logicalKey);
       if (keyName == null) return KeyEventResult.ignored;
-      final action = SaleShortcutSettings.load().purchaseDialogActionForKey(keyName);
+      final action =
+          SaleShortcutSettings.load().purchaseDialogActionForKey(keyName);
       if (action == null) return KeyEventResult.ignored;
       switch (action) {
         case PurchaseDialogShortcutAction.chooseProduct:
@@ -1223,8 +1627,14 @@ class _PurchasesPageState extends State<PurchasesPage> {
     bool handlePurchaseDialogHardwareShortcut(KeyEvent event) {
       final dialogContext = activePurchaseDialogContext;
       final setDialogState = activePurchaseDialogSetState;
-      if (dialogContext == null || setDialogState == null || ModalRoute.of(dialogContext)?.isCurrent != true) return false;
-      return handlePurchaseDialogShortcutKey(event, dialogContext, setDialogState) == KeyEventResult.handled;
+      if (dialogContext == null ||
+          setDialogState == null ||
+          ModalRoute.of(dialogContext)?.isCurrent != true) {
+        return false;
+      }
+      return handlePurchaseDialogShortcutKey(
+              event, dialogContext, setDialogState) ==
+          KeyEventResult.handled;
     }
 
     HardwareKeyboard.instance.addHandler(handlePurchaseDialogHardwareShortcut);
@@ -1239,484 +1649,783 @@ class _PurchasesPageState extends State<PurchasesPage> {
           builder: (context, setDialogState) {
             activePurchaseDialogContext = dialogContext;
             activePurchaseDialogSetState = setDialogState;
-          final total = items.fold<double>(0, (sum, item) => sum + item.lineTotal);
-          final units = selectedProduct?.effectivePurchaseUnits ?? const <ProductSaleUnit>[];
-          if (selectedUnit != null && !units.any((unit) => unit.id == selectedUnit!.id)) {
-            selectedUnit = units.isNotEmpty ? units.first : null;
-            applySuggestedSupplierPrice();
-          }
-          final dialogWidth = VentioResponsive.modalMaxWidth(context, 1220);
-          final dialogHeight = MediaQuery.sizeOf(context).height * 0.88;
-          return Focus(
-            focusNode: dialogShortcutFocusNode,
-            autofocus: true,
-            onKeyEvent: (node, event) => handlePurchaseDialogShortcutKey(event, dialogContext, setDialogState),
-            child: SafeArea(
-            top: false,
-            child: Center(
-              child: ConstrainedBox(
-                constraints: BoxConstraints(maxWidth: dialogWidth, maxHeight: dialogHeight),
-                child: Material(
-                  clipBehavior: Clip.antiAlias,
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-                  child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 20, 16, 12),
-                    child: Row(
-                      children: [
-                        Expanded(child: Text(template == null ? tr.text('new_purchase') : tr.text('duplicate_purchase_draft'), style: Theme.of(context).textTheme.headlineSmall)),
-                        IconButton(
-                          tooltip: tr.text('cancel'),
-                          onPressed: () => cancelPurchaseDialog(dialogContext),
-                          icon: const Icon(Icons.close),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
-                    child: _buildPurchaseDialogShortcutGuide(context, tr),
-                  ),
-                  const Divider(height: 1),
-                  Expanded(
-                    child: SingleChildScrollView(
-                      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-                      padding: EdgeInsets.all(VentioResponsive.pagePadding(context)),
-                      child: Form(
-                        key: formKey,
-                        child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final desktopLayout = constraints.maxWidth >= 900;
-                    final gap = VentioResponsive.gap(context);
-
-                    Widget sectionCard({required String title, required IconData icon, required List<Widget> children}) {
-                      return Card(
-                        elevation: 0,
-                        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
-                        child: Padding(
-                          padding: VentioResponsive.cardInsets(context),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Row(
-                                children: [
-                                  Icon(icon, size: 20),
-                                  const SizedBox(width: 8),
-                                  Expanded(child: Text(title, style: Theme.of(context).textTheme.titleMedium)),
-                                ],
-                              ),
-                              const SizedBox(height: 12),
-                              ...children,
-                            ],
-                          ),
-                        ),
-                      );
-                    }
-
-                    Widget supplierSection() {
-                      return sectionCard(
-                        title: tr.text('purchase_details'),
-                        icon: Icons.receipt_long_outlined,
+            final total =
+                items.fold<double>(0, (sum, item) => sum + item.lineTotal);
+            final units = selectedProduct?.effectivePurchaseUnits ??
+                const <ProductSaleUnit>[];
+            if (selectedUnit != null &&
+                !units.any((unit) => unit.id == selectedUnit!.id)) {
+              selectedUnit = units.isNotEmpty ? units.first : null;
+              applySuggestedSupplierPrice();
+            }
+            final dialogWidth = VentioResponsive.modalMaxWidth(context, 1220);
+            final dialogHeight = MediaQuery.sizeOf(context).height * 0.88;
+            return Focus(
+              focusNode: dialogShortcutFocusNode,
+              autofocus: true,
+              onKeyEvent: (node, event) => handlePurchaseDialogShortcutKey(
+                  event, dialogContext, setDialogState),
+              child: SafeArea(
+                top: false,
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                        maxWidth: dialogWidth, maxHeight: dialogHeight),
+                    child: Material(
+                      clipBehavior: Clip.antiAlias,
+                      borderRadius:
+                          const BorderRadius.vertical(top: Radius.circular(24)),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          if (purchaseProducts.isEmpty) ...[
-                            Text(tr.text('no_stock_tracked_products')),
-                            SizedBox(height: gap),
-                          ],
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: DropdownButtonFormField<String>(
-                                  initialValue: supplierId.isEmpty ? null : supplierId,
-                                  decoration: InputDecoration(labelText: tr.text('supplier')),
-                                  items: widget.store.suppliers.map((supplier) => DropdownMenuItem(value: supplier.id, child: Text(supplier.name))).toList(),
-                                  onChanged: (value) {
-                                    final matches = widget.store.suppliers.where((s) => s.id == value).toList();
-                                    final supplier = matches.isEmpty ? null : matches.first;
-                                    supplierId = supplier?.id ?? '';
-                                    supplierName = supplier?.name ?? '';
-                                    applySuggestedSupplierPrice();
-                                    setDialogState(() {});
-                                  },
-                                  validator: (_) => supplierId.isEmpty ? tr.text('supplier_required') : null,
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(24, 20, 16, 12),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                    child: Text(
+                                        template == null
+                                            ? tr.text('new_purchase')
+                                            : tr.text(
+                                                'duplicate_purchase_draft'),
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .headlineSmall)),
+                                IconButton(
+                                  tooltip: tr.text('cancel'),
+                                  onPressed: () =>
+                                      cancelPurchaseDialog(dialogContext),
+                                  icon: const Icon(Icons.close),
                                 ),
-                              ),
-                              const SizedBox(width: 8),
-                              IconButton.filledTonal(
-                                tooltip: tr.text('add_supplier'),
-                                onPressed: () => createQuickSupplier(setDialogState),
-                                icon: const Icon(Icons.person_add_alt_1_outlined),
-                              ),
-                            ],
-                          ),
-                          SizedBox(height: gap),
-                          SwitchListTile(
-                            contentPadding: EdgeInsets.zero,
-                            value: receiveNow,
-                            onChanged: (value) => setDialogState(() => receiveNow = value),
-                            title: Text(tr.text('receive_now')),
-                            subtitle: Text(tr.text('receive_now_desc')),
-                          ),
-                          const SizedBox(height: 8),
-                          DropdownButtonFormField<String>(
-                            initialValue: paymentStatus,
-                            decoration: InputDecoration(labelText: tr.text('payment_status')),
-                            items: [
-                              DropdownMenuItem(value: 'paid', child: Text(tr.text('cash_paid'))),
-                              DropdownMenuItem(value: 'credit', child: Text(tr.text('credit_unpaid'))),
-                              DropdownMenuItem(value: 'partial', child: Text(tr.text('partial_payment'))),
-                            ],
-                            onChanged: (value) => setDialogState(() => paymentStatus = value ?? 'paid'),
-                          ),
-                          if (paymentStatus != 'credit') ...[
-                            const SizedBox(height: 8),
-                            DropdownButtonFormField<String>(
-                              initialValue: paymentMethod,
-                              decoration: InputDecoration(labelText: tr.text('payment_method')),
-                              items: [
-                                DropdownMenuItem(value: 'Cash', child: Text(tr.text('payment_cash'))),
-                                DropdownMenuItem(value: 'Card', child: Text(tr.text('payment_card'))),
-                                DropdownMenuItem(value: 'Wish', child: Text(tr.text('payment_wish'))),
-                                DropdownMenuItem(value: 'Check', child: Text(tr.text('payment_check'))),
                               ],
-                              onChanged: (value) => setDialogState(() => paymentMethod = value ?? 'Cash'),
                             ),
-                          ],
-                          if (paymentStatus == 'partial') ...[
-                            SizedBox(height: gap),
-                            TextFormField(
-                              controller: paidAmountController,
-                              focusNode: paidAmountFocusNode,
-                              decoration: InputDecoration(labelText: tr.text('paid_amount')),
-                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                            ),
-                          ],
-                          const SizedBox(height: 8),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: [
-                              Chip(label: Text('${tr.text('status')}: ${receiveNow ? tr.text('received') : tr.text('draft')}')),
-                              Chip(label: Text('${tr.text('items')}: ${items.length}')),
-                            ],
                           ),
-                        ],
-                      );
-                    }
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+                            child:
+                                _buildPurchaseDialogShortcutGuide(context, tr),
+                          ),
+                          const Divider(height: 1),
+                          Expanded(
+                            child: SingleChildScrollView(
+                              keyboardDismissBehavior:
+                                  ScrollViewKeyboardDismissBehavior.onDrag,
+                              padding: EdgeInsets.all(
+                                  VentioResponsive.pagePadding(context)),
+                              child: Form(
+                                key: formKey,
+                                child: LayoutBuilder(
+                                  builder: (context, constraints) {
+                                    final desktopLayout =
+                                        constraints.maxWidth >= 900;
+                                    final gap = VentioResponsive.gap(context);
 
-                    Widget productEntrySection() {
-                      final conversion = selectedUnitConversionSummary();
-                      final selectedProductTitle = selectedProduct?.name ?? tr.text('product');
-                      final selectedProductSubtitle = selectedProduct == null
-                          ? tr.text('scan_purchase_barcode_hint')
-                          : [
-                              if (selectedProduct!.code.trim().isNotEmpty) selectedProduct!.code.trim(),
-                              if (selectedProduct!.barcode.trim().isNotEmpty) selectedProduct!.barcode.trim(),
-                              '${tr.text('stock')}: ${_formatQuantity(selectedProduct!.stock)}',
-                            ].join(' • ');
-                      return sectionCard(
-                        title: tr.text('add_product'),
-                        icon: Icons.add_box_outlined,
-                        children: [
-                          InkWell(
-                            borderRadius: BorderRadius.circular(16),
-                            onTap: () => choosePurchaseProduct(setDialogState),
-                            child: InputDecorator(
-                              decoration: InputDecoration(
-                                labelText: tr.text('search_product'),
-                                prefixIcon: const Icon(Icons.search),
-                                suffixIcon: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    IconButton(
-                                      tooltip: tr.text('scan_with_camera'),
-                                      onPressed: () => choosePurchaseProduct(setDialogState, scanFirst: true),
-                                      icon: const Icon(Icons.camera_alt_outlined),
-                                    ),
-                                    IconButton(
-                                      tooltip: tr.text('add_product'),
-                                      onPressed: () => createQuickProduct(setDialogState),
-                                      icon: const Icon(Icons.add_box_outlined),
-                                    ),
-                                  ],
+                                    Widget sectionCard(
+                                        {required String title,
+                                        required IconData icon,
+                                        required List<Widget> children}) {
+                                      return Card(
+                                        elevation: 0,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .surfaceContainerHighest
+                                            .withValues(alpha: 0.35),
+                                        child: Padding(
+                                          padding: VentioResponsive.cardInsets(
+                                              context),
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.stretch,
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Row(
+                                                children: [
+                                                  Icon(icon, size: 20),
+                                                  const SizedBox(width: 8),
+                                                  Expanded(
+                                                      child: Text(title,
+                                                          style: Theme.of(
+                                                                  context)
+                                                              .textTheme
+                                                              .titleMedium)),
+                                                ],
+                                              ),
+                                              const SizedBox(height: 12),
+                                              ...children,
+                                            ],
+                                          ),
+                                        ),
+                                      );
+                                    }
+
+                                    Widget supplierSection() {
+                                      return sectionCard(
+                                        title: tr.text('purchase_details'),
+                                        icon: Icons.receipt_long_outlined,
+                                        children: [
+                                          if (purchaseProducts.isEmpty) ...[
+                                            Text(tr.text(
+                                                'no_stock_tracked_products')),
+                                            SizedBox(height: gap),
+                                          ],
+                                          Row(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Expanded(
+                                                child: DropdownButtonFormField<
+                                                    String>(
+                                                  initialValue:
+                                                      supplierId.isEmpty
+                                                          ? null
+                                                          : supplierId,
+                                                  decoration: InputDecoration(
+                                                      labelText:
+                                                          tr.text('supplier')),
+                                                  items: widget.store.suppliers
+                                                      .map((supplier) =>
+                                                          DropdownMenuItem(
+                                                              value:
+                                                                  supplier.id,
+                                                              child: Text(
+                                                                  supplier
+                                                                      .name)))
+                                                      .toList(),
+                                                  onChanged: (value) {
+                                                    final matches = widget
+                                                        .store.suppliers
+                                                        .where((s) =>
+                                                            s.id == value)
+                                                        .toList();
+                                                    final supplier =
+                                                        matches.isEmpty
+                                                            ? null
+                                                            : matches.first;
+                                                    supplierId =
+                                                        supplier?.id ?? '';
+                                                    supplierName =
+                                                        supplier?.name ?? '';
+                                                    applySuggestedSupplierPrice();
+                                                    setDialogState(() {});
+                                                  },
+                                                  validator: (_) => supplierId
+                                                          .isEmpty
+                                                      ? tr.text(
+                                                          'supplier_required')
+                                                      : null,
+                                                ),
+                                              ),
+                                              const SizedBox(width: 8),
+                                              IconButton.filledTonal(
+                                                tooltip:
+                                                    tr.text('add_supplier'),
+                                                onPressed: () =>
+                                                    createQuickSupplier(
+                                                        setDialogState),
+                                                icon: const Icon(Icons
+                                                    .person_add_alt_1_outlined),
+                                              ),
+                                            ],
+                                          ),
+                                          SizedBox(height: gap),
+                                          SwitchListTile(
+                                            contentPadding: EdgeInsets.zero,
+                                            value: receiveNow,
+                                            onChanged: (value) =>
+                                                setDialogState(
+                                                    () => receiveNow = value),
+                                            title: Text(tr.text('receive_now')),
+                                            subtitle: Text(
+                                                tr.text('receive_now_desc')),
+                                          ),
+                                          const SizedBox(height: 8),
+                                          DropdownButtonFormField<String>(
+                                            initialValue: paymentStatus,
+                                            decoration: InputDecoration(
+                                                labelText:
+                                                    tr.text('payment_status')),
+                                            items: [
+                                              DropdownMenuItem(
+                                                  value: 'paid',
+                                                  child: Text(
+                                                      tr.text('cash_paid'))),
+                                              DropdownMenuItem(
+                                                  value: 'credit',
+                                                  child: Text(tr
+                                                      .text('credit_unpaid'))),
+                                              DropdownMenuItem(
+                                                  value: 'partial',
+                                                  child: Text(tr.text(
+                                                      'partial_payment'))),
+                                            ],
+                                            onChanged: (value) =>
+                                                setDialogState(() =>
+                                                    paymentStatus =
+                                                        value ?? 'paid'),
+                                          ),
+                                          if (paymentStatus != 'credit') ...[
+                                            const SizedBox(height: 8),
+                                            DropdownButtonFormField<String>(
+                                              initialValue: paymentMethod,
+                                              decoration: InputDecoration(
+                                                  labelText: tr
+                                                      .text('payment_method')),
+                                              items: [
+                                                DropdownMenuItem(
+                                                    value: 'Cash',
+                                                    child: Text(tr
+                                                        .text('payment_cash'))),
+                                                DropdownMenuItem(
+                                                    value: 'Card',
+                                                    child: Text(tr
+                                                        .text('payment_card'))),
+                                                DropdownMenuItem(
+                                                    value: 'Wish',
+                                                    child: Text(tr
+                                                        .text('payment_wish'))),
+                                                DropdownMenuItem(
+                                                    value: 'Check',
+                                                    child: Text(tr.text(
+                                                        'payment_check'))),
+                                              ],
+                                              onChanged: (value) =>
+                                                  setDialogState(() =>
+                                                      paymentMethod =
+                                                          value ?? 'Cash'),
+                                            ),
+                                          ],
+                                          if (paymentStatus == 'partial') ...[
+                                            SizedBox(height: gap),
+                                            TextFormField(
+                                              controller: paidAmountController,
+                                              focusNode: paidAmountFocusNode,
+                                              decoration: InputDecoration(
+                                                  labelText:
+                                                      tr.text('paid_amount')),
+                                              keyboardType: const TextInputType
+                                                  .numberWithOptions(
+                                                  decimal: true),
+                                            ),
+                                          ],
+                                          const SizedBox(height: 8),
+                                          Wrap(
+                                            spacing: 8,
+                                            runSpacing: 8,
+                                            children: [
+                                              Chip(
+                                                  label: Text(
+                                                      '${tr.text('status')}: ${receiveNow ? tr.text('received') : tr.text('draft')}')),
+                                              Chip(
+                                                  label: Text(
+                                                      '${tr.text('items')}: ${items.length}')),
+                                            ],
+                                          ),
+                                        ],
+                                      );
+                                    }
+
+                                    Widget productEntrySection() {
+                                      final conversion =
+                                          selectedUnitConversionSummary();
+                                      final selectedProductTitle =
+                                          selectedProduct?.name ??
+                                              tr.text('product');
+                                      final selectedProductSubtitle =
+                                          selectedProduct == null
+                                              ? tr.text(
+                                                  'scan_purchase_barcode_hint')
+                                              : [
+                                                  if (selectedProduct!.code
+                                                      .trim()
+                                                      .isNotEmpty)
+                                                    selectedProduct!.code
+                                                        .trim(),
+                                                  if (selectedProduct!.barcode
+                                                      .trim()
+                                                      .isNotEmpty)
+                                                    selectedProduct!.barcode
+                                                        .trim(),
+                                                  '${tr.text('stock')}: ${_formatQuantity(selectedProduct!.stock)}',
+                                                ].join(' • ');
+                                      return sectionCard(
+                                        title: tr.text('add_product'),
+                                        icon: Icons.add_box_outlined,
+                                        children: [
+                                          InkWell(
+                                            borderRadius:
+                                                BorderRadius.circular(16),
+                                            onTap: () => choosePurchaseProduct(
+                                                setDialogState),
+                                            child: InputDecorator(
+                                              decoration: InputDecoration(
+                                                labelText:
+                                                    tr.text('search_product'),
+                                                prefixIcon:
+                                                    const Icon(Icons.search),
+                                                suffixIcon: Row(
+                                                  mainAxisSize:
+                                                      MainAxisSize.min,
+                                                  children: [
+                                                    IconButton(
+                                                      tooltip: tr.text(
+                                                          'scan_with_camera'),
+                                                      onPressed: () =>
+                                                          choosePurchaseProduct(
+                                                              setDialogState,
+                                                              scanFirst: true),
+                                                      icon: const Icon(Icons
+                                                          .camera_alt_outlined),
+                                                    ),
+                                                    IconButton(
+                                                      tooltip: tr
+                                                          .text('add_product'),
+                                                      onPressed: () =>
+                                                          createQuickProduct(
+                                                              setDialogState),
+                                                      icon: const Icon(Icons
+                                                          .add_box_outlined),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  Text(selectedProductTitle,
+                                                      maxLines: 1,
+                                                      overflow: TextOverflow
+                                                          .ellipsis),
+                                                  if (selectedProductSubtitle
+                                                      .isNotEmpty) ...[
+                                                    const SizedBox(height: 2),
+                                                    Text(
+                                                      selectedProductSubtitle,
+                                                      maxLines: 2,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                      style: Theme.of(context)
+                                                          .textTheme
+                                                          .bodySmall,
+                                                    ),
+                                                  ],
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                          SizedBox(height: gap),
+                                          LayoutBuilder(
+                                            builder:
+                                                (context, fieldConstraints) {
+                                              final oneColumn =
+                                                  fieldConstraints.maxWidth <
+                                                      520;
+                                              final unitField =
+                                                  DropdownButtonFormField<
+                                                      String>(
+                                                initialValue: selectedUnit?.id,
+                                                decoration: InputDecoration(
+                                                    labelText: tr
+                                                        .text('purchase_unit')),
+                                                items: units
+                                                    .map((unit) => DropdownMenuItem(
+                                                        value: unit.id,
+                                                        child: Text(
+                                                            '${unit.name} × ${_formatQuantity(unit.conversionToBase)}')))
+                                                    .toList(),
+                                                onChanged: (value) {
+                                                  final matches = units
+                                                      .where((unit) =>
+                                                          unit.id == value)
+                                                      .toList();
+                                                  selectedUnit = matches.isEmpty
+                                                      ? null
+                                                      : matches.first;
+                                                  applySuggestedSupplierPrice();
+                                                  setDialogState(() {});
+                                                },
+                                              );
+                                              final qtyField = TextFormField(
+                                                controller: qtyController,
+                                                focusNode: qtyFocusNode,
+                                                decoration: InputDecoration(
+                                                    labelText:
+                                                        tr.text('quantity')),
+                                                keyboardType:
+                                                    const TextInputType
+                                                        .numberWithOptions(
+                                                        decimal: true),
+                                                onChanged: (_) =>
+                                                    setDialogState(() {}),
+                                              );
+                                              final costField = TextFormField(
+                                                controller: costController,
+                                                focusNode: costFocusNode,
+                                                decoration: InputDecoration(
+                                                    labelText:
+                                                        tr.text('unit_cost'),
+                                                    helperText:
+                                                        priceHintForSelectedProduct()
+                                                                .isEmpty
+                                                            ? null
+                                                            : priceHintForSelectedProduct()),
+                                                keyboardType:
+                                                    const TextInputType
+                                                        .numberWithOptions(
+                                                        decimal: true),
+                                              );
+                                              final currencyField =
+                                                  DropdownButtonFormField<
+                                                      String>(
+                                                initialValue: costCurrency,
+                                                decoration: InputDecoration(
+                                                    labelText:
+                                                        tr.text('currency')),
+                                                items: const [
+                                                  DropdownMenuItem(
+                                                      value: 'USD',
+                                                      child: Text('USD')),
+                                                  DropdownMenuItem(
+                                                      value: 'LBP',
+                                                      child: Text('LBP')),
+                                                ],
+                                                onChanged: (value) =>
+                                                    setDialogState(() =>
+                                                        costCurrency =
+                                                            value ?? 'USD'),
+                                              );
+                                              if (oneColumn) {
+                                                return Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment
+                                                          .stretch,
+                                                  children: [
+                                                    unitField,
+                                                    SizedBox(height: gap),
+                                                    Row(
+                                                      children: [
+                                                        Expanded(
+                                                            child: qtyField),
+                                                        SizedBox(width: gap),
+                                                        SizedBox(
+                                                            width: 120,
+                                                            child:
+                                                                currencyField),
+                                                      ],
+                                                    ),
+                                                    SizedBox(height: gap),
+                                                    costField,
+                                                  ],
+                                                );
+                                              }
+                                              return Wrap(
+                                                spacing: 12,
+                                                runSpacing: 12,
+                                                children: [
+                                                  SizedBox(
+                                                      width: 220,
+                                                      child: unitField),
+                                                  SizedBox(
+                                                      width: 120,
+                                                      child: qtyField),
+                                                  SizedBox(
+                                                      width: 190,
+                                                      child: costField),
+                                                  SizedBox(
+                                                      width: 120,
+                                                      child: currencyField),
+                                                ],
+                                              );
+                                            },
+                                          ),
+                                          if (conversion.isNotEmpty) ...[
+                                            SizedBox(height: gap),
+                                            Align(
+                                                alignment: AlignmentDirectional
+                                                    .centerStart,
+                                                child: Chip(
+                                                    avatar: const Icon(
+                                                        Icons.compare_arrows,
+                                                        size: 18),
+                                                    label: Text(conversion))),
+                                          ],
+                                          SizedBox(height: gap),
+                                          FilledButton.icon(
+                                            onPressed: selectedProduct ==
+                                                        null ||
+                                                    selectedUnit == null
+                                                ? null
+                                                : () => addSelectedPurchaseLine(
+                                                    setDialogState),
+                                            icon: const Icon(Icons.add),
+                                            label: Text(tr.text(
+                                                'add_product_to_purchase')),
+                                          ),
+                                        ],
+                                      );
+                                    }
+
+                                    Widget lineActions(PurchaseItem item) =>
+                                        Wrap(
+                                          spacing: 4,
+                                          children: [
+                                            IconButton(
+                                                icon: const Icon(
+                                                    Icons.edit_outlined),
+                                                tooltip: tr.text('edit'),
+                                                onPressed: () =>
+                                                    editPurchaseLine(
+                                                        item, setDialogState)),
+                                            IconButton(
+                                                icon: const Icon(
+                                                    Icons.delete_outline),
+                                                tooltip: tr.text('delete'),
+                                                onPressed: () => setDialogState(
+                                                    () => items.remove(item))),
+                                          ],
+                                        );
+
+                                    Widget purchaseLinesSection() {
+                                      if (items.isEmpty) {
+                                        return sectionCard(
+                                          title: tr.text('purchase_invoice'),
+                                          icon: Icons.table_chart_outlined,
+                                          children: [
+                                            Text(tr.text('no_items_added'))
+                                          ],
+                                        );
+                                      }
+                                      final table = SingleChildScrollView(
+                                        scrollDirection: Axis.horizontal,
+                                        child: DataTable(
+                                          columns: [
+                                            DataColumn(
+                                                label:
+                                                    Text(tr.text('product'))),
+                                            DataColumn(
+                                                label: Text(tr.text('unit'))),
+                                            DataColumn(
+                                                label:
+                                                    Text(tr.text('quantity'))),
+                                            DataColumn(
+                                                label:
+                                                    Text(tr.text('unit_cost'))),
+                                            DataColumn(
+                                                label: Text(tr.text('total'))),
+                                            DataColumn(
+                                                label:
+                                                    Text(tr.text('actions'))),
+                                          ],
+                                          rows: items
+                                              .map((item) => DataRow(cells: [
+                                                    DataCell(SizedBox(
+                                                        width: 180,
+                                                        child: Text(
+                                                            item.productName,
+                                                            overflow:
+                                                                TextOverflow
+                                                                    .ellipsis))),
+                                                    DataCell(Text(
+                                                        item.purchaseUnitName)),
+                                                    DataCell(Text(
+                                                        _formatQuantity(
+                                                            item.quantity))),
+                                                    DataCell(Text(formatCurrency(
+                                                        item.originalUnitCost ??
+                                                            item.unitCost,
+                                                        currency: item
+                                                            .unitCostCurrency))),
+                                                    DataCell(Text(
+                                                        formatUsdReferenceAmount(
+                                                            item.lineTotal,
+                                                            widget.store
+                                                                .storeProfile))),
+                                                    DataCell(lineActions(item)),
+                                                  ]))
+                                              .toList(),
+                                        ),
+                                      );
+                                      final cards = Column(
+                                        children: items
+                                            .map((item) => Card(
+                                                  margin: const EdgeInsets.only(
+                                                      bottom: 8),
+                                                  child: ListTile(
+                                                    title:
+                                                        Text(item.productName),
+                                                    subtitle: Text(
+                                                        '${unitConversionSummary(item)} • ${formatCurrency(item.originalUnitCost ?? item.unitCost, currency: item.unitCostCurrency)} • ${formatUsdReferenceAmount(item.lineTotal, widget.store.storeProfile)}'),
+                                                    trailing: lineActions(item),
+                                                  ),
+                                                ))
+                                            .toList(),
+                                      );
+                                      return sectionCard(
+                                        title: tr.text('purchase_invoice'),
+                                        icon: Icons.table_chart_outlined,
+                                        children: [
+                                          desktopLayout ? table : cards
+                                        ],
+                                      );
+                                    }
+
+                                    Widget summarySection() {
+                                      return Card(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .primaryContainer,
+                                        child: Padding(
+                                          padding: VentioResponsive.cardInsets(
+                                              context),
+                                          child: Wrap(
+                                            spacing: 20,
+                                            runSpacing: 8,
+                                            crossAxisAlignment:
+                                                WrapCrossAlignment.center,
+                                            alignment:
+                                                WrapAlignment.spaceBetween,
+                                            children: [
+                                              Text(
+                                                  '${tr.text('supplier')}: ${supplierName.isEmpty ? '-' : supplierName}',
+                                                  style: Theme.of(context)
+                                                      .textTheme
+                                                      .bodyMedium),
+                                              Text(
+                                                  '${tr.text('items')}: ${items.length}',
+                                                  style: Theme.of(context)
+                                                      .textTheme
+                                                      .bodyMedium),
+                                              Text(
+                                                  '${tr.text('total')}: ${formatUsdReferenceAmount(total, widget.store.storeProfile)}',
+                                                  style: Theme.of(context)
+                                                      .textTheme
+                                                      .titleMedium),
+                                            ],
+                                          ),
+                                        ),
+                                      );
+                                    }
+
+                                    final leftPanel = Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        supplierSection(),
+                                        SizedBox(height: gap),
+                                        productEntrySection()
+                                      ],
+                                    );
+                                    final rightPanel = Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        purchaseLinesSection(),
+                                        SizedBox(height: gap),
+                                        summarySection()
+                                      ],
+                                    );
+
+                                    return Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        if (desktopLayout)
+                                          Row(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              SizedBox(
+                                                  width: 390, child: leftPanel),
+                                              SizedBox(width: gap),
+                                              Expanded(child: rightPanel),
+                                            ],
+                                          )
+                                        else ...[
+                                          leftPanel,
+                                          SizedBox(height: gap),
+                                          rightPanel,
+                                        ],
+                                      ],
+                                    );
+                                  },
                                 ),
                               ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(selectedProductTitle, maxLines: 1, overflow: TextOverflow.ellipsis),
-                                  if (selectedProductSubtitle.isNotEmpty) ...[
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      selectedProductSubtitle,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: Theme.of(context).textTheme.bodySmall,
-                                    ),
-                                  ],
-                                ],
-                              ),
                             ),
                           ),
-                          SizedBox(height: gap),
-                          LayoutBuilder(
-                            builder: (context, fieldConstraints) {
-                              final oneColumn = fieldConstraints.maxWidth < 520;
-                              final unitField = DropdownButtonFormField<String>(
-                                initialValue: selectedUnit?.id,
-                                decoration: InputDecoration(labelText: tr.text('purchase_unit')),
-                                items: units.map((unit) => DropdownMenuItem(value: unit.id, child: Text('${unit.name} × ${_formatQuantity(unit.conversionToBase)}'))).toList(),
-                                onChanged: (value) {
-                                  final matches = units.where((unit) => unit.id == value).toList();
-                                  selectedUnit = matches.isEmpty ? null : matches.first;
-                                  applySuggestedSupplierPrice();
-                                  setDialogState(() {});
-                                },
-                              );
-                              final qtyField = TextFormField(
-                                controller: qtyController,
-                                focusNode: qtyFocusNode,
-                                decoration: InputDecoration(labelText: tr.text('quantity')),
-                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                                onChanged: (_) => setDialogState(() {}),
-                              );
-                              final costField = TextFormField(
-                                controller: costController,
-                                focusNode: costFocusNode,
-                                decoration: InputDecoration(labelText: tr.text('unit_cost'), helperText: priceHintForSelectedProduct().isEmpty ? null : priceHintForSelectedProduct()),
-                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                              );
-                              final currencyField = DropdownButtonFormField<String>(
-                                initialValue: costCurrency,
-                                decoration: InputDecoration(labelText: tr.text('currency')),
-                                items: const [
-                                  DropdownMenuItem(value: 'USD', child: Text('USD')),
-                                  DropdownMenuItem(value: 'LBP', child: Text('LBP')),
-                                ],
-                                onChanged: (value) => setDialogState(() => costCurrency = value ?? 'USD'),
-                              );
-                              if (oneColumn) {
-                                return Column(
-                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                          const Divider(height: 1),
+                          Padding(
+                            padding: EdgeInsets.fromLTRB(
+                              VentioResponsive.pagePadding(context),
+                              12,
+                              VentioResponsive.pagePadding(context),
+                              16,
+                            ),
+                            child: LayoutBuilder(
+                              builder: (context, footerConstraints) {
+                                final compactFooter =
+                                    footerConstraints.maxWidth < 520;
+                                final totalText = Text(
+                                  '${tr.text('total')}: ${formatUsdReferenceAmount(total, widget.store.storeProfile)}',
+                                  style:
+                                      Theme.of(context).textTheme.titleMedium,
+                                );
+                                final cancelButton = TextButton(
+                                  onPressed: () =>
+                                      cancelPurchaseDialog(dialogContext),
+                                  child: Text(tr.text('cancel')),
+                                );
+                                final saveButton = FilledButton.icon(
+                                  onPressed: items.isEmpty
+                                      ? null
+                                      : () =>
+                                          savePurchaseFromDialog(dialogContext),
+                                  icon: const Icon(Icons.save_outlined),
+                                  label: Text(tr.text('save')),
+                                );
+                                if (compactFooter) {
+                                  return Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      totalText,
+                                      const SizedBox(height: 10),
+                                      Row(
+                                        children: [
+                                          Expanded(child: cancelButton),
+                                          const SizedBox(width: 12),
+                                          Expanded(child: saveButton),
+                                        ],
+                                      ),
+                                    ],
+                                  );
+                                }
+                                return Row(
                                   children: [
-                                    unitField,
-                                    SizedBox(height: gap),
-                                    Row(
-                                      children: [
-                                        Expanded(child: qtyField),
-                                        SizedBox(width: gap),
-                                        SizedBox(width: 120, child: currencyField),
-                                      ],
-                                    ),
-                                    SizedBox(height: gap),
-                                    costField,
+                                    Expanded(child: totalText),
+                                    cancelButton,
+                                    const SizedBox(width: 12),
+                                    saveButton,
                                   ],
                                 );
-                              }
-                              return Wrap(
-                                spacing: 12,
-                                runSpacing: 12,
-                                children: [
-                                  SizedBox(width: 220, child: unitField),
-                                  SizedBox(width: 120, child: qtyField),
-                                  SizedBox(width: 190, child: costField),
-                                  SizedBox(width: 120, child: currencyField),
-                                ],
-                              );
-                            },
-                          ),
-                          if (conversion.isNotEmpty) ...[
-                            SizedBox(height: gap),
-                            Align(alignment: AlignmentDirectional.centerStart, child: Chip(avatar: const Icon(Icons.compare_arrows, size: 18), label: Text(conversion))),
-                          ],
-                          SizedBox(height: gap),
-                          FilledButton.icon(
-                            onPressed: selectedProduct == null || selectedUnit == null
-                                ? null
-                                : () => addSelectedPurchaseLine(setDialogState),
-                            icon: const Icon(Icons.add),
-                            label: Text(tr.text('add_product_to_purchase')),
+                              },
+                            ),
                           ),
                         ],
-                      );
-                    }
-
-                    Widget lineActions(PurchaseItem item) => Wrap(
-                          spacing: 4,
-                          children: [
-                            IconButton(icon: const Icon(Icons.edit_outlined), tooltip: tr.text('edit'), onPressed: () => editPurchaseLine(item, setDialogState)),
-                            IconButton(icon: const Icon(Icons.delete_outline), tooltip: tr.text('delete'), onPressed: () => setDialogState(() => items.remove(item))),
-                          ],
-                        );
-
-                    Widget purchaseLinesSection() {
-                      if (items.isEmpty) {
-                        return sectionCard(
-                          title: tr.text('purchase_invoice'),
-                          icon: Icons.table_chart_outlined,
-                          children: [Text(tr.text('no_items_added'))],
-                        );
-                      }
-                      final table = SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: DataTable(
-                          columns: [
-                            DataColumn(label: Text(tr.text('product'))),
-                            DataColumn(label: Text(tr.text('unit'))),
-                            DataColumn(label: Text(tr.text('quantity'))),
-                            DataColumn(label: Text(tr.text('unit_cost'))),
-                            DataColumn(label: Text(tr.text('total'))),
-                            DataColumn(label: Text(tr.text('actions'))),
-                          ],
-                          rows: items.map((item) => DataRow(cells: [
-                                DataCell(SizedBox(width: 180, child: Text(item.productName, overflow: TextOverflow.ellipsis))),
-                                DataCell(Text(item.purchaseUnitName)),
-                                DataCell(Text(_formatQuantity(item.quantity))),
-                                DataCell(Text(formatCurrency(item.originalUnitCost ?? item.unitCost, currency: item.unitCostCurrency))),
-                                DataCell(Text(formatUsdReferenceAmount(item.lineTotal, widget.store.storeProfile))),
-                                DataCell(lineActions(item)),
-                              ])).toList(),
-                        ),
-                      );
-                      final cards = Column(
-                        children: items.map((item) => Card(
-                              margin: const EdgeInsets.only(bottom: 8),
-                              child: ListTile(
-                                title: Text(item.productName),
-                                subtitle: Text('${unitConversionSummary(item)} • ${formatCurrency(item.originalUnitCost ?? item.unitCost, currency: item.unitCostCurrency)} • ${formatUsdReferenceAmount(item.lineTotal, widget.store.storeProfile)}'),
-                                trailing: lineActions(item),
-                              ),
-                            )).toList(),
-                      );
-                      return sectionCard(
-                        title: tr.text('purchase_invoice'),
-                        icon: Icons.table_chart_outlined,
-                        children: [desktopLayout ? table : cards],
-                      );
-                    }
-
-                    Widget summarySection() {
-                      return Card(
-                        color: Theme.of(context).colorScheme.primaryContainer,
-                        child: Padding(
-                          padding: VentioResponsive.cardInsets(context),
-                          child: Wrap(
-                            spacing: 20,
-                            runSpacing: 8,
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            alignment: WrapAlignment.spaceBetween,
-                            children: [
-                              Text('${tr.text('supplier')}: ${supplierName.isEmpty ? '-' : supplierName}', style: Theme.of(context).textTheme.bodyMedium),
-                              Text('${tr.text('items')}: ${items.length}', style: Theme.of(context).textTheme.bodyMedium),
-                              Text('${tr.text('total')}: ${formatUsdReferenceAmount(total, widget.store.storeProfile)}', style: Theme.of(context).textTheme.titleMedium),
-                            ],
-                          ),
-                        ),
-                      );
-                    }
-
-                    final leftPanel = Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [supplierSection(), SizedBox(height: gap), productEntrySection()],
-                    );
-                    final rightPanel = Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [purchaseLinesSection(), SizedBox(height: gap), summarySection()],
-                    );
-
-                    return Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        if (desktopLayout)
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              SizedBox(width: 390, child: leftPanel),
-                              SizedBox(width: gap),
-                              Expanded(child: rightPanel),
-                            ],
-                          )
-                        else ...[
-                          leftPanel,
-                          SizedBox(height: gap),
-                          rightPanel,
-                        ],
-                      ],
-                    );
-                          },
-                        ),
                       ),
                     ),
                   ),
-                  const Divider(height: 1),
-                  Padding(
-                    padding: EdgeInsets.fromLTRB(
-                      VentioResponsive.pagePadding(context),
-                      12,
-                      VentioResponsive.pagePadding(context),
-                      16,
-                    ),
-                    child: LayoutBuilder(
-                      builder: (context, footerConstraints) {
-                        final compactFooter = footerConstraints.maxWidth < 520;
-                        final totalText = Text(
-                          '${tr.text('total')}: ${formatUsdReferenceAmount(total, widget.store.storeProfile)}',
-                          style: Theme.of(context).textTheme.titleMedium,
-                        );
-                        final cancelButton = TextButton(
-                          onPressed: () => cancelPurchaseDialog(dialogContext),
-                          child: Text(tr.text('cancel')),
-                        );
-                        final saveButton = FilledButton.icon(
-                          onPressed: items.isEmpty ? null : () => savePurchaseFromDialog(dialogContext),
-                          icon: const Icon(Icons.save_outlined),
-                          label: Text(tr.text('save')),
-                        );
-                        if (compactFooter) {
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              totalText,
-                              const SizedBox(height: 10),
-                              Row(
-                                children: [
-                                  Expanded(child: cancelButton),
-                                  const SizedBox(width: 12),
-                                  Expanded(child: saveButton),
-                                ],
-                              ),
-                            ],
-                          );
-                        }
-                        return Row(
-                          children: [
-                            Expanded(child: totalText),
-                            cancelButton,
-                            const SizedBox(width: 12),
-                            saveButton,
-                          ],
-                        );
-                      },
-                    ),
-                  ),
-                ],
-                  ),
                 ),
               ),
-            ),
-          ),
-          );
+            );
           },
         ),
       );
     } finally {
-      HardwareKeyboard.instance.removeHandler(handlePurchaseDialogHardwareShortcut);
+      HardwareKeyboard.instance
+          .removeHandler(handlePurchaseDialogHardwareShortcut);
       activePurchaseDialogContext = null;
       activePurchaseDialogSetState = null;
     }
@@ -1732,25 +2441,36 @@ class _PurchasesPageState extends State<PurchasesPage> {
 }
 
 class _MetricCard extends StatelessWidget {
-  const _MetricCard({required this.label, required this.value, required this.icon});
+  const _MetricCard(
+      {required this.label, required this.value, required this.icon});
   final String label, value;
   final IconData icon;
   @override
   Widget build(BuildContext context) => SizedBox(
         width: VentioResponsive.clampToScreen(
           context,
-          VentioResponsive.adaptiveWidth(context, mobile: 190, tablet: 220, desktop: 260),
+          VentioResponsive.adaptiveWidth(context,
+              mobile: 190, tablet: 220, desktop: 260),
           min: 160,
         ),
         child: Card(
           child: Padding(
             padding: VentioResponsive.pageInsets(context),
-            child: Row(children: [Icon(icon), const SizedBox(width: 12), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(label), Text(value, style: Theme.of(context).textTheme.titleLarge)]))]),
+            child: Row(children: [
+              Icon(icon),
+              const SizedBox(width: 12),
+              Expanded(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                    Text(label),
+                    Text(value, style: Theme.of(context).textTheme.titleLarge)
+                  ]))
+            ]),
           ),
         ),
       );
 }
-
 
 class _DetailRow extends StatelessWidget {
   const _DetailRow({required this.label, required this.value});
@@ -1764,9 +2484,13 @@ class _DetailRow extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(width: 110, child: Text(label, style: Theme.of(context).textTheme.bodySmall)),
+          SizedBox(
+              width: 110,
+              child: Text(label, style: Theme.of(context).textTheme.bodySmall)),
           const SizedBox(width: 12),
-          Expanded(child: Text(value, style: Theme.of(context).textTheme.bodyMedium)),
+          Expanded(
+              child:
+                  Text(value, style: Theme.of(context).textTheme.bodyMedium)),
         ],
       ),
     );
@@ -1789,9 +2513,19 @@ class _PurchaseTile extends StatelessWidget {
   final Purchase purchase;
   final StoreProfile storeProfile;
   final String Function(DateTime date) formatDate;
-  final VoidCallback? onTap, onReceive, onCancel, onDeleteDraft, onPermanentDelete, onDuplicate;
+  final VoidCallback? onTap,
+      onReceive,
+      onCancel,
+      onDeleteDraft,
+      onPermanentDelete,
+      onDuplicate;
 
-  String _formatQuantity(double value) => value % 1 == 0 ? value.toStringAsFixed(0) : value.toStringAsFixed(3).replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
+  String _formatQuantity(double value) => value % 1 == 0
+      ? value.toStringAsFixed(0)
+      : value
+          .toStringAsFixed(3)
+          .replaceFirst(RegExp(r'0+$'), '')
+          .replaceFirst(RegExp(r'\.$'), '');
 
   @override
   Widget build(BuildContext context) {
@@ -1802,13 +2536,28 @@ class _PurchaseTile extends StatelessWidget {
         : purchase.status.toLowerCase() == 'cancelled'
             ? tr.text('cancelled')
             : purchase.isReceived
-            ? tr.text('received')
-            : tr.text('draft');
-    final statusColor = purchase.isReturned ? Colors.blueGrey : purchase.status.toLowerCase() == 'cancelled' ? Colors.red : purchase.isReceived ? Colors.green : Colors.orange;
-    final statusIcon = purchase.isReturned ? Icons.assignment_return_outlined : purchase.status.toLowerCase() == 'cancelled' ? Icons.cancel_outlined : purchase.isReceived ? Icons.inventory_2_outlined : Icons.pending_actions;
+                ? tr.text('received')
+                : tr.text('draft');
+    final statusColor = purchase.isReturned
+        ? Colors.blueGrey
+        : purchase.status.toLowerCase() == 'cancelled'
+            ? Colors.red
+            : purchase.isReceived
+                ? Colors.green
+                : Colors.orange;
+    final statusIcon = purchase.isReturned
+        ? Icons.assignment_return_outlined
+        : purchase.status.toLowerCase() == 'cancelled'
+            ? Icons.cancel_outlined
+            : purchase.isReceived
+                ? Icons.inventory_2_outlined
+                : Icons.pending_actions;
     final amount = formatUsdReferenceAmount(purchase.subtotal, storeProfile);
-    final supplier = purchase.supplierName.trim().isEmpty ? '-' : purchase.supplierName.trim();
-    final summary = '${purchase.items.length} ${tr.text('items')} • ${_formatQuantity(purchase.totalUnits)} ${tr.text('units')} • ${formatDate(purchase.date)}';
+    final supplier = purchase.supplierName.trim().isEmpty
+        ? '-'
+        : purchase.supplierName.trim();
+    final summary =
+        '${purchase.items.length} ${tr.text('items')} • ${_formatQuantity(purchase.totalUnits)} ${tr.text('units')} • ${formatDate(purchase.date)}';
 
     final actionsMenu = PopupMenuButton<String>(
       tooltip: tr.text('actions'),
@@ -1820,11 +2569,35 @@ class _PurchaseTile extends StatelessWidget {
         if (value == 'permanent_delete') onPermanentDelete?.call();
       },
       itemBuilder: (context) => [
-        PopupMenuItem(value: 'duplicate', child: ListTile(leading: const Icon(Icons.copy_all_outlined), title: Text(tr.text('duplicate_purchase')))),
-        if (onReceive != null) PopupMenuItem(value: 'receive', child: ListTile(leading: const Icon(Icons.download_done), title: Text(tr.text('receive')))),
-        if (onCancel != null) PopupMenuItem(value: 'return', child: ListTile(leading: const Icon(Icons.assignment_return_outlined), title: Text(tr.text('return_purchase')))),
-        if (onDeleteDraft != null) PopupMenuItem(value: 'delete_draft', child: ListTile(leading: const Icon(Icons.delete_outline), title: Text(tr.text('delete_draft_purchase')))),
-        if (onPermanentDelete != null) PopupMenuItem(value: 'permanent_delete', child: ListTile(leading: const Icon(Icons.delete_forever_outlined), title: Text(tr.text('permanently_delete')))),
+        PopupMenuItem(
+            value: 'duplicate',
+            child: ListTile(
+                leading: const Icon(Icons.copy_all_outlined),
+                title: Text(tr.text('duplicate_purchase')))),
+        if (onReceive != null)
+          PopupMenuItem(
+              value: 'receive',
+              child: ListTile(
+                  leading: const Icon(Icons.download_done),
+                  title: Text(tr.text('receive')))),
+        if (onCancel != null)
+          PopupMenuItem(
+              value: 'return',
+              child: ListTile(
+                  leading: const Icon(Icons.assignment_return_outlined),
+                  title: Text(tr.text('return_purchase')))),
+        if (onDeleteDraft != null)
+          PopupMenuItem(
+              value: 'delete_draft',
+              child: ListTile(
+                  leading: const Icon(Icons.delete_outline),
+                  title: Text(tr.text('delete_draft_purchase')))),
+        if (onPermanentDelete != null)
+          PopupMenuItem(
+              value: 'permanent_delete',
+              child: ListTile(
+                  leading: const Icon(Icons.delete_forever_outlined),
+                  title: Text(tr.text('permanently_delete')))),
       ],
     );
 
@@ -1844,9 +2617,11 @@ class _PurchaseTile extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(purchase.purchaseNo, style: Theme.of(context).textTheme.titleMedium),
+                    Text(purchase.purchaseNo,
+                        style: Theme.of(context).textTheme.titleMedium),
                     const SizedBox(height: 2),
-                    Text(supplier, maxLines: 1, overflow: TextOverflow.ellipsis),
+                    Text(supplier,
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 8,
@@ -1854,22 +2629,29 @@ class _PurchaseTile extends StatelessWidget {
                       crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(color: statusColor.withValues(alpha: .12), borderRadius: BorderRadius.circular(12)),
-                          child: Text(statusText, style: TextStyle(color: statusColor)),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                              color: statusColor.withValues(alpha: .12),
+                              borderRadius: BorderRadius.circular(12)),
+                          child: Text(statusText,
+                              style: TextStyle(color: statusColor)),
                         ),
-                        Text(summary, style: Theme.of(context).textTheme.bodySmall),
+                        Text(summary,
+                            style: Theme.of(context).textTheme.bodySmall),
                       ],
                     ),
                     if (isCompact) ...[
                       const SizedBox(height: 8),
-                      Text(amount, style: Theme.of(context).textTheme.titleMedium),
+                      Text(amount,
+                          style: Theme.of(context).textTheme.titleMedium),
                     ],
                   ],
                 ),
               ),
               const SizedBox(width: 8),
-              if (!isCompact) Text(amount, style: Theme.of(context).textTheme.titleMedium),
+              if (!isCompact)
+                Text(amount, style: Theme.of(context).textTheme.titleMedium),
               actionsMenu,
             ],
           ),

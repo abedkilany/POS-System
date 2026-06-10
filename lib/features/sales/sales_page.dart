@@ -22,7 +22,6 @@ import '../../widgets/app_section_header.dart';
 import '../../widgets/empty_state_card.dart';
 import '../barcode/barcode_scanner_page.dart';
 
-
 enum _BarcodeAddResult {
   added,
   autoCorrected,
@@ -47,12 +46,16 @@ class _SalesPageState extends State<SalesPage> {
   final TextEditingController _barcodeController = TextEditingController();
   final TextEditingController _discountController = TextEditingController();
   final TextEditingController _paidAmountController = TextEditingController();
-  final TextEditingController _paymentExchangeRateController = TextEditingController();
+  final TextEditingController _paymentExchangeRateController =
+      TextEditingController();
   final FocusNode _barcodeFocusNode = FocusNode();
   final FocusNode _shortcutFocusNode = FocusNode(debugLabel: 'sale_shortcuts');
-  final FocusNode _paymentShortcutFocusNode = FocusNode(debugLabel: 'sale_payment_shortcuts');
-  final FocusNode _discountFocusNode = FocusNode(debugLabel: 'sale_payment_discount');
-  final FocusNode _cashReceivedFocusNode = FocusNode(debugLabel: 'sale_payment_cash_received');
+  final FocusNode _paymentShortcutFocusNode =
+      FocusNode(debugLabel: 'sale_payment_shortcuts');
+  final FocusNode _discountFocusNode =
+      FocusNode(debugLabel: 'sale_payment_discount');
+  final FocusNode _cashReceivedFocusNode =
+      FocusNode(debugLabel: 'sale_payment_cash_received');
 
   static const String _quickPagesStorageKey = 'sale_quick_product_pages_v1';
   static const String _heldSalesStorageKey = 'sale_held_carts_v1';
@@ -66,7 +69,8 @@ class _SalesPageState extends State<SalesPage> {
   String _discountCurrency = 'USD';
   String _search = '';
   final List<_HeldSaleCart> _heldCarts = [];
-  final MobileScannerController _scannerController = MobileScannerController(detectionSpeed: DetectionSpeed.noDuplicates);
+  final MobileScannerController _scannerController =
+      MobileScannerController(detectionSpeed: DetectionSpeed.noDuplicates);
   bool _scannerActive = false;
   bool _manualBarcodeInput = false;
   bool _quickGridEditMode = false;
@@ -82,7 +86,8 @@ class _SalesPageState extends State<SalesPage> {
     _invoiceCurrency = widget.store.storeProfile.defaultSaleInvoiceCurrency;
     _paymentCurrency = widget.store.storeProfile.defaultSalePaymentCurrency;
     _discountCurrency = widget.store.storeProfile.defaultSaleInvoiceCurrency;
-    _paymentExchangeRateController.text = widget.store.storeProfile.usdToLbpRate.toStringAsFixed(0);
+    _paymentExchangeRateController.text =
+        widget.store.storeProfile.usdToLbpRate.toStringAsFixed(0);
     _loadQuickProductPages();
     _loadHeldSaleCarts();
     HardwareKeyboard.instance.addHandler(_handleSaleHardwareShortcutKey);
@@ -113,38 +118,61 @@ class _SalesPageState extends State<SalesPage> {
   double get _discount {
     final value = double.tryParse(_discountController.text) ?? 0;
     final normalized = value < 0 ? 0 : value;
-    return toUsdReferencePrice(normalized.toDouble(), _discountCurrency, widget.store.storeProfile);
+    return toUsdReferencePrice(
+        normalized.toDouble(), _discountCurrency, widget.store.storeProfile);
   }
 
   double get _subtotal => _cart.fold(0, (sum, item) => sum + item.lineTotal);
-String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool includeUnit = false}) {
+  String _stockAvailabilityLabel(Product product, AppLocalizations tr,
+      {bool includeUnit = false}) {
     if (!product.trackStock) return 'Non-stock';
-    final quantity = includeUnit ? _formatQuantity(product.stock) : product.stock.toString();
-    return includeUnit ? '${tr.text('stock')}: $quantity ${product.unit}' : '${tr.text('stock')}: $quantity';
+    final quantity =
+        includeUnit ? _formatQuantity(product.stock) : product.stock.toString();
+    return includeUnit
+        ? '${tr.text('stock')}: $quantity ${product.unit}'
+        : '${tr.text('stock')}: $quantity';
   }
-  double get _total => (_subtotal - _discount).clamp(0, double.infinity).toDouble();
-  double get _itemsCount => _cart.fold<double>(0, (sum, item) => sum + item.quantity);
 
+  double get _total =>
+      (_subtotal - _discount).clamp(0, double.infinity).toDouble();
+  double get _itemsCount =>
+      _cart.fold<double>(0, (sum, item) => sum + item.quantity);
 
-  bool get _isWalkInCustomer => widget.store.sanitizeSelectedCustomerId(_selectedCustomerId) == AppStore.walkInCustomerId;
+  bool get _isWalkInCustomer =>
+      widget.store.sanitizeSelectedCustomerId(_selectedCustomerId) ==
+      AppStore.walkInCustomerId;
   bool get _isCashPayment => _paymentMethod == 'Cash';
   bool get _isCreditPayment => _paymentMethod == 'Credit';
   bool get _showsCashReceived => !_isCashPayment;
   double get _saleExchangeRate {
-    final value = double.tryParse(_paymentExchangeRateController.text.trim()) ?? widget.store.storeProfile.usdToLbpRate;
+    final value = double.tryParse(_paymentExchangeRateController.text.trim()) ??
+        widget.store.storeProfile.usdToLbpRate;
     return value <= 0 ? widget.store.storeProfile.usdToLbpRate : value;
   }
+
   double get _invoiceTotal => _currencyFromUsd(_total, _invoiceCurrency);
-  double get _cashReceivedInPaymentCurrency => (double.tryParse(_paidAmountController.text.trim()) ?? 0).clamp(0, double.infinity).toDouble();
-  double get _cashReceivedAmount => _convertCurrencyAmount(_cashReceivedInPaymentCurrency, _paymentCurrency, _invoiceCurrency).clamp(0, _invoiceTotal).toDouble();
+  double get _cashReceivedInPaymentCurrency =>
+      (double.tryParse(_paidAmountController.text.trim()) ?? 0)
+          .clamp(0, double.infinity)
+          .toDouble();
+  double get _cashReceivedAmount => _convertCurrencyAmount(
+          _cashReceivedInPaymentCurrency, _paymentCurrency, _invoiceCurrency)
+      .clamp(0, _invoiceTotal)
+      .toDouble();
   String get _derivedPaymentStatus {
     if (_isCreditPayment) return _cashReceivedAmount > 0 ? 'partial' : 'credit';
     return 'paid';
   }
-  double get _derivedPaidAmount => _isCreditPayment ? _cashReceivedAmount : _invoiceTotal;
 
-  double _currencyFromUsd(double usdAmount, String currency) => currency.toUpperCase() == 'LBP' ? usdAmount * _saleExchangeRate : usdAmount;
-  double _convertCurrencyAmount(double amount, String fromCurrency, String toCurrency) {
+  double get _derivedPaidAmount =>
+      _isCreditPayment ? _cashReceivedAmount : _invoiceTotal;
+
+  double _currencyFromUsd(double usdAmount, String currency) =>
+      currency.toUpperCase() == 'LBP'
+          ? usdAmount * _saleExchangeRate
+          : usdAmount;
+  double _convertCurrencyAmount(
+      double amount, String fromCurrency, String toCurrency) {
     final from = fromCurrency.toUpperCase();
     final to = toCurrency.toUpperCase();
     if (from == to) return amount;
@@ -153,13 +181,23 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     return amount;
   }
 
-  String _formatSaleCurrency(double amount, String currency) => formatCurrency(amount, currency: currency);
+  String _formatSaleCurrency(double amount, String currency) =>
+      formatCurrency(amount, currency: currency);
 
   List<Product> _visibleProducts() {
-    return widget.store.products.where((product) => product.isActive && !product.isDeleted).where((product) {
+    return widget.store.products
+        .where((product) => product.isActive && !product.isDeleted)
+        .where((product) {
       if (_search.trim().isEmpty) return true;
       final q = _search.toLowerCase();
-      return product.name.toLowerCase().contains(q) || product.code.toLowerCase().contains(q) || product.barcode.toLowerCase().contains(q) || product.effectiveSaleUnits.any((unit) => unit.barcode.toLowerCase().contains(q)) || product.effectivePurchaseUnits.any((unit) => unit.barcode.toLowerCase().contains(q)) || product.category.toLowerCase().contains(q);
+      return product.name.toLowerCase().contains(q) ||
+          product.code.toLowerCase().contains(q) ||
+          product.barcode.toLowerCase().contains(q) ||
+          product.effectiveSaleUnits
+              .any((unit) => unit.barcode.toLowerCase().contains(q)) ||
+          product.effectivePurchaseUnits
+              .any((unit) => unit.barcode.toLowerCase().contains(q)) ||
+          product.category.toLowerCase().contains(q);
     }).toList();
   }
 
@@ -178,7 +216,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     return true;
   }
 
-  Future<void> _executeSaleShortcut(SaleShortcutAction action, List<Product> visibleProducts) async {
+  Future<void> _executeSaleShortcut(
+      SaleShortcutAction action, List<Product> visibleProducts) async {
     final tr = AppLocalizations.of(context);
     switch (action) {
       case SaleShortcutAction.focusBarcode:
@@ -189,7 +228,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
         break;
       case SaleShortcutAction.holdCart:
         if (_cart.isEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('shortcut_cart_empty'))));
+          ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(tr.text('shortcut_cart_empty'))));
           return;
         }
         await _holdCurrentCart();
@@ -199,7 +239,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
         break;
       case SaleShortcutAction.openPayment:
         if (_cart.isEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('shortcut_cart_empty'))));
+          ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(tr.text('shortcut_cart_empty'))));
           return;
         }
         await _openPaymentPage(printAfterSave: false);
@@ -210,7 +251,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     }
   }
 
-  bool _handlePaymentShortcutKey(KeyEvent event, BuildContext dialogContext, void Function(void Function()) setDialogState) {
+  bool _handlePaymentShortcutKey(KeyEvent event, BuildContext dialogContext,
+      void Function(void Function()) setDialogState) {
     if (event is! KeyDownEvent) return false;
     final keyName = SaleShortcutSettings.keyNameForLogicalKey(event.logicalKey);
     if (keyName == null) return false;
@@ -273,8 +315,12 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
         title: Text(tr.text('clear_cart')),
         content: Text(tr.text('confirm_clear_cart')),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: Text(tr.text('cancel'))),
-          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: Text(tr.text('clear'))),
+          TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(tr.text('cancel'))),
+          FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(tr.text('clear'))),
         ],
       ),
     );
@@ -297,7 +343,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
 
   void _setPaymentMethod(String value) {
     setState(() {
-      _paymentMethod = (_isWalkInCustomer && value == 'Credit') ? 'Cash' : value;
+      _paymentMethod =
+          (_isWalkInCustomer && value == 'Credit') ? 'Cash' : value;
       if (_paymentMethod == 'Cash') {
         _paidAmountController.clear();
       } else if (_paidAmountController.text.trim().isEmpty) {
@@ -315,7 +362,9 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     return Focus(
       focusNode: _shortcutFocusNode,
       autofocus: true,
-      onKeyEvent: (node, event) => _handleSaleShortcutKey(event, products) ? KeyEventResult.handled : KeyEventResult.ignored,
+      onKeyEvent: (node, event) => _handleSaleShortcutKey(event, products)
+          ? KeyEventResult.handled
+          : KeyEventResult.ignored,
       child: LayoutBuilder(
         builder: (context, constraints) {
           final isWide = constraints.maxWidth > 980;
@@ -325,12 +374,12 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
             return _buildMobileSalesLayout(context, tr, products, pagePadding);
           }
 
-          return _buildDesktopSalesLayout(context, tr, products, sales, pagePadding);
+          return _buildDesktopSalesLayout(
+              context, tr, products, sales, pagePadding);
         },
       ),
     );
   }
-
 
   Customer _selectedCustomer() {
     final id = widget.store.sanitizeSelectedCustomerId(_selectedCustomerId);
@@ -344,14 +393,19 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     final phone = customer.phone.trim();
     final id = customer.id.trim();
     if (customer.id == AppStore.walkInCustomerId) return customer.name;
-    return phone.isEmpty ? '#$id - ${customer.name}' : '#$id - ${customer.name} - $phone';
+    return phone.isEmpty
+        ? '#$id - ${customer.name}'
+        : '#$id - ${customer.name} - $phone';
   }
 
   List<Customer> _customerSearchOptions(String query) {
     final normalized = query.trim().toLowerCase();
     final seen = <String>{};
     final customers = <Customer>[];
-    for (final customer in [widget.store.walkInCustomer, ...widget.store.customers]) {
+    for (final customer in [
+      widget.store.walkInCustomer,
+      ...widget.store.customers
+    ]) {
       if (!seen.add(customer.id)) continue;
       if (normalized.isEmpty ||
           customer.name.toLowerCase().contains(normalized) ||
@@ -368,21 +422,25 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     return customers.take(20).toList();
   }
 
-  Widget _buildCustomerSelector(BuildContext context, AppLocalizations tr, {bool dense = false, void Function(void Function())? modalSetState}) {
+  Widget _buildCustomerSelector(BuildContext context, AppLocalizations tr,
+      {bool dense = false, void Function(void Function())? modalSetState}) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Expanded(
           child: RawAutocomplete<Customer>(
-            key: ValueKey('sale_customer_${_selectedCustomerId}_${widget.store.customers.length}'),
-            initialValue: TextEditingValue(text: _customerSearchText(_selectedCustomer())),
+            key: ValueKey(
+                'sale_customer_${_selectedCustomerId}_${widget.store.customers.length}'),
+            initialValue: TextEditingValue(
+                text: _customerSearchText(_selectedCustomer())),
             displayStringForOption: _customerSearchText,
             optionsBuilder: (value) => _customerSearchOptions(value.text),
             onSelected: (customer) {
               _setSelectedCustomerId(customer.id);
               modalSetState?.call(() {});
             },
-            fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+            fieldViewBuilder:
+                (context, controller, focusNode, onFieldSubmitted) {
               return TextFormField(
                 controller: controller,
                 focusNode: focusNode,
@@ -392,7 +450,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                   isDense: dense,
                   prefixIcon: const Icon(Icons.search),
                 ),
-                onTap: () => controller.selection = TextSelection(baseOffset: 0, extentOffset: controller.text.length),
+                onTap: () => controller.selection = TextSelection(
+                    baseOffset: 0, extentOffset: controller.text.length),
               );
             },
             optionsViewBuilder: (context, onSelected, options) {
@@ -404,7 +463,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                   borderRadius: BorderRadius.circular(12),
                   clipBehavior: Clip.antiAlias,
                   child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 280, maxWidth: 520),
+                    constraints:
+                        const BoxConstraints(maxHeight: 280, maxWidth: 520),
                     child: ListView.separated(
                       padding: EdgeInsets.zero,
                       shrinkWrap: true,
@@ -412,13 +472,24 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                       separatorBuilder: (_, __) => const Divider(height: 1),
                       itemBuilder: (context, index) {
                         final customer = list[index];
-                        final isWalkIn = customer.id == AppStore.walkInCustomerId;
+                        final isWalkIn =
+                            customer.id == AppStore.walkInCustomerId;
                         final phone = customer.phone.trim();
                         return ListTile(
                           dense: true,
-                          leading: Icon(isWalkIn ? Icons.person_outline : Icons.badge_outlined),
-                          title: Text(isWalkIn ? customer.name : '#${customer.id} - ${customer.name}', maxLines: 1, overflow: TextOverflow.ellipsis),
-                          subtitle: isWalkIn || phone.isEmpty ? null : Text(phone, maxLines: 1, overflow: TextOverflow.ellipsis),
+                          leading: Icon(isWalkIn
+                              ? Icons.person_outline
+                              : Icons.badge_outlined),
+                          title: Text(
+                              isWalkIn
+                                  ? customer.name
+                                  : '#${customer.id} - ${customer.name}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis),
+                          subtitle: isWalkIn || phone.isEmpty
+                              ? null
+                              : Text(phone,
+                                  maxLines: 1, overflow: TextOverflow.ellipsis),
                           onTap: () => onSelected(customer),
                         );
                       },
@@ -444,8 +515,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     );
   }
 
-
-  Widget _buildPaymentMethodChips(AppLocalizations tr, {void Function(void Function())? modalSetState}) {
+  Widget _buildPaymentMethodChips(AppLocalizations tr,
+      {void Function(void Function())? modalSetState}) {
     final methods = <MapEntry<String, String>>[
       MapEntry('Cash', tr.text('payment_cash')),
       if (!_isWalkInCustomer) MapEntry('Credit', tr.text('credit_unpaid')),
@@ -456,7 +527,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(tr.text('payment_method'), style: Theme.of(context).textTheme.labelLarge),
+        Text(tr.text('payment_method'),
+            style: Theme.of(context).textTheme.labelLarge),
         const SizedBox(height: 8),
         Wrap(
           spacing: 8,
@@ -477,11 +549,13 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     );
   }
 
-  Widget _buildPaymentCurrencySwitch(AppLocalizations tr, {void Function(void Function())? modalSetState}) {
+  Widget _buildPaymentCurrencySwitch(AppLocalizations tr,
+      {void Function(void Function())? modalSetState}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(tr.text('payment_currency'), style: Theme.of(context).textTheme.labelLarge),
+        Text(tr.text('payment_currency'),
+            style: Theme.of(context).textTheme.labelLarge),
         const SizedBox(height: 8),
         LayoutBuilder(
           builder: (context, constraints) {
@@ -520,12 +594,17 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     );
   }
 
-  Widget _buildCashReceivedField(AppLocalizations tr, {bool dense = false, void Function(void Function())? modalSetState}) {
+  Widget _buildCashReceivedField(AppLocalizations tr,
+      {bool dense = false, void Function(void Function())? modalSetState}) {
     return TextFormField(
       focusNode: _cashReceivedFocusNode,
       controller: _paidAmountController,
-      decoration: InputDecoration(labelText: '${tr.text('paid_amount')} ($_paymentCurrency)', isDense: dense),
-      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}$'))],
+      decoration: InputDecoration(
+          labelText: '${tr.text('paid_amount')} ($_paymentCurrency)',
+          isDense: dense),
+      inputFormatters: [
+        FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}$'))
+      ],
       keyboardType: const TextInputType.numberWithOptions(decimal: true),
       onChanged: (_) {
         setState(() {});
@@ -534,7 +613,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     );
   }
 
-  Future<String?> _showQuickCustomerDialog(BuildContext context, AppLocalizations tr) async {
+  Future<String?> _showQuickCustomerDialog(
+      BuildContext context, AppLocalizations tr) async {
     final nameController = TextEditingController();
     final phoneController = TextEditingController();
     final addressController = TextEditingController();
@@ -554,19 +634,29 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                   TextFormField(
                     controller: nameController,
                     autofocus: true,
-                    decoration: InputDecoration(labelText: tr.text('customer_name')),
-                    validator: (value) => value == null || value.trim().isEmpty ? tr.text('required_field') : null,
+                    decoration:
+                        InputDecoration(labelText: tr.text('customer_name')),
+                    validator: (value) => value == null || value.trim().isEmpty
+                        ? tr.text('required_field')
+                        : null,
                   ),
                   const SizedBox(height: 12),
-                  TextFormField(controller: phoneController, decoration: InputDecoration(labelText: tr.text('phone'))),
+                  TextFormField(
+                      controller: phoneController,
+                      decoration: InputDecoration(labelText: tr.text('phone'))),
                   const SizedBox(height: 12),
-                  TextFormField(controller: addressController, decoration: InputDecoration(labelText: tr.text('address'))),
+                  TextFormField(
+                      controller: addressController,
+                      decoration:
+                          InputDecoration(labelText: tr.text('address'))),
                 ],
               ),
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext), child: Text(tr.text('cancel'))),
+            TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: Text(tr.text('cancel'))),
             FilledButton(
               onPressed: () {
                 if (!formKey.currentState!.validate()) return;
@@ -596,7 +686,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     } catch (_) {
       if (context.mounted) {
         final messenger = ScaffoldMessenger.of(context);
-        messenger.showSnackBar(SnackBar(content: Text(tr.text('customer_save_failed'))));
+        messenger.showSnackBar(
+            SnackBar(content: Text(tr.text('customer_save_failed'))));
       }
       return null;
     } finally {
@@ -605,8 +696,6 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
       addressController.dispose();
     }
   }
-
-
 
   Widget _buildShortcutGuide(BuildContext context, AppLocalizations tr) {
     final settings = SaleShortcutSettings.load();
@@ -623,19 +712,22 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     if (chips.isEmpty) {
       return Align(
         alignment: AlignmentDirectional.centerStart,
-        child: Text(tr.text('shortcuts_disabled_for_page'), style: Theme.of(context).textTheme.bodySmall),
+        child: Text(tr.text('shortcuts_disabled_for_page'),
+            style: Theme.of(context).textTheme.bodySmall),
       );
     }
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(children: [
-        Text('${tr.text('shortcut_guide')}: ', style: Theme.of(context).textTheme.bodySmall),
+        Text('${tr.text('shortcut_guide')}: ',
+            style: Theme.of(context).textTheme.bodySmall),
         ...chips.expand((chip) => [chip, const SizedBox(width: 6)]),
       ]),
     );
   }
 
-  Widget _buildDesktopSalesLayout(BuildContext context, AppLocalizations tr, List<Product> products, List<Sale> sales, double pagePadding) {
+  Widget _buildDesktopSalesLayout(BuildContext context, AppLocalizations tr,
+      List<Product> products, List<Sale> sales, double pagePadding) {
     return Padding(
       padding: EdgeInsets.all(pagePadding),
       child: Column(
@@ -656,9 +748,13 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Expanded(flex: 6, child: _buildCurrentSalePanel(context, tr, products)),
+                Expanded(
+                    flex: 6,
+                    child: _buildCurrentSalePanel(context, tr, products)),
                 const SizedBox(width: 12),
-                Expanded(flex: 4, child: _buildQuickProductGridPanel(context, tr, products)),
+                Expanded(
+                    flex: 4,
+                    child: _buildQuickProductGridPanel(context, tr, products)),
               ],
             ),
           ),
@@ -667,7 +763,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     );
   }
 
-  Widget _buildCurrentSalePanel(BuildContext context, AppLocalizations tr, List<Product> products) {
+  Widget _buildCurrentSalePanel(
+      BuildContext context, AppLocalizations tr, List<Product> products) {
     return Card(
       child: Padding(
         padding: VentioResponsive.pageInsets(context),
@@ -676,7 +773,9 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
           children: [
             _buildBarcodeStation(context, tr, products: products),
             const SizedBox(height: 12),
-            Expanded(child: _buildCart(context, tr, showTotals: false, showActions: false)),
+            Expanded(
+                child: _buildCart(context, tr,
+                    showTotals: false, showActions: false)),
             const SizedBox(height: 12),
             _buildSaleTotalBar(context, tr),
           ],
@@ -685,9 +784,11 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     );
   }
 
-  Widget _buildQuickProductGridPanel(BuildContext context, AppLocalizations tr, List<Product> products) {
+  Widget _buildQuickProductGridPanel(
+      BuildContext context, AppLocalizations tr, List<Product> products) {
     _ensureQuickPages(products, tr);
-    final page = _quickPages[_selectedQuickPageIndex.clamp(0, _quickPages.length - 1).toInt()];
+    final page = _quickPages[
+        _selectedQuickPageIndex.clamp(0, _quickPages.length - 1).toInt()];
     final visibleSlotIndexes = _quickVisibleSlotIndexes(page);
 
     return Card(
@@ -698,7 +799,9 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
           children: [
             Row(
               children: [
-                Expanded(child: Text(tr.text('quick_product_grid'), style: Theme.of(context).textTheme.titleLarge)),
+                Expanded(
+                    child: Text(tr.text('quick_product_grid'),
+                        style: Theme.of(context).textTheme.titleLarge)),
                 if (_quickGridEditMode) ...[
                   TextButton.icon(
                     onPressed: _cancelQuickGridEditing,
@@ -731,22 +834,34 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                             buildDefaultDragHandles: false,
                             itemCount: _quickPages.length,
                             onReorderItem: _moveQuickPage,
-                            proxyDecorator: (child, _, __) => Material(elevation: 6, borderRadius: BorderRadius.circular(24), child: child),
+                            proxyDecorator: (child, _, __) => Material(
+                                elevation: 6,
+                                borderRadius: BorderRadius.circular(24),
+                                child: child),
                             itemBuilder: (context, index) {
                               final selected = index == _selectedQuickPageIndex;
                               return Padding(
-                                key: ValueKey('quick_page_${index}_${_quickPages[index].name}'),
-                                padding: const EdgeInsetsDirectional.only(end: 8),
+                                key: ValueKey(
+                                    'quick_page_${index}_${_quickPages[index].name}'),
+                                padding:
+                                    const EdgeInsetsDirectional.only(end: 8),
                                 child: ReorderableDragStartListener(
                                   index: index,
                                   child: InputChip(
-                                    avatar: const Icon(Icons.drag_indicator, size: 18),
+                                    avatar: const Icon(Icons.drag_indicator,
+                                        size: 18),
                                     label: Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
-                                        ConstrainedBox(constraints: const BoxConstraints(maxWidth: 120), child: Text(_quickPages[index].name, overflow: TextOverflow.ellipsis)),
+                                        ConstrainedBox(
+                                            constraints: const BoxConstraints(
+                                                maxWidth: 120),
+                                            child: Text(_quickPages[index].name,
+                                                overflow:
+                                                    TextOverflow.ellipsis)),
                                         const SizedBox(width: 4),
-                                        const Icon(Icons.edit_outlined, size: 16),
+                                        const Icon(Icons.edit_outlined,
+                                            size: 16),
                                       ],
                                     ),
                                     selected: selected,
@@ -754,11 +869,16 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                                       if (selected) {
                                         _renameQuickPage(index);
                                       } else {
-                                        setState(() => _selectedQuickPageIndex = index);
+                                        setState(() =>
+                                            _selectedQuickPageIndex = index);
                                       }
                                     },
-                                    deleteIcon: _quickPages.length > 1 ? const Icon(Icons.close, size: 18) : null,
-                                    onDeleted: _quickPages.length > 1 ? () => _deleteQuickPage(index) : null,
+                                    deleteIcon: _quickPages.length > 1
+                                        ? const Icon(Icons.close, size: 18)
+                                        : null,
+                                    onDeleted: _quickPages.length > 1
+                                        ? () => _deleteQuickPage(index)
+                                        : null,
                                   ),
                                 ),
                               );
@@ -767,13 +887,15 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                         : ListView.separated(
                             scrollDirection: Axis.horizontal,
                             itemCount: _quickPages.length,
-                            separatorBuilder: (_, __) => const SizedBox(width: 8),
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(width: 8),
                             itemBuilder: (context, index) {
                               final selected = index == _selectedQuickPageIndex;
                               return InputChip(
                                 label: Text(_quickPages[index].name),
                                 selected: selected,
-                                onSelected: (_) => setState(() => _selectedQuickPageIndex = index),
+                                onSelected: (_) => setState(
+                                    () => _selectedQuickPageIndex = index),
                               );
                             },
                           ),
@@ -795,10 +917,12 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                   ? Center(child: Text(tr.text('no_products')))
                   : LayoutBuilder(
                       builder: (context, constraints) {
-                        final crossAxisCount = constraints.maxWidth > 520 ? 3 : 2;
+                        final crossAxisCount =
+                            constraints.maxWidth > 520 ? 3 : 2;
                         return GridView.builder(
                           itemCount: visibleSlotIndexes.length,
-                          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
                             crossAxisCount: crossAxisCount,
                             mainAxisSpacing: 10,
                             crossAxisSpacing: 10,
@@ -807,19 +931,28 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                           itemBuilder: (context, visibleIndex) {
                             final slotIndex = visibleSlotIndexes[visibleIndex];
                             final slot = page.slots[slotIndex];
-                            final product = slot.productId == null ? null : _productById(slot.productId!);
+                            final product = slot.productId == null
+                                ? null
+                                : _productById(slot.productId!);
                             final isEmpty = product == null;
-                            final child = _buildQuickProductTile(context, tr, page, slotIndex, slot, product, isEmpty);
+                            final child = _buildQuickProductTile(context, tr,
+                                page, slotIndex, slot, product, isEmpty);
                             if (!_quickGridEditMode) return child;
                             final target = DragTarget<int>(
-                              onWillAcceptWithDetails: (details) => details.data != slotIndex,
-                              onAcceptWithDetails: (details) => _moveQuickSlot(details.data, slotIndex),
+                              onWillAcceptWithDetails: (details) =>
+                                  details.data != slotIndex,
+                              onAcceptWithDetails: (details) =>
+                                  _moveQuickSlot(details.data, slotIndex),
                               builder: (_, candidateData, ___) {
                                 if (candidateData.isEmpty) return child;
                                 return DecoratedBox(
                                   decoration: BoxDecoration(
                                     borderRadius: BorderRadius.circular(18),
-                                    border: Border.all(color: Theme.of(context).colorScheme.primary, width: 2),
+                                    border: Border.all(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .primary,
+                                        width: 2),
                                   ),
                                   child: child,
                                 );
@@ -831,9 +964,11 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                               feedback: Material(
                                 elevation: 6,
                                 borderRadius: BorderRadius.circular(16),
-                                child: SizedBox(width: 150, height: 120, child: child),
+                                child: SizedBox(
+                                    width: 150, height: 120, child: child),
                               ),
-                              childWhenDragging: Opacity(opacity: 0.35, child: child),
+                              childWhenDragging:
+                                  Opacity(opacity: 0.35, child: child),
                               child: target,
                             );
                           },
@@ -847,7 +982,15 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     );
   }
 
-  Widget _buildQuickProductTile(BuildContext context, AppLocalizations tr, _QuickProductPage page, int index, _QuickProductSlot slot, Product? product, bool isEmpty, {VoidCallback? onChanged}) {
+  Widget _buildQuickProductTile(
+      BuildContext context,
+      AppLocalizations tr,
+      _QuickProductPage page,
+      int index,
+      _QuickProductSlot slot,
+      Product? product,
+      bool isEmpty,
+      {VoidCallback? onChanged}) {
     final scheme = Theme.of(context).colorScheme;
     return InkWell(
       borderRadius: BorderRadius.circular(16),
@@ -867,8 +1010,13 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
       child: Ink(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
-          color: isEmpty ? scheme.surfaceContainerHighest.withValues(alpha: 0.35) : scheme.primaryContainer.withValues(alpha: 0.40),
-          border: Border.all(color: isEmpty ? scheme.outlineVariant : scheme.primary.withValues(alpha: 0.28)),
+          color: isEmpty
+              ? scheme.surfaceContainerHighest.withValues(alpha: 0.35)
+              : scheme.primaryContainer.withValues(alpha: 0.40),
+          border: Border.all(
+              color: isEmpty
+                  ? scheme.outlineVariant
+                  : scheme.primary.withValues(alpha: 0.28)),
         ),
         child: Stack(
           children: [
@@ -880,9 +1028,23 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                     : Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Text(slot.shortName?.trim().isNotEmpty == true ? slot.shortName!.trim() : product!.name, textAlign: TextAlign.center, maxLines: 3, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+                          Text(
+                              slot.shortName?.trim().isNotEmpty == true
+                                  ? slot.shortName!.trim()
+                                  : product!.name,
+                              textAlign: TextAlign.center,
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleMedium
+                                  ?.copyWith(fontWeight: FontWeight.w800)),
                           const SizedBox(height: 8),
-                          Text(formatUsdReferenceAmount(product!.price, widget.store.storeProfile), maxLines: 1, overflow: TextOverflow.ellipsis),
+                          Text(
+                              formatUsdReferenceAmount(
+                                  product!.price, widget.store.storeProfile),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis),
                         ],
                       ),
               ),
@@ -902,12 +1064,16 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                 ),
               ),
             if (_quickGridEditMode && !isEmpty)
-              const Positioned(left: 8, bottom: 8, child: Icon(Icons.drag_indicator, size: 20)),
+              const Positioned(
+                  left: 8,
+                  bottom: 8,
+                  child: Icon(Icons.drag_indicator, size: 20)),
             if (_quickGridEditMode && !isEmpty)
               Positioned(
                 right: 8,
                 bottom: 8,
-                child: Icon(Icons.edit_outlined, size: 20, color: scheme.primary),
+                child:
+                    Icon(Icons.edit_outlined, size: 20, color: scheme.primary),
               ),
           ],
         ),
@@ -920,7 +1086,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     int? firstEmpty;
     for (var i = 0; i < page.slots.length; i += 1) {
       final slot = page.slots[i];
-      final product = slot.productId == null ? null : _productById(slot.productId!);
+      final product =
+          slot.productId == null ? null : _productById(slot.productId!);
       if (product != null) {
         filled.add(i);
       } else {
@@ -936,7 +1103,10 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
         .map(
           (page) => _QuickProductPage(
             name: page.name,
-            slots: page.slots.map((slot) => _QuickProductSlot(productId: slot.productId, shortName: slot.shortName)).toList(),
+            slots: page.slots
+                .map((slot) => _QuickProductSlot(
+                    productId: slot.productId, shortName: slot.shortName))
+                .toList(),
           ),
         )
         .toList();
@@ -945,7 +1115,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
   bool get _quickGridHasUnsavedChanges {
     final snapshot = _quickPagesEditSnapshot;
     if (snapshot == null) return false;
-    return jsonEncode(snapshot.map((page) => page.toJson()).toList()) != jsonEncode(_quickPages.map((page) => page.toJson()).toList());
+    return jsonEncode(snapshot.map((page) => page.toJson()).toList()) !=
+        jsonEncode(_quickPages.map((page) => page.toJson()).toList());
   }
 
   void _startQuickGridEditing() {
@@ -973,7 +1144,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
       }
       _quickGridEditMode = false;
       _quickPagesEditSnapshot = null;
-      _selectedQuickPageIndex = _selectedQuickPageIndex.clamp(0, _quickPages.length - 1).toInt();
+      _selectedQuickPageIndex =
+          _selectedQuickPageIndex.clamp(0, _quickPages.length - 1).toInt();
     });
   }
 
@@ -990,9 +1162,15 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
         title: Text(tr.text('unsaved_changes')),
         content: Text(tr.text('quick_grid_unsaved_changes_desc')),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext, 'stay'), child: Text(tr.text('continue_editing'))),
-          TextButton(onPressed: () => Navigator.pop(dialogContext, 'discard'), child: Text(tr.text('discard_changes'))),
-          FilledButton(onPressed: () => Navigator.pop(dialogContext, 'save'), child: Text(tr.text('save'))),
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, 'stay'),
+              child: Text(tr.text('continue_editing'))),
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, 'discard'),
+              child: Text(tr.text('discard_changes'))),
+          FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, 'save'),
+              child: Text(tr.text('save'))),
         ],
       ),
     );
@@ -1015,7 +1193,9 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
       if (decoded is! List) return;
       _quickPages
         ..clear()
-        ..addAll(decoded.whereType<Map<String, dynamic>>().map(_QuickProductPage.fromJson));
+        ..addAll(decoded
+            .whereType<Map<String, dynamic>>()
+            .map(_QuickProductPage.fromJson));
     } catch (_) {
       _quickPages.clear();
     }
@@ -1029,7 +1209,9 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
           slots: List.generate(12, (index) {
             if (index < products.length && index < 6) {
               final product = products[index];
-              return _QuickProductSlot(productId: product.id, shortName: _shortProductName(product.name));
+              return _QuickProductSlot(
+                  productId: product.id,
+                  shortName: _shortProductName(product.name));
             }
             return const _QuickProductSlot();
           }),
@@ -1037,7 +1219,9 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
       );
       unawaited(_saveQuickProductPages());
     }
-    if (_selectedQuickPageIndex >= _quickPages.length) _selectedQuickPageIndex = _quickPages.length - 1;
+    if (_selectedQuickPageIndex >= _quickPages.length) {
+      _selectedQuickPageIndex = _quickPages.length - 1;
+    }
     if (_selectedQuickPageIndex < 0) _selectedQuickPageIndex = 0;
   }
 
@@ -1054,14 +1238,19 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
 
   Product? _productById(String id) {
     for (final product in widget.store.products) {
-      if (product.id == id && product.isActive && !product.isDeleted) return product;
+      if (product.id == id && product.isActive && !product.isDeleted) {
+        return product;
+      }
     }
     return null;
   }
 
   void _addQuickPage() {
     setState(() {
-      _quickPages.add(_QuickProductPage(name: '${AppLocalizations.of(context).text('page')} ${_quickPages.length + 1}', slots: List.generate(12, (_) => const _QuickProductSlot())));
+      _quickPages.add(_QuickProductPage(
+          name:
+              '${AppLocalizations.of(context).text('page')} ${_quickPages.length + 1}',
+          slots: List.generate(12, (_) => const _QuickProductSlot())));
       _selectedQuickPageIndex = _quickPages.length - 1;
       _quickGridEditMode = true;
     });
@@ -1069,10 +1258,13 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
   }
 
   void _deleteQuickPage(int index) {
-    if (_quickPages.length <= 1 || index < 0 || index >= _quickPages.length) return;
+    if (_quickPages.length <= 1 || index < 0 || index >= _quickPages.length) {
+      return;
+    }
     setState(() {
       _quickPages.removeAt(index);
-      _selectedQuickPageIndex = _selectedQuickPageIndex.clamp(0, _quickPages.length - 1).toInt();
+      _selectedQuickPageIndex =
+          _selectedQuickPageIndex.clamp(0, _quickPages.length - 1).toInt();
     });
     if (!_quickGridEditMode) unawaited(_saveQuickProductPages());
   }
@@ -1093,8 +1285,13 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
           onSubmitted: (value) => Navigator.pop(dialogContext, value.trim()),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext), child: Text(tr.text('cancel'))),
-          FilledButton(onPressed: () => Navigator.pop(dialogContext, controller.text.trim()), child: Text(tr.text('save'))),
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: Text(tr.text('cancel'))),
+          FilledButton(
+              onPressed: () =>
+                  Navigator.pop(dialogContext, controller.text.trim()),
+              child: Text(tr.text('save'))),
         ],
       ),
     );
@@ -1107,15 +1304,21 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
   void _moveQuickPage(int oldIndex, int newIndex) {
     if (oldIndex < 0 || oldIndex >= _quickPages.length) return;
     if (newIndex > oldIndex) newIndex -= 1;
-    if (newIndex < 0 || newIndex >= _quickPages.length || oldIndex == newIndex) return;
+    if (newIndex < 0 ||
+        newIndex >= _quickPages.length ||
+        oldIndex == newIndex) {
+      return;
+    }
     setState(() {
       final page = _quickPages.removeAt(oldIndex);
       _quickPages.insert(newIndex, page);
       if (_selectedQuickPageIndex == oldIndex) {
         _selectedQuickPageIndex = newIndex;
-      } else if (oldIndex < _selectedQuickPageIndex && newIndex >= _selectedQuickPageIndex) {
+      } else if (oldIndex < _selectedQuickPageIndex &&
+          newIndex >= _selectedQuickPageIndex) {
         _selectedQuickPageIndex -= 1;
-      } else if (oldIndex > _selectedQuickPageIndex && newIndex <= _selectedQuickPageIndex) {
+      } else if (oldIndex > _selectedQuickPageIndex &&
+          newIndex <= _selectedQuickPageIndex) {
         _selectedQuickPageIndex += 1;
       }
     });
@@ -1123,9 +1326,18 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
   }
 
   void _moveQuickSlot(int fromIndex, int toIndex) {
-    if (_selectedQuickPageIndex < 0 || _selectedQuickPageIndex >= _quickPages.length) return;
+    if (_selectedQuickPageIndex < 0 ||
+        _selectedQuickPageIndex >= _quickPages.length) {
+      return;
+    }
     final page = _quickPages[_selectedQuickPageIndex];
-    if (fromIndex < 0 || fromIndex >= page.slots.length || toIndex < 0 || toIndex >= page.slots.length || fromIndex == toIndex) return;
+    if (fromIndex < 0 ||
+        fromIndex >= page.slots.length ||
+        toIndex < 0 ||
+        toIndex >= page.slots.length ||
+        fromIndex == toIndex) {
+      return;
+    }
     setState(() {
       final moved = page.slots.removeAt(fromIndex);
       page.slots.insert(toIndex, moved);
@@ -1139,13 +1351,19 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     if (!_quickGridEditMode) unawaited(_saveQuickProductPages());
   }
 
-  Future<void> _configureQuickSlot(_QuickProductPage page, int slotIndex) async {
+  Future<void> _configureQuickSlot(
+      _QuickProductPage page, int slotIndex) async {
     if (slotIndex < 0 || slotIndex >= page.slots.length) return;
     final tr = AppLocalizations.of(context);
-    final products = widget.store.products.where((product) => product.isActive && !product.isDeleted).toList();
-    final nameController = TextEditingController(text: page.slots[slotIndex].shortName ?? '');
+    final products = widget.store.products
+        .where((product) => product.isActive && !product.isDeleted)
+        .toList();
+    final nameController =
+        TextEditingController(text: page.slots[slotIndex].shortName ?? '');
     final quickSearchController = TextEditingController();
-    Product? selected = page.slots[slotIndex].productId == null ? null : _productById(page.slots[slotIndex].productId!);
+    Product? selected = page.slots[slotIndex].productId == null
+        ? null
+        : _productById(page.slots[slotIndex].productId!);
     var query = '';
     final result = await showModalBottomSheet<_QuickProductSlot>(
       context: context,
@@ -1155,7 +1373,14 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
           final filtered = products.where((product) {
             if (query.trim().isEmpty) return true;
             final q = query.toLowerCase();
-            return product.name.toLowerCase().contains(q) || product.code.toLowerCase().contains(q) || product.barcode.toLowerCase().contains(q) || product.effectiveSaleUnits.any((unit) => unit.barcode.toLowerCase().contains(q)) || product.effectivePurchaseUnits.any((unit) => unit.barcode.toLowerCase().contains(q)) || product.category.toLowerCase().contains(q);
+            return product.name.toLowerCase().contains(q) ||
+                product.code.toLowerCase().contains(q) ||
+                product.barcode.toLowerCase().contains(q) ||
+                product.effectiveSaleUnits
+                    .any((unit) => unit.barcode.toLowerCase().contains(q)) ||
+                product.effectivePurchaseUnits
+                    .any((unit) => unit.barcode.toLowerCase().contains(q)) ||
+                product.category.toLowerCase().contains(q);
           }).toList();
           return SafeArea(
             child: Padding(
@@ -1172,7 +1397,9 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                   children: [
                     Row(
                       children: [
-                        Expanded(child: Text(tr.text('quick_product_shortcut'), style: Theme.of(context).textTheme.titleLarge)),
+                        Expanded(
+                            child: Text(tr.text('quick_product_shortcut'),
+                                style: Theme.of(context).textTheme.titleLarge)),
                         IconButton(
                           tooltip: tr.text('close'),
                           onPressed: () => Navigator.pop(sheetContext),
@@ -1202,7 +1429,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                     const SizedBox(height: 10),
                     TextField(
                       controller: nameController,
-                      decoration: InputDecoration(labelText: tr.text('short_name')),
+                      decoration:
+                          InputDecoration(labelText: tr.text('short_name')),
                     ),
                     const SizedBox(height: 10),
                     Expanded(
@@ -1210,20 +1438,33 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                           ? Center(child: Text(tr.text('no_products')))
                           : ListView.separated(
                               itemCount: filtered.length,
-                              separatorBuilder: (_, __) => const Divider(height: 1),
+                              separatorBuilder: (_, __) =>
+                                  const Divider(height: 1),
                               itemBuilder: (context, index) {
                                 final product = filtered[index];
                                 final isSelected = selected?.id == product.id;
                                 return ListTile(
                                   selected: isSelected,
-                                  leading: Icon(isSelected ? Icons.check_circle : Icons.inventory_2_outlined),
-                                  title: Text(product.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-                                  subtitle: Text('${product.code} • ${_stockAvailabilityLabel(product, tr)}', maxLines: 1, overflow: TextOverflow.ellipsis),
-                                  trailing: Text(formatUsdReferenceAmount(product.price, widget.store.storeProfile)),
+                                  leading: Icon(isSelected
+                                      ? Icons.check_circle
+                                      : Icons.inventory_2_outlined),
+                                  title: Text(product.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis),
+                                  subtitle: Text(
+                                      '${product.code} • ${_stockAvailabilityLabel(product, tr)}',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis),
+                                  trailing: Text(formatUsdReferenceAmount(
+                                      product.price,
+                                      widget.store.storeProfile)),
                                   onTap: () {
                                     setSheetState(() {
                                       selected = product;
-                                      if (nameController.text.trim().isEmpty) nameController.text = _shortProductName(product.name);
+                                      if (nameController.text.trim().isEmpty) {
+                                        nameController.text =
+                                            _shortProductName(product.name);
+                                      }
                                     });
                                   },
                                 );
@@ -1243,7 +1484,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                           const SizedBox(width: 8),
                           Expanded(
                             child: OutlinedButton(
-                              onPressed: () => Navigator.pop(sheetContext, const _QuickProductSlot()),
+                              onPressed: () => Navigator.pop(
+                                  sheetContext, const _QuickProductSlot()),
                               child: Text(tr.text('delete')),
                             ),
                           ),
@@ -1257,7 +1499,11 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                                       sheetContext,
                                       _QuickProductSlot(
                                         productId: selected!.id,
-                                        shortName: nameController.text.trim().isEmpty ? _shortProductName(selected!.name) : nameController.text.trim(),
+                                        shortName: nameController.text
+                                                .trim()
+                                                .isEmpty
+                                            ? _shortProductName(selected!.name)
+                                            : nameController.text.trim(),
                                       ),
                                     ),
                             child: Text(tr.text('save')),
@@ -1279,7 +1525,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     if (!_quickGridEditMode) unawaited(_saveQuickProductPages());
   }
 
-  Widget _buildMobileSalesLayout(BuildContext context, AppLocalizations tr, List<Product> products, double pagePadding) {
+  Widget _buildMobileSalesLayout(BuildContext context, AppLocalizations tr,
+      List<Product> products, double pagePadding) {
     return SafeArea(
       child: Column(
         children: [
@@ -1292,13 +1539,18 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                 children: [
                   _buildMobileSaleControls(context, tr, products),
                   const SizedBox(height: 8),
-                  _buildCart(context, tr, compactActions: true, showTotals: false, showActions: false, expandCartList: false),
+                  _buildCart(context, tr,
+                      compactActions: true,
+                      showTotals: false,
+                      showActions: false,
+                      expandCartList: false),
                 ],
               ),
             ),
           ),
           Padding(
-            padding: EdgeInsets.fromLTRB(pagePadding, 0, pagePadding, pagePadding),
+            padding:
+                EdgeInsets.fromLTRB(pagePadding, 0, pagePadding, pagePadding),
             child: _buildMobileInvoiceSummary(context, tr),
           ),
         ],
@@ -1306,7 +1558,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     );
   }
 
-  Widget _buildMobileSaleControls(BuildContext context, AppLocalizations tr, List<Product> products) {
+  Widget _buildMobileSaleControls(
+      BuildContext context, AppLocalizations tr, List<Product> products) {
     return Card(
       margin: EdgeInsets.zero,
       child: Padding(
@@ -1315,7 +1568,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
-            _buildBarcodeStation(context, tr, products: products, embedded: true),
+            _buildBarcodeStation(context, tr,
+                products: products, embedded: true),
             if (_scannerActive) ...[
               const SizedBox(height: 10),
               _buildEmbeddedScannerPreview(),
@@ -1327,9 +1581,18 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
               spacing: 8,
               runSpacing: 8,
               children: [
-                _MobileSaleAction(icon: Icons.search, label: tr.text('search'), onTap: () => _showProductSearchSheet(products)),
-                _MobileSaleAction(icon: Icons.grid_view_rounded, label: tr.text('quick_products'), onTap: () => _showQuickProductsSheet(products)),
-                _MobileSaleAction(icon: Icons.receipt_long_outlined, label: tr.text('recent_invoices'), onTap: _showInvoicesSheet),
+                _MobileSaleAction(
+                    icon: Icons.search,
+                    label: tr.text('search'),
+                    onTap: () => _showProductSearchSheet(products)),
+                _MobileSaleAction(
+                    icon: Icons.grid_view_rounded,
+                    label: tr.text('quick_products'),
+                    onTap: () => _showQuickProductsSheet(products)),
+                _MobileSaleAction(
+                    icon: Icons.receipt_long_outlined,
+                    label: tr.text('recent_invoices'),
+                    onTap: _showInvoicesSheet),
               ],
             ),
           ],
@@ -1342,8 +1605,10 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     return _buildSaleTotalBar(context, tr, compact: true);
   }
 
-  Widget _buildSaleTotalBar(BuildContext context, AppLocalizations tr, {bool compact = false}) {
-    final totalText = formatUsdReferenceAmount(_total, widget.store.storeProfile);
+  Widget _buildSaleTotalBar(BuildContext context, AppLocalizations tr,
+      {bool compact = false}) {
+    final totalText =
+        formatUsdReferenceAmount(_total, widget.store.storeProfile);
     final hasDiscount = _discount > 0;
     final content = compact
         ? Column(
@@ -1351,17 +1616,28 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
             children: [
               Row(
                 children: [
-                  Expanded(child: Text('${_formatQuantity(_itemsCount)} ${tr.text('items_count')}', style: Theme.of(context).textTheme.bodyMedium)),
-                  Text(totalText, style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900)),
+                  Expanded(
+                      child: Text(
+                          '${_formatQuantity(_itemsCount)} ${tr.text('items_count')}',
+                          style: Theme.of(context).textTheme.bodyMedium)),
+                  Text(totalText,
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleLarge
+                          ?.copyWith(fontWeight: FontWeight.w900)),
                 ],
               ),
               if (hasDiscount) ...[
                 const SizedBox(height: 4),
-                Text('${tr.text('discount')}: ${formatUsdReferenceAmount(_discount, widget.store.storeProfile)}', style: Theme.of(context).textTheme.bodySmall),
+                Text(
+                    '${tr.text('discount')}: ${formatUsdReferenceAmount(_discount, widget.store.storeProfile)}',
+                    style: Theme.of(context).textTheme.bodySmall),
               ],
               const SizedBox(height: 10),
               FilledButton.icon(
-                onPressed: _cart.isEmpty ? null : () => _openPaymentPage(printAfterSave: false),
+                onPressed: _cart.isEmpty
+                    ? null
+                    : () => _openPaymentPage(printAfterSave: false),
                 icon: const Icon(Icons.payments_outlined),
                 label: Text(tr.text('continue_payment')),
               ),
@@ -1373,16 +1649,25 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(tr.text('total'), style: Theme.of(context).textTheme.bodyMedium),
+                    Text(tr.text('total'),
+                        style: Theme.of(context).textTheme.bodyMedium),
                     const SizedBox(height: 2),
-                    Text(totalText, style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900)),
+                    Text(totalText,
+                        style: Theme.of(context)
+                            .textTheme
+                            .headlineSmall
+                            ?.copyWith(fontWeight: FontWeight.w900)),
                     if (hasDiscount)
-                      Text('${tr.text('discount')}: ${formatUsdReferenceAmount(_discount, widget.store.storeProfile)}', style: Theme.of(context).textTheme.bodySmall),
+                      Text(
+                          '${tr.text('discount')}: ${formatUsdReferenceAmount(_discount, widget.store.storeProfile)}',
+                          style: Theme.of(context).textTheme.bodySmall),
                   ],
                 ),
               ),
               FilledButton.icon(
-                onPressed: _cart.isEmpty ? null : () => _openPaymentPage(printAfterSave: false),
+                onPressed: _cart.isEmpty
+                    ? null
+                    : () => _openPaymentPage(printAfterSave: false),
                 icon: const Icon(Icons.payments_outlined),
                 label: Text(tr.text('continue_payment')),
               ),
@@ -1391,12 +1676,12 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     return Card(
       margin: EdgeInsets.zero,
       child: Padding(
-        padding: EdgeInsets.symmetric(horizontal: compact ? 14 : 18, vertical: compact ? 12 : 14),
+        padding: EdgeInsets.symmetric(
+            horizontal: compact ? 14 : 18, vertical: compact ? 12 : 14),
         child: content,
       ),
     );
   }
-
 
   void _toggleManualBarcodeInput() {
     setState(() => _manualBarcodeInput = !_manualBarcodeInput);
@@ -1423,7 +1708,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     try {
       final decoded = jsonDecode(raw) as List<dynamic>;
       final carts = decoded
-          .map((item) => _HeldSaleCart.fromJson(Map<String, dynamic>.from(item as Map)))
+          .map((item) =>
+              _HeldSaleCart.fromJson(Map<String, dynamic>.from(item as Map)))
           .where((cart) => cart.items.isNotEmpty)
           .toList()
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
@@ -1439,7 +1725,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
   }
 
   Future<void> _saveHeldSaleCarts() async {
-    await LocalDatabaseService.setString(_heldSalesStorageKey, jsonEncode(_heldCarts.map((cart) => cart.toJson()).toList()));
+    await LocalDatabaseService.setString(_heldSalesStorageKey,
+        jsonEncode(_heldCarts.map((cart) => cart.toJson()).toList()));
   }
 
   String _defaultHeldCartName() {
@@ -1465,15 +1752,20 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
           onSubmitted: (value) => Navigator.of(context).pop(value),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(), child: Text(tr.text('cancel'))),
-          FilledButton(onPressed: () => Navigator.of(context).pop(nameController.text), child: Text(tr.text('hold'))),
+          TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text(tr.text('cancel'))),
+          FilledButton(
+              onPressed: () => Navigator.of(context).pop(nameController.text),
+              child: Text(tr.text('hold'))),
         ],
       ),
     );
     nameController.dispose();
     if (name == null) return;
 
-    final trimmedName = name.trim().isEmpty ? _defaultHeldCartName() : name.trim();
+    final trimmedName =
+        name.trim().isEmpty ? _defaultHeldCartName() : name.trim();
     final cart = _HeldSaleCart(
       id: DateTime.now().microsecondsSinceEpoch.toString(),
       name: trimmedName,
@@ -1486,13 +1778,16 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     });
     await _saveHeldSaleCarts();
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('cart_held_successfully'))));
+    ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr.text('cart_held_successfully'))));
     _restoreScannerMode();
   }
 
   Future<void> _restoreHeldCart(_HeldSaleCart heldCart) async {
     if (_cart.isNotEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('hold_current_cart_first'))));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+              AppLocalizations.of(context).text('hold_current_cart_first'))));
       return;
     }
     final restored = <_DraftSaleItem>[];
@@ -1500,7 +1795,9 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     for (final item in heldCart.items) {
       Product? product;
       for (final candidate in widget.store.products) {
-        if (candidate.id == item.productId && candidate.isActive && !candidate.isDeleted) {
+        if (candidate.id == item.productId &&
+            candidate.isActive &&
+            !candidate.isDeleted) {
           product = candidate;
           break;
         }
@@ -1516,11 +1813,16 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
           break;
         }
       }
-      restored.add(_DraftSaleItem(product: product, quantity: item.quantity, saleUnit: saleUnit ?? item.saleUnit));
+      restored.add(_DraftSaleItem(
+          product: product,
+          quantity: item.quantity,
+          saleUnit: saleUnit ?? item.saleUnit));
     }
     if (restored.isEmpty) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('held_cart_products_missing'))));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(AppLocalizations.of(context)
+              .text('held_cart_products_missing'))));
       return;
     }
     setState(() {
@@ -1533,8 +1835,11 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     if (!mounted) return;
     Navigator.of(context).maybePop();
     final tr = AppLocalizations.of(context);
-    final message = missingNames.isEmpty ? tr.text('cart_restored_successfully') : '${tr.text('cart_restored_with_missing_products')}: ${missingNames.join(', ')}';
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    final message = missingNames.isEmpty
+        ? tr.text('cart_restored_successfully')
+        : '${tr.text('cart_restored_with_missing_products')}: ${missingNames.join(', ')}';
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
     _restoreScannerMode();
   }
 
@@ -1563,7 +1868,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                       return ListTile(
                         leading: const Icon(Icons.pause_circle_outline),
                         title: Text(cart.name),
-                        subtitle: Text('${cart.items.length} ${tr.text('items')} • ${_formatHeldCartTime(cart.createdAt)}'),
+                        subtitle: Text(
+                            '${cart.items.length} ${tr.text('items')} • ${_formatHeldCartTime(cart.createdAt)}'),
                         trailing: IconButton(
                           tooltip: tr.text('delete'),
                           icon: const Icon(Icons.delete_outline),
@@ -1578,7 +1884,9 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                   ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.of(context).pop(), child: Text(tr.text('close'))),
+            TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text(tr.text('close'))),
           ],
         ),
       ),
@@ -1607,7 +1915,10 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
       final code = barcode.rawValue?.trim();
       if (code == null || code.isEmpty) continue;
       final now = DateTime.now();
-      if (_lastScannedCode == code && _lastScannedAt != null && now.difference(_lastScannedAt!) < const Duration(milliseconds: 1500)) {
+      if (_lastScannedCode == code &&
+          _lastScannedAt != null &&
+          now.difference(_lastScannedAt!) <
+              const Duration(milliseconds: 1500)) {
         return;
       }
       _lastScannedCode = code;
@@ -1619,7 +1930,9 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
   }
 
   Widget _buildEmbeddedScannerPreview() {
-    if (!_canUseCameraScanner || !_scannerActive) return const SizedBox.shrink();
+    if (!_canUseCameraScanner || !_scannerActive) {
+      return const SizedBox.shrink();
+    }
     final tr = AppLocalizations.of(context);
     final scheme = Theme.of(context).colorScheme;
     final scannerHeight = VentioResponsive.adaptiveWidth(
@@ -1641,7 +1954,9 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
               children: [
                 const Icon(Icons.center_focus_strong_outlined, size: 18),
                 const SizedBox(width: 8),
-                Expanded(child: Text(tr.text('inline_barcode_scanner'), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                Expanded(
+                    child: Text(tr.text('inline_barcode_scanner'),
+                        maxLines: 1, overflow: TextOverflow.ellipsis)),
                 IconButton(
                   tooltip: tr.text('stop_camera_scanner'),
                   onPressed: _scanBarcodeWithCamera,
@@ -1691,13 +2006,19 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     );
   }
 
-  Widget _buildBarcodeStation(BuildContext context, AppLocalizations tr, {required List<Product> products, bool embedded = false}) {
+  Widget _buildBarcodeStation(BuildContext context, AppLocalizations tr,
+      {required List<Product> products, bool embedded = false}) {
     return Container(
       padding: VentioResponsive.cardInsets(context),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(18),
-        color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.45),
-        border: Border.all(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.25)),
+        color: Theme.of(context)
+            .colorScheme
+            .primaryContainer
+            .withValues(alpha: 0.45),
+        border: Border.all(
+            color:
+                Theme.of(context).colorScheme.primary.withValues(alpha: 0.25)),
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -1726,9 +2047,13 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   IconButton(
-                    tooltip: _manualBarcodeInput ? tr.text('hide_keyboard') : tr.text('manual_input'),
+                    tooltip: _manualBarcodeInput
+                        ? tr.text('hide_keyboard')
+                        : tr.text('manual_input'),
                     onPressed: _toggleManualBarcodeInput,
-                    icon: Icon(_manualBarcodeInput ? Icons.keyboard_hide_outlined : Icons.keyboard_outlined),
+                    icon: Icon(_manualBarcodeInput
+                        ? Icons.keyboard_hide_outlined
+                        : Icons.keyboard_outlined),
                   ),
                   IconButton(
                     tooltip: tr.text('search_product'),
@@ -1737,9 +2062,13 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                   ),
                   if (_canUseCameraScanner)
                     IconButton(
-                      tooltip: _scannerActive ? tr.text('stop_camera_scanner') : tr.text('start_camera_scanner'),
+                      tooltip: _scannerActive
+                          ? tr.text('stop_camera_scanner')
+                          : tr.text('start_camera_scanner'),
                       onPressed: _scanBarcodeWithCamera,
-                      icon: Icon(_scannerActive ? Icons.videocam_off_outlined : Icons.camera_alt_outlined),
+                      icon: Icon(_scannerActive
+                          ? Icons.videocam_off_outlined
+                          : Icons.camera_alt_outlined),
                     ),
                   IconButton(
                     tooltip: tr.text('clear'),
@@ -1758,8 +2087,13 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
             ),
             onSubmitted: _addByCode,
           );
-          final button = FilledButton.icon(onPressed: () => _addByCode(_barcodeController.text), icon: const Icon(Icons.add_shopping_cart), label: Text(tr.text('add_to_cart')));
-          final preview = embedded ? const SizedBox.shrink() : _buildEmbeddedScannerPreview();
+          final button = FilledButton.icon(
+              onPressed: () => _addByCode(_barcodeController.text),
+              icon: const Icon(Icons.add_shopping_cart),
+              label: Text(tr.text('add_to_cart')));
+          final preview = embedded
+              ? const SizedBox.shrink()
+              : _buildEmbeddedScannerPreview();
           if (constraints.maxWidth < 460) {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1773,7 +2107,13 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
           }
           return Column(
             children: [
-              Row(children: [const Icon(Icons.qr_code_scanner, size: 32), const SizedBox(width: 12), Expanded(child: field), const SizedBox(width: 12), button]),
+              Row(children: [
+                const Icon(Icons.qr_code_scanner, size: 32),
+                const SizedBox(width: 12),
+                Expanded(child: field),
+                const SizedBox(width: 12),
+                button
+              ]),
               if (!embedded && _scannerActive) preview,
             ],
           );
@@ -1790,7 +2130,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     bool showActions = true,
     bool expandCartList = true,
   }) {
-    Widget cartList({required bool shrinkWrap, required ScrollPhysics? physics}) {
+    Widget cartList(
+        {required bool shrinkWrap, required ScrollPhysics? physics}) {
       return ListView.separated(
         shrinkWrap: shrinkWrap,
         primary: false,
@@ -1807,13 +2148,19 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                 children: [
                   IconButton(
                     tooltip: tr.text('decrease_qty'),
-                    onPressed: item.quantity > 1 ? () => _changeCartQuantity(index, item.quantity - 1) : null,
+                    onPressed: item.quantity > 1
+                        ? () => _changeCartQuantity(index, item.quantity - 1)
+                        : null,
                     icon: const Icon(Icons.remove_circle_outline),
                   ),
-                  SizedBox(width: 42, child: Text(_formatQuantity(item.quantity), textAlign: TextAlign.center)),
+                  SizedBox(
+                      width: 42,
+                      child: Text(_formatQuantity(item.quantity),
+                          textAlign: TextAlign.center)),
                   IconButton(
                     tooltip: tr.text('increase_qty'),
-                    onPressed: () => _changeCartQuantity(index, item.quantity + 1),
+                    onPressed: () =>
+                        _changeCartQuantity(index, item.quantity + 1),
                     icon: const Icon(Icons.add_circle_outline),
                   ),
                   IconButton(
@@ -1829,25 +2176,42 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                   borderRadius: BorderRadius.circular(12),
                   child: Container(
                     decoration: BoxDecoration(
-                      color: item.needsAutoCorrection ? Theme.of(context).colorScheme.errorContainer.withValues(alpha: 0.55) : null,
+                      color: item.needsAutoCorrection
+                          ? Theme.of(context)
+                              .colorScheme
+                              .errorContainer
+                              .withValues(alpha: 0.55)
+                          : null,
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+                    padding:
+                        const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
                           children: [
                             if (item.needsAutoCorrection) ...[
-                              Icon(Icons.warning_amber_rounded, size: 18, color: Theme.of(context).colorScheme.onErrorContainer),
+                              Icon(Icons.warning_amber_rounded,
+                                  size: 18,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onErrorContainer),
                               const SizedBox(width: 6),
                             ],
-                            Expanded(child: Text(item.product.name, style: Theme.of(context).textTheme.titleSmall)),
+                            Expanded(
+                                child: Text(item.product.name,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleSmall)),
                           ],
                         ),
                         const SizedBox(height: 4),
-                        Text('${item.product.code} • ${formatUsdReferenceAmount(item.unitPrice, widget.store.storeProfile)} • ${_formatQuantity(item.quantity)} ${item.unitName} • ${_stockAvailabilityLabel(item.product, tr, includeUnit: true)}'),
-                        Align(alignment: AlignmentDirectional.centerEnd, child: actions),
+                        Text(
+                            '${item.product.code} • ${formatUsdReferenceAmount(item.unitPrice, widget.store.storeProfile)} • ${_formatQuantity(item.quantity)} ${item.unitName} • ${_stockAvailabilityLabel(item.product, tr, includeUnit: true)}'),
+                        Align(
+                            alignment: AlignmentDirectional.centerEnd,
+                            child: actions),
                       ],
                     ),
                   ),
@@ -1855,14 +2219,26 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
               }
               return ListTile(
                 contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-                tileColor: item.needsAutoCorrection ? Theme.of(context).colorScheme.errorContainer.withValues(alpha: 0.55) : null,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                leading: item.needsAutoCorrection ? Icon(Icons.warning_amber_rounded, color: Theme.of(context).colorScheme.onErrorContainer) : null,
+                tileColor: item.needsAutoCorrection
+                    ? Theme.of(context)
+                        .colorScheme
+                        .errorContainer
+                        .withValues(alpha: 0.55)
+                    : null,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+                leading: item.needsAutoCorrection
+                    ? Icon(Icons.warning_amber_rounded,
+                        color: Theme.of(context).colorScheme.onErrorContainer)
+                    : null,
                 title: Text(item.product.name),
-                subtitle: Text('${item.product.code} • ${formatUsdReferenceAmount(item.unitPrice, widget.store.storeProfile)} • ${_formatQuantity(item.quantity)} ${item.unitName} • ${_stockAvailabilityLabel(item.product, tr, includeUnit: true)}'),
+                subtitle: Text(
+                    '${item.product.code} • ${formatUsdReferenceAmount(item.unitPrice, widget.store.storeProfile)} • ${_formatQuantity(item.quantity)} ${item.unitName} • ${_stockAvailabilityLabel(item.product, tr, includeUnit: true)}'),
                 onTap: () => _showQuantitySheet(index),
                 trailing: ConstrainedBox(
-                  constraints: BoxConstraints(maxWidth: VentioResponsive.adaptiveWidth(context, mobile: 144, tablet: 164, desktop: 178)),
+                  constraints: BoxConstraints(
+                      maxWidth: VentioResponsive.adaptiveWidth(context,
+                          mobile: 144, tablet: 164, desktop: 178)),
                   child: actions,
                 ),
               );
@@ -1889,7 +2265,10 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
-        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+        color: Theme.of(context)
+            .colorScheme
+            .surfaceContainerHighest
+            .withValues(alpha: 0.35),
       ),
       child: Padding(
         padding: VentioResponsive.pageInsets(context),
@@ -1901,43 +2280,88 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
               runSpacing: 8,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                Text(tr.text('cart'), style: Theme.of(context).textTheme.titleLarge),
-                Chip(label: Text('${tr.text('items')}: ${_formatQuantity(_itemsCount)}')),
+                Text(tr.text('cart'),
+                    style: Theme.of(context).textTheme.titleLarge),
+                Chip(
+                    label: Text(
+                        '${tr.text('items')}: ${_formatQuantity(_itemsCount)}')),
                 if (_cart.isNotEmpty)
-                  TextButton.icon(onPressed: _confirmClearCart, icon: const Icon(Icons.delete_sweep_outlined), label: Text(tr.text('clear_cart'))),
+                  TextButton.icon(
+                      onPressed: _confirmClearCart,
+                      icon: const Icon(Icons.delete_sweep_outlined),
+                      label: Text(tr.text('clear_cart'))),
                 if (_cart.isNotEmpty)
-                  TextButton.icon(onPressed: _holdCurrentCart, icon: const Icon(Icons.pause_circle_outline), label: Text(tr.text('hold'))),
+                  TextButton.icon(
+                      onPressed: _holdCurrentCart,
+                      icon: const Icon(Icons.pause_circle_outline),
+                      label: Text(tr.text('hold'))),
                 if (_heldCarts.isNotEmpty)
-                  TextButton.icon(onPressed: _showHeldCartsDialog, icon: const Icon(Icons.playlist_add_check_circle_outlined), label: Text('${tr.text('restore')} (${_heldCarts.length})')),
+                  TextButton.icon(
+                      onPressed: _showHeldCartsDialog,
+                      icon:
+                          const Icon(Icons.playlist_add_check_circle_outlined),
+                      label:
+                          Text('${tr.text('restore')} (${_heldCarts.length})')),
               ],
             ),
             const SizedBox(height: 8),
             cartContent,
             if (showTotals) ...[
               const Divider(height: 24),
-              _totalLine(tr.text('subtotal'), _formatSaleCurrency(_currencyFromUsd(_subtotal, _invoiceCurrency), _invoiceCurrency)),
-              _totalLine(tr.text('discount'), _formatSaleCurrency(_currencyFromUsd(_discount, _invoiceCurrency), _invoiceCurrency)),
+              _totalLine(
+                  tr.text('subtotal'),
+                  _formatSaleCurrency(
+                      _currencyFromUsd(_subtotal, _invoiceCurrency),
+                      _invoiceCurrency)),
+              _totalLine(
+                  tr.text('discount'),
+                  _formatSaleCurrency(
+                      _currencyFromUsd(_discount, _invoiceCurrency),
+                      _invoiceCurrency)),
               if (_discount > _subtotal)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 6),
                   child: Text(
                     tr.text('discount_exceeds_subtotal'),
-                    style: TextStyle(color: Theme.of(context).colorScheme.error),
+                    style:
+                        TextStyle(color: Theme.of(context).colorScheme.error),
                   ),
                 ),
               const SizedBox(height: 8),
-              _totalLine(tr.text('total'), _formatSaleCurrency(_invoiceTotal, _invoiceCurrency), isBold: true),
+              _totalLine(tr.text('total'),
+                  _formatSaleCurrency(_invoiceTotal, _invoiceCurrency),
+                  isBold: true),
             ],
             if (showActions) ...[
               const SizedBox(height: 12),
               LayoutBuilder(
                 builder: (context, constraints) {
-                  final primary = FilledButton.icon(onPressed: _cart.isEmpty ? null : () => _openPaymentPage(printAfterSave: true), icon: const Icon(Icons.payments_outlined), label: Text(tr.text('continue_payment')));
-                  final secondary = OutlinedButton.icon(onPressed: _cart.isEmpty ? null : () => _openPaymentPage(printAfterSave: false), icon: const Icon(Icons.payments_outlined), label: Text(tr.text('continue_payment')));
+                  final primary = FilledButton.icon(
+                      onPressed: _cart.isEmpty
+                          ? null
+                          : () => _openPaymentPage(printAfterSave: true),
+                      icon: const Icon(Icons.payments_outlined),
+                      label: Text(tr.text('continue_payment')));
+                  final secondary = OutlinedButton.icon(
+                      onPressed: _cart.isEmpty
+                          ? null
+                          : () => _openPaymentPage(printAfterSave: false),
+                      icon: const Icon(Icons.payments_outlined),
+                      label: Text(tr.text('continue_payment')));
                   if (constraints.maxWidth < 460) {
-                    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [primary, const SizedBox(height: 8), secondary]);
+                    return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          primary,
+                          const SizedBox(height: 8),
+                          secondary
+                        ]);
                   }
-                  return Row(children: [Expanded(child: primary), const SizedBox(width: 12), Expanded(child: secondary)]);
+                  return Row(children: [
+                    Expanded(child: primary),
+                    const SizedBox(width: 12),
+                    Expanded(child: secondary)
+                  ]);
                 },
               ),
             ],
@@ -1948,7 +2372,9 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
   }
 
   Widget _totalLine(String title, String value, {bool isBold = false}) {
-    final style = isBold ? Theme.of(context).textTheme.titleLarge : Theme.of(context).textTheme.bodyLarge;
+    final style = isBold
+        ? Theme.of(context).textTheme.titleLarge
+        : Theme.of(context).textTheme.bodyLarge;
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
       child: Row(
@@ -1974,35 +2400,50 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     );
   }
 
-  Widget _buildInvoicesPanel(BuildContext context, AppLocalizations tr, List<Sale> sales) {
+  Widget _buildInvoicesPanel(
+      BuildContext context, AppLocalizations tr, List<Sale> sales) {
     return Card(
       child: Padding(
         padding: VentioResponsive.pageInsets(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(tr.text('recent_invoices'), style: Theme.of(context).textTheme.titleLarge),
+            Text(tr.text('recent_invoices'),
+                style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 12),
             Expanded(
               child: sales.isEmpty
-                  ? EmptyStateCard(icon: Icons.receipt_long_outlined, title: tr.text('no_sales'), subtitle: tr.text('no_sales_desc'))
+                  ? EmptyStateCard(
+                      icon: Icons.receipt_long_outlined,
+                      title: tr.text('no_sales'),
+                      subtitle: tr.text('no_sales_desc'))
                   : ListView.separated(
                       itemCount: sales.length > 50 ? 50 : sales.length,
                       separatorBuilder: (_, __) => const Divider(height: 1),
                       itemBuilder: (context, index) {
                         final sale = sales[index];
                         return ExpansionTile(
-                          leading: Icon(sale.isCancelled ? Icons.cancel_outlined : Icons.check_circle),
+                          leading: Icon(sale.isCancelled
+                              ? Icons.cancel_outlined
+                              : Icons.check_circle),
                           title: Text(sale.invoiceNo),
-                          subtitle: Text('${sale.customerName} • ${sale.date.toLocal()}'.split('.').first),
-                          trailing: Text(sale.isCancelled ? sale.status : formatUsdReferenceAmount(sale.total, widget.store.storeProfile)),
+                          subtitle: Text(
+                              '${sale.customerName} • ${sale.date.toLocal()}'
+                                  .split('.')
+                                  .first),
+                          trailing: Text(sale.isCancelled
+                              ? sale.status
+                              : formatUsdReferenceAmount(
+                                  sale.total, widget.store.storeProfile)),
                           children: [
                             ...sale.items.map(
                               (item) => ListTile(
                                 dense: true,
                                 title: Text(item.productName),
-                                subtitle: Text('${tr.text('quantity')}: ${_formatQuantity(item.quantity)} ${item.unitName} × ${formatUsdReferenceAmount(item.unitPrice, widget.store.storeProfile)}'),
-                                trailing: Text(formatUsdReferenceAmount(item.lineTotal, widget.store.storeProfile)),
+                                subtitle: Text(
+                                    '${tr.text('quantity')}: ${_formatQuantity(item.quantity)} ${item.unitName} × ${formatUsdReferenceAmount(item.unitPrice, widget.store.storeProfile)}'),
+                                trailing: Text(formatUsdReferenceAmount(
+                                    item.lineTotal, widget.store.storeProfile)),
                               ),
                             ),
                             const Divider(height: 1),
@@ -2013,23 +2454,44 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                                 runSpacing: 8,
                                 children: [
                                   OutlinedButton.icon(
-                                    onPressed: () => _handleInvoiceAction(() => InvoicePdfService.printInvoice(sale: sale, profile: widget.store.storeProfile, locale: AppLocalizations.of(context).locale)),
+                                    onPressed: () => _handleInvoiceAction(() =>
+                                        InvoicePdfService.printInvoice(
+                                            sale: sale,
+                                            profile: widget.store.storeProfile,
+                                            locale: AppLocalizations.of(context)
+                                                .locale)),
                                     icon: const Icon(Icons.print_outlined),
                                     label: Text(tr.text('print_invoice')),
                                   ),
                                   OutlinedButton.icon(
-                                    onPressed: () => _handleInvoiceAction(() => InvoicePdfService.shareInvoice(sale: sale, profile: widget.store.storeProfile, locale: AppLocalizations.of(context).locale)),
+                                    onPressed: () => _handleInvoiceAction(() =>
+                                        InvoicePdfService.shareInvoice(
+                                            sale: sale,
+                                            profile: widget.store.storeProfile,
+                                            locale: AppLocalizations.of(context)
+                                                .locale)),
                                     icon: const Icon(Icons.share_outlined),
                                     label: Text(tr.text('share_pdf')),
                                   ),
                                   OutlinedButton.icon(
-                                    onPressed: (!sale.isCancelled && widget.store.deliveryNoteForSale(sale.id) == null) ? () => _createDeliveryNote(context, sale) : null,
-                                    icon: const Icon(Icons.local_shipping_outlined),
+                                    onPressed: (!sale.isCancelled &&
+                                            widget.store.deliveryNoteForSale(
+                                                    sale.id) ==
+                                                null)
+                                        ? () =>
+                                            _createDeliveryNote(context, sale)
+                                        : null,
+                                    icon: const Icon(
+                                        Icons.local_shipping_outlined),
                                     label: Text(tr.text('delivery_note')),
                                   ),
                                   OutlinedButton.icon(
-                                    onPressed: (!sale.isCancelled && widget.store.canDeleteOrCancel) ? () => _returnSale(context, sale) : null,
-                                    icon: const Icon(Icons.assignment_return_outlined),
+                                    onPressed: (!sale.isCancelled &&
+                                            widget.store.canDeleteOrCancel)
+                                        ? () => _returnSale(context, sale)
+                                        : null,
+                                    icon: const Icon(
+                                        Icons.assignment_return_outlined),
                                     label: Text(tr.text('return_sale')),
                                   ),
                                 ],
@@ -2050,9 +2512,12 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     if (index < 0 || index >= _cart.length) return;
     final item = _cart[index];
     final minQuantity = item.product.allowsDecimalQuantity ? 0.001 : 1.0;
-    final rounded = item.product.allowsDecimalQuantity ? quantity : quantity.roundToDouble();
+    final rounded = item.product.allowsDecimalQuantity
+        ? quantity
+        : quantity.roundToDouble();
     final cleanQuantity = rounded < minQuantity ? minQuantity : rounded;
-    final willNeedCorrection = item.product.trackStock && cleanQuantity * item.conversionToBase > item.product.stock;
+    final willNeedCorrection = item.product.trackStock &&
+        cleanQuantity * item.conversionToBase > item.product.stock;
     setState(() {
       _cart[index] = item.copyWith(quantity: cleanQuantity);
     });
@@ -2065,26 +2530,37 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     if (index < 0 || index >= _cart.length) return;
     final tr = AppLocalizations.of(context);
     final item = _cart[index];
-    final controller = TextEditingController(text: _formatQuantity(item.quantity));
+    final controller =
+        TextEditingController(text: _formatQuantity(item.quantity));
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setModalState) => SafeArea(
           child: Padding(
-            padding: EdgeInsets.only(left: 16, right: 16, top: 16, bottom: MediaQuery.viewInsetsOf(sheetContext).bottom + 16),
+            padding: EdgeInsets.only(
+                left: 16,
+                right: 16,
+                top: 16,
+                bottom: MediaQuery.viewInsetsOf(sheetContext).bottom + 16),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(item.product.name, style: Theme.of(context).textTheme.titleLarge, maxLines: 2, overflow: TextOverflow.ellipsis),
+                Text(item.product.name,
+                    style: Theme.of(context).textTheme.titleLarge,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis),
                 const SizedBox(height: 12),
                 TextField(
                   controller: controller,
                   autofocus: true,
                   textAlign: TextAlign.center,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  inputFormatters: item.product.allowsDecimalQuantity ? [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))] : [FilteringTextInputFormatter.digitsOnly],
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  inputFormatters: item.product.allowsDecimalQuantity
+                      ? [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))]
+                      : [FilteringTextInputFormatter.digitsOnly],
                   decoration: InputDecoration(labelText: tr.text('quantity')),
                 ),
                 const SizedBox(height: 12),
@@ -2093,9 +2569,12 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                     Expanded(
                       child: OutlinedButton.icon(
                         onPressed: () {
-                          final current = double.tryParse(controller.text) ?? item.quantity;
-                          controller.text = _formatQuantity((current - 1) < 1 ? 1 : (current - 1));
-                          controller.selection = TextSelection.fromPosition(TextPosition(offset: controller.text.length));
+                          final current =
+                              double.tryParse(controller.text) ?? item.quantity;
+                          controller.text = _formatQuantity(
+                              (current - 1) < 1 ? 1 : (current - 1));
+                          controller.selection = TextSelection.fromPosition(
+                              TextPosition(offset: controller.text.length));
                         },
                         icon: const Icon(Icons.remove),
                         label: Text(tr.text('decrease_qty')),
@@ -2105,9 +2584,12 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                     Expanded(
                       child: OutlinedButton.icon(
                         onPressed: () {
-                          final current = double.tryParse(controller.text) ?? item.quantity;
-                          controller.text = _formatQuantity((current + 1) < 1 ? 1 : (current + 1));
-                          controller.selection = TextSelection.fromPosition(TextPosition(offset: controller.text.length));
+                          final current =
+                              double.tryParse(controller.text) ?? item.quantity;
+                          controller.text = _formatQuantity(
+                              (current + 1) < 1 ? 1 : (current + 1));
+                          controller.selection = TextSelection.fromPosition(
+                              TextPosition(offset: controller.text.length));
                         },
                         icon: const Icon(Icons.add),
                         label: Text(tr.text('increase_qty')),
@@ -2118,7 +2600,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                 const SizedBox(height: 12),
                 FilledButton(
                   onPressed: () {
-                    final quantity = double.tryParse(controller.text) ?? item.quantity;
+                    final quantity =
+                        double.tryParse(controller.text) ?? item.quantity;
                     Navigator.pop(sheetContext);
                     _changeCartQuantity(index, quantity);
                     FocusScope.of(context).unfocus();
@@ -2137,7 +2620,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
   void _showQuickProductsSheet(List<Product> products) {
     final tr = AppLocalizations.of(context);
     _ensureQuickPages(products, tr);
-    var sheetSelectedPageIndex = _selectedQuickPageIndex.clamp(0, _quickPages.length - 1).toInt();
+    var sheetSelectedPageIndex =
+        _selectedQuickPageIndex.clamp(0, _quickPages.length - 1).toInt();
 
     showModalBottomSheet<void>(
       context: context,
@@ -2147,7 +2631,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setModalState) {
           _ensureQuickPages(products, tr);
-          sheetSelectedPageIndex = sheetSelectedPageIndex.clamp(0, _quickPages.length - 1).toInt();
+          sheetSelectedPageIndex =
+              sheetSelectedPageIndex.clamp(0, _quickPages.length - 1).toInt();
           final page = _quickPages[sheetSelectedPageIndex];
           final visibleSlotIndexes = _quickVisibleSlotIndexes(page);
 
@@ -2174,10 +2659,15 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                     children: [
                       Row(
                         children: [
-                          Expanded(child: Text(tr.text('quick_product_grid'), style: Theme.of(context).textTheme.titleLarge)),
+                          Expanded(
+                              child: Text(tr.text('quick_product_grid'),
+                                  style:
+                                      Theme.of(context).textTheme.titleLarge)),
                           IconButton(
                             tooltip: tr.text('close'),
-                            onPressed: () { unawaited(closeSheet()); },
+                            onPressed: () {
+                              unawaited(closeSheet());
+                            },
                             icon: const Icon(Icons.close),
                           ),
                         ],
@@ -2195,27 +2685,47 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                                       itemCount: _quickPages.length,
                                       onReorderItem: (oldIndex, newIndex) {
                                         _moveQuickPage(oldIndex, newIndex);
-                                        setModalState(() => sheetSelectedPageIndex = _selectedQuickPageIndex);
+                                        setModalState(() =>
+                                            sheetSelectedPageIndex =
+                                                _selectedQuickPageIndex);
                                       },
-                                      proxyDecorator: (child, _, __) => Material(elevation: 6, borderRadius: BorderRadius.circular(24), child: child),
+                                      proxyDecorator: (child, _, __) =>
+                                          Material(
+                                              elevation: 6,
+                                              borderRadius:
+                                                  BorderRadius.circular(24),
+                                              child: child),
                                       itemBuilder: (context, index) {
-                                        final selected = index == sheetSelectedPageIndex;
+                                        final selected =
+                                            index == sheetSelectedPageIndex;
                                         return Padding(
-                                          key: ValueKey('mobile_quick_page_${index}_${_quickPages[index].name}'),
-                                          padding: const EdgeInsetsDirectional.only(end: 8),
+                                          key: ValueKey(
+                                              'mobile_quick_page_${index}_${_quickPages[index].name}'),
+                                          padding:
+                                              const EdgeInsetsDirectional.only(
+                                                  end: 8),
                                           child: ReorderableDragStartListener(
                                             index: index,
                                             child: InputChip(
-                                              avatar: const Icon(Icons.drag_indicator, size: 18),
+                                              avatar: const Icon(
+                                                  Icons.drag_indicator,
+                                                  size: 18),
                                               label: Row(
                                                 mainAxisSize: MainAxisSize.min,
                                                 children: [
                                                   ConstrainedBox(
-                                                    constraints: const BoxConstraints(maxWidth: 120),
-                                                    child: Text(_quickPages[index].name, overflow: TextOverflow.ellipsis),
+                                                    constraints:
+                                                        const BoxConstraints(
+                                                            maxWidth: 120),
+                                                    child: Text(
+                                                        _quickPages[index].name,
+                                                        overflow: TextOverflow
+                                                            .ellipsis),
                                                   ),
                                                   const SizedBox(width: 4),
-                                                  const Icon(Icons.edit_outlined, size: 16),
+                                                  const Icon(
+                                                      Icons.edit_outlined,
+                                                      size: 16),
                                                 ],
                                               ),
                                               selected: selected,
@@ -2224,15 +2734,24 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                                                   await _renameQuickPage(index);
                                                   setModalState(() {});
                                                 } else {
-                                                  setState(() => _selectedQuickPageIndex = index);
-                                                  setModalState(() => sheetSelectedPageIndex = index);
+                                                  setState(() =>
+                                                      _selectedQuickPageIndex =
+                                                          index);
+                                                  setModalState(() =>
+                                                      sheetSelectedPageIndex =
+                                                          index);
                                                 }
                                               },
-                                              deleteIcon: _quickPages.length > 1 ? const Icon(Icons.close, size: 18) : null,
+                                              deleteIcon: _quickPages.length > 1
+                                                  ? const Icon(Icons.close,
+                                                      size: 18)
+                                                  : null,
                                               onDeleted: _quickPages.length > 1
                                                   ? () {
                                                       _deleteQuickPage(index);
-                                                      setModalState(() => sheetSelectedPageIndex = _selectedQuickPageIndex);
+                                                      setModalState(() =>
+                                                          sheetSelectedPageIndex =
+                                                              _selectedQuickPageIndex);
                                                     }
                                                   : null,
                                             ),
@@ -2243,15 +2762,20 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                                   : ListView.separated(
                                       scrollDirection: Axis.horizontal,
                                       itemCount: _quickPages.length,
-                                      separatorBuilder: (_, __) => const SizedBox(width: 8),
+                                      separatorBuilder: (_, __) =>
+                                          const SizedBox(width: 8),
                                       itemBuilder: (context, index) {
-                                        final selected = index == sheetSelectedPageIndex;
+                                        final selected =
+                                            index == sheetSelectedPageIndex;
                                         return InputChip(
                                           label: Text(_quickPages[index].name),
                                           selected: selected,
                                           onSelected: (_) {
-                                            setState(() => _selectedQuickPageIndex = index);
-                                            setModalState(() => sheetSelectedPageIndex = index);
+                                            setState(() =>
+                                                _selectedQuickPageIndex =
+                                                    index);
+                                            setModalState(() =>
+                                                sheetSelectedPageIndex = index);
                                           },
                                         );
                                       },
@@ -2265,7 +2789,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                               label: Text(tr.text('page')),
                               onPressed: () {
                                 _addQuickPage();
-                                setModalState(() => sheetSelectedPageIndex = _selectedQuickPageIndex);
+                                setModalState(() => sheetSelectedPageIndex =
+                                    _selectedQuickPageIndex);
                               },
                             ),
                           ],
@@ -2279,7 +2804,8 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                               child: OutlinedButton.icon(
                                 onPressed: () {
                                   _cancelQuickGridEditing();
-                                  setModalState(() => sheetSelectedPageIndex = _selectedQuickPageIndex);
+                                  setModalState(() => sheetSelectedPageIndex =
+                                      _selectedQuickPageIndex);
                                 },
                                 icon: const Icon(Icons.close),
                                 label: Text(tr.text('cancel')),
@@ -2313,34 +2839,57 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                             ? Center(child: Text(tr.text('no_products')))
                             : LayoutBuilder(
                                 builder: (context, constraints) {
-                                  final crossAxisCount = constraints.maxWidth > 520 ? 3 : 2;
+                                  final crossAxisCount =
+                                      constraints.maxWidth > 520 ? 3 : 2;
                                   return GridView.builder(
                                     itemCount: visibleSlotIndexes.length,
-                                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                                    gridDelegate:
+                                        SliverGridDelegateWithFixedCrossAxisCount(
                                       crossAxisCount: crossAxisCount,
                                       mainAxisSpacing: 10,
                                       crossAxisSpacing: 10,
                                       childAspectRatio: 1.18,
                                     ),
                                     itemBuilder: (context, visibleIndex) {
-                                      final slotIndex = visibleSlotIndexes[visibleIndex];
+                                      final slotIndex =
+                                          visibleSlotIndexes[visibleIndex];
                                       final slot = page.slots[slotIndex];
-                                      final product = slot.productId == null ? null : _productById(slot.productId!);
+                                      final product = slot.productId == null
+                                          ? null
+                                          : _productById(slot.productId!);
                                       final isEmpty = product == null;
-                                      final child = _buildQuickProductTile(context, tr, page, slotIndex, slot, product, isEmpty, onChanged: () => setModalState(() {}));
+                                      final child = _buildQuickProductTile(
+                                          context,
+                                          tr,
+                                          page,
+                                          slotIndex,
+                                          slot,
+                                          product,
+                                          isEmpty,
+                                          onChanged: () =>
+                                              setModalState(() {}));
                                       if (!_quickGridEditMode) return child;
                                       final target = DragTarget<int>(
-                                        onWillAcceptWithDetails: (details) => details.data != slotIndex,
+                                        onWillAcceptWithDetails: (details) =>
+                                            details.data != slotIndex,
                                         onAcceptWithDetails: (details) {
-                                          _moveQuickSlot(details.data, slotIndex);
+                                          _moveQuickSlot(
+                                              details.data, slotIndex);
                                           setModalState(() {});
                                         },
                                         builder: (_, candidateData, ___) {
-                                          if (candidateData.isEmpty) return child;
+                                          if (candidateData.isEmpty) {
+                                            return child;
+                                          }
                                           return DecoratedBox(
                                             decoration: BoxDecoration(
-                                              borderRadius: BorderRadius.circular(18),
-                                              border: Border.all(color: Theme.of(context).colorScheme.primary, width: 2),
+                                              borderRadius:
+                                                  BorderRadius.circular(18),
+                                              border: Border.all(
+                                                  color: Theme.of(context)
+                                                      .colorScheme
+                                                      .primary,
+                                                  width: 2),
                                             ),
                                             child: child,
                                           );
@@ -2351,10 +2900,15 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                                         data: slotIndex,
                                         feedback: Material(
                                           elevation: 6,
-                                          borderRadius: BorderRadius.circular(16),
-                                          child: SizedBox(width: 150, height: 120, child: child),
+                                          borderRadius:
+                                              BorderRadius.circular(16),
+                                          child: SizedBox(
+                                              width: 150,
+                                              height: 120,
+                                              child: child),
                                         ),
-                                        childWhenDragging: Opacity(opacity: 0.35, child: child),
+                                        childWhenDragging: Opacity(
+                                            opacity: 0.35, child: child),
                                         child: target,
                                       );
                                     },
@@ -2393,17 +2947,29 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
           final filteredProducts = products.where((product) {
             if (query.trim().isEmpty) return true;
             final q = query.toLowerCase();
-            return product.name.toLowerCase().contains(q) || product.code.toLowerCase().contains(q) || product.barcode.toLowerCase().contains(q) || product.effectiveSaleUnits.any((unit) => unit.barcode.toLowerCase().contains(q)) || product.effectivePurchaseUnits.any((unit) => unit.barcode.toLowerCase().contains(q)) || product.category.toLowerCase().contains(q);
+            return product.name.toLowerCase().contains(q) ||
+                product.code.toLowerCase().contains(q) ||
+                product.barcode.toLowerCase().contains(q) ||
+                product.effectiveSaleUnits
+                    .any((unit) => unit.barcode.toLowerCase().contains(q)) ||
+                product.effectivePurchaseUnits
+                    .any((unit) => unit.barcode.toLowerCase().contains(q)) ||
+                product.category.toLowerCase().contains(q);
           }).toList();
           return SafeArea(
             child: Padding(
-              padding: EdgeInsets.only(left: 16, right: 16, top: 16, bottom: MediaQuery.viewInsetsOf(sheetContext).bottom + 16),
+              padding: EdgeInsets.only(
+                  left: 16,
+                  right: 16,
+                  top: 16,
+                  bottom: MediaQuery.viewInsetsOf(sheetContext).bottom + 16),
               child: SizedBox(
                 height: MediaQuery.sizeOf(sheetContext).height * 0.78,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text(tr.text('search_product'), style: Theme.of(context).textTheme.titleLarge),
+                    Text(tr.text('search_product'),
+                        style: Theme.of(context).textTheme.titleLarge),
                     const SizedBox(height: 12),
                     TextField(
                       controller: controller,
@@ -2430,13 +2996,21 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
                           ? Center(child: Text(tr.text('no_products')))
                           : ListView.separated(
                               itemCount: filteredProducts.length,
-                              separatorBuilder: (_, __) => const Divider(height: 1),
+                              separatorBuilder: (_, __) =>
+                                  const Divider(height: 1),
                               itemBuilder: (context, index) {
                                 final product = filteredProducts[index];
                                 return ListTile(
-                                  title: Text(product.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-                                  subtitle: Text('${product.code} • ${_stockAvailabilityLabel(product, tr)}', maxLines: 1, overflow: TextOverflow.ellipsis),
-                                  trailing: Text(formatUsdReferenceAmount(product.price, widget.store.storeProfile)),
+                                  title: Text(product.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis),
+                                  subtitle: Text(
+                                      '${product.code} • ${_stockAvailabilityLabel(product, tr)}',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis),
+                                  trailing: Text(formatUsdReferenceAmount(
+                                      product.price,
+                                      widget.store.storeProfile)),
                                   onTap: () {
                                     Navigator.pop(sheetContext);
                                     _search = '';
@@ -2458,16 +3032,17 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     ).whenComplete(controller.dispose);
   }
 
-
   Future<void> _createDeliveryNote(BuildContext context, Sale sale) async {
     final tr = AppLocalizations.of(context);
     try {
       await widget.store.createDeliveryNoteFromSale(sale.id);
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('delivery_note_created'))));
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr.text('delivery_note_created'))));
     } catch (error) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.toString())));
     }
   }
 
@@ -2477,10 +3052,16 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: Text(tr.text('return_sale')),
-        content: Text(tr.text('return_sale_confirm').replaceAll('{invoice}', sale.invoiceNo)),
+        content: Text(tr
+            .text('return_sale_confirm')
+            .replaceAll('{invoice}', sale.invoiceNo)),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: Text(tr.text('cancel'))),
-          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: Text(tr.text('confirm_return_sale'))),
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: Text(tr.text('cancel'))),
+          FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: Text(tr.text('confirm_return_sale'))),
         ],
       ),
     );
@@ -2489,16 +3070,21 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
 
     await widget.store.returnSale(sale.id);
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('sale_returned_stock_restored'))));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(AppLocalizations.of(context)
+              .text('sale_returned_stock_restored'))));
     }
   }
 
-  _BarcodeAddResult _addProduct(Product product, {ProductSaleUnit? saleUnit, bool showBarcodeFeedback = false}) {
+  _BarcodeAddResult _addProduct(Product product,
+      {ProductSaleUnit? saleUnit, bool showBarcodeFeedback = false}) {
     if (!widget.store.canSell) {
       if (showBarcodeFeedback) {
         _showBarcodeAddFeedback(_BarcodeAddResult.notAllowed);
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('role_not_allowed_to_sell'))));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(AppLocalizations.of(context)
+                .text('role_not_allowed_to_sell'))));
       }
       _restoreScannerMode();
       return _BarcodeAddResult.notAllowed;
@@ -2506,13 +3092,22 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
 
     final selectedUnit = saleUnit ?? product.effectiveSaleUnits.first;
 
-    final existingIndex = _cart.indexWhere((item) => item.product.id == product.id && item.unitName == (selectedUnit.name.trim().isNotEmpty ? selectedUnit.name : product.unit));
+    final existingIndex = _cart.indexWhere((item) =>
+        item.product.id == product.id &&
+        item.unitName ==
+            (selectedUnit.name.trim().isNotEmpty
+                ? selectedUnit.name
+                : product.unit));
     var result = _BarcodeAddResult.added;
     setState(() {
       if (existingIndex == -1) {
-        _cart.insert(0, _DraftSaleItem(product: product, quantity: 1, saleUnit: selectedUnit));
+        _cart.insert(
+            0,
+            _DraftSaleItem(
+                product: product, quantity: 1, saleUnit: selectedUnit));
       } else {
-        _cart[existingIndex] = _cart[existingIndex].copyWith(quantity: _cart[existingIndex].quantity + 1);
+        _cart[existingIndex] = _cart[existingIndex]
+            .copyWith(quantity: _cart[existingIndex].quantity + 1);
       }
       final cartItem = _cart[existingIndex == -1 ? 0 : existingIndex];
       if (cartItem.needsAutoCorrection) {
@@ -2539,9 +3134,11 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
 
     Product? product;
     ProductSaleUnit? saleUnit;
-    for (final candidate in widget.store.products.where((item) => !item.isDeleted)) {
+    for (final candidate
+        in widget.store.products.where((item) => !item.isDeleted)) {
       final matchedUnit = candidate.unitForBarcode(cleanCode);
-      if (candidate.code.trim().toLowerCase() == cleanCode.toLowerCase() || matchedUnit != null) {
+      if (candidate.code.trim().toLowerCase() == cleanCode.toLowerCase() ||
+          matchedUnit != null) {
         product = candidate;
         saleUnit = matchedUnit ?? candidate.effectiveSaleUnits.first;
         break;
@@ -2565,39 +3162,44 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     switch (result) {
       case _BarcodeAddResult.added:
         unawaited(BarcodeFeedbackService.play(force: true));
-        messenger.showSnackBar(SnackBar(content: Text(tr.text('barcode_product_added'))));
+        messenger.showSnackBar(
+            SnackBar(content: Text(tr.text('barcode_product_added'))));
         return;
       case _BarcodeAddResult.autoCorrected:
         unawaited(BarcodeFeedbackService.playError(force: true));
         return;
       case _BarcodeAddResult.notFound:
         unawaited(BarcodeFeedbackService.playError(force: true));
-        messenger.showSnackBar(SnackBar(content: Text(tr.text('barcode_product_not_registered'))));
+        messenger.showSnackBar(
+            SnackBar(content: Text(tr.text('barcode_product_not_registered'))));
         return;
       case _BarcodeAddResult.outOfStock:
         unawaited(BarcodeFeedbackService.playError(force: true));
-        messenger.showSnackBar(SnackBar(content: Text(tr.text('barcode_out_of_stock'))));
+        messenger.showSnackBar(
+            SnackBar(content: Text(tr.text('barcode_out_of_stock'))));
         return;
       case _BarcodeAddResult.stockLimitReached:
         unawaited(BarcodeFeedbackService.playError(force: true));
-        messenger.showSnackBar(SnackBar(content: Text(tr.text('barcode_stock_limit_reached'))));
+        messenger.showSnackBar(
+            SnackBar(content: Text(tr.text('barcode_stock_limit_reached'))));
         return;
       case _BarcodeAddResult.notAllowed:
         unawaited(BarcodeFeedbackService.playError(force: true));
-        messenger.showSnackBar(SnackBar(content: Text(tr.text('role_not_allowed_to_sell'))));
+        messenger.showSnackBar(
+            SnackBar(content: Text(tr.text('role_not_allowed_to_sell'))));
         return;
       case _BarcodeAddResult.empty:
         return;
     }
   }
 
-
   Future<void> _openPaymentPage({required bool printAfterSave}) async {
     if (_cart.isEmpty) return;
     _invoiceCurrency = widget.store.storeProfile.defaultSaleInvoiceCurrency;
     _discountCurrency = _invoiceCurrency;
     _paymentCurrency = widget.store.storeProfile.defaultSalePaymentCurrency;
-    _paymentExchangeRateController.text = widget.store.storeProfile.usdToLbpRate.toStringAsFixed(0);
+    _paymentExchangeRateController.text =
+        widget.store.storeProfile.usdToLbpRate.toStringAsFixed(0);
     if (_paymentMethod == 'Cash') {
       _paidAmountController.clear();
     } else if (_paidAmountController.text.trim().isEmpty) {
@@ -2616,7 +3218,11 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     bool handlePaymentHardwareShortcut(KeyEvent event) {
       final dialogContext = activePaymentDialogContext;
       final setDialogState = activePaymentDialogSetState;
-      if (dialogContext == null || setDialogState == null || ModalRoute.of(dialogContext)?.isCurrent != true) return false;
+      if (dialogContext == null ||
+          setDialogState == null ||
+          ModalRoute.of(dialogContext)?.isCurrent != true) {
+        return false;
+      }
       return _handlePaymentShortcutKey(event, dialogContext, setDialogState);
     }
 
@@ -2629,72 +3235,106 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
           builder: (context, setDialogState) {
             activePaymentDialogContext = dialogContext;
             activePaymentDialogSetState = setDialogState;
-          final pageTr = AppLocalizations.of(context);
-          final invoiceTotal = _invoiceTotal;
-          final cashInInvoice = _cashReceivedAmount;
-          final paidInInvoice = _derivedPaidAmount;
-          final remaining = (invoiceTotal - paidInInvoice).clamp(0, double.infinity).toDouble();
-          final nonCashOrCredit = (invoiceTotal - cashInInvoice).clamp(0, double.infinity).toDouble();
-          return Focus(
-            focusNode: _paymentShortcutFocusNode,
-            autofocus: true,
-            onKeyEvent: (node, event) => _handlePaymentShortcutKey(event, dialogContext, setDialogState) ? KeyEventResult.handled : KeyEventResult.ignored,
-            child: AlertDialog(
-            title: Text(pageTr.text('payment_page')),
-            content: SizedBox(
-              width: 520,
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _buildPaymentShortcutGuide(context, pageTr),
-                    const SizedBox(height: 8),
-                    _buildCustomerSelector(context, pageTr, modalSetState: setDialogState),
-                    const SizedBox(height: 16),
-                    _buildPaymentMethodChips(pageTr, modalSetState: setDialogState),
-                    const SizedBox(height: 16),
-                    _buildPaymentCurrencySwitch(pageTr, modalSetState: setDialogState),
-                    if (_showsCashReceived) ...[
-                      const SizedBox(height: 16),
-                      _buildCashReceivedField(pageTr, modalSetState: setDialogState),
-                    ],
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      focusNode: _discountFocusNode,
-                      controller: _discountController,
-                      decoration: InputDecoration(labelText: pageTr.text('discount')),
-                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}$'))],
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      onChanged: (_) {
-                        setState(() => _discountCurrency = _invoiceCurrency);
-                        setDialogState(() {});
-                      },
+            final pageTr = AppLocalizations.of(context);
+            final invoiceTotal = _invoiceTotal;
+            final cashInInvoice = _cashReceivedAmount;
+            final paidInInvoice = _derivedPaidAmount;
+            final remaining = (invoiceTotal - paidInInvoice)
+                .clamp(0, double.infinity)
+                .toDouble();
+            final nonCashOrCredit = (invoiceTotal - cashInInvoice)
+                .clamp(0, double.infinity)
+                .toDouble();
+            return Focus(
+              focusNode: _paymentShortcutFocusNode,
+              autofocus: true,
+              onKeyEvent: (node, event) => _handlePaymentShortcutKey(
+                      event, dialogContext, setDialogState)
+                  ? KeyEventResult.handled
+                  : KeyEventResult.ignored,
+              child: AlertDialog(
+                title: Text(pageTr.text('payment_page')),
+                content: SizedBox(
+                  width: 520,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _buildPaymentShortcutGuide(context, pageTr),
+                        const SizedBox(height: 8),
+                        _buildCustomerSelector(context, pageTr,
+                            modalSetState: setDialogState),
+                        const SizedBox(height: 16),
+                        _buildPaymentMethodChips(pageTr,
+                            modalSetState: setDialogState),
+                        const SizedBox(height: 16),
+                        _buildPaymentCurrencySwitch(pageTr,
+                            modalSetState: setDialogState),
+                        if (_showsCashReceived) ...[
+                          const SizedBox(height: 16),
+                          _buildCashReceivedField(pageTr,
+                              modalSetState: setDialogState),
+                        ],
+                        const SizedBox(height: 16),
+                        TextFormField(
+                          focusNode: _discountFocusNode,
+                          controller: _discountController,
+                          decoration: InputDecoration(
+                              labelText: pageTr.text('discount')),
+                          inputFormatters: [
+                            FilteringTextInputFormatter.allow(
+                                RegExp(r'^\d*\.?\d{0,2}$'))
+                          ],
+                          keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true),
+                          onChanged: (_) {
+                            setState(
+                                () => _discountCurrency = _invoiceCurrency);
+                            setDialogState(() {});
+                          },
+                        ),
+                        const Divider(height: 28),
+                        _totalLine(pageTr.text('total'),
+                            _formatSaleCurrency(invoiceTotal, _invoiceCurrency),
+                            isBold: true),
+                        if (_showsCashReceived)
+                          _totalLine(
+                              pageTr.text('cash_received_amount'),
+                              _formatSaleCurrency(
+                                  cashInInvoice, _invoiceCurrency)),
+                        if (_isCreditPayment)
+                          _totalLine(pageTr.text('remaining_debt'),
+                              _formatSaleCurrency(remaining, _invoiceCurrency),
+                              isBold: true)
+                        else if (!_isCashPayment)
+                          _totalLine(
+                              pageTr.text('non_cash_amount'),
+                              _formatSaleCurrency(
+                                  nonCashOrCredit, _invoiceCurrency),
+                              isBold: true)
+                        else
+                          _totalLine(
+                              pageTr.text('paid_amount'),
+                              _formatSaleCurrency(
+                                  invoiceTotal, _invoiceCurrency),
+                              isBold: true),
+                      ],
                     ),
-                    const Divider(height: 28),
-                    _totalLine(pageTr.text('total'), _formatSaleCurrency(invoiceTotal, _invoiceCurrency), isBold: true),
-                    if (_showsCashReceived)
-                      _totalLine(pageTr.text('cash_received_amount'), _formatSaleCurrency(cashInInvoice, _invoiceCurrency)),
-                    if (_isCreditPayment)
-                      _totalLine(pageTr.text('remaining_debt'), _formatSaleCurrency(remaining, _invoiceCurrency), isBold: true)
-                    else if (!_isCashPayment)
-                      _totalLine(pageTr.text('non_cash_amount'), _formatSaleCurrency(nonCashOrCredit, _invoiceCurrency), isBold: true)
-                    else
-                      _totalLine(pageTr.text('paid_amount'), _formatSaleCurrency(invoiceTotal, _invoiceCurrency), isBold: true),
-                  ],
+                  ),
                 ),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(dialogContext, false),
+                      child: Text(pageTr.text('cancel'))),
+                  FilledButton.icon(
+                    onPressed: () => Navigator.pop(dialogContext, true),
+                    icon: const Icon(Icons.check_circle_outline),
+                    label: Text(pageTr.text('confirm_payment')),
+                  ),
+                ],
               ),
-            ),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: Text(pageTr.text('cancel'))),
-              FilledButton.icon(
-                onPressed: () => Navigator.pop(dialogContext, true),
-                icon: const Icon(Icons.check_circle_outline),
-                label: Text(pageTr.text('confirm_payment')),
-              ),
-            ],
-            ),
-          );
+            );
           },
         ),
       );
@@ -2718,22 +3358,29 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
     }
   }
 
-
   Future<void> _saveCurrentInvoice({required bool printAfterSave}) async {
     if (_cart.isEmpty) return;
     if (_discount > _subtotal) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('discount_exceeds_subtotal'))));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+              AppLocalizations.of(context).text('discount_exceeds_subtotal'))));
       return;
     }
 
     if (_isWalkInCustomer && _paymentMethod == 'Credit') {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('walk_in_cash_only'))));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content:
+              Text(AppLocalizations.of(context).text('walk_in_cash_only'))));
       return;
     }
 
-    final cashReceivedAmount = _showsCashReceived ? _cashReceivedAmount : (_isCashPayment ? _invoiceTotal : 0.0);
+    final cashReceivedAmount = _showsCashReceived
+        ? _cashReceivedAmount
+        : (_isCashPayment ? _invoiceTotal : 0.0);
     if (_showsCashReceived && cashReceivedAmount > _invoiceTotal) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('invalid_cash_received_amount'))));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(AppLocalizations.of(context)
+              .text('invalid_cash_received_amount'))));
       return;
     }
     final paidAmount = _derivedPaidAmount;
@@ -2755,7 +3402,10 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
         exchangeRateAtPayment: _saleExchangeRate,
         paidAmount: paidAmount,
         cashReceivedAmount: cashReceivedAmount,
-        paidAmountInPaymentCurrency: _isCreditPayment ? _cashReceivedInPaymentCurrency : _convertCurrencyAmount(paidAmount, _invoiceCurrency, _paymentCurrency),
+        paidAmountInPaymentCurrency: _isCreditPayment
+            ? _cashReceivedInPaymentCurrency
+            : _convertCurrencyAmount(
+                paidAmount, _invoiceCurrency, _paymentCurrency),
         cashReceivedAmountInPaymentCurrency: _cashReceivedInPaymentCurrency,
         items: _cart
             .map(
@@ -2774,7 +3424,9 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
       );
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('sale_validation_failed'))));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+              AppLocalizations.of(context).text('sale_validation_failed'))));
       return;
     }
 
@@ -2789,17 +3441,23 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
       _invoiceCurrency = widget.store.storeProfile.defaultSaleInvoiceCurrency;
       _paymentCurrency = widget.store.storeProfile.defaultSalePaymentCurrency;
       _discountCurrency = widget.store.storeProfile.defaultSaleInvoiceCurrency;
-      _paymentExchangeRateController.text = widget.store.storeProfile.usdToLbpRate.toStringAsFixed(0);
+      _paymentExchangeRateController.text =
+          widget.store.storeProfile.usdToLbpRate.toStringAsFixed(0);
       _searchController.clear();
       _barcodeController.clear();
       _search = '';
     });
     _restoreScannerMode();
 
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('invoice_created_successfully'))));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(AppLocalizations.of(context)
+            .text('invoice_created_successfully'))));
 
     if (printAfterSave) {
-      await _handleInvoiceAction(() => InvoicePdfService.printInvoice(sale: sale, profile: widget.store.storeProfile, locale: AppLocalizations.of(context).locale));
+      await _handleInvoiceAction(() => InvoicePdfService.printInvoice(
+          sale: sale,
+          profile: widget.store.storeProfile,
+          locale: AppLocalizations.of(context).locale));
     }
   }
 
@@ -2808,14 +3466,16 @@ String _stockAvailabilityLabel(Product product, AppLocalizations tr, {bool inclu
       await action();
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('pdf_action_failed'))));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content:
+              Text(AppLocalizations.of(context).text('pdf_action_failed'))));
     }
   }
 }
 
-
 class _MobileSaleAction extends StatelessWidget {
-  const _MobileSaleAction({required this.icon, required this.label, required this.onTap});
+  const _MobileSaleAction(
+      {required this.icon, required this.label, required this.onTap});
 
   final IconData icon;
   final String label;
@@ -2833,7 +3493,10 @@ class _MobileSaleAction extends StatelessWidget {
           children: [
             Icon(icon),
             const SizedBox(height: 2),
-            Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.labelSmall),
+            Text(label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelSmall),
           ],
         ),
       ),
@@ -2852,7 +3515,8 @@ class _QuickProductSlot {
         'shortName': shortName,
       };
 
-  factory _QuickProductSlot.fromJson(Map<String, dynamic> json) => _QuickProductSlot(
+  factory _QuickProductSlot.fromJson(Map<String, dynamic> json) =>
+      _QuickProductSlot(
         productId: json['productId'] as String?,
         shortName: json['shortName'] as String?,
       );
@@ -2872,14 +3536,19 @@ class _QuickProductPage {
   factory _QuickProductPage.fromJson(Map<String, dynamic> json) {
     final rawSlots = json['slots'];
     final slots = rawSlots is List
-        ? rawSlots.whereType<Map<String, dynamic>>().map(_QuickProductSlot.fromJson).toList()
+        ? rawSlots
+            .whereType<Map<String, dynamic>>()
+            .map(_QuickProductSlot.fromJson)
+            .toList()
         : <_QuickProductSlot>[];
     while (slots.length < 12) {
       slots.add(const _QuickProductSlot());
     }
     if (slots.length > 12) slots.removeRange(12, slots.length);
     return _QuickProductPage(
-      name: (json['name'] as String?)?.trim().isNotEmpty == true ? (json['name'] as String).trim() : 'Favorites',
+      name: (json['name'] as String?)?.trim().isNotEmpty == true
+          ? (json['name'] as String).trim()
+          : 'Favorites',
       slots: slots,
     );
   }
@@ -2895,9 +3564,12 @@ String _formatQuantity(double value) {
   return text;
 }
 
-
 class _HeldSaleCart {
-  const _HeldSaleCart({required this.id, required this.name, required this.createdAt, required this.items});
+  const _HeldSaleCart(
+      {required this.id,
+      required this.name,
+      required this.createdAt,
+      required this.items});
 
   final String id;
   final String name;
@@ -2912,18 +3584,26 @@ class _HeldSaleCart {
       };
 
   factory _HeldSaleCart.fromJson(Map<String, dynamic> json) => _HeldSaleCart(
-        id: json['id'] as String? ?? DateTime.now().microsecondsSinceEpoch.toString(),
+        id: json['id'] as String? ??
+            DateTime.now().microsecondsSinceEpoch.toString(),
         name: json['name'] as String? ?? 'Hold',
-        createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ?? DateTime.now(),
+        createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
+            DateTime.now(),
         items: (json['items'] as List<dynamic>? ?? const [])
-            .map((item) => _HeldSaleItem.fromJson(Map<String, dynamic>.from(item as Map)))
+            .map((item) =>
+                _HeldSaleItem.fromJson(Map<String, dynamic>.from(item as Map)))
             .where((item) => item.quantity > 0 && item.productId.isNotEmpty)
             .toList(),
       );
 }
 
 class _HeldSaleItem {
-  const _HeldSaleItem({required this.productId, required this.productName, required this.quantity, required this.saleUnitId, required this.saleUnit});
+  const _HeldSaleItem(
+      {required this.productId,
+      required this.productName,
+      required this.quantity,
+      required this.saleUnitId,
+      required this.saleUnit});
 
   final String productId;
   final String productName;
@@ -2952,26 +3632,43 @@ class _HeldSaleItem {
         productName: json['productName'] as String? ?? '',
         quantity: (json['quantity'] as num? ?? 0).toDouble(),
         saleUnitId: json['saleUnitId'] as String? ?? 'base',
-        saleUnit: ProductSaleUnit.fromJson(Map<String, dynamic>.from(json['saleUnit'] as Map? ?? const {})),
+        saleUnit: ProductSaleUnit.fromJson(
+            Map<String, dynamic>.from(json['saleUnit'] as Map? ?? const {})),
       );
 }
 
 class _DraftSaleItem {
-  const _DraftSaleItem({required this.product, required this.quantity, ProductSaleUnit? saleUnit})
-      : saleUnit = saleUnit ?? const ProductSaleUnit(id: 'base', name: '', conversionToBase: 1, price: 0, isDefault: true);
+  const _DraftSaleItem(
+      {required this.product,
+      required this.quantity,
+      ProductSaleUnit? saleUnit})
+      : saleUnit = saleUnit ??
+            const ProductSaleUnit(
+                id: 'base',
+                name: '',
+                conversionToBase: 1,
+                price: 0,
+                isDefault: true);
 
   final Product product;
   final double quantity;
   final ProductSaleUnit saleUnit;
 
   double get unitPrice => saleUnit.price > 0 ? saleUnit.price : product.price;
-  double get conversionToBase => saleUnit.conversionToBase <= 0 ? 1 : saleUnit.conversionToBase;
+  double get conversionToBase =>
+      saleUnit.conversionToBase <= 0 ? 1 : saleUnit.conversionToBase;
   double get baseQuantity => quantity * conversionToBase;
-  String get unitName => saleUnit.name.trim().isNotEmpty ? saleUnit.name : product.unit;
+  String get unitName =>
+      saleUnit.name.trim().isNotEmpty ? saleUnit.name : product.unit;
   double get lineTotal => quantity * unitPrice;
-  bool get needsAutoCorrection => product.trackStock && baseQuantity > product.stock;
+  bool get needsAutoCorrection =>
+      product.trackStock && baseQuantity > product.stock;
 
-  _DraftSaleItem copyWith({Product? product, double? quantity, ProductSaleUnit? saleUnit}) {
-    return _DraftSaleItem(product: product ?? this.product, quantity: quantity ?? this.quantity, saleUnit: saleUnit ?? this.saleUnit);
+  _DraftSaleItem copyWith(
+      {Product? product, double? quantity, ProductSaleUnit? saleUnit}) {
+    return _DraftSaleItem(
+        product: product ?? this.product,
+        quantity: quantity ?? this.quantity,
+        saleUnit: saleUnit ?? this.saleUnit);
   }
 }

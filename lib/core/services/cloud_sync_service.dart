@@ -28,6 +28,7 @@ class CloudSyncSettings {
   static Future<void> clearSavedPullCursor() async {
     await LocalDatabaseService.deleteString(_lastPullCursorKey);
   }
+
   static const _autoSyncKey = 'cloud_auto_sync_enabled';
   static const _intervalKey = 'cloud_auto_sync_interval_seconds';
 
@@ -42,36 +43,50 @@ class CloudSyncSettings {
   bool get hasDeviceCredentials {
     final raw = LocalDatabaseService.getString('app_identity_v1') ?? '';
     try {
-      final identity = AppIdentity.fromJson(Map<String, dynamic>.from(jsonDecode(raw) as Map));
-      return identity.deviceId.trim().isNotEmpty && identity.deviceToken.trim().isNotEmpty;
+      final identity = AppIdentity.fromJson(
+          Map<String, dynamic>.from(jsonDecode(raw) as Map));
+      return identity.deviceId.trim().isNotEmpty &&
+          identity.deviceToken.trim().isNotEmpty;
     } catch (_) {
       return false;
     }
   }
-  bool get isConfigured => enabled && apiBaseUrl.trim().isNotEmpty && (hasDeploymentToken || hasDeviceCredentials);
+
+  bool get isConfigured =>
+      enabled &&
+      apiBaseUrl.trim().isNotEmpty &&
+      (hasDeploymentToken || hasDeviceCredentials);
 
   static String normalizeApiBaseUrl(String value, {String fallback = ''}) {
     var raw = value.trim();
     if (raw.isEmpty) return fallback.trim();
     raw = raw.replaceAll(RegExp(r'/+$'), '');
     if (raw.startsWith('/')) {
-      throw const FormatException('يجب أن يكون رابط واجهة السحابة نطاقاً كاملاً وليس مساراً نسبياً.');
+      throw const FormatException(
+          'يجب أن يكون رابط واجهة السحابة نطاقاً كاملاً وليس مساراً نسبياً.');
     }
     if (!raw.contains('://')) {
       raw = 'https://$raw';
     }
     final uri = Uri.tryParse(raw);
-    if (uri == null || (uri.scheme != 'https' && uri.scheme != 'http') || uri.host.trim().isEmpty) {
+    if (uri == null ||
+        (uri.scheme != 'https' && uri.scheme != 'http') ||
+        uri.host.trim().isEmpty) {
       throw const FormatException('رابط واجهة السحابة غير صالح.');
     }
-    return uri.replace(path: uri.path.replaceAll(RegExp(r'/+$'), '')).toString().replaceAll(RegExp(r'/+$'), '');
+    return uri
+        .replace(path: uri.path.replaceAll(RegExp(r'/+$'), ''))
+        .toString()
+        .replaceAll(RegExp(r'/+$'), '');
   }
 
   Uri endpoint(String path, [Map<String, String>? query]) {
     final base = normalizeApiBaseUrl(apiBaseUrl);
     final normalizedPath = path.startsWith('/') ? path : '/$path';
     final uri = Uri.parse('$base$normalizedPath');
-    return query == null ? uri : uri.replace(queryParameters: {...uri.queryParameters, ...query});
+    return query == null
+        ? uri
+        : uri.replace(queryParameters: {...uri.queryParameters, ...query});
   }
 
   CloudSyncSettings copyWith({
@@ -87,7 +102,9 @@ class CloudSyncSettings {
         enabled: enabled ?? this.enabled,
         apiBaseUrl: apiBaseUrl ?? this.apiBaseUrl,
         apiToken: apiToken ?? this.apiToken,
-        lastPullCursor: clearLastPullCursor ? null : (lastPullCursor ?? this.lastPullCursor),
+        lastPullCursor: clearLastPullCursor
+            ? null
+            : (lastPullCursor ?? this.lastPullCursor),
         autoSyncEnabled: autoSyncEnabled ?? this.autoSyncEnabled,
         intervalSeconds: intervalSeconds ?? this.intervalSeconds,
       );
@@ -113,24 +130,28 @@ class CloudSyncSettings {
       apiToken: token,
       lastPullCursor: DateTime.tryParse(cursorRaw),
       autoSyncEnabled: autoRaw == null ? true : autoRaw == 'true',
-      intervalSeconds: int.tryParse(intervalRaw ?? '')?.clamp(5, 3600).toInt() ?? 15,
+      intervalSeconds:
+          int.tryParse(intervalRaw ?? '')?.clamp(5, 3600).toInt() ?? 15,
     );
   }
 
   Future<void> save() async {
-    final normalizedBaseUrl = normalizeApiBaseUrl(apiBaseUrl, fallback: kIsWeb ? Uri.base.origin : '');
+    final normalizedBaseUrl = normalizeApiBaseUrl(apiBaseUrl,
+        fallback: kIsWeb ? Uri.base.origin : '');
     await LocalDatabaseService.setString(_apiBaseUrlKey, normalizedBaseUrl);
     await LocalDatabaseService.setString(_apiTokenKey, apiToken.trim());
-    await LocalDatabaseService.setString(_autoSyncKey, autoSyncEnabled ? 'true' : 'false');
-    await LocalDatabaseService.setString(_intervalKey, intervalSeconds.toString());
+    await LocalDatabaseService.setString(
+        _autoSyncKey, autoSyncEnabled ? 'true' : 'false');
+    await LocalDatabaseService.setString(
+        _intervalKey, intervalSeconds.toString());
     if (lastPullCursor == null) {
       await LocalDatabaseService.deleteString(_lastPullCursorKey);
     } else {
-      await LocalDatabaseService.setString(_lastPullCursorKey, lastPullCursor!.toIso8601String());
+      await LocalDatabaseService.setString(
+          _lastPullCursorKey, lastPullCursor!.toIso8601String());
     }
   }
 }
-
 
 class HostHeartbeatStatus {
   const HostHeartbeatStatus({
@@ -149,7 +170,6 @@ class HostHeartbeatStatus {
   final String hostDeviceName;
   final String message;
 }
-
 
 class CloudDeviceStatus {
   const CloudDeviceStatus({
@@ -194,31 +214,57 @@ class CloudDeviceStatus {
   final bool suspended;
   final bool wipePending;
 
-  bool get isOnline => lastSeenAt != null && DateTime.now().toUtc().difference(lastSeenAt!.toUtc()) <= const Duration(seconds: 90);
+  bool get isOnline =>
+      lastSeenAt != null &&
+      DateTime.now().toUtc().difference(lastSeenAt!.toUtc()) <=
+          const Duration(seconds: 90);
 
-  factory CloudDeviceStatus.fromJson(Map<String, dynamic> json) => CloudDeviceStatus(
+  factory CloudDeviceStatus.fromJson(Map<String, dynamic> json) =>
+      CloudDeviceStatus(
         deviceId: (json['deviceId'] ?? json['device_id'] ?? '').toString(),
-        deviceName: (json['deviceName'] ?? json['device_name'] ?? '').toString(),
+        deviceName:
+            (json['deviceName'] ?? json['device_name'] ?? '').toString(),
         platform: (json['platform'] ?? '').toString(),
         role: (json['role'] ?? '').toString(),
         transport: (json['transport'] ?? '').toString(),
-        lastSeenAt: DateTime.tryParse((json['lastSeenAt'] ?? json['last_seen_at'] ?? '').toString()),
-        appVersion: (json['appVersion'] ?? json['app_version'] ?? '').toString(),
-        hostDeviceId: (json['hostDeviceId'] ?? json['host_device_id'] ?? '').toString(),
-        activeTransport: (json['activeTransport'] ?? json['active_transport'] ?? json['transport'] ?? '').toString(),
-        lastSyncTransport: (json['lastSyncTransport'] ?? json['last_sync_transport'] ?? '').toString(),
-        lastAppliedCursor: DateTime.tryParse((json['lastAppliedCursor'] ?? json['last_applied_cursor'] ?? '').toString()),
-        lastAckCursor: DateTime.tryParse((json['lastAckCursor'] ?? json['last_ack_cursor'] ?? '').toString()),
-        lastAppliedSequence: int.tryParse((json['lastAppliedSequence'] ?? json['last_applied_sequence'] ?? '').toString()) ?? 0,
-        lastAckSequence: int.tryParse((json['lastAckSequence'] ?? json['last_ack_sequence'] ?? '').toString()) ?? 0,
-        lastAckAt: DateTime.tryParse((json['lastAckAt'] ?? json['last_ack_at'] ?? '').toString()),
+        lastSeenAt: DateTime.tryParse(
+            (json['lastSeenAt'] ?? json['last_seen_at'] ?? '').toString()),
+        appVersion:
+            (json['appVersion'] ?? json['app_version'] ?? '').toString(),
+        hostDeviceId:
+            (json['hostDeviceId'] ?? json['host_device_id'] ?? '').toString(),
+        activeTransport: (json['activeTransport'] ??
+                json['active_transport'] ??
+                json['transport'] ??
+                '')
+            .toString(),
+        lastSyncTransport:
+            (json['lastSyncTransport'] ?? json['last_sync_transport'] ?? '')
+                .toString(),
+        lastAppliedCursor: DateTime.tryParse(
+            (json['lastAppliedCursor'] ?? json['last_applied_cursor'] ?? '')
+                .toString()),
+        lastAckCursor: DateTime.tryParse(
+            (json['lastAckCursor'] ?? json['last_ack_cursor'] ?? '')
+                .toString()),
+        lastAppliedSequence: int.tryParse((json['lastAppliedSequence'] ??
+                    json['last_applied_sequence'] ??
+                    '')
+                .toString()) ??
+            0,
+        lastAckSequence: int.tryParse(
+                (json['lastAckSequence'] ?? json['last_ack_sequence'] ?? '')
+                    .toString()) ??
+            0,
+        lastAckAt: DateTime.tryParse(
+            (json['lastAckAt'] ?? json['last_ack_at'] ?? '').toString()),
         online: json['online'] == true,
         revoked: json['revoked'] == true,
         suspended: json['suspended'] == true,
-        wipePending: json['wipePending'] == true || json['wipe_pending'] == true,
+        wipePending:
+            json['wipePending'] == true || json['wipe_pending'] == true,
       );
 }
-
 
 class CloudProvisioningStatus {
   const CloudProvisioningStatus._();
@@ -226,13 +272,18 @@ class CloudProvisioningStatus {
   static const _stateKey = 'cloud_initial_provisioning_state_v1';
   static const _messageKey = 'cloud_initial_provisioning_message_v1';
   static const _requestedAtKey = 'cloud_initial_provisioning_requested_at_v1';
-  static const _lastAttemptAtKey = 'cloud_initial_provisioning_last_attempt_at_v1';
+  static const _lastAttemptAtKey =
+      'cloud_initial_provisioning_last_attempt_at_v1';
   static const _sectionsKey = 'cloud_initial_provisioning_sections_v1';
-  static const _allSectionsCompleteKey = 'cloud_initial_provisioning_all_sections_complete_v1';
+  static const _allSectionsCompleteKey =
+      'cloud_initial_provisioning_all_sections_complete_v1';
 
-  static bool get isPending => LocalDatabaseService.getString(_stateKey) == 'pending';
+  static bool get isPending =>
+      LocalDatabaseService.getString(_stateKey) == 'pending';
 
-  static String get message => LocalDatabaseService.getString(_messageKey) ?? 'يتم تنزيل بيانات المتجر الأولية من جهاز المضيف.';
+  static String get message =>
+      LocalDatabaseService.getString(_messageKey) ??
+      'يتم تنزيل بيانات المتجر الأولية من جهاز المضيف.';
 
   static Map<String, String> get sections {
     final raw = LocalDatabaseService.getString(_sectionsKey);
@@ -240,43 +291,55 @@ class CloudProvisioningStatus {
     try {
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return const <String, String>{};
-      return decoded.map((key, value) => MapEntry(key.toString(), value.toString()));
+      return decoded
+          .map((key, value) => MapEntry(key.toString(), value.toString()));
     } catch (_) {
       return const <String, String>{};
     }
   }
 
-  static bool get allSectionsComplete => LocalDatabaseService.getString(_allSectionsCompleteKey) == 'true';
+  static bool get allSectionsComplete =>
+      LocalDatabaseService.getString(_allSectionsCompleteKey) == 'true';
 
-  static DateTime? get requestedAt => DateTime.tryParse(LocalDatabaseService.getString(_requestedAtKey) ?? '');
+  static DateTime? get requestedAt =>
+      DateTime.tryParse(LocalDatabaseService.getString(_requestedAtKey) ?? '');
 
-  static DateTime? get lastAttemptAt => DateTime.tryParse(LocalDatabaseService.getString(_lastAttemptAtKey) ?? '');
+  static DateTime? get lastAttemptAt => DateTime.tryParse(
+      LocalDatabaseService.getString(_lastAttemptAtKey) ?? '');
 
-  static Future<void> markPending({String message = 'يتم تنزيل بيانات المتجر الأولية من جهاز المضيف.', DateTime? requestedAt}) async {
+  static Future<void> markPending(
+      {String message = 'يتم تنزيل بيانات المتجر الأولية من جهاز المضيف.',
+      DateTime? requestedAt}) async {
     final now = DateTime.now().toUtc();
     await LocalDatabaseService.setString(_stateKey, 'pending');
     await LocalDatabaseService.setString(_messageKey, message);
-    await LocalDatabaseService.setString(_requestedAtKey, (requestedAt ?? now).toIso8601String());
+    await LocalDatabaseService.setString(
+        _requestedAtKey, (requestedAt ?? now).toIso8601String());
   }
 
-  static Future<void> updateSnapshotSections(Map<String, dynamic>? value, {bool? allComplete}) async {
+  static Future<void> updateSnapshotSections(Map<String, dynamic>? value,
+      {bool? allComplete}) async {
     if (value != null) {
       final normalized = <String, String>{};
       for (final entry in value.entries) {
         normalized[entry.key.toString()] = entry.value.toString();
       }
-      await LocalDatabaseService.setString(_sectionsKey, jsonEncode(normalized));
+      await LocalDatabaseService.setString(
+          _sectionsKey, jsonEncode(normalized));
     }
     if (allComplete != null) {
-      await LocalDatabaseService.setString(_allSectionsCompleteKey, allComplete ? 'true' : 'false');
+      await LocalDatabaseService.setString(
+          _allSectionsCompleteKey, allComplete ? 'true' : 'false');
     }
   }
 
   static Future<void> markAttempted([DateTime? value]) async {
-    await LocalDatabaseService.setString(_lastAttemptAtKey, (value ?? DateTime.now().toUtc()).toIso8601String());
+    await LocalDatabaseService.setString(
+        _lastAttemptAtKey, (value ?? DateTime.now().toUtc()).toIso8601String());
   }
 
-  static Future<void> markComplete({String message = 'تم تنزيل بيانات المتجر الأولية.'}) async {
+  static Future<void> markComplete(
+      {String message = 'تم تنزيل بيانات المتجر الأولية.'}) async {
     await LocalDatabaseService.setString(_stateKey, 'complete');
     await LocalDatabaseService.setString(_messageKey, message);
     await LocalDatabaseService.setString(_allSectionsCompleteKey, 'true');
@@ -296,7 +359,12 @@ class CloudProvisioningStatus {
 typedef CloudSyncProgressCallback = void Function(double value, String label);
 
 class CloudSyncResult {
-  const CloudSyncResult({required this.ok, required this.message, this.pushed = 0, this.pulled = 0, this.restoredSnapshot = false});
+  const CloudSyncResult(
+      {required this.ok,
+      required this.message,
+      this.pushed = 0,
+      this.pulled = 0,
+      this.restoredSnapshot = false});
   final bool ok;
   final String message;
   final int pushed;
@@ -304,9 +372,12 @@ class CloudSyncResult {
   final bool restoredSnapshot;
 }
 
-
 class CloudPairingCodeResult {
-  const CloudPairingCodeResult({required this.ok, required this.message, this.code = '', this.expiresAt});
+  const CloudPairingCodeResult(
+      {required this.ok,
+      required this.message,
+      this.code = '',
+      this.expiresAt});
   final bool ok;
   final String message;
   final String code;
@@ -335,14 +406,20 @@ class CloudPairingStatusResult {
 }
 
 class CloudPairingClaimResult {
-  const CloudPairingClaimResult({required this.ok, required this.message, this.identity});
+  const CloudPairingClaimResult(
+      {required this.ok, required this.message, this.identity});
   final bool ok;
   final String message;
   final AppIdentity? identity;
 }
 
 class CloudStoreRecoveryResult {
-  const CloudStoreRecoveryResult({required this.ok, required this.message, this.identity, this.restoredSnapshot = false, this.pulled = 0});
+  const CloudStoreRecoveryResult(
+      {required this.ok,
+      required this.message,
+      this.identity,
+      this.restoredSnapshot = false,
+      this.pulled = 0});
   final bool ok;
   final String message;
   final AppIdentity? identity;
@@ -351,7 +428,8 @@ class CloudStoreRecoveryResult {
 }
 
 class CloudSyncService {
-  CloudSyncService(this.store, {http.Client? client}) : _client = client ?? http.Client();
+  CloudSyncService(this.store, {http.Client? client})
+      : _client = client ?? http.Client();
 
   final AppStore store;
   final http.Client _client;
@@ -386,10 +464,17 @@ class CloudSyncService {
     }
   }
 
-  Future<CloudPairingCodeResult> createPairingCode(CloudSyncSettings settings, {String transport = 'cloud', int ttlMinutes = 5}) async {
+  Future<CloudPairingCodeResult> createPairingCode(CloudSyncSettings settings,
+      {String transport = 'cloud', int ttlMinutes = 5}) async {
     final identity = store.appIdentity;
-    if (!identity.isHost) return const CloudPairingCodeResult(ok: false, message: 'يمكن لجهاز المضيف فقط إنشاء رموز الاقتران.');
-    if (!settings.hasDeploymentToken || settings.apiBaseUrl.trim().isEmpty) return const CloudPairingCodeResult(ok: false, message: 'رابط واجهة السحابة ورمز نشر المضيف مطلوبان.');
+    if (!identity.isHost) {
+      return const CloudPairingCodeResult(
+          ok: false, message: 'يمكن لجهاز المضيف فقط إنشاء رموز الاقتران.');
+    }
+    if (!settings.hasDeploymentToken || settings.apiBaseUrl.trim().isEmpty) {
+      return const CloudPairingCodeResult(
+          ok: false, message: 'رابط واجهة السحابة ورمز نشر المضيف مطلوبان.');
+    }
     try {
       final response = await _client
           .post(
@@ -407,7 +492,10 @@ class CloudSyncService {
           )
           .timeout(const Duration(seconds: 10));
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        return CloudPairingCodeResult(ok: false, message: 'فشل إنشاء رمز الاقتران: ${response.statusCode} ${response.body}');
+        return CloudPairingCodeResult(
+            ok: false,
+            message:
+                'فشل إنشاء رمز الاقتران: ${response.statusCode} ${response.body}');
       }
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
       final ok = decoded['ok'] == true;
@@ -420,16 +508,20 @@ class CloudSyncService {
       }
       return CloudPairingCodeResult(
         ok: ok,
-        message: ok ? 'تم إنشاء رمز الاقتران.' : (decoded['error']?.toString() ?? 'فشل إنشاء رمز الاقتران.'),
+        message: ok
+            ? 'تم إنشاء رمز الاقتران.'
+            : (decoded['error']?.toString() ?? 'فشل إنشاء رمز الاقتران.'),
         code: decoded['code']?.toString() ?? '',
         expiresAt: DateTime.tryParse(decoded['expiresAt']?.toString() ?? ''),
       );
     } catch (error) {
-      return CloudPairingCodeResult(ok: false, message: 'فشل إنشاء رمز الاقتران: $error');
+      return CloudPairingCodeResult(
+          ok: false, message: 'فشل إنشاء رمز الاقتران: $error');
     }
   }
 
-  Future<void> _publishPairingBootstrapInBackground(CloudSyncSettings settings) async {
+  Future<void> _publishPairingBootstrapInBackground(
+      CloudSyncSettings settings) async {
     try {
       await publishLoginBootstrapSnapshotToCloud(settings, force: true);
       await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
@@ -439,10 +531,21 @@ class CloudSyncService {
     }
   }
 
-  Future<CloudPairingStatusResult> pairingCodeStatus(CloudSyncSettings settings, String code) async {
+  Future<CloudPairingStatusResult> pairingCodeStatus(
+      CloudSyncSettings settings, String code) async {
     final identity = store.appIdentity;
-    if (!identity.isHost) return const CloudPairingStatusResult(ok: false, status: 'invalid', message: 'يمكن لجهاز المضيف فقط التحقق من حالة رمز الاقتران.');
-    if (!settings.hasDeploymentToken || settings.apiBaseUrl.trim().isEmpty) return const CloudPairingStatusResult(ok: false, status: 'invalid', message: 'رابط واجهة السحابة ورمز نشر المضيف مطلوبان.');
+    if (!identity.isHost) {
+      return const CloudPairingStatusResult(
+          ok: false,
+          status: 'invalid',
+          message: 'يمكن لجهاز المضيف فقط التحقق من حالة رمز الاقتران.');
+    }
+    if (!settings.hasDeploymentToken || settings.apiBaseUrl.trim().isEmpty) {
+      return const CloudPairingStatusResult(
+          ok: false,
+          status: 'invalid',
+          message: 'رابط واجهة السحابة ورمز نشر المضيف مطلوبان.');
+    }
     try {
       final response = await _client
           .post(
@@ -456,14 +559,20 @@ class CloudSyncService {
           )
           .timeout(const Duration(seconds: 8));
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        return CloudPairingStatusResult(ok: false, status: 'invalid', message: 'فشل فحص حالة الاقتران: ${response.statusCode} ${response.body}');
+        return CloudPairingStatusResult(
+            ok: false,
+            status: 'invalid',
+            message:
+                'فشل فحص حالة الاقتران: ${response.statusCode} ${response.body}');
       }
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
       final status = decoded['status']?.toString() ?? 'invalid';
       return CloudPairingStatusResult(
         ok: decoded['ok'] == true,
         status: status,
-        message: decoded['ok'] == true ? status : (decoded['error']?.toString() ?? 'فشل فحص حالة الاقتران.'),
+        message: decoded['ok'] == true
+            ? status
+            : (decoded['error']?.toString() ?? 'فشل فحص حالة الاقتران.'),
         expiresAt: DateTime.tryParse(decoded['expiresAt']?.toString() ?? ''),
         claimedAt: DateTime.tryParse(decoded['claimedAt']?.toString() ?? ''),
         claimedByDeviceId: decoded['claimedByDeviceId']?.toString() ?? '',
@@ -471,12 +580,15 @@ class CloudSyncService {
         claimedDeviceToken: decoded['claimedDeviceToken']?.toString() ?? '',
       );
     } catch (error) {
-      return CloudPairingStatusResult(ok: false, status: 'invalid', message: 'فشل فحص حالة الاقتران: $error');
+      return CloudPairingStatusResult(
+          ok: false,
+          status: 'invalid',
+          message: 'فشل فحص حالة الاقتران: $error');
     }
   }
 
-
-  Future<CloudSyncResult> _pullLoginBootstrap(CloudSyncSettings settings, {DateTime? minSnapshotUpdatedAt}) async {
+  Future<CloudSyncResult> _pullLoginBootstrap(CloudSyncSettings settings,
+      {DateTime? minSnapshotUpdatedAt}) async {
     final identity = store.appIdentity;
     try {
       await registerCurrentDevice(settings, transport: 'cloud');
@@ -491,41 +603,59 @@ class CloudSyncService {
           'bootstrap': 'login',
         };
         if (minSnapshotUpdatedAt != null) {
-          query['min_snapshot_updated_at'] = minSnapshotUpdatedAt.toIso8601String();
+          query['min_snapshot_updated_at'] =
+              minSnapshotUpdatedAt.toIso8601String();
         }
         if (pageCursor.isNotEmpty) query['cursor'] = pageCursor;
 
         final pull = await _client
-            .get(settings.endpoint('/api/sync/pull', query), headers: _headers(settings))
+            .get(settings.endpoint('/api/sync/pull', query),
+                headers: _headers(settings))
             .timeout(const Duration(seconds: 30));
         if (pull.statusCode < 200 || pull.statusCode >= 300) {
-          return CloudSyncResult(ok: false, message: 'فشل تهيئة تسجيل الدخول السحابية: ${pull.statusCode} ${pull.body}');
+          return CloudSyncResult(
+              ok: false,
+              message:
+                  'فشل تهيئة تسجيل الدخول السحابية: ${pull.statusCode} ${pull.body}');
         }
         final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
         final changes = _syncCore.filterOutLocalEchoes(
-          _syncCore.decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
+          _syncCore
+              .decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
         );
         pulled += await _syncCore.applyAuthoritativeChanges(changes);
         final hasMore = decodedPull['hasMore'] == true;
         pageCursor = (decodedPull['nextCursor'] ?? '').toString();
         if (!hasMore) break;
         if (pageCursor.isEmpty) {
-          return const CloudSyncResult(ok: false, message: 'فشلت متابعة صفحات تهيئة تسجيل الدخول السحابية: مؤشر الصفحة التالية مفقود.');
+          return const CloudSyncResult(
+              ok: false,
+              message:
+                  'فشلت متابعة صفحات تهيئة تسجيل الدخول السحابية: مؤشر الصفحة التالية مفقود.');
         }
       }
       // Do not save the global Cloud pull cursor here. This is only a partial
       // login bootstrap; leaving the cursor empty lets the post-login
       // provisioning sync download the complete snapshot from the beginning.
-      return CloudSyncResult(ok: true, pulled: pulled, restoredSnapshot: pulled > 0, message: 'تم سحب $pulled سجل/سجلات تسجيل دخول من التهيئة السحابية.');
+      return CloudSyncResult(
+          ok: true,
+          pulled: pulled,
+          restoredSnapshot: pulled > 0,
+          message: 'تم سحب $pulled سجل/سجلات تسجيل دخول من التهيئة السحابية.');
     } catch (error) {
-      return CloudSyncResult(ok: false, message: 'فشل تهيئة تسجيل الدخول السحابية: $error');
+      return CloudSyncResult(
+          ok: false, message: 'فشل تهيئة تسجيل الدخول السحابية: $error');
     }
   }
 
-  Future<CloudPairingClaimResult> claimPairingCode(CloudSyncSettings settings, String code) async {
+  Future<CloudPairingClaimResult> claimPairingCode(
+      CloudSyncSettings settings, String code) async {
     final current = store.appIdentity;
     if (current.isHost) {
-      return const CloudPairingClaimResult(ok: false, message: 'لا يمكن لأجهزة المضيف الاقتران كعملاء سحابة. استخدم نقل المضيف بدلاً من ذلك.');
+      return const CloudPairingClaimResult(
+          ok: false,
+          message:
+              'لا يمكن لأجهزة المضيف الاقتران كعملاء سحابة. استخدم نقل المضيف بدلاً من ذلك.');
     }
     // A Client may configure both LAN and Cloud, but only one active transport
     // should run at a time. Pairing Cloud is therefore allowed for an existing
@@ -533,7 +663,8 @@ class CloudSyncService {
     // Client bootstrap pairing intentionally requires only the Cloud API URL and
     // a single-use pairing code. The Host deployment token must stay on Host devices.
     if (!settings.enabled || settings.apiBaseUrl.trim().isEmpty) {
-      return const CloudPairingClaimResult(ok: false, message: 'رابط واجهة السحابة مطلوب.');
+      return const CloudPairingClaimResult(
+          ok: false, message: 'رابط واجهة السحابة مطلوب.');
     }
     var deviceRegistered = false;
     try {
@@ -551,25 +682,47 @@ class CloudSyncService {
           )
           .timeout(const Duration(seconds: 10));
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        return const CloudPairingClaimResult(ok: false, message: 'انتهت صلاحية رمز الاقتران أو تم استخدامه مسبقاً. اطلب رمزاً جديداً من جهاز المضيف.');
+        return const CloudPairingClaimResult(
+            ok: false,
+            message:
+                'انتهت صلاحية رمز الاقتران أو تم استخدامه مسبقاً. اطلب رمزاً جديداً من جهاز المضيف.');
       }
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
       if (decoded['ok'] != true) {
-        return const CloudPairingClaimResult(ok: false, message: 'انتهت صلاحية رمز الاقتران أو تم استخدامه مسبقاً. اطلب رمزاً جديداً من جهاز المضيف.');
+        return const CloudPairingClaimResult(
+            ok: false,
+            message:
+                'انتهت صلاحية رمز الاقتران أو تم استخدامه مسبقاً. اطلب رمزاً جديداً من جهاز المضيف.');
       }
       final claimedStoreId = decoded['storeId']?.toString() ?? current.storeId;
-      final claimedBranchId = decoded['branchId']?.toString() ?? current.branchId;
-      final claimedHostDeviceId = decoded['hostDeviceId']?.toString() ?? current.hostDeviceId;
+      final claimedBranchId =
+          decoded['branchId']?.toString() ?? current.branchId;
+      final claimedHostDeviceId =
+          decoded['hostDeviceId']?.toString() ?? current.hostDeviceId;
       if (current.isClient && current.hostDeviceId.trim().isNotEmpty) {
         final mismatches = <String>[];
-        if (current.storeId.trim().toUpperCase() != claimedStoreId.trim().toUpperCase()) mismatches.add('Store ID');
-        if (current.branchId.trim().toUpperCase() != claimedBranchId.trim().toUpperCase()) mismatches.add('Branch ID');
-        if (current.hostDeviceId.trim().toUpperCase() != claimedHostDeviceId.trim().toUpperCase()) mismatches.add('Host ID');
+        if (current.storeId.trim().toUpperCase() !=
+            claimedStoreId.trim().toUpperCase()) {
+          mismatches.add('Store ID');
+        }
+        if (current.branchId.trim().toUpperCase() !=
+            claimedBranchId.trim().toUpperCase()) {
+          mismatches.add('Branch ID');
+        }
+        if (current.hostDeviceId.trim().toUpperCase() !=
+            claimedHostDeviceId.trim().toUpperCase()) {
+          mismatches.add('Host ID');
+        }
         if (mismatches.isNotEmpty) {
-          return CloudPairingClaimResult(ok: false, message: 'رمز الاقتران يخص متجراً مختلفاً (${mismatches.join(', ')}). استخدم رمز الاقتران من المضيف الحالي.');
+          return CloudPairingClaimResult(
+              ok: false,
+              message:
+                  'رمز الاقتران يخص متجراً مختلفاً (${mismatches.join(', ')}). استخدم رمز الاقتران من المضيف الحالي.');
         }
       }
-      final transport = decoded['transport']?.toString() == 'lan' ? SyncMode.lanOnly : SyncMode.cloudConnected;
+      final transport = decoded['transport']?.toString() == 'lan'
+          ? SyncMode.lanOnly
+          : SyncMode.cloudConnected;
       final identity = current.copyWith(
         storeId: claimedStoreId,
         branchId: claimedBranchId,
@@ -583,7 +736,8 @@ class CloudSyncService {
       await store.updateAppIdentityDuringSetup(identity);
       deviceRegistered = true;
 
-      if (identity.syncMode == SyncMode.cloudConnected || identity.syncMode == SyncMode.marketplaceEnabled) {
+      if (identity.syncMode == SyncMode.cloudConnected ||
+          identity.syncMode == SyncMode.marketplaceEnabled) {
         // Pairing and provisioning are separate lifecycle steps. For large
         // stores, do not block Connect to Store on the full business snapshot.
         // Pull only login-critical records (store settings/profile, roles and
@@ -592,24 +746,37 @@ class CloudSyncService {
         final requestedAt = DateTime.now().toUtc();
         await CloudProvisioningStatus.markPending(
           requestedAt: requestedAt,
-          message: 'بيانات تسجيل الدخول جاهزة. يتم تنزيل بقية بيانات المتجر على مراحل.',
+          message:
+              'بيانات تسجيل الدخول جاهزة. يتم تنزيل بقية بيانات المتجر على مراحل.',
         );
 
         var loginReady = false;
-        var initialPull = await _pullLoginBootstrap(settings.copyWith(clearLastPullCursor: true));
-        loginReady = initialPull.ok && (initialPull.pulled > 0 || !store.needsInitialAdminSetup) && !store.needsInitialAdminSetup;
+        var initialPull = await _pullLoginBootstrap(
+            settings.copyWith(clearLastPullCursor: true));
+        loginReady = initialPull.ok &&
+            (initialPull.pulled > 0 || !store.needsInitialAdminSetup) &&
+            !store.needsInitialAdminSetup;
 
-        var request = const CloudSyncResult(ok: true, message: 'تم استخدام لقطة سحابية موجودة لتهيئة تسجيل الدخول.');
+        var request = const CloudSyncResult(
+            ok: true,
+            message: 'تم استخدام لقطة سحابية موجودة لتهيئة تسجيل الدخول.');
         if (!loginReady) {
-          request = await requestFreshHostSnapshot(settings, requestedAt: requestedAt);
+          request = await requestFreshHostSnapshot(settings,
+              requestedAt: requestedAt);
         }
 
         if (request.ok && !loginReady) {
           for (var attempt = 0; attempt < 6; attempt += 1) {
-            if (attempt > 0) await Future<void>.delayed(const Duration(seconds: 3));
+            if (attempt > 0) {
+              await Future<void>.delayed(const Duration(seconds: 3));
+            }
             await CloudProvisioningStatus.markAttempted(DateTime.now().toUtc());
-            initialPull = await _pullLoginBootstrap(settings.copyWith(clearLastPullCursor: true), minSnapshotUpdatedAt: requestedAt);
-            loginReady = initialPull.ok && (initialPull.pulled > 0 || !store.needsInitialAdminSetup) && !store.needsInitialAdminSetup;
+            initialPull = await _pullLoginBootstrap(
+                settings.copyWith(clearLastPullCursor: true),
+                minSnapshotUpdatedAt: requestedAt);
+            loginReady = initialPull.ok &&
+                (initialPull.pulled > 0 || !store.needsInitialAdminSetup) &&
+                !store.needsInitialAdminSetup;
             if (loginReady) break;
           }
         }
@@ -622,16 +789,23 @@ class CloudSyncService {
           identity: identity,
         );
       }
-      return CloudPairingClaimResult(ok: true, message: 'تم اقتران الجهاز بنجاح. يرجى تسجيل الدخول.', identity: identity);
+      return CloudPairingClaimResult(
+          ok: true,
+          message: 'تم اقتران الجهاز بنجاح. يرجى تسجيل الدخول.',
+          identity: identity);
     } catch (error) {
       if (deviceRegistered) {
         return CloudPairingClaimResult(
           ok: true,
-          message: 'تم اقتران الجهاز بنجاح. سيتم تنزيل بيانات المتجر الأولية تلقائياً عند اتصال المضيف.',
+          message:
+              'تم اقتران الجهاز بنجاح. سيتم تنزيل بيانات المتجر الأولية تلقائياً عند اتصال المضيف.',
           identity: store.appIdentity,
         );
       }
-      return const CloudPairingClaimResult(ok: false, message: 'تعذر توصيل هذا الجهاز. تحقق من رمز الاقتران وحاول مرة أخرى.');
+      return const CloudPairingClaimResult(
+          ok: false,
+          message:
+              'تعذر توصيل هذا الجهاز. تحقق من رمز الاقتران وحاول مرة أخرى.');
     }
   }
 
@@ -643,47 +817,72 @@ class CloudSyncService {
     CloudSyncProgressCallback? onProgress,
   }) async {
     final cleanStoreId = storeId.trim().toUpperCase();
-    final cleanBranchId = (branchId == null || branchId.trim().isEmpty) ? '' : branchId.trim().toUpperCase();
+    final cleanBranchId = (branchId == null || branchId.trim().isEmpty)
+        ? ''
+        : branchId.trim().toUpperCase();
     final cleanRecoveryKey = recoveryKey.trim().toUpperCase();
     if (settings.apiBaseUrl.trim().isEmpty) {
-      return const CloudStoreRecoveryResult(ok: false, message: 'رابط واجهة السحابة مطلوب.');
+      return const CloudStoreRecoveryResult(
+          ok: false, message: 'رابط واجهة السحابة مطلوب.');
     }
     if (!cleanStoreId.startsWith('ST-') || cleanRecoveryKey.isEmpty) {
-      return const CloudStoreRecoveryResult(ok: false, message: 'يجب إدخال معرّف متجر ومفتاح استرداد صالحين.');
+      return const CloudStoreRecoveryResult(
+          ok: false, message: 'يجب إدخال معرّف متجر ومفتاح استرداد صالحين.');
     }
 
     try {
       onProgress?.call(0.10, 'جارٍ التحقق من معرّف المتجر ومفتاح الاسترداد...');
-      final claimResponse = await _client.post(
-        settings.endpoint('/api/sync/recovery/claim'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          if (settings.apiToken.trim().isNotEmpty) 'Authorization': 'Bearer ${settings.apiToken.trim()}',
-        },
-        body: jsonEncode({
-          'storeId': cleanStoreId,
-          'branchId': cleanBranchId,
-          'recoveryKey': cleanRecoveryKey,
-          'deviceId': store.deviceId,
-          'deviceName': store.appIdentity.deviceName,
-          'platform': store.appIdentity.platform.name,
-          'appVersion': 'store-manager-pro',
-        }),
-      ).timeout(const Duration(seconds: 15));
+      final claimResponse = await _client
+          .post(
+            settings.endpoint('/api/sync/recovery/claim'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+              if (settings.apiToken.trim().isNotEmpty)
+                'Authorization': 'Bearer ${settings.apiToken.trim()}',
+            },
+            body: jsonEncode({
+              'storeId': cleanStoreId,
+              'branchId': cleanBranchId,
+              'recoveryKey': cleanRecoveryKey,
+              'deviceId': store.deviceId,
+              'deviceName': store.appIdentity.deviceName,
+              'platform': store.appIdentity.platform.name,
+              'appVersion': 'store-manager-pro',
+            }),
+          )
+          .timeout(const Duration(seconds: 15));
 
       if (claimResponse.statusCode < 200 || claimResponse.statusCode >= 300) {
-        return CloudStoreRecoveryResult(ok: false, message: 'فشل استرداد المتجر: ${claimResponse.statusCode} ${claimResponse.body}');
+        return CloudStoreRecoveryResult(
+            ok: false,
+            message:
+                'فشل استرداد المتجر: ${claimResponse.statusCode} ${claimResponse.body}');
       }
       final claim = jsonDecode(claimResponse.body) as Map<String, dynamic>;
       if (claim['ok'] != true) {
-        return CloudStoreRecoveryResult(ok: false, message: claim['error']?.toString() ?? 'فشل استرداد المتجر.');
+        return CloudStoreRecoveryResult(
+            ok: false,
+            message: claim['error']?.toString() ?? 'فشل استرداد المتجر.');
       }
 
-      final recoveredBranchId = (claim['branchId'] ?? claim['branch_id'] ?? cleanBranchId).toString().trim().isEmpty ? 'BR-MAIN1' : (claim['branchId'] ?? claim['branch_id'] ?? cleanBranchId).toString().trim().toUpperCase();
-      final deviceToken = (claim['deviceToken'] ?? claim['device_token'] ?? '').toString();
-      final hostDeviceId = (claim['hostDeviceId'] ?? claim['host_device_id'] ?? store.deviceId).toString();
-      final cloudTenantId = (claim['cloudTenantId'] ?? claim['cloud_tenant_id'] ?? '').toString();
+      final recoveredBranchId =
+          (claim['branchId'] ?? claim['branch_id'] ?? cleanBranchId)
+                  .toString()
+                  .trim()
+                  .isEmpty
+              ? 'BR-MAIN1'
+              : (claim['branchId'] ?? claim['branch_id'] ?? cleanBranchId)
+                  .toString()
+                  .trim()
+                  .toUpperCase();
+      final deviceToken =
+          (claim['deviceToken'] ?? claim['device_token'] ?? '').toString();
+      final hostDeviceId =
+          (claim['hostDeviceId'] ?? claim['host_device_id'] ?? store.deviceId)
+              .toString();
+      final cloudTenantId =
+          (claim['cloudTenantId'] ?? claim['cloud_tenant_id'] ?? '').toString();
 
       onProgress?.call(0.25, 'جارٍ استعادة هوية المتجر الدائمة...');
       await store.recoverExistingStoreIdentity(
@@ -712,16 +911,27 @@ class CloudSyncService {
           'limit': '1000',
         };
         if (pageCursor.isNotEmpty) query['cursor'] = pageCursor;
-        final pull = await _client.get(settings.endpoint('/api/sync/pull', query), headers: _headers(settings)).timeout(const Duration(seconds: 20));
+        final pull = await _client
+            .get(settings.endpoint('/api/sync/pull', query),
+                headers: _headers(settings))
+            .timeout(const Duration(seconds: 20));
         if (pull.statusCode < 200 || pull.statusCode >= 300) {
-          return CloudStoreRecoveryResult(ok: false, message: 'تم استرداد هوية المتجر، لكن فشل تنزيل اللقطة: ${pull.statusCode} ${pull.body}', identity: store.appIdentity);
+          return CloudStoreRecoveryResult(
+              ok: false,
+              message:
+                  'تم استرداد هوية المتجر، لكن فشل تنزيل اللقطة: ${pull.statusCode} ${pull.body}',
+              identity: store.appIdentity);
         }
         final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
         if ((decodedPull['source'] ?? '').toString() == 'entity_snapshots') {
-          final pageAllSectionsComplete = decodedPull['allSnapshotSectionsComplete'] == true;
-          allSnapshotSectionsComplete = allSnapshotSectionsComplete && pageAllSectionsComplete;
+          final pageAllSectionsComplete =
+              decodedPull['allSnapshotSectionsComplete'] == true;
+          allSnapshotSectionsComplete =
+              allSnapshotSectionsComplete && pageAllSectionsComplete;
           await CloudProvisioningStatus.updateSnapshotSections(
-            decodedPull['snapshotSections'] is Map<String, dynamic> ? decodedPull['snapshotSections'] as Map<String, dynamic> : null,
+            decodedPull['snapshotSections'] is Map<String, dynamic>
+                ? decodedPull['snapshotSections'] as Map<String, dynamic>
+                : null,
             allComplete: pageAllSectionsComplete,
           );
         }
@@ -736,37 +946,63 @@ class CloudSyncService {
           );
         }
         final changes = _syncCore.filterOutLocalEchoes(
-          _syncCore.decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
+          _syncCore
+              .decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
         );
-        restoredSnapshot = restoredSnapshot || changes.isNotEmpty || decodedPull['source'] == 'entity_snapshots';
+        restoredSnapshot = restoredSnapshot ||
+            changes.isNotEmpty ||
+            decodedPull['source'] == 'entity_snapshots';
         pulled += await _syncCore.applyAuthoritativeChanges(changes);
-        onProgress?.call((0.45 + (page + 1) * 0.04).clamp(0.45, 0.88).toDouble(), 'تم تطبيق $pulled سجل/سجلات مستردة...');
+        onProgress?.call(
+            (0.45 + (page + 1) * 0.04).clamp(0.45, 0.88).toDouble(),
+            'تم تطبيق $pulled سجل/سجلات مستردة...');
         if (decodedPull['hasMore'] != true) {
-          final generatedAt = DateTime.tryParse(decodedPull['generatedAt']?.toString() ?? '');
-          if (generatedAt != null) await settings.copyWith(lastPullCursor: generatedAt).save();
+          final generatedAt =
+              DateTime.tryParse(decodedPull['generatedAt']?.toString() ?? '');
+          if (generatedAt != null) {
+            await settings.copyWith(lastPullCursor: generatedAt).save();
+          }
           break;
         }
         pageCursor = (decodedPull['nextCursor'] ?? '').toString();
         if (pageCursor.isEmpty) {
-          return CloudStoreRecoveryResult(ok: false, message: 'فشلت متابعة صفحات استرداد المتجر.', identity: store.appIdentity, pulled: pulled);
+          return CloudStoreRecoveryResult(
+              ok: false,
+              message: 'فشلت متابعة صفحات استرداد المتجر.',
+              identity: store.appIdentity,
+              pulled: pulled);
         }
       }
 
       onProgress?.call(0.90, 'جارٍ نشر لقطة المضيف المستردة...');
-      await publishBootstrapSnapshotToCloud(settings, force: true, onProgress: onProgress);
+      await publishBootstrapSnapshotToCloud(settings,
+          force: true, onProgress: onProgress);
       await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
       await sendHostHeartbeat(settings);
       onProgress?.call(1.0, 'تم استرداد المتجر.');
-      return CloudStoreRecoveryResult(ok: true, message: 'تم استرداد المتجر الحالي بنجاح.', identity: store.appIdentity, restoredSnapshot: restoredSnapshot, pulled: pulled);
+      return CloudStoreRecoveryResult(
+          ok: true,
+          message: 'تم استرداد المتجر الحالي بنجاح.',
+          identity: store.appIdentity,
+          restoredSnapshot: restoredSnapshot,
+          pulled: pulled);
     } catch (error) {
-      return CloudStoreRecoveryResult(ok: false, message: 'فشل استرداد المتجر: $error');
+      return CloudStoreRecoveryResult(
+          ok: false, message: 'فشل استرداد المتجر: $error');
     }
   }
 
-  Future<CloudSyncResult> requestFreshHostSnapshot(CloudSyncSettings settings, {DateTime? requestedAt}) async {
+  Future<CloudSyncResult> requestFreshHostSnapshot(CloudSyncSettings settings,
+      {DateTime? requestedAt}) async {
     final identity = store.appIdentity;
-    if (identity.isHost) return const CloudSyncResult(ok: true, message: 'يمكن للمضيف نشر لقطته مباشرة.');
-    if (!settings.isConfigured) return const CloudSyncResult(ok: false, message: 'رابط واجهة السحابة والرمز مطلوبان.');
+    if (identity.isHost) {
+      return const CloudSyncResult(
+          ok: true, message: 'يمكن للمضيف نشر لقطته مباشرة.');
+    }
+    if (!settings.isConfigured) {
+      return const CloudSyncResult(
+          ok: false, message: 'رابط واجهة السحابة والرمز مطلوبان.');
+    }
     final now = requestedAt ?? DateTime.now().toUtc();
     final request = SyncChange(
       id: '${now.microsecondsSinceEpoch}-${store.deviceId}-snapshot-request',
@@ -782,7 +1018,8 @@ class CloudSyncService {
           'recordedAt': now.toIso8601String(),
           'sourceRole': 'client',
           'sourceDeviceId': store.deviceId,
-          'clientMutationId': '${store.deviceId}_${now.microsecondsSinceEpoch}_system_store_request_snapshot',
+          'clientMutationId':
+              '${store.deviceId}_${now.microsecondsSinceEpoch}_system_store_request_snapshot',
         },
         'reason': 'cloud_rebuild_from_host',
         'requestedAt': now.toIso8601String(),
@@ -807,29 +1044,44 @@ class CloudSyncService {
           )
           .timeout(const Duration(seconds: 20));
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        return CloudSyncResult(ok: false, message: 'فشل طلب لقطة حديثة من المضيف: ${response.statusCode} ${response.body}');
+        return CloudSyncResult(
+            ok: false,
+            message:
+                'فشل طلب لقطة حديثة من المضيف: ${response.statusCode} ${response.body}');
       }
-      return const CloudSyncResult(ok: true, message: 'تم طلب لقطة حديثة من المضيف. سينشر المضيف لقطة كاملة جديدة عند المزامنة السحابية التالية.');
+      return const CloudSyncResult(
+          ok: true,
+          message:
+              'تم طلب لقطة حديثة من المضيف. سينشر المضيف لقطة كاملة جديدة عند المزامنة السحابية التالية.');
     } catch (error) {
-      return CloudSyncResult(ok: false, message: 'فشل طلب لقطة حديثة من المضيف: $error');
+      return CloudSyncResult(
+          ok: false, message: 'فشل طلب لقطة حديثة من المضيف: $error');
     }
   }
 
-  Future<CloudSyncResult> rebuildFromCloudHostSnapshot(CloudSyncSettings settings, {CloudSyncProgressCallback? onProgress}) async {
+  Future<CloudSyncResult> rebuildFromCloudHostSnapshot(
+      CloudSyncSettings settings,
+      {CloudSyncProgressCallback? onProgress}) async {
     final identity = store.appIdentity;
     if (identity.isHost) {
-      return const CloudSyncResult(ok: false, message: 'إعادة البناء من المضيف متاحة فقط لأجهزة العميل.');
+      return const CloudSyncResult(
+          ok: false,
+          message: 'إعادة البناء من المضيف متاحة فقط لأجهزة العميل.');
     }
     if (!settings.isConfigured) {
-      return const CloudSyncResult(ok: false, message: 'رابط واجهة السحابة ورمز الجهاز المقترن مطلوبان.');
+      return const CloudSyncResult(
+          ok: false,
+          message: 'رابط واجهة السحابة ورمز الجهاز المقترن مطلوبان.');
     }
 
     onProgress?.call(0.08, 'جارٍ طلب لقطة حديثة من المضيف...');
     final snapshotRequestedAt = DateTime.now().toUtc();
-    final request = await requestFreshHostSnapshot(settings, requestedAt: snapshotRequestedAt);
+    final request = await requestFreshHostSnapshot(settings,
+        requestedAt: snapshotRequestedAt);
     if (!request.ok) return request;
 
-    onProgress?.call(0.18, 'جارٍ التحقق من وجود لقطة حديثة من المضيف قبل تعديل البيانات المحلية...');
+    onProgress?.call(0.18,
+        'جارٍ التحقق من وجود لقطة حديثة من المضيف قبل تعديل البيانات المحلية...');
     // Do not wipe current Client data until a fresh restore_snapshot is actually
     // received and applied. Failed pairing or unavailable Host data must not
     // erase anything locally.
@@ -845,21 +1097,28 @@ class CloudSyncService {
     // when the Host comes online.
     for (var attempt = 0; attempt < 6; attempt += 1) {
       if (attempt > 0) await Future<void>.delayed(const Duration(seconds: 3));
-      final attemptProgress = (0.28 + attempt * 0.09).clamp(0.28, 0.73).toDouble();
-      onProgress?.call(attemptProgress, 'بانتظار لقطة المضيف وسحب التحديثات (المحاولة ${attempt + 1}/6)...');
-      lastResult = await syncNow(freshSettings, minSnapshotUpdatedAt: snapshotRequestedAt, onProgress: (value, label) {
+      final attemptProgress =
+          (0.28 + attempt * 0.09).clamp(0.28, 0.73).toDouble();
+      onProgress?.call(attemptProgress,
+          'بانتظار لقطة المضيف وسحب التحديثات (المحاولة ${attempt + 1}/6)...');
+      lastResult = await syncNow(freshSettings,
+          minSnapshotUpdatedAt: snapshotRequestedAt,
+          onProgress: (value, label) {
         final scaled = attemptProgress + (value * 0.08);
         onProgress?.call(scaled.clamp(0.0, 0.82).toDouble(), label);
       });
       if (!lastResult.ok) break;
       totalPulled += lastResult.pulled;
-      freshSettings = CloudSyncSettings.load().copyWith(clearLastPullCursor: attempt == 0 ? true : false);
+      freshSettings = CloudSyncSettings.load()
+          .copyWith(clearLastPullCursor: attempt == 0 ? true : false);
       if (lastResult.restoredSnapshot) {
-        onProgress?.call(0.88, 'جارٍ التحقق من البيانات المحلية بعد إعادة البناء...');
+        onProgress?.call(
+            0.88, 'جارٍ التحقق من البيانات المحلية بعد إعادة البناء...');
         final repaired = await store.verifyLocalBusinessDataIntegrity();
         onProgress?.call(0.94, 'جارٍ تنظيف السجلات المحلية...');
         await store.cleanupSoftDeletedRecords();
-        await CloudProvisioningStatus.markComplete(message: 'تم تنزيل بيانات المتجر الأولية.');
+        await CloudProvisioningStatus.markComplete(
+            message: 'تم تنزيل بيانات المتجر الأولية.');
         onProgress?.call(1.0, 'اكتملت إعادة البناء السحابية.');
         return CloudSyncResult(
           ok: repaired.ok,
@@ -877,11 +1136,13 @@ class CloudSyncService {
       ok: false,
       pushed: lastResult?.pushed ?? 0,
       pulled: totalPulled,
-      message: 'طلبت إعادة البناء السحابية لقطة حديثة من المضيف، لكن لم يتم سحب أي لقطة بعد. أبقِ المضيف متصلاً وأعد المحاولة. ${lastResult?.message ?? ''}',
+      message:
+          'طلبت إعادة البناء السحابية لقطة حديثة من المضيف، لكن لم يتم سحب أي لقطة بعد. أبقِ المضيف متصلاً وأعد المحاولة. ${lastResult?.message ?? ''}',
     );
   }
 
-  Future<CloudSyncResult?> checkCurrentDeviceAccess(CloudSyncSettings settings) async {
+  Future<CloudSyncResult?> checkCurrentDeviceAccess(
+      CloudSyncSettings settings) async {
     final identity = store.appIdentity;
     if (!identity.isClient || !settings.isConfigured) return null;
     try {
@@ -898,10 +1159,14 @@ class CloudSyncService {
           )
           .timeout(const Duration(seconds: 10));
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        return CloudSyncResult(ok: false, message: 'فشل فحص صلاحية وصول الجهاز إلى السحابة: ${response.statusCode} ${response.body}');
+        return CloudSyncResult(
+            ok: false,
+            message:
+                'فشل فحص صلاحية وصول الجهاز إلى السحابة: ${response.statusCode} ${response.body}');
       }
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-      if (decoded['wipeRequired'] == true || decoded['action'] == 'wipe_local_data') {
+      if (decoded['wipeRequired'] == true ||
+          decoded['action'] == 'wipe_local_data') {
         final wipedDeviceId = store.deviceId;
         final wipedStoreId = identity.storeId;
         final wipedBranchId = identity.branchId;
@@ -914,10 +1179,13 @@ class CloudSyncService {
           deviceToken: wipedToken,
         );
         await store.factoryResetLocalDevice();
-        return const CloudSyncResult(ok: false, message: 'تم حذف الجهاز من قبل المضيف. تم مسح البيانات المحلية.');
+        return const CloudSyncResult(
+            ok: false,
+            message: 'تم حذف الجهاز من قبل المضيف. تم مسح البيانات المحلية.');
       }
       if (decoded['suspended'] == true || decoded['authorized'] == false) {
-        final reason = decoded['reason']?.toString() ?? 'This device is suspended or not authorized for Cloud sync.';
+        final reason = decoded['reason']?.toString() ??
+            'This device is suspended or not authorized for Cloud sync.';
         if (decoded['suspended'] == true) {
           await store.markSuspendedByHost(reason: reason);
         }
@@ -926,48 +1194,78 @@ class CloudSyncService {
       await store.clearSuspendedByHost();
       return null;
     } catch (error) {
-      return CloudSyncResult(ok: false, message: 'فشل فحص صلاحية وصول الجهاز إلى السحابة: $error');
+      return CloudSyncResult(
+          ok: false, message: 'فشل فحص صلاحية وصول الجهاز إلى السحابة: $error');
     }
   }
 
-  Future<CloudSyncResult> setDeviceSuspended(CloudSyncSettings settings, String deviceId, {required bool suspended}) async {
+  Future<CloudSyncResult> setDeviceSuspended(
+      CloudSyncSettings settings, String deviceId,
+      {required bool suspended}) async {
     final identity = store.appIdentity;
-    if (!identity.isHost) return const CloudSyncResult(ok: false, message: 'يمكن للمضيف فقط تعليق الأجهزة.');
-    if (!settings.isConfigured) return const CloudSyncResult(ok: false, message: 'رابط واجهة السحابة والرمز مطلوبان.');
+    if (!identity.isHost) {
+      return const CloudSyncResult(
+          ok: false, message: 'يمكن للمضيف فقط تعليق الأجهزة.');
+    }
+    if (!settings.isConfigured) {
+      return const CloudSyncResult(
+          ok: false, message: 'رابط واجهة السحابة والرمز مطلوبان.');
+    }
     try {
       final response = await _client
           .post(
             settings.endpoint('/api/sync/device-suspend'),
             headers: _headers(settings),
-            body: jsonEncode({'storeId': identity.storeId, 'branchId': identity.branchId, 'deviceId': deviceId, 'suspended': suspended}),
+            body: jsonEncode({
+              'storeId': identity.storeId,
+              'branchId': identity.branchId,
+              'deviceId': deviceId,
+              'suspended': suspended
+            }),
           )
           .timeout(const Duration(seconds: 10));
       return CloudSyncResult(
         ok: response.statusCode >= 200 && response.statusCode < 300,
         message: response.statusCode >= 200 && response.statusCode < 300
-            ? (suspended ? 'تم تعليق الجهاز في السحابة.' : 'تمت إعادة تفعيل الجهاز في السحابة.')
+            ? (suspended
+                ? 'تم تعليق الجهاز في السحابة.'
+                : 'تمت إعادة تفعيل الجهاز في السحابة.')
             : 'فشل تعليق/إعادة تفعيل الجهاز: ${response.statusCode} ${response.body}',
       );
     } catch (error) {
-      return CloudSyncResult(ok: false, message: 'فشل تعليق/إعادة تفعيل الجهاز: $error');
+      return CloudSyncResult(
+          ok: false, message: 'فشل تعليق/إعادة تفعيل الجهاز: $error');
     }
   }
 
-  Future<CloudSyncResult> revokeDevice(CloudSyncSettings settings, String deviceId) async {
+  Future<CloudSyncResult> revokeDevice(
+      CloudSyncSettings settings, String deviceId) async {
     final identity = store.appIdentity;
-    if (!identity.isHost) return const CloudSyncResult(ok: false, message: 'يمكن للمضيف فقط إلغاء الأجهزة.');
-    if (!settings.isConfigured) return const CloudSyncResult(ok: false, message: 'رابط واجهة السحابة والرمز مطلوبان.');
+    if (!identity.isHost) {
+      return const CloudSyncResult(
+          ok: false, message: 'يمكن للمضيف فقط إلغاء الأجهزة.');
+    }
+    if (!settings.isConfigured) {
+      return const CloudSyncResult(
+          ok: false, message: 'رابط واجهة السحابة والرمز مطلوبان.');
+    }
     try {
       final response = await _client
           .post(
             settings.endpoint('/api/sync/device-revoke'),
             headers: _headers(settings),
-            body: jsonEncode({'storeId': identity.storeId, 'branchId': identity.branchId, 'deviceId': deviceId}),
+            body: jsonEncode({
+              'storeId': identity.storeId,
+              'branchId': identity.branchId,
+              'deviceId': deviceId
+            }),
           )
           .timeout(const Duration(seconds: 10));
       return CloudSyncResult(
         ok: response.statusCode >= 200 && response.statusCode < 300,
-        message: response.statusCode >= 200 && response.statusCode < 300 ? 'تم إلغاء الجهاز.' : 'فشل إلغاء الجهاز: ${response.statusCode} ${response.body}',
+        message: response.statusCode >= 200 && response.statusCode < 300
+            ? 'تم إلغاء الجهاز.'
+            : 'فشل إلغاء الجهاز: ${response.statusCode} ${response.body}',
       );
     } catch (error) {
       return CloudSyncResult(ok: false, message: 'فشل إلغاء الجهاز: $error');
@@ -981,7 +1279,8 @@ class CloudSyncService {
       'Accept': 'application/json',
       // The deployment token keeps backward compatibility with the current API,
       // while the device headers prepare the server for per-device auth.
-      if (settings.apiToken.trim().isNotEmpty) 'Authorization': 'Bearer ${settings.apiToken.trim()}',
+      if (settings.apiToken.trim().isNotEmpty)
+        'Authorization': 'Bearer ${settings.apiToken.trim()}',
       'X-Device-Id': store.deviceId,
       'X-Device-Token': identity.deviceToken,
       'X-Device-Role': identity.deviceRole.name,
@@ -1005,7 +1304,8 @@ class CloudSyncService {
             headers: {
               'Content-Type': 'application/json',
               'Accept': 'application/json',
-              if (settings.apiToken.trim().isNotEmpty) 'Authorization': 'Bearer ${settings.apiToken.trim()}',
+              if (settings.apiToken.trim().isNotEmpty)
+                'Authorization': 'Bearer ${settings.apiToken.trim()}',
               'X-Device-Id': deviceId,
               'X-Device-Token': deviceToken,
               'X-Device-Role': 'client',
@@ -1027,10 +1327,13 @@ class CloudSyncService {
     }
   }
 
-
-  Future<CloudSyncResult> registerCurrentDevice(CloudSyncSettings settings, {String transport = 'cloud'}) async {
+  Future<CloudSyncResult> registerCurrentDevice(CloudSyncSettings settings,
+      {String transport = 'cloud'}) async {
     final identity = store.appIdentity;
-    if (!settings.isConfigured) return const CloudSyncResult(ok: false, message: 'رابط واجهة السحابة والرمز مطلوبان.');
+    if (!settings.isConfigured) {
+      return const CloudSyncResult(
+          ok: false, message: 'رابط واجهة السحابة والرمز مطلوبان.');
+    }
     final deviceState = SyncDeviceStateStore.load(identity);
     try {
       final response = await _client
@@ -1046,8 +1349,11 @@ class CloudSyncService {
               'role': identity.deviceRole.name,
               'transport': transport,
               'activeTransport': identity.activeSyncTransportNormalized,
-              'lastSyncTransport': deviceState.lastSyncTransport.isEmpty ? transport : deviceState.lastSyncTransport,
-              'lastAppliedCursor': deviceState.lastAppliedHostCursor?.toIso8601String(),
+              'lastSyncTransport': deviceState.lastSyncTransport.isEmpty
+                  ? transport
+                  : deviceState.lastSyncTransport,
+              'lastAppliedCursor':
+                  deviceState.lastAppliedHostCursor?.toIso8601String(),
               'lastAckCursor': deviceState.lastAckCursor?.toIso8601String(),
               'lastAppliedSequence': deviceState.lastAppliedSequence,
               'lastAckSequence': deviceState.lastAckSequence,
@@ -1060,85 +1366,120 @@ class CloudSyncService {
           .timeout(const Duration(seconds: 10));
       return CloudSyncResult(
         ok: response.statusCode >= 200 && response.statusCode < 300,
-        message: response.statusCode >= 200 && response.statusCode < 300 ? 'تم تحديث نبض الجهاز.' : 'فشل نبض الجهاز: ${response.statusCode} ${response.body}',
+        message: response.statusCode >= 200 && response.statusCode < 300
+            ? 'تم تحديث نبض الجهاز.'
+            : 'فشل نبض الجهاز: ${response.statusCode} ${response.body}',
       );
     } catch (error) {
       return CloudSyncResult(ok: false, message: 'فشل نبض الجهاز: $error');
     }
   }
 
-  Future<CloudSyncResult> requestHostTransfer(CloudSyncSettings settings, {String reason = ''}) async {
+  Future<CloudSyncResult> requestHostTransfer(CloudSyncSettings settings,
+      {String reason = ''}) async {
     final identity = store.appIdentity;
-    if (!identity.isClient) return const CloudSyncResult(ok: false, message: 'يمكن للعملاء فقط طلب نقل المضيف.');
-    if (settings.apiBaseUrl.trim().isEmpty) return const CloudSyncResult(ok: false, message: 'رابط واجهة السحابة مطلوب.');
+    if (!identity.isClient) {
+      return const CloudSyncResult(
+          ok: false, message: 'يمكن للعملاء فقط طلب نقل المضيف.');
+    }
+    if (settings.apiBaseUrl.trim().isEmpty) {
+      return const CloudSyncResult(
+          ok: false, message: 'رابط واجهة السحابة مطلوب.');
+    }
     try {
-      final response = await _client.post(
-        settings.endpoint('/api/sync/host-transfer/request'),
-        headers: _headers(settings),
-        body: jsonEncode({
-          'storeId': identity.storeId,
-          'branchId': identity.branchId,
-          'requestingDeviceId': store.deviceId,
-          'currentHostDeviceId': identity.hostDeviceId,
-          'reason': reason,
-        }),
-      ).timeout(const Duration(seconds: 10));
+      final response = await _client
+          .post(
+            settings.endpoint('/api/sync/host-transfer/request'),
+            headers: _headers(settings),
+            body: jsonEncode({
+              'storeId': identity.storeId,
+              'branchId': identity.branchId,
+              'requestingDeviceId': store.deviceId,
+              'currentHostDeviceId': identity.hostDeviceId,
+              'reason': reason,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
       return CloudSyncResult(
         ok: response.statusCode >= 200 && response.statusCode < 300,
-        message: response.statusCode >= 200 && response.statusCode < 300 ? 'تم إرسال طلب نقل المضيف.' : 'فشل طلب نقل المضيف: ${response.statusCode} ${response.body}',
+        message: response.statusCode >= 200 && response.statusCode < 300
+            ? 'تم إرسال طلب نقل المضيف.'
+            : 'فشل طلب نقل المضيف: ${response.statusCode} ${response.body}',
       );
     } catch (error) {
       return CloudSyncResult(ok: false, message: 'فشل طلب نقل المضيف: $error');
     }
   }
 
-  Future<CloudSyncResult> approveHostTransfer(CloudSyncSettings settings, String requestingDeviceId) async {
+  Future<CloudSyncResult> approveHostTransfer(
+      CloudSyncSettings settings, String requestingDeviceId) async {
     final identity = store.appIdentity;
-    if (!identity.isHost) return const CloudSyncResult(ok: false, message: 'يمكن للمضيفين فقط الموافقة على نقل المضيف.');
-    if (!settings.isConfigured) return const CloudSyncResult(ok: false, message: 'رابط واجهة السحابة والرمز مطلوبان.');
+    if (!identity.isHost) {
+      return const CloudSyncResult(
+          ok: false, message: 'يمكن للمضيفين فقط الموافقة على نقل المضيف.');
+    }
+    if (!settings.isConfigured) {
+      return const CloudSyncResult(
+          ok: false, message: 'رابط واجهة السحابة والرمز مطلوبان.');
+    }
     try {
-      final response = await _client.post(
-        settings.endpoint('/api/sync/host-transfer/approve'),
-        headers: _headers(settings),
-        body: jsonEncode({
-          'storeId': identity.storeId,
-          'branchId': identity.branchId,
-          'requestingDeviceId': requestingDeviceId,
-          'approvedByHostDeviceId': store.deviceId,
-        }),
-      ).timeout(const Duration(seconds: 10));
+      final response = await _client
+          .post(
+            settings.endpoint('/api/sync/host-transfer/approve'),
+            headers: _headers(settings),
+            body: jsonEncode({
+              'storeId': identity.storeId,
+              'branchId': identity.branchId,
+              'requestingDeviceId': requestingDeviceId,
+              'approvedByHostDeviceId': store.deviceId,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
       return CloudSyncResult(
         ok: response.statusCode >= 200 && response.statusCode < 300,
-        message: response.statusCode >= 200 && response.statusCode < 300 ? 'تمت الموافقة على نقل المضيف في السحابة.' : 'فشل اعتماد نقل المضيف: ${response.statusCode} ${response.body}',
+        message: response.statusCode >= 200 && response.statusCode < 300
+            ? 'تمت الموافقة على نقل المضيف في السحابة.'
+            : 'فشل اعتماد نقل المضيف: ${response.statusCode} ${response.body}',
       );
     } catch (error) {
-      return CloudSyncResult(ok: false, message: 'فشل اعتماد نقل المضيف: $error');
+      return CloudSyncResult(
+          ok: false, message: 'فشل اعتماد نقل المضيف: $error');
     }
   }
 
-  Future<CloudSyncResult> activateHostTransfer(CloudSyncSettings settings) async {
+  Future<CloudSyncResult> activateHostTransfer(
+      CloudSyncSettings settings) async {
     final identity = store.appIdentity;
-    if (!settings.isConfigured && settings.apiBaseUrl.trim().isEmpty) return const CloudSyncResult(ok: false, message: 'رابط واجهة السحابة مطلوب.');
+    if (!settings.isConfigured && settings.apiBaseUrl.trim().isEmpty) {
+      return const CloudSyncResult(
+          ok: false, message: 'رابط واجهة السحابة مطلوب.');
+    }
     try {
-      final response = await _client.post(
-        settings.endpoint('/api/sync/host-transfer/activate'),
-        headers: _headers(settings),
-        body: jsonEncode({
-          'storeId': identity.storeId,
-          'branchId': identity.branchId,
-          'newHostDeviceId': store.deviceId,
-        }),
-      ).timeout(const Duration(seconds: 10));
+      final response = await _client
+          .post(
+            settings.endpoint('/api/sync/host-transfer/activate'),
+            headers: _headers(settings),
+            body: jsonEncode({
+              'storeId': identity.storeId,
+              'branchId': identity.branchId,
+              'newHostDeviceId': store.deviceId,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
       return CloudSyncResult(
         ok: response.statusCode >= 200 && response.statusCode < 300,
-        message: response.statusCode >= 200 && response.statusCode < 300 ? 'تم تفعيل نقل المضيف في السحابة.' : 'فشل تفعيل نقل المضيف: ${response.statusCode} ${response.body}',
+        message: response.statusCode >= 200 && response.statusCode < 300
+            ? 'تم تفعيل نقل المضيف في السحابة.'
+            : 'فشل تفعيل نقل المضيف: ${response.statusCode} ${response.body}',
       );
     } catch (error) {
-      return CloudSyncResult(ok: false, message: 'فشل تفعيل نقل المضيف: $error');
+      return CloudSyncResult(
+          ok: false, message: 'فشل تفعيل نقل المضيف: $error');
     }
   }
 
-  Future<List<CloudDeviceStatus>> listDevices(CloudSyncSettings settings) async {
+  Future<List<CloudDeviceStatus>> listDevices(
+      CloudSyncSettings settings) async {
     final identity = store.appIdentity;
     if (!settings.isConfigured) return const <CloudDeviceStatus>[];
     final response = await _client
@@ -1150,10 +1491,13 @@ class CloudSyncService {
           headers: _headers(settings),
         )
         .timeout(const Duration(seconds: 10));
-    if (response.statusCode < 200 || response.statusCode >= 300) return const <CloudDeviceStatus>[];
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      return const <CloudDeviceStatus>[];
+    }
     final decoded = jsonDecode(response.body) as Map<String, dynamic>;
     return (decoded['devices'] as List<dynamic>? ?? [])
-        .map((item) => CloudDeviceStatus.fromJson(Map<String, dynamic>.from(item as Map)))
+        .map((item) =>
+            CloudDeviceStatus.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
   }
 
@@ -1162,10 +1506,24 @@ class CloudSyncService {
     required Iterable<String> clientDeviceIds,
   }) async {
     final identity = store.appIdentity;
-    if (!identity.isHost) return const CloudSyncResult(ok: false, message: 'يمكن للمضيف فقط إصلاح روابط أجهزة السحابة.');
-    if (!settings.isConfigured) return const CloudSyncResult(ok: false, message: 'رابط واجهة السحابة والرمز مطلوبان.');
-    final cleanClientIds = clientDeviceIds.map((id) => id.trim()).where((id) => id.isNotEmpty && id != store.deviceId).toSet().toList();
-    if (cleanClientIds.isEmpty) return const CloudSyncResult(ok: true, message: 'لا توجد روابط أجهزة سحابية قديمة تحتاج إلى إصلاح.');
+    if (!identity.isHost) {
+      return const CloudSyncResult(
+          ok: false, message: 'يمكن للمضيف فقط إصلاح روابط أجهزة السحابة.');
+    }
+    if (!settings.isConfigured) {
+      return const CloudSyncResult(
+          ok: false, message: 'رابط واجهة السحابة والرمز مطلوبان.');
+    }
+    final cleanClientIds = clientDeviceIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty && id != store.deviceId)
+        .toSet()
+        .toList();
+    if (cleanClientIds.isEmpty) {
+      return const CloudSyncResult(
+          ok: true,
+          message: 'لا توجد روابط أجهزة سحابية قديمة تحتاج إلى إصلاح.');
+    }
     try {
       final response = await _client
           .post(
@@ -1180,26 +1538,38 @@ class CloudSyncService {
           )
           .timeout(const Duration(seconds: 10));
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        return CloudSyncResult(ok: false, message: 'فشل إصلاح روابط أجهزة السحابة: ${response.statusCode} ${response.body}');
+        return CloudSyncResult(
+            ok: false,
+            message:
+                'فشل إصلاح روابط أجهزة السحابة: ${response.statusCode} ${response.body}');
       }
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
       final repaired = int.tryParse('${decoded['repaired'] ?? 0}') ?? 0;
-      final checked = int.tryParse('${decoded['checked'] ?? cleanClientIds.length}') ?? cleanClientIds.length;
-      return CloudSyncResult(ok: decoded['ok'] == true, message: 'تم فحص روابط أجهزة السحابة: $checked، تم إصلاح: $repaired.');
+      final checked =
+          int.tryParse('${decoded['checked'] ?? cleanClientIds.length}') ??
+              cleanClientIds.length;
+      return CloudSyncResult(
+          ok: decoded['ok'] == true,
+          message:
+              'تم فحص روابط أجهزة السحابة: $checked، تم إصلاح: $repaired.');
     } catch (error) {
-      return CloudSyncResult(ok: false, message: 'فشل إصلاح روابط أجهزة السحابة: $error');
+      return CloudSyncResult(
+          ok: false, message: 'فشل إصلاح روابط أجهزة السحابة: $error');
     }
   }
 
   Future<CloudSyncResult> testConnection(CloudSyncSettings settings) async {
     if (!settings.isConfigured) {
-      return const CloudSyncResult(ok: false, message: 'رابط واجهة السحابة والرمز مطلوبان.');
+      return const CloudSyncResult(
+          ok: false, message: 'رابط واجهة السحابة والرمز مطلوبان.');
     }
     final accessResult = await checkCurrentDeviceAccess(settings);
     if (accessResult != null) return accessResult;
 
     try {
-      final health = await _client.get(settings.endpoint('/api/health'), headers: _headers(settings)).timeout(const Duration(seconds: 10));
+      final health = await _client
+          .get(settings.endpoint('/api/health'), headers: _headers(settings))
+          .timeout(const Duration(seconds: 10));
       if (health.statusCode < 200 || health.statusCode >= 300) {
         final authMessage = health.statusCode == 401 || health.statusCode == 403
             ? 'غير مصرح/الرمز غير صالح: رفضت واجهة السحابة الرمز.'
@@ -1207,29 +1577,38 @@ class CloudSyncService {
         return CloudSyncResult(ok: false, message: authMessage);
       }
     } catch (error) {
-      return CloudSyncResult(ok: false, message: 'تعذر الوصول إلى خادم السحابة: $error');
+      return CloudSyncResult(
+          ok: false, message: 'تعذر الوصول إلى خادم السحابة: $error');
     }
 
     final identity = store.appIdentity;
     if (!identity.isClient) {
-      return const CloudSyncResult(ok: true, message: 'اتصال واجهة السحابة سليم.');
+      return const CloudSyncResult(
+          ok: true, message: 'اتصال واجهة السحابة سليم.');
     }
 
     if (identity.deviceToken.trim().isEmpty) {
-      return const CloudSyncResult(ok: false, message: 'غير مصرح/الرمز غير صالح: لا يحتوي هذا العميل على رمز جهاز محفوظ. أعد اقتران هذا الجهاز.');
+      return const CloudSyncResult(
+          ok: false,
+          message:
+              'غير مصرح/الرمز غير صالح: لا يحتوي هذا العميل على رمز جهاز محفوظ. أعد اقتران هذا الجهاز.');
     }
 
     try {
       final hostStatus = await getHostHeartbeatStatus(settings);
       if (!hostStatus.cloudReachable) {
         final lower = hostStatus.message.toLowerCase();
-        final message = lower.contains('401') || lower.contains('403') || lower.contains('unauthorized') || lower.contains('token')
+        final message = lower.contains('401') ||
+                lower.contains('403') ||
+                lower.contains('unauthorized') ||
+                lower.contains('token')
             ? 'Unauthorized/Token invalid: ${hostStatus.message}'
             : 'تعذر الوصول إلى خادم السحابة: ${hostStatus.message}';
         return CloudSyncResult(ok: false, message: message);
       }
       if (!hostStatus.hostReachable) {
-        return CloudSyncResult(ok: false, message: 'المضيف غير متصل: ${hostStatus.message}');
+        return CloudSyncResult(
+            ok: false, message: 'المضيف غير متصل: ${hostStatus.message}');
       }
 
       final state = SyncDeviceStateStore.load(identity);
@@ -1244,7 +1623,10 @@ class CloudSyncService {
         query['since'] = settings.lastPullCursor!.toIso8601String();
       }
 
-      final ping = await _client.get(settings.endpoint('/api/sync/pull', query), headers: _headers(settings)).timeout(const Duration(seconds: 10));
+      final ping = await _client
+          .get(settings.endpoint('/api/sync/pull', query),
+              headers: _headers(settings))
+          .timeout(const Duration(seconds: 10));
       if (ping.statusCode < 200 || ping.statusCode >= 300) {
         final message = ping.statusCode == 401 || ping.statusCode == 403
             ? 'غير مصرح/الرمز غير صالح: رفضت المزامنة السحابية هذا الجهاز. أعد اقتران هذا الجهاز.'
@@ -1252,7 +1634,8 @@ class CloudSyncService {
         return CloudSyncResult(ok: false, message: message);
       }
 
-      return const CloudSyncResult(ok: true, message: 'السحابة متصلة وجاهزة للمزامنة.');
+      return const CloudSyncResult(
+          ok: true, message: 'السحابة متصلة وجاهزة للمزامنة.');
     } catch (error) {
       return CloudSyncResult(ok: false, message: 'المزامنة غير جاهزة: $error');
     }
@@ -1261,25 +1644,34 @@ class CloudSyncService {
   Future<CloudSyncResult> validateSingleHost(CloudSyncSettings settings) async {
     final identity = store.appIdentity;
     if (!settings.isConfigured) {
-      return const CloudSyncResult(ok: false, message: 'رابط واجهة السحابة والرمز مطلوبان.');
+      return const CloudSyncResult(
+          ok: false, message: 'رابط واجهة السحابة والرمز مطلوبان.');
     }
     final status = await getHostHeartbeatStatus(settings);
-    if (status.cloudReachable && status.hostReachable && status.hostDeviceId.isNotEmpty && status.hostDeviceId != store.deviceId) {
+    if (status.cloudReachable &&
+        status.hostReachable &&
+        status.hostDeviceId.isNotEmpty &&
+        status.hostDeviceId != store.deviceId) {
       return CloudSyncResult(
         ok: false,
-        message: 'يوجد مضيف نشط آخر متصل بالفعل للمتجر ${identity.storeId}: ${status.hostDeviceName.isEmpty ? status.hostDeviceId : status.hostDeviceName}. حوّل هذا الجهاز إلى عميل أو أوقف المضيف القديم أولاً.',
+        message:
+            'يوجد مضيف نشط آخر متصل بالفعل للمتجر ${identity.storeId}: ${status.hostDeviceName.isEmpty ? status.hostDeviceId : status.hostDeviceName}. حوّل هذا الجهاز إلى عميل أو أوقف المضيف القديم أولاً.',
       );
     }
-    return const CloudSyncResult(ok: true, message: 'لم يتم العثور على مضيف نشط آخر.');
+    return const CloudSyncResult(
+        ok: true, message: 'لم يتم العثور على مضيف نشط آخر.');
   }
 
   Future<CloudSyncResult> sendHostHeartbeat(CloudSyncSettings settings) async {
     final identity = store.appIdentity;
     if (!identity.isCloudEnabled || !identity.isHost) {
-      return const CloudSyncResult(ok: false, message: 'يتم إرسال النبض فقط من جهاز مضيف مفعّل للسحابة.');
+      return const CloudSyncResult(
+          ok: false,
+          message: 'يتم إرسال النبض فقط من جهاز مضيف مفعّل للسحابة.');
     }
     if (!settings.isConfigured) {
-      return const CloudSyncResult(ok: false, message: 'رابط واجهة السحابة والرمز مطلوبان.');
+      return const CloudSyncResult(
+          ok: false, message: 'رابط واجهة السحابة والرمز مطلوبان.');
     }
     try {
       final response = await _client
@@ -1300,17 +1692,23 @@ class CloudSyncService {
           .timeout(const Duration(seconds: 10));
       return CloudSyncResult(
         ok: response.statusCode >= 200 && response.statusCode < 300,
-        message: response.statusCode >= 200 && response.statusCode < 300 ? 'تم تحديث نبض المضيف.' : 'فشل نبض المضيف: ${response.statusCode} ${response.body}',
+        message: response.statusCode >= 200 && response.statusCode < 300
+            ? 'تم تحديث نبض المضيف.'
+            : 'فشل نبض المضيف: ${response.statusCode} ${response.body}',
       );
     } catch (error) {
       return CloudSyncResult(ok: false, message: 'فشل نبض المضيف: $error');
     }
   }
 
-  Future<HostHeartbeatStatus> getHostHeartbeatStatus(CloudSyncSettings settings, {Duration staleAfter = const Duration(seconds: 90)}) async {
+  Future<HostHeartbeatStatus> getHostHeartbeatStatus(CloudSyncSettings settings,
+      {Duration staleAfter = const Duration(seconds: 90)}) async {
     final identity = store.appIdentity;
     if (!settings.isConfigured) {
-      return const HostHeartbeatStatus(cloudReachable: false, hostReachable: false, message: 'رابط واجهة السحابة والرمز مطلوبان.');
+      return const HostHeartbeatStatus(
+          cloudReachable: false,
+          hostReachable: false,
+          message: 'رابط واجهة السحابة والرمز مطلوبان.');
     }
     try {
       final response = await _client
@@ -1323,30 +1721,53 @@ class CloudSyncService {
           )
           .timeout(const Duration(seconds: 10));
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        return HostHeartbeatStatus(cloudReachable: false, hostReachable: false, message: 'أرجعت واجهة السحابة الحالة ${response.statusCode}: ${response.body}');
+        return HostHeartbeatStatus(
+            cloudReachable: false,
+            hostReachable: false,
+            message:
+                'أرجعت واجهة السحابة الحالة ${response.statusCode}: ${response.body}');
       }
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
       final rawLastSeen = decoded['lastSeenAt'] ?? decoded['last_seen_at'];
-      final lastSeenAt = rawLastSeen == null ? null : DateTime.tryParse(rawLastSeen.toString());
-      final hostReachable = lastSeenAt != null && DateTime.now().toUtc().difference(lastSeenAt.toUtc()) <= staleAfter;
-      final hostDeviceId = (decoded['hostDeviceId'] ?? decoded['host_device_id'] ?? '').toString();
-      final hostDeviceName = (decoded['hostDeviceName'] ?? decoded['host_device_name'] ?? '').toString();
+      final lastSeenAt = rawLastSeen == null
+          ? null
+          : DateTime.tryParse(rawLastSeen.toString());
+      final hostReachable = lastSeenAt != null &&
+          DateTime.now().toUtc().difference(lastSeenAt.toUtc()) <= staleAfter;
+      final hostDeviceId =
+          (decoded['hostDeviceId'] ?? decoded['host_device_id'] ?? '')
+              .toString();
+      final hostDeviceName =
+          (decoded['hostDeviceName'] ?? decoded['host_device_name'] ?? '')
+              .toString();
       return HostHeartbeatStatus(
         cloudReachable: true,
         hostReachable: hostReachable,
         lastSeenAt: lastSeenAt,
         hostDeviceId: hostDeviceId,
         hostDeviceName: hostDeviceName,
-        message: hostReachable ? 'نبض المضيف حديث.' : (lastSeenAt == null ? 'لم يتم العثور على نبض للمضيف.' : 'نبض المضيف قديم.'),
+        message: hostReachable
+            ? 'نبض المضيف حديث.'
+            : (lastSeenAt == null
+                ? 'لم يتم العثور على نبض للمضيف.'
+                : 'نبض المضيف قديم.'),
       );
     } catch (error) {
-      return HostHeartbeatStatus(cloudReachable: false, hostReachable: false, message: 'فشل اتصال واجهة السحابة: $error');
+      return HostHeartbeatStatus(
+          cloudReachable: false,
+          hostReachable: false,
+          message: 'فشل اتصال واجهة السحابة: $error');
     }
   }
 
-  Future<Map<String, dynamic>?> runCloudMaintenance(CloudSyncSettings settings, {int keepRecentEvents = 200}) async {
+  Future<Map<String, dynamic>?> runCloudMaintenance(CloudSyncSettings settings,
+      {int keepRecentEvents = 200}) async {
     final identity = store.appIdentity;
-    if (!identity.isHost || !identity.isCloudEnabled || !settings.isConfigured) return null;
+    if (!identity.isHost ||
+        !identity.isCloudEnabled ||
+        !settings.isConfigured) {
+      return null;
+    }
     try {
       final response = await _client
           .post(
@@ -1365,7 +1786,8 @@ class CloudSyncService {
           )
           .timeout(const Duration(seconds: 20));
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        debugPrint('فشلت صيانة السحابة: ${response.statusCode} ${response.body}');
+        debugPrint(
+            'فشلت صيانة السحابة: ${response.statusCode} ${response.body}');
         return null;
       }
       return jsonDecode(response.body) as Map<String, dynamic>;
@@ -1375,14 +1797,17 @@ class CloudSyncService {
     }
   }
 
-
   Future<int> publishLoginBootstrapSnapshotToCloud(
     CloudSyncSettings settings, {
     bool force = false,
     void Function(double value, String label)? onProgress,
   }) async {
     final identity = store.appIdentity;
-    if (!identity.isHost || !identity.isCloudEnabled || !settings.hasDeploymentToken) return 0;
+    if (!identity.isHost ||
+        !identity.isCloudEnabled ||
+        !settings.hasDeploymentToken) {
+      return 0;
+    }
     await store.removeLegacyCloudBootstrapSnapshotQueue();
     final chunks = store.exportCloudLoginBootstrapSnapshotChunks();
     if (chunks.isEmpty) return 0;
@@ -1400,17 +1825,22 @@ class CloudSyncService {
           .timeout(const Duration(seconds: 20));
       if (response.statusCode == 409) {
         if (!force) {
-          throw StateError('هناك لقطة تهيئة سحابية قيد التنفيذ بالفعل. حاول بعد انتهائها أو استخدم إعادة البناء الإجبارية.');
+          throw StateError(
+              'هناك لقطة تهيئة سحابية قيد التنفيذ بالفعل. حاول بعد انتهائها أو استخدم إعادة البناء الإجبارية.');
         }
       }
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw StateError('فشلت لقطة تهيئة تسجيل الدخول السحابية: ${response.statusCode} ${response.body}');
+        throw StateError(
+            'فشلت لقطة تهيئة تسجيل الدخول السحابية: ${response.statusCode} ${response.body}');
       }
-      onProgress?.call((0.10 + ((i + 1) / chunks.length) * 0.70).clamp(0.10, 0.80).toDouble(), 'جارٍ نشر تهيئة تسجيل الدخول ${i + 1}/${chunks.length}...');
+      onProgress?.call(
+          (0.10 + ((i + 1) / chunks.length) * 0.70)
+              .clamp(0.10, 0.80)
+              .toDouble(),
+          'جارٍ نشر تهيئة تسجيل الدخول ${i + 1}/${chunks.length}...');
     }
     return chunks.length;
   }
-
 
   Future<int> publishBootstrapSnapshotToCloud(
     CloudSyncSettings settings, {
@@ -1418,36 +1848,71 @@ class CloudSyncService {
     void Function(double value, String label)? onProgress,
   }) async {
     final identity = store.appIdentity;
-    if (!identity.isHost || !identity.isCloudEnabled || !settings.hasDeploymentToken) return 0;
+    if (!identity.isHost ||
+        !identity.isCloudEnabled ||
+        !settings.hasDeploymentToken) {
+      return 0;
+    }
     await store.removeLegacyCloudBootstrapSnapshotQueue();
-    final chunks = store.exportCloudBootstrapSnapshotChunks(maxItemsPerChunk: 300);
+    final chunks =
+        store.exportCloudBootstrapSnapshotChunks(maxItemsPerChunk: 300);
     if (chunks.isEmpty) return 0;
 
     for (var i = 0; i < chunks.length; i += 1) {
       final chunk = Map<String, dynamic>.from(chunks[i]);
       chunk['force'] = force && i == 0;
-      final response = await _client
-          .post(
-            settings.endpoint('/api/sync/bootstrap-snapshot'),
-            headers: _headers(settings),
-            body: jsonEncode(chunk),
-          )
-          .timeout(const Duration(seconds: 30));
+      final collection = (chunk['collection'] ?? 'unknown').toString();
+      final sectionIndex =
+          ((chunk['sectionChunkIndex'] as num?)?.toInt() ?? 0) + 1;
+      final sectionTotal = (chunk['sectionTotalChunks'] as num?)?.toInt() ?? 1;
+      final chunkLabel =
+          '$collection $sectionIndex/$sectionTotal (${i + 1}/${chunks.length})';
+      http.Response? response;
+      for (var attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          response = await _client
+              .post(
+                settings.endpoint('/api/sync/bootstrap-snapshot'),
+                headers: _headers(settings),
+                body: jsonEncode(chunk),
+              )
+              .timeout(const Duration(seconds: 30));
+          if (response.statusCode != 429 && response.statusCode < 500) break;
+        } catch (error) {
+          if (attempt == 3) {
+            throw StateError(
+                'Failed to upload bootstrap snapshot chunk $chunkLabel: $error');
+          }
+        }
+        if (attempt < 3) {
+          await Future<void>.delayed(Duration(milliseconds: 500 * attempt));
+        }
+      }
+      if (response == null) {
+        throw StateError(
+            'Failed to upload bootstrap snapshot chunk $chunkLabel.');
+      }
       if (response.statusCode == 409) {
         if (!force) {
-          throw StateError('هناك لقطة تهيئة سحابية قيد التنفيذ بالفعل. حاول بعد انتهائها أو استخدم إعادة البناء الإجبارية.');
+          throw StateError(
+              'هناك لقطة تهيئة سحابية قيد التنفيذ بالفعل. حاول بعد انتهائها أو استخدم إعادة البناء الإجبارية.');
         }
       }
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw StateError('فشلت لقطة التهيئة السحابية: ${response.statusCode} ${response.body}');
+        throw StateError(
+            'فشلت لقطة التهيئة السحابية: ${response.statusCode} ${response.body}');
       }
-      onProgress?.call((0.10 + ((i + 1) / chunks.length) * 0.70).clamp(0.10, 0.80).toDouble(), 'جارٍ نشر جزء اللقطة ${i + 1}/${chunks.length}...');
+      onProgress?.call(
+          (0.10 + ((i + 1) / chunks.length) * 0.70)
+              .clamp(0.10, 0.80)
+              .toDouble(),
+          'جارٍ نشر جزء اللقطة ${i + 1}/${chunks.length}...');
     }
     return chunks.length;
   }
 
-
-  Future<int> _pushPendingToEndpoint(CloudSyncSettings settings, String target, String path) async {
+  Future<int> _pushPendingToEndpoint(
+      CloudSyncSettings settings, String target, String path) async {
     final identity = store.appIdentity;
     var totalPushed = 0;
     var batchNumber = 0;
@@ -1462,7 +1927,10 @@ class CloudSyncService {
     while (true) {
       await store.recoverStaleInProgressSyncQueue(target: target);
       await store.retryFailedSyncQueue(target: target);
-      final pending = _syncCore.pendingChangesForTarget(target).take(batchSize).toList(growable: false);
+      final pending = _syncCore
+          .pendingChangesForTarget(target)
+          .take(batchSize)
+          .toList(growable: false);
       final pendingIds = _syncCore.changeIds(pending);
       if (pending.isEmpty) break;
       batchNumber += 1;
@@ -1477,8 +1945,10 @@ class CloudSyncService {
                 'deviceId': store.deviceId,
                 'storeId': identity.storeId,
                 'branchId': identity.branchId,
-                'sequence': SyncDeviceStateStore.load(identity).lastAppliedSequence,
-                'lastAppliedSequence': SyncDeviceStateStore.load(identity).lastAppliedSequence,
+                'sequence':
+                    SyncDeviceStateStore.load(identity).lastAppliedSequence,
+                'lastAppliedSequence':
+                    SyncDeviceStateStore.load(identity).lastAppliedSequence,
                 'batchNumber': batchNumber,
                 'batchSize': pending.length,
                 'changes': pending.map((item) => item.toJson()).toList(),
@@ -1486,12 +1956,15 @@ class CloudSyncService {
             )
             .timeout(const Duration(seconds: 30));
         if (push.statusCode < 200 || push.statusCode >= 300) {
-          final message = 'فشل الدفع السحابي في الدفعة $batchNumber: ${push.statusCode} ${push.body}';
+          final message =
+              'فشل الدفع السحابي في الدفعة $batchNumber: ${push.statusCode} ${push.body}';
           await _syncCore.markPushFailed(pendingIds, message);
           throw StateError(message);
         }
         final decoded = jsonDecode(push.body) as Map<String, dynamic>;
-        final ackIds = (decoded['ackIds'] as List<dynamic>? ?? []).map((item) => '$item').toList();
+        final ackIds = (decoded['ackIds'] as List<dynamic>? ?? [])
+            .map((item) => '$item')
+            .toList();
         final rejected = _decodeRejectedSyncRequests(decoded['rejected']);
         if (rejected.isNotEmpty) await _syncCore.markPushRejected(rejected);
         if (target == 'cloud_host') {
@@ -1505,7 +1978,8 @@ class CloudSyncService {
       } catch (error) {
         // Keep the affected batch retryable. Already acknowledged previous
         // batches remain synced; unsent later batches were never touched.
-        await _syncCore.markPushFailed(pendingIds, 'فشل الدفع السحابي في الدفعة $batchNumber: $error');
+        await _syncCore.markPushFailed(
+            pendingIds, 'فشل الدفع السحابي في الدفعة $batchNumber: $error');
         rethrow;
       }
     }
@@ -1513,15 +1987,16 @@ class CloudSyncService {
     return totalPushed;
   }
 
-
-
   Map<String, String> _decodeRejectedSyncRequests(dynamic raw) {
     final output = <String, String>{};
     if (raw is List) {
       for (final item in raw) {
         if (item is Map) {
           final id = (item['id'] ?? '').toString();
-          if (id.isNotEmpty) output[id] = (item['reason'] ?? 'تم رفضه من قبل المضيف.').toString();
+          if (id.isNotEmpty) {
+            output[id] =
+                (item['reason'] ?? 'تم رفضه من قبل المضيف.').toString();
+          }
         }
       }
     }
@@ -1558,7 +2033,9 @@ class CloudSyncService {
     // A relay ACK only means the Cloud server received the request. The final
     // decision comes later from the Host. Once the Host reports accepted, mark
     // the draft as acknowledged so the Client no longer counts it as pending.
-    if (acceptedIds.isNotEmpty) await _syncCore.markPushAcknowledged(acceptedIds);
+    if (acceptedIds.isNotEmpty) {
+      await _syncCore.markPushAcknowledged(acceptedIds);
+    }
 
     // Rejected drafts must not remain as normal local data. AppStore will mark
     // the queue row as rejected and quarantine local creates that the Host did
@@ -1580,7 +2057,8 @@ class CloudSyncService {
         )
         .timeout(const Duration(seconds: 20));
     if (pull.statusCode < 200 || pull.statusCode >= 300) {
-      throw StateError('فشل سحب طلبات السحابة: ${pull.statusCode} ${pull.body}');
+      throw StateError(
+          'فشل سحب طلبات السحابة: ${pull.statusCode} ${pull.body}');
     }
     final decoded = jsonDecode(pull.body) as Map<String, dynamic>;
     final changes = _syncCore.filterOutLocalEchoes(
@@ -1607,7 +2085,9 @@ class CloudSyncService {
             'branchId': identity.branchId,
             'hostDeviceId': store.deviceId,
             'ackIds': ackIds,
-            'rejected': accepted.rejected.entries.map((entry) => {'id': entry.key, 'reason': entry.value}).toList(),
+            'rejected': accepted.rejected.entries
+                .map((entry) => {'id': entry.key, 'reason': entry.value})
+                .toList(),
           }),
         )
         .timeout(const Duration(seconds: 20));
@@ -1622,14 +2102,18 @@ class CloudSyncService {
     return changes.length;
   }
 
-
-  Future<CloudSyncResult> pushPendingForUnifiedEngine(CloudSyncSettings settings, {CloudSyncProgressCallback? onProgress}) async {
+  Future<CloudSyncResult> pushPendingForUnifiedEngine(
+      CloudSyncSettings settings,
+      {CloudSyncProgressCallback? onProgress}) async {
     final identity = store.appIdentity;
     if (!_cloudAllowedForIdentity(identity)) {
-      return const CloudSyncResult(ok: false, message: 'السحابة ليست وسيلة المزامنة النشطة/المهيأة لهذا الجهاز.');
+      return const CloudSyncResult(
+          ok: false,
+          message: 'السحابة ليست وسيلة المزامنة النشطة/المهيأة لهذا الجهاز.');
     }
     if (!settings.isConfigured) {
-      return const CloudSyncResult(ok: false, message: 'رابط واجهة السحابة والرمز مطلوبان.');
+      return const CloudSyncResult(
+          ok: false, message: 'رابط واجهة السحابة والرمز مطلوبان.');
     }
 
     try {
@@ -1639,9 +2123,11 @@ class CloudSyncService {
       if (identity.isHost) {
         onProgress?.call(0.10, 'جارٍ تجهيز قائمة لقطات المضيف السحابية...');
         await store.ensureHostCloudBootstrapSnapshotQueued();
-        final repairedCloudQueue = await store.repairMissingHostCloudQueueForPendingChanges();
+        final repairedCloudQueue =
+            await store.repairMissingHostCloudQueueForPendingChanges();
         if (repairedCloudQueue > 0) {
-          onProgress?.call(0.18, 'تم إصلاح $repairedCloudQueue عنصر/عناصر مفقودة في قائمة المضيف السحابية...');
+          onProgress?.call(0.18,
+              'تم إصلاح $repairedCloudQueue عنصر/عناصر مفقودة في قائمة المضيف السحابية...');
         }
         onProgress?.call(0.25, 'جارٍ إرسال نبض المضيف...');
         await sendHostHeartbeat(settings);
@@ -1651,12 +2137,14 @@ class CloudSyncService {
         acceptedRemoteRequests = await _hostPullRemoteRequests(settings);
         onProgress?.call(0.75, 'جارٍ رفع تغييرات المضيف المعتمدة...');
         await store.repairMissingHostCloudQueueForPendingChanges();
-        pushed += await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
+        pushed +=
+            await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
         await runCloudMaintenance(settings);
         return CloudSyncResult(
           ok: true,
           pushed: pushed,
-          message: 'اكتمل الدفع السحابي للمضيف. تم قبول $acceptedRemoteRequests طلب/طلبات بعيدة، وتم دفع $pushed تغيير/تغييرات معتمدة.',
+          message:
+              'اكتمل الدفع السحابي للمضيف. تم قبول $acceptedRemoteRequests طلب/طلبات بعيدة، وتم دفع $pushed تغيير/تغييرات معتمدة.',
         );
       }
 
@@ -1665,8 +2153,13 @@ class CloudSyncService {
       onProgress?.call(0.22, 'جارٍ فحص طلبات العميل المرسلة...');
       await _pollSubmittedClientRequests(settings);
       onProgress?.call(0.28, 'جارٍ إرسال طلبات العميل إلى وسيط المضيف...');
-      pushed += await _pushPendingToEndpoint(settings, 'cloud_host', '/api/sync/requests/push');
-      return CloudSyncResult(ok: true, pushed: pushed, message: 'اكتمل الدفع السحابي للعميل. تم إرسال $pushed طلب/طلبات إلى وسيط المضيف.');
+      pushed += await _pushPendingToEndpoint(
+          settings, 'cloud_host', '/api/sync/requests/push');
+      return CloudSyncResult(
+          ok: true,
+          pushed: pushed,
+          message:
+              'اكتمل الدفع السحابي للعميل. تم إرسال $pushed طلب/طلبات إلى وسيط المضيف.');
     } catch (error) {
       return CloudSyncResult(ok: false, message: 'فشل الدفع السحابي: $error');
     }
@@ -1679,13 +2172,19 @@ class CloudSyncService {
   }) async {
     final identity = store.appIdentity;
     if (identity.isHost) {
-      return const CloudSyncResult(ok: true, message: 'أجهزة المضيف لا تسحب تغييرات سحابية معتمدة.', pulled: 0);
+      return const CloudSyncResult(
+          ok: true,
+          message: 'أجهزة المضيف لا تسحب تغييرات سحابية معتمدة.',
+          pulled: 0);
     }
     if (!_cloudAllowedForIdentity(identity)) {
-      return const CloudSyncResult(ok: false, message: 'السحابة ليست وسيلة المزامنة النشطة/المهيأة لهذا الجهاز.');
+      return const CloudSyncResult(
+          ok: false,
+          message: 'السحابة ليست وسيلة المزامنة النشطة/المهيأة لهذا الجهاز.');
     }
     if (!settings.isConfigured) {
-      return const CloudSyncResult(ok: false, message: 'رابط واجهة السحابة والرمز مطلوبان.');
+      return const CloudSyncResult(
+          ok: false, message: 'رابط واجهة السحابة والرمز مطلوبان.');
     }
 
     try {
@@ -1697,7 +2196,8 @@ class CloudSyncService {
       // local state, then page 2 asks Cloud for sequence > the new value while
       // also passing the old page cursor. That combination can silently miss
       // events, which showed up as product count differences across devices.
-      final baseLastAppliedSequence = SyncDeviceStateStore.load(store.appIdentity).lastAppliedSequence;
+      final baseLastAppliedSequence =
+          SyncDeviceStateStore.load(store.appIdentity).lastAppliedSequence;
       var pageCursor = '';
       DateTime? finalPullCursor;
       var finalPullSequence = 0;
@@ -1709,7 +2209,10 @@ class CloudSyncService {
       while (true) {
         pageCount += 1;
         if (pageCount > maxPagesPerRun) {
-          return CloudSyncResult(ok: false, message: 'توقف السحب السحابي بعد $maxPagesPerRun صفحة لتجنب حلقة لا نهائية. يرجى إعادة محاولة المزامنة.');
+          return CloudSyncResult(
+              ok: false,
+              message:
+                  'توقف السحب السحابي بعد $maxPagesPerRun صفحة لتجنب حلقة لا نهائية. يرجى إعادة محاولة المزامنة.');
         }
 
         final query = <String, String>{
@@ -1717,26 +2220,42 @@ class CloudSyncService {
           'branch_id': identity.branchId,
           'limit': '1000',
         };
-        if (baseLastAppliedSequence > 0) query['since_sequence'] = baseLastAppliedSequence.toString();
-        if (initialCursor != null) query['since'] = initialCursor.toIso8601String();
+        if (baseLastAppliedSequence > 0) {
+          query['since_sequence'] = baseLastAppliedSequence.toString();
+        }
+        if (initialCursor != null) {
+          query['since'] = initialCursor.toIso8601String();
+        }
         if (initialCursor == null && minSnapshotUpdatedAt != null) {
-          query['min_snapshot_updated_at'] = minSnapshotUpdatedAt.toIso8601String();
+          query['min_snapshot_updated_at'] =
+              minSnapshotUpdatedAt.toIso8601String();
         }
         if (pageCursor.isNotEmpty) query['cursor'] = pageCursor;
 
-        final pullProgress = (0.35 + (pageCount - 1) * 0.08).clamp(0.35, 0.82).toDouble();
-        onProgress?.call(pullProgress, 'جارٍ سحب تغييرات السحابة - صفحة $pageCount...');
-        final pull = await _client.get(settings.endpoint('/api/sync/pull', query), headers: _headers(settings)).timeout(const Duration(seconds: 20));
+        final pullProgress =
+            (0.35 + (pageCount - 1) * 0.08).clamp(0.35, 0.82).toDouble();
+        onProgress?.call(
+            pullProgress, 'جارٍ سحب تغييرات السحابة - صفحة $pageCount...');
+        final pull = await _client
+            .get(settings.endpoint('/api/sync/pull', query),
+                headers: _headers(settings))
+            .timeout(const Duration(seconds: 20));
         if (pull.statusCode < 200 || pull.statusCode >= 300) {
-          return CloudSyncResult(ok: false, message: 'فشل السحب السحابي: ${pull.statusCode} ${pull.body}');
+          return CloudSyncResult(
+              ok: false,
+              message: 'فشل السحب السحابي: ${pull.statusCode} ${pull.body}');
         }
 
         final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
         if ((decodedPull['source'] ?? '').toString() == 'entity_snapshots') {
-          final pageAllSectionsComplete = decodedPull['allSnapshotSectionsComplete'] == true;
-          allSnapshotSectionsComplete = allSnapshotSectionsComplete && pageAllSectionsComplete;
+          final pageAllSectionsComplete =
+              decodedPull['allSnapshotSectionsComplete'] == true;
+          allSnapshotSectionsComplete =
+              allSnapshotSectionsComplete && pageAllSectionsComplete;
           await CloudProvisioningStatus.updateSnapshotSections(
-            decodedPull['snapshotSections'] is Map<String, dynamic> ? decodedPull['snapshotSections'] as Map<String, dynamic> : null,
+            decodedPull['snapshotSections'] is Map<String, dynamic>
+                ? decodedPull['snapshotSections'] as Map<String, dynamic>
+                : null,
             allComplete: pageAllSectionsComplete,
           );
         }
@@ -1750,36 +2269,52 @@ class CloudSyncService {
           );
         }
         final changes = _syncCore.filterOutLocalEchoes(
-          _syncCore.decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
+          _syncCore
+              .decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
         );
         final source = (decodedPull['source'] ?? '').toString();
         restoredSnapshot = restoredSnapshot ||
             changes.any((item) => item.operation == 'restore_snapshot') ||
-            (initialCursor == null && source == 'entity_snapshots' && changes.isNotEmpty);
-        onProgress?.call((0.42 + (pageCount - 1) * 0.08).clamp(0.42, 0.86).toDouble(), 'جارٍ تطبيق ${changes.length} تغيير/تغييرات سحابية من الصفحة $pageCount...');
+            (initialCursor == null &&
+                source == 'entity_snapshots' &&
+                changes.isNotEmpty);
+        onProgress?.call(
+            (0.42 + (pageCount - 1) * 0.08).clamp(0.42, 0.86).toDouble(),
+            'جارٍ تطبيق ${changes.length} تغيير/تغييرات سحابية من الصفحة $pageCount...');
         pulled += await _syncCore.applyAuthoritativeChanges(changes);
 
         final hasMore = decodedPull['hasMore'] == true;
         pageCursor = (decodedPull['nextCursor'] ?? '').toString();
         if (!hasMore) {
-          finalPullCursor = DateTime.tryParse(decodedPull['generatedAt']?.toString() ?? '');
-          finalPullSequence = int.tryParse(decodedPull['generatedSequence']?.toString() ?? '') ?? finalPullSequence;
+          finalPullCursor =
+              DateTime.tryParse(decodedPull['generatedAt']?.toString() ?? '');
+          finalPullSequence = int.tryParse(
+                  decodedPull['generatedSequence']?.toString() ?? '') ??
+              finalPullSequence;
           break;
         }
         if (pageCursor.isEmpty) {
-          return const CloudSyncResult(ok: false, message: 'فشلت متابعة صفحات السحب السحابي: مؤشر الصفحة التالية مفقود.');
+          return const CloudSyncResult(
+              ok: false,
+              message:
+                  'فشلت متابعة صفحات السحب السحابي: مؤشر الصفحة التالية مفقود.');
         }
       }
 
-      final initialSnapshotStillUploading = initialCursor == null && restoredSnapshot && !allSnapshotSectionsComplete;
+      final initialSnapshotStillUploading = initialCursor == null &&
+          restoredSnapshot &&
+          !allSnapshotSectionsComplete;
       if (initialSnapshotStillUploading) {
         onProgress?.call(0.90, 'بانتظار انتهاء المضيف من رفع أقسام المتجر...');
-        await CloudProvisioningStatus.markPending(message: 'ما زال المضيف يرفع بيانات المتجر. سيستمر التنزيل تلقائياً.');
+        await CloudProvisioningStatus.markPending(
+            message:
+                'ما زال المضيف يرفع بيانات المتجر. سيستمر التنزيل تلقائياً.');
       } else {
         onProgress?.call(0.90, 'جارٍ حفظ مؤشر المزامنة السحابية...');
         if (finalPullCursor != null) {
           await settings.copyWith(lastPullCursor: finalPullCursor).save();
-          await _recordDeviceSyncState('cloud', finalPullCursor, sequence: finalPullSequence, settings: settings);
+          await _recordDeviceSyncState('cloud', finalPullCursor,
+              sequence: finalPullSequence, settings: settings);
         }
       }
 
@@ -1787,8 +2322,12 @@ class CloudSyncService {
         onProgress?.call(0.96, 'جارٍ التنظيف بعد المزامنة السحابية...');
         await store.cleanupSoftDeletedRecords();
       }
-      if (store.appIdentity.isClient && (restoredSnapshot || pulled > 0) && !store.needsInitialAdminSetup && !initialSnapshotStillUploading) {
-        await CloudProvisioningStatus.markComplete(message: 'تم تنزيل بيانات المتجر الأولية.');
+      if (store.appIdentity.isClient &&
+          (restoredSnapshot || pulled > 0) &&
+          !store.needsInitialAdminSetup &&
+          !initialSnapshotStillUploading) {
+        await CloudProvisioningStatus.markComplete(
+            message: 'تم تنزيل بيانات المتجر الأولية.');
       }
       return CloudSyncResult(
         ok: true,
@@ -1801,13 +2340,18 @@ class CloudSyncService {
     }
   }
 
-  Future<CloudSyncResult> syncNow(CloudSyncSettings settings, {DateTime? minSnapshotUpdatedAt, CloudSyncProgressCallback? onProgress}) async {
+  Future<CloudSyncResult> syncNow(CloudSyncSettings settings,
+      {DateTime? minSnapshotUpdatedAt,
+      CloudSyncProgressCallback? onProgress}) async {
     final identity = store.appIdentity;
     if (!_cloudAllowedForIdentity(identity)) {
-      return const CloudSyncResult(ok: false, message: 'السحابة ليست وسيلة المزامنة النشطة/المهيأة لهذا الجهاز.');
+      return const CloudSyncResult(
+          ok: false,
+          message: 'السحابة ليست وسيلة المزامنة النشطة/المهيأة لهذا الجهاز.');
     }
     if (!settings.isConfigured) {
-      return const CloudSyncResult(ok: false, message: 'رابط واجهة السحابة والرمز مطلوبان.');
+      return const CloudSyncResult(
+          ok: false, message: 'رابط واجهة السحابة والرمز مطلوبان.');
     }
     final accessResult = await checkCurrentDeviceAccess(settings);
     if (accessResult != null) return accessResult;
@@ -1820,9 +2364,11 @@ class CloudSyncService {
       if (identity.isHost) {
         onProgress?.call(0.10, 'جارٍ تجهيز قائمة لقطات المضيف السحابية...');
         await store.ensureHostCloudBootstrapSnapshotQueued();
-        final repairedCloudQueue = await store.repairMissingHostCloudQueueForPendingChanges();
+        final repairedCloudQueue =
+            await store.repairMissingHostCloudQueueForPendingChanges();
         if (repairedCloudQueue > 0) {
-          onProgress?.call(0.18, 'تم إصلاح $repairedCloudQueue عنصر/عناصر مفقودة في قائمة المضيف السحابية...');
+          onProgress?.call(0.18,
+              'تم إصلاح $repairedCloudQueue عنصر/عناصر مفقودة في قائمة المضيف السحابية...');
         }
         onProgress?.call(0.25, 'جارٍ إرسال نبض المضيف...');
         await sendHostHeartbeat(settings);
@@ -1832,7 +2378,8 @@ class CloudSyncService {
         acceptedRemoteRequests = await _hostPullRemoteRequests(settings);
         onProgress?.call(0.75, 'جارٍ رفع تغييرات المضيف المعتمدة...');
         await store.repairMissingHostCloudQueueForPendingChanges();
-        pushed += await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
+        pushed +=
+            await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
         onProgress?.call(0.90, 'جارٍ تشغيل صيانة آمنة لسجل المزامنة المحلي...');
         await store.compactSyncedSyncHistoryForMaintenance();
         onProgress?.call(0.96, 'جارٍ تشغيل صيانة آمنة للسحابة...');
@@ -1842,7 +2389,8 @@ class CloudSyncService {
           ok: true,
           pushed: pushed,
           pulled: 0,
-          message: 'اكتملت مزامنة المضيف السحابية. تم قبول $acceptedRemoteRequests طلب/طلبات بعيدة، وتم دفع $pushed تغيير/تغييرات معتمدة.',
+          message:
+              'اكتملت مزامنة المضيف السحابية. تم قبول $acceptedRemoteRequests طلب/طلبات بعيدة، وتم دفع $pushed تغيير/تغييرات معتمدة.',
         );
       } else {
         // Any cloud-enabled Client that has local draft changes should send
@@ -1852,7 +2400,8 @@ class CloudSyncService {
         onProgress?.call(0.12, 'جارٍ تسجيل جهاز العميل...');
         await registerCurrentDevice(settings, transport: 'cloud');
         onProgress?.call(0.28, 'جارٍ إرسال طلبات العميل إلى وسيط المضيف...');
-        pushed += await _pushPendingToEndpoint(settings, 'cloud_host', '/api/sync/requests/push');
+        pushed += await _pushPendingToEndpoint(
+            settings, 'cloud_host', '/api/sync/requests/push');
       }
 
       final initialCursor = settings.lastPullCursor;
@@ -1861,7 +2410,8 @@ class CloudSyncService {
       // local state, then page 2 asks Cloud for sequence > the new value while
       // also passing the old page cursor. That combination can silently miss
       // events, which showed up as product count differences across devices.
-      final baseLastAppliedSequence = SyncDeviceStateStore.load(store.appIdentity).lastAppliedSequence;
+      final baseLastAppliedSequence =
+          SyncDeviceStateStore.load(store.appIdentity).lastAppliedSequence;
       var pageCursor = '';
       DateTime? finalPullCursor;
       var finalPullSequence = 0;
@@ -1873,7 +2423,10 @@ class CloudSyncService {
       while (true) {
         pageCount += 1;
         if (pageCount > maxPagesPerRun) {
-          return CloudSyncResult(ok: false, message: 'توقف السحب السحابي بعد $maxPagesPerRun صفحة لتجنب حلقة لا نهائية. يرجى إعادة محاولة المزامنة.');
+          return CloudSyncResult(
+              ok: false,
+              message:
+                  'توقف السحب السحابي بعد $maxPagesPerRun صفحة لتجنب حلقة لا نهائية. يرجى إعادة محاولة المزامنة.');
         }
 
         final query = <String, String>{
@@ -1881,16 +2434,26 @@ class CloudSyncService {
           'branch_id': identity.branchId,
           'limit': '1000',
         };
-        if (baseLastAppliedSequence > 0) query['since_sequence'] = baseLastAppliedSequence.toString();
-        if (initialCursor != null) query['since'] = initialCursor.toIso8601String();
+        if (baseLastAppliedSequence > 0) {
+          query['since_sequence'] = baseLastAppliedSequence.toString();
+        }
+        if (initialCursor != null) {
+          query['since'] = initialCursor.toIso8601String();
+        }
         if (initialCursor == null && minSnapshotUpdatedAt != null) {
-          query['min_snapshot_updated_at'] = minSnapshotUpdatedAt.toIso8601String();
+          query['min_snapshot_updated_at'] =
+              minSnapshotUpdatedAt.toIso8601String();
         }
         if (pageCursor.isNotEmpty) query['cursor'] = pageCursor;
 
-        final pullProgress = (0.35 + (pageCount - 1) * 0.08).clamp(0.35, 0.82).toDouble();
-        onProgress?.call(pullProgress, 'جارٍ سحب تغييرات السحابة - صفحة $pageCount...');
-        final pull = await _client.get(settings.endpoint('/api/sync/pull', query), headers: _headers(settings)).timeout(const Duration(seconds: 20));
+        final pullProgress =
+            (0.35 + (pageCount - 1) * 0.08).clamp(0.35, 0.82).toDouble();
+        onProgress?.call(
+            pullProgress, 'جارٍ سحب تغييرات السحابة - صفحة $pageCount...');
+        final pull = await _client
+            .get(settings.endpoint('/api/sync/pull', query),
+                headers: _headers(settings))
+            .timeout(const Duration(seconds: 20));
         if (pull.statusCode < 200 || pull.statusCode >= 300) {
           final message = 'فشل السحب السحابي: ${pull.statusCode} ${pull.body}';
           return CloudSyncResult(ok: false, message: message);
@@ -1898,10 +2461,14 @@ class CloudSyncService {
 
         final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
         if ((decodedPull['source'] ?? '').toString() == 'entity_snapshots') {
-          final pageAllSectionsComplete = decodedPull['allSnapshotSectionsComplete'] == true;
-          allSnapshotSectionsComplete = allSnapshotSectionsComplete && pageAllSectionsComplete;
+          final pageAllSectionsComplete =
+              decodedPull['allSnapshotSectionsComplete'] == true;
+          allSnapshotSectionsComplete =
+              allSnapshotSectionsComplete && pageAllSectionsComplete;
           await CloudProvisioningStatus.updateSnapshotSections(
-            decodedPull['snapshotSections'] is Map<String, dynamic> ? decodedPull['snapshotSections'] as Map<String, dynamic> : null,
+            decodedPull['snapshotSections'] is Map<String, dynamic>
+                ? decodedPull['snapshotSections'] as Map<String, dynamic>
+                : null,
             allComplete: pageAllSectionsComplete,
           );
         }
@@ -1915,36 +2482,52 @@ class CloudSyncService {
           );
         }
         final changes = _syncCore.filterOutLocalEchoes(
-          _syncCore.decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
+          _syncCore
+              .decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
         );
         final source = (decodedPull['source'] ?? '').toString();
         restoredSnapshot = restoredSnapshot ||
             changes.any((item) => item.operation == 'restore_snapshot') ||
-            (initialCursor == null && source == 'entity_snapshots' && changes.isNotEmpty);
-        onProgress?.call((0.42 + (pageCount - 1) * 0.08).clamp(0.42, 0.86).toDouble(), 'جارٍ تطبيق ${changes.length} تغيير/تغييرات سحابية من الصفحة $pageCount...');
+            (initialCursor == null &&
+                source == 'entity_snapshots' &&
+                changes.isNotEmpty);
+        onProgress?.call(
+            (0.42 + (pageCount - 1) * 0.08).clamp(0.42, 0.86).toDouble(),
+            'جارٍ تطبيق ${changes.length} تغيير/تغييرات سحابية من الصفحة $pageCount...');
         pulled += await _syncCore.applyAuthoritativeChanges(changes);
 
         final hasMore = decodedPull['hasMore'] == true;
         pageCursor = (decodedPull['nextCursor'] ?? '').toString();
         if (!hasMore) {
-          finalPullCursor = DateTime.tryParse(decodedPull['generatedAt']?.toString() ?? '');
-          finalPullSequence = int.tryParse(decodedPull['generatedSequence']?.toString() ?? '') ?? finalPullSequence;
+          finalPullCursor =
+              DateTime.tryParse(decodedPull['generatedAt']?.toString() ?? '');
+          finalPullSequence = int.tryParse(
+                  decodedPull['generatedSequence']?.toString() ?? '') ??
+              finalPullSequence;
           break;
         }
         if (pageCursor.isEmpty) {
-          return const CloudSyncResult(ok: false, message: 'فشلت متابعة صفحات السحب السحابي: مؤشر الصفحة التالية مفقود.');
+          return const CloudSyncResult(
+              ok: false,
+              message:
+                  'فشلت متابعة صفحات السحب السحابي: مؤشر الصفحة التالية مفقود.');
         }
       }
 
-      final initialSnapshotStillUploading = initialCursor == null && restoredSnapshot && !allSnapshotSectionsComplete;
+      final initialSnapshotStillUploading = initialCursor == null &&
+          restoredSnapshot &&
+          !allSnapshotSectionsComplete;
       if (initialSnapshotStillUploading) {
         onProgress?.call(0.90, 'بانتظار انتهاء المضيف من رفع أقسام المتجر...');
-        await CloudProvisioningStatus.markPending(message: 'ما زال المضيف يرفع بيانات المتجر. سيستمر التنزيل تلقائياً.');
+        await CloudProvisioningStatus.markPending(
+            message:
+                'ما زال المضيف يرفع بيانات المتجر. سيستمر التنزيل تلقائياً.');
       } else {
         onProgress?.call(0.90, 'جارٍ حفظ مؤشر المزامنة السحابية...');
         if (finalPullCursor != null) {
           await settings.copyWith(lastPullCursor: finalPullCursor).save();
-          await _recordDeviceSyncState('cloud', finalPullCursor, sequence: finalPullSequence, settings: settings);
+          await _recordDeviceSyncState('cloud', finalPullCursor,
+              sequence: finalPullSequence, settings: settings);
         }
       }
 
@@ -1956,8 +2539,12 @@ class CloudSyncService {
         onProgress?.call(0.97, 'جارٍ تشغيل صيانة سجل مزامنة العميل...');
         await store.compactClientSyncedSyncHistoryForMaintenance();
       }
-      if (store.appIdentity.isClient && (restoredSnapshot || pulled > 0) && !store.needsInitialAdminSetup && !initialSnapshotStillUploading) {
-        await CloudProvisioningStatus.markComplete(message: 'تم تنزيل بيانات المتجر الأولية.');
+      if (store.appIdentity.isClient &&
+          (restoredSnapshot || pulled > 0) &&
+          !store.needsInitialAdminSetup &&
+          !initialSnapshotStillUploading) {
+        await CloudProvisioningStatus.markComplete(
+            message: 'تم تنزيل بيانات المتجر الأولية.');
       }
       onProgress?.call(1.0, 'اكتملت المزامنة السحابية.');
       return CloudSyncResult(
@@ -1965,10 +2552,12 @@ class CloudSyncService {
         pushed: pushed,
         pulled: pulled,
         restoredSnapshot: restoredSnapshot,
-        message: 'اكتملت المزامنة السحابية. تم إرسال $pushed طلب/طلبات إلى وسيط المضيف، وتم سحب $pulled تغيير/تغييرات معتمدة.',
+        message:
+            'اكتملت المزامنة السحابية. تم إرسال $pushed طلب/طلبات إلى وسيط المضيف، وتم سحب $pulled تغيير/تغييرات معتمدة.',
       );
     } catch (error) {
-      return CloudSyncResult(ok: false, message: 'فشلت المزامنة السحابية: $error');
+      return CloudSyncResult(
+          ok: false, message: 'فشلت المزامنة السحابية: $error');
     }
   }
 }

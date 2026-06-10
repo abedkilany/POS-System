@@ -25,7 +25,16 @@ class AccountTransaction {
   })  : createdAt = createdAt ?? updatedAt ?? date,
         updatedAt = updatedAt ?? createdAt ?? date;
 
-  final String id, accountType, accountId, accountName, type, referenceId, referenceNo, currency, paymentMethod, note;
+  final String id,
+      accountType,
+      accountId,
+      accountName,
+      type,
+      referenceId,
+      referenceNo,
+      currency,
+      paymentMethod,
+      note;
   final DateTime date, createdAt, updatedAt;
   final DateTime? deletedAt;
   final double debit, credit;
@@ -36,6 +45,14 @@ class AccountTransaction {
   bool get isCustomer => accountType.toLowerCase() == 'customer';
   bool get isSupplier => accountType.toLowerCase() == 'supplier';
   double get signedAmount => debit - credit;
+
+  static double _safeAmount(double value) =>
+      value.isFinite && value > 0 ? value : 0;
+
+  static double _parseAmount(dynamic value) {
+    if (value is num) return _safeAmount(value.toDouble());
+    return _safeAmount(double.tryParse(value?.toString() ?? '') ?? 0);
+  }
 
   AccountTransaction copyWith({
     String? id,
@@ -84,7 +101,8 @@ class AccountTransaction {
         storeId: storeId ?? this.storeId,
         branchId: branchId ?? this.branchId,
         version: version ?? this.version,
-        lastModifiedByDeviceId: lastModifiedByDeviceId ?? this.lastModifiedByDeviceId,
+        lastModifiedByDeviceId:
+            lastModifiedByDeviceId ?? this.lastModifiedByDeviceId,
       );
 
   Map<String, dynamic> toJson() => {
@@ -96,8 +114,8 @@ class AccountTransaction {
         'type': type,
         'referenceId': referenceId,
         'referenceNo': referenceNo,
-        'debit': debit,
-        'credit': credit,
+        'debit': _safeAmount(debit),
+        'credit': _safeAmount(credit),
         'currency': currency,
         'paymentMethod': paymentMethod,
         'note': note,
@@ -113,8 +131,10 @@ class AccountTransaction {
       };
 
   factory AccountTransaction.fromJson(Map<String, dynamic> json) {
-    final date = DateTime.tryParse(json['date']?.toString() ?? '') ?? DateTime.now();
-    final updated = DateTime.tryParse(json['updatedAt']?.toString() ?? '') ?? date;
+    final date =
+        DateTime.tryParse(json['date']?.toString() ?? '') ?? DateTime.now();
+    final updated =
+        DateTime.tryParse(json['updatedAt']?.toString() ?? '') ?? date;
     return AccountTransaction(
       id: json['id']?.toString() ?? '',
       accountType: json['accountType']?.toString() ?? '',
@@ -124,12 +144,15 @@ class AccountTransaction {
       type: json['type']?.toString() ?? '',
       referenceId: json['referenceId']?.toString() ?? '',
       referenceNo: json['referenceNo']?.toString() ?? '',
-      debit: (json['debit'] as num? ?? 0).toDouble(),
-      credit: (json['credit'] as num? ?? 0).toDouble(),
-      currency: (json['currency']?.toString().trim().isEmpty ?? true) ? 'USD' : json['currency'].toString().trim().toUpperCase(),
+      debit: _parseAmount(json['debit']),
+      credit: _parseAmount(json['credit']),
+      currency: (json['currency']?.toString().trim().isEmpty ?? true)
+          ? 'USD'
+          : json['currency'].toString().trim().toUpperCase(),
       paymentMethod: json['paymentMethod']?.toString() ?? '',
       note: json['note']?.toString() ?? '',
-      createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? '') ?? updated,
+      createdAt:
+          DateTime.tryParse(json['createdAt']?.toString() ?? '') ?? updated,
       updatedAt: updated,
       deletedAt: DateTime.tryParse(json['deletedAt']?.toString() ?? ''),
       deviceId: json['deviceId']?.toString() ?? '',
@@ -137,7 +160,9 @@ class AccountTransaction {
       storeId: json['storeId']?.toString() ?? '',
       branchId: json['branchId']?.toString() ?? '',
       version: (json['version'] as num? ?? 1).toInt(),
-      lastModifiedByDeviceId: json['lastModifiedByDeviceId']?.toString() ?? json['deviceId']?.toString() ?? '',
+      lastModifiedByDeviceId: json['lastModifiedByDeviceId']?.toString() ??
+          json['deviceId']?.toString() ??
+          '',
     );
   }
 }
