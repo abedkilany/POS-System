@@ -452,6 +452,12 @@ class CloudSyncService {
   String _snapshotGenerationFailedAtKey(String transport) =>
       'failed_host_snapshot_generation_at_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}';
 
+  String _restoreCommandExecutedKey(String transport) =>
+      'executed_host_restore_command_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}';
+
+  String _restoreCommandInProgressKey(String transport) =>
+      'in_progress_host_restore_command_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}';
+
   String _snapshotGenerationLockId(String transport, String generation) =>
       '${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}_$generation';
 
@@ -464,14 +470,49 @@ class CloudSyncService {
         .trim();
   }
 
+  String _remoteHostRestoreCommandId(Map<String, dynamic> decoded) {
+    return (decoded['hostRestoreCommandId'] ??
+            decoded['restoreCommandId'] ??
+            decoded['rebuildCommandId'] ??
+            decoded['commandId'] ??
+            decoded['hostSnapshotGeneration'] ??
+            decoded['snapshotGeneration'] ??
+            decoded['restoreGeneration'] ??
+            '')
+        .toString()
+        .trim();
+  }
+
+  String _restoreCommandIdFromChanges(List<SyncChange> changes) {
+    for (final change in changes) {
+      if (change.entityType == 'system' &&
+          change.operation == 'cloud_restore_snapshot_ready') {
+        return _remoteHostRestoreCommandId(change.payload);
+      }
+    }
+    return '';
+  }
+
+  bool _restoreCommandAlreadyExecuted(String transport, String commandId) {
+    if (commandId.trim().isEmpty) return false;
+    final executed =
+        LocalDatabaseService.getString(_restoreCommandExecutedKey(transport)) ??
+            '';
+    return executed.trim() == commandId.trim();
+  }
+
   bool _needsHostSnapshotGenerationRebuild(
       String transport, Map<String, dynamic> decoded) {
     if (!store.appIdentity.isClient) return false;
     final remote = _remoteHostSnapshotGeneration(decoded);
     if (remote.isEmpty) return false;
+    final commandId = _remoteHostRestoreCommandId(decoded);
+    final commandExecuted =
+        _restoreCommandAlreadyExecuted(transport, commandId);
+    if (commandExecuted) return false;
     final applied =
         LocalDatabaseService.getString(_snapshotGenerationKey(transport)) ?? '';
-    if (applied.trim() == remote) return false;
+    if (applied.trim() == remote && commandId.isEmpty) return false;
 
     final lockId = _snapshotGenerationLockId(transport, remote);
     if (_activeSnapshotGenerationRebuilds.contains(lockId)) return false;
@@ -489,8 +530,9 @@ class CloudSyncService {
       return false;
     }
 
-    final failed =
-        LocalDatabaseService.getString(_snapshotGenerationFailedKey(transport)) ?? '';
+    final failed = LocalDatabaseService.getString(
+            _snapshotGenerationFailedKey(transport)) ??
+        '';
     final failedAtRaw = LocalDatabaseService.getString(
             _snapshotGenerationFailedAtKey(transport)) ??
         '';
@@ -503,8 +545,20 @@ class CloudSyncService {
     return true;
   }
 
-  Future<void> _markHostSnapshotGenerationApplied(
+  Future<void> _markRestoreCommandExecuted(
       String transport, dynamic source) async {
+    if (source is! Map<String, dynamic>) return;
+    final commandId = _remoteHostRestoreCommandId(source);
+    if (commandId.isEmpty) return;
+    await LocalDatabaseService.setString(
+        _restoreCommandExecutedKey(transport), commandId);
+    await LocalDatabaseService.deleteString(
+        _restoreCommandInProgressKey(transport));
+  }
+
+  Future<void> _markHostSnapshotGenerationApplied(
+      String transport, dynamic source,
+      {bool markRestoreCommandExecuted = true}) async {
     String generation = '';
     if (source is Map<String, dynamic>) {
       generation = _remoteHostSnapshotGeneration(source);
@@ -512,25 +566,40 @@ class CloudSyncService {
     if (generation.isEmpty) return;
     await LocalDatabaseService.setString(
         _snapshotGenerationKey(transport), generation);
+    if (markRestoreCommandExecuted) {
+      await _markRestoreCommandExecuted(transport, source);
+    }
     await LocalDatabaseService.deleteString(
         _snapshotGenerationInProgressKey(transport));
     await LocalDatabaseService.deleteString(
         _snapshotGenerationInProgressAtKey(transport));
-    await LocalDatabaseService.deleteString(_snapshotGenerationFailedKey(transport));
+    await LocalDatabaseService.deleteString(
+        _snapshotGenerationFailedKey(transport));
     await LocalDatabaseService.deleteString(
         _snapshotGenerationFailedAtKey(transport));
   }
 
   Future<bool> _beginHostSnapshotGenerationRebuild(
-      String transport, String generation) async {
+    String transport,
+    String generation, {
+    String commandId = '',
+  }) async {
     if (generation.isEmpty) return false;
     final applied =
         LocalDatabaseService.getString(_snapshotGenerationKey(transport)) ?? '';
-    if (applied.trim() == generation) return false;
+    if (applied.trim() == generation && commandId.trim().isEmpty) {
+      return false;
+    }
     final lockId = _snapshotGenerationLockId(transport, generation);
     if (!_activeSnapshotGenerationRebuilds.add(lockId)) return false;
     await LocalDatabaseService.setString(
         _snapshotGenerationInProgressKey(transport), generation);
+    final effectiveCommandId =
+        commandId.trim().isEmpty ? generation : commandId.trim();
+    if (effectiveCommandId.isNotEmpty) {
+      await LocalDatabaseService.setString(
+          _restoreCommandInProgressKey(transport), effectiveCommandId);
+    }
     await LocalDatabaseService.setString(
         _snapshotGenerationInProgressAtKey(transport),
         DateTime.now().toIso8601String());
@@ -548,6 +617,15 @@ class CloudSyncService {
     if (success) {
       await LocalDatabaseService.setString(
           _snapshotGenerationKey(transport), generation);
+      final inProgressCommand = LocalDatabaseService.getString(
+              _restoreCommandInProgressKey(transport)) ??
+          '';
+      if (inProgressCommand.trim().isNotEmpty) {
+        await LocalDatabaseService.setString(
+            _restoreCommandExecutedKey(transport), inProgressCommand.trim());
+        await LocalDatabaseService.deleteString(
+            _restoreCommandInProgressKey(transport));
+      }
       await LocalDatabaseService.deleteString(
           _snapshotGenerationInProgressKey(transport));
       await LocalDatabaseService.deleteString(
@@ -566,6 +644,8 @@ class CloudSyncService {
       await LocalDatabaseService.setString(
           _snapshotGenerationFailedAtKey(transport),
           DateTime.now().toIso8601String());
+      await LocalDatabaseService.deleteString(
+          _restoreCommandInProgressKey(transport));
     }
   }
 
@@ -576,7 +656,12 @@ class CloudSyncService {
   }) async {
     if (!_needsHostSnapshotGenerationRebuild('cloud', decodedPull)) return null;
     final generation = _remoteHostSnapshotGeneration(decodedPull);
-    if (!await _beginHostSnapshotGenerationRebuild('cloud', generation)) {
+    final commandId = _remoteHostRestoreCommandId(decodedPull);
+    if (!await _beginHostSnapshotGenerationRebuild(
+      'cloud',
+      generation,
+      commandId: commandId,
+    )) {
       return null;
     }
     CloudSyncResult result;
@@ -584,8 +669,8 @@ class CloudSyncService {
       onProgress?.call(0.50,
           'تم اكتشاف نسخة مسترجعة جديدة على المضيف. جارٍ إعادة بناء بيانات الجهاز...');
       await CloudSyncSettings.clearSavedPullCursor();
-      await SyncDeviceStateStore.resetClientProgress(
-          store.appIdentity, transport: 'cloud');
+      await SyncDeviceStateStore.resetClientProgress(store.appIdentity,
+          transport: 'cloud');
       await CloudProvisioningStatus.markPending(
           message: 'جارٍ تنزيل نسخة المضيف الجديدة بعد الاسترجاع.');
       result = await rebuildFromCloudHostSnapshot(
@@ -823,7 +908,8 @@ class CloudSyncService {
   }
 
   Future<CloudPairingClaimResult> claimPairingCode(
-      CloudSyncSettings settings, String code, {CloudSyncProgressCallback? onProgress}) async {
+      CloudSyncSettings settings, String code,
+      {CloudSyncProgressCallback? onProgress}) async {
     final current = store.appIdentity;
     if (current.isHost) {
       return const CloudPairingClaimResult(
@@ -941,11 +1027,13 @@ class CloudSyncService {
               settings.copyWith(clearLastPullCursor: true),
               force: attempt == 0,
               onProgress: (value, label) {
-                final scaled = (0.24 + value * 0.50).clamp(0.24, 0.74).toDouble();
+                final scaled =
+                    (0.24 + value * 0.50).clamp(0.24, 0.74).toDouble();
                 onProgress?.call(scaled, label);
               },
             );
-            onProgress?.call(0.78, 'Importing Cloud snapshot chunks locally...');
+            onProgress?.call(
+                0.78, 'Importing Cloud snapshot chunks locally...');
             await store.importSyncSnapshotJson(jsonEncode(envelope));
             await _markHostSnapshotGenerationApplied('cloud', envelope);
             onProgress?.call(0.88, 'Verifying local store data...');
@@ -953,8 +1041,10 @@ class CloudSyncService {
             if (!verified.ok || store.needsInitialAdminSetup) {
               throw StateError(verified.message);
             }
-            final cursor = store.syncSnapshotGeneratedAtFromJson(jsonEncode(envelope));
-            final sequence = store.syncSnapshotGeneratedSequenceFromJson(jsonEncode(envelope));
+            final cursor =
+                store.syncSnapshotGeneratedAtFromJson(jsonEncode(envelope));
+            final sequence = store
+                .syncSnapshotGeneratedSequenceFromJson(jsonEncode(envelope));
             await SyncDeviceStateStore.recordSyncResult(
               store.appIdentity,
               transport: 'cloud',
@@ -969,11 +1059,13 @@ class CloudSyncService {
             onProgress?.call(1.0, 'Cloud snapshot is ready.');
             return CloudPairingClaimResult(
               ok: true,
-              message: 'تم اقتران الجهاز وتنزيل بيانات المتجر كاملة. يمكنك تسجيل الدخول الآن.',
+              message:
+                  'تم اقتران الجهاز وتنزيل بيانات المتجر كاملة. يمكنك تسجيل الدخول الآن.',
               identity: store.appIdentity,
             );
           } catch (_) {
-            request = await requestFreshHostSnapshot(settings, requestedAt: requestedAt);
+            request = await requestFreshHostSnapshot(settings,
+                requestedAt: requestedAt);
             if (!request.ok) break;
           }
         }
@@ -1299,15 +1391,22 @@ class CloudSyncService {
         );
         onProgress?.call(0.84, 'جارٍ تطبيق دفعات اللقطة السحابية محلياً...');
         await store.importSyncSnapshotJson(jsonEncode(envelope));
-        await _markHostSnapshotGenerationApplied('cloud', envelope);
-        onProgress?.call(0.90, 'جارٍ التحقق من البيانات المحلية بعد إعادة البناء...');
+        await _markHostSnapshotGenerationApplied('cloud', envelope,
+            markRestoreCommandExecuted: false);
+        onProgress?.call(
+            0.90, 'جارٍ التحقق من البيانات المحلية بعد إعادة البناء...');
         final repaired = await store.verifyLocalBusinessDataIntegrity();
         onProgress?.call(0.96, 'جارٍ تنظيف السجلات المحلية...');
         await store.cleanupSoftDeletedRecords();
+        if (repaired.ok) {
+          await _markRestoreCommandExecuted('cloud', envelope);
+        }
         await CloudProvisioningStatus.markComplete(
             message: 'تم تنزيل بيانات المتجر الأولية.');
-        final cursor = store.syncSnapshotGeneratedAtFromJson(jsonEncode(envelope));
-        final sequence = store.syncSnapshotGeneratedSequenceFromJson(jsonEncode(envelope));
+        final cursor =
+            store.syncSnapshotGeneratedAtFromJson(jsonEncode(envelope));
+        final sequence =
+            store.syncSnapshotGeneratedSequenceFromJson(jsonEncode(envelope));
         await SyncDeviceStateStore.recordSyncResult(
           store.appIdentity,
           transport: 'cloud',
@@ -2380,14 +2479,14 @@ class CloudSyncService {
     }
   }
 
-
   Future<bool> _cloudSnapshotIsNewerThanLocal(
     CloudSyncSettings settings,
   ) async {
     if (!store.appIdentity.isClient) return false;
     try {
       final state = SyncDeviceStateStore.load(store.appIdentity);
-      final localCursor = state.lastAppliedHostCursor ?? settings.lastPullCursor;
+      final localCursor =
+          state.lastAppliedHostCursor ?? settings.lastPullCursor;
       final manifest = await _CloudSnapshotPullTransport(
         settings: settings,
         headers: _headers(settings),
@@ -2395,14 +2494,19 @@ class CloudSyncService {
         storeId: store.appIdentity.storeId,
         branchId: store.appIdentity.branchId,
       ).requestManifest();
-      final remoteGeneratedAt = DateTime.tryParse(manifest.syncGeneratedAt ?? '');
+      final commandId =
+          (manifest.hostRestoreCommandId ?? manifest.restoreCommandId ?? '')
+              .trim();
+      if (_restoreCommandAlreadyExecuted('cloud', commandId)) return false;
+      final remoteGeneratedAt =
+          DateTime.tryParse(manifest.syncGeneratedAt ?? '');
       if (remoteGeneratedAt == null) return false;
       if (localCursor == null) return true;
       // Add a small tolerance so re-reading the same materialized snapshot does
       // not trigger repeated rebuilds due to clock precision differences.
       return remoteGeneratedAt.toUtc().isAfter(
-        localCursor.toUtc().add(const Duration(seconds: 2)),
-      );
+            localCursor.toUtc().add(const Duration(seconds: 2)),
+          );
     } catch (_) {
       // Snapshot freshness is a safety net. If the manifest is temporarily not
       // reachable, keep the normal incremental pull path alive.
@@ -2444,9 +2548,11 @@ class CloudSyncService {
       final baseLastAppliedSequence =
           SyncDeviceStateStore.load(store.appIdentity).lastAppliedSequence;
       if (await _cloudSnapshotIsNewerThanLocal(settings)) {
-        onProgress?.call(0.32, 'تم العثور على Snapshot أحدث من المضيف. جارٍ إعادة بناء بيانات هذا الجهاز...');
+        onProgress?.call(0.32,
+            'تم العثور على Snapshot أحدث من المضيف. جارٍ إعادة بناء بيانات هذا الجهاز...');
         await CloudSyncSettings.clearSavedPullCursor();
-        await SyncDeviceStateStore.resetClientProgress(store.appIdentity, transport: 'cloud');
+        await SyncDeviceStateStore.resetClientProgress(store.appIdentity,
+            transport: 'cloud');
         return rebuildFromCloudHostSnapshot(
           settings.copyWith(clearLastPullCursor: true),
           onProgress: onProgress,
@@ -2537,20 +2643,27 @@ class CloudSyncService {
             item.entityType == 'system' &&
             item.operation == 'cloud_restore_snapshot_ready');
         if (restoreMarker && store.appIdentity.isClient) {
-          onProgress?.call(0.50, 'تم العثور على استرجاع جديد على المضيف. جارٍ إعادة بناء بيانات الجهاز من Snapshot كاملة...');
-          await CloudSyncSettings.clearSavedPullCursor();
-          await SyncDeviceStateStore.resetClientProgress(store.appIdentity, transport: 'cloud');
-          await CloudProvisioningStatus.markPending(
-              message: 'جارٍ تنزيل نسخة المضيف الجديدة بعد الاسترجاع.');
-          // A Host Restore is a full replacement, not an incremental change.
-          // Do not depend on timestamp filters here: old backup rows can carry
-          // historical updatedAt values, and the marker time may be newer than
-          // some rows. Force the unified snapshot downloader/importer to rebuild
-          // the Client from the currently published Host snapshot.
-          return rebuildFromCloudHostSnapshot(
-            settings.copyWith(clearLastPullCursor: true),
-            onProgress: onProgress,
-          );
+          final commandId = _restoreCommandIdFromChanges(changes);
+          if (_restoreCommandAlreadyExecuted('cloud', commandId)) {
+            restoredSnapshot = false;
+          } else {
+            onProgress?.call(0.50,
+                'تم العثور على استرجاع جديد على المضيف. جارٍ إعادة بناء بيانات الجهاز من Snapshot كاملة...');
+            await CloudSyncSettings.clearSavedPullCursor();
+            await SyncDeviceStateStore.resetClientProgress(store.appIdentity,
+                transport: 'cloud');
+            await CloudProvisioningStatus.markPending(
+                message: 'جارٍ تنزيل نسخة المضيف الجديدة بعد الاسترجاع.');
+            // A Host Restore is a full replacement, not an incremental change.
+            // Do not depend on timestamp filters here: old backup rows can carry
+            // historical updatedAt values, and the marker time may be newer than
+            // some rows. Force the unified snapshot downloader/importer to rebuild
+            // the Client from the currently published Host snapshot.
+            return rebuildFromCloudHostSnapshot(
+              settings.copyWith(clearLastPullCursor: true),
+              onProgress: onProgress,
+            );
+          }
         }
         restoredSnapshot = restoredSnapshot ||
             changes.any((item) => item.operation == 'restore_snapshot') ||
@@ -2692,9 +2805,11 @@ class CloudSyncService {
       final baseLastAppliedSequence =
           SyncDeviceStateStore.load(store.appIdentity).lastAppliedSequence;
       if (await _cloudSnapshotIsNewerThanLocal(settings)) {
-        onProgress?.call(0.32, 'تم العثور على Snapshot أحدث من المضيف. جارٍ إعادة بناء بيانات هذا الجهاز...');
+        onProgress?.call(0.32,
+            'تم العثور على Snapshot أحدث من المضيف. جارٍ إعادة بناء بيانات هذا الجهاز...');
         await CloudSyncSettings.clearSavedPullCursor();
-        await SyncDeviceStateStore.resetClientProgress(store.appIdentity, transport: 'cloud');
+        await SyncDeviceStateStore.resetClientProgress(store.appIdentity,
+            transport: 'cloud');
         return rebuildFromCloudHostSnapshot(
           settings.copyWith(clearLastPullCursor: true),
           onProgress: onProgress,
@@ -2784,20 +2899,27 @@ class CloudSyncService {
             item.entityType == 'system' &&
             item.operation == 'cloud_restore_snapshot_ready');
         if (restoreMarker && store.appIdentity.isClient) {
-          onProgress?.call(0.50, 'تم العثور على استرجاع جديد على المضيف. جارٍ إعادة بناء بيانات الجهاز من Snapshot كاملة...');
-          await CloudSyncSettings.clearSavedPullCursor();
-          await SyncDeviceStateStore.resetClientProgress(store.appIdentity, transport: 'cloud');
-          await CloudProvisioningStatus.markPending(
-              message: 'جارٍ تنزيل نسخة المضيف الجديدة بعد الاسترجاع.');
-          // A Host Restore is a full replacement, not an incremental change.
-          // Do not depend on timestamp filters here: old backup rows can carry
-          // historical updatedAt values, and the marker time may be newer than
-          // some rows. Force the unified snapshot downloader/importer to rebuild
-          // the Client from the currently published Host snapshot.
-          return rebuildFromCloudHostSnapshot(
-            settings.copyWith(clearLastPullCursor: true),
-            onProgress: onProgress,
-          );
+          final commandId = _restoreCommandIdFromChanges(changes);
+          if (_restoreCommandAlreadyExecuted('cloud', commandId)) {
+            restoredSnapshot = false;
+          } else {
+            onProgress?.call(0.50,
+                'تم العثور على استرجاع جديد على المضيف. جارٍ إعادة بناء بيانات الجهاز من Snapshot كاملة...');
+            await CloudSyncSettings.clearSavedPullCursor();
+            await SyncDeviceStateStore.resetClientProgress(store.appIdentity,
+                transport: 'cloud');
+            await CloudProvisioningStatus.markPending(
+                message: 'جارٍ تنزيل نسخة المضيف الجديدة بعد الاسترجاع.');
+            // A Host Restore is a full replacement, not an incremental change.
+            // Do not depend on timestamp filters here: old backup rows can carry
+            // historical updatedAt values, and the marker time may be newer than
+            // some rows. Force the unified snapshot downloader/importer to rebuild
+            // the Client from the currently published Host snapshot.
+            return rebuildFromCloudHostSnapshot(
+              settings.copyWith(clearLastPullCursor: true),
+              onProgress: onProgress,
+            );
+          }
         }
         restoredSnapshot = restoredSnapshot ||
             changes.any((item) => item.operation == 'restore_snapshot') ||
@@ -2874,7 +2996,6 @@ class CloudSyncService {
   }
 }
 
-
 class _CloudSnapshotPullTransport implements UnifiedSnapshotChunkPullTransport {
   _CloudSnapshotPullTransport({
     required this.settings,
@@ -2892,7 +3013,8 @@ class _CloudSnapshotPullTransport implements UnifiedSnapshotChunkPullTransport {
   String _jobId = '';
 
   @override
-  Future<UnifiedSnapshotManifestResponse> requestManifest({bool force = false}) async {
+  Future<UnifiedSnapshotManifestResponse> requestManifest(
+      {bool force = false}) async {
     final response = await client
         .get(
           settings.endpoint('/api/sync/bootstrap-snapshot', {
@@ -2904,20 +3026,25 @@ class _CloudSnapshotPullTransport implements UnifiedSnapshotChunkPullTransport {
         )
         .timeout(const Duration(seconds: 30));
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw StateError('Cloud snapshot manifest failed: ${response.statusCode} ${response.body}');
+      throw StateError(
+          'Cloud snapshot manifest failed: ${response.statusCode} ${response.body}');
     }
     final decoded = Map<String, dynamic>.from(jsonDecode(response.body) as Map);
     _jobId = (decoded['jobId'] ?? '').toString();
     return UnifiedSnapshotManifestResponse(
-      manifest: Map<String, dynamic>.from((decoded['snapshotManifest'] as Map?) ?? const <String, dynamic>{}),
+      manifest: Map<String, dynamic>.from(
+          (decoded['snapshotManifest'] as Map?) ?? const <String, dynamic>{}),
       totalChunks: (decoded['totalChunks'] as num?)?.toInt() ?? 0,
       snapshotFormat: decoded['snapshotFormat']?.toString(),
       snapshotVersion: decoded['snapshotVersion'],
       snapshotKind: decoded['snapshotKind']?.toString(),
       syncGeneratedAt: decoded['syncGeneratedAt']?.toString(),
-      syncGeneratedSequence: (decoded['syncGeneratedSequence'] as num?)?.toInt(),
+      syncGeneratedSequence:
+          (decoded['syncGeneratedSequence'] as num?)?.toInt(),
       hostSnapshotGeneration: decoded['hostSnapshotGeneration']?.toString(),
       snapshotGeneration: decoded['snapshotGeneration']?.toString(),
+      hostRestoreCommandId: decoded['hostRestoreCommandId']?.toString(),
+      restoreCommandId: decoded['restoreCommandId']?.toString(),
     );
   }
 
@@ -2931,14 +3058,18 @@ class _CloudSnapshotPullTransport implements UnifiedSnapshotChunkPullTransport {
     };
     if (_jobId.trim().isNotEmpty) query['job_id'] = _jobId;
     final response = await client
-        .get(settings.endpoint('/api/sync/bootstrap-snapshot', query), headers: headers)
+        .get(settings.endpoint('/api/sync/bootstrap-snapshot', query),
+            headers: headers)
         .timeout(const Duration(seconds: 30));
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw StateError('Cloud snapshot chunk ${ordinal + 1} failed: ${response.statusCode} ${response.body}');
+      throw StateError(
+          'Cloud snapshot chunk ${ordinal + 1} failed: ${response.statusCode} ${response.body}');
     }
     final decoded = Map<String, dynamic>.from(jsonDecode(response.body) as Map);
     final chunk = decoded['chunk'];
-    if (chunk is! Map) throw StateError('Cloud snapshot chunk ${ordinal + 1} is invalid.');
+    if (chunk is! Map) {
+      throw StateError('Cloud snapshot chunk ${ordinal + 1} is invalid.');
+    }
     return UnifiedSnapshotChunkResponse(
       chunk: Map<String, dynamic>.from(chunk),
       ordinal: (decoded['ordinal'] as num?)?.toInt() ?? ordinal,
@@ -2952,7 +3083,6 @@ class _CloudSnapshotPullTransport implements UnifiedSnapshotChunkPullTransport {
     // engine still calls this hook so Cloud and LAN share the same pipeline.
   }
 }
-
 
 class _CloudSnapshotPushTransport implements UnifiedSnapshotChunkPushTransport {
   _CloudSnapshotPushTransport({

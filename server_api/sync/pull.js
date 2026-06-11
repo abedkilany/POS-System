@@ -77,6 +77,7 @@ export default async function handler(req, res) {
 
     const restoreGenerationRows = await sql`
       select coalesce(payload->>'snapshotGeneration', payload->>'restoreGeneration', payload->>'restoredAt', '') as generation,
+             coalesce(payload->>'commandId', payload->>'restoreCommandId', payload->>'rebuildCommandId', '') as command_id,
              coalesce(sequence, 0) as sequence
       from sync_events
       where store_id = ${storeId}
@@ -87,6 +88,7 @@ export default async function handler(req, res) {
       limit 1
     `;
     const hostSnapshotGeneration = String(restoreGenerationRows[0]?.generation || '');
+    const hostRestoreCommandId = String(restoreGenerationRows[0]?.command_id || hostSnapshotGeneration || '');
     const hostSnapshotGenerationSequence = Number(restoreGenerationRows[0]?.sequence || 0);
 
     // First-time/new-device pull: return the latest materialized state in
@@ -208,6 +210,8 @@ export default async function handler(req, res) {
         source: 'entity_snapshots',
         hostSnapshotGeneration,
         snapshotGeneration: hostSnapshotGeneration,
+        hostRestoreCommandId,
+        restoreCommandId: hostRestoreCommandId,
         hostSnapshotGenerationSequence,
         allSnapshotSectionsComplete,
         snapshotSections: sectionStatus.sections || {},
@@ -237,6 +241,8 @@ export default async function handler(req, res) {
           latestSequence,
           hostSnapshotGeneration,
           snapshotGeneration: hostSnapshotGeneration,
+          hostRestoreCommandId,
+          restoreCommandId: hostRestoreCommandId,
           hostSnapshotGenerationSequence,
           generatedAt: new Date().toISOString(),
           generatedSequence: latestSequence,
@@ -304,6 +310,8 @@ export default async function handler(req, res) {
       generatedSequence: hasMore ? null : maxSequence,
       hostSnapshotGeneration,
       snapshotGeneration: hostSnapshotGeneration,
+      hostRestoreCommandId,
+      restoreCommandId: hostRestoreCommandId,
       hostSnapshotGenerationSequence,
       source: 'sync_events',
     });

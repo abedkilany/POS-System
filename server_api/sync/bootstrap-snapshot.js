@@ -198,6 +198,8 @@ export default async function handler(req, res) {
           syncGeneratedSequence: Number(first.sync_generated_sequence || 0),
           hostSnapshotGeneration: String(chunk.hostSnapshotGeneration || chunk.snapshotGeneration || chunk.restoreGeneration || ''),
           snapshotGeneration: String(chunk.hostSnapshotGeneration || chunk.snapshotGeneration || chunk.restoreGeneration || ''),
+          hostRestoreCommandId: String(chunk.hostRestoreCommandId || chunk.restoreCommandId || chunk.rebuildCommandId || ''),
+          restoreCommandId: String(chunk.hostRestoreCommandId || chunk.restoreCommandId || chunk.rebuildCommandId || ''),
         });
       }
 

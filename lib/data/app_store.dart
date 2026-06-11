@@ -7034,7 +7034,6 @@ class AppStore extends ChangeNotifier {
                 .reduce((a, b) => a > b ? a : b),
       };
 
-
   Map<String, dynamic> _unifiedSnapshotManifestJson({
     required String jobId,
     required String generatedAt,
@@ -7107,7 +7106,12 @@ class AppStore extends ChangeNotifier {
       chunks[i]['syncGeneratedAt'] = generatedAt;
       chunks[i]['syncGeneratedSequence'] = _syncChanges.isEmpty
           ? 0
-          : _syncChanges.map((item) => item.sequence).reduce((a, b) => a > b ? a : b);
+          : _syncChanges
+              .map((item) => item.sequence)
+              .reduce((a, b) => a > b ? a : b);
+      chunks[i]['restoreCommandId'] = currentHostRestoreCommandId();
+      chunks[i]['hostRestoreCommandId'] = currentHostRestoreCommandId();
+      chunks[i]['rebuildCommandId'] = currentHostRestoreCommandId();
       // Legacy progress fields remain collection-based so the current Cloud
       // provisioning screen and server responses keep working during phase 1.
       chunks[i]['sectionChunkIndex'] = collectionIndex;
@@ -7155,8 +7159,7 @@ class AppStore extends ChangeNotifier {
       'supplierProductPrices':
           _supplierProductPrices.map((item) => item.toJson()).toList(),
       'stockMovements': _stockMovements.map((item) => item.toJson()).toList(),
-      'inventoryCounts':
-          _inventoryCounts.map((item) => item.toJson()).toList(),
+      'inventoryCounts': _inventoryCounts.map((item) => item.toJson()).toList(),
       'sales': _sales.map((item) => item.toJson()).toList(),
       'saleQuotations': _saleQuotations.map((item) => item.toJson()).toList(),
       'deliveryNotes': _deliveryNotes.map((item) => item.toJson()).toList(),
@@ -7211,8 +7214,7 @@ class AppStore extends ChangeNotifier {
   }) {
     final identity = appIdentity;
     final generatedAt = DateTime.now().toIso8601String();
-    final jobId =
-        '${DateTime.now().microsecondsSinceEpoch}-$_deviceId-$kind';
+    final jobId = '${DateTime.now().microsecondsSinceEpoch}-$_deviceId-$kind';
     final collections = _unifiedSnapshotCollectionPayloads(
       sectionIds: sectionIds,
     );
@@ -7297,9 +7299,9 @@ class AppStore extends ChangeNotifier {
       final decoded = _decodeUnifiedSnapshotChunkPayload(chunk);
       if (collection == '_meta') {
         payload.addAll(decoded);
-        generatedSequence = int.tryParse(
-                decoded['syncGeneratedSequence']?.toString() ?? '') ??
-            generatedSequence;
+        generatedSequence =
+            int.tryParse(decoded['syncGeneratedSequence']?.toString() ?? '') ??
+                generatedSequence;
         continue;
       }
       final items = decoded['items'] is List
@@ -7425,7 +7427,9 @@ class AppStore extends ChangeNotifier {
         .convert(_backupPayload(includeDeviceAndSyncState: false));
   }
 
-  static const String _hostSnapshotGenerationKey = 'host_snapshot_generation_v1';
+  static const String _hostSnapshotGenerationKey =
+      'host_snapshot_generation_v1';
+  static const String _hostRestoreCommandIdKey = 'host_restore_command_id_v1';
 
   String currentHostSnapshotGeneration() {
     if (!appIdentity.isHost) return '';
@@ -7435,8 +7439,8 @@ class AppStore extends ChangeNotifier {
         item.entityType == 'system' &&
         item.operation == 'cloud_restore_snapshot_ready');
     if (markers.isEmpty) return '';
-    final latest = markers.reduce((a, b) =>
-        a.createdAt.isAfter(b.createdAt) ? a : b);
+    final latest =
+        markers.reduce((a, b) => a.createdAt.isAfter(b.createdAt) ? a : b);
     final payload = latest.payload;
     final generation = (payload['snapshotGeneration'] ??
             payload['restoreGeneration'] ??
@@ -7444,6 +7448,27 @@ class AppStore extends ChangeNotifier {
             latest.createdAt.toIso8601String())
         .toString();
     return generation.trim();
+  }
+
+  String currentHostRestoreCommandId() {
+    if (!appIdentity.isHost) return '';
+    final stored = LocalDatabaseService.getString(_hostRestoreCommandIdKey);
+    if (stored != null && stored.trim().isNotEmpty) return stored.trim();
+    final markers = _syncChanges.where((item) =>
+        item.entityType == 'system' &&
+        item.operation == 'cloud_restore_snapshot_ready');
+    if (markers.isEmpty) return '';
+    final latest =
+        markers.reduce((a, b) => a.createdAt.isAfter(b.createdAt) ? a : b);
+    final payload = latest.payload;
+    final commandId = (payload['commandId'] ??
+            payload['restoreCommandId'] ??
+            payload['rebuildCommandId'] ??
+            payload['snapshotGeneration'] ??
+            payload['restoreGeneration'] ??
+            '')
+        .toString();
+    return commandId.trim();
   }
 
   Map<String, dynamic> exportUnifiedSnapshotEnvelope({
@@ -7456,21 +7481,24 @@ class AppStore extends ChangeNotifier {
       maxItemsPerChunk: maxItemsPerChunk,
       maxEncodedPayloadBytes: maxEncodedPayloadBytes,
     );
-    final manifest = chunks.isNotEmpty && chunks.first['snapshotManifest'] is Map
-        ? Map<String, dynamic>.from(chunks.first['snapshotManifest'] as Map)
-        : _unifiedSnapshotManifestJson(
-            jobId: '',
-            generatedAt: DateTime.now().toIso8601String(),
-            kind: kind,
-            totalChunks: chunks.length,
-          );
+    final manifest =
+        chunks.isNotEmpty && chunks.first['snapshotManifest'] is Map
+            ? Map<String, dynamic>.from(chunks.first['snapshotManifest'] as Map)
+            : _unifiedSnapshotManifestJson(
+                jobId: '',
+                generatedAt: DateTime.now().toIso8601String(),
+                kind: kind,
+                totalChunks: chunks.length,
+              );
     final generatedAt = chunks.isEmpty
         ? DateTime.now().toIso8601String()
         : (chunks.first['generatedAt'] ?? DateTime.now().toIso8601String())
             .toString();
     final generatedSequence = _syncChanges.isEmpty
         ? 0
-        : _syncChanges.map((item) => item.sequence).reduce((a, b) => a > b ? a : b);
+        : _syncChanges
+            .map((item) => item.sequence)
+            .reduce((a, b) => a > b ? a : b);
     return <String, dynamic>{
       'snapshotFormat': UnifiedSnapshotManifest.format,
       'snapshotVersion': UnifiedSnapshotManifest.version,
@@ -7482,6 +7510,8 @@ class AppStore extends ChangeNotifier {
       'syncGeneratedSequence': generatedSequence,
       'snapshotGeneration': currentHostSnapshotGeneration(),
       'hostSnapshotGeneration': currentHostSnapshotGeneration(),
+      'restoreCommandId': currentHostRestoreCommandId(),
+      'hostRestoreCommandId': currentHostRestoreCommandId(),
     };
   }
 
@@ -7533,7 +7563,8 @@ class AppStore extends ChangeNotifier {
         ((latestSequence > sequenceFloor &&
                 earliestSequence > 0 &&
                 sequenceFloor < earliestSequence - 1) ||
-            (hasHostRestoreMarker && latestSequence > 0 &&
+            (hasHostRestoreMarker &&
+                latestSequence > 0 &&
                 sequenceFloor > latestSequence));
 
     final changes = needsSnapshot
@@ -7566,6 +7597,8 @@ class AppStore extends ChangeNotifier {
       'requestedSinceSequence': sequenceFloor,
       'hostSnapshotGeneration': currentHostSnapshotGeneration(),
       'snapshotGeneration': currentHostSnapshotGeneration(),
+      'restoreCommandId': currentHostRestoreCommandId(),
+      'hostRestoreCommandId': currentHostRestoreCommandId(),
       'needsSnapshot': needsSnapshot,
       'changes': changes.map((item) => item.toJson()).toList(),
     });
@@ -7952,14 +7985,21 @@ class AppStore extends ChangeNotifier {
     // paired Clients know they must discard their old cursor and rebuild from
     // the fresh Host snapshot published by the sync layer.
     if (appIdentity.isHost) {
-      final restoreGeneration = DateTime.now().toUtc().microsecondsSinceEpoch.toString();
+      final restoreGeneration =
+          DateTime.now().toUtc().microsecondsSinceEpoch.toString();
+      final restoreCommandId = 'host_restore_rebuild_$restoreGeneration';
       await LocalDatabaseService.setString(
           _hostSnapshotGenerationKey, restoreGeneration);
+      await LocalDatabaseService.setString(
+          _hostRestoreCommandIdKey, restoreCommandId);
       _recordSyncChange(
         entityType: 'system',
         entityId: 'store',
         operation: 'cloud_restore_snapshot_ready',
         payload: {
+          'commandId': restoreCommandId,
+          'restoreCommandId': restoreCommandId,
+          'rebuildCommandId': restoreCommandId,
           'restoredAt': DateTime.now().toIso8601String(),
           'snapshotGeneration': restoreGeneration,
           'restoreGeneration': restoreGeneration,

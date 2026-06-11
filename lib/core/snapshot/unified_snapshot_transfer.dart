@@ -1,7 +1,8 @@
 import 'dart:async';
 
 /// Progress callback used by the unified snapshot transfer pipeline.
-typedef UnifiedSnapshotTransferProgress = void Function(double value, String label);
+typedef UnifiedSnapshotTransferProgress = void Function(
+    double value, String label);
 
 /// A transport-neutral snapshot chunk response.
 class UnifiedSnapshotChunkResponse {
@@ -28,6 +29,8 @@ class UnifiedSnapshotManifestResponse {
     this.syncGeneratedSequence,
     this.hostSnapshotGeneration,
     this.snapshotGeneration,
+    this.hostRestoreCommandId,
+    this.restoreCommandId,
   });
 
   final Map<String, dynamic> manifest;
@@ -39,6 +42,8 @@ class UnifiedSnapshotManifestResponse {
   final int? syncGeneratedSequence;
   final String? hostSnapshotGeneration;
   final String? snapshotGeneration;
+  final String? hostRestoreCommandId;
+  final String? restoreCommandId;
 }
 
 /// Transport adapter implemented by LAN and Cloud only for IO.
@@ -75,10 +80,12 @@ class UnifiedSnapshotTransferService {
     final chunks = <Map<String, dynamic>>[];
 
     for (var ordinal = resumeFromOrdinal; ordinal < totalChunks; ordinal += 1) {
-      final progress = (0.18 + (totalChunks == 0 ? 0 : (ordinal / totalChunks) * 0.52))
-          .clamp(0.18, 0.70)
-          .toDouble();
-      onProgress?.call(progress, '$labelPrefix: downloading chunk ${ordinal + 1}/$totalChunks...');
+      final progress =
+          (0.18 + (totalChunks == 0 ? 0 : (ordinal / totalChunks) * 0.52))
+              .clamp(0.18, 0.70)
+              .toDouble();
+      onProgress?.call(progress,
+          '$labelPrefix: downloading chunk ${ordinal + 1}/$totalChunks...');
 
       UnifiedSnapshotChunkResponse? response;
       Object? lastError;
@@ -94,10 +101,12 @@ class UnifiedSnapshotTransferService {
         }
       }
       if (response == null) {
-        throw StateError('$labelPrefix chunk ${ordinal + 1}/$totalChunks failed after retry: $lastError');
+        throw StateError(
+            '$labelPrefix chunk ${ordinal + 1}/$totalChunks failed after retry: $lastError');
       }
       if (response.ordinal != ordinal) {
-        throw StateError('$labelPrefix returned chunk ${response.ordinal}, expected $ordinal.');
+        throw StateError(
+            '$labelPrefix returned chunk ${response.ordinal}, expected $ordinal.');
       }
       chunks.add(response.chunk);
       await transport.ackChunk(ordinal);
@@ -113,15 +122,22 @@ class UnifiedSnapshotTransferService {
       'totalChunks': totalChunks,
       'syncGeneratedAt': manifest.syncGeneratedAt,
       'syncGeneratedSequence': manifest.syncGeneratedSequence,
-      'hostSnapshotGeneration': manifest.hostSnapshotGeneration ?? manifest.snapshotGeneration ?? '',
-      'snapshotGeneration': manifest.snapshotGeneration ?? manifest.hostSnapshotGeneration ?? '',
+      'hostSnapshotGeneration':
+          manifest.hostSnapshotGeneration ?? manifest.snapshotGeneration ?? '',
+      'snapshotGeneration':
+          manifest.snapshotGeneration ?? manifest.hostSnapshotGeneration ?? '',
+      'hostRestoreCommandId':
+          manifest.hostRestoreCommandId ?? manifest.restoreCommandId ?? '',
+      'restoreCommandId':
+          manifest.restoreCommandId ?? manifest.hostRestoreCommandId ?? '',
     };
   }
 }
 
 /// Transport adapter for uploading Host snapshot chunks.
 abstract class UnifiedSnapshotChunkPushTransport {
-  Future<void> uploadChunk(Map<String, dynamic> chunk, {required bool force, required bool preserveExisting});
+  Future<void> uploadChunk(Map<String, dynamic> chunk,
+      {required bool force, required bool preserveExisting});
 }
 
 extension UnifiedSnapshotTransferUploader on UnifiedSnapshotTransferService {
