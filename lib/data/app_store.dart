@@ -4083,6 +4083,36 @@ class AppStore extends ChangeNotifier {
         Map<String, dynamic>.from(payload);
   }
 
+  Map<String, dynamic> _businessPayloadWithoutSyncEnvelope(
+      Map<String, dynamic> payload) {
+    final clean = Map<String, dynamic>.from(payload);
+    clean.remove('_syncV2');
+    return clean;
+  }
+
+  void _rememberRemoteSqliteBusinessRows(SyncChange change) {
+    if (!LocalDatabaseService.isSqliteAuthoritative) return;
+
+    final businessKey = _sqliteKeyForEntityType(change.entityType);
+    if (businessKey != null && change.payload.isNotEmpty) {
+      _rememberSqliteDirtyBusinessRow(
+          businessKey, _businessPayloadWithoutSyncEnvelope(change.payload));
+    }
+
+    // Applying a remote stock movement mutates the related Product stock/cost
+    // in memory as a side effect. Persist that Product row too; otherwise the
+    // movement is visible only until restart when SQLite is authoritative.
+    if (change.entityType == 'stock_movement') {
+      final productId = change.payload['productId']?.toString() ?? '';
+      if (productId.isNotEmpty) {
+        final product = _findProductById(productId);
+        if (product != null) {
+          _rememberSqliteDirtyBusinessRow(_productsKey, product.toJson());
+        }
+      }
+    }
+  }
+
   void _recordSyncChange({
     required String entityType,
     required String entityId,
@@ -8614,7 +8644,7 @@ class AppStore extends ChangeNotifier {
         .any((item) => item.changeId == changeId && item.target == target)) {
       return;
     }
-    _syncQueue.add(SyncQueueItem(
+    final item = SyncQueueItem(
       id: '$changeId-$target',
       changeId: changeId,
       target: target,
@@ -8622,7 +8652,9 @@ class AppStore extends ChangeNotifier {
       attempts: 0,
       createdAt: now,
       updatedAt: now,
-    ));
+    );
+    _syncQueue.add(item);
+    _sqliteDirtySyncQueue.add(item);
   }
 
   Future<void> applyRemoteSyncChanges(
@@ -8671,6 +8703,8 @@ class AppStore extends ChangeNotifier {
     var warehousesChanged = false;
     var accountTransactionsChanged = false;
     var rolesUsersChanged = false;
+    var invoiceCounterChanged = false;
+    var purchaseCounterChanged = false;
 
     void markEntityDirty(SyncChange change) {
       switch (change.entityType) {
@@ -8699,6 +8733,7 @@ class AppStore extends ChangeNotifier {
           break;
         case 'sale':
           salesChanged = true;
+          invoiceCounterChanged = true;
           break;
         case 'sale_quotation':
           saleQuotationsChanged = true;
@@ -8732,6 +8767,7 @@ class AppStore extends ChangeNotifier {
           break;
         case 'purchase':
           purchasesChanged = true;
+          purchaseCounterChanged = true;
           break;
         case 'stock_movement':
           stockMovementsChanged = true;
@@ -8763,6 +8799,7 @@ class AppStore extends ChangeNotifier {
         continue;
       }
       await _applySyncChangePayload(change);
+      _rememberRemoteSqliteBusinessRows(change);
       markEntityDirty(change);
       final shouldMirrorToCloud =
           mirrorToCloud && _shouldMirrorRemoteChangeToCloud(change);
@@ -8814,6 +8851,7 @@ class AppStore extends ChangeNotifier {
           ? authoritativeChange.copyWith(isSynced: true, syncedAt: acceptedAt)
           : authoritativeChange.copyWith(isSynced: false, syncedAt: null);
       _syncChanges.add(storedChange);
+      _sqliteDirtySyncChanges.add(storedChange);
       if (shouldMirrorToCloud) {
         _enqueueSyncChangeForTarget(storedChange.id, 'cloud', acceptedAt);
       }
@@ -8855,6 +8893,8 @@ class AppStore extends ChangeNotifier {
             categories: categoriesChanged,
             brands: brandsChanged,
             units: unitsChanged,
+            invoiceCounter: invoiceCounterChanged,
+            purchaseCounter: purchaseCounterChanged,
             sync: true,
           ),
         ]);

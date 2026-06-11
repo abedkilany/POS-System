@@ -33,6 +33,31 @@ function normalizeChange(raw, fallback) {
   };
 }
 
+
+async function ensureCloudSequenceTable() {
+  await sql`
+    create table if not exists cloud_sync_sequences (
+      store_id text not null,
+      branch_id text not null default 'main',
+      last_sequence bigint not null default 0,
+      updated_at timestamptz not null default now(),
+      primary key (store_id, branch_id)
+    )
+  `;
+}
+
+async function allocateServerSequence(storeId, branchId) {
+  const rows = await sql`
+    insert into cloud_sync_sequences (store_id, branch_id, last_sequence, updated_at)
+    values (${storeId}, ${branchId || 'main'}, 1, now())
+    on conflict (store_id, branch_id) do update set
+      last_sequence = cloud_sync_sequences.last_sequence + 1,
+      updated_at = now()
+    returning last_sequence
+  `;
+  return Number(rows[0]?.last_sequence || 0);
+}
+
 const snapshotCollections = {
   products: 'product',
   customers: 'customer',
@@ -238,10 +263,11 @@ async function materializeChange(change) {
 export default async function handler(req, res) {
   try {
     await sql`alter table sync_events add column if not exists store_epoch integer not null default 1`;
-    await sql`alter table sync_events add column if not exists sequence integer not null default 0`;
+    await sql`alter table sync_events add column if not exists sequence bigint not null default 0`;
     await sql`alter table sync_events add column if not exists event_id text default ''`;
     await sql`alter table sync_events add column if not exists request_id text default ''`;
     await sql`alter table sync_events add column if not exists source_command_id text default ''`;
+    await ensureCloudSequenceTable();
     await sql`create unique index if not exists idx_sync_events_event_id_unique on sync_events (store_id, branch_id, event_id) where event_id is not null and event_id <> ''`;
     await sql`create unique index if not exists idx_sync_events_source_command_unique on sync_events (store_id, branch_id, source_command_id) where source_command_id is not null and source_command_id <> ''`;
     await ensureDeviceAuthColumns();
@@ -272,23 +298,30 @@ export default async function handler(req, res) {
       if (syncV2Kind === 'draftCommand') {
         return res.status(403).json({ ok: false, error: 'Draft commands must be sent to the Host relay, not the authoritative event stream.' });
       }
-      if (change.eventId || change.sourceCommandId) {
-        const duplicateRows = await sql`
-          select id
-          from sync_events
-          where store_id = ${change.storeId}
-            and branch_id = ${change.branchId}
-            and (
-              (${change.eventId} <> '' and event_id = ${change.eventId})
-              or (${change.sourceCommandId} <> '' and source_command_id = ${change.sourceCommandId})
-            )
-          limit 1
-        `;
-        if (duplicateRows.length > 0) {
-          ackIds.push(change.id);
-          continue;
-        }
+      const duplicateRows = await sql`
+        select id, sequence
+        from sync_events
+        where store_id = ${change.storeId}
+          and branch_id = ${change.branchId}
+          and (
+            id = ${change.id}
+            or (${change.eventId} <> '' and event_id = ${change.eventId})
+            or (${change.sourceCommandId} <> '' and source_command_id = ${change.sourceCommandId})
+          )
+        limit 1
+      `;
+      if (duplicateRows.length > 0) {
+        latestAcceptedSequence = Math.max(latestAcceptedSequence, Number(duplicateRows[0].sequence || 0));
+        ackIds.push(change.id);
+        continue;
       }
+
+      // Cloud sequence must be authoritative and monotonic per store/branch.
+      // Device-local sequence values can overlap or move backwards after a
+      // restore/snapshot, so never use the incoming change.sequence as the
+      // server cursor stored in sync_events.
+      change.sequence = await allocateServerSequence(change.storeId, change.branchId);
+
       const inserted = await sql`
         insert into sync_events (
           id, store_id, branch_id, device_id, entity_type, entity_id, operation, payload, created_at, store_epoch, sequence, event_id, request_id, source_command_id
@@ -296,14 +329,14 @@ export default async function handler(req, res) {
           ${change.id}, ${change.storeId}, ${change.branchId}, ${change.deviceId}, ${change.entityType}, ${change.entityId}, ${change.operation}, ${JSON.stringify(change.payload)}, ${change.createdAt}, ${change.storeEpoch}, ${change.sequence}, ${change.eventId}, ${change.requestId}, ${change.sourceCommandId}
         )
         on conflict (id) do nothing
-        returning id
+        returning id, sequence
       `;
       if (inserted.length > 0) {
         await materializeChange(change);
         await cleanupExpiredSoftDeletes(change.storeId, change.branchId);
+        latestAcceptedSequence = Math.max(latestAcceptedSequence, Number(inserted[0].sequence || change.sequence || 0));
       }
       latestAcceptedAt = change.createdAt;
-      latestAcceptedSequence = Math.max(latestAcceptedSequence, Number(change.sequence || 0));
       ackIds.push(change.id);
     }
 

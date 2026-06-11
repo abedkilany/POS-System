@@ -127,6 +127,7 @@ create index if not exists idx_store_devices_latest
 alter table sync_events add column if not exists event_id text default '';
 alter table sync_events add column if not exists request_id text default '';
 alter table sync_events add column if not exists source_command_id text default '';
+alter table sync_events add column if not exists sequence bigint not null default 0;
 alter table cloud_change_requests add column if not exists request_id text default '';
 create unique index if not exists idx_sync_events_event_id_unique
   on sync_events (store_id, branch_id, event_id)
@@ -138,6 +139,18 @@ create unique index if not exists idx_cloud_change_requests_request_unique
   on cloud_change_requests (store_id, branch_id, request_id)
   where request_id is not null and request_id <> '';
 
+
+
+-- Server-authoritative Cloud cursor per store/branch.
+-- Device-local sequence values are not safe as a Cloud pull cursor because
+-- they can overlap or move backwards after restore/snapshot workflows.
+create table if not exists cloud_sync_sequences (
+  store_id text not null,
+  branch_id text not null default 'main',
+  last_sequence bigint not null default 0,
+  updated_at timestamptz not null default now(),
+  primary key (store_id, branch_id)
+);
 
 -- Cloud maintenance support: keeps cleanup scoped per store/branch and fast.
 create index if not exists idx_sync_events_store_branch_sequence
