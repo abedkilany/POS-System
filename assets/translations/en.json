@@ -1553,5 +1553,7 @@
   "snapshot_progress_keep_open": "Keep this screen open until all sections are completed.",
   "snapshot_section_waiting": "Waiting",
   "snapshot_section_in_progress": "In progress",
-  "snapshot_section_completed": "Completed"
+  "snapshot_section_completed": "Completed",
+  "snapshot_progress_lan_rebuild_title": "LAN rebuild from Host snapshot",
+  "snapshot_progress_cloud_rebuild_title": "Cloud rebuild from Host snapshot"
 }

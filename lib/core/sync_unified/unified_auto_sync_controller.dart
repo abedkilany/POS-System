@@ -8,6 +8,8 @@ import 'cloud_sync_transport_adapter.dart';
 import 'lan_sync_transport_adapter.dart';
 import 'unified_sync_engine.dart';
 
+typedef AutoSnapshotProgressPresenter = void Function(String transport, double value, String label);
+
 class UnifiedSyncFactory {
   const UnifiedSyncFactory._();
 
@@ -41,9 +43,10 @@ class UnifiedSyncFactory {
 }
 
 class UnifiedAutoLanSyncController {
-  UnifiedAutoLanSyncController(this.store);
+  UnifiedAutoLanSyncController(this.store, {this.onSnapshotProgress});
 
   final AppStore store;
+  final AutoSnapshotProgressPresenter? onSnapshotProgress;
   Timer? _periodicTimer;
   Timer? _debounceTimer;
   bool _running = false;
@@ -159,6 +162,29 @@ class UnifiedAutoLanSyncController {
     }
   }
 
+  void Function(double value, String label)? _snapshotOnlyProgress(String transport) {
+    final presenter = onSnapshotProgress;
+    if (presenter == null) return null;
+    var active = false;
+    return (value, label) {
+      final normalized = label.toLowerCase();
+      if (!active && _looksLikeSnapshotLifecycleMessage(normalized)) {
+        active = true;
+      }
+      if (active) presenter(transport, value, label);
+    };
+  }
+
+  bool _looksLikeSnapshotLifecycleMessage(String normalized) {
+    return normalized.contains('snapshot') ||
+        normalized.contains('rebuild') ||
+        normalized.contains('restore') ||
+        normalized.contains('لقطة') ||
+        normalized.contains('إعادة') ||
+        normalized.contains('اعادة') ||
+        normalized.contains('استرجاع');
+  }
+
   Future<void> _runClientSync() async {
     if (_running || _disposed) return;
     final settings = LanSyncSettings.load();
@@ -167,7 +193,9 @@ class UnifiedAutoLanSyncController {
     _running = true;
     try {
       await store.retryFailedSyncQueue(target: 'host');
-      final result = await UnifiedSyncFactory.lanEngine(store, settings: settings).syncNow();
+      final result = await UnifiedSyncFactory.lanEngine(store, settings: settings).syncNow(
+        onProgress: _snapshotOnlyProgress('LAN'),
+      );
       if (result.ok) {
         _lastPendingCount = store.pendingSyncCount;
       }
@@ -178,9 +206,10 @@ class UnifiedAutoLanSyncController {
 }
 
 class UnifiedAutoCloudSyncController {
-  UnifiedAutoCloudSyncController(this.store);
+  UnifiedAutoCloudSyncController(this.store, {this.onSnapshotProgress});
 
   final AppStore store;
+  final AutoSnapshotProgressPresenter? onSnapshotProgress;
 
   bool _cloudAllowedForCurrentRole() {
     final identity = store.appIdentity;
@@ -237,6 +266,29 @@ class UnifiedAutoCloudSyncController {
     _debounceTimer = Timer(const Duration(seconds: 3), () => _tick());
   }
 
+  void Function(double value, String label)? _snapshotOnlyProgress(String transport) {
+    final presenter = onSnapshotProgress;
+    if (presenter == null) return null;
+    var active = false;
+    return (value, label) {
+      final normalized = label.toLowerCase();
+      if (!active && _looksLikeSnapshotLifecycleMessage(normalized)) {
+        active = true;
+      }
+      if (active) presenter(transport, value, label);
+    };
+  }
+
+  bool _looksLikeSnapshotLifecycleMessage(String normalized) {
+    return normalized.contains('snapshot') ||
+        normalized.contains('rebuild') ||
+        normalized.contains('restore') ||
+        normalized.contains('لقطة') ||
+        normalized.contains('إعادة') ||
+        normalized.contains('اعادة') ||
+        normalized.contains('استرجاع');
+  }
+
   Future<void> _tick() async {
     if (_running || _disposed) return;
     _running = true;
@@ -268,7 +320,9 @@ class UnifiedAutoCloudSyncController {
         await store.retryFailedSyncQueue(target: 'cloud_host');
         final engine = UnifiedSyncFactory.cloudEngine(store, settings: settings);
         if (staleClient && !hasOutgoingWork) {
-          final repair = await engine.rebuildFromHostSnapshot();
+          final repair = await engine.rebuildFromHostSnapshot(
+            onProgress: _snapshotOnlyProgress('Cloud'),
+          );
           if (!repair.ok) {
             await CloudSyncSettings.clearSavedPullCursor();
             settings = settings.copyWith(clearLastPullCursor: true);
@@ -276,7 +330,9 @@ class UnifiedAutoCloudSyncController {
             settings = CloudSyncSettings.load();
           }
         }
-        await UnifiedSyncFactory.cloudEngine(store, settings: settings).syncNow();
+        await UnifiedSyncFactory.cloudEngine(store, settings: settings).syncNow(
+          onProgress: _snapshotOnlyProgress('Cloud'),
+        );
         _lastCloudQueueCount = store.pendingSyncQueueForTarget('cloud', readyOnly: false).length;
         _lastRelayQueueCount = store.pendingSyncQueueForTarget('cloud_host', readyOnly: false).length;
       }

@@ -1553,5 +1553,7 @@
   "snapshot_progress_keep_open": "أبقِ هذه الشاشة مفتوحة حتى تكتمل كل الأقسام.",
   "snapshot_section_waiting": "بانتظار",
   "snapshot_section_in_progress": "قيد التنفيذ",
-  "snapshot_section_completed": "مكتمل"
+  "snapshot_section_completed": "مكتمل",
+  "snapshot_progress_lan_rebuild_title": "إعادة بناء LAN من لقطة المضيف",
+  "snapshot_progress_cloud_rebuild_title": "إعادة بناء Cloud من لقطة المضيف"
 }

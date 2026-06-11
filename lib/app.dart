@@ -9,6 +9,7 @@ import 'core/theme/app_theme.dart';
 import 'core/utils/responsive.dart';
 import 'core/sync_unified/sync_unified.dart';
 import 'core/sync_unified/sync_device_state.dart';
+import 'core/snapshot/unified_snapshot_progress.dart';
 import 'core/services/cloud_sync_service.dart';
 import 'core/services/lan_sync_service.dart';
 import 'data/app_store.dart';
@@ -32,6 +33,18 @@ import 'features/settings/settings_page.dart';
 import 'features/dev_tools/stress_lab_page.dart';
 import 'features/suppliers/suppliers_page.dart';
 
+class _AutoSnapshotProgressState {
+  const _AutoSnapshotProgressState({
+    this.transport = '',
+    this.value,
+    this.label = '',
+  });
+
+  final String transport;
+  final double? value;
+  final String label;
+}
+
 class StoreManagerApp extends StatefulWidget {
   const StoreManagerApp({super.key});
 
@@ -43,9 +56,19 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
   Locale _locale = const Locale('en');
   ThemeMode _themeMode = ThemeMode.system;
   final AppStore _store = AppStore();
-  late final UnifiedAutoLanSyncController _autoSyncController = UnifiedAutoLanSyncController(_store);
-  late final UnifiedAutoCloudSyncController _autoCloudSyncController = UnifiedAutoCloudSyncController(_store);
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+  final ValueNotifier<_AutoSnapshotProgressState> _autoSnapshotProgress =
+      ValueNotifier<_AutoSnapshotProgressState>(const _AutoSnapshotProgressState());
+  late final UnifiedAutoLanSyncController _autoSyncController = UnifiedAutoLanSyncController(
+    _store,
+    onSnapshotProgress: _handleAutoSnapshotProgress,
+  );
+  late final UnifiedAutoCloudSyncController _autoCloudSyncController = UnifiedAutoCloudSyncController(
+    _store,
+    onSnapshotProgress: _handleAutoSnapshotProgress,
+  );
   bool _syncStarted = false;
+  bool _autoSnapshotProgressDialogOpen = false;
 
   @override
   void initState() {
@@ -84,10 +107,76 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
     _autoCloudSyncController.stop();
   }
 
+
+  void _handleAutoSnapshotProgress(String transport, double value, String label) {
+    if (!mounted || _store.activeUser == null) return;
+    final safeValue = value.clamp(0.0, 1.0).toDouble();
+    _autoSnapshotProgress.value = _AutoSnapshotProgressState(
+      transport: transport,
+      value: safeValue,
+      label: label,
+    );
+    _showAutoSnapshotProgressDialog();
+    if (safeValue >= 1.0) {
+      Future<void>.delayed(const Duration(milliseconds: 900), () {
+        if (!_autoSnapshotProgressDialogOpen) return;
+        final current = _autoSnapshotProgress.value.value ?? 0;
+        if (current >= 1.0) {
+          _dismissAutoSnapshotProgressDialog();
+        }
+      });
+    }
+  }
+
+  void _showAutoSnapshotProgressDialog() {
+    if (_autoSnapshotProgressDialogOpen) return;
+    final navigator = _navigatorKey.currentState;
+    final dialogContext = _navigatorKey.currentContext;
+    if (navigator == null || dialogContext == null) return;
+    _autoSnapshotProgressDialogOpen = true;
+    unawaited(showDialog<void>(
+      context: dialogContext,
+      barrierDismissible: false,
+      builder: (context) {
+        return PopScope(
+          canPop: false,
+          child: AlertDialog(
+            contentPadding: const EdgeInsets.all(20),
+            content: SizedBox(
+              width: 560,
+              child: ValueListenableBuilder<_AutoSnapshotProgressState>(
+                valueListenable: _autoSnapshotProgress,
+                builder: (context, state, _) => UnifiedSnapshotProgressView(
+                  value: state.value,
+                  label: state.label.isEmpty
+                      ? 'Host restored data. Rebuilding this device from the latest snapshot...'
+                      : state.label,
+                  titleKey: state.transport.toLowerCase() == 'lan'
+                      ? 'snapshot_progress_lan_rebuild_title'
+                      : 'snapshot_progress_cloud_rebuild_title',
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    ).whenComplete(() {
+      _autoSnapshotProgressDialogOpen = false;
+      _autoSnapshotProgress.value = const _AutoSnapshotProgressState();
+    }));
+  }
+
+  void _dismissAutoSnapshotProgressDialog() {
+    final navigator = _navigatorKey.currentState;
+    if (navigator == null || !navigator.canPop()) return;
+    navigator.pop();
+  }
+
   @override
   void dispose() {
     unawaited(_autoSyncController.stop());
     _autoCloudSyncController.stop();
+    _autoSnapshotProgress.dispose();
     _store.dispose();
     super.dispose();
   }
@@ -113,6 +202,7 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
           WidgetsBinding.instance.addPostFrameCallback((_) => _stopSyncForLogout());
         }
         return MaterialApp(
+          navigatorKey: _navigatorKey,
           debugShowCheckedModeBanner: false,
           title: 'Ventio',
           theme: AppTheme.lightTheme,
