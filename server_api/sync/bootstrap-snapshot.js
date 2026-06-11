@@ -196,6 +196,8 @@ export default async function handler(req, res) {
           totalChunks: Number(first.total_chunks || chunk.totalChunks || 0),
           syncGeneratedAt: new Date(first.sync_generated_at).toISOString(),
           syncGeneratedSequence: Number(first.sync_generated_sequence || 0),
+          hostSnapshotGeneration: String(chunk.hostSnapshotGeneration || chunk.snapshotGeneration || chunk.restoreGeneration || ''),
+          snapshotGeneration: String(chunk.hostSnapshotGeneration || chunk.snapshotGeneration || chunk.restoreGeneration || ''),
         });
       }
 

@@ -26,6 +26,8 @@ class UnifiedSnapshotManifestResponse {
     this.snapshotKind,
     this.syncGeneratedAt,
     this.syncGeneratedSequence,
+    this.hostSnapshotGeneration,
+    this.snapshotGeneration,
   });
 
   final Map<String, dynamic> manifest;
@@ -35,6 +37,8 @@ class UnifiedSnapshotManifestResponse {
   final String? snapshotKind;
   final String? syncGeneratedAt;
   final int? syncGeneratedSequence;
+  final String? hostSnapshotGeneration;
+  final String? snapshotGeneration;
 }
 
 /// Transport adapter implemented by LAN and Cloud only for IO.
@@ -109,6 +113,8 @@ class UnifiedSnapshotTransferService {
       'totalChunks': totalChunks,
       'syncGeneratedAt': manifest.syncGeneratedAt,
       'syncGeneratedSequence': manifest.syncGeneratedSequence,
+      'hostSnapshotGeneration': manifest.hostSnapshotGeneration ?? manifest.snapshotGeneration ?? '',
+      'snapshotGeneration': manifest.snapshotGeneration ?? manifest.hostSnapshotGeneration ?? '',
     };
   }
 }

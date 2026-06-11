@@ -436,6 +436,64 @@ class CloudSyncService {
   final http.Client _client;
   late final UnifiedSyncCoreService _syncCore = UnifiedSyncCoreService(store);
 
+  String _snapshotGenerationKey(String transport) =>
+      'applied_host_snapshot_generation_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}';
+
+  String _remoteHostSnapshotGeneration(Map<String, dynamic> decoded) {
+    return (decoded['hostSnapshotGeneration'] ??
+            decoded['snapshotGeneration'] ??
+            decoded['restoreGeneration'] ??
+            '')
+        .toString()
+        .trim();
+  }
+
+  bool _needsHostSnapshotGenerationRebuild(
+      String transport, Map<String, dynamic> decoded) {
+    if (!store.appIdentity.isClient) return false;
+    final remote = _remoteHostSnapshotGeneration(decoded);
+    if (remote.isEmpty) return false;
+    final applied =
+        LocalDatabaseService.getString(_snapshotGenerationKey(transport)) ?? '';
+    return applied.trim() != remote;
+  }
+
+  Future<void> _markHostSnapshotGenerationApplied(
+      String transport, dynamic source) async {
+    String generation = '';
+    if (source is Map<String, dynamic>) {
+      generation = _remoteHostSnapshotGeneration(source);
+    }
+    if (generation.isEmpty) return;
+    await LocalDatabaseService.setString(
+        _snapshotGenerationKey(transport), generation);
+  }
+
+  Future<CloudSyncResult?> _rebuildIfHostSnapshotGenerationChanged(
+    CloudSyncSettings settings,
+    Map<String, dynamic> decodedPull, {
+    CloudSyncProgressCallback? onProgress,
+  }) async {
+    if (!_needsHostSnapshotGenerationRebuild('cloud', decodedPull)) return null;
+    final generation = _remoteHostSnapshotGeneration(decodedPull);
+    onProgress?.call(0.50,
+        'تم اكتشاف نسخة مسترجعة جديدة على المضيف. جارٍ إعادة بناء بيانات الجهاز...');
+    await CloudSyncSettings.clearSavedPullCursor();
+    await SyncDeviceStateStore.resetClientProgress(
+        store.appIdentity, transport: 'cloud');
+    await CloudProvisioningStatus.markPending(
+        message: 'جارٍ تنزيل نسخة المضيف الجديدة بعد الاسترجاع.');
+    final result = await rebuildFromCloudHostSnapshot(
+      settings.copyWith(clearLastPullCursor: true),
+      onProgress: onProgress,
+    );
+    if (result.ok && generation.isNotEmpty) {
+      await LocalDatabaseService.setString(
+          _snapshotGenerationKey('cloud'), generation);
+    }
+    return result;
+  }
+
   bool _cloudAllowedForIdentity(AppIdentity identity) {
     if (identity.isHost) return identity.isCloudEnabled;
     if (!identity.isClient) return false;
@@ -775,6 +833,7 @@ class CloudSyncService {
             );
             onProgress?.call(0.78, 'Importing Cloud snapshot chunks locally...');
             await store.importSyncSnapshotJson(jsonEncode(envelope));
+            await _markHostSnapshotGenerationApplied('cloud', envelope);
             onProgress?.call(0.88, 'Verifying local store data...');
             final verified = await store.verifyLocalBusinessDataIntegrity();
             if (!verified.ok || store.needsInitialAdminSetup) {
@@ -1126,6 +1185,7 @@ class CloudSyncService {
         );
         onProgress?.call(0.84, 'جارٍ تطبيق دفعات اللقطة السحابية محلياً...');
         await store.importSyncSnapshotJson(jsonEncode(envelope));
+        await _markHostSnapshotGenerationApplied('cloud', envelope);
         onProgress?.call(0.90, 'جارٍ التحقق من البيانات المحلية بعد إعادة البناء...');
         final repaired = await store.verifyLocalBusinessDataIntegrity();
         onProgress?.call(0.96, 'جارٍ تنظيف السجلات المحلية...');
@@ -2327,6 +2387,12 @@ class CloudSyncService {
         }
 
         final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
+        final generationRebuild = await _rebuildIfHostSnapshotGenerationChanged(
+          settings,
+          decodedPull,
+          onProgress: onProgress,
+        );
+        if (generationRebuild != null) return generationRebuild;
         if ((decodedPull['source'] ?? '').toString() == 'entity_snapshots') {
           final pageAllSectionsComplete =
               decodedPull['allSnapshotSectionsComplete'] == true;
@@ -2568,6 +2634,12 @@ class CloudSyncService {
         }
 
         final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
+        final generationRebuild = await _rebuildIfHostSnapshotGenerationChanged(
+          settings,
+          decodedPull,
+          onProgress: onProgress,
+        );
+        if (generationRebuild != null) return generationRebuild;
         if ((decodedPull['source'] ?? '').toString() == 'entity_snapshots') {
           final pageAllSectionsComplete =
               decodedPull['allSnapshotSectionsComplete'] == true;
@@ -2730,6 +2802,8 @@ class _CloudSnapshotPullTransport implements UnifiedSnapshotChunkPullTransport {
       snapshotKind: decoded['snapshotKind']?.toString(),
       syncGeneratedAt: decoded['syncGeneratedAt']?.toString(),
       syncGeneratedSequence: (decoded['syncGeneratedSequence'] as num?)?.toInt(),
+      hostSnapshotGeneration: decoded['hostSnapshotGeneration']?.toString(),
+      snapshotGeneration: decoded['snapshotGeneration']?.toString(),
     );
   }
 

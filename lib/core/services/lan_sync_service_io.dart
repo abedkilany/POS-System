@@ -410,6 +410,67 @@ class LanSyncService {
   static HttpServer? _sharedServer;
   static int? _sharedPort;
 
+  String _snapshotGenerationKey(String transport) =>
+      'applied_host_snapshot_generation_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}';
+
+  String _remoteHostSnapshotGeneration(Map<String, dynamic> decoded) {
+    return (decoded['hostSnapshotGeneration'] ??
+            decoded['snapshotGeneration'] ??
+            decoded['restoreGeneration'] ??
+            '')
+        .toString()
+        .trim();
+  }
+
+  bool _needsHostSnapshotGenerationRebuild(
+      String transport, Map<String, dynamic> decoded) {
+    if (!store.appIdentity.isClient) return false;
+    final remote = _remoteHostSnapshotGeneration(decoded);
+    if (remote.isEmpty) return false;
+    final applied =
+        LocalDatabaseService.getString(_snapshotGenerationKey(transport)) ?? '';
+    return applied.trim() != remote;
+  }
+
+  Future<void> _markHostSnapshotGenerationApplied(
+      String transport, dynamic source) async {
+    String generation = '';
+    if (source is Map<String, dynamic>) {
+      generation = _remoteHostSnapshotGeneration(source);
+    }
+    if (generation.isEmpty) return;
+    await LocalDatabaseService.setString(
+        _snapshotGenerationKey(transport), generation);
+  }
+
+  Future<LanSyncResult?> _rebuildIfHostSnapshotGenerationChanged(
+    String host,
+    int port,
+    String token,
+    Map<String, dynamic> decodedPull, {
+    LanSyncProgressCallback? onProgress,
+  }) async {
+    if (!_needsHostSnapshotGenerationRebuild('lan', decodedPull)) return null;
+    final generation = _remoteHostSnapshotGeneration(decodedPull);
+    onProgress?.call(0.72,
+        'Host restore detected. Rebuilding from LAN Host snapshot...');
+    final settings = LanSyncSettings.load();
+    await settings.copyWith(clearLastPullCursor: true).save();
+    await SyncDeviceStateStore.resetClientProgress(
+        store.appIdentity, transport: 'lan');
+    final result = await repairFromHostSnapshot(
+      host,
+      port: port,
+      token: token,
+      onProgress: onProgress,
+    );
+    if (result.ok && generation.isNotEmpty) {
+      await LocalDatabaseService.setString(
+          _snapshotGenerationKey('lan'), generation);
+    }
+    return result;
+  }
+
   bool get isHosting => _sharedServer != null;
   int? get port => _sharedPort;
 
@@ -520,6 +581,8 @@ class LanSyncService {
       'totalChunks': envelope['totalChunks'],
       'syncGeneratedAt': envelope['syncGeneratedAt'],
       'syncGeneratedSequence': envelope['syncGeneratedSequence'],
+      'hostSnapshotGeneration': envelope['hostSnapshotGeneration'],
+      'snapshotGeneration': envelope['snapshotGeneration'],
     };
   }
 
@@ -841,6 +904,7 @@ class LanSyncService {
       final snapshot = jsonEncode(snapshotEnvelope);
       onProgress?.call(0.74, 'Importing LAN snapshot chunks locally...');
       await store.importSyncSnapshotJson(snapshot);
+      await _markHostSnapshotGenerationApplied('lan', snapshotEnvelope);
       final hostCursor = store.syncSnapshotGeneratedAtFromJson(snapshot);
       final settings = LanSyncSettings.load();
       await settings.copyWith(
@@ -914,6 +978,7 @@ class LanSyncService {
       final snapshot = jsonEncode(snapshotEnvelope);
       onProgress?.call(0.72, 'Applying LAN snapshot chunks locally...');
       await store.importSyncSnapshotJson(snapshot);
+      await _markHostSnapshotGenerationApplied('lan', snapshotEnvelope);
       final hostCursor = store.syncSnapshotGeneratedAtFromJson(snapshot);
       final settings = LanSyncSettings.load();
       onProgress?.call(0.94, 'Saving LAN sync cursor...');
@@ -938,6 +1003,7 @@ class LanSyncService {
       );
       final snapshot = jsonEncode(snapshotEnvelope);
       await store.importSyncSnapshotJson(snapshot);
+      await _markHostSnapshotGenerationApplied('lan', snapshotEnvelope);
       final hostCursor = store.syncSnapshotGeneratedAtFromJson(snapshot);
       final settings = LanSyncSettings.load();
       await settings.copyWith(lastPullCursor: hostCursor, lastConnectionAt: DateTime.now(), lastSyncAt: DateTime.now()).save();
@@ -965,6 +1031,7 @@ class LanSyncService {
       final snapshot = jsonEncode(snapshotEnvelope);
       onProgress?.call(0.72, 'Applying LAN snapshot chunks locally...');
       await store.importSyncSnapshotJson(snapshot);
+      await _markHostSnapshotGenerationApplied('lan', snapshotEnvelope);
       onProgress?.call(0.86, 'Marking rebuilt data as synced...');
       await store.markAllSyncChangesSynced();
       final hostCursor = store.syncSnapshotGeneratedAtFromJson(snapshot);
@@ -1153,6 +1220,14 @@ class LanSyncService {
         return LanSyncResult(ok: false, message: 'Pull changes failed: ${pullResponse.statusCode} $pullBody');
       }
       final decodedPull = jsonDecode(pullBody) as Map<String, dynamic>;
+      final generationRebuild = await _rebuildIfHostSnapshotGenerationChanged(
+        host,
+        port,
+        token,
+        decodedPull,
+        onProgress: onProgress,
+      );
+      if (generationRebuild != null) return generationRebuild;
       if (decodedPull['needsSnapshot'] == true) {
         final repair = await repairFromHostSnapshot(host, port: port, token: token, onProgress: onProgress);
         return repair.ok
@@ -1259,6 +1334,14 @@ class LanSyncService {
         return LanSyncResult(ok: false, message: repair == null ? message : '$message. ${repair.message}');
       }
       final decodedPull = jsonDecode(pullBody) as Map<String, dynamic>;
+      final generationRebuild = await _rebuildIfHostSnapshotGenerationChanged(
+        host,
+        port,
+        token,
+        decodedPull,
+        onProgress: onProgress,
+      );
+      if (generationRebuild != null) return generationRebuild;
       if (decodedPull['needsSnapshot'] == true) {
         final repair = await repairFromHostSnapshot(host, port: port, token: token, onProgress: onProgress);
         return repair.ok
@@ -1343,6 +1426,8 @@ class _LanSnapshotPullTransport implements UnifiedSnapshotChunkPullTransport {
         snapshotKind: decoded['snapshotKind']?.toString(),
         syncGeneratedAt: decoded['syncGeneratedAt']?.toString(),
         syncGeneratedSequence: (decoded['syncGeneratedSequence'] as num?)?.toInt(),
+        hostSnapshotGeneration: decoded['hostSnapshotGeneration']?.toString(),
+        snapshotGeneration: decoded['snapshotGeneration']?.toString(),
       );
     } finally {
       client.close(force: true);

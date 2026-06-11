@@ -7425,6 +7425,27 @@ class AppStore extends ChangeNotifier {
         .convert(_backupPayload(includeDeviceAndSyncState: false));
   }
 
+  static const String _hostSnapshotGenerationKey = 'host_snapshot_generation_v1';
+
+  String currentHostSnapshotGeneration() {
+    if (!appIdentity.isHost) return '';
+    final stored = LocalDatabaseService.getString(_hostSnapshotGenerationKey);
+    if (stored != null && stored.trim().isNotEmpty) return stored.trim();
+    final markers = _syncChanges.where((item) =>
+        item.entityType == 'system' &&
+        item.operation == 'cloud_restore_snapshot_ready');
+    if (markers.isEmpty) return '';
+    final latest = markers.reduce((a, b) =>
+        a.createdAt.isAfter(b.createdAt) ? a : b);
+    final payload = latest.payload;
+    final generation = (payload['snapshotGeneration'] ??
+            payload['restoreGeneration'] ??
+            payload['restoredAt'] ??
+            latest.createdAt.toIso8601String())
+        .toString();
+    return generation.trim();
+  }
+
   Map<String, dynamic> exportUnifiedSnapshotEnvelope({
     String kind = 'full_store',
     int maxItemsPerChunk = 250,
@@ -7459,6 +7480,8 @@ class AppStore extends ChangeNotifier {
       'totalChunks': chunks.length,
       'syncGeneratedAt': generatedAt,
       'syncGeneratedSequence': generatedSequence,
+      'snapshotGeneration': currentHostSnapshotGeneration(),
+      'hostSnapshotGeneration': currentHostSnapshotGeneration(),
     };
   }
 
@@ -7541,6 +7564,8 @@ class AppStore extends ChangeNotifier {
       'earliestSequence': earliestSequence,
       'latestSequence': latestSequence,
       'requestedSinceSequence': sequenceFloor,
+      'hostSnapshotGeneration': currentHostSnapshotGeneration(),
+      'snapshotGeneration': currentHostSnapshotGeneration(),
       'needsSnapshot': needsSnapshot,
       'changes': changes.map((item) => item.toJson()).toList(),
     });
@@ -7927,12 +7952,17 @@ class AppStore extends ChangeNotifier {
     // paired Clients know they must discard their old cursor and rebuild from
     // the fresh Host snapshot published by the sync layer.
     if (appIdentity.isHost) {
+      final restoreGeneration = DateTime.now().toUtc().microsecondsSinceEpoch.toString();
+      await LocalDatabaseService.setString(
+          _hostSnapshotGenerationKey, restoreGeneration);
       _recordSyncChange(
         entityType: 'system',
         entityId: 'store',
         operation: 'cloud_restore_snapshot_ready',
         payload: {
           'restoredAt': DateTime.now().toIso8601String(),
+          'snapshotGeneration': restoreGeneration,
+          'restoreGeneration': restoreGeneration,
           'reason': 'manual_backup_import',
           'storeId': appIdentity.storeId,
           'branchId': appIdentity.branchId,

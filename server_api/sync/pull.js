@@ -75,6 +75,20 @@ export default async function handler(req, res) {
     const bootstrapMode = String(req.query.bootstrap || req.query.bootstrap_mode || '').trim().toLowerCase();
     const loginBootstrapOnly = bootstrapMode === 'login';
 
+    const restoreGenerationRows = await sql`
+      select coalesce(payload->>'snapshotGeneration', payload->>'restoreGeneration', payload->>'restoredAt', '') as generation,
+             coalesce(sequence, 0) as sequence
+      from sync_events
+      where store_id = ${storeId}
+        and branch_id = ${branchId}
+        and entity_type = 'system'
+        and operation = 'cloud_restore_snapshot_ready'
+      order by sequence desc, received_at desc
+      limit 1
+    `;
+    const hostSnapshotGeneration = String(restoreGenerationRows[0]?.generation || '');
+    const hostSnapshotGenerationSequence = Number(restoreGenerationRows[0]?.sequence || 0);
+
     // First-time/new-device pull: return the latest materialized state in
     // stable pages. The cursor also carries a high-water mark so events created
     // during a multi-page snapshot are not skipped after the snapshot finishes.
@@ -192,6 +206,9 @@ export default async function handler(req, res) {
         generatedAt: hasMore ? null : watermark,
         generatedSequence: hasMore ? null : watermarkSequence,
         source: 'entity_snapshots',
+        hostSnapshotGeneration,
+        snapshotGeneration: hostSnapshotGeneration,
+        hostSnapshotGenerationSequence,
         allSnapshotSectionsComplete,
         snapshotSections: sectionStatus.sections || {},
       });
@@ -207,7 +224,8 @@ export default async function handler(req, res) {
       `;
       const earliestSequence = Number(sequenceWindowRows[0]?.earliest_sequence || 0);
       const latestSequence = Number(sequenceWindowRows[0]?.latest_sequence || 0);
-      if (earliestSequence > 0 && sinceSequence < earliestSequence - 1) {
+      if ((earliestSequence > 0 && sinceSequence < earliestSequence - 1) ||
+          (hostSnapshotGeneration && latestSequence > 0 && sinceSequence > latestSequence)) {
         await markDevicePullSeen(req, { storeId, branchId });
         return res.status(200).json({
           ok: true,
@@ -217,6 +235,9 @@ export default async function handler(req, res) {
           needsSnapshot: true,
           earliestSequence,
           latestSequence,
+          hostSnapshotGeneration,
+          snapshotGeneration: hostSnapshotGeneration,
+          hostSnapshotGenerationSequence,
           generatedAt: new Date().toISOString(),
           generatedSequence: latestSequence,
           source: 'sync_events_compacted',
@@ -281,6 +302,9 @@ export default async function handler(req, res) {
       nextCursor: hasMore && last ? encodeCursor({ mode: 'events', receivedAt: asIso(last.received_at), createdAt: asIso(last.created_at), id: last.id }) : null,
       generatedAt: hasMore ? null : (maxReceivedAt || new Date().toISOString()),
       generatedSequence: hasMore ? null : maxSequence,
+      hostSnapshotGeneration,
+      snapshotGeneration: hostSnapshotGeneration,
+      hostSnapshotGenerationSequence,
       source: 'sync_events',
     });
   } catch (error) {
