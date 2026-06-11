@@ -35,13 +35,17 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
   MobileScannerController? _controller;
 
   bool _handled = false;
+  bool _cameraStartFailed = false;
 
   @override
   void initState() {
     super.initState();
     if (!BarcodeScannerPage.isSupportedPlatform) return;
     _controller = MobileScannerController(
-      detectionSpeed: DetectionSpeed.noDuplicates,
+      autoStart: false,
+      cameraResolution: const Size(1280, 720),
+      detectionSpeed: DetectionSpeed.normal,
+      detectionTimeoutMs: 500,
       formats: widget.formats ??
           const [
             BarcodeFormat.aztec,
@@ -59,6 +63,18 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
             BarcodeFormat.upcE,
           ],
     );
+    WidgetsBinding.instance.addPostFrameCallback((_) => _startScanner());
+  }
+
+  Future<void> _startScanner() async {
+    final controller = _controller;
+    if (!mounted || controller == null) return;
+    setState(() => _cameraStartFailed = false);
+    try {
+      await controller.start();
+    } catch (_) {
+      if (mounted) setState(() => _cameraStartFailed = true);
+    }
   }
 
   @override
@@ -136,7 +152,22 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
       body: Stack(
         fit: StackFit.expand,
         children: [
-          MobileScanner(controller: controller, onDetect: _handleDetect),
+          MobileScanner(
+            controller: controller,
+            onDetect: _handleDetect,
+            errorBuilder: (context, error) => _ScannerErrorView(
+              title: tr.text('camera_scanner_error'),
+              message: tr.text('camera_scanner_error_desc'),
+              onRetry: _startScanner,
+            ),
+            placeholderBuilder: (_) => const ColoredBox(color: Colors.black),
+          ),
+          if (_cameraStartFailed)
+            _ScannerErrorView(
+              title: tr.text('camera_scanner_error'),
+              message: tr.text('camera_scanner_error_desc'),
+              onRetry: _startScanner,
+            ),
           IgnorePointer(
             child: Center(
               child: LayoutBuilder(
@@ -179,6 +210,72 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ScannerErrorView extends StatelessWidget {
+  const _ScannerErrorView({
+    required this.title,
+    required this.message,
+    required this.onRetry,
+  });
+
+  final String title;
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    return ColoredBox(
+      color: Colors.black,
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Card(
+            color: Colors.black.withValues(alpha: 0.72),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(18),
+              side: const BorderSide(color: Colors.white70, width: 2),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.error_outline,
+                      color: Colors.white, size: 36),
+                  const SizedBox(height: 12),
+                  Text(
+                    title,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(color: Colors.white),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    message,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodyMedium
+                        ?.copyWith(color: Colors.white70),
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton.icon(
+                    onPressed: onRetry,
+                    icon: const Icon(Icons.refresh),
+                    label: Text(tr.text('retry')),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

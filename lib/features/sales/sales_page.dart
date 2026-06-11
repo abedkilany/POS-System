@@ -69,9 +69,14 @@ class _SalesPageState extends State<SalesPage> {
   String _discountCurrency = 'USD';
   String _search = '';
   final List<_HeldSaleCart> _heldCarts = [];
-  final MobileScannerController _scannerController =
-      MobileScannerController(detectionSpeed: DetectionSpeed.noDuplicates);
+  final MobileScannerController _scannerController = MobileScannerController(
+    autoStart: false,
+    cameraResolution: const Size(1280, 720),
+    detectionSpeed: DetectionSpeed.normal,
+    detectionTimeoutMs: 500,
+  );
   bool _scannerActive = false;
+  bool _scannerStartFailed = false;
   bool _manualBarcodeInput = false;
   bool _quickGridEditMode = false;
   List<_QuickProductPage>? _quickPagesEditSnapshot;
@@ -1907,7 +1912,28 @@ class _SalesPageState extends State<SalesPage> {
       defaultTargetPlatform == TargetPlatform.iOS;
 
   Future<void> _scanBarcodeWithCamera() async {
-    setState(() => _scannerActive = !_scannerActive);
+    if (_scannerActive) {
+      await _scannerController.stop();
+      if (mounted) setState(() => _scannerActive = false);
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _scannerActive = true;
+      _scannerStartFailed = false;
+    });
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _startEmbeddedScanner());
+  }
+
+  Future<void> _startEmbeddedScanner() async {
+    if (!mounted || !_scannerActive) return;
+    setState(() => _scannerStartFailed = false);
+    try {
+      await _scannerController.start();
+    } catch (_) {
+      if (mounted) setState(() => _scannerStartFailed = true);
+    }
   }
 
   void _handleEmbeddedBarcode(BarcodeCapture capture) {
@@ -1975,7 +2001,14 @@ class _SalesPageState extends State<SalesPage> {
                   controller: _scannerController,
                   fit: BoxFit.cover,
                   onDetect: _handleEmbeddedBarcode,
+                  errorBuilder: (context, error) => _EmbeddedScannerError(
+                    onRetry: _startEmbeddedScanner,
+                  ),
+                  placeholderBuilder: (_) =>
+                      ColoredBox(color: scheme.surfaceContainerHighest),
                 ),
+                if (_scannerStartFailed)
+                  _EmbeddedScannerError(onRetry: _startEmbeddedScanner),
                 IgnorePointer(
                   child: Center(
                     child: LayoutBuilder(
@@ -3470,6 +3503,46 @@ class _SalesPageState extends State<SalesPage> {
           content:
               Text(AppLocalizations.of(context).text('pdf_action_failed'))));
     }
+  }
+}
+
+class _EmbeddedScannerError extends StatelessWidget {
+  const _EmbeddedScannerError({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    return ColoredBox(
+      color: Colors.black,
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline, color: Colors.white, size: 24),
+              const SizedBox(height: 8),
+              Text(
+                tr.text('camera_scanner_error'),
+                textAlign: TextAlign.center,
+                style: Theme.of(context)
+                    .textTheme
+                    .bodyMedium
+                    ?.copyWith(color: Colors.white),
+              ),
+              const SizedBox(height: 8),
+              FilledButton.tonalIcon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh),
+                label: Text(tr.text('retry')),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 

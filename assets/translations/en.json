@@ -142,6 +142,8 @@
   "cancellation_reversal": "Cancellation / reversal",
   "cancelled": "Cancelled",
   "cancelled_at": "Cancelled at",
+  "camera_scanner_error": "Camera scanner could not start.",
+  "camera_scanner_error_desc": "Close other apps using the camera, allow camera permission, then try again.",
   "camera_scanner_not_supported": "Camera scanning is not supported on this device.",
   "camera_scanner_not_supported_desc": "Use a USB barcode scanner or enter the code manually. Camera scanning is available on Android, iOS, macOS, and Web.",
   "card": "Card",
