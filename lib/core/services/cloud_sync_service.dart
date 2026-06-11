@@ -452,6 +452,12 @@ class CloudSyncService {
   String _snapshotGenerationFailedAtKey(String transport) =>
       'failed_host_snapshot_generation_at_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}';
 
+  String _snapshotRequestKey(String transport, String generation) =>
+      'requested_host_snapshot_generation_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}_${generation.trim()}';
+
+  String _snapshotRequestAtKey(String transport, String generation) =>
+      'requested_host_snapshot_generation_at_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}_${generation.trim()}';
+
   String _restoreCommandExecutedKey(String transport) =>
       'executed_host_restore_command_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}';
 
@@ -676,6 +682,9 @@ class CloudSyncService {
       result = await rebuildFromCloudHostSnapshot(
         settings.copyWith(clearLastPullCursor: true),
         onProgress: onProgress,
+        requestFreshSnapshot: false,
+        expectedSnapshotGeneration: generation,
+        expectedRestoreCommandId: commandId,
       );
       await _finishHostSnapshotGenerationRebuild(
         'cloud',
@@ -1285,8 +1294,43 @@ class CloudSyncService {
     }
   }
 
+  Future<bool> _shouldRequestFreshSnapshotForGeneration(
+    String transport,
+    String generation, {
+    Duration cooldown = const Duration(minutes: 15),
+  }) async {
+    final cleanGeneration = generation.trim();
+    if (cleanGeneration.isEmpty) return true;
+    final applied =
+        LocalDatabaseService.getString(_snapshotGenerationKey(transport)) ?? '';
+    if (applied.trim() == cleanGeneration) return false;
+    final requested =
+        LocalDatabaseService.getString(_snapshotRequestKey(transport, cleanGeneration)) ?? '';
+    final requestedAtRaw = LocalDatabaseService.getString(
+            _snapshotRequestAtKey(transport, cleanGeneration)) ??
+        '';
+    final requestedAt = DateTime.tryParse(requestedAtRaw);
+    if (requested == cleanGeneration &&
+        requestedAt != null &&
+        DateTime.now().difference(requestedAt) < cooldown) {
+      return false;
+    }
+    return true;
+  }
+
+  Future<void> _markFreshSnapshotRequestedForGeneration(
+      String transport, String generation) async {
+    final cleanGeneration = generation.trim();
+    if (cleanGeneration.isEmpty) return;
+    await LocalDatabaseService.setString(
+        _snapshotRequestKey(transport, cleanGeneration), cleanGeneration);
+    await LocalDatabaseService.setString(
+        _snapshotRequestAtKey(transport, cleanGeneration),
+        DateTime.now().toIso8601String());
+  }
+
   Future<CloudSyncResult> requestFreshHostSnapshot(CloudSyncSettings settings,
-      {DateTime? requestedAt}) async {
+      {DateTime? requestedAt, String snapshotGeneration = ''}) async {
     final identity = store.appIdentity;
     if (identity.isHost) {
       return const CloudSyncResult(
@@ -1295,6 +1339,15 @@ class CloudSyncService {
     if (!settings.isConfigured) {
       return const CloudSyncResult(
           ok: false, message: 'رابط واجهة السحابة والرمز مطلوبان.');
+    }
+    final cleanGeneration = snapshotGeneration.trim();
+    if (cleanGeneration.isNotEmpty &&
+        !await _shouldRequestFreshSnapshotForGeneration(
+            'cloud', cleanGeneration)) {
+      return const CloudSyncResult(
+          ok: true,
+          message:
+              'تم طلب Snapshot لهذا الجيل سابقاً أو تم تطبيقه، لذلك لن يتم إرسال طلب مكرر.');
     }
     final now = requestedAt ?? DateTime.now().toUtc();
     final request = SyncChange(
@@ -1316,6 +1369,8 @@ class CloudSyncService {
         },
         'reason': 'cloud_rebuild_from_host',
         'requestedAt': now.toIso8601String(),
+        if (cleanGeneration.isNotEmpty) 'snapshotGeneration': cleanGeneration,
+        if (cleanGeneration.isNotEmpty) 'hostSnapshotGeneration': cleanGeneration,
         'storeId': identity.storeId,
         'branchId': identity.branchId,
       },
@@ -1342,6 +1397,7 @@ class CloudSyncService {
             message:
                 'فشل طلب لقطة حديثة من المضيف: ${response.statusCode} ${response.body}');
       }
+      await _markFreshSnapshotRequestedForGeneration('cloud', cleanGeneration);
       return const CloudSyncResult(
           ok: true,
           message:
@@ -1354,7 +1410,10 @@ class CloudSyncService {
 
   Future<CloudSyncResult> rebuildFromCloudHostSnapshot(
       CloudSyncSettings settings,
-      {CloudSyncProgressCallback? onProgress}) async {
+      {CloudSyncProgressCallback? onProgress,
+      bool requestFreshSnapshot = true,
+      String expectedSnapshotGeneration = '',
+      String expectedRestoreCommandId = ''}) async {
     final identity = store.appIdentity;
     if (identity.isHost) {
       return const CloudSyncResult(
@@ -1367,11 +1426,19 @@ class CloudSyncService {
           message: 'رابط واجهة السحابة ورمز الجهاز المقترن مطلوبان.');
     }
 
-    onProgress?.call(0.08, 'جارٍ طلب لقطة حديثة من المضيف...');
     final snapshotRequestedAt = DateTime.now().toUtc();
-    final request = await requestFreshHostSnapshot(settings,
-        requestedAt: snapshotRequestedAt);
-    if (!request.ok) return request;
+    if (requestFreshSnapshot) {
+      onProgress?.call(0.08, 'جارٍ طلب لقطة حديثة من المضيف...');
+      final request = await requestFreshHostSnapshot(
+        settings,
+        requestedAt: snapshotRequestedAt,
+        snapshotGeneration: expectedSnapshotGeneration,
+      );
+      if (!request.ok) return request;
+    } else {
+      onProgress?.call(0.08,
+          'تم العثور على Snapshot منشورة مسبقاً. لن يتم إرسال طلب جديد للمضيف...');
+    }
 
     onProgress?.call(0.18,
         'جارٍ التحقق من وجود لقطة حديثة من المضيف قبل تعديل البيانات المحلية...');
@@ -1389,18 +1456,33 @@ class CloudSyncService {
             onProgress?.call(scaled, label);
           },
         );
+        if ((envelope['hostSnapshotGeneration'] ?? '')
+                .toString()
+                .trim()
+                .isEmpty &&
+            expectedSnapshotGeneration.trim().isNotEmpty) {
+          envelope['hostSnapshotGeneration'] = expectedSnapshotGeneration.trim();
+          envelope['snapshotGeneration'] = expectedSnapshotGeneration.trim();
+        }
+        if ((envelope['hostRestoreCommandId'] ?? '')
+                .toString()
+                .trim()
+                .isEmpty &&
+            expectedRestoreCommandId.trim().isNotEmpty) {
+          envelope['hostRestoreCommandId'] = expectedRestoreCommandId.trim();
+          envelope['restoreCommandId'] = expectedRestoreCommandId.trim();
+        }
         onProgress?.call(0.84, 'جارٍ تطبيق دفعات اللقطة السحابية محلياً...');
         await store.importSyncSnapshotJson(jsonEncode(envelope));
         await _markHostSnapshotGenerationApplied('cloud', envelope,
-            markRestoreCommandExecuted: false);
+            markRestoreCommandExecuted: true);
         onProgress?.call(
             0.90, 'جارٍ التحقق من البيانات المحلية بعد إعادة البناء...');
         final repaired = await store.verifyLocalBusinessDataIntegrity();
         onProgress?.call(0.96, 'جارٍ تنظيف السجلات المحلية...');
         await store.cleanupSoftDeletedRecords();
-        if (repaired.ok) {
-          await _markRestoreCommandExecuted('cloud', envelope);
-        }
+        // The snapshot was imported successfully. Do not repeat the same rebuild
+        // just because the post-import integrity check reports warnings.
         await CloudProvisioningStatus.markComplete(
             message: 'تم تنزيل بيانات المتجر الأولية.');
         final cursor =
@@ -2498,6 +2580,20 @@ class CloudSyncService {
           (manifest.hostRestoreCommandId ?? manifest.restoreCommandId ?? '')
               .trim();
       if (_restoreCommandAlreadyExecuted('cloud', commandId)) return false;
+      final generation =
+          (manifest.hostSnapshotGeneration ?? manifest.snapshotGeneration ?? '')
+              .trim();
+      if (generation.isNotEmpty) {
+        if (!_needsHostSnapshotGenerationRebuild('cloud', <String, dynamic>{
+          'hostSnapshotGeneration': generation,
+          'snapshotGeneration': generation,
+          'hostRestoreCommandId': commandId,
+          'restoreCommandId': commandId,
+        })) {
+          return false;
+        }
+        return true;
+      }
       final remoteGeneratedAt =
           DateTime.tryParse(manifest.syncGeneratedAt ?? '');
       if (remoteGeneratedAt == null) return false;
@@ -2556,6 +2652,7 @@ class CloudSyncService {
         return rebuildFromCloudHostSnapshot(
           settings.copyWith(clearLastPullCursor: true),
           onProgress: onProgress,
+          requestFreshSnapshot: false,
         );
       }
       var pageCursor = '';
@@ -2662,6 +2759,8 @@ class CloudSyncService {
             return rebuildFromCloudHostSnapshot(
               settings.copyWith(clearLastPullCursor: true),
               onProgress: onProgress,
+              requestFreshSnapshot: false,
+              expectedRestoreCommandId: commandId,
             );
           }
         }
@@ -2813,6 +2912,7 @@ class CloudSyncService {
         return rebuildFromCloudHostSnapshot(
           settings.copyWith(clearLastPullCursor: true),
           onProgress: onProgress,
+          requestFreshSnapshot: false,
         );
       }
       var pageCursor = '';
@@ -2918,6 +3018,8 @@ class CloudSyncService {
             return rebuildFromCloudHostSnapshot(
               settings.copyWith(clearLastPullCursor: true),
               onProgress: onProgress,
+              requestFreshSnapshot: false,
+              expectedRestoreCommandId: commandId,
             );
           }
         }

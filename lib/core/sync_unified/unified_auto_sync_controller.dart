@@ -301,7 +301,7 @@ class UnifiedAutoCloudSyncController {
         final pendingProvisioning = store.appIdentity.isClient && CloudProvisioningStatus.isPending;
         if (pendingProvisioning) {
           final lastAttempt = CloudProvisioningStatus.lastAttemptAt;
-          final shouldRequest = lastAttempt == null || now.difference(lastAttempt) > const Duration(minutes: 1);
+          final shouldRequest = lastAttempt == null || now.difference(lastAttempt) > const Duration(minutes: 10);
           if (shouldRequest) {
             await CloudProvisioningStatus.markAttempted(now);
             final requestedAt = CloudProvisioningStatus.requestedAt ?? now;
