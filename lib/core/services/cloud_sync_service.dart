@@ -2318,15 +2318,18 @@ class CloudSyncService {
             item.entityType == 'system' &&
             item.operation == 'cloud_restore_snapshot_ready');
         if (restoreMarker && store.appIdentity.isClient) {
-          onProgress?.call(0.50, 'تم العثور على نسخة مضيف جديدة. جارٍ إعادة بناء بيانات الجهاز...');
+          onProgress?.call(0.50, 'تم العثور على استرجاع جديد على المضيف. جارٍ إعادة بناء بيانات الجهاز من Snapshot كاملة...');
           await CloudSyncSettings.clearSavedPullCursor();
           await SyncDeviceStateStore.resetClientProgress(store.appIdentity, transport: 'cloud');
           await CloudProvisioningStatus.markPending(
               message: 'جارٍ تنزيل نسخة المضيف الجديدة بعد الاسترجاع.');
-          return pullAuthoritativeChangesForUnifiedEngine(
+          // A Host Restore is a full replacement, not an incremental change.
+          // Do not depend on timestamp filters here: old backup rows can carry
+          // historical updatedAt values, and the marker time may be newer than
+          // some rows. Force the unified snapshot downloader/importer to rebuild
+          // the Client from the currently published Host snapshot.
+          return rebuildFromCloudHostSnapshot(
             settings.copyWith(clearLastPullCursor: true),
-            minSnapshotUpdatedAt: DateTime.tryParse(
-                changes.firstWhere((item) => item.entityType == 'system' && item.operation == 'cloud_restore_snapshot_ready').payload['restoredAt']?.toString() ?? ''),
             onProgress: onProgress,
           );
         }
@@ -2547,15 +2550,18 @@ class CloudSyncService {
             item.entityType == 'system' &&
             item.operation == 'cloud_restore_snapshot_ready');
         if (restoreMarker && store.appIdentity.isClient) {
-          onProgress?.call(0.50, 'تم العثور على نسخة مضيف جديدة. جارٍ إعادة بناء بيانات الجهاز...');
+          onProgress?.call(0.50, 'تم العثور على استرجاع جديد على المضيف. جارٍ إعادة بناء بيانات الجهاز من Snapshot كاملة...');
           await CloudSyncSettings.clearSavedPullCursor();
           await SyncDeviceStateStore.resetClientProgress(store.appIdentity, transport: 'cloud');
           await CloudProvisioningStatus.markPending(
               message: 'جارٍ تنزيل نسخة المضيف الجديدة بعد الاسترجاع.');
-          return pullAuthoritativeChangesForUnifiedEngine(
+          // A Host Restore is a full replacement, not an incremental change.
+          // Do not depend on timestamp filters here: old backup rows can carry
+          // historical updatedAt values, and the marker time may be newer than
+          // some rows. Force the unified snapshot downloader/importer to rebuild
+          // the Client from the currently published Host snapshot.
+          return rebuildFromCloudHostSnapshot(
             settings.copyWith(clearLastPullCursor: true),
-            minSnapshotUpdatedAt: DateTime.tryParse(
-                changes.firstWhere((item) => item.entityType == 'system' && item.operation == 'cloud_restore_snapshot_ready').payload['restoredAt']?.toString() ?? ''),
             onProgress: onProgress,
           );
         }

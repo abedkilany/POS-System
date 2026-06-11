@@ -7857,17 +7857,28 @@ class AppStore extends ChangeNotifier {
     _invalidateAccountLedgerCache();
     _syncChanges.clear();
     _storeProfile = profile;
-    // Business Backup may restore the permanent Store/Branch identity,
-    // but it must never replace this device identity, role, tokens, pairing data, cursors, or Recovery Key.
+    // Business Backup may contain an old Store/Branch identity. When this
+    // device is already a paired Host, keep the current sync identity so
+    // existing Clients remain attached to the same store after Restore. The
+    // restored file replaces business data only; it must not move the Host to a
+    // different cloud/LAN store namespace and make Clients miss the rebuild
+    // marker.
+    final currentIdentityBeforeImport = appIdentity;
+    final preservePairedHostIdentity = currentIdentityBeforeImport.isHost &&
+        (currentIdentityBeforeImport.isCloudEnabled || _isLanHostConfigured);
     final importedStoreId = decoded['storeId']?.toString().trim() ?? '';
     final importedBranchId = decoded['branchId']?.toString().trim() ?? '';
-    _appIdentity = appIdentity.copyWith(
-      storeId: importedStoreId.isNotEmpty
-          ? importedStoreId.toUpperCase()
-          : appIdentity.storeId,
-      branchId: importedBranchId.isNotEmpty
-          ? importedBranchId.toUpperCase()
-          : appIdentity.branchId,
+    _appIdentity = currentIdentityBeforeImport.copyWith(
+      storeId: preservePairedHostIdentity
+          ? currentIdentityBeforeImport.storeId
+          : (importedStoreId.isNotEmpty
+              ? importedStoreId.toUpperCase()
+              : currentIdentityBeforeImport.storeId),
+      branchId: preservePairedHostIdentity
+          ? currentIdentityBeforeImport.branchId
+          : (importedBranchId.isNotEmpty
+              ? importedBranchId.toUpperCase()
+              : currentIdentityBeforeImport.branchId),
       deviceId: _deviceId,
       platform: _detectPlatform(),
       updatedAt: DateTime.now(),
