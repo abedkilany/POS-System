@@ -7742,8 +7742,24 @@ class AppStore extends ChangeNotifier {
         ? importedPurchaseCounter
         : _loadPurchaseCounter();
     _normalizeCustomers();
-    // Manual Business Backup import is local business-data restore only.
-    // It does not create sync events; Host snapshots are managed by the sync engine.
+
+    // A Host backup import replaces the authoritative business dataset.
+    // Record a small restore marker (not the giant backup payload) so already
+    // paired Clients know they must discard their old cursor and rebuild from
+    // the fresh Host snapshot published by the sync layer.
+    if (appIdentity.isHost) {
+      _recordSyncChange(
+        entityType: 'system',
+        entityId: 'store',
+        operation: 'cloud_restore_snapshot_ready',
+        payload: {
+          'restoredAt': DateTime.now().toIso8601String(),
+          'reason': 'manual_backup_import',
+          'storeId': appIdentity.storeId,
+          'branchId': appIdentity.branchId,
+        },
+      );
+    }
 
     await _saveAll();
     notifyListeners();

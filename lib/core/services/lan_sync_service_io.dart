@@ -1056,6 +1056,15 @@ class LanSyncService {
       final changes = _syncCore.filterOutLocalEchoes(
         _syncCore.decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
       );
+      final restoreMarker = changes.any((item) =>
+          item.entityType == 'system' &&
+          item.operation == 'cloud_restore_snapshot_ready');
+      if (restoreMarker && store.appIdentity.isClient) {
+        onProgress?.call(0.72, 'Host restore detected. Rebuilding from LAN Host snapshot...');
+        await settings.copyWith(clearLastPullCursor: true).save();
+        await SyncDeviceStateStore.resetClientProgress(store.appIdentity, transport: 'lan');
+        return repairFromHostSnapshot(host, port: port, token: token, onProgress: onProgress);
+      }
       onProgress?.call(0.78, 'Applying ${changes.length} LAN change(s) locally...');
       await _syncCore.applyAuthoritativeChanges(changes);
       final generatedAt = DateTime.tryParse(decodedPull['generatedAt'] as String? ?? '') ?? DateTime.now();
@@ -1153,6 +1162,15 @@ class LanSyncService {
       final changes = _syncCore.filterOutLocalEchoes(
         _syncCore.decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
       );
+      final restoreMarker = changes.any((item) =>
+          item.entityType == 'system' &&
+          item.operation == 'cloud_restore_snapshot_ready');
+      if (restoreMarker && store.appIdentity.isClient) {
+        onProgress?.call(0.72, 'Host restore detected. Rebuilding from LAN Host snapshot...');
+        await settings.copyWith(clearLastPullCursor: true).save();
+        await SyncDeviceStateStore.resetClientProgress(store.appIdentity, transport: 'lan');
+        return repairFromHostSnapshot(host, port: port, token: token, onProgress: onProgress);
+      }
       onProgress?.call(0.78, 'Applying ${changes.length} LAN change(s) locally...');
       await _syncCore.applyAuthoritativeChanges(changes);
       final generatedAt = DateTime.tryParse(decodedPull['generatedAt'] as String? ?? '') ?? DateTime.now();

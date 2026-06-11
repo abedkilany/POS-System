@@ -936,9 +936,14 @@ class SettingsPage extends StatelessWidget {
       );
     }
 
+    final service = CloudSyncService(store);
+    // Backup import replaces the full Host dataset. Publish a fresh materialized
+    // Cloud snapshot before pushing the small restore marker, so Clients that
+    // receive the marker can immediately rebuild from the new Host data.
+    await service.publishBootstrapSnapshotToCloud(cloud, force: true);
     final result = await UnifiedSyncEngine(
       CloudSyncTransportAdapter(
-        service: CloudSyncService(store),
+        service: service,
         settings: cloud,
       ),
     ).syncNow();

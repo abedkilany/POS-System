@@ -202,6 +202,24 @@ class SyncDeviceStateStore {
 
   static DateTime? unifiedCursor(AppIdentity identity) => load(identity).lastAppliedHostCursor;
 
+  /// Clears local client progress so the next Cloud/LAN pull can rebuild from
+  /// a fresh Host snapshot instead of continuing after an old event sequence.
+  static Future<void> resetClientProgress(AppIdentity identity, {String transport = 'cloud'}) async {
+    final current = load(identity);
+    await save(
+      identity,
+      current.copyWith(
+        activeTransport: transport,
+        lastAppliedSequence: 0,
+        lastAckSequence: 0,
+        lastSyncTransport: transport,
+        clearLastAppliedHostCursor: true,
+        clearLastAckCursor: true,
+        updatedAt: DateTime.now(),
+      ),
+    );
+  }
+
   /// Returns the best transport-independent marker for a successful sync.
   ///
   /// Clients store their own progress in [SyncDeviceState]. Hosts may only

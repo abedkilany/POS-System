@@ -2273,6 +2273,22 @@ class CloudSyncService {
               .decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
         );
         final source = (decodedPull['source'] ?? '').toString();
+        final restoreMarker = changes.any((item) =>
+            item.entityType == 'system' &&
+            item.operation == 'cloud_restore_snapshot_ready');
+        if (restoreMarker && store.appIdentity.isClient) {
+          onProgress?.call(0.50, 'تم العثور على نسخة مضيف جديدة. جارٍ إعادة بناء بيانات الجهاز...');
+          await CloudSyncSettings.clearSavedPullCursor();
+          await SyncDeviceStateStore.resetClientProgress(store.appIdentity, transport: 'cloud');
+          await CloudProvisioningStatus.markPending(
+              message: 'جارٍ تنزيل نسخة المضيف الجديدة بعد الاسترجاع.');
+          return pullAuthoritativeChangesForUnifiedEngine(
+            settings.copyWith(clearLastPullCursor: true),
+            minSnapshotUpdatedAt: DateTime.tryParse(
+                changes.firstWhere((item) => item.entityType == 'system' && item.operation == 'cloud_restore_snapshot_ready').payload['restoredAt']?.toString() ?? ''),
+            onProgress: onProgress,
+          );
+        }
         restoredSnapshot = restoredSnapshot ||
             changes.any((item) => item.operation == 'restore_snapshot') ||
             (initialCursor == null &&
@@ -2486,6 +2502,22 @@ class CloudSyncService {
               .decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
         );
         final source = (decodedPull['source'] ?? '').toString();
+        final restoreMarker = changes.any((item) =>
+            item.entityType == 'system' &&
+            item.operation == 'cloud_restore_snapshot_ready');
+        if (restoreMarker && store.appIdentity.isClient) {
+          onProgress?.call(0.50, 'تم العثور على نسخة مضيف جديدة. جارٍ إعادة بناء بيانات الجهاز...');
+          await CloudSyncSettings.clearSavedPullCursor();
+          await SyncDeviceStateStore.resetClientProgress(store.appIdentity, transport: 'cloud');
+          await CloudProvisioningStatus.markPending(
+              message: 'جارٍ تنزيل نسخة المضيف الجديدة بعد الاسترجاع.');
+          return pullAuthoritativeChangesForUnifiedEngine(
+            settings.copyWith(clearLastPullCursor: true),
+            minSnapshotUpdatedAt: DateTime.tryParse(
+                changes.firstWhere((item) => item.entityType == 'system' && item.operation == 'cloud_restore_snapshot_ready').payload['restoredAt']?.toString() ?? ''),
+            onProgress: onProgress,
+          );
+        }
         restoredSnapshot = restoredSnapshot ||
             changes.any((item) => item.operation == 'restore_snapshot') ||
             (initialCursor == null &&
