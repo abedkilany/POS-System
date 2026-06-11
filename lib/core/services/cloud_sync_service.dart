@@ -2206,6 +2206,36 @@ class CloudSyncService {
     }
   }
 
+
+  Future<bool> _cloudSnapshotIsNewerThanLocal(
+    CloudSyncSettings settings,
+  ) async {
+    if (!store.appIdentity.isClient) return false;
+    try {
+      final state = SyncDeviceStateStore.load(store.appIdentity);
+      final localCursor = state.lastAppliedHostCursor ?? settings.lastPullCursor;
+      final manifest = await _CloudSnapshotPullTransport(
+        settings: settings,
+        headers: _headers(settings),
+        client: _client,
+        storeId: store.appIdentity.storeId,
+        branchId: store.appIdentity.branchId,
+      ).requestManifest();
+      final remoteGeneratedAt = DateTime.tryParse(manifest.syncGeneratedAt ?? '');
+      if (remoteGeneratedAt == null) return false;
+      if (localCursor == null) return true;
+      // Add a small tolerance so re-reading the same materialized snapshot does
+      // not trigger repeated rebuilds due to clock precision differences.
+      return remoteGeneratedAt.toUtc().isAfter(
+        localCursor.toUtc().add(const Duration(seconds: 2)),
+      );
+    } catch (_) {
+      // Snapshot freshness is a safety net. If the manifest is temporarily not
+      // reachable, keep the normal incremental pull path alive.
+      return false;
+    }
+  }
+
   Future<CloudSyncResult> pullAuthoritativeChangesForUnifiedEngine(
     CloudSyncSettings settings, {
     DateTime? minSnapshotUpdatedAt,
@@ -2239,6 +2269,15 @@ class CloudSyncService {
       // events, which showed up as product count differences across devices.
       final baseLastAppliedSequence =
           SyncDeviceStateStore.load(store.appIdentity).lastAppliedSequence;
+      if (await _cloudSnapshotIsNewerThanLocal(settings)) {
+        onProgress?.call(0.32, 'تم العثور على Snapshot أحدث من المضيف. جارٍ إعادة بناء بيانات هذا الجهاز...');
+        await CloudSyncSettings.clearSavedPullCursor();
+        await SyncDeviceStateStore.resetClientProgress(store.appIdentity, transport: 'cloud');
+        return rebuildFromCloudHostSnapshot(
+          settings.copyWith(clearLastPullCursor: true),
+          onProgress: onProgress,
+        );
+      }
       var pageCursor = '';
       DateTime? finalPullCursor;
       var finalPullSequence = 0;
@@ -2472,6 +2511,15 @@ class CloudSyncService {
       // events, which showed up as product count differences across devices.
       final baseLastAppliedSequence =
           SyncDeviceStateStore.load(store.appIdentity).lastAppliedSequence;
+      if (await _cloudSnapshotIsNewerThanLocal(settings)) {
+        onProgress?.call(0.32, 'تم العثور على Snapshot أحدث من المضيف. جارٍ إعادة بناء بيانات هذا الجهاز...');
+        await CloudSyncSettings.clearSavedPullCursor();
+        await SyncDeviceStateStore.resetClientProgress(store.appIdentity, transport: 'cloud');
+        return rebuildFromCloudHostSnapshot(
+          settings.copyWith(clearLastPullCursor: true),
+          onProgress: onProgress,
+        );
+      }
       var pageCursor = '';
       DateTime? finalPullCursor;
       var finalPullSequence = 0;

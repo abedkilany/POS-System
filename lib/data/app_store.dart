@@ -7491,14 +7491,27 @@ class AppStore extends ChangeNotifier {
     final sequenceFloor = sinceSequence ?? 0;
     final earliestSequence = _earliestStoredAuthoritativeSequence();
     final latestSequence = _latestStoredAuthoritativeSequence();
+    final hasHostRestoreMarker = _syncChanges.any((item) =>
+        item.entityType == 'system' &&
+        item.operation == 'cloud_restore_snapshot_ready');
 
     // If a client asks for an old sequence that has already been compacted,
     // incremental delivery cannot be trusted. The client must rebuild from a
     // full Host snapshot instead of silently accepting a partial event stream.
+    //
+    // Restore-specific guard: a manual Host backup restore can replace the
+    // local sync log with a fresh, shorter log while existing Clients still
+    // remember a higher lastAppliedSequence from the previous dataset. In that
+    // case the normal `sequence > sinceSequence` query returns nothing, so the
+    // Client never sees the restore marker. Treat `client sequence > latest
+    // Host sequence` as a snapshot-required condition whenever a Host restore
+    // marker is present.
     final needsSnapshot = sequenceFloor > 0 &&
-        latestSequence > sequenceFloor &&
-        earliestSequence > 0 &&
-        sequenceFloor < earliestSequence - 1;
+        ((latestSequence > sequenceFloor &&
+                earliestSequence > 0 &&
+                sequenceFloor < earliestSequence - 1) ||
+            (hasHostRestoreMarker && latestSequence > 0 &&
+                sequenceFloor > latestSequence));
 
     final changes = needsSnapshot
         ? <SyncChange>[]
