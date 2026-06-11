@@ -7087,11 +7087,12 @@ class AppStore extends ChangeNotifier {
       generatedAt: generatedAt,
       kind: kind,
       totalChunks: chunks.length,
-      collections: chunks.map((item) => (item['collection'] ?? '').toString()),
+      // Keep the manifest section model stable even when some collections are
+      // empty and therefore omitted from the chunk stream.
+      collections: null,
     );
     final allCollections = collectionTotals.keys.toList(growable: false);
     final unifiedSections = UnifiedSnapshotCatalog.sections
-        .where((section) => sectionIds.contains(section.id))
         .map((section) => section.id)
         .toList(growable: false);
     for (var i = 0; i < chunks.length; i += 1) {
@@ -7244,9 +7245,10 @@ class AppStore extends ChangeNotifier {
         return;
       }
       if (list.isEmpty) {
-        final payload = {'items': const <dynamic>[]};
-        addEncodedPayload(collection, chunkIndex, payload,
-            _encodeUnifiedSnapshotChunkPayload(payload));
+        // Empty collections are represented by their absence from the chunk
+        // stream. The unified importer already treats missing collections as
+        // empty lists, so sending zero-item chunks only wastes requests and can
+        // leave large restore publishes waiting on meaningless empty uploads.
         return;
       }
 

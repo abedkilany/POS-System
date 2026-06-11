@@ -63,14 +63,25 @@ class UnifiedSnapshotProgressView extends StatelessWidget {
                   color: done ? Colors.green : active ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.outline,
                 ),
                 const SizedBox(width: 8),
-                Expanded(child: Text(tr.text(section.labelKey))),
-                Text(
-                  done
-                      ? tr.text('snapshot_section_completed')
-                      : active
-                          ? tr.text('snapshot_section_in_progress')
-                          : tr.text('snapshot_section_waiting'),
-                  style: Theme.of(context).textTheme.bodySmall,
+                Expanded(
+                  child: Text(
+                    tr.text(section.labelKey),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                SizedBox(
+                  width: 110,
+                  child: Text(
+                    done
+                        ? tr.text('snapshot_section_completed')
+                        : active
+                            ? tr.text('snapshot_section_in_progress')
+                            : tr.text('snapshot_section_waiting'),
+                    textAlign: TextAlign.end,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
                 ),
               ],
             ),
