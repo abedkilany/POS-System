@@ -37,8 +37,8 @@ class UnifiedSyncEngine {
   Future<UnifiedPairingCodeResult> createPairingCode({int ttlMinutes = 5}) =>
       transport.createPairingCode(ttlMinutes: ttlMinutes);
 
-  Future<UnifiedPairingClaimResult> claimPairingCode(String code) =>
-      transport.claimPairingCode(code);
+  Future<UnifiedPairingClaimResult> claimPairingCode(String code, {void Function(double value, String label)? onProgress}) =>
+      transport.claimPairingCode(code, onProgress: onProgress);
 
   Future<UnifiedSyncResult> pushPending(UnifiedSyncPushRequest request) =>
       transport.pushPending(request);

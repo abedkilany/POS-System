@@ -10,6 +10,7 @@ import '../../models/sync_change.dart';
 import 'local_database_service.dart';
 import 'unified_sync_core_service.dart';
 import '../sync_unified/sync_device_state.dart';
+import '../snapshot/unified_snapshot_transfer.dart';
 
 typedef LanSyncProgressCallback = void Function(double value, String label);
 
@@ -404,6 +405,8 @@ class LanSyncService {
 
   final AppStore store;
   late final UnifiedSyncCoreService _syncCore = UnifiedSyncCoreService(store);
+  Map<String, dynamic>? _snapshotTransferCache;
+  DateTime? _snapshotTransferCacheAt;
   static HttpServer? _sharedServer;
   static int? _sharedPort;
 
@@ -488,6 +491,38 @@ class LanSyncService {
     await request.response.close();
   }
 
+  Map<String, dynamic> _currentLanSnapshotEnvelope({bool force = false}) {
+    final now = DateTime.now();
+    final cached = _snapshotTransferCache;
+    final age = _snapshotTransferCacheAt == null
+        ? const Duration(days: 1)
+        : now.difference(_snapshotTransferCacheAt!);
+    if (!force && cached != null && age < const Duration(minutes: 5)) {
+      return cached;
+    }
+    final envelope = store.exportUnifiedSnapshotEnvelope(
+      kind: 'full_store',
+      maxItemsPerChunk: 300,
+    );
+    _snapshotTransferCache = envelope;
+    _snapshotTransferCacheAt = now;
+    return envelope;
+  }
+
+  Map<String, dynamic> _snapshotManifestResponse({bool force = false}) {
+    final envelope = _currentLanSnapshotEnvelope(force: force);
+    return <String, dynamic>{
+      'ok': true,
+      'snapshotFormat': envelope['snapshotFormat'],
+      'snapshotVersion': envelope['snapshotVersion'],
+      'snapshotKind': envelope['snapshotKind'],
+      'snapshotManifest': envelope['snapshotManifest'],
+      'totalChunks': envelope['totalChunks'],
+      'syncGeneratedAt': envelope['syncGeneratedAt'],
+      'syncGeneratedSequence': envelope['syncGeneratedSequence'],
+    };
+  }
+
   Future<void> _handleRequest(HttpRequest request) async {
     try {
       request.response.headers.add('Access-Control-Allow-Origin', '*');
@@ -529,7 +564,7 @@ class LanSyncService {
         // oldest successful claim is accepted. Later claims with the same code fail.
         await settings.copyWith(secret: '', pairedDevices: paired, hostRegistry: registry).save();
 
-        final snapshot = jsonDecode(store.exportSyncSnapshotJson()) as Map<String, dynamic>;
+        final snapshotInfo = _snapshotManifestResponse(force: true);
         await _json(request, {
           'ok': true,
           'message': 'LAN device paired successfully.',
@@ -538,7 +573,11 @@ class LanSyncService {
           'storeId': store.appIdentity.storeId,
           'branchId': store.appIdentity.branchId,
           'hostDeviceId': store.deviceId,
-          'snapshot': snapshot,
+          'snapshotAvailable': true,
+          'snapshotManifest': snapshotInfo['snapshotManifest'],
+          'totalChunks': snapshotInfo['totalChunks'],
+          'syncGeneratedAt': snapshotInfo['syncGeneratedAt'],
+          'syncGeneratedSequence': snapshotInfo['syncGeneratedSequence'],
         });
         return;
       }
@@ -591,9 +630,38 @@ class LanSyncService {
         return;
       }
 
+      if (request.method == 'GET' && request.uri.path == '/snapshot/manifest') {
+        final force = request.uri.queryParameters['force'] == '1';
+        await _json(request, _snapshotManifestResponse(force: force));
+        return;
+      }
+
+      if (request.method == 'GET' && request.uri.path == '/snapshot/chunk') {
+        final ordinal = int.tryParse(request.uri.queryParameters['ordinal'] ?? '') ?? -1;
+        final envelope = _currentLanSnapshotEnvelope();
+        final chunks = (envelope['snapshotChunks'] as List<dynamic>? ?? const <dynamic>[])
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList(growable: false);
+        if (ordinal < 0 || ordinal >= chunks.length) {
+          await _json(request, {'ok': false, 'error': 'Snapshot chunk not found.'}, status: HttpStatus.notFound);
+          return;
+        }
+        await _json(request, {
+          'ok': true,
+          'chunk': chunks[ordinal],
+          'ordinal': ordinal,
+          'totalChunks': chunks.length,
+          'snapshotManifest': envelope['snapshotManifest'],
+          'syncGeneratedAt': envelope['syncGeneratedAt'],
+          'syncGeneratedSequence': envelope['syncGeneratedSequence'],
+        });
+        return;
+      }
+
       if (request.method == 'GET' && request.uri.path == '/snapshot') {
         request.response.headers.contentType = ContentType.json;
-        request.response.write(store.exportSyncSnapshotJson());
+        request.response.write(jsonEncode(_currentLanSnapshotEnvelope(force: true)));
         await request.response.close();
         return;
       }
@@ -694,16 +762,18 @@ class LanSyncService {
 
   HttpClient _client() => HttpClient()..connectionTimeout = const Duration(seconds: 15);
 
-  void _attachToken(HttpClientRequest request, String token) {
+  void _attachToken(HttpClientRequest request, String token, {String? deviceId}) {
     final identity = store.appIdentity;
-    if (identity.deviceId.trim().isNotEmpty && identity.deviceToken.trim().isNotEmpty) {
-      request.headers.add('X-Device-Id', identity.deviceId.trim());
-      request.headers.add('X-Device-Token', identity.deviceToken.trim());
+    final headerDeviceId = (deviceId ?? identity.deviceId).trim();
+    final headerToken = token.trim().isNotEmpty ? token.trim() : identity.deviceToken.trim();
+    if (headerDeviceId.isNotEmpty && headerToken.isNotEmpty) {
+      request.headers.add('X-Device-Id', headerDeviceId);
+      request.headers.add('X-Device-Token', headerToken);
       request.headers.add('X-Device-Role', identity.deviceRole.name);
     }
   }
 
-  Future<LanSyncResult> claimPairingCode(String host, {int port = 8787, required String code}) async {
+  Future<LanSyncResult> claimPairingCode(String host, {int port = 8787, required String code, LanSyncProgressCallback? onProgress}) async {
     final identity = store.appIdentity;
     if (identity.isHost) {
       return const LanSyncResult(ok: false, message: 'Host devices cannot pair as LAN Clients. Use Transfer Host instead.');
@@ -712,7 +782,9 @@ class LanSyncService {
     // prepares another delivery method; the active transport still decides
     // which one auto-sync runs.
     try {
+      onProgress?.call(0.08, 'Connecting to LAN Host...');
       final client = _client();
+      onProgress?.call(0.14, 'Verifying LAN pairing code...');
       final request = await client.post(host.trim(), port, '/pairing/claim');
       request.headers.contentType = ContentType.json;
       request.write(jsonEncode({
@@ -744,20 +816,32 @@ class LanSyncService {
         }
       }
 
-      final snapshot = jsonEncode(decoded['snapshot'] as Map<String, dynamic>);
-      await store.importSyncSnapshotJson(snapshot);
-      final hostCursor = store.syncSnapshotGeneratedAtFromJson(snapshot);
       final current = store.appIdentity;
+      final pairedDeviceId = decoded['deviceId']?.toString() ?? current.deviceId;
+      final pairedDeviceToken = decoded['deviceToken']?.toString() ?? current.deviceToken;
+      onProgress?.call(0.22, 'Registering this device...');
       await store.updateAppIdentityDuringSetup(current.copyWith(
         storeId: claimedStoreId,
         branchId: claimedBranchId,
-        deviceId: decoded['deviceId']?.toString() ?? current.deviceId,
+        deviceId: pairedDeviceId,
         deviceRole: DeviceRole.client,
         syncMode: SyncMode.lanOnly,
         activeSyncTransport: 'lan',
         hostDeviceId: claimedHostDeviceId,
-        deviceToken: decoded['deviceToken']?.toString() ?? current.deviceToken,
+        deviceToken: pairedDeviceToken,
       ));
+      final snapshotEnvelope = await _downloadLanSnapshotEnvelope(
+        host,
+        port: port,
+        token: pairedDeviceToken,
+        deviceId: pairedDeviceId,
+        force: false,
+        onProgress: onProgress,
+      );
+      final snapshot = jsonEncode(snapshotEnvelope);
+      onProgress?.call(0.74, 'Importing LAN snapshot chunks locally...');
+      await store.importSyncSnapshotJson(snapshot);
+      final hostCursor = store.syncSnapshotGeneratedAtFromJson(snapshot);
       final settings = LanSyncSettings.load();
       await settings.copyWith(
         host: host.trim(),
@@ -772,6 +856,7 @@ class LanSyncService {
         lastSyncAt: DateTime.now(),
       ).save();
       await SyncDeviceStateStore.recordSyncResult(store.appIdentity, transport: 'lan', appliedCursor: hostCursor, ackCursor: hostCursor);
+      onProgress?.call(1.0, 'LAN snapshot is ready.');
       return const LanSyncResult(ok: true, message: 'LAN pairing completed.');
     } catch (error) {
       return LanSyncResult(ok: false, message: 'LAN pairing failed: $error');
@@ -792,54 +877,76 @@ class LanSyncService {
     }
   }
 
+  Future<Map<String, dynamic>> _downloadLanSnapshotEnvelope(
+    String host, {
+    int port = 8787,
+    String token = '',
+    String? deviceId,
+    bool force = false,
+    LanSyncProgressCallback? onProgress,
+  }) {
+    return const UnifiedSnapshotTransferService().downloadEnvelope(
+      _LanSnapshotPullTransport(
+        host: host,
+        port: port,
+        token: token,
+        deviceId: deviceId ?? store.appIdentity.deviceId,
+        attachToken: _attachToken,
+        newClient: _client,
+      ),
+      force: force,
+      labelPrefix: 'LAN snapshot',
+      onProgress: onProgress,
+    );
+  }
+
+
   Future<LanSyncResult> initialClone(String host, {int port = 8787, String token = '', LanSyncProgressCallback? onProgress}) async {
     try {
-      onProgress?.call(0.20, 'Connecting to LAN Host snapshot...');
-      final client = _client();
-      final request = await client.get(host.trim(), port, '/snapshot');
-      _attachToken(request, token);
-      final response = await request.close();
-      onProgress?.call(0.48, 'Downloading Host snapshot...');
-      final body = await utf8.decoder.bind(response).join();
-      client.close(force: true);
-      if (response.statusCode != 200) {
-        return LanSyncResult(ok: false, message: 'Initial clone failed: ${response.statusCode} $body');
-      }
-      onProgress?.call(0.72, 'Applying full Host snapshot locally...');
-      await store.importSyncSnapshotJson(body);
-      final hostCursor = store.syncSnapshotGeneratedAtFromJson(body);
+      onProgress?.call(0.10, 'Connecting to LAN Host snapshot...');
+      final snapshotEnvelope = await _downloadLanSnapshotEnvelope(
+        host,
+        port: port,
+        token: token,
+        force: true,
+        onProgress: onProgress,
+      );
+      final snapshot = jsonEncode(snapshotEnvelope);
+      onProgress?.call(0.72, 'Applying LAN snapshot chunks locally...');
+      await store.importSyncSnapshotJson(snapshot);
+      final hostCursor = store.syncSnapshotGeneratedAtFromJson(snapshot);
       final settings = LanSyncSettings.load();
       onProgress?.call(0.94, 'Saving LAN sync cursor...');
       await settings.copyWith(lastPullCursor: hostCursor, lastConnectionAt: DateTime.now(), lastSyncAt: DateTime.now()).save();
-      final hostSequence = store.syncSnapshotGeneratedSequenceFromJson(body);
+      final hostSequence = store.syncSnapshotGeneratedSequenceFromJson(snapshot);
       await SyncDeviceStateStore.recordSyncResult(store.appIdentity, transport: 'lan', appliedCursor: hostCursor, ackCursor: hostCursor, appliedSequence: hostSequence, ackSequence: hostSequence);
       await _sendLanAck(host, port: port, token: token, cursor: hostCursor, sequence: hostSequence);
-      return const LanSyncResult(ok: true, message: 'Initial clone completed.');
+      return const LanSyncResult(ok: true, message: 'Initial clone completed from LAN snapshot chunks.');
     } catch (error) {
       return LanSyncResult(ok: false, message: 'Initial clone failed: $error');
     }
   }
 
+
   Future<LanSyncResult> pullNow(String host, {int port = 8787, String token = ''}) async {
     try {
-      final client = _client();
-      final request = await client.get(host.trim(), port, '/snapshot');
-      _attachToken(request, token);
-      final response = await request.close();
-      final body = await utf8.decoder.bind(response).join();
-      client.close(force: true);
-      if (response.statusCode != 200) {
-        return LanSyncResult(ok: false, message: 'Pull failed: ${response.statusCode} $body');
-      }
-      await store.mergeBackupJson(body, markSynced: false);
-      final hostCursor = store.syncSnapshotGeneratedAtFromJson(body);
+      final snapshotEnvelope = await _downloadLanSnapshotEnvelope(
+        host,
+        port: port,
+        token: token,
+        force: true,
+      );
+      final snapshot = jsonEncode(snapshotEnvelope);
+      await store.importSyncSnapshotJson(snapshot);
+      final hostCursor = store.syncSnapshotGeneratedAtFromJson(snapshot);
       final settings = LanSyncSettings.load();
       await settings.copyWith(lastPullCursor: hostCursor, lastConnectionAt: DateTime.now(), lastSyncAt: DateTime.now()).save();
-      return const LanSyncResult(ok: true, message: 'Pull completed.');
+      return const LanSyncResult(ok: true, message: 'Pull completed from LAN snapshot chunks.');
     } catch (error) {
       return LanSyncResult(ok: false, message: 'Pull failed: $error');
     }
   }
+
 
 
   Future<LanSyncResult> repairFromHostSnapshot(String host, {int port = 8787, String token = '', LanSyncProgressCallback? onProgress}) async {
@@ -847,35 +954,34 @@ class LanSyncService {
       return const LanSyncResult(ok: false, message: 'Host devices cannot rebuild from LAN Host snapshots. Use Transfer Host instead.');
     }
     try {
-      onProgress?.call(0.20, 'Connecting to LAN Host snapshot...');
-      final client = _client();
-      final request = await client.get(host.trim(), port, '/snapshot');
-      _attachToken(request, token);
-      final response = await request.close();
-      onProgress?.call(0.48, 'Downloading Host snapshot...');
-      final body = await utf8.decoder.bind(response).join();
-      client.close(force: true);
-      if (response.statusCode != 200) {
-        return LanSyncResult(ok: false, message: 'Repair snapshot failed: ${response.statusCode} $body');
-      }
-      onProgress?.call(0.72, 'Applying full Host snapshot locally...');
-      await store.importSyncSnapshotJson(body);
+      onProgress?.call(0.10, 'Connecting to LAN Host snapshot...');
+      final snapshotEnvelope = await _downloadLanSnapshotEnvelope(
+        host,
+        port: port,
+        token: token,
+        force: true,
+        onProgress: onProgress,
+      );
+      final snapshot = jsonEncode(snapshotEnvelope);
+      onProgress?.call(0.72, 'Applying LAN snapshot chunks locally...');
+      await store.importSyncSnapshotJson(snapshot);
       onProgress?.call(0.86, 'Marking rebuilt data as synced...');
       await store.markAllSyncChangesSynced();
-      final hostCursor = store.syncSnapshotGeneratedAtFromJson(body);
+      final hostCursor = store.syncSnapshotGeneratedAtFromJson(snapshot);
       final settings = LanSyncSettings.load();
       await settings.copyWith(lastPullCursor: hostCursor, lastConnectionAt: DateTime.now(), lastSyncAt: DateTime.now()).save();
-      final hostSequence = store.syncSnapshotGeneratedSequenceFromJson(body);
+      final hostSequence = store.syncSnapshotGeneratedSequenceFromJson(snapshot);
       await SyncDeviceStateStore.recordSyncResult(store.appIdentity, transport: 'lan', appliedCursor: hostCursor, ackCursor: hostCursor, appliedSequence: hostSequence, ackSequence: hostSequence);
       await _sendLanAck(host, port: port, token: token, cursor: hostCursor, sequence: hostSequence);
       onProgress?.call(0.94, 'Running Client sync log maintenance...');
       await store.compactClientSyncedSyncHistoryForMaintenance();
       onProgress?.call(1.0, 'LAN rebuild completed.');
-      return const LanSyncResult(ok: true, message: 'LAN rebuild completed from full Host snapshot.');
+      return const LanSyncResult(ok: true, message: 'LAN rebuild completed from snapshot chunks.');
     } catch (error) {
       return LanSyncResult(ok: false, message: 'Repair snapshot failed: $error');
     }
   }
+
 
 
 
@@ -1195,5 +1301,81 @@ class LanSyncService {
       if (pendingIds.isNotEmpty && !pushCompleted) await _syncCore.markPushFailed(pendingIds, error.toString());
       return LanSyncResult(ok: false, message: 'Sync failed: $error');
     }
+  }
+}
+
+
+class _LanSnapshotPullTransport implements UnifiedSnapshotChunkPullTransport {
+  _LanSnapshotPullTransport({
+    required this.host,
+    required this.port,
+    required this.token,
+    required this.deviceId,
+    required this.attachToken,
+    required this.newClient,
+  });
+
+  final String host;
+  final int port;
+  final String token;
+  final String deviceId;
+  final void Function(HttpClientRequest request, String token, {String? deviceId}) attachToken;
+  final HttpClient Function() newClient;
+
+  @override
+  Future<UnifiedSnapshotManifestResponse> requestManifest({bool force = false}) async {
+    final client = newClient();
+    try {
+      final path = force ? '/snapshot/manifest?force=1' : '/snapshot/manifest';
+      final request = await client.get(host.trim(), port, path);
+      attachToken(request, token, deviceId: deviceId);
+      final response = await request.close();
+      final body = await utf8.decoder.bind(response).join();
+      if (response.statusCode != 200) {
+        throw StateError('Snapshot manifest failed: ${response.statusCode} $body');
+      }
+      final decoded = Map<String, dynamic>.from(jsonDecode(body) as Map);
+      return UnifiedSnapshotManifestResponse(
+        manifest: Map<String, dynamic>.from((decoded['snapshotManifest'] as Map?) ?? const <String, dynamic>{}),
+        totalChunks: (decoded['totalChunks'] as num?)?.toInt() ?? 0,
+        snapshotFormat: decoded['snapshotFormat']?.toString(),
+        snapshotVersion: decoded['snapshotVersion'],
+        snapshotKind: decoded['snapshotKind']?.toString(),
+        syncGeneratedAt: decoded['syncGeneratedAt']?.toString(),
+        syncGeneratedSequence: (decoded['syncGeneratedSequence'] as num?)?.toInt(),
+      );
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  @override
+  Future<UnifiedSnapshotChunkResponse> requestChunk(int ordinal) async {
+    final client = newClient();
+    try {
+      final request = await client.get(host.trim(), port, '/snapshot/chunk?ordinal=$ordinal');
+      attachToken(request, token, deviceId: deviceId);
+      final response = await request.close();
+      final body = await utf8.decoder.bind(response).join();
+      if (response.statusCode != 200) {
+        throw StateError('Snapshot chunk ${ordinal + 1} failed: ${response.statusCode} $body');
+      }
+      final decoded = Map<String, dynamic>.from(jsonDecode(body) as Map);
+      final chunk = decoded['chunk'];
+      if (chunk is! Map) throw StateError('Snapshot chunk ${ordinal + 1} is invalid.');
+      return UnifiedSnapshotChunkResponse(
+        chunk: Map<String, dynamic>.from(chunk),
+        ordinal: (decoded['ordinal'] as num?)?.toInt() ?? ordinal,
+        totalChunks: (decoded['totalChunks'] as num?)?.toInt() ?? 0,
+      );
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  @override
+  Future<void> ackChunk(int ordinal) async {
+    // LAN snapshot chunk ACK is currently client-local; the unified transfer
+    // engine still calls this hook so LAN and Cloud share the same pipeline.
   }
 }

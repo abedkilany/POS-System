@@ -16,6 +16,7 @@ import '../../core/services/local_database_service.dart';
 import '../../core/shortcuts/app_shortcuts.dart';
 import '../../core/sync_unified/sync_device_state.dart';
 import '../../core/sync_unified/sync_unified.dart';
+import '../../core/snapshot/unified_snapshot_progress.dart';
 
 import '../../core/localization/app_localizations.dart';
 import '../../core/utils/responsive.dart';
@@ -917,20 +918,21 @@ class SettingsPage extends StatelessWidget {
     final cloud = CloudSyncSettings.load();
     if (!identity.isHost || !identity.isCloudEnabled || !cloud.isConfigured) return;
 
+    final progress = ValueNotifier<_OperationProgress>(
+      _OperationProgress(0.05, tr.text('uploading_host_event')),
+    );
     if (context.mounted) {
       showDialog<void>(
         context: context,
         barrierDismissible: false,
         builder: (_) => AlertDialog(
           title: Text('$actionName • ${tr.text('cloud_push')}'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(tr.text('uploading_host_event')),
-              const SizedBox(height: 12),
-              const LinearProgressIndicator(value: 0.70),
-            ],
+          content: ValueListenableBuilder<_OperationProgress>(
+            valueListenable: progress,
+            builder: (_, value, __) => UnifiedSnapshotProgressView(
+              value: value.value,
+              label: value.label,
+            ),
           ),
         ),
       );
@@ -940,7 +942,12 @@ class SettingsPage extends StatelessWidget {
     // Backup import replaces the full Host dataset. Publish a fresh materialized
     // Cloud snapshot before pushing the small restore marker, so Clients that
     // receive the marker can immediately rebuild from the new Host data.
-    await service.publishBootstrapSnapshotToCloud(cloud, force: true);
+    await service.publishBootstrapSnapshotToCloud(
+      cloud,
+      force: true,
+      onProgress: (value, label) => progress.value = _OperationProgress(value, label),
+    );
+    progress.value = _OperationProgress(0.86, tr.text('sync_completed'));
     final result = await UnifiedSyncEngine(
       CloudSyncTransportAdapter(
         service: service,
@@ -949,6 +956,7 @@ class SettingsPage extends StatelessWidget {
     ).syncNow();
     if (context.mounted) {
       Navigator.of(context, rootNavigator: true).pop();
+      progress.dispose();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(result.ok ? '$actionName ${tr.text('cloud_push_success')}' : '$actionName ${tr.text('cloud_push_failed')}: ${localizeRuntimeMessage(result.message, tr)}')),
       );
@@ -986,11 +994,10 @@ class SettingsPage extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(value.label),
-                const SizedBox(height: 10),
-                LinearProgressIndicator(value: value.value),
-                const SizedBox(height: 12),
-                Text(AppLocalizations.of(context).text('rebuild_keep_open_desc')),
+                UnifiedSnapshotProgressView(
+                  value: value.value,
+                  label: value.label,
+                ),
               ],
             ),
           ),
@@ -2671,6 +2678,9 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     _cloudPairingCodeController.clear();
     _clearExpectedPairingTarget();
     var dialogMode = mode;
+    var dialogBusy = false;
+    double? dialogProgressValue;
+    var dialogProgressLabel = '';
     final saved = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
@@ -2700,7 +2710,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                             ButtonSegment<SyncMode>(value: SyncMode.cloudConnected, icon: const Icon(Icons.cloud_outlined), label: Text(tr.text('cloud'))),
                           ],
                           selected: {dialogMode},
-                          onSelectionChanged: (value) => setDialogState(() => dialogMode = value.first),
+                          onSelectionChanged: dialogBusy ? null : (value) => setDialogState(() => dialogMode = value.first),
                         ),
                       ),
                       const SizedBox(height: 12),
@@ -2709,7 +2719,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                         child: SizedBox(
                           width: compact ? double.infinity : null,
                           child: OutlinedButton.icon(
-                            onPressed: _busy
+                            onPressed: (_busy || dialogBusy)
                                 ? null
                                 : () => _scanConnectToStoreQr(
                                       setDialogState,
@@ -2723,15 +2733,22 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                       ),
                       const SizedBox(height: 16),
                       if (isLan) ...[
-                        TextField(controller: _lanHostController, decoration: InputDecoration(labelText: tr.text('host_ip_address'), border: const OutlineInputBorder())),
+                        TextField(enabled: !dialogBusy, controller: _lanHostController, decoration: InputDecoration(labelText: tr.text('host_ip_address'), border: const OutlineInputBorder())),
                         const SizedBox(height: 12),
-                        TextField(controller: _lanPortController, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: tr.text('port'), border: const OutlineInputBorder())),
+                        TextField(enabled: !dialogBusy, controller: _lanPortController, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: tr.text('port'), border: const OutlineInputBorder())),
                         const SizedBox(height: 12),
-                        TextField(controller: _lanTokenController, decoration: InputDecoration(labelText: tr.text('pairing_token'), border: const OutlineInputBorder())),
+                        TextField(enabled: !dialogBusy, controller: _lanTokenController, decoration: InputDecoration(labelText: tr.text('pairing_token'), border: const OutlineInputBorder())),
                       ] else ...[
-                        TextField(controller: _cloudApiController, decoration: InputDecoration(labelText: tr.text('api_url'), border: const OutlineInputBorder())),
+                        TextField(enabled: !dialogBusy, controller: _cloudApiController, decoration: InputDecoration(labelText: tr.text('api_url'), border: const OutlineInputBorder())),
                         const SizedBox(height: 12),
-                        TextField(controller: _cloudPairingCodeController, decoration: InputDecoration(labelText: tr.text('pairing_code_from_host'), border: const OutlineInputBorder())),
+                        TextField(enabled: !dialogBusy, controller: _cloudPairingCodeController, decoration: InputDecoration(labelText: tr.text('pairing_code_from_host'), border: const OutlineInputBorder())),
+                      ],
+                      if (dialogBusy) ...[
+                        const SizedBox(height: 16),
+                        UnifiedSnapshotProgressView(
+                          value: dialogProgressValue,
+                          label: dialogProgressLabel.isEmpty ? tr.text('connecting_downloading_store_data') : dialogProgressLabel,
+                        ),
                       ],
                     ],
                   ),
@@ -2740,47 +2757,76 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
               actions: [
                 TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: Text(tr.text('cancel'))),
                 FilledButton(
-                  onPressed: () async {
-                    if (isLan) {
-                      final host = _lanHostController.text.trim();
-                      final token = _lanTokenController.text.trim();
-                      if (host.isEmpty || token.isEmpty) return;
-                      if (widget.store.appIdentity.isClient && widget.store.appIdentity.hostDeviceId.trim().isNotEmpty) {
-                        _validateExpectedPairingTarget(widget.store.appIdentity);
-                      }
-                      await LanSyncSettings.load().copyWith(
-                        host: host,
-                        port: _lanPort,
-                        secret: token,
-                        mode: LanSyncDeviceMode.client,
-                        setupComplete: true,
-                        hostModeEnabled: false,
-                        autoSyncEnabled: widget.store.appIdentity.activeSyncTransportNormalized == 'lan',
-                      ).save();
-                    } else {
-                      final apiUrl = _cloudApiController.text.trim();
-                      final code = _cloudPairingCodeController.text.trim();
-                      if (apiUrl.isEmpty || code.isEmpty) return;
-                      final previousIdentity = widget.store.appIdentity;
-                      final previousActive = previousIdentity.activeSyncTransportNormalized;
-                      final settings = CloudSyncSettings.load().copyWith(
-                        enabled: true,
-                        apiBaseUrl: CloudSyncSettings.normalizeApiBaseUrl(apiUrl, fallback: kIsWeb ? Uri.base.origin : ''),
-                        autoSyncEnabled: previousActive == 'cloud',
-                      );
-                      await settings.save();
-                      final result = await CloudSyncService(widget.store).claimPairingCode(settings, code);
-                      if (!result.ok) throw Exception(result.message);
-                      final claimedIdentity = result.identity ?? widget.store.appIdentity;
-                      _validateExpectedPairingTarget(claimedIdentity);
-                      _validateAgainstExistingClientIdentity(previousIdentity, claimedIdentity);
-                      if (previousActive == 'lan') {
-                        await widget.store.setActiveSyncTransport('lan');
-                      }
+                  onPressed: dialogBusy ? null : () async {
+                    setDialogState(() {
+                      dialogBusy = true;
+                      dialogProgressValue = 0.04;
+                      dialogProgressLabel = tr.text('connecting_downloading_store_data');
+                    });
+                    void dialogProgress(double value, String label) {
+                      if (!dialogContext.mounted) return;
+                      setDialogState(() {
+                        dialogProgressValue = value;
+                        dialogProgressLabel = localizeRuntimeMessage(label, tr);
+                      });
                     }
-                    if (dialogContext.mounted) Navigator.of(dialogContext).pop(true);
+                    try {
+                      if (isLan) {
+                        final host = _lanHostController.text.trim();
+                        final token = _lanTokenController.text.trim();
+                        if (host.isEmpty || token.isEmpty) {
+                          setDialogState(() => dialogBusy = false);
+                          return;
+                        }
+                        final previousIdentity = widget.store.appIdentity;
+                        final previousActive = previousIdentity.activeSyncTransportNormalized;
+                        final result = await LanSyncService(widget.store).claimPairingCode(
+                          host,
+                          port: _lanPort,
+                          code: token,
+                          onProgress: dialogProgress,
+                        );
+                        if (!result.ok) throw Exception(result.message);
+                        _validateExpectedPairingTarget(widget.store.appIdentity);
+                        _validateAgainstExistingClientIdentity(previousIdentity, widget.store.appIdentity);
+                        if (previousActive == 'cloud') {
+                          await widget.store.setActiveSyncTransport('cloud');
+                        }
+                      } else {
+                        final apiUrl = _cloudApiController.text.trim();
+                        final code = _cloudPairingCodeController.text.trim();
+                        if (apiUrl.isEmpty || code.isEmpty) {
+                          setDialogState(() => dialogBusy = false);
+                          return;
+                        }
+                        final previousIdentity = widget.store.appIdentity;
+                        final previousActive = previousIdentity.activeSyncTransportNormalized;
+                        final settings = CloudSyncSettings.load().copyWith(
+                          enabled: true,
+                          apiBaseUrl: CloudSyncSettings.normalizeApiBaseUrl(apiUrl, fallback: kIsWeb ? Uri.base.origin : ''),
+                          autoSyncEnabled: previousActive == 'cloud',
+                        );
+                        await settings.save();
+                        final result = await CloudSyncService(widget.store).claimPairingCode(settings, code, onProgress: dialogProgress);
+                        if (!result.ok) throw Exception(result.message);
+                        final claimedIdentity = result.identity ?? widget.store.appIdentity;
+                        _validateExpectedPairingTarget(claimedIdentity);
+                        _validateAgainstExistingClientIdentity(previousIdentity, claimedIdentity);
+                        if (previousActive == 'lan') {
+                          await widget.store.setActiveSyncTransport('lan');
+                        }
+                      }
+                      if (dialogContext.mounted) Navigator.of(dialogContext).pop(true);
+                    } catch (error) {
+                      if (!dialogContext.mounted) return;
+                      setDialogState(() {
+                        dialogBusy = false;
+                        dialogProgressLabel = localizeRuntimeMessage(error.toString(), tr);
+                      });
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(localizeRuntimeMessage(error.toString(), tr))));
+                    }
                   },
-                  child: Text(tr.text('save')),
+                  child: Text(dialogBusy ? tr.text('working') : tr.text('save')),
                 ),
               ],
             );
@@ -3115,7 +3161,10 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           Text(_busy ? (_status.isEmpty ? tr.text('working') : _status) : (_status.isEmpty ? _humanStatus(context) : _status)),
           if (_busy) ...[
             const SizedBox(height: 8),
-            LinearProgressIndicator(value: _statusProgress),
+            UnifiedSnapshotProgressView(
+              value: _statusProgress,
+              label: _status.isEmpty ? tr.text('working') : _status,
+            ),
           ],
         ],
       ),
@@ -3573,11 +3622,11 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     );
   }
 
-  List<Widget> _lanFields({required bool showHostIp, bool forHost = false}) => [
+  List<Widget> _lanFields({required bool showHostIp, bool forHost = false, bool dialogBusy = false}) => [
         if (showHostIp)
-          TextField(controller: _lanHostController, decoration: InputDecoration(labelText: AppLocalizations.of(context).text('manual_host_ip_optional'), border: const OutlineInputBorder())),
+          TextField(enabled: !dialogBusy, controller: _lanHostController, decoration: InputDecoration(labelText: AppLocalizations.of(context).text('manual_host_ip_optional'), border: const OutlineInputBorder())),
         if (showHostIp) const SizedBox(height: 12),
-        TextField(controller: _lanPortController, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: AppLocalizations.of(context).text('port'), border: const OutlineInputBorder())),
+        TextField(enabled: !dialogBusy, controller: _lanPortController, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: AppLocalizations.of(context).text('port'), border: const OutlineInputBorder())),
         const SizedBox(height: 12),
         TextField(
           controller: _lanIntervalController,

@@ -9,6 +9,7 @@ import '../../core/utils/responsive.dart';
 import '../../core/services/cloud_sync_service.dart';
 import '../../core/services/lan_sync_service.dart';
 import '../../core/sync_unified/sync_unified.dart';
+import '../../core/snapshot/unified_snapshot_progress.dart';
 import '../../data/app_store.dart';
 import '../barcode/barcode_scanner_page.dart';
 
@@ -66,6 +67,8 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
   bool _busy = false;
   String _status = '';
   _SetupStatus _statusType = _SetupStatus.idle;
+  double? _snapshotProgressValue;
+  String _snapshotProgressLabel = '';
   Timer? _qrCountdownTimer;
   DateTime? _qrExpiresAt;
   _ClientPairingState _qrStatus = _ClientPairingState.noCode;
@@ -120,6 +123,16 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
     });
   }
 
+  void _setSnapshotProgress(double value, String label) {
+    if (!mounted) return;
+    setState(() {
+      _snapshotProgressValue = value.clamp(0.0, 1.0).toDouble();
+      _snapshotProgressLabel = label;
+      _status = label;
+      _statusType = _SetupStatus.info;
+    });
+  }
+
   void _clearStatus() {
     if (!mounted) return;
     setState(() {
@@ -135,6 +148,8 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       _qrStatus = _ClientPairingState.connecting;
       _status = message;
       _statusType = _SetupStatus.info;
+      _snapshotProgressValue = 0.02;
+      _snapshotProgressLabel = message;
     });
   }
 
@@ -161,23 +176,6 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
     }
   }
 
-  void _finishRegisteredWaitingForStoreData() {
-    if (!mounted) return;
-    setState(() {
-      _busy = false;
-      _qrStatus = _ClientPairingState.connected;
-      _status = AppLocalizations.of(context).text('device_connected_waiting_store_data');
-      _statusType = _SetupStatus.warning;
-    });
-  }
-
-  bool _cloudPairingDownloadedInitialData(UnifiedPairingClaimResult result) {
-    final message = result.message.toLowerCase();
-    if (message.contains('will download') || message.contains('being prepared') || message.contains('waiting')) {
-      return false;
-    }
-    return message.contains('downloaded') || message.contains('please sign in');
-  }
 
   String _friendlyErrorMessage(Object error, {required String fallback}) {
     final raw = error.toString();
@@ -306,7 +304,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       }
 
       _setStatus(claimingLanPairing);
-      final result = await _lanEngine().claimPairingCode(secret);
+      final result = await _lanEngine().claimPairingCode(secret, onProgress: _setSnapshotProgress);
       if (!result.ok) {
         _markQrFailed(result.message);
         _setStatus(result.message, type: _SetupStatus.error);
@@ -357,18 +355,14 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       await settings.save();
 
       _setStatus(verifyingPairingCode);
-      final result = await _cloudEngine(settings).claimPairingCode(code);
+      final result = await _cloudEngine(settings).claimPairingCode(code, onProgress: _setSnapshotProgress);
       if (!result.ok) {
         _markQrFailed(result.message);
         _setStatus(result.message, type: _SetupStatus.error);
         return;
       }
 
-      if (_cloudPairingDownloadedInitialData(result)) {
-        await _finishSuccessfulConnection(connectedStoreSignIn);
-      } else {
-        _finishRegisteredWaitingForStoreData();
-      }
+      await _finishSuccessfulConnection(connectedStoreSignIn);
     } on FormatException catch (_) {
       _markQrFailed(cloudConnectionFailed);
       _setStatus(cloudConnectionFailed, type: _SetupStatus.error);
@@ -462,9 +456,12 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const CircularProgressIndicator(),
-                        const SizedBox(height: 16),
-                        Text(_status.isEmpty ? tr.text('connecting_downloading_store_data') : _status, textAlign: TextAlign.center),
+                        UnifiedSnapshotProgressView(
+                          value: _snapshotProgressValue,
+                          label: _snapshotProgressLabel.isEmpty
+                              ? (_status.isEmpty ? tr.text('connecting_downloading_store_data') : _status)
+                              : _snapshotProgressLabel,
+                        ),
                       ],
                     ),
                   ),
@@ -578,7 +575,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       _ClientPairingState.noCode => tr.text('scan_or_enter_host_pairing_code'),
       _ClientPairingState.ready => tr.text('pairing_code_ready_to_connect_help'),
       _ClientPairingState.connecting => tr.text('connecting_downloading_store_data'),
-      _ClientPairingState.connected => tr.text('device_connected_waiting_store_data'),
+      _ClientPairingState.connected => tr.text('connected_store_sign_in'),
       _ClientPairingState.expired => tr.text('pairing_code_expired_or_used'),
       _ClientPairingState.failed => tr.text('connection_failed_check_code'),
     };

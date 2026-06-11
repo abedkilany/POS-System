@@ -97,6 +97,20 @@ async function ensureTables() {
     primary key (store_id, branch_id, job_id, section)
   )`;
   await sql`create index if not exists idx_bootstrap_snapshot_sections_latest on bootstrap_snapshot_sections (store_id, branch_id, section, updated_at desc)`;
+  await sql`create table if not exists unified_snapshot_chunks (
+    store_id text not null,
+    branch_id text not null default 'main',
+    job_id text not null,
+    ordinal integer not null,
+    total_chunks integer not null default 0,
+    chunk jsonb not null default '{}'::jsonb,
+    snapshot_manifest jsonb not null default '{}'::jsonb,
+    sync_generated_at timestamptz not null default now(),
+    sync_generated_sequence integer not null default 0,
+    updated_at timestamptz not null default now(),
+    primary key (store_id, branch_id, job_id, ordinal)
+  )`;
+  await sql`create index if not exists idx_unified_snapshot_chunks_latest on unified_snapshot_chunks (store_id, branch_id, updated_at desc, job_id, ordinal)`;
   await sql`alter table entity_snapshots add column if not exists branch_id text not null default 'main'`;
   await sql`create unique index if not exists idx_entity_snapshots_unique on entity_snapshots (store_id, branch_id, entity_type, entity_id)`;
 }
@@ -136,8 +150,80 @@ async function upsertSnapshot({ storeId, branchId, entityType, entityId, operati
 
 export default async function handler(req, res) {
   try {
-    if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Method not allowed' });
     await ensureTables();
+
+    if (req.method === 'GET') {
+      const storeId = String(req.query.store_id || req.query.storeId || 'default-store');
+      const branchId = String(req.query.branch_id || req.query.branchId || 'main');
+      assertStoreAllowed(storeId);
+      await assertSyncTokenOrDevice(req, { storeId, branchId, allowedRoles: ['host', 'client'], allowedTransports: ['cloud'] });
+      const mode = String(req.query.mode || '').trim().toLowerCase();
+      const jobIdQuery = String(req.query.job_id || req.query.jobId || '').trim();
+      const latestJobRows = jobIdQuery
+        ? [{ job_id: jobIdQuery }]
+        : await sql`
+            select job_id
+            from bootstrap_snapshot_jobs
+            where store_id = ${storeId}
+              and branch_id = ${branchId}
+              and status = 'completed'
+            order by updated_at desc
+            limit 1
+          `;
+      const jobId = latestJobRows[0]?.job_id || '';
+      if (!jobId) return res.status(404).json({ ok: false, error: 'No completed unified snapshot is available.' });
+
+      if (mode === 'manifest') {
+        const rows = await sql`
+          select chunk, snapshot_manifest, total_chunks, sync_generated_at, sync_generated_sequence
+          from unified_snapshot_chunks
+          where store_id = ${storeId}
+            and branch_id = ${branchId}
+            and job_id = ${jobId}
+          order by ordinal asc
+          limit 1
+        `;
+        const first = rows[0];
+        if (!first) return res.status(404).json({ ok: false, error: 'Snapshot manifest not found.' });
+        const chunk = first.chunk || {};
+        return res.status(200).json({
+          ok: true,
+          jobId,
+          snapshotFormat: chunk.snapshotFormat,
+          snapshotVersion: chunk.snapshotVersion,
+          snapshotKind: chunk.snapshotKind,
+          snapshotManifest: first.snapshot_manifest || chunk.snapshotManifest || {},
+          totalChunks: Number(first.total_chunks || chunk.totalChunks || 0),
+          syncGeneratedAt: new Date(first.sync_generated_at).toISOString(),
+          syncGeneratedSequence: Number(first.sync_generated_sequence || 0),
+        });
+      }
+
+      if (mode === 'chunk') {
+        const ordinal = Math.max(Number(req.query.ordinal || 0), 0);
+        const rows = await sql`
+          select chunk, total_chunks
+          from unified_snapshot_chunks
+          where store_id = ${storeId}
+            and branch_id = ${branchId}
+            and job_id = ${jobId}
+            and ordinal = ${ordinal}
+          limit 1
+        `;
+        const row = rows[0];
+        if (!row) return res.status(404).json({ ok: false, error: 'Snapshot chunk not found.' });
+        return res.status(200).json({
+          ok: true,
+          jobId,
+          ordinal,
+          totalChunks: Number(row.total_chunks || 0),
+          chunk: row.chunk || {},
+        });
+      }
+      return res.status(400).json({ ok: false, error: 'Unsupported snapshot GET mode.' });
+    }
+
+    if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Method not allowed' });
 
     const body = req.body || {};
     const storeId = String(body.storeId || body.store_id || 'default-store');
@@ -157,6 +243,18 @@ export default async function handler(req, res) {
     if (!collection) return res.status(400).json({ ok: false, error: 'Missing snapshot collection.' });
     assertStoreAllowed(storeId);
     await assertSyncTokenOrDevice(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['cloud'] });
+
+    await sql`
+      insert into unified_snapshot_chunks (store_id, branch_id, job_id, ordinal, total_chunks, chunk, snapshot_manifest, sync_generated_at, sync_generated_sequence, updated_at)
+      values (${storeId}, ${branchId}, ${jobId}, ${ordinal}, ${totalChunks}, ${JSON.stringify(body || {})}, ${JSON.stringify(body.snapshotManifest || {})}, ${updatedAt}, ${Number(body.syncGeneratedSequence || body.sync_generated_sequence || 0)}, now())
+      on conflict (store_id, branch_id, job_id, ordinal) do update set
+        total_chunks = excluded.total_chunks,
+        chunk = excluded.chunk,
+        snapshot_manifest = excluded.snapshot_manifest,
+        sync_generated_at = excluded.sync_generated_at,
+        sync_generated_sequence = excluded.sync_generated_sequence,
+        updated_at = now()
+    `;
 
     if (ordinal === 0) {
       const active = await sql`

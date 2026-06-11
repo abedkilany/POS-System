@@ -1541,5 +1541,17 @@
   "maintenance_recheck_no_changes": "No data was changed. The health check was refreshed only.",
   "maintenance_cloud_queue_repair_completed": "Cloud sync queue repair completed",
   "maintenance_cloud_queue_repair_none": "No missing Host to Cloud queue rows were found.",
-  "maintenance_cloud_queue_repair_count": "{count} missing Host to Cloud queue rows were recreated."
+  "maintenance_cloud_queue_repair_count": "{count} missing Host to Cloud queue rows were recreated.",
+  "snapshot_section_login_settings_users": "Login settings and users",
+  "snapshot_section_catalogs_warehouses": "Catalogs and warehouses",
+  "snapshot_section_products_customers_suppliers": "Products, customers and suppliers",
+  "snapshot_section_inventory_movements": "Inventory movements",
+  "snapshot_section_sales_purchases": "Sales and purchases",
+  "snapshot_section_accounting_reports": "Accounting and reports",
+  "snapshot_progress_title": "Store data snapshot",
+  "snapshot_progress_preparing": "Preparing snapshot...",
+  "snapshot_progress_keep_open": "Keep this screen open until all sections are completed.",
+  "snapshot_section_waiting": "Waiting",
+  "snapshot_section_in_progress": "In progress",
+  "snapshot_section_completed": "Completed"
 }

@@ -10,6 +10,7 @@ import '../../models/sync_change.dart';
 import 'local_database_service.dart';
 import 'unified_sync_core_service.dart';
 import '../sync_unified/sync_device_state.dart';
+import '../snapshot/unified_snapshot_transfer.dart';
 
 class CloudSyncSettings {
   const CloudSyncSettings({
@@ -587,6 +588,7 @@ class CloudSyncService {
     }
   }
 
+  // ignore: unused_element
   Future<CloudSyncResult> _pullLoginBootstrap(CloudSyncSettings settings,
       {DateTime? minSnapshotUpdatedAt}) async {
     final identity = store.appIdentity;
@@ -649,7 +651,7 @@ class CloudSyncService {
   }
 
   Future<CloudPairingClaimResult> claimPairingCode(
-      CloudSyncSettings settings, String code) async {
+      CloudSyncSettings settings, String code, {CloudSyncProgressCallback? onProgress}) async {
     final current = store.appIdentity;
     if (current.isHost) {
       return const CloudPairingClaimResult(
@@ -667,6 +669,7 @@ class CloudSyncService {
           ok: false, message: 'رابط واجهة السحابة مطلوب.');
     }
     var deviceRegistered = false;
+    onProgress?.call(0.08, 'Connecting to Cloud pairing service...');
     try {
       final response = await _client
           .post(
@@ -733,60 +736,85 @@ class CloudSyncService {
         deviceToken: decoded['deviceToken']?.toString() ?? current.deviceToken,
         updatedAt: DateTime.now(),
       );
+      onProgress?.call(0.22, 'Registering this device...');
       await store.updateAppIdentityDuringSetup(identity);
       deviceRegistered = true;
 
       if (identity.syncMode == SyncMode.cloudConnected ||
           identity.syncMode == SyncMode.marketplaceEnabled) {
-        // Pairing and provisioning are separate lifecycle steps. For large
-        // stores, do not block Connect to Store on the full business snapshot.
-        // Pull only login-critical records (store settings/profile, roles and
-        // users), then let the normal background provisioning download the rest
-        // after the user reaches Login.
+        // Phase 3: Connect to Store is not considered complete until the same
+        // unified Snapshot used by LAN is fully downloaded, imported and
+        // verified. Cloud may still transfer through the server, but the
+        // lifecycle is now identical to LAN: register -> snapshot chunks ->
+        // import -> verify -> ready.
         final requestedAt = DateTime.now().toUtc();
         await CloudProvisioningStatus.markPending(
           requestedAt: requestedAt,
-          message:
-              'بيانات تسجيل الدخول جاهزة. يتم تنزيل بقية بيانات المتجر على مراحل.',
+          message: 'جارٍ تنزيل بيانات المتجر كاملة قبل تفعيل الجهاز.',
         );
 
-        var loginReady = false;
-        var initialPull = await _pullLoginBootstrap(
-            settings.copyWith(clearLastPullCursor: true));
-        loginReady = initialPull.ok &&
-            (initialPull.pulled > 0 || !store.needsInitialAdminSetup) &&
-            !store.needsInitialAdminSetup;
+        CloudSyncResult request = const CloudSyncResult(
+          ok: true,
+          message: 'سيتم استخدام أحدث لقطة سحابية متاحة.',
+        );
 
-        var request = const CloudSyncResult(
-            ok: true,
-            message: 'تم استخدام لقطة سحابية موجودة لتهيئة تسجيل الدخول.');
-        if (!loginReady) {
-          request = await requestFreshHostSnapshot(settings,
-              requestedAt: requestedAt);
-        }
-
-        if (request.ok && !loginReady) {
-          for (var attempt = 0; attempt < 6; attempt += 1) {
-            if (attempt > 0) {
-              await Future<void>.delayed(const Duration(seconds: 3));
+        for (var attempt = 0; attempt < 6; attempt += 1) {
+          if (attempt > 0) {
+            onProgress?.call(0.28, 'Waiting for Host full snapshot...');
+            await Future<void>.delayed(const Duration(seconds: 3));
+          }
+          await CloudProvisioningStatus.markAttempted(DateTime.now().toUtc());
+          try {
+            final envelope = await _downloadCloudSnapshotEnvelope(
+              settings.copyWith(clearLastPullCursor: true),
+              force: attempt == 0,
+              onProgress: (value, label) {
+                final scaled = (0.24 + value * 0.50).clamp(0.24, 0.74).toDouble();
+                onProgress?.call(scaled, label);
+              },
+            );
+            onProgress?.call(0.78, 'Importing Cloud snapshot chunks locally...');
+            await store.importSyncSnapshotJson(jsonEncode(envelope));
+            onProgress?.call(0.88, 'Verifying local store data...');
+            final verified = await store.verifyLocalBusinessDataIntegrity();
+            if (!verified.ok || store.needsInitialAdminSetup) {
+              throw StateError(verified.message);
             }
-            await CloudProvisioningStatus.markAttempted(DateTime.now().toUtc());
-            initialPull = await _pullLoginBootstrap(
-                settings.copyWith(clearLastPullCursor: true),
-                minSnapshotUpdatedAt: requestedAt);
-            loginReady = initialPull.ok &&
-                (initialPull.pulled > 0 || !store.needsInitialAdminSetup) &&
-                !store.needsInitialAdminSetup;
-            if (loginReady) break;
+            final cursor = store.syncSnapshotGeneratedAtFromJson(jsonEncode(envelope));
+            final sequence = store.syncSnapshotGeneratedSequenceFromJson(jsonEncode(envelope));
+            await SyncDeviceStateStore.recordSyncResult(
+              store.appIdentity,
+              transport: 'cloud',
+              appliedCursor: cursor,
+              ackCursor: cursor,
+              appliedSequence: sequence,
+              ackSequence: sequence,
+            );
+            await CloudProvisioningStatus.markComplete(
+              message: 'تم تنزيل بيانات المتجر كاملة.',
+            );
+            onProgress?.call(1.0, 'Cloud snapshot is ready.');
+            return CloudPairingClaimResult(
+              ok: true,
+              message: 'تم اقتران الجهاز وتنزيل بيانات المتجر كاملة. يمكنك تسجيل الدخول الآن.',
+              identity: store.appIdentity,
+            );
+          } catch (_) {
+            request = await requestFreshHostSnapshot(settings, requestedAt: requestedAt);
+            if (!request.ok) break;
           }
         }
 
+        await CloudProvisioningStatus.markPending(
+          requestedAt: requestedAt,
+          message: 'لم تكتمل لقطة المتجر الكاملة بعد.',
+        );
         return CloudPairingClaimResult(
-          ok: true,
-          message: loginReady
-              ? 'تم اقتران الجهاز بنجاح. تم تنزيل بيانات تسجيل الدخول. يرجى تسجيل الدخول؛ وسيستمر تنزيل بقية بيانات المتجر.'
-              : 'تم اقتران الجهاز بنجاح. بانتظار بيانات تسجيل الدخول من المضيف. أبقِ المضيف متصلاً؛ وسيتم تنزيل بيانات المتجر تلقائياً.',
-          identity: identity,
+          ok: false,
+          message: request.ok
+              ? 'تم تسجيل الجهاز، لكن لم تكتمل لقطة المتجر الكاملة بعد. أبقِ المضيف متصلاً وحاول مرة أخرى.'
+              : request.message,
+          identity: store.appIdentity,
         );
       }
       return CloudPairingClaimResult(
@@ -796,9 +824,9 @@ class CloudSyncService {
     } catch (error) {
       if (deviceRegistered) {
         return CloudPairingClaimResult(
-          ok: true,
+          ok: false,
           message:
-              'تم اقتران الجهاز بنجاح. سيتم تنزيل بيانات المتجر الأولية تلقائياً عند اتصال المضيف.',
+              'تم تسجيل الجهاز، لكن لم تكتمل لقطة المتجر الكاملة. أبقِ المضيف متصلاً وحاول مرة أخرى.',
           identity: store.appIdentity,
         );
       }
@@ -1082,9 +1110,59 @@ class CloudSyncService {
 
     onProgress?.call(0.18,
         'جارٍ التحقق من وجود لقطة حديثة من المضيف قبل تعديل البيانات المحلية...');
+    // Phase 2: first try the transport-neutral chunk downloader. Cloud and LAN
+    // now share the same manifest -> chunks -> envelope -> importer pipeline;
+    // only the requestManifest/requestChunk transport is different.
+    for (var attempt = 0; attempt < 6; attempt += 1) {
+      if (attempt > 0) await Future<void>.delayed(const Duration(seconds: 3));
+      try {
+        final envelope = await _downloadCloudSnapshotEnvelope(
+          settings.copyWith(clearLastPullCursor: true),
+          force: false,
+          onProgress: (value, label) {
+            final scaled = (0.22 + value * 0.58).clamp(0.0, 0.82).toDouble();
+            onProgress?.call(scaled, label);
+          },
+        );
+        onProgress?.call(0.84, 'جارٍ تطبيق دفعات اللقطة السحابية محلياً...');
+        await store.importSyncSnapshotJson(jsonEncode(envelope));
+        onProgress?.call(0.90, 'جارٍ التحقق من البيانات المحلية بعد إعادة البناء...');
+        final repaired = await store.verifyLocalBusinessDataIntegrity();
+        onProgress?.call(0.96, 'جارٍ تنظيف السجلات المحلية...');
+        await store.cleanupSoftDeletedRecords();
+        await CloudProvisioningStatus.markComplete(
+            message: 'تم تنزيل بيانات المتجر الأولية.');
+        final cursor = store.syncSnapshotGeneratedAtFromJson(jsonEncode(envelope));
+        final sequence = store.syncSnapshotGeneratedSequenceFromJson(jsonEncode(envelope));
+        await SyncDeviceStateStore.recordSyncResult(
+          store.appIdentity,
+          transport: 'cloud',
+          appliedCursor: cursor,
+          ackCursor: cursor,
+          appliedSequence: sequence,
+          ackSequence: sequence,
+        );
+        onProgress?.call(1.0, 'اكتملت إعادة البناء السحابية.');
+        return CloudSyncResult(
+          ok: repaired.ok,
+          pulled: (envelope['totalChunks'] as num?)?.toInt() ?? 0,
+          restoredSnapshot: true,
+          message: repaired.ok
+              ? 'اكتملت إعادة البناء السحابية من دفعات Snapshot موحدة.'
+              : 'تم تنزيل دفعات Snapshot موحدة، لكن فحص البيانات المحلي وجد مشاكل: ${repaired.message}',
+        );
+      } catch (_) {
+        onProgress?.call(
+          (0.24 + attempt * 0.08).clamp(0.24, 0.68).toDouble(),
+          'بانتظار توفر دفعات Snapshot السحابية (المحاولة ${attempt + 1}/6)...',
+        );
+      }
+    }
+
     // Do not wipe current Client data until a fresh restore_snapshot is actually
     // received and applied. Failed pairing or unavailable Host data must not
-    // erase anything locally.
+    // erase anything locally. Keep the legacy entity-snapshot pull as a
+    // compatibility fallback for servers not yet migrated to chunk downloads.
     await CloudSyncSettings.clearSavedPullCursor();
 
     var freshSettings = settings.copyWith(clearLastPullCursor: true);
@@ -1797,6 +1875,26 @@ class CloudSyncService {
     }
   }
 
+  Future<Map<String, dynamic>> _downloadCloudSnapshotEnvelope(
+    CloudSyncSettings settings, {
+    bool force = false,
+    CloudSyncProgressCallback? onProgress,
+  }) {
+    final identity = store.appIdentity;
+    return const UnifiedSnapshotTransferService().downloadEnvelope(
+      _CloudSnapshotPullTransport(
+        settings: settings,
+        headers: _headers(settings),
+        client: _client,
+        storeId: identity.storeId,
+        branchId: identity.branchId,
+      ),
+      force: force,
+      labelPrefix: 'Cloud snapshot',
+      onProgress: onProgress,
+    );
+  }
+
   Future<int> publishLoginBootstrapSnapshotToCloud(
     CloudSyncSettings settings, {
     bool force = false,
@@ -1811,35 +1909,18 @@ class CloudSyncService {
     await store.removeLegacyCloudBootstrapSnapshotQueue();
     final chunks = store.exportCloudLoginBootstrapSnapshotChunks();
     if (chunks.isEmpty) return 0;
-
-    for (var i = 0; i < chunks.length; i += 1) {
-      final chunk = Map<String, dynamic>.from(chunks[i]);
-      chunk['force'] = force && i == 0;
-      chunk['preserveExisting'] = true;
-      final response = await _client
-          .post(
-            settings.endpoint('/api/sync/bootstrap-snapshot'),
-            headers: _headers(settings),
-            body: jsonEncode(chunk),
-          )
-          .timeout(const Duration(seconds: 20));
-      if (response.statusCode == 409) {
-        if (!force) {
-          throw StateError(
-              'هناك لقطة تهيئة سحابية قيد التنفيذ بالفعل. حاول بعد انتهائها أو استخدم إعادة البناء الإجبارية.');
-        }
-      }
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw StateError(
-            'فشلت لقطة تهيئة تسجيل الدخول السحابية: ${response.statusCode} ${response.body}');
-      }
-      onProgress?.call(
-          (0.10 + ((i + 1) / chunks.length) * 0.70)
-              .clamp(0.10, 0.80)
-              .toDouble(),
-          'جارٍ نشر تهيئة تسجيل الدخول ${i + 1}/${chunks.length}...');
-    }
-    return chunks.length;
+    return const UnifiedSnapshotTransferService().uploadChunks(
+      _CloudSnapshotPushTransport(
+        settings: settings,
+        headers: _headers(settings),
+        client: _client,
+      ),
+      chunks,
+      force: force,
+      preserveExisting: true,
+      labelPrefix: 'Cloud login snapshot',
+      onProgress: onProgress,
+    );
   }
 
   Future<int> publishBootstrapSnapshotToCloud(
@@ -1857,58 +1938,18 @@ class CloudSyncService {
     final chunks =
         store.exportCloudBootstrapSnapshotChunks(maxItemsPerChunk: 300);
     if (chunks.isEmpty) return 0;
-
-    for (var i = 0; i < chunks.length; i += 1) {
-      final chunk = Map<String, dynamic>.from(chunks[i]);
-      chunk['force'] = force && i == 0;
-      final collection = (chunk['collection'] ?? 'unknown').toString();
-      final sectionIndex =
-          ((chunk['sectionChunkIndex'] as num?)?.toInt() ?? 0) + 1;
-      final sectionTotal = (chunk['sectionTotalChunks'] as num?)?.toInt() ?? 1;
-      final chunkLabel =
-          '$collection $sectionIndex/$sectionTotal (${i + 1}/${chunks.length})';
-      http.Response? response;
-      for (var attempt = 1; attempt <= 3; attempt += 1) {
-        try {
-          response = await _client
-              .post(
-                settings.endpoint('/api/sync/bootstrap-snapshot'),
-                headers: _headers(settings),
-                body: jsonEncode(chunk),
-              )
-              .timeout(const Duration(seconds: 30));
-          if (response.statusCode != 429 && response.statusCode < 500) break;
-        } catch (error) {
-          if (attempt == 3) {
-            throw StateError(
-                'Failed to upload bootstrap snapshot chunk $chunkLabel: $error');
-          }
-        }
-        if (attempt < 3) {
-          await Future<void>.delayed(Duration(milliseconds: 500 * attempt));
-        }
-      }
-      if (response == null) {
-        throw StateError(
-            'Failed to upload bootstrap snapshot chunk $chunkLabel.');
-      }
-      if (response.statusCode == 409) {
-        if (!force) {
-          throw StateError(
-              'هناك لقطة تهيئة سحابية قيد التنفيذ بالفعل. حاول بعد انتهائها أو استخدم إعادة البناء الإجبارية.');
-        }
-      }
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw StateError(
-            'فشلت لقطة التهيئة السحابية: ${response.statusCode} ${response.body}');
-      }
-      onProgress?.call(
-          (0.10 + ((i + 1) / chunks.length) * 0.70)
-              .clamp(0.10, 0.80)
-              .toDouble(),
-          'جارٍ نشر جزء اللقطة ${i + 1}/${chunks.length}...');
-    }
-    return chunks.length;
+    return const UnifiedSnapshotTransferService().uploadChunks(
+      _CloudSnapshotPushTransport(
+        settings: settings,
+        headers: _headers(settings),
+        client: _client,
+      ),
+      chunks,
+      force: force,
+      preserveExisting: false,
+      labelPrefix: 'Cloud snapshot',
+      onProgress: onProgress,
+    );
   }
 
   Future<int> _pushPendingToEndpoint(
@@ -2578,7 +2619,6 @@ class CloudSyncService {
         await CloudProvisioningStatus.markComplete(
             message: 'تم تنزيل بيانات المتجر الأولية.');
       }
-      onProgress?.call(1.0, 'اكتملت المزامنة السحابية.');
       return CloudSyncResult(
         ok: true,
         pushed: pushed,
@@ -2590,6 +2630,134 @@ class CloudSyncService {
     } catch (error) {
       return CloudSyncResult(
           ok: false, message: 'فشلت المزامنة السحابية: $error');
+    }
+  }
+}
+
+
+class _CloudSnapshotPullTransport implements UnifiedSnapshotChunkPullTransport {
+  _CloudSnapshotPullTransport({
+    required this.settings,
+    required this.headers,
+    required this.client,
+    required this.storeId,
+    required this.branchId,
+  });
+
+  final CloudSyncSettings settings;
+  final Map<String, String> headers;
+  final http.Client client;
+  final String storeId;
+  final String branchId;
+  String _jobId = '';
+
+  @override
+  Future<UnifiedSnapshotManifestResponse> requestManifest({bool force = false}) async {
+    final response = await client
+        .get(
+          settings.endpoint('/api/sync/bootstrap-snapshot', {
+            'mode': 'manifest',
+            'store_id': storeId,
+            'branch_id': branchId,
+          }),
+          headers: headers,
+        )
+        .timeout(const Duration(seconds: 30));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw StateError('Cloud snapshot manifest failed: ${response.statusCode} ${response.body}');
+    }
+    final decoded = Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+    _jobId = (decoded['jobId'] ?? '').toString();
+    return UnifiedSnapshotManifestResponse(
+      manifest: Map<String, dynamic>.from((decoded['snapshotManifest'] as Map?) ?? const <String, dynamic>{}),
+      totalChunks: (decoded['totalChunks'] as num?)?.toInt() ?? 0,
+      snapshotFormat: decoded['snapshotFormat']?.toString(),
+      snapshotVersion: decoded['snapshotVersion'],
+      snapshotKind: decoded['snapshotKind']?.toString(),
+      syncGeneratedAt: decoded['syncGeneratedAt']?.toString(),
+      syncGeneratedSequence: (decoded['syncGeneratedSequence'] as num?)?.toInt(),
+    );
+  }
+
+  @override
+  Future<UnifiedSnapshotChunkResponse> requestChunk(int ordinal) async {
+    final query = <String, String>{
+      'mode': 'chunk',
+      'store_id': storeId,
+      'branch_id': branchId,
+      'ordinal': ordinal.toString(),
+    };
+    if (_jobId.trim().isNotEmpty) query['job_id'] = _jobId;
+    final response = await client
+        .get(settings.endpoint('/api/sync/bootstrap-snapshot', query), headers: headers)
+        .timeout(const Duration(seconds: 30));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw StateError('Cloud snapshot chunk ${ordinal + 1} failed: ${response.statusCode} ${response.body}');
+    }
+    final decoded = Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+    final chunk = decoded['chunk'];
+    if (chunk is! Map) throw StateError('Cloud snapshot chunk ${ordinal + 1} is invalid.');
+    return UnifiedSnapshotChunkResponse(
+      chunk: Map<String, dynamic>.from(chunk),
+      ordinal: (decoded['ordinal'] as num?)?.toInt() ?? ordinal,
+      totalChunks: (decoded['totalChunks'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  @override
+  Future<void> ackChunk(int ordinal) async {
+    // Cloud snapshot chunk ACK is currently client-local; the unified transfer
+    // engine still calls this hook so Cloud and LAN share the same pipeline.
+  }
+}
+
+
+class _CloudSnapshotPushTransport implements UnifiedSnapshotChunkPushTransport {
+  _CloudSnapshotPushTransport({
+    required this.settings,
+    required this.headers,
+    required this.client,
+  });
+
+  final CloudSyncSettings settings;
+  final Map<String, String> headers;
+  final http.Client client;
+
+  @override
+  Future<void> uploadChunk(Map<String, dynamic> chunk,
+      {required bool force, required bool preserveExisting}) async {
+    final body = Map<String, dynamic>.from(chunk);
+    body['force'] = force;
+    body['preserveExisting'] = preserveExisting;
+    http.Response? response;
+    Object? lastError;
+    for (var attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        response = await client
+            .post(
+              settings.endpoint('/api/sync/bootstrap-snapshot'),
+              headers: headers,
+              body: jsonEncode(body),
+            )
+            .timeout(const Duration(seconds: 30));
+        if (response.statusCode != 429 && response.statusCode < 500) break;
+      } catch (error) {
+        lastError = error;
+      }
+      if (attempt < 3) {
+        await Future<void>.delayed(Duration(milliseconds: 500 * attempt));
+      }
+    }
+    if (response == null) {
+      throw StateError('Failed to upload snapshot chunk: $lastError');
+    }
+    if (response.statusCode == 409 && !force) {
+      throw StateError(
+          'هناك لقطة تهيئة سحابية قيد التنفيذ بالفعل. حاول بعد انتهائها أو استخدم إعادة البناء الإجبارية.');
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw StateError(
+          'فشل رفع جزء Snapshot: ${response.statusCode} ${response.body}');
     }
   }
 }

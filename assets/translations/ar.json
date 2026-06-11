@@ -1541,5 +1541,17 @@
   "maintenance_recheck_no_changes": "لم يتم تغيير أي بيانات. تم تحديث فحص الصحة فقط.",
   "maintenance_cloud_queue_repair_completed": "اكتمل إصلاح قائمة مزامنة السحابة",
   "maintenance_cloud_queue_repair_none": "لم يتم العثور على صفوف ناقصة في قائمة Host إلى Cloud.",
-  "maintenance_cloud_queue_repair_count": "تمت إعادة إنشاء {count} صف ناقص في قائمة Host إلى Cloud."
+  "maintenance_cloud_queue_repair_count": "تمت إعادة إنشاء {count} صف ناقص في قائمة Host إلى Cloud.",
+  "snapshot_section_login_settings_users": "إعدادات الدخول والمستخدمون",
+  "snapshot_section_catalogs_warehouses": "التصنيفات والمستودعات",
+  "snapshot_section_products_customers_suppliers": "المنتجات والعملاء والموردون",
+  "snapshot_section_inventory_movements": "حركات المخزون",
+  "snapshot_section_sales_purchases": "المبيعات والمشتريات",
+  "snapshot_section_accounting_reports": "المحاسبة والتقارير",
+  "snapshot_progress_title": "لقطة بيانات المتجر",
+  "snapshot_progress_preparing": "جارٍ تجهيز اللقطة...",
+  "snapshot_progress_keep_open": "أبقِ هذه الشاشة مفتوحة حتى تكتمل كل الأقسام.",
+  "snapshot_section_waiting": "بانتظار",
+  "snapshot_section_in_progress": "قيد التنفيذ",
+  "snapshot_section_completed": "مكتمل"
 }

@@ -198,11 +198,12 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
   }
 
   @override
-  Future<UnifiedPairingClaimResult> claimPairingCode(String code) async {
+  Future<UnifiedPairingClaimResult> claimPairingCode(String code, {void Function(double value, String label)? onProgress}) async {
     final result = await _service.claimPairingCode(
       _settings.host,
       port: _settings.port,
       code: code,
+      onProgress: onProgress,
     );
     return UnifiedPairingClaimResult(
       ok: result.ok,

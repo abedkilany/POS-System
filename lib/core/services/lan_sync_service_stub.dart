@@ -359,7 +359,7 @@ class LanSyncService {
   Future<void> stopHost() async {}
   Future<LanSyncResult> testConnection(String host, {int port = 8787, String token = ''}) async =>
       const LanSyncResult(ok: false, message: 'LAN sync is not available in the web build. Use Cloud Sync/API instead.');
-  Future<LanSyncResult> claimPairingCode(String host, {int port = 8787, required String code}) async =>
+  Future<LanSyncResult> claimPairingCode(String host, {int port = 8787, required String code, LanSyncProgressCallback? onProgress}) async =>
       const LanSyncResult(ok: false, message: 'LAN pairing is not available in the web build.');
   Future<LanSyncResult> initialClone(String host, {int port = 8787, String token = '', LanSyncProgressCallback? onProgress}) async =>
       const LanSyncResult(ok: false, message: 'LAN initial clone is not available in the web build.');

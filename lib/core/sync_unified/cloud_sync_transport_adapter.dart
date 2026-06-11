@@ -159,8 +159,8 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
   }
 
   @override
-  Future<UnifiedPairingClaimResult> claimPairingCode(String code) async {
-    final result = await _service.claimPairingCode(_settings, code);
+  Future<UnifiedPairingClaimResult> claimPairingCode(String code, {void Function(double value, String label)? onProgress}) async {
+    final result = await _service.claimPairingCode(_settings, code, onProgress: onProgress);
     return UnifiedPairingClaimResult(
       ok: result.ok,
       message: result.message,

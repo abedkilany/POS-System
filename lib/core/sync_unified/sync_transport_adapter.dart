@@ -150,7 +150,7 @@ abstract class SyncTransportAdapter {
 
   Future<UnifiedPairingCodeResult> createPairingCode({int ttlMinutes = 5});
 
-  Future<UnifiedPairingClaimResult> claimPairingCode(String code);
+  Future<UnifiedPairingClaimResult> claimPairingCode(String code, {void Function(double value, String label)? onProgress});
 
   Future<UnifiedSyncResult> pushPending(UnifiedSyncPushRequest request);
 

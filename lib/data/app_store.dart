@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/services/local_database_service.dart';
 import '../core/sync_unified/sync_device_state.dart';
+import '../core/snapshot/unified_snapshot.dart';
 import '../core/utils/currency_utils.dart';
 
 import '../models/account_transaction.dart';
@@ -7033,88 +7034,114 @@ class AppStore extends ChangeNotifier {
                 .reduce((a, b) => a > b ? a : b),
       };
 
-  List<Map<String, dynamic>> exportCloudLoginBootstrapSnapshotChunks() {
-    final identity = appIdentity;
-    final generatedAt = DateTime.now().toIso8601String();
-    final jobId =
-        '${DateTime.now().microsecondsSinceEpoch}-$_deviceId-login-bootstrap';
 
-    String encodeCompressed(Map<String, dynamic> payload) {
-      final bytes = utf8.encode(jsonEncode(payload));
-      final compressed = GZipEncoder().encode(bytes);
-      return base64Encode(compressed);
-    }
-
-    final chunks = <Map<String, dynamic>>[];
-
-    void addPayload(
-        String collection, int index, Map<String, dynamic> payload) {
-      chunks.add({
-        'jobId': jobId,
-        'storeId': identity.storeId,
-        'branchId': identity.branchId,
-        'deviceId': _deviceId,
-        'collection': collection,
-        'chunkIndex': index,
-        'encoding': 'gzip+base64+json',
-        'payload': encodeCompressed(payload),
-        'generatedAt': generatedAt,
-        'storeEpoch': identity.storeEpoch,
-      });
-    }
-
-    addPayload('_meta', 0, {
-      'version': 14,
-      'generatedAt': generatedAt,
-      'schemaVersion': 17,
-      'invoiceCounter': _invoiceCounter,
-      'purchaseCounter': _purchaseCounter,
-      'storeProfile': _storeProfile.toJson(),
-      'appIdentity': identity.toJson(),
-      'storeEpoch': identity.storeEpoch,
-      'syncGeneratedSequence': _syncChanges.isEmpty
-          ? 0
-          : _syncChanges
-              .map((item) => item.sequence)
-              .reduce((a, b) => a > b ? a : b),
-    });
-    addPayload(
-        'roles', 0, {'items': _roles.map((item) => item.toJson()).toList()});
-    addPayload(
-        'users', 0, {'items': _users.map((item) => item.toJson()).toList()});
-
-    final sectionTotals = <String, int>{};
-    final sectionSeen = <String, int>{};
-    for (final chunk in chunks) {
-      final collection = (chunk['collection'] ?? '').toString();
-      sectionTotals[collection] = (sectionTotals[collection] ?? 0) + 1;
-    }
-    final allSections = sectionTotals.keys.toList(growable: false);
-    for (var i = 0; i < chunks.length; i += 1) {
-      final collection = (chunks[i]['collection'] ?? '').toString();
-      final sectionIndex = sectionSeen[collection] ?? 0;
-      sectionSeen[collection] = sectionIndex + 1;
-      chunks[i]['totalChunks'] = chunks.length;
-      chunks[i]['ordinal'] = i;
-      chunks[i]['sectionChunkIndex'] = sectionIndex;
-      chunks[i]['sectionTotalChunks'] = sectionTotals[collection] ?? 1;
-      chunks[i]['allSections'] = allSections;
-    }
-    return chunks;
-  }
-
-  List<Map<String, dynamic>> exportCloudBootstrapSnapshotChunks({
-    int maxItemsPerChunk = 250,
-    int maxEncodedPayloadBytes = 900 * 1024,
+  Map<String, dynamic> _unifiedSnapshotManifestJson({
+    required String jobId,
+    required String generatedAt,
+    required String kind,
+    int totalChunks = 1,
+    Iterable<String>? collections,
   }) {
     final identity = appIdentity;
-    final generatedAt = DateTime.now().toIso8601String();
-    final jobId =
-        '${DateTime.now().microsecondsSinceEpoch}-$_deviceId-bootstrap';
-    final collections = <String, List<dynamic>>{
-      // Login-critical records must be published before heavy business data.
-      // A new Cloud Client can leave Connect to Store as soon as these chunks
-      // are available, then continue the remaining snapshot after login.
+    final sections = collections == null
+        ? UnifiedSnapshotCatalog.sections
+        : UnifiedSnapshotCatalog.sectionsForCollections(collections);
+    return UnifiedSnapshotManifest(
+      jobId: jobId,
+      generatedAt: generatedAt,
+      storeId: identity.storeId,
+      branchId: identity.branchId,
+      deviceId: _deviceId,
+      storeEpoch: identity.storeEpoch.toString(),
+      kind: kind,
+      totalChunks: totalChunks,
+      sections: sections,
+    ).toJson();
+  }
+
+  void _attachUnifiedSnapshotChunkMetadata(
+    List<Map<String, dynamic>> chunks, {
+    required String kind,
+    required String generatedAt,
+  }) {
+    final collectionTotals = <String, int>{};
+    final collectionSeen = <String, int>{};
+    final sectionTotals = <String, int>{};
+    final sectionSeen = <String, int>{};
+    final sectionIds = <String>{};
+    for (final chunk in chunks) {
+      final collection = (chunk['collection'] ?? '').toString();
+      final section = UnifiedSnapshotCatalog.sectionForCollection(collection);
+      chunk['snapshotFormat'] = UnifiedSnapshotManifest.format;
+      chunk['snapshotVersion'] = UnifiedSnapshotManifest.version;
+      chunk['snapshotKind'] = kind;
+      chunk['sectionId'] = section.id;
+      chunk['sectionLabelKey'] = section.labelKey;
+      chunk['sectionOrder'] = section.order;
+      sectionIds.add(section.id);
+      collectionTotals[collection] = (collectionTotals[collection] ?? 0) + 1;
+      sectionTotals[section.id] = (sectionTotals[section.id] ?? 0) + 1;
+    }
+    final manifest = _unifiedSnapshotManifestJson(
+      jobId: chunks.isEmpty ? '' : (chunks.first['jobId'] ?? '').toString(),
+      generatedAt: generatedAt,
+      kind: kind,
+      totalChunks: chunks.length,
+      collections: chunks.map((item) => (item['collection'] ?? '').toString()),
+    );
+    final allCollections = collectionTotals.keys.toList(growable: false);
+    final unifiedSections = UnifiedSnapshotCatalog.sections
+        .where((section) => sectionIds.contains(section.id))
+        .map((section) => section.id)
+        .toList(growable: false);
+    for (var i = 0; i < chunks.length; i += 1) {
+      final collection = (chunks[i]['collection'] ?? '').toString();
+      final section = UnifiedSnapshotCatalog.sectionForCollection(collection);
+      final collectionIndex = collectionSeen[collection] ?? 0;
+      final unifiedSectionIndex = sectionSeen[section.id] ?? 0;
+      collectionSeen[collection] = collectionIndex + 1;
+      sectionSeen[section.id] = unifiedSectionIndex + 1;
+      chunks[i]['totalChunks'] = chunks.length;
+      chunks[i]['ordinal'] = i;
+      chunks[i]['syncGeneratedAt'] = generatedAt;
+      chunks[i]['syncGeneratedSequence'] = _syncChanges.isEmpty
+          ? 0
+          : _syncChanges.map((item) => item.sequence).reduce((a, b) => a > b ? a : b);
+      // Legacy progress fields remain collection-based so the current Cloud
+      // provisioning screen and server responses keep working during phase 1.
+      chunks[i]['sectionChunkIndex'] = collectionIndex;
+      chunks[i]['sectionTotalChunks'] = collectionTotals[collection] ?? 1;
+      chunks[i]['allSections'] = allCollections;
+      // New unified fields describe the business-level snapshot sections used
+      // by both transports in the next phases.
+      chunks[i]['unifiedSectionChunkIndex'] = unifiedSectionIndex;
+      chunks[i]['unifiedSectionTotalChunks'] = sectionTotals[section.id] ?? 1;
+      chunks[i]['allUnifiedSections'] = unifiedSections;
+      chunks[i]['snapshotManifest'] = manifest;
+    }
+  }
+
+  Map<String, List<dynamic>> _unifiedSnapshotCollectionPayloads({
+    Set<String>? sectionIds,
+  }) {
+    final all = <String, List<dynamic>>{
+      '_meta': <dynamic>[
+        <String, dynamic>{
+          'version': 14,
+          'generatedAt': DateTime.now().toIso8601String(),
+          'schemaVersion': 17,
+          'invoiceCounter': _invoiceCounter,
+          'purchaseCounter': _purchaseCounter,
+          'storeProfile': _storeProfile.toJson(),
+          'appIdentity': appIdentity.toJson(),
+          'storeEpoch': appIdentity.storeEpoch,
+          'syncGeneratedSequence': _syncChanges.isEmpty
+              ? 0
+              : _syncChanges
+                  .map((item) => item.sequence)
+                  .reduce((a, b) => a > b ? a : b),
+        }
+      ],
       'roles': _roles.map((item) => item.toJson()).toList(),
       'users': _users.map((item) => item.toJson()).toList(),
       'categories': _categories.map((item) => item.toJson()).toList(),
@@ -7126,25 +7153,68 @@ class AppStore extends ChangeNotifier {
       'suppliers': _suppliers.map((item) => item.toJson()).toList(),
       'supplierProductPrices':
           _supplierProductPrices.map((item) => item.toJson()).toList(),
+      'stockMovements': _stockMovements.map((item) => item.toJson()).toList(),
+      'inventoryCounts':
+          _inventoryCounts.map((item) => item.toJson()).toList(),
       'sales': _sales.map((item) => item.toJson()).toList(),
       'saleQuotations': _saleQuotations.map((item) => item.toJson()).toList(),
       'deliveryNotes': _deliveryNotes.map((item) => item.toJson()).toList(),
+      'purchases': _purchases.map((item) => item.toJson()).toList(),
+      'expenses': _expenses.map((item) => item.toJson()).toList(),
+      'accountTransactions':
+          _accountTransactions.map((item) => item.toJson()).toList(),
       'billsOfMaterials':
           _billsOfMaterials.map((item) => item.toJson()).toList(),
       'manufacturingOrders':
           _manufacturingOrders.map((item) => item.toJson()).toList(),
-      'expenses': _expenses.map((item) => item.toJson()).toList(),
-      'purchases': _purchases.map((item) => item.toJson()).toList(),
-      'stockMovements': _stockMovements.map((item) => item.toJson()).toList(),
-      'accountTransactions':
-          _accountTransactions.map((item) => item.toJson()).toList(),
     };
 
-    String encodeCompressed(Map<String, dynamic> payload) {
-      final bytes = utf8.encode(jsonEncode(payload));
-      final compressed = GZipEncoder().encode(bytes);
-      return base64Encode(compressed);
+    final ordered = <String, List<dynamic>>{};
+    for (final section in UnifiedSnapshotCatalog.sections) {
+      if (sectionIds != null && !sectionIds.contains(section.id)) continue;
+      for (final collection in section.collections) {
+        ordered[collection] = all[collection] ?? const <dynamic>[];
+      }
     }
+    return ordered;
+  }
+
+  String _encodeUnifiedSnapshotChunkPayload(Map<String, dynamic> payload) {
+    final bytes = utf8.encode(jsonEncode(payload));
+    final compressed = GZipEncoder().encode(bytes);
+    return base64Encode(compressed);
+  }
+
+  Map<String, dynamic> _decodeUnifiedSnapshotChunkPayload(
+      Map<String, dynamic> chunk) {
+    final encoding = (chunk['encoding'] ?? '').toString();
+    final rawPayload = chunk['payload'];
+    if (encoding == 'gzip+base64+json' && rawPayload is String) {
+      final compressed = base64Decode(rawPayload);
+      final bytes = GZipDecoder().decodeBytes(compressed);
+      final decoded = jsonDecode(utf8.decode(bytes));
+      return Map<String, dynamic>.from(decoded as Map);
+    }
+    if (rawPayload is Map) return Map<String, dynamic>.from(rawPayload);
+    return const <String, dynamic>{};
+  }
+
+  /// The single snapshot builder used by Cloud, LAN, restore, repair, and
+  /// pairing flows. The same catalog, manifest, payload shape, and chunk
+  /// structure are used by both LAN and Cloud transports.
+  List<Map<String, dynamic>> exportUnifiedSnapshotChunks({
+    String kind = 'full_store',
+    Set<String>? sectionIds,
+    int maxItemsPerChunk = 250,
+    int maxEncodedPayloadBytes = 900 * 1024,
+  }) {
+    final identity = appIdentity;
+    final generatedAt = DateTime.now().toIso8601String();
+    final jobId =
+        '${DateTime.now().microsecondsSinceEpoch}-$_deviceId-$kind';
+    final collections = _unifiedSnapshotCollectionPayloads(
+      sectionIds: sectionIds,
+    );
 
     final chunks = <Map<String, dynamic>>[];
     void addEncodedPayload(String collection, int index,
@@ -7163,38 +7233,27 @@ class AppStore extends ChangeNotifier {
       });
     }
 
-    void addPayload(
-        String collection, int index, Map<String, dynamic> payload) {
-      addEncodedPayload(collection, index, payload, encodeCompressed(payload));
-    }
-
-    addPayload('_meta', 0, {
-      'version': 14,
-      'generatedAt': generatedAt,
-      'schemaVersion': 17,
-      'invoiceCounter': _invoiceCounter,
-      'purchaseCounter': _purchaseCounter,
-      'storeProfile': _storeProfile.toJson(),
-      'appIdentity': identity.toJson(),
-      'storeEpoch': identity.storeEpoch,
-      'syncGeneratedSequence': _syncChanges.isEmpty
-          ? 0
-          : _syncChanges
-              .map((item) => item.sequence)
-              .reduce((a, b) => a > b ? a : b),
-    });
-
     collections.forEach((collection, list) {
       var chunkIndex = 0;
+      if (collection == '_meta') {
+        final meta = list.isEmpty
+            ? <String, dynamic>{}
+            : Map<String, dynamic>.from(list.first as Map);
+        addEncodedPayload(collection, chunkIndex, meta,
+            _encodeUnifiedSnapshotChunkPayload(meta));
+        return;
+      }
       if (list.isEmpty) {
-        addPayload(collection, chunkIndex, {'items': const <dynamic>[]});
+        final payload = {'items': const <dynamic>[]};
+        addEncodedPayload(collection, chunkIndex, payload,
+            _encodeUnifiedSnapshotChunkPayload(payload));
         return;
       }
 
       void addRange(int start, int end) {
         final count = end - start;
         final payload = {'items': list.sublist(start, end)};
-        final encoded = encodeCompressed(payload);
+        final encoded = _encodeUnifiedSnapshotChunkPayload(payload);
         if (encoded.length <= maxEncodedPayloadBytes || count <= 1) {
           addEncodedPayload(collection, chunkIndex, payload, encoded);
           chunkIndex += 1;
@@ -7211,24 +7270,79 @@ class AppStore extends ChangeNotifier {
       }
     });
 
-    final sectionTotals = <String, int>{};
-    final sectionSeen = <String, int>{};
-    for (final chunk in chunks) {
-      final collection = (chunk['collection'] ?? '').toString();
-      sectionTotals[collection] = (sectionTotals[collection] ?? 0) + 1;
-    }
-    final allSections = sectionTotals.keys.toList(growable: false);
-    for (var i = 0; i < chunks.length; i += 1) {
-      final collection = (chunks[i]['collection'] ?? '').toString();
-      final sectionIndex = sectionSeen[collection] ?? 0;
-      sectionSeen[collection] = sectionIndex + 1;
-      chunks[i]['totalChunks'] = chunks.length;
-      chunks[i]['ordinal'] = i;
-      chunks[i]['sectionChunkIndex'] = sectionIndex;
-      chunks[i]['sectionTotalChunks'] = sectionTotals[collection] ?? 1;
-      chunks[i]['allSections'] = allSections;
-    }
+    _attachUnifiedSnapshotChunkMetadata(
+      chunks,
+      kind: kind,
+      generatedAt: generatedAt,
+    );
     return chunks;
+  }
+
+  Map<String, dynamic> unifiedSnapshotPayloadFromChunks(
+      List<Map<String, dynamic>> chunks) {
+    final payload = <String, dynamic>{};
+    Map<String, dynamic>? manifest;
+    var generatedAt = DateTime.now().toIso8601String();
+    var generatedSequence = 0;
+
+    for (final chunk in chunks) {
+      manifest ??= chunk['snapshotManifest'] is Map
+          ? Map<String, dynamic>.from(chunk['snapshotManifest'] as Map)
+          : null;
+      generatedAt = (chunk['generatedAt'] ?? generatedAt).toString();
+      final collection = (chunk['collection'] ?? '').toString();
+      if (collection.isEmpty) continue;
+      final decoded = _decodeUnifiedSnapshotChunkPayload(chunk);
+      if (collection == '_meta') {
+        payload.addAll(decoded);
+        generatedSequence = int.tryParse(
+                decoded['syncGeneratedSequence']?.toString() ?? '') ??
+            generatedSequence;
+        continue;
+      }
+      final items = decoded['items'] is List
+          ? List<dynamic>.from(decoded['items'] as List)
+          : const <dynamic>[];
+      final existing = payload[collection];
+      if (existing is List) {
+        existing.addAll(items);
+      } else {
+        payload[collection] = List<dynamic>.from(items);
+      }
+    }
+
+    payload['snapshotManifest'] = manifest ??
+        _unifiedSnapshotManifestJson(
+          jobId: chunks.isEmpty ? '' : (chunks.first['jobId'] ?? '').toString(),
+          generatedAt: generatedAt,
+          kind: chunks.isEmpty
+              ? 'full_store'
+              : (chunks.first['snapshotKind'] ?? 'full_store').toString(),
+          totalChunks: chunks.length,
+          collections:
+              chunks.map((item) => (item['collection'] ?? '').toString()),
+        );
+    payload['syncGeneratedAt'] = generatedAt;
+    payload['syncGeneratedSequence'] = generatedSequence;
+    return payload;
+  }
+
+  List<Map<String, dynamic>> exportCloudLoginBootstrapSnapshotChunks() {
+    return exportUnifiedSnapshotChunks(
+      kind: 'login_bootstrap',
+      sectionIds: {UnifiedSnapshotCatalog.loginSettingsAndUsers.id},
+    );
+  }
+
+  List<Map<String, dynamic>> exportCloudBootstrapSnapshotChunks({
+    int maxItemsPerChunk = 250,
+    int maxEncodedPayloadBytes = 900 * 1024,
+  }) {
+    return exportUnifiedSnapshotChunks(
+      kind: 'full_store',
+      maxItemsPerChunk: maxItemsPerChunk,
+      maxEncodedPayloadBytes: maxEncodedPayloadBytes,
+    );
   }
 
   String exportRecoveryFileJson({String cloudApiUrl = ''}) {
@@ -7309,8 +7423,47 @@ class AppStore extends ChangeNotifier {
         .convert(_backupPayload(includeDeviceAndSyncState: false));
   }
 
-  String exportSyncSnapshotJson() =>
-      const JsonEncoder.withIndent('  ').convert(_backupPayload());
+  Map<String, dynamic> exportUnifiedSnapshotEnvelope({
+    String kind = 'full_store',
+    int maxItemsPerChunk = 250,
+    int maxEncodedPayloadBytes = 900 * 1024,
+  }) {
+    final chunks = exportUnifiedSnapshotChunks(
+      kind: kind,
+      maxItemsPerChunk: maxItemsPerChunk,
+      maxEncodedPayloadBytes: maxEncodedPayloadBytes,
+    );
+    final manifest = chunks.isNotEmpty && chunks.first['snapshotManifest'] is Map
+        ? Map<String, dynamic>.from(chunks.first['snapshotManifest'] as Map)
+        : _unifiedSnapshotManifestJson(
+            jobId: '',
+            generatedAt: DateTime.now().toIso8601String(),
+            kind: kind,
+            totalChunks: chunks.length,
+          );
+    final generatedAt = chunks.isEmpty
+        ? DateTime.now().toIso8601String()
+        : (chunks.first['generatedAt'] ?? DateTime.now().toIso8601String())
+            .toString();
+    final generatedSequence = _syncChanges.isEmpty
+        ? 0
+        : _syncChanges.map((item) => item.sequence).reduce((a, b) => a > b ? a : b);
+    return <String, dynamic>{
+      'snapshotFormat': UnifiedSnapshotManifest.format,
+      'snapshotVersion': UnifiedSnapshotManifest.version,
+      'snapshotKind': kind,
+      'snapshotManifest': manifest,
+      'snapshotChunks': chunks,
+      'totalChunks': chunks.length,
+      'syncGeneratedAt': generatedAt,
+      'syncGeneratedSequence': generatedSequence,
+    };
+  }
+
+  String exportSyncSnapshotJson() {
+    return const JsonEncoder.withIndent('  ')
+        .convert(exportUnifiedSnapshotEnvelope(kind: 'full_store'));
+  }
 
   DateTime syncSnapshotGeneratedAtFromJson(String rawJson) {
     try {
@@ -8032,7 +8185,14 @@ class AppStore extends ChangeNotifier {
           'Host devices cannot be converted to Clients by importing a sync snapshot.');
     }
     final decoded = jsonDecode(rawJson) as Map<String, dynamic>;
-    await _replaceFromBackupMap(decoded,
+    final unifiedChunks = decoded['snapshotChunks'];
+    final payload = unifiedChunks is List
+        ? unifiedSnapshotPayloadFromChunks(unifiedChunks
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList(growable: false))
+        : decoded;
+    await _replaceFromBackupMap(payload,
         preserveLocalIdentityForLanClient: true);
   }
 
@@ -8040,6 +8200,13 @@ class AppStore extends ChangeNotifier {
     Map<String, dynamic> decoded, {
     bool preserveLocalIdentityForLanClient = false,
   }) async {
+    final unifiedChunks = decoded['snapshotChunks'];
+    if (unifiedChunks is List) {
+      decoded = unifiedSnapshotPayloadFromChunks(unifiedChunks
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList(growable: false));
+    }
     final products = (decoded['products'] as List<dynamic>? ?? [])
         .map((item) => Product.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
