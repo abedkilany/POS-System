@@ -435,9 +435,25 @@ class CloudSyncService {
   final AppStore store;
   final http.Client _client;
   late final UnifiedSyncCoreService _syncCore = UnifiedSyncCoreService(store);
+  static final Set<String> _activeSnapshotGenerationRebuilds = <String>{};
 
   String _snapshotGenerationKey(String transport) =>
       'applied_host_snapshot_generation_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}';
+
+  String _snapshotGenerationInProgressKey(String transport) =>
+      'in_progress_host_snapshot_generation_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}';
+
+  String _snapshotGenerationFailedKey(String transport) =>
+      'failed_host_snapshot_generation_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}';
+
+  String _snapshotGenerationInProgressAtKey(String transport) =>
+      'in_progress_host_snapshot_generation_at_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}';
+
+  String _snapshotGenerationFailedAtKey(String transport) =>
+      'failed_host_snapshot_generation_at_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}';
+
+  String _snapshotGenerationLockId(String transport, String generation) =>
+      '${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}_$generation';
 
   String _remoteHostSnapshotGeneration(Map<String, dynamic> decoded) {
     return (decoded['hostSnapshotGeneration'] ??
@@ -455,7 +471,36 @@ class CloudSyncService {
     if (remote.isEmpty) return false;
     final applied =
         LocalDatabaseService.getString(_snapshotGenerationKey(transport)) ?? '';
-    return applied.trim() != remote;
+    if (applied.trim() == remote) return false;
+
+    final lockId = _snapshotGenerationLockId(transport, remote);
+    if (_activeSnapshotGenerationRebuilds.contains(lockId)) return false;
+
+    final inProgress = LocalDatabaseService.getString(
+            _snapshotGenerationInProgressKey(transport)) ??
+        '';
+    final inProgressAtRaw = LocalDatabaseService.getString(
+            _snapshotGenerationInProgressAtKey(transport)) ??
+        '';
+    final inProgressAt = DateTime.tryParse(inProgressAtRaw);
+    if (inProgress.trim() == remote &&
+        inProgressAt != null &&
+        DateTime.now().difference(inProgressAt) < const Duration(minutes: 10)) {
+      return false;
+    }
+
+    final failed =
+        LocalDatabaseService.getString(_snapshotGenerationFailedKey(transport)) ?? '';
+    final failedAtRaw = LocalDatabaseService.getString(
+            _snapshotGenerationFailedAtKey(transport)) ??
+        '';
+    final failedAt = DateTime.tryParse(failedAtRaw);
+    if (failed.trim() == remote &&
+        failedAt != null &&
+        DateTime.now().difference(failedAt) < const Duration(minutes: 2)) {
+      return false;
+    }
+    return true;
   }
 
   Future<void> _markHostSnapshotGenerationApplied(
@@ -467,6 +512,61 @@ class CloudSyncService {
     if (generation.isEmpty) return;
     await LocalDatabaseService.setString(
         _snapshotGenerationKey(transport), generation);
+    await LocalDatabaseService.deleteString(
+        _snapshotGenerationInProgressKey(transport));
+    await LocalDatabaseService.deleteString(
+        _snapshotGenerationInProgressAtKey(transport));
+    await LocalDatabaseService.deleteString(_snapshotGenerationFailedKey(transport));
+    await LocalDatabaseService.deleteString(
+        _snapshotGenerationFailedAtKey(transport));
+  }
+
+  Future<bool> _beginHostSnapshotGenerationRebuild(
+      String transport, String generation) async {
+    if (generation.isEmpty) return false;
+    final applied =
+        LocalDatabaseService.getString(_snapshotGenerationKey(transport)) ?? '';
+    if (applied.trim() == generation) return false;
+    final lockId = _snapshotGenerationLockId(transport, generation);
+    if (!_activeSnapshotGenerationRebuilds.add(lockId)) return false;
+    await LocalDatabaseService.setString(
+        _snapshotGenerationInProgressKey(transport), generation);
+    await LocalDatabaseService.setString(
+        _snapshotGenerationInProgressAtKey(transport),
+        DateTime.now().toIso8601String());
+    return true;
+  }
+
+  Future<void> _finishHostSnapshotGenerationRebuild(
+    String transport,
+    String generation, {
+    required bool success,
+  }) async {
+    if (generation.isEmpty) return;
+    final lockId = _snapshotGenerationLockId(transport, generation);
+    _activeSnapshotGenerationRebuilds.remove(lockId);
+    if (success) {
+      await LocalDatabaseService.setString(
+          _snapshotGenerationKey(transport), generation);
+      await LocalDatabaseService.deleteString(
+          _snapshotGenerationInProgressKey(transport));
+      await LocalDatabaseService.deleteString(
+          _snapshotGenerationInProgressAtKey(transport));
+      await LocalDatabaseService.deleteString(
+          _snapshotGenerationFailedKey(transport));
+      await LocalDatabaseService.deleteString(
+          _snapshotGenerationFailedAtKey(transport));
+    } else {
+      await LocalDatabaseService.deleteString(
+          _snapshotGenerationInProgressKey(transport));
+      await LocalDatabaseService.deleteString(
+          _snapshotGenerationInProgressAtKey(transport));
+      await LocalDatabaseService.setString(
+          _snapshotGenerationFailedKey(transport), generation);
+      await LocalDatabaseService.setString(
+          _snapshotGenerationFailedAtKey(transport),
+          DateTime.now().toIso8601String());
+    }
   }
 
   Future<CloudSyncResult?> _rebuildIfHostSnapshotGenerationChanged(
@@ -476,20 +576,34 @@ class CloudSyncService {
   }) async {
     if (!_needsHostSnapshotGenerationRebuild('cloud', decodedPull)) return null;
     final generation = _remoteHostSnapshotGeneration(decodedPull);
-    onProgress?.call(0.50,
-        'تم اكتشاف نسخة مسترجعة جديدة على المضيف. جارٍ إعادة بناء بيانات الجهاز...');
-    await CloudSyncSettings.clearSavedPullCursor();
-    await SyncDeviceStateStore.resetClientProgress(
-        store.appIdentity, transport: 'cloud');
-    await CloudProvisioningStatus.markPending(
-        message: 'جارٍ تنزيل نسخة المضيف الجديدة بعد الاسترجاع.');
-    final result = await rebuildFromCloudHostSnapshot(
-      settings.copyWith(clearLastPullCursor: true),
-      onProgress: onProgress,
-    );
-    if (result.ok && generation.isNotEmpty) {
-      await LocalDatabaseService.setString(
-          _snapshotGenerationKey('cloud'), generation);
+    if (!await _beginHostSnapshotGenerationRebuild('cloud', generation)) {
+      return null;
+    }
+    CloudSyncResult result;
+    try {
+      onProgress?.call(0.50,
+          'تم اكتشاف نسخة مسترجعة جديدة على المضيف. جارٍ إعادة بناء بيانات الجهاز...');
+      await CloudSyncSettings.clearSavedPullCursor();
+      await SyncDeviceStateStore.resetClientProgress(
+          store.appIdentity, transport: 'cloud');
+      await CloudProvisioningStatus.markPending(
+          message: 'جارٍ تنزيل نسخة المضيف الجديدة بعد الاسترجاع.');
+      result = await rebuildFromCloudHostSnapshot(
+        settings.copyWith(clearLastPullCursor: true),
+        onProgress: onProgress,
+      );
+      await _finishHostSnapshotGenerationRebuild(
+        'cloud',
+        generation,
+        success: result.ok,
+      );
+    } catch (_) {
+      await _finishHostSnapshotGenerationRebuild(
+        'cloud',
+        generation,
+        success: false,
+      );
+      rethrow;
     }
     return result;
   }
