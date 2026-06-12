@@ -292,6 +292,34 @@ class LocalDatabaseService {
       for (final key in _requireBox.keys) key.toString(): _requireBox.get(key)?.toString() ?? '',
     };
   }
+
+  /// Full diagnostic/admin snapshot for the Database page.
+  ///
+  /// `allEntries()` intentionally stays startup-fast after SQLite became
+  /// authoritative and only returns the scalar mirror. The Database page,
+  /// however, is an explicit admin browser and must show the real typed SQLite
+  /// tables as well. This method hydrates those tables on demand.
+  static Future<Map<String, String>> adminEntries() async {
+    final memory = _memoryStore;
+    if (memory != null) return Map<String, String>.from(memory);
+    if (_sqliteReady) {
+      final db = SqliteMigrationManager.database;
+      if (db == null) return Map<String, String>.from(_sqliteMirror);
+      final entries = Map<String, String>.from(_sqliteMirror);
+      for (final key in BusinessSqliteStore.adminEntityKeys) {
+        final value = await BusinessSqliteStore.readEntityListJsonByKey(db, key);
+        if (value != null) entries[key] = value;
+      }
+      for (final key in SyncSqliteStore.sqliteBackedKeys) {
+        final value = await SyncSqliteStore.readKeyJson(db, key);
+        if (value != null) entries[key] = value;
+      }
+      return entries;
+    }
+    return <String, String>{
+      for (final key in _requireBox.keys) key.toString(): _requireBox.get(key)?.toString() ?? '',
+    };
+  }
   static Map<String, String> allRawHiveEntries() {
     final memory = _memoryStore;
     if (memory != null) return Map<String, String>.from(memory);

@@ -382,6 +382,9 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final color = Theme.of(context).colorScheme;
+    final isMobile = VentioResponsive.isMobile(context);
+    final outerPadding = VentioResponsive.pagePadding(context);
+    final cardMargin = EdgeInsets.all(isMobile ? 8 : 24);
 
     return Scaffold(
       appBar: AppBar(
@@ -389,80 +392,75 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       ),
       body: Stack(
         children: [
-          Center(
-            child: ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: VentioResponsive.clampToScreen(context, 860, min: 280, horizontalPadding: 32)),
-              child: Card(
-                margin: const EdgeInsets.all(24),
-                child: Padding(
-                  padding: VentioResponsive.pageInsets(context),
-                  child: ListView(
-                    shrinkWrap: true,
-                    children: [
-                      _buildHeader(context, tr, color),
-                      const SizedBox(height: 24),
-                      _buildSectionTitle(context, tr.text('connection_method'), Icons.hub_outlined),
-                      const SizedBox(height: 12),
-                      SegmentedButton<_ConnectMode>(
-                        segments: [
-                          ButtonSegment(value: _ConnectMode.cloud, label: Text(tr.text('connection_cloud')), icon: const Icon(Icons.cloud_outlined)),
-                          ButtonSegment(value: _ConnectMode.lan, label: Text(tr.text('connection_lan')), icon: const Icon(Icons.wifi_outlined)),
-                        ],
-                        selected: {_mode},
-                        onSelectionChanged: _busy
-                            ? null
-                            : (value) => setState(() {
-                                  _mode = value.first;
-                                  _status = '';
-                                  _statusType = _SetupStatus.idle;
-                                  _qrExpiresAt = null;
-                                  _qrStatus = _ClientPairingState.noCode;
-                                  _syncQrStatusFromInput();
-                                }),
-                      ),
-                      const SizedBox(height: 16),
-                      _buildConnectionStateCard(context, tr),
-                      const SizedBox(height: 16),
-                      _buildQrCard(context, tr),
-                      const SizedBox(height: 16),
-                      _buildSectionTitle(context, tr.text(_mode == _ConnectMode.cloud ? 'cloud_setup' : 'lan_setup'), Icons.tune_outlined),
-                      const SizedBox(height: 12),
-                      if (_mode == _ConnectMode.cloud) ..._buildCloudFields(tr),
-                      if (_mode == _ConnectMode.lan) ..._buildLanFields(tr),
-                      const SizedBox(height: 16),
-                      SizedBox(
-                        width: double.infinity,
-                        child: FilledButton.icon(
-                          onPressed: _busy ? null : _connect,
-                          icon: const Icon(Icons.check_circle_outline),
-                          label: Text(tr.text('connect_to_store')),
+          SafeArea(
+            child: Align(
+              alignment: AlignmentDirectional.topCenter,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: VentioResponsive.clampToScreen(
+                    context,
+                    860,
+                    min: 280,
+                    horizontalPadding: outerPadding * 2,
+                  ),
+                ),
+                child: Card(
+                  margin: cardMargin,
+                  child: Padding(
+                    padding: VentioResponsive.pageInsets(context),
+                    child: ListView(
+                      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+                      children: [
+                        _buildHeader(context, tr, color),
+                        SizedBox(height: isMobile ? 18 : 24),
+                        _buildSectionTitle(context, tr.text('connection_method'), Icons.hub_outlined),
+                        const SizedBox(height: 12),
+                        _buildModeSelector(context, tr),
+                        const SizedBox(height: 16),
+                        _buildConnectionStateCard(context, tr),
+                        const SizedBox(height: 16),
+                        _buildQrCard(context, tr),
+                        const SizedBox(height: 16),
+                        _buildSectionTitle(context, tr.text(_mode == _ConnectMode.cloud ? 'cloud_setup' : 'lan_setup'), Icons.tune_outlined),
+                        const SizedBox(height: 12),
+                        if (_mode == _ConnectMode.cloud) ..._buildCloudFields(tr),
+                        if (_mode == _ConnectMode.lan) ..._buildLanFields(tr),
+                        const SizedBox(height: 16),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            onPressed: _busy ? null : _connect,
+                            icon: const Icon(Icons.check_circle_outline),
+                            label: Text(tr.text('connect_to_store'), overflow: TextOverflow.ellipsis),
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 12),
-                      if (_status.isNotEmpty) _buildStatusBanner(context),
-                    ],
+                        const SizedBox(height: 12),
+                        if (_status.isNotEmpty) _buildStatusBanner(context),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
           ),
           if (_busy)
-            ColoredBox(
-              color: Colors.black.withValues(alpha: 0.24),
-              child: Center(
-                child: Card(
-                  child: Padding(
-                    padding: VentioResponsive.pageInsets(context),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        UnifiedSnapshotProgressView(
+            Positioned.fill(
+              child: ColoredBox(
+                color: Colors.black.withValues(alpha: 0.24),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(maxWidth: VentioResponsive.modalMaxWidth(context, 520)),
+                    child: Card(
+                      margin: EdgeInsets.all(outerPadding),
+                      child: Padding(
+                        padding: VentioResponsive.pageInsets(context),
+                        child: UnifiedSnapshotProgressView(
                           value: _snapshotProgressValue,
                           label: _snapshotProgressLabel.isEmpty
                               ? (_status.isEmpty ? tr.text('connecting_downloading_store_data') : _status)
                               : _snapshotProgressLabel,
                         ),
-                      ],
+                      ),
                     ),
                   ),
                 ),
@@ -470,6 +468,61 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
             ),
         ],
       ),
+    );
+  }
+
+  Widget _buildModeSelector(BuildContext context, AppLocalizations tr) {
+    void selectMode(_ConnectMode mode) {
+      if (_busy || _mode == mode) return;
+      setState(() {
+        _mode = mode;
+        _status = '';
+        _statusType = _SetupStatus.idle;
+        _qrExpiresAt = null;
+        _qrStatus = _ClientPairingState.noCode;
+        _syncQrStatusFromInput();
+      });
+    }
+
+    final segments = [
+      ButtonSegment(value: _ConnectMode.cloud, label: Text(tr.text('connection_cloud')), icon: const Icon(Icons.cloud_outlined)),
+      ButtonSegment(value: _ConnectMode.lan, label: Text(tr.text('connection_lan')), icon: const Icon(Icons.wifi_outlined)),
+    ];
+
+    if (!VentioResponsive.isMobile(context)) {
+      return SegmentedButton<_ConnectMode>(
+        segments: segments,
+        selected: {_mode},
+        onSelectionChanged: _busy ? null : (value) => selectMode(value.first),
+      );
+    }
+
+    Widget mobileButton(_ConnectMode mode, IconData icon, String label) {
+      final selected = _mode == mode;
+      final buttonChild = Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 18),
+          const SizedBox(width: 8),
+          Text(label, overflow: TextOverflow.ellipsis),
+        ],
+      );
+      return SizedBox(
+        width: double.infinity,
+        child: selected
+            ? FilledButton(onPressed: _busy ? null : () => selectMode(mode), child: buttonChild)
+            : OutlinedButton(onPressed: _busy ? null : () => selectMode(mode), child: buttonChild),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        mobileButton(_ConnectMode.cloud, Icons.cloud_outlined, tr.text('connection_cloud')),
+        const SizedBox(height: 8),
+        mobileButton(_ConnectMode.lan, Icons.wifi_outlined, tr.text('connection_lan')),
+      ],
     );
   }
 
@@ -490,7 +543,14 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       children: [
         Icon(icon, size: 20),
         const SizedBox(width: 8),
-        Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+        Expanded(
+          child: Text(
+            title,
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
       ],
     );
   }
@@ -590,30 +650,63 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Container(
-                  width: 52,
-                  height: 52,
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final compactHeader = constraints.maxWidth < 430;
+                final titleColumn = Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      tr.text('scan_host_qr_code'),
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      hasCode ? tr.text('pairing_code_ready_to_connect_help') : tr.text('scan_or_enter_host_pairing_code'),
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                  ],
+                );
+                final iconBox = Container(
+                  width: compactHeader ? 44 : 52,
+                  height: compactHeader ? 44 : 52,
                   decoration: BoxDecoration(
                     color: color.secondaryContainer,
                     borderRadius: BorderRadius.circular(16),
                   ),
                   child: Icon(Icons.qr_code_2_rounded, color: color.onSecondaryContainer),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
+                );
+
+                if (compactHeader) {
+                  return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(tr.text('scan_host_qr_code'), style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-                      const SizedBox(height: 2),
-                      Text(hasCode ? tr.text('pairing_code_ready_to_connect_help') : tr.text('scan_or_enter_host_pairing_code'), style: Theme.of(context).textTheme.bodyMedium),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          iconBox,
+                          const SizedBox(width: 10),
+                          Expanded(child: titleColumn),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Align(alignment: AlignmentDirectional.centerStart, child: _qrStatusBadge(context, tr)),
                     ],
-                  ),
-                ),
-                _qrStatusBadge(context, tr),
-              ],
+                  );
+                }
+
+                return Row(
+                  children: [
+                    iconBox,
+                    const SizedBox(width: 12),
+                    Expanded(child: titleColumn),
+                    const SizedBox(width: 12),
+                    Flexible(child: Align(alignment: AlignmentDirectional.centerEnd, child: _qrStatusBadge(context, tr))),
+                  ],
+                );
+              },
             ),
             if (hasCode) ...[
               const SizedBox(height: 12),

@@ -93,6 +93,8 @@ class BusinessSqliteStore {
 
   static bool isTypedEntityKey(String key) => _entityListKeys.contains(key);
 
+  static List<String> get adminEntityKeys => List<String>.unmodifiable(_entityListKeys);
+
   static Future<void> migrateFromHiveIfNeeded(
     VentioDriftDatabase db, {
     required Map<String, String> hiveEntries,

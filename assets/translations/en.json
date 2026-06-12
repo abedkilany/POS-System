@@ -1555,5 +1555,7 @@
   "snapshot_section_in_progress": "In progress",
   "snapshot_section_completed": "Completed",
   "snapshot_progress_lan_rebuild_title": "LAN rebuild from Host snapshot",
-  "snapshot_progress_cloud_rebuild_title": "Cloud rebuild from Host snapshot"
+  "snapshot_progress_cloud_rebuild_title": "Cloud rebuild from Host snapshot",
+  "data_view": "Data view",
+  "invalid_json": "Invalid JSON. Fix the text before saving."
 }

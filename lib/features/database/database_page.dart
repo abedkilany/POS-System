@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import '../../core/localization/app_localizations.dart';
 
 import '../../core/services/local_database_service.dart';
+import '../../core/services/database_sql_editor_service.dart';
+import '../../core/services/sql_result_export_service.dart';
 import '../../data/app_store.dart';
 
 class DatabasePage extends StatefulWidget {
@@ -22,7 +24,7 @@ class _DatabasePageState extends State<DatabasePage> {
   String _selectedKey = '';
   String _tableQuery = '';
   String _recordQuery = '';
-  final String _selectedMode = 'data';
+  String _selectedMode = 'data';
   int _page = 0;
   int _pageSize = 50;
   Map<String, String> _entries = const <String, String>{};
@@ -34,11 +36,18 @@ class _DatabasePageState extends State<DatabasePage> {
   bool _sortAscending = true;
   final ScrollController _horizontalTableController = ScrollController();
   final ScrollController _verticalTableController = ScrollController();
+  final TextEditingController _sqlController = TextEditingController(text: 'SELECT name FROM sqlite_master WHERE type = \'table\' ORDER BY name;');
+  bool _sqlAllowWrites = false;
+  bool _sqlRunning = false;
+  String? _sqlError;
+  List<SqlEditorResult> _sqlResults = const <SqlEditorResult>[];
+  int? _expandedSqlExportIndex;
 
   @override
   void dispose() {
     _horizontalTableController.dispose();
     _verticalTableController.dispose();
+    _sqlController.dispose();
     super.dispose();
   }
 
@@ -77,9 +86,10 @@ class _DatabasePageState extends State<DatabasePage> {
     return key;
   }
 
-  void _reload() {
-    final entries = LocalDatabaseService.allEntries();
+  Future<void> _reload() async {
+    final entries = await LocalDatabaseService.adminEntries();
     final keys = entries.keys.toList()..sort();
+    if (!mounted) return;
     setState(() {
       _entries = entries;
       if (_selectedKey.isEmpty || !entries.containsKey(_selectedKey)) {
@@ -128,7 +138,9 @@ class _DatabasePageState extends State<DatabasePage> {
             Expanded(
               child: _selectedMode == 'structure'
                   ? _buildStructureView(columns, rows.length, raw)
-                  : _buildDataView(decoded, columns, visibleRows),
+                  : _selectedMode == 'sql'
+                      ? _buildSqlEditorView()
+                      : _buildDataView(decoded, columns, visibleRows),
             ),
           ],
         );
@@ -174,8 +186,7 @@ class _DatabasePageState extends State<DatabasePage> {
     for (var i = 0; i < decoded.length; i++) {
       if (!_selectedRowIndexes.contains(i)) updated.add(decoded[i]);
     }
-    await LocalDatabaseService.setString(_selectedKey, jsonEncode(updated));
-    _reload();
+    await _writeSelectedKey(jsonEncode(updated));
   }
 
 Widget _buildLockedView() {
@@ -234,7 +245,7 @@ Widget _buildLockedView() {
                   if (ok) {
                     Navigator.pop(context, true);
                   } else {
-                    setDialogState(() => error = 'Wrong password');
+                    setDialogState(() => error = _t('wrong_password'));
                   }
                 },
               ),
@@ -249,7 +260,7 @@ Widget _buildLockedView() {
                 if (ok) {
                   Navigator.pop(context, true);
                 } else {
-                  setDialogState(() => error = 'Wrong password');
+                  setDialogState(() => error = _t('wrong_password'));
                 }
               },
               child: Text(_t('unlock')),
@@ -489,7 +500,9 @@ Widget _buildLockedView() {
                   PopupMenuButton<String>(
                     onSelected: (value) {
                       if (value == 'refresh') _reload();
-                      if (value == 'columns') _openRawEditor();
+                      if (value == 'columns') setState(() => _selectedMode = 'structure');
+                      if (value == 'data') setState(() => _selectedMode = 'data');
+                      if (value == 'sql') setState(() => _selectedMode = 'sql');
                       if (value == 'add') _openRowEditor();
                       if (value == 'deleteSelected') _deleteSelectedRows();
                       if (value == 'raw') _openRawEditor();
@@ -500,7 +513,9 @@ Widget _buildLockedView() {
                     },
                     itemBuilder: (context) => [
                       PopupMenuItem(value: 'refresh', child: Text(_t('refresh'))),
-                      PopupMenuItem(value: 'columns', child: Text(_t('columns'))),
+                      if (_selectedMode != 'structure') PopupMenuItem(value: 'columns', child: Text(_t('columns'))),
+                      if (_selectedMode != 'data') PopupMenuItem(value: 'data', child: Text(_t('data_view'))),
+                      if (_selectedMode != 'sql') const PopupMenuItem(value: 'sql', child: Text('SQL Editor')),
                       PopupMenuItem(enabled: decoded is List, value: 'add', child: Text(_t('add_record'))),
                       if (_selectedRowIndexes.isNotEmpty) PopupMenuItem(value: 'deleteSelected', child: Text(_tf('delete_selected_records_count', {'count': _selectedRowIndexes.length}))),
                       const PopupMenuDivider(),
@@ -533,6 +548,376 @@ Widget _buildLockedView() {
       },
     );
   }
+
+
+
+  Widget _buildSqlEditorView() {
+    final theme = Theme.of(context);
+    final exportResultIndex = _latestExportableSqlResultIndex();
+    final exportRows = exportResultIndex == null ? null : _sqlResults[exportResultIndex].rows;
+    return Stack(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.terminal_outlined),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'SQL Editor',
+                          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                      FilterChip(
+                        label: const Text('Execute writes'),
+                        selected: _sqlAllowWrites,
+                        onSelected: _sqlRunning ? null : (value) => setState(() => _sqlAllowWrites = value),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _sqlAllowWrites
+                        ? 'Write mode allows INSERT, UPDATE, DELETE, and REPLACE after confirmation. Dangerous schema commands are blocked.'
+                        : 'Query mode is read-only. SELECT/WITH/EXPLAIN statements are allowed and results are limited automatically.',
+                    style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _sqlController,
+                    minLines: 7,
+                    maxLines: 12,
+                    style: const TextStyle(fontFamily: 'monospace'),
+                    decoration: const InputDecoration(
+                      labelText: 'SQL',
+                      alignLabelWithHint: true,
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      FilledButton.icon(
+                        onPressed: _sqlRunning ? null : _runSqlEditor,
+                        icon: _sqlRunning
+                            ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                            : const Icon(Icons.play_arrow),
+                        label: Text(_sqlAllowWrites ? 'Execute SQL' : 'Run Query'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: _sqlRunning || _selectedKey.isEmpty ? null : _fillSqlForSelectedTable,
+                        icon: const Icon(Icons.table_view_outlined),
+                        label: const Text('SELECT current table'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: _sqlRunning ? null : () => setState(() {
+                          _sqlController.text = 'SELECT name FROM sqlite_master WHERE type = \'table\' ORDER BY name;';
+                          _sqlError = null;
+                        }),
+                        icon: const Icon(Icons.list_alt_outlined),
+                        label: const Text('List tables'),
+                      ),
+                      TextButton.icon(
+                        onPressed: _sqlRunning ? null : () => setState(() {
+                          _sqlController.clear();
+                          _sqlResults = const <SqlEditorResult>[];
+                          _expandedSqlExportIndex = null;
+                          _sqlError = null;
+                        }),
+                        icon: const Icon(Icons.clear),
+                        label: Text(_t('clear')),
+                      ),
+                    ],
+                  ),
+                  if (_sqlError != null) ...[
+                    const SizedBox(height: 12),
+                    Text(_sqlError!, style: TextStyle(color: theme.colorScheme.error, fontWeight: FontWeight.w700)),
+                  ],
+                ],
+              ),
+            ),
+          ),
+              const SizedBox(height: 12),
+              Expanded(child: _buildSqlResults()),
+            ],
+          ),
+        ),
+        if (exportRows != null)
+          Positioned(
+            right: 24,
+            bottom: 24,
+            child: SafeArea(
+              minimum: const EdgeInsets.only(right: 4, bottom: 4),
+              child: _buildSqlExportButton(exportRows, exportResultIndex!),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildSqlResults() {
+    if (_sqlResults.isEmpty) {
+      return Center(child: Text('No SQL results yet.'));
+    }
+    return ListView.separated(
+      padding: const EdgeInsets.only(bottom: 112),
+      itemCount: _sqlResults.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 12),
+      itemBuilder: (context, index) {
+        final result = _sqlResults[index];
+        return Card(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SelectableText(result.statement, style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w700)),
+                const SizedBox(height: 6),
+                Text(result.message),
+                if (result.isQuery) ...[
+                  const SizedBox(height: 12),
+                  _buildSqlResultTable(result.rows),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildSqlResultTable(List<Map<String, Object?>> rows) {
+    if (rows.isEmpty) return const Text('No rows returned.');
+    final columns = <String>{};
+    for (final row in rows) {
+      columns.addAll(row.keys);
+    }
+    final orderedColumns = columns.toList()..sort();
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final tableWidth = constraints.maxWidth.isFinite ? constraints.maxWidth : 720.0;
+
+        return Container(
+          decoration: BoxDecoration(
+            border: Border.all(color: Theme.of(context).dividerColor),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minWidth: tableWidth),
+              child: DataTable(
+                headingRowHeight: 48,
+                dataRowMinHeight: 52,
+                dataRowMaxHeight: 72,
+                columnSpacing: 32,
+                horizontalMargin: 16,
+                columns: [
+                  const DataColumn(label: Text('#')),
+                  for (final column in orderedColumns) DataColumn(label: Text(column)),
+                ],
+                rows: [
+                  for (var rowIndex = 0; rowIndex < rows.length; rowIndex++)
+                    DataRow(
+                      cells: [
+                        DataCell(Text('${rowIndex + 1}')),
+                        for (final column in orderedColumns)
+                          DataCell(
+                            ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 360, minWidth: 120),
+                              child: SelectableText(_displayValue(rows[rowIndex][column]), maxLines: 2),
+                            ),
+                          ),
+                      ],
+                    ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  int? _latestExportableSqlResultIndex() {
+    for (var index = _sqlResults.length - 1; index >= 0; index--) {
+      final result = _sqlResults[index];
+      if (result.isQuery && result.rows.isNotEmpty) return index;
+    }
+    return null;
+  }
+
+  Widget _buildSqlExportButton(List<Map<String, Object?>> rows, int resultIndex) {
+    final expanded = _expandedSqlExportIndex == resultIndex;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        if (expanded) ...[
+          _buildSqlExportFormatButton('JSON', () => _exportSqlRows(rows, 'json')),
+          const SizedBox(height: 8),
+          _buildSqlExportFormatButton('CSV', () => _exportSqlRows(rows, 'csv')),
+          const SizedBox(height: 8),
+          _buildSqlExportFormatButton('XLSX', () => _exportSqlRows(rows, 'xlsx')),
+          const SizedBox(height: 8),
+        ],
+        FloatingActionButton.small(
+          heroTag: 'sql-export-$resultIndex',
+          tooltip: expanded ? 'Close export options' : 'Export SQL result',
+          onPressed: () => setState(() => _expandedSqlExportIndex = expanded ? null : resultIndex),
+          child: Icon(expanded ? Icons.close : Icons.file_download_outlined),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSqlExportFormatButton(String label, VoidCallback onPressed) {
+    return Material(
+      elevation: 4,
+      shape: const StadiumBorder(),
+      color: Theme.of(context).colorScheme.surface,
+      child: InkWell(
+        customBorder: const StadiumBorder(),
+        onTap: onPressed,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          child: Text(label, style: const TextStyle(fontWeight: FontWeight.w800)),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _exportSqlRows(List<Map<String, Object?>> rows, String format) async {
+    setState(() => _expandedSqlExportIndex = null);
+    try {
+      await SqlResultExportService.exportRows(
+        rows: rows,
+        format: format,
+        baseFileName: 'sql_result_${_timestampForFileName()}',
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('SQL result exported as ${format.toUpperCase()}')));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
+
+  String _timestampForFileName() {
+    final now = DateTime.now();
+    String two(int value) => value.toString().padLeft(2, '0');
+    return '${now.year}_${two(now.month)}_${two(now.day)}_${two(now.hour)}${two(now.minute)}${two(now.second)}';
+  }
+
+  void _fillSqlForSelectedTable() {
+    final tableName = _sqliteTableNameForKey(_selectedKey);
+    _sqlController.text = 'SELECT * FROM $tableName LIMIT 100;';
+    setState(() {
+      _sqlError = null;
+      _selectedMode = 'sql';
+    });
+  }
+
+  String _sqliteTableNameForKey(String key) {
+    switch (key) {
+      case 'products_v4':
+        return 'products';
+      case 'customers_v4':
+        return 'customers';
+      case 'suppliers_v4':
+        return 'suppliers';
+      case 'sales_v4':
+        return 'sales';
+      case 'purchases_v1':
+        return 'purchases';
+      case 'expenses_v4':
+        return 'expenses';
+      case 'stock_movements_v1':
+        return 'stock_movements';
+      case 'supplier_product_prices_v1':
+        return 'supplier_product_prices';
+      case 'product_categories_v1':
+        return 'catalog_categories';
+      case 'product_brands_v1':
+        return 'catalog_brands';
+      case 'product_units_v1':
+        return 'catalog_units';
+      default:
+        return key.replaceAll(RegExp(r'[^A-Za-z0-9_]'), '_');
+    }
+  }
+
+  Future<void> _runSqlEditor() async {
+    final script = _sqlController.text.trim();
+    if (script.isEmpty) return;
+    final statements = DatabaseSqlEditorService.splitStatements(script);
+    if (statements.isEmpty) return;
+    final hasWrites = statements.any((statement) => !DatabaseSqlEditorService.isQueryStatement(statement));
+    if (hasWrites) {
+      if (!_sqlAllowWrites) {
+        setState(() => _sqlError = 'This script contains write statements. Enable Execute writes first.');
+        return;
+      }
+      final confirmed = await _confirmSqlExecution(statements.length);
+      if (confirmed != true) return;
+    }
+
+    setState(() {
+      _sqlRunning = true;
+      _sqlError = null;
+    });
+    try {
+      final results = await DatabaseSqlEditorService.runScript(script, allowWrites: _sqlAllowWrites);
+      await widget.store.refreshAfterDatabaseChange(_selectedKey);
+      await _reload();
+      if (!mounted) return;
+      setState(() {
+        _sqlResults = results;
+        _expandedSqlExportIndex = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('SQL executed locally. Sync was not triggered.')));
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _sqlError = error.toString());
+    } finally {
+      if (mounted) setState(() => _sqlRunning = false);
+    }
+  }
+
+  Future<bool?> _confirmSqlExecution(int statementCount) {
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Execute SQL changes?'),
+        content: Text('This will execute $statementCount SQL statement(s) locally only. It will refresh the app state but will not create sync changes.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(_t('cancel'))),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+              foregroundColor: Theme.of(context).colorScheme.onError,
+            ),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Execute'),
+          ),
+        ],
+      ),
+    );
+  }
+
 
   Widget _buildDataView(dynamic decoded, List<String> columns, List<Map<String, dynamic>> visibleRows) {
     if (_selectedKey.isEmpty) return Center(child: Text(_t('no_database_keys_found')));
@@ -878,8 +1263,10 @@ Widget _buildLockedView() {
   }
 
   Future<void> _writeSelectedKey(String value) async {
-    await LocalDatabaseService.setString(_selectedKey, value);
-    _reload();
+    final changedKey = _selectedKey;
+    await LocalDatabaseService.setString(changedKey, value);
+    await widget.store.refreshAfterDatabaseChange(changedKey);
+    await _reload();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_t('database_saved_restart'))));
   }
@@ -898,6 +1285,16 @@ Widget _buildLockedView() {
       ),
     );
     if (saved != true) return;
+    final rawText = controller.text.trim();
+    if (rawText.isNotEmpty) {
+      try {
+        jsonDecode(rawText);
+      } catch (_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_t('invalid_json'))));
+        return;
+      }
+    }
     await _writeSelectedKey(controller.text);
   }
 
@@ -940,7 +1337,9 @@ Widget _buildLockedView() {
       ),
     );
     if (confirmed != true) return;
-    await LocalDatabaseService.deleteString(_selectedKey);
-    _reload();
+    final changedKey = _selectedKey;
+    await LocalDatabaseService.deleteString(changedKey);
+    await widget.store.refreshAfterDatabaseChange(changedKey);
+    await _reload();
   }
 }

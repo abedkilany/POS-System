@@ -1586,6 +1586,282 @@ class AppStore extends ChangeNotifier {
     }
   }
 
+
+
+  /// Reloads the in-memory AppStore state after a manual Database Admin change.
+  ///
+  /// DatabasePage can edit the persistent local database directly. Without this
+  /// refresh, screens that already cached products, identity, users, stock, or
+  /// reports in AppStore keep showing old values until a full app restart.
+  Future<void> refreshAfterDatabaseChange(String key) async {
+    try {
+      switch (key) {
+        case _appIdentityKey:
+          _appIdentity = _loadOrCreateAppIdentity();
+          break;
+
+        case _storeProfileKey:
+          _storeProfile = _loadStoreProfile();
+          break;
+
+        case _productsKey:
+          _products
+            ..clear()
+            ..addAll(_loadProducts());
+          _ensureCatalogDefaults();
+          break;
+
+        case _customersKey:
+          _customers
+            ..clear()
+            ..addAll(_loadCustomers());
+          _normalizeCustomers();
+          break;
+
+        case _salesKey:
+          _sales
+            ..clear()
+            ..addAll(_loadSales());
+          _invoiceCounter = _loadInvoiceCounter();
+          break;
+
+        case _saleQuotationsKey:
+          _saleQuotations
+            ..clear()
+            ..addAll(_loadSaleQuotations());
+          break;
+
+        case _deliveryNotesKey:
+          _deliveryNotes
+            ..clear()
+            ..addAll(_loadDeliveryNotes());
+          break;
+
+        case _billsOfMaterialsKey:
+          _billsOfMaterials
+            ..clear()
+            ..addAll(_loadBillsOfMaterials());
+          break;
+
+        case _manufacturingOrdersKey:
+          _manufacturingOrders
+            ..clear()
+            ..addAll(_loadManufacturingOrders());
+          break;
+
+        case _suppliersKey:
+          _suppliers
+            ..clear()
+            ..addAll(_loadSuppliers());
+          break;
+
+        case _supplierProductPricesKey:
+          _supplierProductPrices
+            ..clear()
+            ..addAll(_loadSupplierProductPrices());
+          break;
+
+        case _expensesKey:
+          _expenses
+            ..clear()
+            ..addAll(_loadExpenses());
+          break;
+
+        case _purchasesKey:
+          _purchases
+            ..clear()
+            ..addAll(_loadPurchases());
+          _purchaseCounter = _loadPurchaseCounter();
+          break;
+
+        case _stockMovementsKey:
+          _stockMovements
+            ..clear()
+            ..addAll(_loadStockMovements());
+          break;
+
+        case _inventoryCountsKey:
+          _inventoryCounts
+            ..clear()
+            ..addAll(_loadInventoryCounts());
+          break;
+
+        case _warehousesKey:
+          _warehouses
+            ..clear()
+            ..addAll(_loadWarehouses());
+          _ensureDefaultWarehouse();
+          break;
+
+        case _accountTransactionsKey:
+          _accountTransactions
+            ..clear()
+            ..addAll(_loadAccountTransactions());
+          _invalidateAccountLedgerCache();
+          break;
+
+        case _categoriesKey:
+          _categories
+            ..clear()
+            ..addAll(_loadCatalogItems(_categoriesKey));
+          _ensureCatalogDefaults();
+          break;
+
+        case _brandsKey:
+          _brands
+            ..clear()
+            ..addAll(_loadCatalogItems(_brandsKey));
+          _ensureCatalogDefaults();
+          break;
+
+        case _unitsKey:
+          _units
+            ..clear()
+            ..addAll(_loadCatalogItems(_unitsKey));
+          _ensureCatalogDefaults();
+          break;
+
+        case _rolesKey:
+        case _usersKey:
+        case _activeUserKey:
+        case _rememberLoginKey:
+          _roles
+            ..clear()
+            ..addAll(_loadRoles());
+          _users
+            ..clear()
+            ..addAll(_loadUsers());
+          _rememberLogin =
+              LocalDatabaseService.getString(_rememberLoginKey) == 'true';
+          _activeUser = null;
+          _restoreActiveUser();
+          break;
+
+        case _syncChangesKey:
+          _syncChanges
+            ..clear()
+            ..addAll(_loadSyncChanges());
+          _syncSequence = _loadSyncSequence();
+          break;
+
+        case _syncQueueKey:
+          _syncQueue
+            ..clear()
+            ..addAll(_loadSyncQueue());
+          break;
+
+        case _invoiceCounterKey:
+          _invoiceCounter = _loadInvoiceCounter();
+          break;
+
+        case _purchaseCounterKey:
+          _purchaseCounter = _loadPurchaseCounter();
+          break;
+
+        case _syncSequenceKey:
+          _syncSequence = _loadSyncSequence();
+          break;
+
+        default:
+          await reloadAllAfterDatabaseChange();
+          return;
+      }
+
+      _invalidateDerivedDataCaches();
+      notifyListeners();
+    } catch (error, stackTrace) {
+      debugPrint('Database admin refresh failed for $key: $error');
+      debugPrint('$stackTrace');
+      await reloadAllAfterDatabaseChange();
+    }
+  }
+
+  /// Conservative full refresh used for unknown keys or recovery after a failed
+  /// targeted refresh.
+  Future<void> reloadAllAfterDatabaseChange() async {
+    _appIdentity = _loadOrCreateAppIdentity();
+    _storeProfile = _loadStoreProfile();
+    _products
+      ..clear()
+      ..addAll(_loadProducts());
+    _customers
+      ..clear()
+      ..addAll(_loadCustomers());
+    _sales
+      ..clear()
+      ..addAll(_loadSales());
+    _saleQuotations
+      ..clear()
+      ..addAll(_loadSaleQuotations());
+    _deliveryNotes
+      ..clear()
+      ..addAll(_loadDeliveryNotes());
+    _billsOfMaterials
+      ..clear()
+      ..addAll(_loadBillsOfMaterials());
+    _manufacturingOrders
+      ..clear()
+      ..addAll(_loadManufacturingOrders());
+    _suppliers
+      ..clear()
+      ..addAll(_loadSuppliers());
+    _supplierProductPrices
+      ..clear()
+      ..addAll(_loadSupplierProductPrices());
+    _expenses
+      ..clear()
+      ..addAll(_loadExpenses());
+    _purchases
+      ..clear()
+      ..addAll(_loadPurchases());
+    _stockMovements
+      ..clear()
+      ..addAll(_loadStockMovements());
+    _inventoryCounts
+      ..clear()
+      ..addAll(_loadInventoryCounts());
+    _warehouses
+      ..clear()
+      ..addAll(_loadWarehouses());
+    _accountTransactions
+      ..clear()
+      ..addAll(_loadAccountTransactions());
+    _categories
+      ..clear()
+      ..addAll(_loadCatalogItems(_categoriesKey));
+    _brands
+      ..clear()
+      ..addAll(_loadCatalogItems(_brandsKey));
+    _units
+      ..clear()
+      ..addAll(_loadCatalogItems(_unitsKey));
+    _roles
+      ..clear()
+      ..addAll(_loadRoles());
+    _users
+      ..clear()
+      ..addAll(_loadUsers());
+    _syncChanges
+      ..clear()
+      ..addAll(_loadSyncChanges());
+    _syncQueue
+      ..clear()
+      ..addAll(_loadSyncQueue());
+
+    _rememberLogin = LocalDatabaseService.getString(_rememberLoginKey) == 'true';
+    _activeUser = null;
+    _restoreActiveUser();
+    _normalizeCustomers();
+    _ensureCatalogDefaults();
+    _ensureDefaultWarehouse();
+    _invoiceCounter = _loadInvoiceCounter();
+    _purchaseCounter = _loadPurchaseCounter();
+    _syncSequence = _loadSyncSequence();
+    _invalidateAccountLedgerCache();
+    _invalidateDerivedDataCaches();
+    notifyListeners();
+  }
+
   Future<void> _migrateLegacySharedPreferencesIfNeeded() async {
     if (!LocalDatabaseService.isEmpty) return;
 

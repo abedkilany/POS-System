@@ -1555,5 +1555,7 @@
   "snapshot_section_in_progress": "قيد التنفيذ",
   "snapshot_section_completed": "مكتمل",
   "snapshot_progress_lan_rebuild_title": "إعادة بناء LAN من لقطة المضيف",
-  "snapshot_progress_cloud_rebuild_title": "إعادة بناء Cloud من لقطة المضيف"
+  "snapshot_progress_cloud_rebuild_title": "إعادة بناء Cloud من لقطة المضيف",
+  "data_view": "عرض البيانات",
+  "invalid_json": "صيغة JSON غير صحيحة. صحّح النص قبل الحفظ."
 }
