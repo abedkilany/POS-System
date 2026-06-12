@@ -1304,8 +1304,9 @@ class CloudSyncService {
     final applied =
         LocalDatabaseService.getString(_snapshotGenerationKey(transport)) ?? '';
     if (applied.trim() == cleanGeneration) return false;
-    final requested =
-        LocalDatabaseService.getString(_snapshotRequestKey(transport, cleanGeneration)) ?? '';
+    final requested = LocalDatabaseService.getString(
+            _snapshotRequestKey(transport, cleanGeneration)) ??
+        '';
     final requestedAtRaw = LocalDatabaseService.getString(
             _snapshotRequestAtKey(transport, cleanGeneration)) ??
         '';
@@ -1370,7 +1371,8 @@ class CloudSyncService {
         'reason': 'cloud_rebuild_from_host',
         'requestedAt': now.toIso8601String(),
         if (cleanGeneration.isNotEmpty) 'snapshotGeneration': cleanGeneration,
-        if (cleanGeneration.isNotEmpty) 'hostSnapshotGeneration': cleanGeneration,
+        if (cleanGeneration.isNotEmpty)
+          'hostSnapshotGeneration': cleanGeneration,
         'storeId': identity.storeId,
         'branchId': identity.branchId,
       },
@@ -1461,7 +1463,8 @@ class CloudSyncService {
                 .trim()
                 .isEmpty &&
             expectedSnapshotGeneration.trim().isNotEmpty) {
-          envelope['hostSnapshotGeneration'] = expectedSnapshotGeneration.trim();
+          envelope['hostSnapshotGeneration'] =
+              expectedSnapshotGeneration.trim();
           envelope['snapshotGeneration'] = expectedSnapshotGeneration.trim();
         }
         if ((envelope['hostRestoreCommandId'] ?? '')
@@ -2724,11 +2727,31 @@ class CloudSyncService {
         }
         if (decodedPull['needsSnapshot'] == true) {
           await CloudSyncSettings.clearSavedPullCursor();
-          return CloudSyncResult(
-            ok: false,
-            message: 'تم اكتشاف فجوة في سجل أحداث السحابة. يلزم إصلاح اللقطة.',
-            restoredSnapshot: true,
-            pulled: pulled,
+          final generation = _remoteHostSnapshotGeneration(decodedPull);
+          final commandId = _remoteHostRestoreCommandId(decodedPull);
+          if (_restoreCommandAlreadyExecuted('cloud', commandId)) {
+            final generatedAt = DateTime.tryParse(
+                    decodedPull['generatedAt']?.toString() ?? '') ??
+                DateTime.now();
+            final generatedSequence = int.tryParse(
+                    decodedPull['generatedSequence']?.toString() ?? '') ??
+                0;
+            await settings.copyWith(lastPullCursor: generatedAt).save();
+            await _recordDeviceSyncState('cloud', generatedAt,
+                sequence: generatedSequence, settings: settings);
+            return CloudSyncResult(
+              ok: true,
+              message:
+                  'تم تجاهل أمر إعادة بناء منفذ سابقاً وتحديث مؤشر المزامنة.',
+              pulled: pulled,
+            );
+          }
+          return rebuildFromCloudHostSnapshot(
+            settings.copyWith(clearLastPullCursor: true),
+            onProgress: onProgress,
+            requestFreshSnapshot: false,
+            expectedSnapshotGeneration: generation,
+            expectedRestoreCommandId: commandId,
           );
         }
         final changes = _syncCore.filterOutLocalEchoes(
@@ -2983,11 +3006,32 @@ class CloudSyncService {
         }
         if (decodedPull['needsSnapshot'] == true) {
           await CloudSyncSettings.clearSavedPullCursor();
-          return CloudSyncResult(
-            ok: false,
-            message: 'تم اكتشاف فجوة في سجل أحداث السحابة. يلزم إصلاح اللقطة.',
-            restoredSnapshot: true,
-            pulled: pulled,
+          final generation = _remoteHostSnapshotGeneration(decodedPull);
+          final commandId = _remoteHostRestoreCommandId(decodedPull);
+          if (_restoreCommandAlreadyExecuted('cloud', commandId)) {
+            final generatedAt = DateTime.tryParse(
+                    decodedPull['generatedAt']?.toString() ?? '') ??
+                DateTime.now();
+            final generatedSequence = int.tryParse(
+                    decodedPull['generatedSequence']?.toString() ?? '') ??
+                0;
+            await settings.copyWith(lastPullCursor: generatedAt).save();
+            await _recordDeviceSyncState('cloud', generatedAt,
+                sequence: generatedSequence, settings: settings);
+            return CloudSyncResult(
+              ok: true,
+              message:
+                  'تم تجاهل أمر إعادة بناء منفذ سابقاً وتحديث مؤشر المزامنة.',
+              pushed: pushed,
+              pulled: pulled,
+            );
+          }
+          return rebuildFromCloudHostSnapshot(
+            settings.copyWith(clearLastPullCursor: true),
+            onProgress: onProgress,
+            requestFreshSnapshot: false,
+            expectedSnapshotGeneration: generation,
+            expectedRestoreCommandId: commandId,
           );
         }
         final changes = _syncCore.filterOutLocalEchoes(
