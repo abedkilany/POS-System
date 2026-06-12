@@ -21,3 +21,21 @@ Future<void> downloadTextFile({
   anchor.remove();
   html.Url.revokeObjectUrl(url);
 }
+
+Future<void> downloadBinaryFile({
+  required String filename,
+  required List<int> bytes,
+  String? dialogTitle,
+  String? cancelMessage,
+}) async {
+  final blob = html.Blob([bytes], 'application/octet-stream');
+  final url = html.Url.createObjectUrlFromBlob(blob);
+  final anchor = html.AnchorElement(href: url)
+    ..download = filename
+    ..style.display = 'none';
+
+  html.document.body?.children.add(anchor);
+  anchor.click();
+  anchor.remove();
+  html.Url.revokeObjectUrl(url);
+}

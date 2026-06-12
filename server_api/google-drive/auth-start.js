@@ -29,18 +29,58 @@ function apiBaseUrl(req) {
   return `${proto}://${host}`;
 }
 
+function page(title, message) {
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>${title}</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 48px; color: #1f2937; }
+      .box { max-width: 640px; padding: 24px; border: 1px solid #d1d5db; border-radius: 12px; }
+      h1 { margin-top: 0; }
+      code { background: #f3f4f6; border-radius: 4px; padding: 2px 5px; }
+    </style>
+  </head>
+  <body>
+    <div class="box">
+      <h1>${title}</h1>
+      <p>${message}</p>
+      <p>You can close this window and return to Ventio.</p>
+    </div>
+  </body>
+</html>`;
+}
+
 export default async function handler(req, res) {
   try {
     if (req.method !== 'GET') return res.status(405).json({ ok: false, error: 'Method not allowed' });
-    const clientId = String(process.env.GOOGLE_DRIVE_WEB_CLIENT_ID || process.env.GOOGLE_DRIVE_CLIENT_ID || '').trim();
-    if (!clientId) return res.status(500).send('Google Drive OAuth client is not configured.');
-
     const sessionId = String(req.query.session_id || '').trim();
     if (!sessionId || !/^[a-zA-Z0-9_-]{24,160}$/.test(sessionId)) {
       return res.status(400).send('Invalid Google Drive session.');
     }
 
     await ensureTable();
+    const clientId = String(process.env.GOOGLE_DRIVE_WEB_CLIENT_ID || process.env.GOOGLE_DRIVE_CLIENT_ID || '').trim();
+    const clientSecret = String(process.env.GOOGLE_DRIVE_WEB_CLIENT_SECRET || process.env.GOOGLE_DRIVE_CLIENT_SECRET || '').trim();
+    if (!clientId || !clientSecret) {
+      await sql`
+        insert into google_drive_oauth_sessions (session_id, state, status, error, updated_at)
+        values (${sessionId}, 'missing-google-oauth-config', 'error', 'Google Drive is not configured on the server. Set GOOGLE_DRIVE_WEB_CLIENT_ID and GOOGLE_DRIVE_WEB_CLIENT_SECRET, then redeploy.', now())
+        on conflict (session_id) do update
+        set status = 'error',
+            error = excluded.error,
+            access_token = '',
+            refresh_token = '',
+            expires_at = null,
+            updated_at = now()
+      `;
+      return res.status(500).send(page(
+        'Google Drive is not configured',
+        'The Ventio server is missing <code>GOOGLE_DRIVE_WEB_CLIENT_ID</code> or <code>GOOGLE_DRIVE_WEB_CLIENT_SECRET</code>. Add them to the server environment variables, redeploy, then try again.'
+      ));
+    }
+
     const state = crypto.randomBytes(24).toString('base64url');
     await sql`
       insert into google_drive_oauth_sessions (session_id, state, status, updated_at)

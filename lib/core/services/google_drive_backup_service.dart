@@ -85,6 +85,34 @@ class GoogleDriveBackupStatus {
   final String message;
 }
 
+class GoogleDriveBackupFile {
+  const GoogleDriveBackupFile({
+    required this.id,
+    required this.name,
+    required this.category,
+    this.createdAt,
+    this.sizeBytes,
+  });
+
+  final String id;
+  final String name;
+  final String category;
+  final DateTime? createdAt;
+  final int? sizeBytes;
+
+  String get displayName {
+    final size = sizeBytes == null ? '' : ' - ${_formatSize(sizeBytes!)}';
+    return '$category - $name$size';
+  }
+
+  static String _formatSize(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    final kb = bytes / 1024;
+    if (kb < 1024) return '${kb.toStringAsFixed(1)} KB';
+    return '${(kb / 1024).toStringAsFixed(1)} MB';
+  }
+}
+
 class GoogleDriveAuthorizationChallenge {
   const GoogleDriveAuthorizationChallenge({
     required this.deviceCode,
@@ -554,6 +582,84 @@ class GoogleDriveBackupService {
     }
   }
 
+  static Future<List<GoogleDriveBackupFile>> listBackupFiles({
+    GoogleDriveBackupSettings? settings,
+  }) async {
+    final resolved = settings ?? await loadSettings();
+    if (!resolved.isAuthorized) {
+      throw StateError('Google Drive is not authorized yet.');
+    }
+    final token = await _accessToken(resolved);
+    final rootFolderId = resolved.folderId.trim();
+    if (rootFolderId.isEmpty) return const <GoogleDriveBackupFile>[];
+
+    final backups = <GoogleDriveBackupFile>[];
+    for (final category in const ['Backup now', 'Daily', 'Weekly', 'Monthly']) {
+      final folderId =
+          await _findFolder(token, category, parentId: rootFolderId);
+      if (folderId == null) continue;
+      final query =
+          "'$folderId' in parents and trashed = false and name contains '.vtb'";
+      final list = await _driveGet(token, 'files', <String, String>{
+        'q': query,
+        'fields': 'files(id,name,createdTime,size)',
+        'pageSize': '1000',
+        'orderBy': 'createdTime desc',
+      });
+      for (final raw in (list['files'] as List?) ?? const []) {
+        final file = Map<String, dynamic>.from(raw as Map);
+        backups.add(GoogleDriveBackupFile(
+          id: file['id']?.toString() ?? '',
+          name: file['name']?.toString() ?? 'backup.vtb',
+          category: category,
+          createdAt: DateTime.tryParse(file['createdTime']?.toString() ?? ''),
+          sizeBytes: int.tryParse(file['size']?.toString() ?? ''),
+        ));
+      }
+    }
+    backups.removeWhere((file) => file.id.trim().isEmpty);
+    backups.sort((a, b) {
+      final aTime = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final bTime = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      return bTime.compareTo(aTime);
+    });
+    return backups;
+  }
+
+  static Future<List<int>> downloadBackupFile(
+    GoogleDriveBackupFile file, {
+    GoogleDriveBackupSettings? settings,
+  }) async {
+    final resolved = settings ?? await loadSettings();
+    if (!resolved.isAuthorized) {
+      throw StateError('Google Drive is not authorized yet.');
+    }
+    final token = await _accessToken(resolved);
+    final response = await http.get(
+      Uri.https('www.googleapis.com', '/drive/v3/files/${file.id}', {
+        'alt': 'media',
+      }),
+      headers: <String, String>{'Authorization': 'Bearer $token'},
+    );
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return response.bodyBytes;
+    }
+    final body = response.body.trim();
+    if (body.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(body) as Map<String, dynamic>;
+        final error = decoded['error'];
+        if (error is Map && error['message'] != null) {
+          final message = error['message'].toString();
+          throw StateError(message);
+        }
+      } on FormatException {
+        // Fall through to the generic status-code message below.
+      }
+    }
+    throw StateError('Google Drive download failed (${response.statusCode}).');
+  }
+
   static Future<String> _accessToken(GoogleDriveBackupSettings settings) async {
     final expiresAt = settings.accessTokenExpiresAt;
     if (settings.accessToken.trim().isNotEmpty &&
@@ -626,6 +732,20 @@ class GoogleDriveBackupService {
 
   static Future<String> _ensureFolder(String token, String name,
       {String? parentId}) async {
+    final existing = await _findFolder(token, name, parentId: parentId);
+    if (existing != null) return existing;
+    final metadata = <String, Object?>{
+      'name': name,
+      'mimeType': 'application/vnd.google-apps.folder',
+      if (parentId != null) 'parents': <String>[parentId],
+    };
+    final created = await _drivePostJson(token, 'files', metadata,
+        query: const {'fields': 'id'});
+    return created['id'] as String;
+  }
+
+  static Future<String?> _findFolder(String token, String name,
+      {String? parentId}) async {
     final escapedName = _driveQueryEscape(name);
     final parent = parentId == null ? '' : " and '$parentId' in parents";
     final query =
@@ -639,14 +759,7 @@ class GoogleDriveBackupService {
     if (files.isNotEmpty) {
       return (files.first as Map)['id'] as String;
     }
-    final metadata = <String, Object?>{
-      'name': name,
-      'mimeType': 'application/vnd.google-apps.folder',
-      if (parentId != null) 'parents': <String>[parentId],
-    };
-    final created = await _drivePostJson(token, 'files', metadata,
-        query: const {'fields': 'id'});
-    return created['id'] as String;
+    return null;
   }
 
   static Future<bool> _fileExists(
