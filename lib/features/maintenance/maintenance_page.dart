@@ -23,6 +23,7 @@ class _MaintenancePageState extends State<MaintenancePage> {
   bool _loading = true;
   bool _lastRunWasDeep = false;
   String? _lastDiagnosticReport;
+  bool get _showAdvancedTools => false;
 
   @override
   void initState() {
@@ -139,40 +140,7 @@ class _MaintenancePageState extends State<MaintenancePage> {
         padding: const EdgeInsets.all(16),
         children: [
           const SizedBox(height: 16),
-          Card(
-            child: Padding(
-              padding: EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(tr.text('advanced_tools')),
-                  SizedBox(height: 12),
-                  Wrap(
-                    spacing: 12,
-                    runSpacing: 12,
-                    children: [
-                      FilledButton.icon(
-                        onPressed: () => Navigator.of(context).push(
-                            MaterialPageRoute(
-                                builder: (_) =>
-                                    DatabasePage(store: widget.store))),
-                        icon: Icon(Icons.storage_outlined),
-                        label: Text(tr.text('database_explorer')),
-                      ),
-                      FilledButton.icon(
-                        onPressed: () => Navigator.of(context).push(
-                            MaterialPageRoute(
-                                builder: (_) =>
-                                    StressLabPage(store: widget.store))),
-                        icon: Icon(Icons.speed_outlined),
-                        label: Text(tr.text('stress_lab')),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
+          if (_showAdvancedTools) _buildAdvancedToolsCard(tr),
           Row(
             children: [
               const Icon(Icons.health_and_safety_outlined, size: 32),
@@ -192,13 +160,10 @@ class _MaintenancePageState extends State<MaintenancePage> {
                   ],
                 ),
               ),
-              FilledButton.icon(
-                onPressed: _loading ? null : () => _refresh(deep: false),
-                icon: const Icon(Icons.refresh),
-                label: Text(tr.text('quick_check')),
-              ),
             ],
           ),
+          const SizedBox(height: 16),
+          _buildMaintenanceActionsCard(tr, summary, availableRepairActions),
           const SizedBox(height: 16),
           if (_loading)
             const LinearProgressIndicator()
@@ -296,42 +261,6 @@ class _MaintenancePageState extends State<MaintenancePage> {
                 for (final issue in summary.issues) _HealthTile(issue: issue),
               ],
             ),
-            const SizedBox(height: 16),
-            _SectionCard(
-              title: tr.text('maintenance_actions'),
-              icon: Icons.build_outlined,
-              children: [
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
-                  children: [
-                    FilledButton.icon(
-                      onPressed: _exportDiagnosticReport,
-                      icon: const Icon(Icons.description_outlined),
-                      label: Text(tr.text('export_technical_report')),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: () => _refresh(deep: false),
-                      icon: const Icon(Icons.cleaning_services_outlined),
-                      label: Text(tr.text('quick_recheck')),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: _loading ? null : () => _refresh(deep: true),
-                      icon: const Icon(Icons.fact_check_outlined),
-                      label: Text(tr.text('run_deep_diagnostics')),
-                    ),
-                    if (availableRepairActions.contains(
-                        MaintenanceRepairAction.repairMissingCloudQueue))
-                      OutlinedButton.icon(
-                        onPressed: () => _confirmAndRunRepair(
-                            MaintenanceRepairAction.repairMissingCloudQueue),
-                        icon: const Icon(Icons.sync_problem_outlined),
-                        label: Text(tr.text('repair_cloud_sync_queue')),
-                      ),
-                  ],
-                ),
-              ],
-            ),
           ],
           if (_lastDiagnosticReport != null) ...[
             const SizedBox(height: 16),
@@ -351,6 +280,89 @@ class _MaintenancePageState extends State<MaintenancePage> {
             ),
           ],
         ],
+      ),
+    );
+  }
+
+  Widget _buildMaintenanceActionsCard(
+    AppLocalizations tr,
+    MaintenanceSummary? summary,
+    Set<MaintenanceRepairAction> availableRepairActions,
+  ) {
+    return _SectionCard(
+      title: tr.text('maintenance_actions'),
+      icon: Icons.build_outlined,
+      children: [
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            FilledButton.icon(
+              onPressed: _loading ? null : () => _refresh(deep: false),
+              icon: const Icon(Icons.cleaning_services_outlined),
+              label: Text(tr.text('quick_recheck')),
+            ),
+            OutlinedButton.icon(
+              onPressed: _loading ? null : () => _refresh(deep: true),
+              icon: const Icon(Icons.fact_check_outlined),
+              label: Text(tr.text('run_deep_diagnostics')),
+            ),
+            OutlinedButton.icon(
+              onPressed: summary == null ? null : _exportDiagnosticReport,
+              icon: const Icon(Icons.description_outlined),
+              label: Text(tr.text('export_technical_report')),
+            ),
+            if (availableRepairActions
+                .contains(MaintenanceRepairAction.repairMissingCloudQueue))
+              OutlinedButton.icon(
+                onPressed: _loading
+                    ? null
+                    : () => _confirmAndRunRepair(
+                        MaintenanceRepairAction.repairMissingCloudQueue),
+                icon: const Icon(Icons.sync_problem_outlined),
+                label: Text(tr.text('repair_cloud_sync_queue')),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAdvancedToolsCard(AppLocalizations tr) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(tr.text('advanced_tools')),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                FilledButton.icon(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => DatabasePage(store: widget.store),
+                    ),
+                  ),
+                  icon: const Icon(Icons.storage_outlined),
+                  label: Text(tr.text('database_explorer')),
+                ),
+                FilledButton.icon(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => StressLabPage(store: widget.store),
+                    ),
+                  ),
+                  icon: const Icon(Icons.speed_outlined),
+                  label: Text(tr.text('stress_lab')),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
