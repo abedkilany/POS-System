@@ -29,6 +29,10 @@ import requestsStatus from '../server_api/sync/requests/status.js';
 import requestsPush from '../server_api/sync/requests/push.js';
 import maintenance from '../server_api/sync/maintenance.js';
 import bootstrapSnapshot from '../server_api/sync/bootstrap-snapshot.js';
+import googleDriveAuthStart from '../server_api/google-drive/auth-start.js';
+import googleDriveCallback from '../server_api/google-drive/callback.js';
+import googleDriveStatus from '../server_api/google-drive/status.js';
+import googleDriveRefresh from '../server_api/google-drive/refresh.js';
 
 const routes = new Map([
   ['health', health],
@@ -49,6 +53,10 @@ const routes = new Map([
   ['sync/push', push],
   ['sync/maintenance', maintenance],
   ['sync/bootstrap-snapshot', bootstrapSnapshot],
+  ['google-drive/auth-start', googleDriveAuthStart],
+  ['google-drive/callback', googleDriveCallback],
+  ['google-drive/status', googleDriveStatus],
+  ['google-drive/refresh', googleDriveRefresh],
   ['sync/recovery/claim', recoveryClaim],
   ['sync/requests/ack', requestsAck],
   ['sync/requests/pull', requestsPull],

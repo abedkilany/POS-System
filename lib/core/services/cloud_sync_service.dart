@@ -25,6 +25,10 @@ class CloudSyncSettings {
   static const _apiBaseUrlKey = 'cloud_api_base_url';
   static const _apiTokenKey = 'cloud_api_token';
   static const _lastPullCursorKey = 'cloud_last_pull_cursor';
+  static const _bundledCloudApiBaseUrl =
+      String.fromEnvironment('CLOUD_API_BASE_URL');
+  static const _bundledPublicApiBaseUrl =
+      String.fromEnvironment('PUBLIC_API_BASE_URL');
 
   static Future<void> clearSavedPullCursor() async {
     await LocalDatabaseService.deleteString(_lastPullCursorKey);
@@ -57,6 +61,12 @@ class CloudSyncSettings {
       enabled &&
       apiBaseUrl.trim().isNotEmpty &&
       (hasDeploymentToken || hasDeviceCredentials);
+
+  static String get bundledApiBaseUrl {
+    final cloudUrl = _bundledCloudApiBaseUrl.trim();
+    if (cloudUrl.isNotEmpty) return cloudUrl;
+    return _bundledPublicApiBaseUrl.trim();
+  }
 
   static String normalizeApiBaseUrl(String value, {String fallback = ''}) {
     var raw = value.trim();
@@ -116,7 +126,8 @@ class CloudSyncSettings {
     final cursorRaw = LocalDatabaseService.getString(_lastPullCursorKey) ?? '';
     final autoRaw = LocalDatabaseService.getString(_autoSyncKey);
     final intervalRaw = LocalDatabaseService.getString(_intervalKey);
-    final currentOrigin = kIsWeb ? Uri.base.origin : '';
+    final bundledOrigin = bundledApiBaseUrl;
+    final currentOrigin = kIsWeb ? Uri.base.origin : bundledOrigin;
     var normalizedBaseUrl = currentOrigin;
     if (base != null && base.trim().isNotEmpty) {
       try {

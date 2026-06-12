@@ -1,11 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../../data/app_store.dart';
+import 'cloud_sync_service.dart';
+import 'google_drive_browser_auth.dart';
 import 'local_database_service.dart';
 
 class GoogleDriveBackupSettings {
@@ -34,6 +37,7 @@ class GoogleDriveBackupSettings {
   final int monthlyCount;
 
   bool get hasClient => clientId.trim().isNotEmpty;
+  bool get hasClientSecret => clientSecret.trim().isNotEmpty;
   bool get isAuthorized =>
       refreshToken.trim().isNotEmpty || accessToken.trim().isNotEmpty;
 
@@ -86,6 +90,7 @@ class GoogleDriveAuthorizationChallenge {
     required this.deviceCode,
     required this.userCode,
     required this.verificationUrl,
+    this.verificationUrlComplete = '',
     required this.expiresAt,
     required this.intervalSeconds,
   });
@@ -93,8 +98,21 @@ class GoogleDriveAuthorizationChallenge {
   final String deviceCode;
   final String userCode;
   final String verificationUrl;
+  final String verificationUrlComplete;
   final DateTime expiresAt;
   final int intervalSeconds;
+}
+
+class _GoogleTokenResponse {
+  const _GoogleTokenResponse({
+    required this.statusCode,
+    required this.decoded,
+  });
+
+  final int statusCode;
+  final Map<String, dynamic> decoded;
+
+  bool get isSuccess => statusCode >= 200 && statusCode < 300;
 }
 
 class GoogleDriveBackupService {
@@ -116,6 +134,14 @@ class GoogleDriveBackupService {
   static const int defaultWeeklyCount = 4;
   static const int defaultMonthlyCount = 3;
   static const String _scope = 'https://www.googleapis.com/auth/drive.file';
+  static const String _defaultClientId =
+      '462649203125-beloepij0c32pr231qbn3jm07uss4mr9.apps.googleusercontent.com';
+  static const String bundledClientId = String.fromEnvironment(
+      'GOOGLE_DRIVE_CLIENT_ID',
+      defaultValue: _defaultClientId);
+  static const String bundledClientSecret =
+      String.fromEnvironment('GOOGLE_DRIVE_CLIENT_SECRET');
+  static bool get hasBundledClient => bundledClientId.trim().isNotEmpty;
 
   static final ValueNotifier<GoogleDriveBackupStatus> status =
       ValueNotifier<GoogleDriveBackupStatus>(const GoogleDriveBackupStatus());
@@ -123,10 +149,15 @@ class GoogleDriveBackupService {
   static bool _isRunning = false;
 
   static Future<GoogleDriveBackupSettings> loadSettings() async {
+    final savedClientId = LocalDatabaseService.getString(_clientIdKey) ?? '';
+    final savedClientSecret =
+        LocalDatabaseService.getString(_clientSecretKey) ?? '';
     return GoogleDriveBackupSettings(
       enabled: LocalDatabaseService.getString(_enabledKey) == 'true',
-      clientId: LocalDatabaseService.getString(_clientIdKey) ?? '',
-      clientSecret: LocalDatabaseService.getString(_clientSecretKey) ?? '',
+      clientId: savedClientId.trim().isEmpty ? bundledClientId : savedClientId,
+      clientSecret: savedClientSecret.trim().isEmpty
+          ? bundledClientSecret
+          : savedClientSecret,
       folderId: LocalDatabaseService.getString(_folderIdKey) ?? '',
       refreshToken: LocalDatabaseService.getString(_refreshTokenKey) ?? '',
       accessToken: LocalDatabaseService.getString(_accessTokenKey) ?? '',
@@ -195,6 +226,8 @@ class GoogleDriveBackupService {
       userCode: decoded['user_code'] as String,
       verificationUrl: (decoded['verification_url'] ??
           decoded['verification_uri']) as String,
+      verificationUrlComplete:
+          (decoded['verification_url_complete'] ?? '').toString(),
       expiresAt: DateTime.now()
           .add(Duration(seconds: (decoded['expires_in'] as num).toInt())),
       intervalSeconds:
@@ -206,21 +239,7 @@ class GoogleDriveBackupService {
     GoogleDriveBackupSettings settings,
     GoogleDriveAuthorizationChallenge challenge,
   ) async {
-    final body = <String, String>{
-      'client_id': settings.clientId.trim(),
-      'device_code': challenge.deviceCode,
-      'grant_type': 'urn:ietf:params:oauth:grant-type:device_code',
-    };
-    if (settings.clientSecret.trim().isNotEmpty) {
-      body['client_secret'] = settings.clientSecret.trim();
-    }
-
-    final response = await http.post(
-      Uri.parse('https://oauth2.googleapis.com/token'),
-      headers: const {'Content-Type': 'application/x-www-form-urlencoded'},
-      body: body,
-    );
-    final decoded = _decodeResponse(response);
+    final decoded = await _requestDeviceToken(settings, challenge);
     final next = settings.copyWith(
       refreshToken:
           (decoded['refresh_token'] as String?) ?? settings.refreshToken,
@@ -230,6 +249,203 @@ class GoogleDriveBackupService {
     );
     await saveSettings(next);
     return next;
+  }
+
+  static Future<GoogleDriveBackupSettings> connectWithBrowser(
+      GoogleDriveBackupSettings settings) async {
+    if (kIsWeb) {
+      throw UnsupportedError(
+          'Browser Google authorization is not supported on Web.');
+    }
+    if (!settings.hasClient) {
+      throw StateError('Google Drive Client ID is required.');
+    }
+    final challenge = await startAuthorization(settings);
+    await GoogleDriveBrowserAuth.openUrl(
+      challenge.verificationUrlComplete.isNotEmpty
+          ? challenge.verificationUrlComplete
+          : challenge.verificationUrl,
+    );
+    final decoded = await _pollDeviceAuthorization(settings, challenge);
+    final next = settings.copyWith(
+      refreshToken:
+          (decoded['refresh_token'] as String?) ?? settings.refreshToken,
+      accessToken: decoded['access_token'] as String,
+      accessTokenExpiresAt: DateTime.now().add(Duration(
+          seconds: ((decoded['expires_in'] as num?)?.toInt() ?? 3600) - 60)),
+    );
+    await saveSettings(next);
+    return next;
+  }
+
+  static Future<GoogleDriveBackupSettings> connectWithServer(
+      GoogleDriveBackupSettings settings) async {
+    final cloud = CloudSyncSettings.load();
+    final apiBaseUrl = cloud.apiBaseUrl.trim();
+    if (apiBaseUrl.isEmpty) {
+      throw StateError(
+          'Cloud API URL is required for Google Drive connection.');
+    }
+    final sessionId = _randomSessionId();
+    final base = CloudSyncSettings.normalizeApiBaseUrl(apiBaseUrl);
+    final authUrl = Uri.parse('$base/api/google-drive/auth-start')
+        .replace(queryParameters: {'session_id': sessionId});
+    await GoogleDriveBrowserAuth.openUrl(authUrl.toString());
+
+    final statusUrl = Uri.parse('$base/api/google-drive/status')
+        .replace(queryParameters: {'session_id': sessionId});
+    final deadline = DateTime.now().add(const Duration(minutes: 5));
+    while (DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(seconds: 2));
+      final response = await http.get(statusUrl);
+      final decoded = response.body.trim().isEmpty
+          ? <String, dynamic>{}
+          : jsonDecode(response.body) as Map<String, dynamic>;
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw StateError(decoded['error']?.toString() ??
+            'Google Drive connection failed (${response.statusCode}).');
+      }
+      final status = decoded['status']?.toString() ?? '';
+      if (status == 'pending') continue;
+      if (status == 'error' || decoded['ok'] == false) {
+        throw StateError(
+            decoded['error']?.toString() ?? 'Google Drive connection failed.');
+      }
+      if (status == 'complete') {
+        final next = settings.copyWith(
+          refreshToken: decoded['refreshToken']?.toString() ?? '',
+          accessToken: decoded['accessToken']?.toString() ?? '',
+          accessTokenExpiresAt: DateTime.tryParse(
+              decoded['accessTokenExpiresAt']?.toString() ?? ''),
+        );
+        await saveSettings(next);
+        return next;
+      }
+    }
+    throw StateError('Google Drive connection timed out.');
+  }
+
+  static Future<void> openAuthorizationChallenge(
+      GoogleDriveAuthorizationChallenge challenge) {
+    return GoogleDriveBrowserAuth.openUrl(
+      challenge.verificationUrlComplete.isNotEmpty
+          ? challenge.verificationUrlComplete
+          : challenge.verificationUrl,
+    );
+  }
+
+  static Future<GoogleDriveBackupSettings> finishBrowserAuthorization(
+    GoogleDriveBackupSettings settings,
+    GoogleDriveAuthorizationChallenge challenge,
+  ) async {
+    final decoded = await _pollDeviceAuthorization(settings, challenge);
+    final next = settings.copyWith(
+      refreshToken:
+          (decoded['refresh_token'] as String?) ?? settings.refreshToken,
+      accessToken: decoded['access_token'] as String,
+      accessTokenExpiresAt: DateTime.now().add(Duration(
+          seconds: ((decoded['expires_in'] as num?)?.toInt() ?? 3600) - 60)),
+    );
+    await saveSettings(next);
+    return next;
+  }
+
+  static Future<Map<String, dynamic>> _pollDeviceAuthorization(
+    GoogleDriveBackupSettings settings,
+    GoogleDriveAuthorizationChallenge challenge,
+  ) async {
+    var interval = Duration(seconds: challenge.intervalSeconds);
+    while (DateTime.now().isBefore(challenge.expiresAt)) {
+      await Future<void>.delayed(interval);
+      final result = await _requestDeviceTokenRaw(settings, challenge);
+      final decoded = result.decoded;
+      if (result.isSuccess) {
+        return decoded;
+      }
+      final error = decoded['error']?.toString() ?? '';
+      if (error == 'authorization_pending') {
+        continue;
+      }
+      if (error == 'slow_down') {
+        interval += const Duration(seconds: 5);
+        continue;
+      }
+      if (error == 'access_denied') {
+        throw StateError('Google Drive access was denied.');
+      }
+      if (error == 'expired_token') {
+        throw StateError('Google authorization expired. Try again.');
+      }
+      final description = decoded['error_description'];
+      throw StateError(description?.toString() ??
+          (error.isEmpty ? 'Google authorization failed.' : error));
+    }
+    throw StateError('Google authorization expired. Try again.');
+  }
+
+  static Future<Map<String, dynamic>> _requestDeviceToken(
+    GoogleDriveBackupSettings settings,
+    GoogleDriveAuthorizationChallenge challenge,
+  ) async {
+    final result = await _requestDeviceTokenRaw(settings, challenge);
+    if (result.isSuccess) return result.decoded;
+    final description = result.decoded['error_description']?.toString();
+    if (description != null && description.isNotEmpty) {
+      throw StateError(description);
+    }
+    final error = result.decoded['error'];
+    if (error is Map && error['message'] != null) {
+      throw StateError(error['message'].toString());
+    }
+    if (error != null) {
+      if (error.toString() == 'invalid_request' && !settings.hasClientSecret) {
+        throw StateError(
+            'Google requires the OAuth client secret for this connection. Import Client secret.json once from Developer setup.');
+      }
+      throw StateError(error.toString());
+    }
+    throw StateError('Google authorization failed.');
+  }
+
+  static Future<_GoogleTokenResponse> _requestDeviceTokenRaw(
+    GoogleDriveBackupSettings settings,
+    GoogleDriveAuthorizationChallenge challenge,
+  ) async {
+    final first = await _postDeviceToken(settings, challenge,
+        includeSecret: settings.hasClientSecret);
+    if (first.isSuccess) return first;
+    final error = first.decoded['error']?.toString() ?? '';
+    if (error == 'invalid_request' && settings.hasClientSecret) {
+      return _postDeviceToken(settings, challenge, includeSecret: false);
+    }
+    return first;
+  }
+
+  static Future<_GoogleTokenResponse> _postDeviceToken(
+    GoogleDriveBackupSettings settings,
+    GoogleDriveAuthorizationChallenge challenge, {
+    required bool includeSecret,
+  }) async {
+    final body = <String, String>{
+      'client_id': settings.clientId.trim(),
+      'device_code': challenge.deviceCode,
+      'grant_type': 'urn:ietf:params:oauth:grant-type:device_code',
+    };
+    if (includeSecret && settings.clientSecret.trim().isNotEmpty) {
+      body['client_secret'] = settings.clientSecret.trim();
+    }
+    final response = await http.post(
+      Uri.parse('https://oauth2.googleapis.com/token'),
+      headers: const {'Content-Type': 'application/x-www-form-urlencoded'},
+      body: body,
+    );
+    final decoded = response.body.trim().isEmpty
+        ? <String, dynamic>{}
+        : jsonDecode(response.body) as Map<String, dynamic>;
+    return _GoogleTokenResponse(
+      statusCode: response.statusCode,
+      decoded: decoded,
+    );
   }
 
   static Future<void> runDueBackup(AppStore store) async {
@@ -349,20 +565,56 @@ class GoogleDriveBackupService {
       throw StateError(
           'Google Drive authorization expired. Connect Google Drive again.');
     }
+    final cloud = CloudSyncSettings.load();
+    if (cloud.apiBaseUrl.trim().isNotEmpty &&
+        settings.clientSecret.trim().isEmpty) {
+      final base = CloudSyncSettings.normalizeApiBaseUrl(cloud.apiBaseUrl);
+      final response = await http.post(
+        Uri.parse('$base/api/google-drive/refresh'),
+        headers: const {'Content-Type': 'application/json; charset=utf-8'},
+        body: jsonEncode({'refreshToken': settings.refreshToken.trim()}),
+      );
+      final decoded = response.body.trim().isEmpty
+          ? <String, dynamic>{}
+          : jsonDecode(response.body) as Map<String, dynamic>;
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw StateError(decoded['error']?.toString() ??
+            'Google Drive token refresh failed.');
+      }
+      final next = settings.copyWith(
+        accessToken: decoded['accessToken']?.toString() ?? '',
+        accessTokenExpiresAt: DateTime.tryParse(
+            decoded['accessTokenExpiresAt']?.toString() ?? ''),
+      );
+      await saveSettings(next);
+      return next.accessToken;
+    }
     final body = <String, String>{
       'client_id': settings.clientId.trim(),
       'refresh_token': settings.refreshToken.trim(),
       'grant_type': 'refresh_token',
     };
-    if (settings.clientSecret.trim().isNotEmpty) {
-      body['client_secret'] = settings.clientSecret.trim();
-    }
     final response = await http.post(
       Uri.parse('https://oauth2.googleapis.com/token'),
       headers: const {'Content-Type': 'application/x-www-form-urlencoded'},
       body: body,
     );
-    final decoded = _decodeResponse(response);
+    var decoded = response.body.trim().isEmpty
+        ? <String, dynamic>{}
+        : jsonDecode(response.body) as Map<String, dynamic>;
+    if ((response.statusCode < 200 || response.statusCode >= 300) &&
+        decoded['error']?.toString() == 'invalid_request' &&
+        settings.clientSecret.trim().isNotEmpty) {
+      body['client_secret'] = settings.clientSecret.trim();
+      final retry = await http.post(
+        Uri.parse('https://oauth2.googleapis.com/token'),
+        headers: const {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: body,
+      );
+      decoded = _decodeResponse(retry);
+    } else if (response.statusCode < 200 || response.statusCode >= 300) {
+      decoded = _decodeResponse(response);
+    }
     final next = settings.copyWith(
       accessToken: decoded['access_token'] as String,
       accessTokenExpiresAt: DateTime.now().add(Duration(
@@ -560,4 +812,10 @@ class GoogleDriveBackupService {
 
   static String _driveQueryEscape(String value) =>
       value.replaceAll(r'\', r'\\').replaceAll("'", r"\'");
+
+  static String _randomSessionId() {
+    final random = Random.secure();
+    final bytes = List<int>.generate(32, (_) => random.nextInt(256));
+    return base64UrlEncode(bytes).replaceAll('=', '');
+  }
 }

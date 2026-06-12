@@ -1976,9 +1976,10 @@ class _GoogleDriveBackupSettingsCard extends StatefulWidget {
 class _GoogleDriveBackupSettingsCardState
     extends State<_GoogleDriveBackupSettingsCard> {
   GoogleDriveBackupSettings? _settings;
-  GoogleDriveAuthorizationChallenge? _challenge;
   bool _saving = false;
   bool _hasChanges = false;
+  bool _showAdvancedSetup = false;
+  int _developerTapCount = 0;
   final TextEditingController _clientIdController = TextEditingController();
   final TextEditingController _clientSecretController = TextEditingController();
   final TextEditingController _folderIdController = TextEditingController();
@@ -2089,39 +2090,17 @@ class _GoogleDriveBackupSettingsCardState
   }
 
   Future<void> _startConnect() async {
-    try {
-      final settings = _hasChanges ? await _save() : _settings;
-      if (settings == null) return;
-      final challenge =
-          await GoogleDriveBackupService.startAuthorization(settings);
-      if (!mounted) return;
-      setState(() => _challenge = challenge);
-      await Clipboard.setData(ClipboardData(text: challenge.userCode));
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content:
-                Text('Google code copied. Open the link and approve Ventio.')),
-      );
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Google Drive connect failed: $error')));
-    }
-  }
-
-  Future<void> _finishConnect() async {
-    final settings = _settings;
-    final challenge = _challenge;
-    if (settings == null || challenge == null) return;
     setState(() => _saving = true);
     try {
-      final next = await GoogleDriveBackupService.finishAuthorization(
-          settings, challenge);
+      final settings = _hasChanges ? await _save() : _settings;
+      if (settings == null) {
+        if (mounted) setState(() => _saving = false);
+        return;
+      }
+      final next = await GoogleDriveBackupService.connectWithServer(settings);
       if (!mounted) return;
       setState(() {
         _settings = next;
-        _challenge = null;
         _saving = false;
         _hasChanges = false;
       });
@@ -2130,8 +2109,8 @@ class _GoogleDriveBackupSettingsCardState
     } catch (error) {
       if (!mounted) return;
       setState(() => _saving = false);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Google Drive authorization is not ready: $error')));
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Google Drive connection failed: $error')));
     }
   }
 
@@ -2140,12 +2119,71 @@ class _GoogleDriveBackupSettingsCardState
     await GoogleDriveBackupService.disconnect();
     await _load();
     if (!mounted) return;
-    setState(() {
-      _saving = false;
-      _challenge = null;
-    });
+    setState(() => _saving = false);
     ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Google Drive disconnected.')));
+  }
+
+  Future<void> _importGoogleCredentialsFile() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['json'],
+        withData: true,
+      );
+      if (result == null || result.files.isEmpty) return;
+      final bytes = result.files.single.bytes;
+      if (bytes == null || bytes.isEmpty) {
+        throw Exception('Empty Google credentials file.');
+      }
+      final decoded = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+      final section = decoded['installed'] is Map
+          ? decoded['installed'] as Map
+          : decoded['web'] is Map
+              ? decoded['web'] as Map
+              : null;
+      if (section == null) {
+        throw Exception('Invalid Google credentials file.');
+      }
+      final clientId = (section['client_id'] ?? '').toString().trim();
+      final clientSecret = (section['client_secret'] ?? '').toString().trim();
+      if (clientId.isEmpty) {
+        throw Exception('Google Client ID was not found.');
+      }
+      _clientIdController.text = clientId;
+      _clientSecretController.text = clientSecret;
+      final saved = await _save();
+      if (!mounted || saved == null) return;
+      setState(() => _showAdvancedSetup = false);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Google credentials imported. You can connect now.')));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Could not import Google credentials: $error')));
+    }
+  }
+
+  void _handleDeveloperTap() {
+    if (_showAdvancedSetup) return;
+    _developerTapCount += 1;
+    if (_developerTapCount >= 5) {
+      _developerTapCount = 0;
+      setState(() => _showAdvancedSetup = true);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Developer setup unlocked.')),
+      );
+    }
+  }
+
+  Future<void> _copyDriveFolderLink() async {
+    final folderId = _settings?.folderId.trim() ?? '';
+    if (folderId.isEmpty) return;
+    await Clipboard.setData(ClipboardData(
+        text: 'https://drive.google.com/drive/folders/$folderId'));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Drive folder link copied.')));
   }
 
   Future<void> _backupNow() async {
@@ -2176,6 +2214,9 @@ class _GoogleDriveBackupSettingsCardState
     }
     final disabled = widget.store.appIdentity.isClient;
     final connected = settings.isAuthorized;
+    final showDeveloperSetup = _showAdvancedSetup;
+    final googleConfigured =
+        CloudSyncSettings.load().apiBaseUrl.trim().isNotEmpty;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -2188,138 +2229,161 @@ class _GoogleDriveBackupSettingsCardState
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             secondary: const Icon(Icons.cloud_upload_outlined),
-            title: const Text('Automatic Google Drive backup'),
+            title: GestureDetector(
+              onTap: _handleDeveloperTap,
+              child: const Text('Google Drive backup'),
+            ),
             subtitle: Text(disabled
                 ? 'Google Drive backup runs on the Host device only.'
                 : connected
-                    ? 'Uploads the same Ventio backup file to Google Drive after login.'
-                    : 'Connect Google Drive, then enable automatic backups.'),
+                    ? 'Connected. Ventio can save backups to your Drive.'
+                    : googleConfigured
+                        ? 'Connect once, then save backups whenever you need.'
+                        : 'Google Drive is not configured in this build.'),
             value: !disabled && settings.enabled,
             onChanged: disabled || _saving || !connected
                 ? null
                 : (value) => _save(enabled: value),
           ),
           const SizedBox(height: 8),
-          TextField(
-            controller: _clientIdController,
-            enabled: !disabled && !_saving,
-            decoration: const InputDecoration(
-              labelText: 'Google OAuth Client ID',
-              helperText:
-                  'Create a TV and Limited Input OAuth client in Google Cloud and enable Drive API.',
-            ),
-            onSubmitted: (_) {
-              if (_hasChanges) _save();
-            },
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(connected
+                ? Icons.check_circle_outline
+                : googleConfigured
+                    ? Icons.account_circle_outlined
+                    : Icons.info_outline),
+            title: Text(connected
+                ? 'Google Drive is connected'
+                : googleConfigured
+                    ? 'Connect with Google'
+                    : 'Google Drive is not ready'),
+            subtitle: Text(connected
+                ? 'Ventio can upload backup files to your Drive.'
+                : googleConfigured
+                    ? 'Use your Google account. No setup fields are needed.'
+                    : 'The packaged app needs the Ventio server URL first.'),
           ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _clientSecretController,
-            enabled: !disabled && !_saving,
-            obscureText: true,
-            decoration: const InputDecoration(
-              labelText: 'Google OAuth Client Secret (optional)',
-              helperText:
-                  'Leave empty if your OAuth client does not use a secret.',
-            ),
-            onSubmitted: (_) {
-              if (_hasChanges) _save();
-            },
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _folderIdController,
-            enabled: !disabled && !_saving,
-            decoration: const InputDecoration(
-              labelText: 'Drive folder ID (optional)',
-              helperText: 'Leave empty to create/use a Ventio Backups folder.',
-            ),
-            onSubmitted: (_) {
-              if (_hasChanges) _save();
-            },
-          ),
-          const SizedBox(height: 12),
-          if (_challenge != null)
+          if (showDeveloperSetup) ...[
             Container(
               width: double.infinity,
-              margin: const EdgeInsets.only(bottom: 12),
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: theme.colorScheme.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                      'Open Google authorization, enter this code, then press Finish connect.'),
-                  const SizedBox(height: 8),
-                  SelectableText(_challenge!.verificationUrl,
-                      style: theme.textTheme.bodyMedium
-                          ?.copyWith(fontWeight: FontWeight.w700)),
-                  const SizedBox(height: 6),
-                  SelectableText(_challenge!.userCode,
-                      style: theme.textTheme.titleMedium
-                          ?.copyWith(fontWeight: FontWeight.w800)),
-                ],
-              ),
+              child: const Text(
+                  'This is only for packaging the app. Regular users should only connect with Google.'),
             ),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final itemWidth = constraints.maxWidth < 620
-                  ? constraints.maxWidth
-                  : (constraints.maxWidth - 24) / 3;
-              return Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                children: [
-                  SizedBox(
-                      width: itemWidth,
-                      child: _countField(
-                          _dailyController, 'Daily copies', disabled)),
-                  SizedBox(
-                      width: itemWidth,
-                      child: _countField(
-                          _weeklyController, 'Weekly copies', disabled)),
-                  SizedBox(
-                      width: itemWidth,
-                      child: _countField(
-                          _monthlyController, 'Monthly copies', disabled)),
-                ],
-              );
-            },
-          ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed:
+                  disabled || _saving ? null : _importGoogleCredentialsFile,
+              icon: const Icon(Icons.file_upload_outlined),
+              label: const Text('Import Google credentials file'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _clientIdController,
+              enabled: !disabled && !_saving,
+              decoration: const InputDecoration(
+                labelText: 'Google OAuth Client ID',
+                helperText:
+                    'One-time developer setup. After this, users only press Connect Drive.',
+              ),
+              onSubmitted: (_) {
+                if (_hasChanges) _save();
+              },
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _clientSecretController,
+              enabled: !disabled && !_saving,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Google OAuth Client Secret (optional)',
+                helperText:
+                    'Leave empty if your OAuth client does not use a secret.',
+              ),
+              onSubmitted: (_) {
+                if (_hasChanges) _save();
+              },
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _folderIdController,
+              enabled: !disabled && !_saving,
+              decoration: const InputDecoration(
+                labelText: 'Drive folder ID (optional)',
+                helperText:
+                    'Leave empty to create/use a Ventio Backups folder.',
+              ),
+              onSubmitted: (_) {
+                if (_hasChanges) _save();
+              },
+            ),
+            const SizedBox(height: 12),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final itemWidth = constraints.maxWidth < 620
+                    ? constraints.maxWidth
+                    : (constraints.maxWidth - 24) / 3;
+                return Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    SizedBox(
+                        width: itemWidth,
+                        child: _countField(
+                            _dailyController, 'Daily copies', disabled)),
+                    SizedBox(
+                        width: itemWidth,
+                        child: _countField(
+                            _weeklyController, 'Weekly copies', disabled)),
+                    SizedBox(
+                        width: itemWidth,
+                        child: _countField(
+                            _monthlyController, 'Monthly copies', disabled)),
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 12),
+          ],
           const SizedBox(height: 12),
           Wrap(
             spacing: 12,
             runSpacing: 10,
             children: [
-              OutlinedButton.icon(
-                onPressed:
-                    disabled || _saving || !_hasChanges ? null : () => _save(),
-                icon: const Icon(Icons.save_outlined),
-                label: const Text('Save Drive settings'),
-              ),
-              OutlinedButton.icon(
-                onPressed:
-                    disabled || _saving || settings.clientId.trim().isEmpty
-                        ? null
-                        : _startConnect,
-                icon: const Icon(Icons.link_outlined),
-                label: Text(connected ? 'Reconnect Drive' : 'Connect Drive'),
-              ),
-              if (_challenge != null)
-                FilledButton.icon(
-                  onPressed: disabled || _saving ? null : _finishConnect,
-                  icon: const Icon(Icons.check_circle_outline),
-                  label: const Text('Finish connect'),
+              if (showDeveloperSetup)
+                OutlinedButton.icon(
+                  onPressed: disabled || _saving || !_hasChanges
+                      ? null
+                      : () => _save(),
+                  icon: const Icon(Icons.save_outlined),
+                  label: const Text('Save developer setup'),
                 ),
+              OutlinedButton.icon(
+                onPressed: disabled || _saving || !googleConfigured
+                    ? null
+                    : _startConnect,
+                icon: const Icon(Icons.account_circle_outlined),
+                label: Text(connected
+                    ? 'Reconnect with Google'
+                    : 'Connect with Google'),
+              ),
               FilledButton.icon(
                 onPressed:
                     disabled || _saving || !connected ? null : _backupNow,
                 icon: const Icon(Icons.cloud_upload_outlined),
-                label: const Text('Backup to Drive now'),
+                label: const Text('Backup now'),
               ),
+              if (connected && settings.folderId.trim().isNotEmpty)
+                OutlinedButton.icon(
+                  onPressed: disabled || _saving ? null : _copyDriveFolderLink,
+                  icon: const Icon(Icons.folder_open_outlined),
+                  label: const Text('Copy Drive folder link'),
+                ),
               if (connected)
                 TextButton.icon(
                   onPressed: disabled || _saving ? null : _disconnect,
