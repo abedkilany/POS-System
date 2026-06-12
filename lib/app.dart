@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
+import 'core/app_brand.dart';
 import 'core/localization/app_localizations.dart';
 import 'core/theme/app_theme.dart';
 import 'core/utils/responsive.dart';
@@ -47,14 +48,14 @@ class _AutoSnapshotProgressState {
   final String label;
 }
 
-class StoreManagerApp extends StatefulWidget {
-  const StoreManagerApp({super.key});
+class VentioApp extends StatefulWidget {
+  const VentioApp({super.key});
 
   @override
-  State<StoreManagerApp> createState() => _StoreManagerAppState();
+  State<VentioApp> createState() => _VentioAppState();
 }
 
-class _StoreManagerAppState extends State<StoreManagerApp> {
+class _VentioAppState extends State<VentioApp> {
   Locale _locale = const Locale('en');
   ThemeMode _themeMode = ThemeMode.system;
   final AppStore _store = AppStore();
@@ -212,7 +213,7 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
         return MaterialApp(
           navigatorKey: _navigatorKey,
           debugShowCheckedModeBanner: false,
-          title: 'Ventio',
+          title: AppBrand.name,
           theme: AppTheme.lightTheme,
           darkTheme: AppTheme.darkTheme,
           themeMode: _themeMode,

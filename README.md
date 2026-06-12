@@ -1,6 +1,6 @@
-# POS System — Host Authority Sync V8
+# Ventio
 
-This build keeps the Flutter offline/LAN POS app and adds a cleaner Vercel + Neon cloud path.
+Ventio is an offline-first sales, inventory, sync, and backup management app with LAN, cloud, and Google Drive backup support.
 
 ## What changed
 

@@ -1,4 +1,4 @@
--- POS System Sync Engine v1 schema for Neon PostgreSQL
+-- Ventio Sync Engine v1 schema for Neon PostgreSQL
 -- Run this once in Neon SQL Editor.
 
 create table if not exists sync_events (

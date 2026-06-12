@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
+import '../../core/app_brand.dart';
 import '../../core/services/backup_download_service.dart';
 import '../../core/services/barcode_feedback_service.dart';
 import '../../core/services/cloud_sync_service.dart';
@@ -72,6 +73,10 @@ class SettingsPage extends StatelessWidget {
           icon: Icons.keyboard_command_key_outlined,
           label: tr.text('keyboard_shortcuts'),
           description: tr.text('keyboard_shortcuts_desc')),
+      _SettingsNavData(
+          icon: Icons.info_outline,
+          label: tr.text('about_ventio'),
+          description: tr.text('about_ventio_desc')),
     ];
 
     return DefaultTabController(
@@ -86,6 +91,7 @@ class SettingsPage extends StatelessWidget {
             _settingsList(context, _backupCards(context)),
             _settingsList(context, _adminCards(context)),
             _settingsList(context, _shortcutCards(context)),
+            _settingsList(context, _aboutCards(context)),
           ];
 
           if (!isWide) {
@@ -238,6 +244,44 @@ class SettingsPage extends StatelessWidget {
         ),
       ),
       const _ScannerFeedbackSettingsCard(),
+    ];
+  }
+
+  List<Widget> _aboutCards(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    final identity = store.appIdentity;
+    return [
+      _SectionCard(
+        icon: Icons.info_outline,
+        title: tr.text('about_ventio'),
+        subtitle: tr.text('about_ventio_desc'),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _VentioBrandHeader(
+              title: AppBrand.name,
+              subtitle: tr.text('about_ventio_summary'),
+            ),
+            const SizedBox(height: 18),
+            _InfoGrid(
+              items: [
+                _InfoGridItem(Icons.verified_outlined, tr.text('app_name'),
+                    AppBrand.name),
+                _InfoGridItem(Icons.new_releases_outlined,
+                    tr.text('app_version'), AppBrand.version),
+                _InfoGridItem(Icons.computer_outlined, tr.text('platform'),
+                    identity.platform.name),
+                _InfoGridItem(Icons.dns_outlined, tr.text('device_role'),
+                    identity.deviceRole.name),
+                _InfoGridItem(Icons.storefront_outlined, tr.text('store_name'),
+                    store.storeProfile.name),
+                _InfoGridItem(Icons.cloud_sync_outlined, tr.text('sync_mode'),
+                    identity.isHost ? tr.text('host') : identity.syncMode.name),
+              ],
+            ),
+          ],
+        ),
+      ),
     ];
   }
 
@@ -6958,6 +7002,79 @@ class _SettingsNavItem extends StatelessWidget {
                     : colorScheme.onSurfaceVariant),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _VentioBrandHeader extends StatelessWidget {
+  const _VentioBrandHeader({required this.title, required this.subtitle});
+
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: VentioResponsive.cardInsets(context),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        gradient: LinearGradient(
+          colors: [
+            colorScheme.primaryContainer.withValues(alpha: 0.55),
+            colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        border: Border.all(color: colorScheme.outlineVariant),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 72,
+            height: 72,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: colorScheme.surface,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: colorScheme.outlineVariant),
+            ),
+            child: Image.asset(
+              'assets/branding/ventio_symbol_transparent.png',
+              fit: BoxFit.contain,
+              errorBuilder: (context, error, stackTrace) => Icon(
+                Icons.storefront_outlined,
+                color: colorScheme.primary,
+                size: 34,
+              ),
+            ),
+          ),
+          const SizedBox(width: 18),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.w800,
+                        color: colorScheme.onSurface,
+                      ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  subtitle,
+                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

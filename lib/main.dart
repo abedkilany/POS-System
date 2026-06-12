@@ -6,5 +6,5 @@ import 'core/services/local_database_service.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await LocalDatabaseService.initialize();
-  runApp(const StoreManagerApp());
+  runApp(const VentioApp());
 }

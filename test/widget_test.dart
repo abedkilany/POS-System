@@ -7,13 +7,13 @@ import 'package:ventio/core/services/local_database_service.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('StoreManagerApp builds without crashing', (tester) async {
+  testWidgets('VentioApp builds without crashing', (tester) async {
     SharedPreferences.setMockInitialValues({});
     LocalDatabaseService.useInMemoryStoreForTesting(const <String, String>{});
 
-    await tester.pumpWidget(const StoreManagerApp());
+    await tester.pumpWidget(const VentioApp());
     await tester.pump();
 
-    expect(find.byType(StoreManagerApp), findsOneWidget);
+    expect(find.byType(VentioApp), findsOneWidget);
   });
 }

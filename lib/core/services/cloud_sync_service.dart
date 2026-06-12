@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+import '../app_brand.dart';
 import '../../data/app_store.dart';
 import '../../models/app_identity.dart';
 import '../../models/sync_change.dart';
@@ -956,7 +957,7 @@ class CloudSyncService {
               'deviceId': store.deviceId,
               'deviceName': current.deviceName,
               'platform': current.platform.name,
-              'appVersion': 'store-manager-pro',
+              'appVersion': AppBrand.cloudAppVersion,
             }),
           )
           .timeout(const Duration(seconds: 10));
@@ -1159,7 +1160,7 @@ class CloudSyncService {
               'deviceId': store.deviceId,
               'deviceName': store.appIdentity.deviceName,
               'platform': store.appIdentity.platform.name,
-              'appVersion': 'store-manager-pro',
+              'appVersion': AppBrand.cloudAppVersion,
             }),
           )
           .timeout(const Duration(seconds: 15));
@@ -1804,7 +1805,7 @@ class CloudSyncService {
               'lastAckSequence': deviceState.lastAckSequence,
               'deviceToken': identity.deviceToken,
               'hostDeviceId': identity.hostDeviceId,
-              'appVersion': 'store-manager-pro',
+              'appVersion': AppBrand.cloudAppVersion,
               'storeEpoch': identity.storeEpoch,
             }),
           )
@@ -2129,7 +2130,7 @@ class CloudSyncService {
               'hostDeviceId': store.deviceId,
               'hostDeviceName': identity.deviceName,
               'platform': identity.platform.name,
-              'appVersion': 'store-manager-pro',
+              'appVersion': AppBrand.cloudAppVersion,
               'syncMode': identity.syncMode.name,
               'recoveryKey': identity.recoveryKey,
             }),
