@@ -197,6 +197,11 @@ class GoogleDriveBackupService {
     );
   }
 
+  static DateTime? lastSuccessAt() {
+    return DateTime.tryParse(
+        LocalDatabaseService.getString(_lastSuccessKey) ?? '');
+  }
+
   static Future<void> saveSettings(GoogleDriveBackupSettings settings) async {
     await LocalDatabaseService.setString(
         _enabledKey, settings.enabled ? 'true' : 'false');

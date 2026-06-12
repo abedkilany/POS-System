@@ -68,6 +68,8 @@ class LocalAutoBackupService {
     );
   }
 
+  static DateTime? lastSuccessAt() => null;
+
   static Future<void> saveSettings(LocalAutoBackupSettings settings) async {}
 
   static Future<String> defaultLocationPath() async => 'Ventio/Backup';

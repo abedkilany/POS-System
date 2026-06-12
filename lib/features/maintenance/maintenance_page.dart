@@ -64,21 +64,32 @@ class _MaintenancePageState extends State<MaintenancePage> {
     if (summary == null) return;
 
     final report = _service.buildDiagnosticReport(summary);
-    final timestamp = summary.generatedAt.toIso8601String().replaceAll(RegExp(r'[^0-9]'), '').substring(0, 14);
+    final timestamp = summary.generatedAt
+        .toIso8601String()
+        .replaceAll(RegExp(r'[^0-9]'), '')
+        .substring(0, 14);
     final filename = 'ventio_technical_report_$timestamp.json';
 
     final tr = AppLocalizations.of(context);
     try {
-      await downloadTextFile(filename: filename, content: report, dialogTitle: tr.text('technical_report_saved'), cancelMessage: tr.text('file_save_cancelled'));
+      await downloadTextFile(
+          filename: filename,
+          content: report,
+          dialogTitle: tr.text('technical_report_saved'),
+          cancelMessage: tr.text('file_save_cancelled'));
       if (!mounted) return;
       setState(() => _lastDiagnosticReport = report);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${tr.text('technical_report_saved')}: $filename')),
+        SnackBar(
+            content: Text('${tr.text('technical_report_saved')}: $filename')),
       );
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error is StateError ? localizeRuntimeMessage(error.message, tr) : tr.text('could_not_save_technical_report'))),
+        SnackBar(
+            content: Text(error is StateError
+                ? localizeRuntimeMessage(error.message, tr)
+                : tr.text('could_not_save_technical_report'))),
       );
     }
   }
@@ -91,8 +102,12 @@ class _MaintenancePageState extends State<MaintenancePage> {
         title: Text(tr.text('run_maintenance_repair')),
         content: Text(tr.text('maintenance_repair_confirm_desc')),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: Text(tr.text('cancel'))),
-          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: Text(tr.text('run_repair'))),
+          TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(tr.text('cancel'))),
+          FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(tr.text('run_repair'))),
         ],
       ),
     );
@@ -102,7 +117,9 @@ class _MaintenancePageState extends State<MaintenancePage> {
     await _refresh();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('${_localizedMaintenanceRepairTitle(tr, result.title)}: ${_localizedMaintenanceRepairMessage(tr, result.message)}')),
+      SnackBar(
+          content: Text(
+              '${_localizedMaintenanceRepairTitle(tr, result.title)}: ${_localizedMaintenanceRepairMessage(tr, result.message)}')),
     );
   }
 
@@ -110,6 +127,11 @@ class _MaintenancePageState extends State<MaintenancePage> {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final summary = _summary;
+    final availableRepairActions = summary?.issues
+            .map((issue) => issue.repairAction)
+            .whereType<MaintenanceRepairAction>()
+            .toSet() ??
+        const <MaintenanceRepairAction>{};
 
     return RefreshIndicator(
       onRefresh: () => _refresh(deep: false),
@@ -130,12 +152,18 @@ class _MaintenancePageState extends State<MaintenancePage> {
                     runSpacing: 12,
                     children: [
                       FilledButton.icon(
-                        onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => DatabasePage(store: widget.store))),
+                        onPressed: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                                builder: (_) =>
+                                    DatabasePage(store: widget.store))),
                         icon: Icon(Icons.storage_outlined),
                         label: Text(tr.text('database_explorer')),
                       ),
                       FilledButton.icon(
-                        onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => StressLabPage(store: widget.store))),
+                        onPressed: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                                builder: (_) =>
+                                    StressLabPage(store: widget.store))),
                         icon: Icon(Icons.speed_outlined),
                         label: Text(tr.text('stress_lab')),
                       ),
@@ -145,7 +173,6 @@ class _MaintenancePageState extends State<MaintenancePage> {
               ),
             ),
           ),
-
           Row(
             children: [
               const Icon(Icons.health_and_safety_outlined, size: 32),
@@ -154,9 +181,14 @@ class _MaintenancePageState extends State<MaintenancePage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(tr.text('maintenance_center'), style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
+                    Text(tr.text('maintenance_center'),
+                        style: Theme.of(context)
+                            .textTheme
+                            .headlineSmall
+                            ?.copyWith(fontWeight: FontWeight.w700)),
                     const SizedBox(height: 4),
-                    Text(tr.text('maintenance_center_desc'), style: Theme.of(context).textTheme.bodyMedium),
+                    Text(tr.text('maintenance_center_desc'),
+                        style: Theme.of(context).textTheme.bodyMedium),
                   ],
                 ),
               ),
@@ -179,13 +211,32 @@ class _MaintenancePageState extends State<MaintenancePage> {
               title: tr.text('readable_report'),
               icon: Icons.summarize_outlined,
               children: [
-                _InfoRow(label: tr.text('status'), value: _localizedMaintenanceHealthStatus(tr, summary)),
-                _InfoRow(label: tr.text('health_score'), value: '${summary.healthScore}/100'),
-                _InfoRow(label: tr.text('issues_found'), value: "${summary.criticalCount} ${tr.text('critical')}, ${summary.warningCount} ${tr.text('warnings')}, ${summary.infoCount} ${tr.text('notes')}"),
-                _InfoRow(label: tr.text('database_storage'), value: summary.databaseExists ? tr.text('secure_appdata_storage') : tr.text('not_created_yet')),
-                _InfoRow(label: tr.text('database_size'), value: _formatBytes(summary.databaseSizeBytes)),
-                _InfoRow(label: tr.text('last_check'), value: _formatDateTime(summary.generatedAt)),
-                _InfoRow(label: tr.text('check_type'), value: _lastRunWasDeep ? tr.text('deep_diagnostics') : tr.text('quick_check')),
+                _InfoRow(
+                    label: tr.text('status'),
+                    value: _localizedMaintenanceHealthStatus(tr, summary)),
+                _InfoRow(
+                    label: tr.text('health_score'),
+                    value: '${summary.healthScore}/100'),
+                _InfoRow(
+                    label: tr.text('issues_found'),
+                    value:
+                        "${summary.criticalCount} ${tr.text('critical')}, ${summary.warningCount} ${tr.text('warnings')}, ${summary.infoCount} ${tr.text('notes')}"),
+                _InfoRow(
+                    label: tr.text('database_storage'),
+                    value: summary.databaseExists
+                        ? tr.text('secure_appdata_storage')
+                        : tr.text('not_created_yet')),
+                _InfoRow(
+                    label: tr.text('database_size'),
+                    value: _formatBytes(summary.databaseSizeBytes)),
+                _InfoRow(
+                    label: tr.text('last_check'),
+                    value: _formatDateTime(summary.generatedAt)),
+                _InfoRow(
+                    label: tr.text('check_type'),
+                    value: _lastRunWasDeep
+                        ? tr.text('deep_diagnostics')
+                        : tr.text('quick_check')),
               ],
             ),
             const SizedBox(height: 16),
@@ -193,7 +244,10 @@ class _MaintenancePageState extends State<MaintenancePage> {
               title: tr.text('recommendations'),
               icon: Icons.lightbulb_outline,
               children: [
-                for (final recommendation in summary.recommendations) _RecommendationTile(text: _localizedMaintenanceRecommendation(tr, recommendation)),
+                for (final recommendation in summary.recommendations)
+                  _RecommendationTile(
+                      text: _localizedMaintenanceRecommendation(
+                          tr, recommendation)),
               ],
             ),
             const SizedBox(height: 16),
@@ -201,11 +255,22 @@ class _MaintenancePageState extends State<MaintenancePage> {
               title: tr.text('database'),
               icon: Icons.folder_outlined,
               children: [
-                _InfoRow(label: tr.text('platform'), value: summary.platformLabel),
-                _InfoRow(label: tr.text('database_directory'), value: summary.databaseDirectoryPath),
-                _InfoRow(label: tr.text('database_file'), value: summary.databaseFilePath),
-                _InfoRow(label: tr.text('database_exists'), value: summary.databaseExists ? tr.text('yes') : tr.text('no')),
-                _InfoRow(label: tr.text('database_size'), value: _formatBytes(summary.databaseSizeBytes)),
+                _InfoRow(
+                    label: tr.text('platform'), value: summary.platformLabel),
+                _InfoRow(
+                    label: tr.text('database_directory'),
+                    value: summary.databaseDirectoryPath),
+                _InfoRow(
+                    label: tr.text('database_file'),
+                    value: summary.databaseFilePath),
+                _InfoRow(
+                    label: tr.text('database_exists'),
+                    value: summary.databaseExists
+                        ? tr.text('yes')
+                        : tr.text('no')),
+                _InfoRow(
+                    label: tr.text('database_size'),
+                    value: _formatBytes(summary.databaseSizeBytes)),
               ],
             ),
             const SizedBox(height: 16),
@@ -217,7 +282,8 @@ class _MaintenancePageState extends State<MaintenancePage> {
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    for (final entry in summary.counts.entries) _CountChip(label: entry.key, count: entry.value),
+                    for (final entry in summary.counts.entries)
+                      _CountChip(label: entry.key, count: entry.value),
                   ],
                 ),
               ],
@@ -254,11 +320,14 @@ class _MaintenancePageState extends State<MaintenancePage> {
                       icon: const Icon(Icons.fact_check_outlined),
                       label: Text(tr.text('run_deep_diagnostics')),
                     ),
-                    OutlinedButton.icon(
-                      onPressed: () => _confirmAndRunRepair(MaintenanceRepairAction.repairMissingCloudQueue),
-                      icon: const Icon(Icons.sync_problem_outlined),
-                      label: Text(tr.text('repair_cloud_sync_queue')),
-                    ),
+                    if (availableRepairActions.contains(
+                        MaintenanceRepairAction.repairMissingCloudQueue))
+                      OutlinedButton.icon(
+                        onPressed: () => _confirmAndRunRepair(
+                            MaintenanceRepairAction.repairMissingCloudQueue),
+                        icon: const Icon(Icons.sync_problem_outlined),
+                        label: Text(tr.text('repair_cloud_sync_queue')),
+                      ),
                   ],
                 ),
               ],
@@ -270,9 +339,14 @@ class _MaintenancePageState extends State<MaintenancePage> {
               title: tr.text('technical_report'),
               icon: Icons.article_outlined,
               children: [
-                Text(tr.text('technical_report_desc'), style: Theme.of(context).textTheme.bodySmall),
+                Text(tr.text('technical_report_desc'),
+                    style: Theme.of(context).textTheme.bodySmall),
                 const SizedBox(height: 12),
-                SelectableText(_lastDiagnosticReport!, style: Theme.of(context).textTheme.bodySmall?.copyWith(fontFamily: 'monospace')),
+                SelectableText(_lastDiagnosticReport!,
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(fontFamily: 'monospace')),
               ],
             ),
           ],
@@ -282,7 +356,6 @@ class _MaintenancePageState extends State<MaintenancePage> {
   }
 }
 
-
 class _MaintenanceDashboard extends StatelessWidget {
   const _MaintenanceDashboard({required this.summary});
 
@@ -291,60 +364,105 @@ class _MaintenanceDashboard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
+    final backupSeverity = _highestSeverity(
+        summary, const ['local_backup_status', 'google_drive_backup_status']);
     final cards = [
       _DashboardCardData(
         title: tr.text('database'),
         icon: Icons.storage_outlined,
-        severity: summary.databaseExists ? MaintenanceSeverity.ok : MaintenanceSeverity.warning,
-        headline: summary.databaseExists ? tr.text('secure') : tr.text('not_created'),
-        subtitle: summary.databaseExists ? tr.text('stored_in_appdata') : tr.text('save_change_create_db'),
+        severity: summary.databaseExists
+            ? MaintenanceSeverity.ok
+            : MaintenanceSeverity.warning,
+        headline:
+            summary.databaseExists ? tr.text('secure') : tr.text('not_created'),
+        subtitle: summary.databaseExists
+            ? tr.text('stored_in_appdata')
+            : tr.text('save_change_create_db'),
         metrics: [
-          _DashboardMetric(tr.text('size'), _formatCompactBytes(summary.databaseSizeBytes)),
-          _DashboardMetric(tr.text('keys'), '${summary.counts['localDatabaseKeys'] ?? 0}'),
+          _DashboardMetric(
+              tr.text('size'), _formatCompactBytes(summary.databaseSizeBytes)),
+          _DashboardMetric(
+              tr.text('keys'), '${summary.counts['localDatabaseKeys'] ?? 0}'),
         ],
       ),
       _DashboardCardData(
         title: tr.text('inventory'),
         icon: Icons.inventory_2_outlined,
-        severity: _highestSeverity(summary, const ['negative_stock', 'zero_cost_products', 'zero_price_products', 'duplicate_product_names']),
-        headline: _headlineFor(context, _highestSeverity(summary, const ['negative_stock', 'zero_cost_products', 'zero_price_products', 'duplicate_product_names'])),
-        subtitle: tr.format('products_tracked', {'count': summary.counts['products'] ?? 0}),
+        severity: _highestSeverity(summary, const [
+          'negative_stock',
+          'zero_cost_products',
+          'zero_price_products',
+          'duplicate_product_names'
+        ]),
+        headline: _headlineFor(
+            context,
+            _highestSeverity(summary, const [
+              'negative_stock',
+              'zero_cost_products',
+              'zero_price_products',
+              'duplicate_product_names'
+            ])),
+        subtitle: tr.format(
+            'products_tracked', {'count': summary.counts['products'] ?? 0}),
         metrics: [
-          _DashboardMetric(tr.text('products'), '${summary.counts['products'] ?? 0}'),
-          _DashboardMetric(tr.text('movements'), '${summary.counts['stockMovements'] ?? 0}'),
+          _DashboardMetric(
+              tr.text('products'), '${summary.counts['products'] ?? 0}'),
+          _DashboardMetric(
+              tr.text('movements'), '${summary.counts['stockMovements'] ?? 0}'),
         ],
       ),
       _DashboardCardData(
         title: tr.text('accounting'),
         icon: Icons.account_balance_wallet_outlined,
         severity: _highestSeverity(summary, const ['overpaid_sales']),
-        headline: _headlineFor(context, _highestSeverity(summary, const ['overpaid_sales'])),
-        subtitle: tr.format('account_transactions_found', {'count': summary.counts['accountTransactions'] ?? 0}),
+        headline: _headlineFor(
+            context, _highestSeverity(summary, const ['overpaid_sales'])),
+        subtitle: tr.format('account_transactions_found',
+            {'count': summary.counts['accountTransactions'] ?? 0}),
         metrics: [
-          _DashboardMetric(tr.text('expenses'), '${summary.counts['expenses'] ?? 0}'),
-          _DashboardMetric(tr.text('transactions'), '${summary.counts['accountTransactions'] ?? 0}'),
+          _DashboardMetric(
+              tr.text('expenses'), '${summary.counts['expenses'] ?? 0}'),
+          _DashboardMetric(tr.text('transactions'),
+              '${summary.counts['accountTransactions'] ?? 0}'),
         ],
       ),
       _DashboardCardData(
         title: tr.text('sync'),
         icon: Icons.sync_outlined,
-        severity: _highestSeverity(summary, const ['data_conflicts', 'pending_sync_changes']),
-        headline: _headlineFor(context, _highestSeverity(summary, const ['data_conflicts', 'pending_sync_changes'])),
-        subtitle: tr.format('pending_changes_count', {'count': (summary.counts['pendingSyncChanges'] ?? 0) + (summary.counts['pendingSyncQueue'] ?? 0)}),
+        severity: _highestSeverity(
+            summary, const ['data_conflicts', 'pending_sync_changes']),
+        headline: _headlineFor(
+            context,
+            _highestSeverity(
+                summary, const ['data_conflicts', 'pending_sync_changes'])),
+        subtitle: tr.format('pending_changes_count', {
+          'count': (summary.counts['pendingSyncChanges'] ?? 0) +
+              (summary.counts['pendingSyncQueue'] ?? 0)
+        }),
         metrics: [
-          _DashboardMetric(tr.text('queue'), '${summary.counts['pendingSyncQueue'] ?? 0}'),
-          _DashboardMetric(tr.text('conflicts'), '${summary.counts['dataConflicts'] ?? 0}'),
+          _DashboardMetric(
+              tr.text('queue'), '${summary.counts['pendingSyncQueue'] ?? 0}'),
+          _DashboardMetric(
+              tr.text('conflicts'), '${summary.counts['dataConflicts'] ?? 0}'),
         ],
       ),
       _DashboardCardData(
         title: tr.text('backups'),
         icon: Icons.backup_outlined,
-        severity: MaintenanceSeverity.info,
-        headline: tr.text('recommended'),
-        subtitle: tr.text('backup_recommendation_desc'),
+        severity: backupSeverity,
+        headline: _headlineFor(context, backupSeverity),
+        subtitle: tr.text('backup_status_dashboard_desc'),
         metrics: [
-          _DashboardMetric(tr.text('mode'), tr.text('manual')),
-          _DashboardMetric(tr.text('status'), tr.text('advised')),
+          _DashboardMetric(
+              tr.text('local_backup'),
+              (summary.counts['localBackupEnabled'] ?? 0) == 1
+                  ? tr.text('enabled')
+                  : tr.text('disabled')),
+          _DashboardMetric(
+              tr.text('google_drive'),
+              (summary.counts['googleDriveConnected'] ?? 0) == 1
+                  ? tr.text('connected')
+                  : tr.text('not_connected')),
         ],
       ),
     ];
@@ -356,7 +474,8 @@ class _MaintenanceDashboard extends StatelessWidget {
         LayoutBuilder(
           builder: (context, constraints) {
             final isWide = constraints.maxWidth >= 720;
-            final cardWidth = isWide ? (constraints.maxWidth - 12) / 2 : constraints.maxWidth;
+            final cardWidth =
+                isWide ? (constraints.maxWidth - 12) / 2 : constraints.maxWidth;
             return Wrap(
               spacing: 12,
               runSpacing: 12,
@@ -374,15 +493,23 @@ class _MaintenanceDashboard extends StatelessWidget {
     );
   }
 
-  static MaintenanceSeverity _highestSeverity(MaintenanceSummary summary, List<String> issueIds) {
+  static MaintenanceSeverity _highestSeverity(
+      MaintenanceSummary summary, List<String> issueIds) {
     final issues = summary.issues.where((issue) => issueIds.contains(issue.id));
-    if (issues.any((issue) => issue.severity == MaintenanceSeverity.critical)) return MaintenanceSeverity.critical;
-    if (issues.any((issue) => issue.severity == MaintenanceSeverity.warning)) return MaintenanceSeverity.warning;
-    if (issues.any((issue) => issue.severity == MaintenanceSeverity.info)) return MaintenanceSeverity.info;
+    if (issues.any((issue) => issue.severity == MaintenanceSeverity.critical)) {
+      return MaintenanceSeverity.critical;
+    }
+    if (issues.any((issue) => issue.severity == MaintenanceSeverity.warning)) {
+      return MaintenanceSeverity.warning;
+    }
+    if (issues.any((issue) => issue.severity == MaintenanceSeverity.info)) {
+      return MaintenanceSeverity.info;
+    }
     return MaintenanceSeverity.ok;
   }
 
-  static String _headlineFor(BuildContext context, MaintenanceSeverity severity) {
+  static String _headlineFor(
+      BuildContext context, MaintenanceSeverity severity) {
     final tr = AppLocalizations.of(context);
     return switch (severity) {
       MaintenanceSeverity.ok => tr.text('healthy'),
@@ -463,12 +590,21 @@ class _DashboardCard extends StatelessWidget {
             children: [
               Icon(data.icon, size: 24),
               const SizedBox(width: 8),
-              Expanded(child: Text(data.title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800))),
+              Expanded(
+                  child: Text(data.title,
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w800))),
               Icon(icon, color: color),
             ],
           ),
           const SizedBox(height: 12),
-          Text(data.headline, style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900, color: color)),
+          Text(data.headline,
+              style: Theme.of(context)
+                  .textTheme
+                  .titleLarge
+                  ?.copyWith(fontWeight: FontWeight.w900, color: color)),
           const SizedBox(height: 4),
           Text(data.subtitle, style: Theme.of(context).textTheme.bodySmall),
           const SizedBox(height: 12),
@@ -478,7 +614,8 @@ class _DashboardCard extends StatelessWidget {
             children: [
               for (final metric in data.metrics)
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(color: Theme.of(context).dividerColor),
@@ -487,8 +624,10 @@ class _DashboardCard extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(metric.label, style: Theme.of(context).textTheme.labelSmall),
-                      Text(metric.value, style: const TextStyle(fontWeight: FontWeight.w800)),
+                      Text(metric.label,
+                          style: Theme.of(context).textTheme.labelSmall),
+                      Text(metric.value,
+                          style: const TextStyle(fontWeight: FontWeight.w800)),
                     ],
                   ),
                 ),
@@ -534,9 +673,19 @@ class _HealthOverviewCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(tr.format('ventio_health_status', {'status': _localizedMaintenanceHealthStatus(tr, summary)}), style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
+                      Text(
+                          tr.format('ventio_health_status', {
+                            'status':
+                                _localizedMaintenanceHealthStatus(tr, summary)
+                          }),
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleLarge
+                              ?.copyWith(fontWeight: FontWeight.w800)),
                       const SizedBox(height: 4),
-                      Text(isHealthy ? tr.text('no_maintenance_action_needed') : tr.text('review_warnings_before_production')),
+                      Text(isHealthy
+                          ? tr.text('no_maintenance_action_needed')
+                          : tr.text('review_warnings_before_production')),
                     ],
                   ),
                 ),
@@ -548,10 +697,23 @@ class _HealthOverviewCard extends StatelessWidget {
               spacing: 8,
               runSpacing: 8,
               children: [
-                _StatusChip(label: tr.text('critical'), value: summary.criticalCount, icon: Icons.error_outline),
-                _StatusChip(label: tr.text('warnings'), value: summary.warningCount, icon: Icons.warning_amber_outlined),
-                _StatusChip(label: tr.text('notes'), value: summary.infoCount, icon: Icons.info_outline),
-                _StatusChip(label: tr.text('pending_sync'), value: (summary.counts['pendingSyncChanges'] ?? 0) + (summary.counts['pendingSyncQueue'] ?? 0), icon: Icons.sync_outlined),
+                _StatusChip(
+                    label: tr.text('critical'),
+                    value: summary.criticalCount,
+                    icon: Icons.error_outline),
+                _StatusChip(
+                    label: tr.text('warnings'),
+                    value: summary.warningCount,
+                    icon: Icons.warning_amber_outlined),
+                _StatusChip(
+                    label: tr.text('notes'),
+                    value: summary.infoCount,
+                    icon: Icons.info_outline),
+                _StatusChip(
+                    label: tr.text('pending_sync'),
+                    value: (summary.counts['pendingSyncChanges'] ?? 0) +
+                        (summary.counts['pendingSyncQueue'] ?? 0),
+                    icon: Icons.sync_outlined),
               ],
             ),
           ],
@@ -577,7 +739,11 @@ class _ScoreBadge extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text('$score', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900)),
+          Text('$score',
+              style: Theme.of(context)
+                  .textTheme
+                  .headlineSmall
+                  ?.copyWith(fontWeight: FontWeight.w900)),
           const Text('/100'),
         ],
       ),
@@ -586,7 +752,8 @@ class _ScoreBadge extends StatelessWidget {
 }
 
 class _StatusChip extends StatelessWidget {
-  const _StatusChip({required this.label, required this.value, required this.icon});
+  const _StatusChip(
+      {required this.label, required this.value, required this.icon});
 
   final String label;
   final int value;
@@ -602,7 +769,8 @@ class _StatusChip extends StatelessWidget {
 }
 
 class _SectionCard extends StatelessWidget {
-  const _SectionCard({required this.title, required this.icon, required this.children});
+  const _SectionCard(
+      {required this.title, required this.icon, required this.children});
 
   final String title;
   final IconData icon;
@@ -620,7 +788,11 @@ class _SectionCard extends StatelessWidget {
               children: [
                 Icon(icon),
                 const SizedBox(width: 8),
-                Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                Text(title,
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w700)),
               ],
             ),
             const SizedBox(height: 12),
@@ -645,7 +817,10 @@ class _InfoRow extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(width: 160, child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600))),
+          SizedBox(
+              width: 160,
+              child: Text(label,
+                  style: const TextStyle(fontWeight: FontWeight.w600))),
           Expanded(child: SelectableText(value)),
         ],
       ),
@@ -711,27 +886,38 @@ class _HealthTile extends StatelessWidget {
       leading: Icon(icon, color: color),
       title: Text(_localizedMaintenanceIssueTitle(tr, issue)),
       subtitle: Text(_localizedMaintenanceIssueMessage(tr, issue)),
-      trailing: issue.repairAction == null ? null : const Icon(Icons.build_circle_outlined),
+      trailing: issue.repairAction == null
+          ? null
+          : const Icon(Icons.build_circle_outlined),
     );
   }
 }
 
-String _localizedMaintenanceHealthStatus(AppLocalizations tr, MaintenanceSummary summary) {
+String _localizedMaintenanceHealthStatus(
+    AppLocalizations tr, MaintenanceSummary summary) {
   if (summary.criticalCount > 0) return tr.text('maintenance_status_critical');
   if (summary.warningCount > 0) return tr.text('maintenance_status_needs');
   if (summary.infoCount > 0) return tr.text('maintenance_status_notes');
   return tr.text('healthy');
 }
 
-String _localizedMaintenanceRecommendation(AppLocalizations tr, String recommendation) {
+String _localizedMaintenanceRecommendation(
+    AppLocalizations tr, String recommendation) {
   return switch (recommendation) {
-    'Run the app once, then run the health check again to confirm the SQLite database file is created.' => tr.text('maintenance_rec_create_db'),
-    'Add products to start inventory tracking.' => tr.text('maintenance_rec_add_products'),
-    'Create a first sale invoice to validate the sales workflow.' => tr.text('maintenance_rec_first_sale'),
-    'Open sync tools and complete pending synchronization when the network is available.' => tr.text('maintenance_rec_sync'),
-    'Review data conflicts before creating more invoices.' => tr.text('maintenance_rec_conflicts'),
-    'Create a fresh backup before major updates or device changes.' => tr.text('maintenance_rec_backup_fresh'),
-    'Create a backup after fixing any maintenance warnings.' => tr.text('maintenance_rec_backup_after'),
+    'Run the app once, then run the health check again to confirm the SQLite database file is created.' =>
+      tr.text('maintenance_rec_create_db'),
+    'Add products to start inventory tracking.' =>
+      tr.text('maintenance_rec_add_products'),
+    'Create a first sale invoice to validate the sales workflow.' =>
+      tr.text('maintenance_rec_first_sale'),
+    'Open sync tools and complete pending synchronization when the network is available.' =>
+      tr.text('maintenance_rec_sync'),
+    'Review data conflicts before creating more invoices.' =>
+      tr.text('maintenance_rec_conflicts'),
+    'Create a fresh backup before major updates or device changes.' =>
+      tr.text('maintenance_rec_backup_fresh'),
+    'Create a backup after fixing any maintenance warnings.' =>
+      tr.text('maintenance_rec_backup_after'),
     _ => recommendation,
   };
 }
@@ -739,34 +925,53 @@ String _localizedMaintenanceRecommendation(AppLocalizations tr, String recommend
 String _localizedMaintenanceRepairTitle(AppLocalizations tr, String title) {
   return switch (title) {
     'Database re-check completed' => tr.text('maintenance_recheck_completed'),
-    'Cloud sync queue repair completed' => tr.text('maintenance_cloud_queue_repair_completed'),
+    'Cloud sync queue repair completed' =>
+      tr.text('maintenance_cloud_queue_repair_completed'),
     _ => title,
   };
 }
 
 String _localizedMaintenanceRepairMessage(AppLocalizations tr, String message) {
   final count = _leadingCount(message);
-  if (message == 'No data was changed. The health check was refreshed only.') return tr.text('maintenance_recheck_no_changes');
-  if (message.startsWith('No missing Host')) return tr.text('maintenance_cloud_queue_repair_none');
-  if (count != null && message.contains('missing Host')) return tr.format('maintenance_cloud_queue_repair_count', {'count': count});
+  if (message == 'No data was changed. The health check was refreshed only.') {
+    return tr.text('maintenance_recheck_no_changes');
+  }
+  if (message.startsWith('No missing Host')) {
+    return tr.text('maintenance_cloud_queue_repair_none');
+  }
+  if (count != null && message.contains('missing Host')) {
+    return tr.format('maintenance_cloud_queue_repair_count', {'count': count});
+  }
   return localizeRuntimeMessage(message, tr);
 }
 
-String _localizedMaintenanceIssueTitle(AppLocalizations tr, MaintenanceIssue issue) {
+String _localizedMaintenanceIssueTitle(
+    AppLocalizations tr, MaintenanceIssue issue) {
   return tr.text('maintenance_issue_${issue.id}_title');
 }
 
-String _localizedMaintenanceIssueMessage(AppLocalizations tr, MaintenanceIssue issue) {
+String _localizedMaintenanceIssueMessage(
+    AppLocalizations tr, MaintenanceIssue issue) {
   switch (issue.id) {
     case 'deep_diagnostics_skipped':
       return tr.text('maintenance_issue_deep_diagnostics_skipped_message');
     case 'database_location':
-      if (!issue.message.startsWith('SQLite database file found')) return tr.text('maintenance_issue_database_location_missing');
-      return issue.details['legacyHiveExists'] == true ? tr.text('maintenance_issue_database_location_found_hive') : tr.text('maintenance_issue_database_location_found_no_hive');
+      if (!issue.message.startsWith('SQLite database file found')) {
+        return tr.text('maintenance_issue_database_location_missing');
+      }
+      return issue.details['legacyHiveExists'] == true
+          ? tr.text('maintenance_issue_database_location_found_hive')
+          : tr.text('maintenance_issue_database_location_found_no_hive');
     case 'sqlite_migration_status':
-      return issue.message.startsWith('SQLite migration is complete') ? tr.text('maintenance_issue_sqlite_migration_ok') : tr.text('maintenance_issue_sqlite_migration_warning');
+      return issue.message.startsWith('SQLite migration is complete')
+          ? tr.text('maintenance_issue_sqlite_migration_ok')
+          : tr.text('maintenance_issue_sqlite_migration_warning');
     case 'local_database_keys':
-      return tr.format('maintenance_issue_local_database_keys_message', {'count': _leadingCount(issue.message) ?? 0});
+      return tr.format('maintenance_issue_local_database_keys_message',
+          {'count': _leadingCount(issue.message) ?? 0});
+    case 'local_backup_status':
+    case 'google_drive_backup_status':
+      return _localizedMaintenanceBackupIssue(tr, issue.message);
     case 'duplicate_product_names':
     case 'duplicate_customer_names':
     case 'duplicate_supplier_names':
@@ -785,10 +990,38 @@ String _localizedMaintenanceIssueMessage(AppLocalizations tr, MaintenanceIssue i
   }
 }
 
-String _localizedMaintenanceCountIssue(AppLocalizations tr, MaintenanceIssue issue) {
+String _localizedMaintenanceBackupIssue(AppLocalizations tr, String message) {
+  return switch (message) {
+    'Backups are managed by the Host device.' =>
+      tr.text('maintenance_issue_backups_managed_by_host'),
+    'Automatic local backup is healthy.' =>
+      tr.text('maintenance_issue_local_backup_ok'),
+    'Automatic local backup is disabled.' =>
+      tr.text('maintenance_issue_local_backup_disabled'),
+    'Automatic local backup is enabled, but no successful backup was recorded yet.' =>
+      tr.text('maintenance_issue_local_backup_never'),
+    'Automatic local backup is older than the recommended window.' =>
+      tr.text('maintenance_issue_local_backup_old'),
+    'Google Drive backup is healthy.' =>
+      tr.text('maintenance_issue_google_drive_backup_ok'),
+    'Google Drive backup is not connected.' =>
+      tr.text('maintenance_issue_google_drive_not_connected'),
+    'Google Drive backup is connected but automatic backup is disabled.' =>
+      tr.text('maintenance_issue_google_drive_disabled'),
+    'Google Drive backup is enabled, but no successful backup was recorded yet.' =>
+      tr.text('maintenance_issue_google_drive_never'),
+    'Google Drive backup is older than the recommended window.' =>
+      tr.text('maintenance_issue_google_drive_old'),
+    _ => message,
+  };
+}
+
+String _localizedMaintenanceCountIssue(
+    AppLocalizations tr, MaintenanceIssue issue) {
   final prefix = 'maintenance_issue_${issue.id}';
   if (issue.message.startsWith('No ')) return tr.text('${prefix}_ok');
-  return tr.format('${prefix}_found', {'count': _leadingCount(issue.message) ?? 0});
+  return tr
+      .format('${prefix}_found', {'count': _leadingCount(issue.message) ?? 0});
 }
 
 int? _leadingCount(String value) {

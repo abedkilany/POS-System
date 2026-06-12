@@ -76,19 +76,30 @@ class LocalAutoBackupService {
   static Future<LocalAutoBackupSettings> loadSettings() async {
     return LocalAutoBackupSettings(
       enabled: LocalDatabaseService.getString(_enabledKey) == 'true',
-      locationPath: LocalDatabaseService.getString(_locationKey) ?? await defaultLocationPath(),
+      locationPath: LocalDatabaseService.getString(_locationKey) ??
+          await defaultLocationPath(),
       dailyCount: _readPositiveInt(_dailyCountKey, defaultDailyCount),
       weeklyCount: _readPositiveInt(_weeklyCountKey, defaultWeeklyCount),
       monthlyCount: _readPositiveInt(_monthlyCountKey, defaultMonthlyCount),
     );
   }
 
+  static DateTime? lastSuccessAt() {
+    return DateTime.tryParse(
+        LocalDatabaseService.getString(_lastSuccessKey) ?? '');
+  }
+
   static Future<void> saveSettings(LocalAutoBackupSettings settings) async {
-    await LocalDatabaseService.setString(_enabledKey, settings.enabled ? 'true' : 'false');
-    await LocalDatabaseService.setString(_locationKey, settings.locationPath.trim());
-    await LocalDatabaseService.setString(_dailyCountKey, settings.dailyCount.clamp(1, 365).toString());
-    await LocalDatabaseService.setString(_weeklyCountKey, settings.weeklyCount.clamp(1, 52).toString());
-    await LocalDatabaseService.setString(_monthlyCountKey, settings.monthlyCount.clamp(1, 24).toString());
+    await LocalDatabaseService.setString(
+        _enabledKey, settings.enabled ? 'true' : 'false');
+    await LocalDatabaseService.setString(
+        _locationKey, settings.locationPath.trim());
+    await LocalDatabaseService.setString(
+        _dailyCountKey, settings.dailyCount.clamp(1, 365).toString());
+    await LocalDatabaseService.setString(
+        _weeklyCountKey, settings.weeklyCount.clamp(1, 52).toString());
+    await LocalDatabaseService.setString(
+        _monthlyCountKey, settings.monthlyCount.clamp(1, 24).toString());
   }
 
   static Future<String> defaultLocationPath() async {
@@ -105,13 +116,21 @@ class LocalAutoBackupService {
   }
 
   static Future<void> runDueBackup(AppStore store) async {
-    if (_isRunning || kIsWeb) return;
-    if (store.appIdentity.isClient) return;
+    if (_isRunning || kIsWeb) {
+      return;
+    }
+    if (store.appIdentity.isClient) {
+      return;
+    }
     final settings = await loadSettings();
-    if (!settings.enabled) return;
+    if (!settings.enabled) {
+      return;
+    }
     final now = DateTime.now();
     final scheduled = DateTime(now.year, now.month, now.day, 2);
-    if (now.isBefore(scheduled) && await _hasDailyForDate(settings, now)) return;
+    if (now.isBefore(scheduled) && await _hasDailyForDate(settings, now)) {
+      return;
+    }
     await createBackupNow(store, settings: settings, reason: 'auto');
   }
 
@@ -120,51 +139,69 @@ class LocalAutoBackupService {
     LocalAutoBackupSettings? settings,
     String reason = 'manual',
   }) async {
-    if (_isRunning) throw StateError('Backup is already running.');
-    if (kIsWeb) throw UnsupportedError('Local automatic backup is not supported on Web.');
-    if (store.appIdentity.isClient) throw StateError('Local backup is only available on the Host device.');
+    if (_isRunning) {
+      throw StateError('Backup is already running.');
+    }
+    if (kIsWeb) {
+      throw UnsupportedError('Local automatic backup is not supported on Web.');
+    }
+    if (store.appIdentity.isClient) {
+      throw StateError('Local backup is only available on the Host device.');
+    }
 
     _isRunning = true;
-    status.value = const LocalAutoBackupStatus(isRunning: true, message: 'Creating local backup...');
+    status.value = const LocalAutoBackupStatus(
+        isRunning: true, message: 'Creating local backup...');
     try {
       final resolved = settings ?? await loadSettings();
       final root = Directory(resolved.locationPath.trim().isEmpty
           ? await defaultLocationPath()
           : resolved.locationPath.trim());
       final dailyDir = Directory('${root.path}${Platform.pathSeparator}Daily');
-      final weeklyDir = Directory('${root.path}${Platform.pathSeparator}Weekly');
-      final monthlyDir = Directory('${root.path}${Platform.pathSeparator}Monthly');
-      final manualDir = Directory('${root.path}${Platform.pathSeparator}Backup now');
+      final weeklyDir =
+          Directory('${root.path}${Platform.pathSeparator}Weekly');
+      final monthlyDir =
+          Directory('${root.path}${Platform.pathSeparator}Monthly');
+      final manualDir =
+          Directory('${root.path}${Platform.pathSeparator}Backup now');
       await dailyDir.create(recursive: true);
       await weeklyDir.create(recursive: true);
       await monthlyDir.create(recursive: true);
       await manualDir.create(recursive: true);
 
       final now = DateTime.now();
-      status.value = const LocalAutoBackupStatus(isRunning: true, message: 'Compressing backup...');
+      status.value = const LocalAutoBackupStatus(
+          isRunning: true, message: 'Compressing backup...');
       final bytes = _buildZipBytes(store.exportBackupJson(), now, reason);
 
       if (reason == 'manual') {
-        final manualFile = File('${manualDir.path}${Platform.pathSeparator}ventio_manual_${_dateTimeStamp(now)}.vtb');
+        final manualFile = File(
+            '${manualDir.path}${Platform.pathSeparator}ventio_manual_${_dateTimeStamp(now)}.vtb');
         await manualFile.writeAsBytes(bytes, flush: true);
-        await LocalDatabaseService.setString(_lastSuccessKey, now.toIso8601String());
-        status.value = LocalAutoBackupStatus(lastSuccessAt: now, message: 'Manual local backup completed.');
+        await LocalDatabaseService.setString(
+            _lastSuccessKey, now.toIso8601String());
+        status.value = LocalAutoBackupStatus(
+            lastSuccessAt: now, message: 'Manual local backup completed.');
         return manualFile;
       }
 
-      final dailyFile = File('${dailyDir.path}${Platform.pathSeparator}ventio_daily_${_dateStamp(now)}.vtb');
+      final dailyFile = File(
+          '${dailyDir.path}${Platform.pathSeparator}ventio_daily_${_dateStamp(now)}.vtb');
       if (!await dailyFile.exists()) {
         await dailyFile.writeAsBytes(bytes, flush: true);
       }
 
       final weekStamp = _weekStamp(now);
-      final weeklyFile = File('${weeklyDir.path}${Platform.pathSeparator}ventio_weekly_$weekStamp.vtb');
+      final weeklyFile = File(
+          '${weeklyDir.path}${Platform.pathSeparator}ventio_weekly_$weekStamp.vtb');
       if (!await weeklyFile.exists()) {
         await dailyFile.copy(weeklyFile.path);
       }
 
-      final monthStamp = '${now.year.toString().padLeft(4, '0')}_${now.month.toString().padLeft(2, '0')}';
-      final monthlyFile = File('${monthlyDir.path}${Platform.pathSeparator}ventio_monthly_$monthStamp.vtb');
+      final monthStamp =
+          '${now.year.toString().padLeft(4, '0')}_${now.month.toString().padLeft(2, '0')}';
+      final monthlyFile = File(
+          '${monthlyDir.path}${Platform.pathSeparator}ventio_monthly_$monthStamp.vtb');
       if (!await monthlyFile.exists()) {
         await dailyFile.copy(monthlyFile.path);
       }
@@ -173,23 +210,28 @@ class LocalAutoBackupService {
       await _trimBackups(weeklyDir, resolved.weeklyCount);
       await _trimBackups(monthlyDir, resolved.monthlyCount);
 
-      await LocalDatabaseService.setString(_lastSuccessKey, now.toIso8601String());
-      status.value = LocalAutoBackupStatus(lastSuccessAt: now, message: 'Local backup completed.');
+      await LocalDatabaseService.setString(
+          _lastSuccessKey, now.toIso8601String());
+      status.value = LocalAutoBackupStatus(
+          lastSuccessAt: now, message: 'Local backup completed.');
       return dailyFile;
     } catch (error) {
-      status.value = LocalAutoBackupStatus(lastError: error.toString(), message: 'Local backup failed.');
+      status.value = LocalAutoBackupStatus(
+          lastError: error.toString(), message: 'Local backup failed.');
       rethrow;
     } finally {
       _isRunning = false;
       Timer(const Duration(seconds: 5), () {
         if (!status.value.isRunning) {
-          status.value = LocalAutoBackupStatus(lastSuccessAt: status.value.lastSuccessAt);
+          status.value =
+              LocalAutoBackupStatus(lastSuccessAt: status.value.lastSuccessAt);
         }
       });
     }
   }
 
-  static List<int> _buildZipBytes(String backupJson, DateTime generatedAt, String reason) {
+  static List<int> _buildZipBytes(
+      String backupJson, DateTime generatedAt, String reason) {
     final backupBytes = utf8.encode(backupJson);
     final manifest = jsonEncode(<String, Object?>{
       'app': 'Ventio',
@@ -201,7 +243,8 @@ class LocalAutoBackupService {
     final manifestBytes = utf8.encode(manifest);
     final archive = Archive()
       ..addFile(ArchiveFile('backup.json', backupBytes.length, backupBytes))
-      ..addFile(ArchiveFile('manifest.json', manifestBytes.length, manifestBytes));
+      ..addFile(
+          ArchiveFile('manifest.json', manifestBytes.length, manifestBytes));
     return ZipEncoder().encode(archive);
   }
 
@@ -225,28 +268,43 @@ class LocalAutoBackupService {
   static int _isoWeekNumber(DateTime date) {
     final dayOfYear = date.difference(DateTime(date.year)).inDays + 1;
     final woy = ((dayOfYear - date.weekday + 10) / 7).floor();
-    if (woy < 1) return _isoWeekNumber(DateTime(date.year - 1, 12, 31));
-    if (woy == 53 && DateTime(date.year, 12, 31).weekday < DateTime.thursday) return 1;
+    if (woy < 1) {
+      return _isoWeekNumber(DateTime(date.year - 1, 12, 31));
+    }
+    if (woy == 53 && DateTime(date.year, 12, 31).weekday < DateTime.thursday) {
+      return 1;
+    }
     return woy;
   }
 
-  static Future<bool> _hasDailyForDate(LocalAutoBackupSettings settings, DateTime date) async {
-    final dir = Directory('${settings.locationPath}${Platform.pathSeparator}Daily');
-    if (!await dir.exists()) return false;
+  static Future<bool> _hasDailyForDate(
+      LocalAutoBackupSettings settings, DateTime date) async {
+    final dir =
+        Directory('${settings.locationPath}${Platform.pathSeparator}Daily');
+    if (!await dir.exists()) {
+      return false;
+    }
     final stamp = _dateStamp(date);
     await for (final entity in dir.list(followLinks: false)) {
-      if (entity is File && entity.path.contains(stamp)) return true;
+      if (entity is File && entity.path.contains(stamp)) {
+        return true;
+      }
     }
     return false;
   }
 
   static Future<void> _trimBackups(Directory dir, int keep) async {
-    if (!await dir.exists()) return;
+    if (!await dir.exists()) {
+      return;
+    }
     final files = <File>[];
     await for (final entity in dir.list(followLinks: false)) {
-      if (entity is File && entity.path.toLowerCase().endsWith('.vtb')) files.add(entity);
+      if (entity is File && entity.path.toLowerCase().endsWith('.vtb')) {
+        files.add(entity);
+      }
     }
-    files.sort((a, b) => b.statSync().modified.compareTo(a.statSync().modified));
+    files
+        .sort((a, b) => b.statSync().modified.compareTo(a.statSync().modified));
     final limit = keep.clamp(1, 1000).toInt();
     for (final file in files.skip(limit)) {
       try {
