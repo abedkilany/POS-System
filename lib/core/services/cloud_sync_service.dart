@@ -677,8 +677,6 @@ class CloudSyncService {
       await CloudSyncSettings.clearSavedPullCursor();
       await SyncDeviceStateStore.resetClientProgress(store.appIdentity,
           transport: 'cloud');
-      await CloudProvisioningStatus.markPending(
-          message: 'جارٍ تنزيل نسخة المضيف الجديدة بعد الاسترجاع.');
       result = await rebuildFromCloudHostSnapshot(
         settings.copyWith(clearLastPullCursor: true),
         onProgress: onProgress,
@@ -2772,8 +2770,6 @@ class CloudSyncService {
             await CloudSyncSettings.clearSavedPullCursor();
             await SyncDeviceStateStore.resetClientProgress(store.appIdentity,
                 transport: 'cloud');
-            await CloudProvisioningStatus.markPending(
-                message: 'جارٍ تنزيل نسخة المضيف الجديدة بعد الاسترجاع.');
             // A Host Restore is a full replacement, not an incremental change.
             // Do not depend on timestamp filters here: old backup rows can carry
             // historical updatedAt values, and the marker time may be newer than
@@ -3052,8 +3048,6 @@ class CloudSyncService {
             await CloudSyncSettings.clearSavedPullCursor();
             await SyncDeviceStateStore.resetClientProgress(store.appIdentity,
                 transport: 'cloud');
-            await CloudProvisioningStatus.markPending(
-                message: 'جارٍ تنزيل نسخة المضيف الجديدة بعد الاسترجاع.');
             // A Host Restore is a full replacement, not an incremental change.
             // Do not depend on timestamp filters here: old backup rows can carry
             // historical updatedAt values, and the marker time may be newer than
