@@ -18,6 +18,7 @@ const collectionTypes = {
   units: 'unit',
   purchases: 'purchase',
   stockMovements: 'stock_movement',
+  inventoryCounts: 'inventory_count',
   accountTransactions: 'account_transaction',
   roles: 'role',
   users: 'user',

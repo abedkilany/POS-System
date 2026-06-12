@@ -1,7 +1,11 @@
+import 'dart:convert';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
+import '../../core/services/cloud_sync_service.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/sync_unified/sync_unified.dart';
 import '../../data/app_store.dart';
@@ -69,6 +73,182 @@ class _LoginGatePageState extends State<LoginGatePage> {
       if (mounted) messenger.showSnackBar(SnackBar(content: Text(error.toString())));
     } finally {
       if (mounted) setState(() => _checkingSuspension = false);
+    }
+  }
+
+  Future<void> _loadRecoveryFileIntoFields(
+    BuildContext context, {
+    required TextEditingController apiUrlController,
+    required TextEditingController storeIdController,
+    required TextEditingController branchIdController,
+    required TextEditingController recoveryKeyController,
+    required VoidCallback onLoaded,
+  }) async {
+    final tr = AppLocalizations.of(context);
+    try {
+      final result = await FilePicker.platform.pickFiles(
+          type: FileType.custom,
+          allowedExtensions: const ['json'],
+          withData: true);
+      if (result == null || result.files.isEmpty) return;
+      final bytes = result.files.single.bytes;
+      if (bytes == null || bytes.isEmpty) {
+        throw Exception(tr.text('empty_recovery_file'));
+      }
+      final data = widget.store.parseRecoveryFileJson(utf8.decode(bytes));
+      if ((data['cloudApiUrl'] ?? '').isNotEmpty) {
+        apiUrlController.text = data['cloudApiUrl']!;
+      }
+      storeIdController.text = data['storeId'] ?? '';
+      branchIdController.text = data['branchId'] ?? '';
+      recoveryKeyController.text = data['recoveryKey'] ?? '';
+      onLoaded();
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(tr.text('recovery_file_loaded'))));
+      }
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('${tr.text('invalid_recovery_file')}: $error')));
+      }
+    }
+  }
+
+  Future<void> _recoverExistingStore(BuildContext context) async {
+    final tr = AppLocalizations.of(context);
+    final cloud = CloudSyncSettings.load();
+    final apiUrlController = TextEditingController(text: cloud.apiBaseUrl);
+    final storeIdController =
+        TextEditingController(text: widget.store.appIdentity.storeId);
+    final branchIdController = TextEditingController();
+    final recoveryKeyController = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        var canRecover = false;
+        void refresh(StateSetter setState) {
+          setState(() => canRecover = apiUrlController.text.trim().isNotEmpty &&
+              storeIdController.text.trim().isNotEmpty &&
+              recoveryKeyController.text.trim().isNotEmpty);
+        }
+
+        return StatefulBuilder(
+          builder: (context, setState) => AlertDialog(
+            title: Text(AppLocalizations.of(context).text('recover_existing_store')),
+            content: ResponsiveDialogBox(
+              maxWidth: VentioResponsive.modalMaxWidth(context, 460),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(AppLocalizations.of(context).text('recover_existing_store_desc')),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () => _loadRecoveryFileIntoFields(
+                        context,
+                        apiUrlController: apiUrlController,
+                        storeIdController: storeIdController,
+                        branchIdController: branchIdController,
+                        recoveryKeyController: recoveryKeyController,
+                        onLoaded: () => refresh(setState),
+                      ),
+                      icon: const Icon(Icons.upload_file_outlined),
+                      label: Text(AppLocalizations.of(context).text('upload_recovery_file')),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: apiUrlController,
+                    decoration: InputDecoration(
+                      labelText: AppLocalizations.of(context).text('cloud_api_url'),
+                      hintText: 'https://your-cloud-api.vercel.app',
+                      border: const OutlineInputBorder(),
+                    ),
+                    onChanged: (_) => refresh(setState),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: storeIdController,
+                    textCapitalization: TextCapitalization.characters,
+                    decoration: InputDecoration(
+                      labelText: AppLocalizations.of(context).text('store_id'),
+                      hintText: 'ST-XXXXXX',
+                      border: const OutlineInputBorder(),
+                    ),
+                    onChanged: (_) => refresh(setState),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: branchIdController,
+                    textCapitalization: TextCapitalization.characters,
+                    decoration: InputDecoration(
+                      labelText: AppLocalizations.of(context).text('branch_id_optional'),
+                      hintText: AppLocalizations.of(context).text('branch_id_recover_hint'),
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: recoveryKeyController,
+                    textCapitalization: TextCapitalization.characters,
+                    decoration: InputDecoration(
+                      labelText: AppLocalizations.of(context).text('recovery_key'),
+                      hintText: 'RK-XXXX-XXXX-XXXX',
+                      border: const OutlineInputBorder(),
+                    ),
+                    onChanged: (_) => refresh(setState),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: Text(AppLocalizations.of(context).text('cancel')),
+              ),
+              FilledButton(
+                onPressed: canRecover ? () => Navigator.pop(dialogContext, true) : null,
+                child: Text(AppLocalizations.of(context).text('recover')),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    if (confirmed != true) return;
+    try {
+      final recoverySettings = cloud.copyWith(
+        enabled: true,
+        apiBaseUrl: apiUrlController.text.trim(),
+        clearLastPullCursor: true,
+      );
+      await recoverySettings.save();
+      final result = await CloudSyncService(widget.store).recoverExistingStoreFromCloud(
+        recoverySettings,
+        storeId: storeIdController.text,
+        branchId: branchIdController.text,
+        recoveryKey: recoveryKeyController.text,
+      );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(localizeRuntimeMessage(result.message, tr))),
+        );
+        setState(() {});
+      }
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    } finally {
+      apiUrlController.dispose();
+      storeIdController.dispose();
+      branchIdController.dispose();
+      recoveryKeyController.dispose();
     }
   }
 
@@ -291,41 +471,50 @@ class _LoginGatePageState extends State<LoginGatePage> {
                             final canRegisterHere = !kIsWeb;
                             final actions = <Widget>[
                               if (canRegisterHere)
-                                Expanded(
-                                  child: OutlinedButton.icon(
-                                    onPressed: _loggingIn
-                                        ? null
-                                        : () => setState(() => _showRegister = true),
-                                    icon: const Icon(Icons.person_add_alt_1),
-                                    label: Text(tr.text('register')),
-                                  ),
-                                ),
-                              if (canRegisterHere) const SizedBox(width: 12),
-                              Expanded(
-                                child: OutlinedButton.icon(
+                                OutlinedButton.icon(
                                   onPressed: _loggingIn
                                       ? null
-                                      : () async {
-                                          await Navigator.of(context).push(
-                                            MaterialPageRoute<void>(
-                                              builder: (_) => SyncSetupPage(
-                                                store: widget.store,
-                                                onDone: () async {
-                                                  if (Navigator.of(context).canPop()) {
-                                                    Navigator.of(context).pop();
-                                                  }
-                                                },
-                                              ),
-                                            ),
-                                          );
-                                          if (mounted) setState(() {});
-                                        },
-                                  icon: const Icon(Icons.link),
-                                  label: Text(tr.text('connect_to_store')),
+                                      : () => setState(() => _showRegister = true),
+                                  icon: const Icon(Icons.person_add_alt_1),
+                                  label: Text(tr.text('register')),
                                 ),
+                              OutlinedButton.icon(
+                                onPressed: _loggingIn
+                                    ? null
+                                    : () async {
+                                        await Navigator.of(context).push(
+                                          MaterialPageRoute<void>(
+                                            builder: (_) => SyncSetupPage(
+                                              store: widget.store,
+                                              onDone: () async {
+                                                if (Navigator.of(context).canPop()) {
+                                                  Navigator.of(context).pop();
+                                                }
+                                              },
+                                            ),
+                                          ),
+                                        );
+                                        if (mounted) setState(() {});
+                                      },
+                                icon: const Icon(Icons.link),
+                                label: Text(tr.text('connect_to_store')),
+                              ),
+                              OutlinedButton.icon(
+                                onPressed: _loggingIn
+                                    ? null
+                                    : () => _recoverExistingStore(context),
+                                icon: const Icon(Icons.key_outlined),
+                                label: Text(tr.text('recover_existing_store')),
                               ),
                             ];
-                            return Row(children: actions);
+                            return Align(
+                              alignment: AlignmentDirectional.centerStart,
+                              child: Wrap(
+                                spacing: 12,
+                                runSpacing: 10,
+                                children: actions,
+                              ),
+                            );
                           },
                         ),
                     ],

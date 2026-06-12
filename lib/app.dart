@@ -11,7 +11,9 @@ import 'core/sync_unified/sync_unified.dart';
 import 'core/sync_unified/sync_device_state.dart';
 import 'core/snapshot/unified_snapshot_progress.dart';
 import 'core/services/cloud_sync_service.dart';
+import 'core/services/google_drive_backup_service.dart';
 import 'core/services/lan_sync_service.dart';
+import 'core/services/local_auto_backup_service.dart';
 import 'data/app_store.dart';
 import 'models/user_role.dart';
 import 'features/accounting/accounting_page.dart';
@@ -58,12 +60,15 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
   final AppStore _store = AppStore();
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   final ValueNotifier<_AutoSnapshotProgressState> _autoSnapshotProgress =
-      ValueNotifier<_AutoSnapshotProgressState>(const _AutoSnapshotProgressState());
-  late final UnifiedAutoLanSyncController _autoSyncController = UnifiedAutoLanSyncController(
+      ValueNotifier<_AutoSnapshotProgressState>(
+          const _AutoSnapshotProgressState());
+  late final UnifiedAutoLanSyncController _autoSyncController =
+      UnifiedAutoLanSyncController(
     _store,
     onSnapshotProgress: _handleAutoSnapshotProgress,
   );
-  late final UnifiedAutoCloudSyncController _autoCloudSyncController = UnifiedAutoCloudSyncController(
+  late final UnifiedAutoCloudSyncController _autoCloudSyncController =
+      UnifiedAutoCloudSyncController(
     _store,
     onSnapshotProgress: _handleAutoSnapshotProgress,
   );
@@ -91,7 +96,6 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
     }
   }
 
-
   Future<void> _startSyncAfterLogin() async {
     if (_syncStarted || _store.activeUser == null) return;
     _syncStarted = true;
@@ -99,6 +103,8 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
     if (!mounted || _store.activeUser == null) return;
     unawaited(_autoSyncController.start());
     unawaited(_autoCloudSyncController.start());
+    unawaited(LocalAutoBackupService.runDueBackup(_store));
+    unawaited(GoogleDriveBackupService.runDueBackup(_store));
   }
 
   Future<void> _stopSyncForLogout() async {
@@ -107,8 +113,8 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
     _autoCloudSyncController.stop();
   }
 
-
-  void _handleAutoSnapshotProgress(String transport, double value, String label) {
+  void _handleAutoSnapshotProgress(
+      String transport, double value, String label) {
     if (!mounted || _store.activeUser == null) return;
     final safeValue = value.clamp(0.0, 1.0).toDouble();
     _autoSnapshotProgress.value = _AutoSnapshotProgressState(
@@ -197,9 +203,11 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
       animation: _store,
       builder: (context, _) {
         if (_store.activeUser != null && !_syncStarted) {
-          WidgetsBinding.instance.addPostFrameCallback((_) => _startSyncAfterLogin());
+          WidgetsBinding.instance
+              .addPostFrameCallback((_) => _startSyncAfterLogin());
         } else if (_store.activeUser == null && _syncStarted) {
-          WidgetsBinding.instance.addPostFrameCallback((_) => _stopSyncForLogout());
+          WidgetsBinding.instance
+              .addPostFrameCallback((_) => _stopSyncForLogout());
         }
         return MaterialApp(
           navigatorKey: _navigatorKey,
@@ -231,13 +239,13 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
                     },
                   ),
                 )
-              : const Scaffold(body: Center(child: CircularProgressIndicator())),
+              : const Scaffold(
+                  body: Center(child: CircularProgressIndicator())),
         );
       },
     );
   }
 }
-
 
 class _CloudProvisioningPage extends StatefulWidget {
   const _CloudProvisioningPage({this.onChanged});
@@ -274,12 +282,22 @@ class _CloudProvisioningPageState extends State<_CloudProvisioningPage> {
     return names.any(sections.containsKey);
   }
 
-  String _stageStatus(Map<String, String> sections, Iterable<String> names, AppLocalizations tr) {
-    final values = names.where(sections.containsKey).map((name) => sections[name] ?? '').toList(growable: false);
+  String _stageStatus(Map<String, String> sections, Iterable<String> names,
+      AppLocalizations tr) {
+    final values = names
+        .where(sections.containsKey)
+        .map((name) => sections[name] ?? '')
+        .toList(growable: false);
     if (values.isEmpty) return tr.text('waiting');
-    if (values.every((value) => value == 'completed')) return tr.text('completed');
-    if (values.any((value) => value == 'uploading')) return tr.text('downloading');
-    if (values.any((value) => value == 'pending')) return tr.text('waiting_for_host');
+    if (values.every((value) => value == 'completed')) {
+      return tr.text('completed');
+    }
+    if (values.any((value) => value == 'uploading')) {
+      return tr.text('downloading');
+    }
+    if (values.any((value) => value == 'pending')) {
+      return tr.text('waiting_for_host');
+    }
     return values.join(', ');
   }
 
@@ -289,15 +307,27 @@ class _CloudProvisioningPageState extends State<_CloudProvisioningPage> {
     final tr = AppLocalizations.of(context);
     final sections = CloudProvisioningStatus.sections;
     final stages = <_ProvisioningStageView>[
-      _ProvisioningStageView(tr.text('login_settings_and_users'), ['roles', 'users'], forceComplete: true),
-      _ProvisioningStageView(tr.text('catalogs_and_warehouses'), ['categories', 'brands', 'units', 'warehouses']),
-      _ProvisioningStageView(tr.text('products_customers_suppliers'), ['products', 'customers', 'suppliers', 'supplierProductPrices']),
-      _ProvisioningStageView(tr.text('inventory_movements'), ['stockMovements', 'billsOfMaterials', 'manufacturingOrders']),
-      _ProvisioningStageView(tr.text('sales_and_purchases'), ['sales', 'saleQuotations', 'deliveryNotes', 'purchases']),
-      _ProvisioningStageView(tr.text('accounting_and_reports'), ['expenses', 'accountTransactions']),
+      _ProvisioningStageView(
+          tr.text('login_settings_and_users'), ['roles', 'users'],
+          forceComplete: true),
+      _ProvisioningStageView(tr.text('catalogs_and_warehouses'),
+          ['categories', 'brands', 'units', 'warehouses']),
+      _ProvisioningStageView(tr.text('products_customers_suppliers'),
+          ['products', 'customers', 'suppliers', 'supplierProductPrices']),
+      _ProvisioningStageView(tr.text('inventory_movements'),
+          ['stockMovements', 'billsOfMaterials', 'manufacturingOrders']),
+      _ProvisioningStageView(tr.text('sales_and_purchases'),
+          ['sales', 'saleQuotations', 'deliveryNotes', 'purchases']),
+      _ProvisioningStageView(tr.text('accounting_and_reports'),
+          ['expenses', 'accountTransactions']),
     ];
-    final completedCount = stages.where((stage) => stage.forceComplete || _isComplete(sections, stage.sections)).length;
-    final progress = stages.isEmpty ? null : (completedCount / stages.length).clamp(0.05, 1.0).toDouble();
+    final completedCount = stages
+        .where((stage) =>
+            stage.forceComplete || _isComplete(sections, stage.sections))
+        .length;
+    final progress = stages.isEmpty
+        ? null
+        : (completedCount / stages.length).clamp(0.05, 1.0).toDouble();
 
     return Center(
       child: ConstrainedBox(
@@ -310,9 +340,12 @@ class _CloudProvisioningPageState extends State<_CloudProvisioningPage> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Icon(Icons.cloud_sync_outlined, size: 48, color: theme.colorScheme.primary),
+                Icon(Icons.cloud_sync_outlined,
+                    size: 48, color: theme.colorScheme.primary),
                 const SizedBox(height: 16),
-                Text(tr.text('preparing_store_data'), textAlign: TextAlign.center, style: theme.textTheme.headlineSmall),
+                Text(tr.text('preparing_store_data'),
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.headlineSmall),
                 const SizedBox(height: 8),
                 Text(
                   localizeRuntimeMessage(CloudProvisioningStatus.message, tr),
@@ -320,7 +353,10 @@ class _CloudProvisioningPageState extends State<_CloudProvisioningPage> {
                   style: theme.textTheme.bodyMedium,
                 ),
                 const SizedBox(height: 20),
-                LinearProgressIndicator(value: CloudProvisioningStatus.allSectionsComplete ? 1 : progress),
+                LinearProgressIndicator(
+                    value: CloudProvisioningStatus.allSectionsComplete
+                        ? 1
+                        : progress),
                 const SizedBox(height: 20),
                 for (final stage in stages)
                   Padding(
@@ -329,7 +365,8 @@ class _CloudProvisioningPageState extends State<_CloudProvisioningPage> {
                       children: [
                         Builder(
                           builder: (_) {
-                            final complete = stage.forceComplete || _isComplete(sections, stage.sections);
+                            final complete = stage.forceComplete ||
+                                _isComplete(sections, stage.sections);
                             final started = _hasAny(sections, stage.sections);
                             final icon = complete
                                 ? Icons.check_circle
@@ -353,7 +390,9 @@ class _CloudProvisioningPageState extends State<_CloudProvisioningPage> {
                               if (!stage.forceComplete)
                                 Text(
                                   _stageStatus(sections, stage.sections, tr),
-                                  style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                      color:
+                                          theme.colorScheme.onSurfaceVariant),
                                 ),
                             ],
                           ),
@@ -377,7 +416,8 @@ class _CloudProvisioningPageState extends State<_CloudProvisioningPage> {
 }
 
 class _ProvisioningStageView {
-  const _ProvisioningStageView(this.label, this.sections, {this.forceComplete = false});
+  const _ProvisioningStageView(this.label, this.sections,
+      {this.forceComplete = false});
 
   final String label;
   final List<String> sections;
@@ -385,7 +425,11 @@ class _ProvisioningStageView {
 }
 
 class _ShellItem {
-  const _ShellItem({required this.label, required this.icon, required this.selectedIcon, required this.page});
+  const _ShellItem(
+      {required this.label,
+      required this.icon,
+      required this.selectedIcon,
+      required this.page});
 
   final String label;
   final IconData icon;
@@ -393,8 +437,81 @@ class _ShellItem {
   final Widget page;
 }
 
+class LocalAutoBackupIndicator extends StatelessWidget {
+  const LocalAutoBackupIndicator({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return ValueListenableBuilder<LocalAutoBackupStatus>(
+      valueListenable: LocalAutoBackupService.status,
+      builder: (context, status, _) {
+        if (!status.isRunning &&
+            status.message.isEmpty &&
+            status.lastError.isEmpty) {
+          return const SizedBox.shrink();
+        }
+        final hasError = status.lastError.isNotEmpty;
+        final color =
+            hasError ? theme.colorScheme.error : theme.colorScheme.primary;
+        final message = hasError ? status.lastError : status.message;
+        return Padding(
+          padding: const EdgeInsetsDirectional.only(end: 4),
+          child: Tooltip(
+            message: message.isEmpty ? 'Local backup' : message,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.12),
+                border: Border.all(color: color.withValues(alpha: 0.38)),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (status.isRunning)
+                    SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: color),
+                    )
+                  else
+                    Icon(
+                        hasError
+                            ? Icons.backup_outlined
+                            : Icons.check_circle_outline,
+                        size: 14,
+                        color: color),
+                  const SizedBox(width: 6),
+                  Text(
+                    status.isRunning
+                        ? 'Backup'
+                        : hasError
+                            ? 'Backup issue'
+                            : 'Backed up',
+                    style: theme.textTheme.labelMedium
+                        ?.copyWith(fontWeight: FontWeight.w700, color: color),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
 class MainShell extends StatefulWidget {
-  const MainShell({super.key, required this.onLocaleChanged, required this.onThemeModeChanged, required this.themeMode, required this.store, this.onSyncSettingsChanged, this.onLogout});
+  const MainShell(
+      {super.key,
+      required this.onLocaleChanged,
+      required this.onThemeModeChanged,
+      required this.themeMode,
+      required this.store,
+      this.onSyncSettingsChanged,
+      this.onLogout});
 
   final ValueChanged<Locale> onLocaleChanged;
   final ValueChanged<ThemeMode> onThemeModeChanged;
@@ -432,41 +549,125 @@ class _MainShellState extends State<MainShell> {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final storeName = widget.store.storeProfile.name.trim();
-    final shellTitle = storeName.isEmpty || storeName == 'My Store' || storeName == tr.text('my_store') ? 'Ventio' : storeName;
+    final shellTitle = storeName.isEmpty ||
+            storeName == 'My Store' ||
+            storeName == tr.text('my_store')
+        ? 'Ventio'
+        : storeName;
     final items = [
-      _ShellItem(label: tr.text('dashboard'), icon: Icons.dashboard_outlined, selectedIcon: Icons.dashboard, page: DashboardPage(store: widget.store)),
-      if (widget.store.hasPermission(AppPermission.productsCreate) || widget.store.hasPermission(AppPermission.productsEdit) || widget.store.hasPermission(AppPermission.productsDelete))
-        _ShellItem(label: tr.text('products'), icon: Icons.inventory_2_outlined, selectedIcon: Icons.inventory_2, page: ProductsPage(store: widget.store)),
+      _ShellItem(
+          label: tr.text('dashboard'),
+          icon: Icons.dashboard_outlined,
+          selectedIcon: Icons.dashboard,
+          page: DashboardPage(store: widget.store)),
+      if (widget.store.hasPermission(AppPermission.productsCreate) ||
+          widget.store.hasPermission(AppPermission.productsEdit) ||
+          widget.store.hasPermission(AppPermission.productsDelete))
+        _ShellItem(
+            label: tr.text('products'),
+            icon: Icons.inventory_2_outlined,
+            selectedIcon: Icons.inventory_2,
+            page: ProductsPage(store: widget.store)),
       if (widget.store.hasPermission(AppPermission.customersManage))
-        _ShellItem(label: tr.text('customers'), icon: Icons.people_outline, selectedIcon: Icons.people, page: CustomersPage(store: widget.store)),
+        _ShellItem(
+            label: tr.text('customers'),
+            icon: Icons.people_outline,
+            selectedIcon: Icons.people,
+            page: CustomersPage(store: widget.store)),
       if (widget.store.hasPermission(AppPermission.suppliersManage))
-        _ShellItem(label: tr.text('suppliers'), icon: Icons.local_shipping_outlined, selectedIcon: Icons.local_shipping, page: SuppliersPage(store: widget.store)),
-      if (widget.store.hasPermission(AppPermission.salesCreate) || widget.store.hasPermission(AppPermission.salesCancel))
-        _ShellItem(label: tr.text('sales'), icon: Icons.receipt_long_outlined, selectedIcon: Icons.receipt_long, page: SalesPage(store: widget.store)),
+        _ShellItem(
+            label: tr.text('suppliers'),
+            icon: Icons.local_shipping_outlined,
+            selectedIcon: Icons.local_shipping,
+            page: SuppliersPage(store: widget.store)),
+      if (widget.store.hasPermission(AppPermission.salesCreate) ||
+          widget.store.hasPermission(AppPermission.salesCancel))
+        _ShellItem(
+            label: tr.text('sales'),
+            icon: Icons.receipt_long_outlined,
+            selectedIcon: Icons.receipt_long,
+            page: SalesPage(store: widget.store)),
       if (widget.store.hasPermission(AppPermission.salesCreate))
-        _ShellItem(label: tr.text('quotations'), icon: Icons.request_quote_outlined, selectedIcon: Icons.request_quote, page: QuotationsPage(store: widget.store)),
-        _ShellItem(label: tr.text('delivery_notes'), icon: Icons.local_shipping_outlined, selectedIcon: Icons.local_shipping, page: DeliveryNotesPage(store: widget.store)),
+        _ShellItem(
+            label: tr.text('quotations'),
+            icon: Icons.request_quote_outlined,
+            selectedIcon: Icons.request_quote,
+            page: QuotationsPage(store: widget.store)),
+      _ShellItem(
+          label: tr.text('delivery_notes'),
+          icon: Icons.local_shipping_outlined,
+          selectedIcon: Icons.local_shipping,
+          page: DeliveryNotesPage(store: widget.store)),
       if (widget.store.hasPermission(AppPermission.suppliersManage))
-        _ShellItem(label: tr.text('purchases'), icon: Icons.add_shopping_cart_outlined, selectedIcon: Icons.add_shopping_cart, page: PurchasesPage(store: widget.store)),
+        _ShellItem(
+            label: tr.text('purchases'),
+            icon: Icons.add_shopping_cart_outlined,
+            selectedIcon: Icons.add_shopping_cart,
+            page: PurchasesPage(store: widget.store)),
       if (widget.store.hasPermission(AppPermission.expensesManage))
-        _ShellItem(label: tr.text('expenses'), icon: Icons.payments_outlined, selectedIcon: Icons.payments, page: ExpensesPage(store: widget.store)),
-      if (widget.store.hasPermission(AppPermission.reportsView) || widget.store.hasPermission(AppPermission.customersManage) || widget.store.hasPermission(AppPermission.suppliersManage))
-        _ShellItem(label: tr.text('accounting'), icon: Icons.account_balance_wallet_outlined, selectedIcon: Icons.account_balance_wallet, page: AccountingPage(store: widget.store)),
-      _ShellItem(label: tr.text('inventory'), icon: Icons.warehouse_outlined, selectedIcon: Icons.warehouse, page: InventoryPage(store: widget.store)),
+        _ShellItem(
+            label: tr.text('expenses'),
+            icon: Icons.payments_outlined,
+            selectedIcon: Icons.payments,
+            page: ExpensesPage(store: widget.store)),
+      if (widget.store.hasPermission(AppPermission.reportsView) ||
+          widget.store.hasPermission(AppPermission.customersManage) ||
+          widget.store.hasPermission(AppPermission.suppliersManage))
+        _ShellItem(
+            label: tr.text('accounting'),
+            icon: Icons.account_balance_wallet_outlined,
+            selectedIcon: Icons.account_balance_wallet,
+            page: AccountingPage(store: widget.store)),
+      _ShellItem(
+          label: tr.text('inventory'),
+          icon: Icons.warehouse_outlined,
+          selectedIcon: Icons.warehouse,
+          page: InventoryPage(store: widget.store)),
       if (widget.store.hasPermission(AppPermission.productsEdit))
-        _ShellItem(label: tr.text('manufacturing_page'), icon: Icons.precision_manufacturing_outlined, selectedIcon: Icons.precision_manufacturing, page: ManufacturingPage(store: widget.store)),
+        _ShellItem(
+            label: tr.text('manufacturing_page'),
+            icon: Icons.precision_manufacturing_outlined,
+            selectedIcon: Icons.precision_manufacturing,
+            page: ManufacturingPage(store: widget.store)),
       if (widget.store.hasPermission(AppPermission.reportsView))
-        _ShellItem(label: tr.text('reports'), icon: Icons.bar_chart_outlined, selectedIcon: Icons.bar_chart, page: ReportsPage(store: widget.store)),
+        _ShellItem(
+            label: tr.text('reports'),
+            icon: Icons.bar_chart_outlined,
+            selectedIcon: Icons.bar_chart,
+            page: ReportsPage(store: widget.store)),
       if (widget.store.hasPermission(AppPermission.databaseManage))
-        _ShellItem(label: tr.text('database'), icon: Icons.storage_outlined, selectedIcon: Icons.storage, page: DatabasePage(store: widget.store)),
+        _ShellItem(
+            label: tr.text('database'),
+            icon: Icons.storage_outlined,
+            selectedIcon: Icons.storage,
+            page: DatabasePage(store: widget.store)),
       if (widget.store.hasPermission(AppPermission.databaseManage))
-        _ShellItem(label: tr.text('maintenance'), icon: Icons.health_and_safety_outlined, selectedIcon: Icons.health_and_safety, page: MaintenancePage(store: widget.store)),
-      _ShellItem(label: tr.text('settings'), icon: Icons.settings_outlined, selectedIcon: Icons.settings, page: SettingsPage(store: widget.store, onLocaleChanged: widget.onLocaleChanged, onThemeModeChanged: widget.onThemeModeChanged, themeMode: widget.themeMode, onSyncSettingsChanged: widget.onSyncSettingsChanged)),
+        _ShellItem(
+            label: tr.text('maintenance'),
+            icon: Icons.health_and_safety_outlined,
+            selectedIcon: Icons.health_and_safety,
+            page: MaintenancePage(store: widget.store)),
+      _ShellItem(
+          label: tr.text('settings'),
+          icon: Icons.settings_outlined,
+          selectedIcon: Icons.settings,
+          page: SettingsPage(
+              store: widget.store,
+              onLocaleChanged: widget.onLocaleChanged,
+              onThemeModeChanged: widget.onThemeModeChanged,
+              themeMode: widget.themeMode,
+              onSyncSettingsChanged: widget.onSyncSettingsChanged)),
       if (widget.store.isStressLabEnabled)
-        _ShellItem(label: tr.text('stress_lab'), icon: Icons.science_outlined, selectedIcon: Icons.science, page: StressLabPage(store: widget.store)),
+        _ShellItem(
+            label: tr.text('stress_lab'),
+            icon: Icons.science_outlined,
+            selectedIcon: Icons.science,
+            page: StressLabPage(store: widget.store)),
     ];
     final resolvedItems = items;
-    if (selectedIndex >= resolvedItems.length) selectedIndex = resolvedItems.length - 1;
+    if (selectedIndex >= resolvedItems.length) {
+      selectedIndex = resolvedItems.length - 1;
+    }
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -479,8 +680,10 @@ class _MainShellState extends State<MainShell> {
                 onPressed: () => Scaffold.of(context).openDrawer(),
               ),
             ),
-            title: Text('$shellTitle • ${resolvedItems[selectedIndex].label}', overflow: TextOverflow.ellipsis),
+            title: Text('$shellTitle • ${resolvedItems[selectedIndex].label}',
+                overflow: TextOverflow.ellipsis),
             actions: [
+              LocalAutoBackupIndicator(),
               HostConnectionIndicator(store: widget.store),
               PopupMenuButton<String>(
                 tooltip: widget.store.activeUser?.fullName ?? tr.text('logout'),
@@ -498,10 +701,13 @@ class _MainShellState extends State<MainShell> {
                   final currentLocale = Localizations.localeOf(context);
                   final isArabic = currentLocale.languageCode == 'ar';
                   return [
-                    if ((widget.store.activeUser?.fullName ?? '').trim().isNotEmpty)
+                    if ((widget.store.activeUser?.fullName ?? '')
+                        .trim()
+                        .isNotEmpty)
                       PopupMenuItem<String>(
                         enabled: false,
-                        child: Text(widget.store.activeUser!.fullName, maxLines: 1, overflow: TextOverflow.ellipsis),
+                        child: Text(widget.store.activeUser!.fullName,
+                            maxLines: 1, overflow: TextOverflow.ellipsis),
                       ),
                     PopupMenuItem<String>(
                       value: 'language_en',
@@ -543,7 +749,8 @@ class _MainShellState extends State<MainShell> {
                 itemBuilder: (context, index) {
                   final item = resolvedItems[index];
                   return ListTile(
-                    leading: Icon(index == selectedIndex ? item.selectedIcon : item.icon),
+                    leading: Icon(
+                        index == selectedIndex ? item.selectedIcon : item.icon),
                     title: Text(item.label),
                     selected: index == selectedIndex,
                     enabled: !_drawerNavigationLocked,
@@ -553,7 +760,10 @@ class _MainShellState extends State<MainShell> {
               ),
             ),
           ),
-          body: CloudProvisioningStatus.isPending && widget.store.appIdentity.isClient && widget.store.appIdentity.activeSyncTransportNormalized == 'cloud'
+          body: CloudProvisioningStatus.isPending &&
+                  widget.store.appIdentity.isClient &&
+                  widget.store.appIdentity.activeSyncTransportNormalized ==
+                      'cloud'
               ? _CloudProvisioningPage(onChanged: () => setState(() {}))
               : resolvedItems[selectedIndex].page,
         );
@@ -562,9 +772,18 @@ class _MainShellState extends State<MainShell> {
   }
 }
 
-
-
-enum _TransportState { checking, active, online, pending, provisioning, suspended, offline, error, disabled, notConfigured }
+enum _TransportState {
+  checking,
+  active,
+  online,
+  pending,
+  provisioning,
+  suspended,
+  offline,
+  error,
+  disabled,
+  notConfigured
+}
 
 class _TransportSnapshot {
   const _TransportSnapshot({
@@ -603,13 +822,15 @@ class _ConnectionStatusSnapshot {
 }
 
 class HostConnectionIndicator extends StatefulWidget {
-  const HostConnectionIndicator({super.key, required this.store, this.compact = false});
+  const HostConnectionIndicator(
+      {super.key, required this.store, this.compact = false});
 
   final AppStore store;
   final bool compact;
 
   @override
-  State<HostConnectionIndicator> createState() => _HostConnectionIndicatorState();
+  State<HostConnectionIndicator> createState() =>
+      _HostConnectionIndicatorState();
 }
 
 class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
@@ -618,9 +839,12 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
   _ConnectionStatusSnapshot _snapshot = const _ConnectionStatusSnapshot(
     roleLabel: '',
     roleMessage: '...',
-    lan: _TransportSnapshot(label: 'LAN', state: _TransportState.checking, message: '...'),
-    cloud: _TransportSnapshot(label: '', state: _TransportState.checking, message: '...'),
-    syncHealth: _TransportSnapshot(label: '', state: _TransportState.checking, message: '...'),
+    lan: _TransportSnapshot(
+        label: 'LAN', state: _TransportState.checking, message: '...'),
+    cloud: _TransportSnapshot(
+        label: '', state: _TransportState.checking, message: '...'),
+    syncHealth: _TransportSnapshot(
+        label: '', state: _TransportState.checking, message: '...'),
     activeTransportLabel: '',
     pendingChanges: 0,
   );
@@ -646,7 +870,8 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
   }
 
   String _t(String key) => AppLocalizations.of(context).text(key);
-  String _rt(String message) => localizeRuntimeMessage(message, AppLocalizations.of(context));
+  String _rt(String message) =>
+      localizeRuntimeMessage(message, AppLocalizations.of(context));
 
   String _roleLabel() {
     final identity = widget.store.appIdentity;
@@ -665,9 +890,14 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
   String _activeTransportLabel() {
     final identity = widget.store.appIdentity;
     if (identity.isHost) {
-      final lan = UnifiedSyncFactory.isLanSetupComplete ? _t('connection_lan') : '';
-      final cloud = UnifiedSyncFactory.cloudCanCheck(widget.store) ? _t('connection_cloud') : '';
-      final parts = [lan, cloud].where((part) => part.trim().isNotEmpty).toList(growable: false);
+      final lan =
+          UnifiedSyncFactory.isLanSetupComplete ? _t('connection_lan') : '';
+      final cloud = UnifiedSyncFactory.cloudCanCheck(widget.store)
+          ? _t('connection_cloud')
+          : '';
+      final parts = [lan, cloud]
+          .where((part) => part.trim().isNotEmpty)
+          .toList(growable: false);
       if (parts.isEmpty) return _t('local');
       return parts.join(' + ');
     }
@@ -680,8 +910,12 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
   bool _isActiveTransport(_TransportSnapshot snapshot) {
     final identity = widget.store.appIdentity;
     if (identity.isHost) {
-      if (snapshot.label == _t('connection_lan')) return UnifiedSyncFactory.isLanSetupComplete;
-      if (snapshot.label == _t('connection_cloud')) return UnifiedSyncFactory.cloudCanCheck(widget.store);
+      if (snapshot.label == _t('connection_lan')) {
+        return UnifiedSyncFactory.isLanSetupComplete;
+      }
+      if (snapshot.label == _t('connection_cloud')) {
+        return UnifiedSyncFactory.cloudCanCheck(widget.store);
+      }
       return true;
     }
     final active = identity.activeSyncTransportNormalized;
@@ -701,7 +935,8 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
 
     final identity = widget.store.appIdentity;
     final settings = LanSyncSettings.load();
-    final hasSavedLanSettings = settings.host.trim().isNotEmpty || settings.secret.trim().isNotEmpty;
+    final hasSavedLanSettings =
+        settings.host.trim().isNotEmpty || settings.secret.trim().isNotEmpty;
     final lanEnabledForRole = identity.isHost
         ? settings.setupComplete && settings.isHost
         : identity.isClient &&
@@ -712,8 +947,12 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     if (!lanEnabledForRole) {
       return _TransportSnapshot(
         label: _t('connection_lan'),
-        state: hasSavedLanSettings ? _TransportState.disabled : _TransportState.notConfigured,
-        message: hasSavedLanSettings ? _t('connection_state_disabled') : _t('connection_lan_not_configured'),
+        state: hasSavedLanSettings
+            ? _TransportState.disabled
+            : _TransportState.notConfigured,
+        message: hasSavedLanSettings
+            ? _t('connection_state_disabled')
+            : _t('connection_lan_not_configured'),
       );
     }
 
@@ -728,19 +967,25 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     }
 
     try {
-      final status = await UnifiedSyncFactory.lanEngine(widget.store, settings: settings).getHostStatus();
+      final status =
+          await UnifiedSyncFactory.lanEngine(widget.store, settings: settings)
+              .getHostStatus();
       if (status.hostReachable) {
         return _TransportSnapshot(
           label: _t('connection_lan'),
           state: _TransportState.online,
-          message: status.message.isEmpty ? _t('connection_lan_host_reachable') : _rt(status.message),
+          message: status.message.isEmpty
+              ? _t('connection_lan_host_reachable')
+              : _rt(status.message),
           lastSeenAt: status.lastSeenAt ?? DateTime.now(),
         );
       }
       return _TransportSnapshot(
         label: _t('connection_lan'),
         state: _TransportState.offline,
-        message: status.message.isEmpty ? _t('connection_lan_host_offline') : _rt(status.message),
+        message: status.message.isEmpty
+            ? _t('connection_lan_host_offline')
+            : _rt(status.message),
         lastSeenAt: status.lastSeenAt,
       );
     } catch (error) {
@@ -755,28 +1000,41 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
   Future<_TransportSnapshot> _readCloudStatus() async {
     final identity = widget.store.appIdentity;
     final settings = CloudSyncSettings.load();
-    final provisioning = identity.isClient && identity.activeSyncTransportNormalized == 'cloud' && CloudProvisioningStatus.isPending;
-    final hasSavedCloudSettings = settings.apiBaseUrl.trim().isNotEmpty && (settings.hasDeploymentToken || settings.hasDeviceCredentials);
+    final provisioning = identity.isClient &&
+        identity.activeSyncTransportNormalized == 'cloud' &&
+        CloudProvisioningStatus.isPending;
+    final hasSavedCloudSettings = settings.apiBaseUrl.trim().isNotEmpty &&
+        (settings.hasDeploymentToken || settings.hasDeviceCredentials);
     final cloudEnabledForRole = identity.isHost
         ? identity.isCloudEnabled && hasSavedCloudSettings
-        : identity.isClient && identity.activeSyncTransportNormalized == 'cloud' && hasSavedCloudSettings;
+        : identity.isClient &&
+            identity.activeSyncTransportNormalized == 'cloud' &&
+            hasSavedCloudSettings;
 
     if (!cloudEnabledForRole) {
       return _TransportSnapshot(
         label: _t('connection_cloud'),
-        state: hasSavedCloudSettings ? _TransportState.disabled : _TransportState.notConfigured,
-        message: hasSavedCloudSettings ? _t('connection_state_disabled') : _t('connection_cloud_not_configured'),
+        state: hasSavedCloudSettings
+            ? _TransportState.disabled
+            : _TransportState.notConfigured,
+        message: hasSavedCloudSettings
+            ? _t('connection_state_disabled')
+            : _t('connection_cloud_not_configured'),
       );
     }
 
     try {
-      final status = await UnifiedSyncFactory.cloudEngine(widget.store, settings: settings).getHostStatus();
+      final status =
+          await UnifiedSyncFactory.cloudEngine(widget.store, settings: settings)
+              .getHostStatus();
 
       if (provisioning) {
         return _TransportSnapshot(
           label: _t('connection_cloud'),
           state: _TransportState.provisioning,
-          message: '${_rt(CloudProvisioningStatus.message)} ${_rt(status.message)}'.trim(),
+          message:
+              '${_rt(CloudProvisioningStatus.message)} ${_rt(status.message)}'
+                  .trim(),
           lastSeenAt: status.lastSeenAt,
         );
       }
@@ -785,7 +1043,9 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
         return _TransportSnapshot(
           label: _t('connection_cloud'),
           state: _TransportState.offline,
-          message: status.message.isEmpty ? _t('connection_cloud_unreachable') : _rt(status.message),
+          message: status.message.isEmpty
+              ? _t('connection_cloud_unreachable')
+              : _rt(status.message),
           lastSeenAt: status.lastSeenAt,
         );
       }
@@ -793,7 +1053,9 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
       if (widget.store.appIdentity.isHost) {
         return _TransportSnapshot(
           label: _t('connection_cloud'),
-          state: status.hostReachable ? _TransportState.online : _TransportState.pending,
+          state: status.hostReachable
+              ? _TransportState.online
+              : _TransportState.pending,
           message: status.hostReachable
               ? _t('connection_cloud_host_heartbeat_active')
               : _t('connection_cloud_waiting_heartbeat'),
@@ -805,7 +1067,9 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
         return _TransportSnapshot(
           label: _t('connection_cloud'),
           state: _TransportState.online,
-          message: status.message.isEmpty ? _t('connection_cloud_host_reachable') : status.message,
+          message: status.message.isEmpty
+              ? _t('connection_cloud_host_reachable')
+              : status.message,
           lastSeenAt: status.lastSeenAt ?? DateTime.now(),
         );
       }
@@ -813,7 +1077,9 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
       return _TransportSnapshot(
         label: _t('connection_cloud'),
         state: _TransportState.offline,
-        message: status.lastSeenAt == null ? _t('connection_no_host_heartbeat') : _t('connection_host_heartbeat_stale'),
+        message: status.lastSeenAt == null
+            ? _t('connection_no_host_heartbeat')
+            : _t('connection_host_heartbeat_stale'),
         lastSeenAt: status.lastSeenAt,
       );
     } catch (error) {
@@ -827,10 +1093,15 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
 
   _TransportSnapshot _readSyncHealthStatus() {
     final identity = widget.store.appIdentity;
-    final pending = identity.isClient ? widget.store.activeClientPendingSyncCount : widget.store.pendingSyncCount;
-    final lastSuccessfulSync = SyncDeviceStateStore.lastSuccessfulSyncAt(identity);
+    final pending = identity.isClient
+        ? widget.store.activeClientPendingSyncCount
+        : widget.store.pendingSyncCount;
+    final lastSuccessfulSync =
+        SyncDeviceStateStore.lastSuccessfulSyncAt(identity);
 
-    if (identity.isClient && identity.activeSyncTransportNormalized == 'cloud' && CloudProvisioningStatus.isPending) {
+    if (identity.isClient &&
+        identity.activeSyncTransportNormalized == 'cloud' &&
+        CloudProvisioningStatus.isPending) {
       return _TransportSnapshot(
         label: _t('connection_sync_health'),
         state: _TransportState.provisioning,
@@ -843,20 +1114,29 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
       return _TransportSnapshot(
         label: _t('connection_sync_health'),
         state: _TransportState.suspended,
-        message: widget.store.suspendedByHostReason.trim().isEmpty ? _t('client_suspended_by_host_desc') : _rt(widget.store.suspendedByHostReason),
+        message: widget.store.suspendedByHostReason.trim().isEmpty
+            ? _t('client_suspended_by_host_desc')
+            : _rt(widget.store.suspendedByHostReason),
         lastSuccessfulSyncAt: lastSuccessfulSync,
       );
     }
 
     final lanSettings = LanSyncSettings.load();
     final cloudSettings = CloudSyncSettings.load();
-    final hasSavedCloudSettings = cloudSettings.apiBaseUrl.trim().isNotEmpty && (cloudSettings.hasDeploymentToken || cloudSettings.hasDeviceCredentials);
+    final hasSavedCloudSettings = cloudSettings.apiBaseUrl.trim().isNotEmpty &&
+        (cloudSettings.hasDeploymentToken ||
+            cloudSettings.hasDeviceCredentials);
     final lanEnabled = identity.isHost
         ? lanSettings.setupComplete && lanSettings.isHost
-        : identity.isClient && identity.activeSyncTransportNormalized == 'lan' && lanSettings.setupComplete && lanSettings.isClient;
+        : identity.isClient &&
+            identity.activeSyncTransportNormalized == 'lan' &&
+            lanSettings.setupComplete &&
+            lanSettings.isClient;
     final cloudEnabled = identity.isHost
         ? identity.isCloudEnabled && hasSavedCloudSettings
-        : identity.isClient && identity.activeSyncTransportNormalized == 'cloud' && hasSavedCloudSettings;
+        : identity.isClient &&
+            identity.activeSyncTransportNormalized == 'cloud' &&
+            hasSavedCloudSettings;
 
     if (!lanEnabled && !cloudEnabled) {
       return _TransportSnapshot(
@@ -898,11 +1178,22 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     final checking = _ConnectionStatusSnapshot(
       roleLabel: _roleLabel(),
       roleMessage: _roleMessage(),
-      lan: _TransportSnapshot(label: _t('connection_lan'), state: _TransportState.checking, message: _t('connection_lan_checking')),
-      cloud: _TransportSnapshot(label: _t('connection_cloud'), state: _TransportState.checking, message: _t('connection_cloud_checking')),
-      syncHealth: _TransportSnapshot(label: _t('connection_sync_health'), state: _TransportState.checking, message: _t('connection_sync_checking')),
+      lan: _TransportSnapshot(
+          label: _t('connection_lan'),
+          state: _TransportState.checking,
+          message: _t('connection_lan_checking')),
+      cloud: _TransportSnapshot(
+          label: _t('connection_cloud'),
+          state: _TransportState.checking,
+          message: _t('connection_cloud_checking')),
+      syncHealth: _TransportSnapshot(
+          label: _t('connection_sync_health'),
+          state: _TransportState.checking,
+          message: _t('connection_sync_checking')),
       activeTransportLabel: _activeTransportLabel(),
-      pendingChanges: widget.store.appIdentity.isClient ? widget.store.activeClientPendingSyncCount : widget.store.pendingSyncCount,
+      pendingChanges: widget.store.appIdentity.isClient
+          ? widget.store.activeClientPendingSyncCount
+          : widget.store.pendingSyncCount,
     );
     if (mounted) setState(() => _snapshot = checking);
 
@@ -918,7 +1209,9 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
         cloud: cloud,
         syncHealth: syncHealth,
         activeTransportLabel: _activeTransportLabel(),
-        pendingChanges: widget.store.appIdentity.isClient ? widget.store.activeClientPendingSyncCount : widget.store.pendingSyncCount,
+        pendingChanges: widget.store.appIdentity.isClient
+            ? widget.store.activeClientPendingSyncCount
+            : widget.store.pendingSyncCount,
       );
     });
   }
@@ -968,7 +1261,13 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
 
   bool _needsAttention(_TransportSnapshot snapshot) {
     return switch (snapshot.state) {
-      _TransportState.offline || _TransportState.error || _TransportState.pending || _TransportState.provisioning || _TransportState.suspended || _TransportState.checking => true,
+      _TransportState.offline ||
+      _TransportState.error ||
+      _TransportState.pending ||
+      _TransportState.provisioning ||
+      _TransportState.suspended ||
+      _TransportState.checking =>
+        true,
       _ => false,
     };
   }
@@ -978,30 +1277,42 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     if (identity.isHost) {
       final candidates = <_TransportSnapshot>[];
       if (UnifiedSyncFactory.isLanSetupComplete) candidates.add(_snapshot.lan);
-      if (UnifiedSyncFactory.cloudCanCheck(widget.store)) candidates.add(_snapshot.cloud);
+      if (UnifiedSyncFactory.cloudCanCheck(widget.store)) {
+        candidates.add(_snapshot.cloud);
+      }
       if (candidates.isEmpty) return _snapshot.lan;
       if (candidates.any((item) => item.state == _TransportState.checking)) {
-        return candidates.firstWhere((item) => item.state == _TransportState.checking);
+        return candidates
+            .firstWhere((item) => item.state == _TransportState.checking);
       }
-      if (candidates.any((item) => item.state == _TransportState.online || item.state == _TransportState.active)) {
-        return candidates.firstWhere((item) => item.state == _TransportState.online || item.state == _TransportState.active);
+      if (candidates.any((item) =>
+          item.state == _TransportState.online ||
+          item.state == _TransportState.active)) {
+        return candidates.firstWhere((item) =>
+            item.state == _TransportState.online ||
+            item.state == _TransportState.active);
       }
       return candidates.first;
     }
     final active = identity.activeSyncTransportNormalized;
     if (active == 'lan') return _snapshot.lan;
     if (active == 'cloud') return _snapshot.cloud;
-    return _TransportSnapshot(label: _t('local'), state: _TransportState.disabled, message: _t('connection_role_local_desc'));
+    return _TransportSnapshot(
+        label: _t('local'),
+        state: _TransportState.disabled,
+        message: _t('connection_role_local_desc'));
   }
 
   bool get _hasAttention {
     final activeConnection = _activeConnectionSnapshot;
-    return _needsAttention(activeConnection) || _needsAttention(_snapshot.syncHealth);
+    return _needsAttention(activeConnection) ||
+        _needsAttention(_snapshot.syncHealth);
   }
 
   _TransportState get _summaryState {
     final activeConnection = _activeConnectionSnapshot;
-    if (activeConnection.state == _TransportState.checking || _snapshot.syncHealth.state == _TransportState.checking) {
+    if (activeConnection.state == _TransportState.checking ||
+        _snapshot.syncHealth.state == _TransportState.checking) {
       return _TransportState.checking;
     }
     if (_hasAttention) return _TransportState.error;
@@ -1010,9 +1321,16 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
 
   String get _connectionSummaryLabel {
     final connection = _activeConnectionSnapshot;
-    if (connection.state == _TransportState.online || connection.state == _TransportState.active) return _t('connection_state_active');
-    if (connection.state == _TransportState.disabled) return _t('connection_state_disabled');
-    if (connection.state == _TransportState.notConfigured) return _t('connection_state_not_configured');
+    if (connection.state == _TransportState.online ||
+        connection.state == _TransportState.active) {
+      return _t('connection_state_active');
+    }
+    if (connection.state == _TransportState.disabled) {
+      return _t('connection_state_disabled');
+    }
+    if (connection.state == _TransportState.notConfigured) {
+      return _t('connection_state_not_configured');
+    }
     return _stateText(connection.state);
   }
 
@@ -1020,20 +1338,32 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     final sync = _snapshot.syncHealth;
     if (sync.state == _TransportState.active) return _t('synced');
     if (sync.state == _TransportState.suspended) return _t('suspended');
-    if (sync.state == _TransportState.pending) return widget.store.appIdentity.isClient ? _t('sync_pending') : _t('connection_state_pending');
-    if (sync.state == _TransportState.notConfigured) return _t('not_synced_yet');
+    if (sync.state == _TransportState.pending) {
+      return widget.store.appIdentity.isClient
+          ? _t('sync_pending')
+          : _t('connection_state_pending');
+    }
+    if (sync.state == _TransportState.notConfigured) {
+      return _t('not_synced_yet');
+    }
     return _stateText(sync.state);
   }
 
   String get _summaryLabel {
-    if (_summaryState == _TransportState.checking) return _t('connection_state_checking');
+    if (_summaryState == _TransportState.checking) {
+      return _t('connection_state_checking');
+    }
     return '$_connectionSummaryLabel • $_syncSummaryLabel';
   }
 
-  PopupMenuItem<void> _detailItem(BuildContext context, IconData icon, String title, _TransportSnapshot snapshot, {bool activeTransport = true}) {
+  PopupMenuItem<void> _detailItem(BuildContext context, IconData icon,
+      String title, _TransportSnapshot snapshot,
+      {bool activeTransport = true}) {
     final theme = Theme.of(context);
-    final color = activeTransport ? _stateColor(context, snapshot.state) : Colors.grey;
-    final titleSuffix = activeTransport ? '' : ' (${_t('connection_state_disabled')})';
+    final color =
+        activeTransport ? _stateColor(context, snapshot.state) : Colors.grey;
+    final titleSuffix =
+        activeTransport ? '' : ' (${_t('connection_state_disabled')})';
     return PopupMenuItem<void>(
       enabled: false,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
@@ -1050,7 +1380,8 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text('$title$titleSuffix: ${_stateText(snapshot.state)}', style: theme.textTheme.labelLarge),
+                Text('$title$titleSuffix: ${_stateText(snapshot.state)}',
+                    style: theme.textTheme.labelLarge),
                 if (snapshot.message.trim().isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 2),
@@ -1069,7 +1400,8 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     );
   }
 
-  PopupMenuItem<void> _infoItem(BuildContext context, IconData icon, String title, String value) {
+  PopupMenuItem<void> _infoItem(
+      BuildContext context, IconData icon, String title, String value) {
     final theme = Theme.of(context);
     return PopupMenuItem<void>(
       enabled: false,
@@ -1089,7 +1421,10 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
               children: [
                 Text(title, style: theme.textTheme.labelLarge),
                 const SizedBox(height: 2),
-                Text(value, maxLines: 3, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall),
+                Text(value,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall),
               ],
             ),
           ),
@@ -1123,7 +1458,9 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
         message: tooltip,
         child: PopupMenuButton<void>(
           tooltip: tooltip,
-          constraints: BoxConstraints(minWidth: 280, maxWidth: VentioResponsive.modalMaxWidth(context, 390)),
+          constraints: BoxConstraints(
+              minWidth: 280,
+              maxWidth: VentioResponsive.modalMaxWidth(context, 390)),
           onOpened: _refresh,
           itemBuilder: (context) => [
             PopupMenuItem<void>(
@@ -1138,8 +1475,11 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text(_summaryLabel, style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
-                        Text(_snapshot.roleLabel, style: theme.textTheme.bodySmall),
+                        Text(_summaryLabel,
+                            style: theme.textTheme.titleSmall
+                                ?.copyWith(fontWeight: FontWeight.w700)),
+                        Text(_snapshot.roleLabel,
+                            style: theme.textTheme.bodySmall),
                       ],
                     ),
                   ),
@@ -1147,18 +1487,32 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
               ),
             ),
             const PopupMenuDivider(),
-            _infoItem(context, Icons.swap_horiz_outlined, _t('active_transport'), _snapshot.activeTransportLabel),
-            _infoItem(context, Icons.device_hub_outlined, _t('connection_status'), _connectionSummaryLabel),
-            _infoItem(context, Icons.sync_outlined, _t('sync_status'), _syncSummaryLabel),
-            _infoItem(context, Icons.pending_actions_outlined, _t('pending_changes'), _snapshot.pendingChanges.toString()),
-            _infoItem(context, Icons.verified_outlined, _t('last_successful_sync'), _timeText(syncHealth.lastSuccessfulSyncAt)),
+            _infoItem(context, Icons.swap_horiz_outlined,
+                _t('active_transport'), _snapshot.activeTransportLabel),
+            _infoItem(context, Icons.device_hub_outlined,
+                _t('connection_status'), _connectionSummaryLabel),
+            _infoItem(context, Icons.sync_outlined, _t('sync_status'),
+                _syncSummaryLabel),
+            _infoItem(context, Icons.pending_actions_outlined,
+                _t('pending_changes'), _snapshot.pendingChanges.toString()),
+            _infoItem(
+                context,
+                Icons.verified_outlined,
+                _t('last_successful_sync'),
+                _timeText(syncHealth.lastSuccessfulSyncAt)),
             const PopupMenuDivider(),
-            _detailItem(context, Icons.lan_outlined, _t('connection_lan'), lan, activeTransport: _isActiveTransport(lan)),
-            _detailItem(context, Icons.cloud_outlined, _t('connection_cloud'), cloud, activeTransport: _isActiveTransport(cloud)),
+            _detailItem(context, Icons.lan_outlined, _t('connection_lan'), lan,
+                activeTransport: _isActiveTransport(lan)),
+            _detailItem(
+                context, Icons.cloud_outlined, _t('connection_cloud'), cloud,
+                activeTransport: _isActiveTransport(cloud)),
             PopupMenuItem<void>(
               enabled: false,
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              child: Text(_snapshot.roleMessage, maxLines: 3, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall),
+              child: Text(_snapshot.roleMessage,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall),
             ),
           ],
           child: Container(
@@ -1179,7 +1533,8 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
                     _summaryLabel,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w700),
+                    style: theme.textTheme.labelMedium
+                        ?.copyWith(fontWeight: FontWeight.w700),
                   ),
                 ),
               ],

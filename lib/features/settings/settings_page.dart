@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:archive/archive.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -11,8 +12,10 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../../core/services/backup_download_service.dart';
 import '../../core/services/barcode_feedback_service.dart';
 import '../../core/services/cloud_sync_service.dart';
+import '../../core/services/google_drive_backup_service.dart';
 import '../../core/services/lan_sync_service.dart';
 import '../../core/services/local_database_service.dart';
+import '../../core/services/local_auto_backup_service.dart';
 import '../../core/shortcuts/app_shortcuts.dart';
 import '../../core/sync_unified/sync_device_state.dart';
 import '../../core/sync_unified/sync_unified.dart';
@@ -317,6 +320,10 @@ class SettingsPage extends StatelessWidget {
                           avatar: const Icon(Icons.storage_outlined, size: 18),
                           label: Text(tr.text('local_db_hive'))))),
               _BackupSummaryCard(summary: store.currentBackupSummary),
+              const SizedBox(height: 16),
+              _AutoLocalBackupSettingsCard(store: store),
+              const SizedBox(height: 16),
+              _GoogleDriveBackupSettingsCard(store: store),
               const SizedBox(height: 16),
               Text(tr.text('actions'),
                   style: Theme.of(context).textTheme.titleSmall),
@@ -831,7 +838,7 @@ class SettingsPage extends StatelessWidget {
     try {
       final result = await FilePicker.platform.pickFiles(
           type: FileType.custom,
-          allowedExtensions: const ['json'],
+          allowedExtensions: const ['json', 'vtb', 'zip'],
           withData: true);
       if (result == null || result.files.isEmpty) return;
       final bytes = result.files.single.bytes;
@@ -881,6 +888,50 @@ class SettingsPage extends StatelessWidget {
     }
   }
 
+  String _extractBackupJsonFromPickedFile(
+    PlatformFile file,
+    List<int> bytes,
+    AppLocalizations tr,
+  ) {
+    final lowerName = file.name.toLowerCase();
+    final isArchive = lowerName.endsWith('.vtb') ||
+        lowerName.endsWith('.zip') ||
+        _looksLikeZipArchive(bytes);
+
+    if (!isArchive) {
+      return utf8.decode(bytes);
+    }
+
+    try {
+      final archive = ZipDecoder().decodeBytes(bytes, verify: true);
+      ArchiveFile? backupFile;
+      for (final entry in archive.files) {
+        final entryName = entry.name.replaceAll('\\', '/').toLowerCase();
+        if (entry.isFile && entryName.split('/').last == 'backup.json') {
+          backupFile = entry;
+          break;
+        }
+      }
+
+      if (backupFile == null) {
+        throw Exception(tr.text('invalid_backup_file'));
+      }
+
+      final content = backupFile.content;
+      return utf8.decode(content);
+    } catch (_) {
+      throw Exception(tr.text('invalid_backup_file'));
+    }
+  }
+
+  bool _looksLikeZipArchive(List<int> bytes) {
+    return bytes.length >= 4 &&
+        bytes[0] == 0x50 &&
+        bytes[1] == 0x4B &&
+        (bytes[2] == 0x03 || bytes[2] == 0x05 || bytes[2] == 0x07) &&
+        (bytes[3] == 0x04 || bytes[3] == 0x06 || bytes[3] == 0x08);
+  }
+
   Future<void> _importBackupFile(BuildContext context) async {
     final tr = AppLocalizations.of(context);
     if (store.appIdentity.isClient) {
@@ -892,7 +943,7 @@ class SettingsPage extends StatelessWidget {
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: const ['json'],
+        allowedExtensions: const ['json', 'vtb', 'zip'],
         withData: true,
       );
 
@@ -910,7 +961,7 @@ class SettingsPage extends StatelessWidget {
         throw Exception(tr.text('empty_backup_file'));
       }
 
-      var raw = utf8.decode(bytes);
+      var raw = _extractBackupJsonFromPickedFile(file, bytes, tr);
       if (raw.trim().startsWith('{') &&
           raw.contains('store_manager_pro_encrypted_backup')) {
         if (!context.mounted) return;
@@ -1667,6 +1718,632 @@ class _ScannerFeedbackSettingsCardState
           ],
         ),
       ),
+    );
+  }
+}
+
+class _AutoLocalBackupSettingsCard extends StatefulWidget {
+  const _AutoLocalBackupSettingsCard({required this.store});
+
+  final AppStore store;
+
+  @override
+  State<_AutoLocalBackupSettingsCard> createState() =>
+      _AutoLocalBackupSettingsCardState();
+}
+
+class _AutoLocalBackupSettingsCardState
+    extends State<_AutoLocalBackupSettingsCard> {
+  LocalAutoBackupSettings? _settings;
+  bool _saving = false;
+  bool _hasChanges = false;
+  final TextEditingController _pathController = TextEditingController();
+  final TextEditingController _dailyController = TextEditingController();
+  final TextEditingController _weeklyController = TextEditingController();
+  final TextEditingController _monthlyController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _pathController.addListener(_markChanged);
+    _dailyController.addListener(_markChanged);
+    _weeklyController.addListener(_markChanged);
+    _monthlyController.addListener(_markChanged);
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _pathController.dispose();
+    _dailyController.dispose();
+    _weeklyController.dispose();
+    _monthlyController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    final settings = await LocalAutoBackupService.loadSettings();
+    if (!mounted) return;
+    setState(() {
+      _settings = settings;
+      _pathController.text = settings.locationPath;
+      _dailyController.text = settings.dailyCount.toString();
+      _weeklyController.text = settings.weeklyCount.toString();
+      _monthlyController.text = settings.monthlyCount.toString();
+      _hasChanges = false;
+    });
+  }
+
+  void _markChanged() {
+    final current = _settings;
+    if (current == null || _saving) return;
+    final changed =
+        _settingsSignature(_draftSettings()) != _settingsSignature(current);
+    if (changed != _hasChanges && mounted) {
+      setState(() => _hasChanges = changed);
+    }
+  }
+
+  String _settingsSignature(LocalAutoBackupSettings settings) =>
+      '${settings.enabled}|${settings.locationPath.trim()}|${settings.dailyCount}|${settings.weeklyCount}|${settings.monthlyCount}';
+
+  LocalAutoBackupSettings _draftSettings({bool? enabled}) {
+    final current = _settings!;
+    return current.copyWith(
+      enabled: enabled ?? current.enabled,
+      locationPath: _pathController.text.trim(),
+      dailyCount:
+          _count(_dailyController, LocalAutoBackupService.defaultDailyCount),
+      weeklyCount:
+          _count(_weeklyController, LocalAutoBackupService.defaultWeeklyCount),
+      monthlyCount: _count(
+          _monthlyController, LocalAutoBackupService.defaultMonthlyCount),
+    );
+  }
+
+  int _count(TextEditingController controller, int fallback) {
+    final value = int.tryParse(controller.text.trim());
+    if (value == null || value <= 0) return fallback;
+    return value;
+  }
+
+  Future<void> _save({bool? enabled}) async {
+    final current = _settings;
+    if (current == null) return;
+    setState(() => _saving = true);
+    final next = _draftSettings(enabled: enabled);
+    try {
+      await LocalAutoBackupService.saveSettings(next);
+      if (!mounted) return;
+      setState(() {
+        _settings = next;
+        _saving = false;
+        _hasChanges = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Local backup settings saved.')));
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not save backup settings: $error')));
+    }
+  }
+
+  Future<void> _pickDirectory() async {
+    final picked = await FilePicker.platform
+        .getDirectoryPath(dialogTitle: 'Choose backup folder');
+    if (picked == null || picked.trim().isEmpty) return;
+    _pathController.text = picked;
+  }
+
+  Future<void> _backupNow() async {
+    try {
+      if (_hasChanges) {
+        await _save();
+      }
+      final settings = await LocalAutoBackupService.loadSettings();
+      await LocalAutoBackupService.createBackupNow(widget.store,
+          settings: settings, reason: 'manual');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Local backup completed.')));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Local backup failed: $error')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final settings = _settings;
+    final theme = Theme.of(context);
+    if (settings == null) {
+      return const Center(child: LinearProgressIndicator());
+    }
+    final disabled = widget.store.appIdentity.isClient;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        border: Border.all(color: theme.dividerColor),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            secondary: const Icon(Icons.schedule_outlined),
+            title: const Text('Automatic local backup'),
+            subtitle: Text(disabled
+                ? 'Local backup runs on the Host device only.'
+                : 'Runs in the background after login. If the 2:00 AM backup was missed, it runs at first app opening.'),
+            value: !disabled && settings.enabled,
+            onChanged:
+                disabled || _saving ? null : (value) => _save(enabled: value),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _pathController,
+            enabled: !disabled && !_saving,
+            decoration: InputDecoration(
+              labelText: 'Backup location',
+              helperText: r'Default: C:\ProgramData\Ventio\Backup',
+              suffixIcon: IconButton(
+                tooltip: 'Browse',
+                onPressed: disabled || _saving ? null : _pickDirectory,
+                icon: const Icon(Icons.folder_open_outlined),
+              ),
+            ),
+            onSubmitted: (_) {
+              if (_hasChanges) _save();
+            },
+          ),
+          const SizedBox(height: 12),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final itemWidth = constraints.maxWidth < 620
+                  ? constraints.maxWidth
+                  : (constraints.maxWidth - 24) / 3;
+              return Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  SizedBox(
+                      width: itemWidth,
+                      child: _countField(
+                          _dailyController, 'Daily copies', disabled)),
+                  SizedBox(
+                      width: itemWidth,
+                      child: _countField(
+                          _weeklyController, 'Weekly copies', disabled)),
+                  SizedBox(
+                      width: itemWidth,
+                      child: _countField(
+                          _monthlyController, 'Monthly copies', disabled)),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              OutlinedButton.icon(
+                onPressed:
+                    disabled || _saving || !_hasChanges ? null : () => _save(),
+                icon: const Icon(Icons.save_outlined),
+                label: const Text('Save backup settings'),
+              ),
+              const SizedBox(width: 12),
+              FilledButton.icon(
+                onPressed: disabled || _saving ? null : _backupNow,
+                icon: const Icon(Icons.backup_outlined),
+                label: const Text('Backup now'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _countField(
+      TextEditingController controller, String label, bool disabled) {
+    return TextField(
+      controller: controller,
+      enabled: !disabled && !_saving,
+      keyboardType: TextInputType.number,
+      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+      decoration: InputDecoration(labelText: label),
+      onSubmitted: (_) {
+        if (_hasChanges) _save();
+      },
+    );
+  }
+}
+
+class _GoogleDriveBackupSettingsCard extends StatefulWidget {
+  const _GoogleDriveBackupSettingsCard({required this.store});
+
+  final AppStore store;
+
+  @override
+  State<_GoogleDriveBackupSettingsCard> createState() =>
+      _GoogleDriveBackupSettingsCardState();
+}
+
+class _GoogleDriveBackupSettingsCardState
+    extends State<_GoogleDriveBackupSettingsCard> {
+  GoogleDriveBackupSettings? _settings;
+  GoogleDriveAuthorizationChallenge? _challenge;
+  bool _saving = false;
+  bool _hasChanges = false;
+  final TextEditingController _clientIdController = TextEditingController();
+  final TextEditingController _clientSecretController = TextEditingController();
+  final TextEditingController _folderIdController = TextEditingController();
+  final TextEditingController _dailyController = TextEditingController();
+  final TextEditingController _weeklyController = TextEditingController();
+  final TextEditingController _monthlyController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    for (final controller in [
+      _clientIdController,
+      _clientSecretController,
+      _folderIdController,
+      _dailyController,
+      _weeklyController,
+      _monthlyController,
+    ]) {
+      controller.addListener(_markChanged);
+    }
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _clientIdController.dispose();
+    _clientSecretController.dispose();
+    _folderIdController.dispose();
+    _dailyController.dispose();
+    _weeklyController.dispose();
+    _monthlyController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    final settings = await GoogleDriveBackupService.loadSettings();
+    if (!mounted) return;
+    setState(() {
+      _settings = settings;
+      _clientIdController.text = settings.clientId;
+      _clientSecretController.text = settings.clientSecret;
+      _folderIdController.text = settings.folderId;
+      _dailyController.text = settings.dailyCount.toString();
+      _weeklyController.text = settings.weeklyCount.toString();
+      _monthlyController.text = settings.monthlyCount.toString();
+      _hasChanges = false;
+    });
+  }
+
+  void _markChanged() {
+    final current = _settings;
+    if (current == null || _saving) return;
+    final changed =
+        _settingsSignature(_draftSettings()) != _settingsSignature(current);
+    if (changed != _hasChanges && mounted) {
+      setState(() => _hasChanges = changed);
+    }
+  }
+
+  String _settingsSignature(GoogleDriveBackupSettings settings) =>
+      '${settings.enabled}|${settings.clientId.trim()}|${settings.clientSecret.trim()}|${settings.folderId.trim()}|${settings.dailyCount}|${settings.weeklyCount}|${settings.monthlyCount}';
+
+  GoogleDriveBackupSettings _draftSettings({bool? enabled}) {
+    final current = _settings!;
+    return current.copyWith(
+      enabled: enabled ?? current.enabled,
+      clientId: _clientIdController.text.trim(),
+      clientSecret: _clientSecretController.text.trim(),
+      folderId: _folderIdController.text.trim(),
+      dailyCount:
+          _count(_dailyController, GoogleDriveBackupService.defaultDailyCount),
+      weeklyCount: _count(
+          _weeklyController, GoogleDriveBackupService.defaultWeeklyCount),
+      monthlyCount: _count(
+          _monthlyController, GoogleDriveBackupService.defaultMonthlyCount),
+    );
+  }
+
+  int _count(TextEditingController controller, int fallback) {
+    final value = int.tryParse(controller.text.trim());
+    if (value == null || value <= 0) return fallback;
+    return value;
+  }
+
+  Future<GoogleDriveBackupSettings?> _save({bool? enabled}) async {
+    final current = _settings;
+    if (current == null) return null;
+    setState(() => _saving = true);
+    final next = _draftSettings(enabled: enabled);
+    try {
+      await GoogleDriveBackupService.saveSettings(next);
+      if (!mounted) return next;
+      setState(() {
+        _settings = next;
+        _saving = false;
+        _hasChanges = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Google Drive backup settings saved.')));
+      return next;
+    } catch (error) {
+      if (!mounted) return null;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Could not save Google Drive settings: $error')));
+      return null;
+    }
+  }
+
+  Future<void> _startConnect() async {
+    try {
+      final settings = _hasChanges ? await _save() : _settings;
+      if (settings == null) return;
+      final challenge =
+          await GoogleDriveBackupService.startAuthorization(settings);
+      if (!mounted) return;
+      setState(() => _challenge = challenge);
+      await Clipboard.setData(ClipboardData(text: challenge.userCode));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content:
+                Text('Google code copied. Open the link and approve Ventio.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Google Drive connect failed: $error')));
+    }
+  }
+
+  Future<void> _finishConnect() async {
+    final settings = _settings;
+    final challenge = _challenge;
+    if (settings == null || challenge == null) return;
+    setState(() => _saving = true);
+    try {
+      final next = await GoogleDriveBackupService.finishAuthorization(
+          settings, challenge);
+      if (!mounted) return;
+      setState(() {
+        _settings = next;
+        _challenge = null;
+        _saving = false;
+        _hasChanges = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Google Drive connected.')));
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Google Drive authorization is not ready: $error')));
+    }
+  }
+
+  Future<void> _disconnect() async {
+    setState(() => _saving = true);
+    await GoogleDriveBackupService.disconnect();
+    await _load();
+    if (!mounted) return;
+    setState(() {
+      _saving = false;
+      _challenge = null;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Google Drive disconnected.')));
+  }
+
+  Future<void> _backupNow() async {
+    try {
+      if (_hasChanges) {
+        await _save();
+      }
+      final settings = await GoogleDriveBackupService.loadSettings();
+      await GoogleDriveBackupService.createBackupNow(widget.store,
+          settings: settings, reason: 'manual');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Google Drive backup completed.')));
+      await _load();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Google Drive backup failed: $error')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final settings = _settings;
+    final theme = Theme.of(context);
+    if (settings == null) {
+      return const Center(child: LinearProgressIndicator());
+    }
+    final disabled = widget.store.appIdentity.isClient;
+    final connected = settings.isAuthorized;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        border: Border.all(color: theme.dividerColor),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            secondary: const Icon(Icons.cloud_upload_outlined),
+            title: const Text('Automatic Google Drive backup'),
+            subtitle: Text(disabled
+                ? 'Google Drive backup runs on the Host device only.'
+                : connected
+                    ? 'Uploads the same Ventio backup file to Google Drive after login.'
+                    : 'Connect Google Drive, then enable automatic backups.'),
+            value: !disabled && settings.enabled,
+            onChanged: disabled || _saving || !connected
+                ? null
+                : (value) => _save(enabled: value),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _clientIdController,
+            enabled: !disabled && !_saving,
+            decoration: const InputDecoration(
+              labelText: 'Google OAuth Client ID',
+              helperText:
+                  'Create a TV and Limited Input OAuth client in Google Cloud and enable Drive API.',
+            ),
+            onSubmitted: (_) {
+              if (_hasChanges) _save();
+            },
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _clientSecretController,
+            enabled: !disabled && !_saving,
+            obscureText: true,
+            decoration: const InputDecoration(
+              labelText: 'Google OAuth Client Secret (optional)',
+              helperText:
+                  'Leave empty if your OAuth client does not use a secret.',
+            ),
+            onSubmitted: (_) {
+              if (_hasChanges) _save();
+            },
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _folderIdController,
+            enabled: !disabled && !_saving,
+            decoration: const InputDecoration(
+              labelText: 'Drive folder ID (optional)',
+              helperText: 'Leave empty to create/use a Ventio Backups folder.',
+            ),
+            onSubmitted: (_) {
+              if (_hasChanges) _save();
+            },
+          ),
+          const SizedBox(height: 12),
+          if (_challenge != null)
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                      'Open Google authorization, enter this code, then press Finish connect.'),
+                  const SizedBox(height: 8),
+                  SelectableText(_challenge!.verificationUrl,
+                      style: theme.textTheme.bodyMedium
+                          ?.copyWith(fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 6),
+                  SelectableText(_challenge!.userCode,
+                      style: theme.textTheme.titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w800)),
+                ],
+              ),
+            ),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final itemWidth = constraints.maxWidth < 620
+                  ? constraints.maxWidth
+                  : (constraints.maxWidth - 24) / 3;
+              return Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  SizedBox(
+                      width: itemWidth,
+                      child: _countField(
+                          _dailyController, 'Daily copies', disabled)),
+                  SizedBox(
+                      width: itemWidth,
+                      child: _countField(
+                          _weeklyController, 'Weekly copies', disabled)),
+                  SizedBox(
+                      width: itemWidth,
+                      child: _countField(
+                          _monthlyController, 'Monthly copies', disabled)),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 12,
+            runSpacing: 10,
+            children: [
+              OutlinedButton.icon(
+                onPressed:
+                    disabled || _saving || !_hasChanges ? null : () => _save(),
+                icon: const Icon(Icons.save_outlined),
+                label: const Text('Save Drive settings'),
+              ),
+              OutlinedButton.icon(
+                onPressed:
+                    disabled || _saving || settings.clientId.trim().isEmpty
+                        ? null
+                        : _startConnect,
+                icon: const Icon(Icons.link_outlined),
+                label: Text(connected ? 'Reconnect Drive' : 'Connect Drive'),
+              ),
+              if (_challenge != null)
+                FilledButton.icon(
+                  onPressed: disabled || _saving ? null : _finishConnect,
+                  icon: const Icon(Icons.check_circle_outline),
+                  label: const Text('Finish connect'),
+                ),
+              FilledButton.icon(
+                onPressed:
+                    disabled || _saving || !connected ? null : _backupNow,
+                icon: const Icon(Icons.cloud_upload_outlined),
+                label: const Text('Backup to Drive now'),
+              ),
+              if (connected)
+                TextButton.icon(
+                  onPressed: disabled || _saving ? null : _disconnect,
+                  icon: const Icon(Icons.link_off_outlined),
+                  label: const Text('Disconnect'),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _countField(
+      TextEditingController controller, String label, bool disabled) {
+    return TextField(
+      controller: controller,
+      enabled: !disabled && !_saving,
+      keyboardType: TextInputType.number,
+      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+      decoration: InputDecoration(labelText: label),
+      onSubmitted: (_) {
+        if (_hasChanges) _save();
+      },
     );
   }
 }
