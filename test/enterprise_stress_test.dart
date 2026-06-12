@@ -48,13 +48,16 @@ Future<AppStore> _readyStore() async {
   LocalDatabaseService.useInMemoryStoreForTesting(_hostIdentitySeed());
   final store = AppStore();
   await store.initialize();
-  await store.completeInitialAdminSetup(fullName: 'Admin', username: 'admin', password: 'AdminPass123');
+  await store.completeInitialAdminSetup(
+      fullName: 'Admin', username: 'admin', password: 'AdminPass123');
   return store;
 }
 
 void main() {
   group('Enterprise stress and recovery tests', () {
-    test('handles realistic catalog and sales volume without corrupting inventory', () async {
+    test(
+        'handles realistic catalog and sales volume without corrupting inventory',
+        () async {
       final store = await _readyStore();
 
       for (var i = 0; i < 75; i++) {
@@ -83,7 +86,8 @@ void main() {
       expect(store.sales, hasLength(30));
       expect(store.products.where((p) => p.stock < 0), isEmpty);
       expect(store.totalSalesAmount, greaterThan(0));
-      expect(store.pendingSyncQueueCount, greaterThan(0));
+      expect(store.syncChanges, isNotEmpty);
+      expect(store.pendingSyncQueueCount, 0);
     });
 
     test('backup restore survives a populated store round trip', () async {

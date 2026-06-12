@@ -22,7 +22,6 @@ class _MaintenancePageState extends State<MaintenancePage> {
   MaintenanceSummary? _summary;
   bool _loading = true;
   bool _lastRunWasDeep = false;
-  String? _lastDiagnosticReport;
   bool get _showAdvancedTools => false;
 
   @override
@@ -79,7 +78,6 @@ class _MaintenancePageState extends State<MaintenancePage> {
           dialogTitle: tr.text('technical_report_saved'),
           cancelMessage: tr.text('file_save_cancelled'));
       if (!mounted) return;
-      setState(() => _lastDiagnosticReport = report);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
             content: Text('${tr.text('technical_report_saved')}: $filename')),
@@ -259,23 +257,6 @@ class _MaintenancePageState extends State<MaintenancePage> {
               icon: Icons.fact_check_outlined,
               children: [
                 for (final issue in summary.issues) _HealthTile(issue: issue),
-              ],
-            ),
-          ],
-          if (_lastDiagnosticReport != null) ...[
-            const SizedBox(height: 16),
-            _SectionCard(
-              title: tr.text('technical_report'),
-              icon: Icons.article_outlined,
-              children: [
-                Text(tr.text('technical_report_desc'),
-                    style: Theme.of(context).textTheme.bodySmall),
-                const SizedBox(height: 12),
-                SelectableText(_lastDiagnosticReport!,
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
-                        ?.copyWith(fontFamily: 'monospace')),
               ],
             ),
           ],
