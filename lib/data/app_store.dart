@@ -7194,7 +7194,11 @@ class AppStore extends ChangeNotifier {
         'version': 12,
         'generatedAt': DateTime.now().toIso8601String(),
         'schemaVersion': 17,
-        if (!includeDeviceAndSyncState) 'backupType': 'business_backup',
+        'backupType': includeDeviceAndSyncState
+            ? 'full_device_backup'
+            : 'business_backup',
+        if (includeDeviceAndSyncState)
+          'localDatabaseEntries': LocalDatabaseService.allEntries(),
         if (!includeDeviceAndSyncState) 'storeId': appIdentity.storeId,
         if (!includeDeviceAndSyncState) 'branchId': appIdentity.branchId,
         if (!includeDeviceAndSyncState) 'appVersion': 'stage2',
@@ -7700,7 +7704,7 @@ class AppStore extends ChangeNotifier {
   String exportBackupJson() {
     requirePermission(AppPermission.backupExport);
     return const JsonEncoder.withIndent('  ')
-        .convert(_backupPayload(includeDeviceAndSyncState: false));
+        .convert(_backupPayload(includeDeviceAndSyncState: true));
   }
 
   static const String _hostSnapshotGenerationKey =
@@ -8126,6 +8130,10 @@ class AppStore extends ChangeNotifier {
         .map((item) =>
             StockMovement.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
+    final inventoryCounts = (decoded['inventoryCounts'] as List<dynamic>? ?? [])
+        .map((item) => InventoryCountSession.fromJson(
+            Map<String, dynamic>.from(item as Map)))
+        .toList();
     final warehouses = (decoded['warehouses'] as List<dynamic>? ?? [])
         .map((item) =>
             Warehouse.fromJson(Map<String, dynamic>.from(item as Map)))
@@ -8194,6 +8202,9 @@ class AppStore extends ChangeNotifier {
     _stockMovements
       ..clear()
       ..addAll(stockMovements);
+    _inventoryCounts
+      ..clear()
+      ..addAll(inventoryCounts);
     _warehouses
       ..clear()
       ..addAll(warehouses);
@@ -8202,7 +8213,35 @@ class AppStore extends ChangeNotifier {
       ..clear()
       ..addAll(accountTransactions);
     _invalidateAccountLedgerCache();
-    _syncChanges.clear();
+    final restoreFullDeviceBackup =
+        decoded['backupType']?.toString() == 'full_device_backup';
+    final localDatabaseEntries = restoreFullDeviceBackup &&
+            decoded['localDatabaseEntries'] is Map
+        ? Map<String, dynamic>.from(decoded['localDatabaseEntries'] as Map)
+        : const <String, dynamic>{};
+    final importedSyncChanges = restoreFullDeviceBackup
+        ? (decoded['syncChanges'] as List<dynamic>? ?? const <dynamic>[])
+            .map((item) =>
+                SyncChange.fromJson(Map<String, dynamic>.from(item as Map)))
+            .toList()
+        : const <SyncChange>[];
+    final importedSyncQueue = restoreFullDeviceBackup
+        ? (decoded['syncQueue'] as List<dynamic>? ?? const <dynamic>[])
+            .map((item) => SyncQueueItem.fromJson(
+                Map<String, dynamic>.from(item as Map)))
+            .toList()
+        : const <SyncQueueItem>[];
+    _syncChanges
+      ..clear()
+      ..addAll(importedSyncChanges);
+    _syncQueue
+      ..clear()
+      ..addAll(importedSyncQueue);
+    if (restoreFullDeviceBackup &&
+        decoded['deviceId']?.toString().trim().isNotEmpty == true) {
+      _deviceId = decoded['deviceId'].toString().trim();
+      await LocalDatabaseService.setString(_deviceIdKey, _deviceId);
+    }
     _storeProfile = profile;
     // Business Backup may contain an old Store/Branch identity. When this
     // device is already a paired Host, keep the current sync identity so
@@ -8215,21 +8254,26 @@ class AppStore extends ChangeNotifier {
         (currentIdentityBeforeImport.isCloudEnabled || _isLanHostConfigured);
     final importedStoreId = decoded['storeId']?.toString().trim() ?? '';
     final importedBranchId = decoded['branchId']?.toString().trim() ?? '';
-    _appIdentity = currentIdentityBeforeImport.copyWith(
-      storeId: preservePairedHostIdentity
-          ? currentIdentityBeforeImport.storeId
-          : (importedStoreId.isNotEmpty
-              ? importedStoreId.toUpperCase()
-              : currentIdentityBeforeImport.storeId),
-      branchId: preservePairedHostIdentity
-          ? currentIdentityBeforeImport.branchId
-          : (importedBranchId.isNotEmpty
-              ? importedBranchId.toUpperCase()
-              : currentIdentityBeforeImport.branchId),
-      deviceId: _deviceId,
-      platform: _detectPlatform(),
-      updatedAt: DateTime.now(),
-    );
+    if (restoreFullDeviceBackup && decoded['appIdentity'] is Map) {
+      _appIdentity = AppIdentity.fromJson(
+          Map<String, dynamic>.from(decoded['appIdentity'] as Map));
+    } else {
+      _appIdentity = currentIdentityBeforeImport.copyWith(
+        storeId: preservePairedHostIdentity
+            ? currentIdentityBeforeImport.storeId
+            : (importedStoreId.isNotEmpty
+                ? importedStoreId.toUpperCase()
+                : currentIdentityBeforeImport.storeId),
+        branchId: preservePairedHostIdentity
+            ? currentIdentityBeforeImport.branchId
+            : (importedBranchId.isNotEmpty
+                ? importedBranchId.toUpperCase()
+                : currentIdentityBeforeImport.branchId),
+        deviceId: _deviceId,
+        platform: _detectPlatform(),
+        updatedAt: DateTime.now(),
+      );
+    }
     await LocalDatabaseService.setString(
         _appIdentityKey, jsonEncode(_appIdentity!.toJson()));
     if (decoded['themeMode'] is String) {
@@ -8256,11 +8300,10 @@ class AppStore extends ChangeNotifier {
         : _loadPurchaseCounter();
     _normalizeCustomers();
 
-    // A Host backup import replaces the authoritative business dataset.
-    // Record a small restore marker (not the giant backup payload) so already
-    // paired Clients know they must discard their old cursor and rebuild from
-    // the fresh Host snapshot published by the sync layer.
-    if (appIdentity.isHost) {
+    // A Host business backup import replaces the authoritative business dataset.
+    // Full-device backups restore the saved sync log as-is, so they should not
+    // append an extra rebuild marker unless this is the older business-only flow.
+    if (!restoreFullDeviceBackup && appIdentity.isHost) {
       final restoreGeneration =
           DateTime.now().toUtc().microsecondsSinceEpoch.toString();
       final restoreCommandId = 'host_restore_rebuild_$restoreGeneration';
@@ -8286,7 +8329,29 @@ class AppStore extends ChangeNotifier {
       );
     }
 
+    // Full-device backups are expected to restore the whole local database, not
+    // only the typed business collections above. Clear the current local store
+    // first so stale keys from the previous installation cannot survive, then
+    // save the typed collections and finally re-apply the raw exported entries
+    // (settings, identity, cursors, login/session flags, feature preferences,
+    // and any future keys not represented by AppStore fields yet).
+    if (restoreFullDeviceBackup && localDatabaseEntries.isNotEmpty) {
+      await LocalDatabaseService.clearAll();
+    }
+
     await _saveAll();
+
+    if (restoreFullDeviceBackup && localDatabaseEntries.isNotEmpty) {
+      for (final entry in localDatabaseEntries.entries) {
+        await LocalDatabaseService.setString(
+          entry.key.toString(),
+          entry.value?.toString() ?? '',
+        );
+      }
+      await reloadAllAfterDatabaseChange();
+      return;
+    }
+
     notifyListeners();
   }
 

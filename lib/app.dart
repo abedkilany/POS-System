@@ -12,6 +12,7 @@ import 'core/sync_unified/sync_device_state.dart';
 import 'core/snapshot/unified_snapshot_progress.dart';
 import 'core/services/cloud_sync_service.dart';
 import 'core/services/lan_sync_service.dart';
+import 'core/services/local_auto_backup_service.dart';
 import 'data/app_store.dart';
 import 'models/user_role.dart';
 import 'features/accounting/accounting_page.dart';
@@ -99,6 +100,7 @@ class _StoreManagerAppState extends State<StoreManagerApp> {
     if (!mounted || _store.activeUser == null) return;
     unawaited(_autoSyncController.start());
     unawaited(_autoCloudSyncController.start());
+    unawaited(LocalAutoBackupService.runDueBackup(_store));
   }
 
   Future<void> _stopSyncForLogout() async {
@@ -393,6 +395,59 @@ class _ShellItem {
   final Widget page;
 }
 
+
+class LocalAutoBackupIndicator extends StatelessWidget {
+  const LocalAutoBackupIndicator({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return ValueListenableBuilder<LocalAutoBackupStatus>(
+      valueListenable: LocalAutoBackupService.status,
+      builder: (context, status, _) {
+        if (!status.isRunning && status.message.isEmpty && status.lastError.isEmpty) {
+          return const SizedBox.shrink();
+        }
+        final hasError = status.lastError.isNotEmpty;
+        final color = hasError ? theme.colorScheme.error : theme.colorScheme.primary;
+        final message = hasError ? status.lastError : status.message;
+        return Padding(
+          padding: const EdgeInsetsDirectional.only(end: 4),
+          child: Tooltip(
+            message: message.isEmpty ? 'Local backup' : message,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.12),
+                border: Border.all(color: color.withValues(alpha: 0.38)),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (status.isRunning)
+                    SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: color),
+                    )
+                  else
+                    Icon(hasError ? Icons.backup_outlined : Icons.check_circle_outline, size: 14, color: color),
+                  const SizedBox(width: 6),
+                  Text(
+                    status.isRunning ? 'Backup' : hasError ? 'Backup issue' : 'Backed up',
+                    style: theme.textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w700, color: color),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
 class MainShell extends StatefulWidget {
   const MainShell({super.key, required this.onLocaleChanged, required this.onThemeModeChanged, required this.themeMode, required this.store, this.onSyncSettingsChanged, this.onLogout});
 
@@ -481,6 +536,7 @@ class _MainShellState extends State<MainShell> {
             ),
             title: Text('$shellTitle • ${resolvedItems[selectedIndex].label}', overflow: TextOverflow.ellipsis),
             actions: [
+              LocalAutoBackupIndicator(),
               HostConnectionIndicator(store: widget.store),
               PopupMenuButton<String>(
                 tooltip: widget.store.activeUser?.fullName ?? tr.text('logout'),
