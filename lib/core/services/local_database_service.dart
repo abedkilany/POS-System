@@ -21,6 +21,7 @@ class LocalDatabaseService {
   static const String _cloudApiTokenKey = 'cloud_api_token';
   static const String _appIdentityKey = 'app_identity_v1';
   static const String _secureDeviceTokenKey = 'app_identity_device_token_v1';
+  static const String _secureRecoveryKeyKey = 'app_identity_recovery_key_v1';
   static final Map<String, String> _secureStringMirror = <String, String>{};
   static Box<String>? _box;
   static Map<String, String>? _memoryStoreForTesting;
@@ -154,6 +155,10 @@ class LocalDatabaseService {
     if (secureDeviceToken != null) {
       _secureStringMirror[_secureDeviceTokenKey] = secureDeviceToken;
     }
+    final secureRecoveryKey = await _secureStorage.read(key: _secureRecoveryKeyKey);
+    if (secureRecoveryKey != null) {
+      _secureStringMirror[_secureRecoveryKeyKey] = secureRecoveryKey;
+    }
 
     final legacyCloudToken = _rawScalarValue(_cloudApiTokenKey)?.trim() ?? '';
     if (legacyCloudToken.isNotEmpty && (_secureStringMirror[_cloudApiTokenKey] ?? '').isEmpty) {
@@ -169,6 +174,12 @@ class LocalDatabaseService {
       if (legacyDeviceToken.isNotEmpty && (_secureStringMirror[_secureDeviceTokenKey] ?? '').isEmpty) {
         await _secureStorage.write(key: _secureDeviceTokenKey, value: legacyDeviceToken);
         _secureStringMirror[_secureDeviceTokenKey] = legacyDeviceToken;
+      }
+      final legacyRecoveryKey = (decoded?['recoveryKey'] ?? decoded?['recovery_key'] ?? '').toString().trim();
+      if (legacyRecoveryKey.isNotEmpty && (_secureStringMirror[_secureRecoveryKeyKey] ?? '').isEmpty) {
+        final cleanRecoveryKey = legacyRecoveryKey.toUpperCase();
+        await _secureStorage.write(key: _secureRecoveryKeyKey, value: cleanRecoveryKey);
+        _secureStringMirror[_secureRecoveryKeyKey] = cleanRecoveryKey;
       }
       final sanitized = _sanitizeAppIdentityJson(rawIdentity);
       if (sanitized != rawIdentity) await _writeRawScalarValue(_appIdentityKey, sanitized);
@@ -188,15 +199,19 @@ class LocalDatabaseService {
     if (decoded == null) return value;
     decoded.remove('deviceToken');
     decoded.remove('device_token');
+    decoded.remove('recoveryKey');
+    decoded.remove('recovery_key');
     return jsonEncode(decoded);
   }
 
-  static String _mergeSecureDeviceTokenIntoIdentityJson(String value) {
+  static String _mergeSecureIdentitySecretsIntoIdentityJson(String value) {
     final token = (_secureStringMirror[_secureDeviceTokenKey] ?? '').trim();
-    if (token.isEmpty) return value;
+    final recoveryKey = (_secureStringMirror[_secureRecoveryKeyKey] ?? '').trim();
+    if (token.isEmpty && recoveryKey.isEmpty) return value;
     final decoded = _tryDecodeJsonMap(value);
     if (decoded == null) return value;
-    decoded['deviceToken'] = token;
+    if (token.isNotEmpty) decoded['deviceToken'] = token;
+    if (recoveryKey.isNotEmpty) decoded['recoveryKey'] = recoveryKey;
     return jsonEncode(decoded);
   }
 
@@ -258,7 +273,7 @@ class LocalDatabaseService {
     }
     final value = _rawScalarValue(key);
     if (key == _appIdentityKey && value != null) {
-      return _mergeSecureDeviceTokenIntoIdentityJson(value);
+      return _mergeSecureIdentitySecretsIntoIdentityJson(value);
     }
     return value;
   }
@@ -337,6 +352,12 @@ class LocalDatabaseService {
         await _secureStorage.write(key: _secureDeviceTokenKey, value: token);
         _secureStringMirror[_secureDeviceTokenKey] = token;
       }
+      final recoveryKey = (decoded?['recoveryKey'] ?? decoded?['recovery_key'] ?? '').toString().trim();
+      if (recoveryKey.isNotEmpty) {
+        final cleanRecoveryKey = recoveryKey.toUpperCase();
+        await _secureStorage.write(key: _secureRecoveryKeyKey, value: cleanRecoveryKey);
+        _secureStringMirror[_secureRecoveryKeyKey] = cleanRecoveryKey;
+      }
       await _writeRawScalarValue(key, _sanitizeAppIdentityJson(value));
       return;
     }
@@ -361,7 +382,9 @@ class LocalDatabaseService {
     }
     if (key == _appIdentityKey) {
       await _secureStorage.delete(key: _secureDeviceTokenKey);
+      await _secureStorage.delete(key: _secureRecoveryKeyKey);
       _secureStringMirror.remove(_secureDeviceTokenKey);
+      _secureStringMirror.remove(_secureRecoveryKeyKey);
     }
     final memory = _memoryStore;
     if (memory != null) {
@@ -386,8 +409,10 @@ class LocalDatabaseService {
   static Future<void> clearAll() async {
     await _secureStorage.delete(key: _cloudApiTokenKey);
     await _secureStorage.delete(key: _secureDeviceTokenKey);
+    await _secureStorage.delete(key: _secureRecoveryKeyKey);
     _secureStringMirror.remove(_cloudApiTokenKey);
     _secureStringMirror.remove(_secureDeviceTokenKey);
+    _secureStringMirror.remove(_secureRecoveryKeyKey);
     final memory = _memoryStore;
     if (memory != null) {
       memory.clear();
