@@ -1150,7 +1150,7 @@ class CloudSyncService {
             headers: {
               'Content-Type': 'application/json',
               'Accept': 'application/json',
-              if (settings.apiToken.trim().isNotEmpty)
+              if (store.appIdentity.isHost && settings.apiToken.trim().isNotEmpty)
                 'Authorization': 'Bearer ${settings.apiToken.trim()}',
             },
             body: jsonEncode({
@@ -1723,9 +1723,9 @@ class CloudSyncService {
     return {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
-      // The deployment token keeps backward compatibility with the current API,
-      // while the device headers prepare the server for per-device auth.
-      if (settings.apiToken.trim().isNotEmpty)
+      // Only Host/Admin devices may send the deployment token. Clients authenticate
+      // with their own per-device token instead.
+      if (identity.isHost && settings.apiToken.trim().isNotEmpty)
         'Authorization': 'Bearer ${settings.apiToken.trim()}',
       'X-Device-Id': store.deviceId,
       'X-Device-Token': identity.deviceToken,
@@ -1750,7 +1750,7 @@ class CloudSyncService {
             headers: {
               'Content-Type': 'application/json',
               'Accept': 'application/json',
-              if (settings.apiToken.trim().isNotEmpty)
+              if (store.appIdentity.isHost && settings.apiToken.trim().isNotEmpty)
                 'Authorization': 'Bearer ${settings.apiToken.trim()}',
               'X-Device-Id': deviceId,
               'X-Device-Token': deviceToken,

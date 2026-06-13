@@ -18,6 +18,10 @@ class LocalDatabaseService {
   static const String _encryptionKeyPrefsKey = 'ventio_local_db_key_v1';
   static const String _legacyEncryptionKeyPrefsKey = 'store_manager_local_db_key_v1';
   static const FlutterSecureStorage _secureStorage = FlutterSecureStorage();
+  static const String _cloudApiTokenKey = 'cloud_api_token';
+  static const String _appIdentityKey = 'app_identity_v1';
+  static const String _secureDeviceTokenKey = 'app_identity_device_token_v1';
+  static final Map<String, String> _secureStringMirror = <String, String>{};
   static Box<String>? _box;
   static Map<String, String>? _memoryStoreForTesting;
   static final Map<String, String> _sqliteMirror = <String, String>{};
@@ -52,6 +56,7 @@ class LocalDatabaseService {
           ..addAll(await BusinessSqliteStore.hydrateScalarKeyMirror(existingDb))
           ..addAll(await SyncSqliteStore.hydrateScalarKeyMirror(existingDb));
         _sqliteReady = true;
+        await _hydrateAndMigrateSecureScalars();
         await retireLegacyVentioHiveFilesIfPresent();
         return;
       }
@@ -70,6 +75,7 @@ class LocalDatabaseService {
             ..addAll(await BusinessSqliteStore.hydrateScalarKeyMirror(existingDb))
             ..addAll(await SyncSqliteStore.hydrateScalarKeyMirror(existingDb));
           _sqliteReady = true;
+          await _hydrateAndMigrateSecureScalars();
           return;
         }
       }
@@ -99,7 +105,11 @@ class LocalDatabaseService {
         ..addAll(await BusinessSqliteStore.hydrateScalarKeyMirror(db))
         ..addAll(await SyncSqliteStore.hydrateScalarKeyMirror(db));
       _sqliteReady = true;
+      await _hydrateAndMigrateSecureScalars();
       if (!kIsWeb) await retireLegacyVentioHiveFilesIfPresent();
+    }
+    if (!_sqliteReady) {
+      await _hydrateAndMigrateSecureScalars();
     }
   }
 
@@ -135,13 +145,122 @@ class LocalDatabaseService {
     return box;
   }
 
-  static String? getString(String key) {
+  static Future<void> _hydrateAndMigrateSecureScalars() async {
+    final secureCloudToken = await _secureStorage.read(key: _cloudApiTokenKey);
+    if (secureCloudToken != null) {
+      _secureStringMirror[_cloudApiTokenKey] = secureCloudToken;
+    }
+    final secureDeviceToken = await _secureStorage.read(key: _secureDeviceTokenKey);
+    if (secureDeviceToken != null) {
+      _secureStringMirror[_secureDeviceTokenKey] = secureDeviceToken;
+    }
+
+    final legacyCloudToken = _rawScalarValue(_cloudApiTokenKey)?.trim() ?? '';
+    if (legacyCloudToken.isNotEmpty && (_secureStringMirror[_cloudApiTokenKey] ?? '').isEmpty) {
+      await _secureStorage.write(key: _cloudApiTokenKey, value: legacyCloudToken);
+      _secureStringMirror[_cloudApiTokenKey] = legacyCloudToken;
+    }
+    await _deleteRawScalarValue(_cloudApiTokenKey);
+
+    final rawIdentity = _rawScalarValue(_appIdentityKey);
+    if (rawIdentity != null && rawIdentity.trim().isNotEmpty) {
+      final decoded = _tryDecodeJsonMap(rawIdentity);
+      final legacyDeviceToken = (decoded?['deviceToken'] ?? decoded?['device_token'] ?? '').toString().trim();
+      if (legacyDeviceToken.isNotEmpty && (_secureStringMirror[_secureDeviceTokenKey] ?? '').isEmpty) {
+        await _secureStorage.write(key: _secureDeviceTokenKey, value: legacyDeviceToken);
+        _secureStringMirror[_secureDeviceTokenKey] = legacyDeviceToken;
+      }
+      final sanitized = _sanitizeAppIdentityJson(rawIdentity);
+      if (sanitized != rawIdentity) await _writeRawScalarValue(_appIdentityKey, sanitized);
+    }
+  }
+
+  static Map<String, dynamic>? _tryDecodeJsonMap(String value) {
+    try {
+      final decoded = jsonDecode(value);
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+    } catch (_) {}
+    return null;
+  }
+
+  static String _sanitizeAppIdentityJson(String value) {
+    final decoded = _tryDecodeJsonMap(value);
+    if (decoded == null) return value;
+    decoded.remove('deviceToken');
+    decoded.remove('device_token');
+    return jsonEncode(decoded);
+  }
+
+  static String _mergeSecureDeviceTokenIntoIdentityJson(String value) {
+    final token = (_secureStringMirror[_secureDeviceTokenKey] ?? '').trim();
+    if (token.isEmpty) return value;
+    final decoded = _tryDecodeJsonMap(value);
+    if (decoded == null) return value;
+    decoded['deviceToken'] = token;
+    return jsonEncode(decoded);
+  }
+
+  static String? _rawScalarValue(String key) {
     final memory = _memoryStore;
     if (memory != null) return memory[key];
-    if (_sqliteReady) {
-      return _sqliteMirror[key];
+    if (_sqliteReady) return _sqliteMirror[key];
+    final box = _box;
+    if (box == null || !box.isOpen) return null;
+    return box.get(key);
+  }
+
+  static Future<void> _writeRawScalarValue(String key, String value) async {
+    final memory = _memoryStore;
+    if (memory != null) {
+      memory[key] = value;
+      return;
     }
-    return _requireBox.get(key);
+    if (_sqliteReady) {
+      final db = SqliteMigrationManager.database;
+      if (db != null) {
+        if (SyncSqliteStore.isSqliteBackedKey(key)) {
+          await SyncSqliteStore.saveKeyJson(db, key, value);
+        } else {
+          await BusinessSqliteStore.saveKeyJson(db, key, value);
+        }
+        _sqliteMirror[key] = value;
+        return;
+      }
+    }
+    await _requireBox.put(key, value);
+  }
+
+  static Future<void> _deleteRawScalarValue(String key) async {
+    final memory = _memoryStore;
+    if (memory != null) {
+      memory.remove(key);
+      return;
+    }
+    if (_sqliteReady) {
+      final db = SqliteMigrationManager.database;
+      if (db != null) {
+        if (SyncSqliteStore.isSqliteBackedKey(key)) {
+          await SyncSqliteStore.saveKeyJson(db, key, key == SyncSqliteStore.syncSequenceKey ? '0' : '[]');
+        } else {
+          await BusinessSqliteStore.deleteKey(db, key);
+          _sqliteMirror.remove(key);
+        }
+        return;
+      }
+    }
+    final box = _box;
+    if (box != null && box.isOpen) await box.delete(key);
+  }
+
+  static String? getString(String key) {
+    if (key == _cloudApiTokenKey) {
+      return _secureStringMirror[_cloudApiTokenKey] ?? '';
+    }
+    final value = _rawScalarValue(key);
+    if (key == _appIdentityKey && value != null) {
+      return _mergeSecureDeviceTokenIntoIdentityJson(value);
+    }
+    return value;
   }
 
   static String? getRawHiveString(String key) {
@@ -199,24 +318,29 @@ class LocalDatabaseService {
   }
 
   static Future<void> setString(String key, String value) async {
-    final memory = _memoryStore;
-    if (memory != null) {
-      memory[key] = value;
+    if (key == _cloudApiTokenKey) {
+      final clean = value.trim();
+      if (clean.isEmpty) {
+        await _secureStorage.delete(key: _cloudApiTokenKey);
+        _secureStringMirror.remove(_cloudApiTokenKey);
+      } else {
+        await _secureStorage.write(key: _cloudApiTokenKey, value: clean);
+        _secureStringMirror[_cloudApiTokenKey] = clean;
+      }
+      await _deleteRawScalarValue(_cloudApiTokenKey);
       return;
     }
-    if (_sqliteReady) {
-      final db = SqliteMigrationManager.database;
-      if (db != null) {
-        if (SyncSqliteStore.isSqliteBackedKey(key)) {
-          await SyncSqliteStore.saveKeyJson(db, key, value);
-        } else {
-          await BusinessSqliteStore.saveKeyJson(db, key, value);
-        }
-        _sqliteMirror[key] = value;
-        return;
+    if (key == _appIdentityKey) {
+      final decoded = _tryDecodeJsonMap(value);
+      final token = (decoded?['deviceToken'] ?? decoded?['device_token'] ?? '').toString().trim();
+      if (token.isNotEmpty) {
+        await _secureStorage.write(key: _secureDeviceTokenKey, value: token);
+        _secureStringMirror[_secureDeviceTokenKey] = token;
       }
+      await _writeRawScalarValue(key, _sanitizeAppIdentityJson(value));
+      return;
     }
-    await _requireBox.put(key, value);
+    await _writeRawScalarValue(key, value);
   }
 
   static bool containsKey(String key) {
@@ -229,6 +353,16 @@ class LocalDatabaseService {
   }
 
   static Future<void> deleteString(String key) async {
+    if (key == _cloudApiTokenKey) {
+      await _secureStorage.delete(key: _cloudApiTokenKey);
+      _secureStringMirror.remove(_cloudApiTokenKey);
+      await _deleteRawScalarValue(_cloudApiTokenKey);
+      return;
+    }
+    if (key == _appIdentityKey) {
+      await _secureStorage.delete(key: _secureDeviceTokenKey);
+      _secureStringMirror.remove(_secureDeviceTokenKey);
+    }
     final memory = _memoryStore;
     if (memory != null) {
       memory.remove(key);
@@ -250,6 +384,10 @@ class LocalDatabaseService {
   }
 
   static Future<void> clearAll() async {
+    await _secureStorage.delete(key: _cloudApiTokenKey);
+    await _secureStorage.delete(key: _secureDeviceTokenKey);
+    _secureStringMirror.remove(_cloudApiTokenKey);
+    _secureStringMirror.remove(_secureDeviceTokenKey);
     final memory = _memoryStore;
     if (memory != null) {
       memory.clear();
