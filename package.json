@@ -7,7 +7,8 @@
     "build": "bash scripts/vercel-build.sh"
   },
   "dependencies": {
-    "@neondatabase/serverless": "^0.10.4"
+    "@neondatabase/serverless": "^0.10.4",
+    "pg": "^8.16.3"
   },
   "devDependencies": {}
 }
