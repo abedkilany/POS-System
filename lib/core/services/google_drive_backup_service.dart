@@ -524,9 +524,7 @@ class GoogleDriveBackupService {
 
       final token = await _accessToken(resolved);
       resolved = await loadSettings();
-      final folderId = resolved.folderId.trim().isEmpty
-          ? await _ensureFolder(token, 'Ventio Backups')
-          : resolved.folderId.trim();
+      final folderId = await _ensureRootFolder(token, resolved);
       if (folderId != resolved.folderId.trim()) {
         resolved = resolved.copyWith(folderId: folderId);
         await saveSettings(resolved);
@@ -749,6 +747,30 @@ class GoogleDriveBackupService {
     return created['id'] as String;
   }
 
+  static Future<String> _ensureRootFolder(
+      String token, GoogleDriveBackupSettings settings) async {
+    final savedFolderId = settings.folderId.trim();
+    if (savedFolderId.isNotEmpty &&
+        await _folderIdExists(token, savedFolderId)) {
+      return savedFolderId;
+    }
+    return _ensureFolder(token, 'Ventio Backups');
+  }
+
+  static Future<bool> _folderIdExists(String token, String folderId) async {
+    final response = await http.get(
+      Uri.https('www.googleapis.com', '/drive/v3/files/$folderId',
+          const <String, String>{
+        'fields': 'id,mimeType,trashed',
+      }),
+      headers: <String, String>{'Authorization': 'Bearer $token'},
+    );
+    if (response.statusCode == 404) return false;
+    final decoded = _decodeResponse(response);
+    return decoded['mimeType'] == 'application/vnd.google-apps.folder' &&
+        decoded['trashed'] != true;
+  }
+
   static Future<String?> _findFolder(String token, String name,
       {String? parentId}) async {
     final escapedName = _driveQueryEscape(name);
@@ -783,8 +805,10 @@ class GoogleDriveBackupService {
       GoogleDriveBackupSettings settings, DateTime date) async {
     try {
       final token = await _accessToken(settings);
-      final folderId = settings.folderId.trim();
-      if (folderId.isEmpty) return false;
+      final folderId = await _ensureRootFolder(token, settings);
+      if (folderId != settings.folderId.trim()) {
+        await saveSettings(settings.copyWith(folderId: folderId));
+      }
       final dailyId = await _ensureFolder(token, 'Daily', parentId: folderId);
       return _fileExists(
           token, dailyId, 'ventio_daily_${_dateStamp(date)}.vtb');
