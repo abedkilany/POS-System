@@ -1150,7 +1150,8 @@ class CloudSyncService {
             headers: {
               'Content-Type': 'application/json',
               'Accept': 'application/json',
-              if (store.appIdentity.isHost && settings.apiToken.trim().isNotEmpty)
+              if (store.appIdentity.isHost &&
+                  settings.apiToken.trim().isNotEmpty)
                 'Authorization': 'Bearer ${settings.apiToken.trim()}',
             },
             body: jsonEncode({
@@ -1723,9 +1724,9 @@ class CloudSyncService {
     return {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
-      // Only Host/Admin devices may send the deployment token. Clients authenticate
-      // with their own per-device token instead.
-      if (identity.isHost && settings.apiToken.trim().isNotEmpty)
+      // Clients authenticate with their own per-device token. Local/Host admin
+      // flows may still need the deployment token for setup and health checks.
+      if (!identity.isClient && settings.apiToken.trim().isNotEmpty)
         'Authorization': 'Bearer ${settings.apiToken.trim()}',
       'X-Device-Id': store.deviceId,
       'X-Device-Token': identity.deviceToken,
@@ -1750,7 +1751,8 @@ class CloudSyncService {
             headers: {
               'Content-Type': 'application/json',
               'Accept': 'application/json',
-              if (store.appIdentity.isHost && settings.apiToken.trim().isNotEmpty)
+              if (store.appIdentity.isHost &&
+                  settings.apiToken.trim().isNotEmpty)
                 'Authorization': 'Bearer ${settings.apiToken.trim()}',
               'X-Device-Id': deviceId,
               'X-Device-Token': deviceToken,
@@ -2021,6 +2023,11 @@ class CloudSyncService {
             ? 'غير مصرح/الرمز غير صالح: رفضت واجهة السحابة الرمز.'
             : 'تعذر الوصول إلى خادم السحابة: أرجعت واجهة السحابة الحالة ${health.statusCode}: ${health.body}';
         return CloudSyncResult(ok: false, message: authMessage);
+      }
+      final decoded = jsonDecode(health.body) as Map<String, dynamic>;
+      if (decoded['ok'] != true) {
+        return const CloudSyncResult(
+            ok: false, message: 'Cloud health response was not successful.');
       }
     } catch (error) {
       return CloudSyncResult(
