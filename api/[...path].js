@@ -7,6 +7,8 @@ export const config = {
 };
 
 import health from '../server_api/health.js';
+import authRegister from '../server_api/auth/register.js';
+import authLogin from '../server_api/auth/login.js';
 import deviceRevoke from '../server_api/sync/device-revoke.js';
 import deviceWipeAck from '../server_api/sync/device-wipe-ack.js';
 import deviceSuspend from '../server_api/sync/device-suspend.js';
@@ -36,6 +38,8 @@ import googleDriveRefresh from '../server_api/google-drive/refresh.js';
 
 const routes = new Map([
   ['health', health],
+  ['auth/register', authRegister],
+  ['auth/login', authLogin],
   ['sync/device-revoke', deviceRevoke],
   ['sync/device-wipe-ack', deviceWipeAck],
   ['sync/device-suspend', deviceSuspend],

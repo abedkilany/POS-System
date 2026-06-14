@@ -1001,7 +1001,7 @@
   "store_id": "Store ID",
   "store_information": "Store Information",
   "store_information_desc": "Store name, phone, address, and logo.",
-  "store_name": "Store Name",
+  "store_name": "Store name",
   "store_profile_updated": "Store profile updated successfully.",
   "store_recovery_security": "Store recovery security",
   "store_recovery_security_desc": "Save this recovery file in a secure place. It contains only store access information and no business data. The recovery key is shown here for export only; keep it private.",
@@ -1581,5 +1581,11 @@
   "snapshot_progress_lan_rebuild_title": "LAN rebuild from Host snapshot",
   "snapshot_progress_cloud_rebuild_title": "Cloud rebuild from Host snapshot",
   "data_view": "Data view",
-  "invalid_json": "Invalid JSON. Fix the text before saving."
+  "invalid_json": "Invalid JSON. Fix the text before saving.",
+  "online": "Online",
+  "offline": "Offline",
+  "first_run_online_required": "First run must stay Online to create the trial account on the server.",
+  "online_login_failed": "Online login failed",
+  "online_register_failed": "Online registration failed",
+  "trial_created_sign_in": "Trial account created. You have {days} days. Please sign in."
 }

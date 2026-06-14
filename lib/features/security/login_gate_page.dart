@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
+import '../../core/services/account_auth_service.dart';
 import '../../core/services/cloud_sync_service.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/sync_unified/sync_unified.dart';
@@ -28,6 +29,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
       TextEditingController(text: 'Administrator');
   final TextEditingController _confirmPasswordController =
       TextEditingController();
+  final TextEditingController _storeNameController =
+      TextEditingController(text: 'My Store');
 
   bool _savingSetup = false;
   bool _loggingIn = false;
@@ -35,11 +38,15 @@ class _LoginGatePageState extends State<LoginGatePage> {
   bool _showRegister = false;
   bool _showPassword = false;
   bool _checkingSuspension = false;
+  bool _onlineMode = true;
 
   @override
   void initState() {
     super.initState();
     _rememberLogin = widget.store.rememberLogin;
+    _storeNameController.text = widget.store.storeProfile.name.trim().isEmpty
+        ? 'My Store'
+        : widget.store.storeProfile.name.trim();
   }
 
   @override
@@ -48,6 +55,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
     _passwordController.dispose();
     _fullNameController.dispose();
     _confirmPasswordController.dispose();
+    _storeNameController.dispose();
     super.dispose();
   }
 
@@ -257,6 +265,34 @@ class _LoginGatePageState extends State<LoginGatePage> {
     final messenger = ScaffoldMessenger.of(context);
 
     setState(() => _loggingIn = true);
+
+    if (_onlineMode) {
+      try {
+        final onlineResult = await AccountAuthService().login(
+          username: _usernameController.text,
+          password: _passwordController.text,
+        );
+        if (!mounted) return;
+        if (!onlineResult.ok) {
+          setState(() => _loggingIn = false);
+          messenger.showSnackBar(SnackBar(
+            content: Text(onlineResult.message.isEmpty
+                ? AppLocalizations.of(context).text('online_login_failed')
+                : onlineResult.message),
+          ));
+          return;
+        }
+        await AccountAuthService.cacheOnlineResult(onlineResult, mode: 'login');
+      } catch (error) {
+        if (!mounted) return;
+        setState(() => _loggingIn = false);
+        messenger.showSnackBar(SnackBar(
+          content: Text('${AppLocalizations.of(context).text('online_login_failed')}: $error'),
+        ));
+        return;
+      }
+    }
+
     final ok = await widget.store.login(
       _usernameController.text,
       _passwordController.text,
@@ -288,6 +324,22 @@ class _LoginGatePageState extends State<LoginGatePage> {
     setState(() => _savingSetup = true);
 
     try {
+      AccountAuthResult? onlineResult;
+      if (_onlineMode) {
+        onlineResult = await AccountAuthService().register(
+          username: _usernameController.text,
+          password: password,
+          fullName: _fullNameController.text,
+          storeName: _storeNameController.text,
+        );
+        if (!onlineResult.ok) {
+          throw StateError(onlineResult.message.isEmpty
+              ? AppLocalizations.of(context).text('online_register_failed')
+              : onlineResult.message);
+        }
+        await AccountAuthService.cacheOnlineResult(onlineResult, mode: 'trial');
+      }
+
       await widget.store.completeInitialAdminSetup(
         fullName: _fullNameController.text,
         username: _usernameController.text,
@@ -301,8 +353,13 @@ class _LoginGatePageState extends State<LoginGatePage> {
           _passwordController.clear();
           _confirmPasswordController.clear();
         });
+        final message = onlineResult == null
+            ? AppLocalizations.of(context).text('admin_created_sign_in')
+            : AppLocalizations.of(context).format('trial_created_sign_in', {
+                'days': '14',
+              });
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(AppLocalizations.of(context).text('admin_created_sign_in'))),
+          SnackBar(content: Text(message)),
         );
       }
     } catch (error) {
@@ -323,6 +380,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
     if (_showRegister && !kIsWeb && widget.store.needsInitialAdminSetup) {
       return _InitialAdminSetupCard(
         fullNameController: _fullNameController,
+        storeNameController: _storeNameController,
         usernameController: _usernameController,
         passwordController: _passwordController,
         confirmPasswordController: _confirmPasswordController,
@@ -402,6 +460,45 @@ class _LoginGatePageState extends State<LoginGatePage> {
                       ),
                       const SizedBox(height: 8),
                       Text(tr.text('signin_hint'), textAlign: TextAlign.center),
+                      const SizedBox(height: 16),
+                      SegmentedButton<bool>(
+                        segments: [
+                          ButtonSegment<bool>(
+                            value: true,
+                            icon: const Icon(Icons.cloud_done_outlined),
+                            label: Text(tr.text('online')),
+                          ),
+                          ButtonSegment<bool>(
+                            value: false,
+                            icon: const Icon(Icons.computer_outlined),
+                            label: Text(tr.text('offline')),
+                          ),
+                        ],
+                        selected: {_onlineMode},
+                        onSelectionChanged: _loggingIn ||
+                                (widget.store.needsInitialAdminSetup && _onlineMode)
+                            ? null
+                            : (values) {
+                                final next = values.first;
+                                if (!next && widget.store.needsInitialAdminSetup) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(tr.text('first_run_online_required')),
+                                    ),
+                                  );
+                                  return;
+                                }
+                                setState(() => _onlineMode = next);
+                              },
+                      ),
+                      if (widget.store.needsInitialAdminSetup) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          tr.text('first_run_online_required'),
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
                       const SizedBox(height: 20),
                       TextField(
                         controller: _usernameController,
@@ -533,6 +630,7 @@ class _InitialAdminSetupCard extends StatefulWidget {
   const _InitialAdminSetupCard({
     required this.fullNameController,
     required this.usernameController,
+    required this.storeNameController,
     required this.passwordController,
     required this.confirmPasswordController,
     required this.saving,
@@ -542,6 +640,7 @@ class _InitialAdminSetupCard extends StatefulWidget {
 
   final TextEditingController fullNameController;
   final TextEditingController usernameController;
+  final TextEditingController storeNameController;
   final TextEditingController passwordController;
   final TextEditingController confirmPasswordController;
   final bool saving;
@@ -594,6 +693,14 @@ class _InitialAdminSetupCardState extends State<_InitialAdminSetupCard> {
                         textInputAction: TextInputAction.next,
                         decoration:
                             InputDecoration(labelText: tr.text('admin_name')),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: widget.storeNameController,
+                        enabled: !widget.saving,
+                        textInputAction: TextInputAction.next,
+                        decoration:
+                            InputDecoration(labelText: tr.text('store_name')),
                       ),
                       const SizedBox(height: 12),
                       TextField(
