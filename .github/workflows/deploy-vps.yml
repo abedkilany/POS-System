@@ -50,16 +50,20 @@ jobs:
           VPS_PORT: ${{ secrets.VPS_PORT }}
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_APP_DIR: ${{ secrets.VPS_APP_DIR }}
+          VPS_WEB_DIR: ${{ secrets.VPS_WEB_DIR }}
         run: |
           set -euo pipefail
-          upload_items=(api server_api build package.json scripts)
+          api_items=(api server_api package.json scripts)
           if [ -f package-lock.json ]; then
-            upload_items+=(package-lock.json)
+            api_items+=(package-lock.json)
           fi
-          ssh -i ~/.ssh/ventio_deploy_key -p "${VPS_PORT:-22}" "$VPS_USER@$VPS_HOST" "mkdir -p '$VPS_APP_DIR'"
+          ssh -i ~/.ssh/ventio_deploy_key -p "${VPS_PORT:-22}" "$VPS_USER@$VPS_HOST" "mkdir -p '$VPS_APP_DIR' '$VPS_WEB_DIR'"
           rsync -az --delete -e "ssh -i ~/.ssh/ventio_deploy_key -p ${VPS_PORT:-22}" \
-            "${upload_items[@]}" \
+            "${api_items[@]}" \
             "$VPS_USER@$VPS_HOST:$VPS_APP_DIR/"
+          rsync -az --delete -e "ssh -i ~/.ssh/ventio_deploy_key -p ${VPS_PORT:-22}" \
+            build/web/ \
+            "$VPS_USER@$VPS_HOST:$VPS_WEB_DIR/"
 
       - name: Restart API
         env:
