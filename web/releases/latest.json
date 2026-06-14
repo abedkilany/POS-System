@@ -1,15 +1,17 @@
-{
-  "version": "1.0.6",
-  "build": 16,
-  "channel": "stable",
-  "windows": {
-    "url": "",
-    "sha256": "",
-    "size": 0
-  },
-  "android": {
-    "source": "play_store"
-  },
-  "notes": [],
-  "required": false
+﻿{
+    "version":  "1.0.7",
+    "build":  17,
+    "channel":  "stable",
+    "windows":  {
+                    "url":  "https://ventio.duckdns.org/releases/windows/VentioSetup-1.0.7-build17.exe",
+                    "sha256":  "076a783d18d61b6ac3e51b975b119876992d087d7ddd58ca0adfa7c812c99ea7",
+                    "size":  16684747
+                },
+    "android":  {
+                    "source":  "play_store"
+                },
+    "notes":  [
+
+              ],
+    "required":  false
 }
