@@ -68,10 +68,11 @@ jobs:
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_APP_DIR: ${{ secrets.VPS_APP_DIR }}
           VPS_HEALTH_URL: ${{ secrets.VPS_HEALTH_URL }}
+          VPS_HEALTH_TOKEN: ${{ secrets.VPS_HEALTH_TOKEN }}
         run: |
           set -euo pipefail
           ssh -i ~/.ssh/ventio_deploy_key -p "${VPS_PORT:-22}" "$VPS_USER@$VPS_HOST" \
-            "VPS_APP_DIR='$VPS_APP_DIR' VPS_HEALTH_URL='$VPS_HEALTH_URL' bash -s" <<'DEPLOY'
+            "VPS_APP_DIR='$VPS_APP_DIR' VPS_HEALTH_URL='$VPS_HEALTH_URL' VPS_HEALTH_TOKEN='$VPS_HEALTH_TOKEN' bash -s" <<'DEPLOY'
           set -euo pipefail
 
           cd "$VPS_APP_DIR"
@@ -86,6 +87,10 @@ jobs:
           pm2 save
 
           if [ -n "${VPS_HEALTH_URL:-}" ]; then
-            curl -fsS "$VPS_HEALTH_URL" >/dev/null
+            if [ -n "${VPS_HEALTH_TOKEN:-}" ]; then
+              curl -fsS -H "Authorization: Bearer $VPS_HEALTH_TOKEN" "$VPS_HEALTH_URL" >/dev/null
+            else
+              curl -fsS "$VPS_HEALTH_URL" >/dev/null
+            fi
           fi
           DEPLOY
