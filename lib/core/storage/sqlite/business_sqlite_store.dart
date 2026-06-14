@@ -95,14 +95,14 @@ class BusinessSqliteStore {
 
   static List<String> get adminEntityKeys => List<String>.unmodifiable(_entityListKeys);
 
-  static Future<void> migrateFromHiveIfNeeded(
+  static Future<void> migrateFromLegacyJsonIfNeeded(
     VentioDriftDatabase db, {
-    required Map<String, String> hiveEntries,
+    required Map<String, String> legacyEntries,
   }) async {
     final typedDone = await _metaValue(db, phase3TypedTablesMetaKey) == 'true';
     if (typedDone) return;
 
-    for (final entry in hiveEntries.entries) {
+    for (final entry in legacyEntries.entries) {
       if (!isBusinessKey(entry.key)) continue;
       await saveKeyJson(db, entry.key, entry.value);
     }
@@ -183,7 +183,7 @@ class BusinessSqliteStore {
     if (isTypedEntityKey(key)) {
       // Performance fix: normal app saves must be incremental. The old Phase 3B
       // compatibility path deleted the whole entity table and re-inserted every
-      // row on every product/customer/sale change, which preserved Hive's slow
+      // row on every product/customer/sale change, which preserved legacy JSON storage's slow
       // "rewrite the whole list" behavior inside SQLite. Keep local_key_values
       // out of the hot path as well; hydrateKeyMirror rebuilds the JSON mirror
       // from the typed tables on startup.
@@ -268,22 +268,22 @@ class BusinessSqliteStore {
     await db.customStatement('DELETE FROM local_key_values;');
   }
 
-  static Future<BusinessSqliteValidationResult> validateAgainstHive(
+  static Future<BusinessSqliteValidationResult> validateAgainstLegacyJson(
     VentioDriftDatabase db, {
-    required Map<String, String> hiveEntries,
+    required Map<String, String> legacyEntries,
   }) async {
     final problems = <String>[];
     for (final key in _entityListKeys) {
-      final hiveCount = _jsonListLength(hiveEntries[key]);
+      final legacyCount = _jsonListLength(legacyEntries[key]);
       final sqliteCount = await _entityCount(db, _tableByKey[key]!);
-      if (hiveEntries.containsKey(key) && hiveCount != sqliteCount) {
-        problems.add('$key hive=$hiveCount sqlite=$sqliteCount');
+      if (legacyEntries.containsKey(key) && legacyCount != sqliteCount) {
+        problems.add('$key legacy=$legacyCount sqlite=$sqliteCount');
       }
     }
 
     if (problems.isEmpty) {
       await _setMeta(db, phase3ValidatedMetaKey, 'true');
-      return const BusinessSqliteValidationResult(ok: true, message: 'Business entity counts match Hive source data.');
+      return const BusinessSqliteValidationResult(ok: true, message: 'Business entity counts match legacy JSON storage source data.');
     }
 
     await _setMeta(db, phase3ValidatedMetaKey, 'false');
@@ -365,7 +365,7 @@ class BusinessSqliteStore {
         payloads.add(jsonDecode(text));
       } catch (_) {
         // Skip corrupt rows instead of breaking app startup; validation will
-        // catch count mismatches before Hive can be retired.
+        // catch count mismatches before legacy JSON storage can be retired.
       }
     }
     return jsonEncode(payloads);

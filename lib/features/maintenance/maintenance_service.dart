@@ -5,7 +5,6 @@ import '../../core/services/google_drive_backup_service.dart';
 import '../../core/services/local_auto_backup_service.dart';
 import '../../core/services/maintenance_storage_info.dart';
 import '../../core/storage/sqlite/sqlite_migration_manager.dart';
-import '../../core/storage/sqlite/sync_sqlite_store.dart';
 import '../../data/app_store.dart';
 import 'maintenance_models.dart';
 
@@ -17,7 +16,6 @@ class MaintenanceService {
   Future<MaintenanceSummary> runHealthCheck({bool deep = false}) async {
     final storage = await getMaintenanceStorageInfo();
     final sqliteCounts = await _sqliteTableCounts();
-    final migrationMeta = await _readMigrationMeta(repairIfPossible: false);
     final backupSnapshot = await _backupSnapshot();
     final counts = <String, int>{
       'products': sqliteCounts['products'] ?? store.products.length,
@@ -44,8 +42,7 @@ class MaintenanceService {
     };
 
     final issues = <MaintenanceIssue>[
-      _databaseLocationIssue(storage, migrationMeta),
-      _migrationIssue(migrationMeta, storage),
+      _databaseLocationIssue(storage),
       _localKeysIssue(counts['localDatabaseKeys'] ?? 0),
       ...backupSnapshot.issues,
       if (deep) ...[
@@ -66,12 +63,8 @@ class MaintenanceService {
       databaseSizeBytes: storage.databaseSizeBytes,
       databaseEngine: storage.databaseEngine,
       databaseDetails: <String, dynamic>{
-        'legacyHiveFilePath': storage.legacyHiveFilePath,
-        'legacyHiveExists': storage.legacyHiveExists,
-        'legacyHiveSizeBytes': storage.legacyHiveSizeBytes,
         'discoveredSqliteFiles': storage.discoveredSqliteFiles,
       },
-      migrationMeta: migrationMeta,
       counts: counts,
       issues: issues,
     );
@@ -103,63 +96,21 @@ class MaintenanceService {
     }
   }
 
-  MaintenanceIssue _databaseLocationIssue(
-      MaintenanceStorageInfo storage, Map<String, String> migrationMeta) {
-    final typedTablesMigrated =
-        migrationMeta['sqlite_phase3_typed_tables_migrated'] == 'true';
+  MaintenanceIssue _databaseLocationIssue(MaintenanceStorageInfo storage) {
     return MaintenanceIssue(
       id: 'database_location',
       title: 'SQLite database location',
       severity:
           storage.exists ? MaintenanceSeverity.ok : MaintenanceSeverity.warning,
       message: storage.exists
-          ? 'SQLite database file found in private Ventio storage. Legacy Hive is ${storage.legacyHiveExists ? 'still present for fallback/migration audit.' : 'not present, which is OK after migration.'}'
+          ? 'SQLite database file found in private Ventio storage.'
           : 'SQLite database file is not visible yet. Open the app once, then run maintenance again.',
       details: {
         'engine': storage.databaseEngine,
         'directoryPath': storage.databaseDirectoryPath,
         'filePath': storage.databaseFilePath,
         'sizeBytes': storage.databaseSizeBytes,
-        'legacyHiveFilePath': storage.legacyHiveFilePath,
-        'legacyHiveExists': storage.legacyHiveExists,
-        'legacyHiveSizeBytes': storage.legacyHiveSizeBytes,
         'discoveredSqliteFiles': storage.discoveredSqliteFiles,
-        'hiveMissingIsOk': typedTablesMigrated && !storage.legacyHiveExists,
-      },
-    );
-  }
-
-  MaintenanceIssue _migrationIssue(
-      Map<String, String> migrationMeta, MaintenanceStorageInfo storage) {
-    final syncMigrated = migrationMeta['sqlite_phase2_sync_migrated'] == 'true';
-    final businessMigrated =
-        migrationMeta['sqlite_phase3_business_migrated'] == 'true';
-    final typedTablesMigrated =
-        migrationMeta['sqlite_phase3_typed_tables_migrated'] == 'true';
-    final validationPassed =
-        migrationMeta['sqlite_phase3_validation_passed'] == 'true';
-    final sqliteAuthoritative =
-        LocalDatabaseService.isSqliteAuthoritative && storage.exists;
-    final ok = syncMigrated && businessMigrated && typedTablesMigrated;
-    final isFalseWarningOnly =
-        !ok && sqliteAuthoritative && validationPassed && typedTablesMigrated;
-    return MaintenanceIssue(
-      id: 'sqlite_migration_status',
-      title: 'SQLite migration status',
-      severity: ok || isFalseWarningOnly
-          ? MaintenanceSeverity.ok
-          : MaintenanceSeverity.warning,
-      message: ok || isFalseWarningOnly
-          ? 'SQLite migration is complete: sync data, business data, and typed entity tables are active.'
-          : 'SQLite migration metadata is incomplete. Keep Hive available until migration finishes.',
-      details: {
-        'sqlite_phase2_sync_migrated': syncMigrated,
-        'sqlite_phase3_business_migrated': businessMigrated,
-        'sqlite_phase3_typed_tables_migrated': typedTablesMigrated,
-        'sqlite_phase3_validation_passed': validationPassed,
-        'sqliteAuthoritative': sqliteAuthoritative,
-        'falseWarningRepaired': isFalseWarningOnly,
-        'migrationMeta': migrationMeta,
       },
     );
   }
@@ -540,39 +491,6 @@ class MaintenanceService {
             'SELECT COUNT(*) AS row_count FROM $tableName$whereActive')
         .getSingleOrNull();
     return row?.read<int>('row_count') ?? 0;
-  }
-
-  Future<Map<String, String>> _readMigrationMeta(
-      {bool repairIfPossible = false}) async {
-    final db = SqliteMigrationManager.database;
-    if (db == null) return const <String, String>{};
-    var rows =
-        await db.customSelect('SELECT key, value FROM migration_meta').get();
-    var meta = <String, String>{
-      for (final row in rows)
-        row.read<String>('key'): row.read<String>('value'),
-    };
-
-    // Some builds correctly moved to authoritative SQLite but did not write the
-    // phase-2 sync metadata on the fresh/validated SQLite startup path. Repair
-    // that missing flag only after phase-3 typed tables are validated, so a real
-    // failed Hive → SQLite migration still stays visible as a warning.
-    if (repairIfPossible &&
-        LocalDatabaseService.isSqliteAuthoritative &&
-        meta['sqlite_phase3_validation_passed'] == 'true' &&
-        meta['sqlite_phase3_business_migrated'] == 'true' &&
-        meta['sqlite_phase3_typed_tables_migrated'] == 'true' &&
-        meta['sqlite_phase2_sync_migrated'] != 'true') {
-      await SyncSqliteStore.markSyncMigrationCompleted(db);
-      rows =
-          await db.customSelect('SELECT key, value FROM migration_meta').get();
-      meta = <String, String>{
-        for (final row in rows)
-          row.read<String>('key'): row.read<String>('value'),
-      };
-    }
-
-    return meta;
   }
 
   int _countDuplicates(Iterable<String> values) {

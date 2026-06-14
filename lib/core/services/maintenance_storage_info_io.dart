@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import '../storage/sqlite/sqlite_database_connection_io.dart';
-import 'local_database_path.dart';
 import 'maintenance_storage_info.dart';
 
 Future<MaintenanceStorageInfo> getMaintenanceStorageInfoImpl() async {
@@ -20,11 +19,6 @@ Future<MaintenanceStorageInfo> getMaintenanceStorageInfoImpl() async {
   final exists = await sqliteFile.exists();
   final size = exists ? await sqliteFile.length() : 0;
 
-  final hiveDirectoryPath = await getVentioHiveDirectoryPath();
-  final legacyHiveFilePath = p.join(hiveDirectoryPath, 'ventio.hive');
-  final legacyHiveFile = File(legacyHiveFilePath);
-  final legacyHiveExists = await legacyHiveFile.exists();
-  final legacyHiveSize = legacyHiveExists ? await legacyHiveFile.length() : 0;
 
   return MaintenanceStorageInfo(
     databaseDirectoryPath: directoryPath,
@@ -33,9 +27,6 @@ Future<MaintenanceStorageInfo> getMaintenanceStorageInfoImpl() async {
     exists: exists,
     platformLabel: Platform.operatingSystem,
     databaseEngine: 'sqlite',
-    legacyHiveFilePath: legacyHiveFilePath,
-    legacyHiveExists: legacyHiveExists,
-    legacyHiveSizeBytes: legacyHiveSize,
     discoveredSqliteFiles: sqliteFiles,
   );
 }

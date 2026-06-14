@@ -657,7 +657,7 @@ class _StressLabPageState extends State<StressLabPage> {
     final syncHealth = pendingQueue == 0 && pendingChanges == 0 && failedQueue == 0 && rejectedQueue == 0 ? 'PASS' : 'FAIL';
 
     // DB_BLOAT used to treat every retained SyncChange above 250 as database
-    // bloat. That rule was valid for the old Hive/JSON storage path, where the
+    // bloat. That rule was valid for the old legacy JSON storage/JSON storage path, where the
     // full sync history was serialized back into one large value. After the
     // SQLite migration, synced authoritative history is stored row-by-row and
     // does not indicate JSON/DB bloat by itself.

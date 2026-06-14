@@ -41,7 +41,6 @@ class MaintenanceSummary {
     required this.issues,
     this.databaseEngine = 'sqlite',
     this.databaseDetails = const <String, dynamic>{},
-    this.migrationMeta = const <String, String>{},
   });
 
   final DateTime generatedAt;
@@ -54,7 +53,6 @@ class MaintenanceSummary {
   final List<MaintenanceIssue> issues;
   final String databaseEngine;
   final Map<String, dynamic> databaseDetails;
-  final Map<String, String> migrationMeta;
 
   int get criticalCount => issues.where((item) => item.severity == MaintenanceSeverity.critical).length;
   int get warningCount => issues.where((item) => item.severity == MaintenanceSeverity.warning).length;
@@ -114,7 +112,6 @@ class MaintenanceSummary {
           'sizeBytes': databaseSizeBytes,
           ...databaseDetails,
         },
-        'migrationMeta': migrationMeta,
         'counts': counts,
         'issues': issues.map((item) => item.toJson()).toList(),
       };

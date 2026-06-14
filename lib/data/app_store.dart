@@ -3888,7 +3888,7 @@ class AppStore extends ChangeNotifier {
     // Use the normal key writer instead of only the SQLite dirty lists because
     // many sync paths mutate existing rows (mark synced/rejected/clear queue).
     // The SQLite backend already merges these rows instead of full deleting,
-    // while Hive/legacy storage still receives the compact sync-only JSON.
+    // while legacy JSON storage/legacy storage still receives the compact sync-only JSON.
     await Future.wait([
       LocalDatabaseService.setString(
         _syncChangesKey,
@@ -10028,7 +10028,7 @@ class AppStore extends ChangeNotifier {
     // restore_snapshot SyncChange rows. They are now published directly to the
     // Cloud materialized snapshot endpoint in compressed chunks by
     // CloudSyncService._publishBootstrapSnapshotToCloud(). Keep this method as
-    // a compatibility no-op so older call-sites no longer bloat the local Hive DB.
+    // a compatibility no-op so older call-sites no longer bloat the local legacy JSON storage DB.
     final identity = appIdentity;
     if (!identity.isHost || !identity.isCloudEnabled) return;
     final markerKey = 'cloud_host_bootstrap_snapshot_v3_${identity.storeId}';

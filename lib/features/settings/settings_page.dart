@@ -363,7 +363,7 @@ class SettingsPage extends StatelessWidget {
                       padding: const EdgeInsets.only(bottom: 12),
                       child: Chip(
                           avatar: const Icon(Icons.storage_outlined, size: 18),
-                          label: Text(tr.text('local_db_hive'))))),
+                          label: Text(tr.text('local_db_sqlite'))))),
               _BackupSummaryCard(summary: store.currentBackupSummary),
               if (!isClient) ...[
                 const SizedBox(height: 16),

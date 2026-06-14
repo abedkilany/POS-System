@@ -1,29 +1,21 @@
 import 'dart:convert';
-import 'dart:math';
 import 'package:flutter/foundation.dart';
-import 'package:hive_ce_flutter/hive_flutter.dart';
-import 'local_database_path.dart';
 import '../storage/sqlite/business_sqlite_store.dart';
 import '../storage/sqlite/sqlite_migration_manager.dart';
 import '../storage/sqlite/sync_sqlite_store.dart';
 import '../../models/sync_change.dart';
 import '../../models/sync_queue_item.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class LocalDatabaseService {
   LocalDatabaseService._();
 
-  static const String boxName = 'ventio';
-  static const String _encryptionKeyPrefsKey = 'ventio_local_db_key_v1';
-  static const String _legacyEncryptionKeyPrefsKey = 'store_manager_local_db_key_v1';
   static const FlutterSecureStorage _secureStorage = FlutterSecureStorage();
   static const String _cloudApiTokenKey = 'cloud_api_token';
   static const String _appIdentityKey = 'app_identity_v1';
-  static const String _secureDeviceTokenKey = 'app_identity_device_token_v1';
+  static const String _legacySecureDeviceTokenKey = 'app_identity_device_token_v1';
   static const String _secureRecoveryKeyKey = 'app_identity_recovery_key_v1';
   static final Map<String, String> _secureStringMirror = <String, String>{};
-  static Box<String>? _box;
   static Map<String, String>? _memoryStoreForTesting;
   static final Map<String, String> _sqliteMirror = <String, String>{};
   static bool _sqliteReady = false;
@@ -33,7 +25,6 @@ class LocalDatabaseService {
   @visibleForTesting
   static void useInMemoryStoreForTesting([Map<String, String>? seed]) {
     _memoryStoreForTesting = Map<String, String>.from(seed ?? const <String, String>{});
-    _box = null;
   }
 
   @visibleForTesting
@@ -43,118 +34,45 @@ class LocalDatabaseService {
 
   static Future<void> initialize() async {
     if (_memoryStoreForTesting != null) return;
-    if (_box != null && _box!.isOpen) return;
+    if (_sqliteReady && SqliteMigrationManager.database != null) return;
 
-    // If phase 3B has already been validated on this device, start directly
-    // from SQLite and do not open Hive. This is the practical retirement path:
-    // Hive is only opened once on older installs that still need migration.
-    if (!kIsWeb) {
-      final existingSqliteStatus = await SqliteMigrationManager.initializeFromExistingSqliteIfValidated();
-      var existingDb = SqliteMigrationManager.database;
-      if (existingSqliteStatus.sqliteFoundationReady && existingDb != null) {
-        _sqliteMirror
-          ..clear()
-          ..addAll(await BusinessSqliteStore.hydrateScalarKeyMirror(existingDb))
-          ..addAll(await SyncSqliteStore.hydrateScalarKeyMirror(existingDb));
-        _sqliteReady = true;
-        await _hydrateAndMigrateSecureScalars();
-        await retireLegacyVentioHiveFilesIfPresent();
-        return;
-      }
-
-      // Fresh installs do not have a legacy Hive box to migrate. Do not call
-      // Hive.openBox in that case, because merely opening the box creates
-      // AppData\Roaming\ventio\ventio.hive even though SQLite is the
-      // authoritative storage engine.
-      final legacyHiveExists = await hasLegacyVentioHiveDatabase();
-      if (!legacyHiveExists) {
-        final freshSqliteStatus = await SqliteMigrationManager.initializeFreshSqlite();
-        existingDb = SqliteMigrationManager.database;
-        if (freshSqliteStatus.sqliteFoundationReady && existingDb != null) {
-          _sqliteMirror
-            ..clear()
-            ..addAll(await BusinessSqliteStore.hydrateScalarKeyMirror(existingDb))
-            ..addAll(await SyncSqliteStore.hydrateScalarKeyMirror(existingDb));
-          _sqliteReady = true;
-          await _hydrateAndMigrateSecureScalars();
-          return;
-        }
-      }
-    }
-
-    // Keep web on Hive's browser-safe storage, but force desktop/mobile to use
-    // the application support directory instead of user-visible folders such as
-    // Documents. On Windows this resolves under AppData\Roaming.
     if (kIsWeb) {
-      await Hive.initFlutter();
-    } else {
-      final hiveDirectoryPath = await getVentioHiveDirectoryPath();
-      Hive.init(hiveDirectoryPath);
+      throw UnsupportedError('Ventio local SQLite storage is not supported on web builds.');
     }
 
-    final key = await _loadOrCreateEncryptionKey();
-    _box = await Hive.openBox<String>(boxName, encryptionCipher: HiveAesCipher(key));
-
-    // Phase 1 SQLite/Drift foundation: initialize the parallel SQLite store
-    // and write a Hive safety backup. This is deliberately non-authoritative
-    // so existing devices keep using Hive until the later migration phases.
-    final sqliteStatus = await SqliteMigrationManager.initializePhase3();
-    final db = SqliteMigrationManager.database;
-    if (sqliteStatus.sqliteFoundationReady && db != null) {
-      _sqliteMirror
-        ..clear()
-        ..addAll(await BusinessSqliteStore.hydrateScalarKeyMirror(db))
-        ..addAll(await SyncSqliteStore.hydrateScalarKeyMirror(db));
-      _sqliteReady = true;
-      await _hydrateAndMigrateSecureScalars();
-      if (!kIsWeb) await retireLegacyVentioHiveFilesIfPresent();
+    final existingSqliteStatus = await SqliteMigrationManager.initializeFromExistingSqliteIfValidated();
+    var db = SqliteMigrationManager.database;
+    if (!existingSqliteStatus.sqliteFoundationReady || db == null) {
+      await SqliteMigrationManager.initializeFreshSqlite();
+      db = SqliteMigrationManager.database;
     }
-    if (!_sqliteReady) {
-      await _hydrateAndMigrateSecureScalars();
-    }
-  }
-
-  static Future<Uint8List> _loadOrCreateEncryptionKey() async {
-    final secureExisting = await _secureStorage.read(key: _encryptionKeyPrefsKey);
-    if (secureExisting != null && secureExisting.isNotEmpty) {
-      return Uint8List.fromList(base64Url.decode(secureExisting));
+    if (db == null) {
+      throw StateError('SQLite database failed to initialize.');
     }
 
-    // One-time migration from the older SharedPreferences key storage.
-    final prefs = await SharedPreferences.getInstance();
-    final legacyExisting = prefs.getString(_legacyEncryptionKeyPrefsKey) ?? prefs.getString(_encryptionKeyPrefsKey);
-    if (legacyExisting != null && legacyExisting.isNotEmpty) {
-      await _secureStorage.write(key: _encryptionKeyPrefsKey, value: legacyExisting);
-      await prefs.remove(_legacyEncryptionKeyPrefsKey);
-      await prefs.remove(_encryptionKeyPrefsKey);
-      return Uint8List.fromList(base64Url.decode(legacyExisting));
-    }
-
-    final random = Random.secure();
-    final key = Uint8List.fromList(List<int>.generate(32, (_) => random.nextInt(256)));
-    await _secureStorage.write(key: _encryptionKeyPrefsKey, value: base64UrlEncode(key));
-    return key;
+    _sqliteMirror
+      ..clear()
+      ..addAll(await BusinessSqliteStore.hydrateScalarKeyMirror(db))
+      ..addAll(await SyncSqliteStore.hydrateScalarKeyMirror(db));
+    _sqliteReady = true;
+    await _hydrateAndMigrateSecureScalars();
   }
 
   static Map<String, String>? get _memoryStore => _memoryStoreForTesting;
 
-  static Box<String> get _requireBox {
-    final box = _box;
-    if (box == null || !box.isOpen) {
-      throw StateError('Local database has not been initialized.');
-    }
-    return box;
-  }
 
   static Future<void> _hydrateAndMigrateSecureScalars() async {
     final secureCloudToken = await _secureStorage.read(key: _cloudApiTokenKey);
     if (secureCloudToken != null) {
       _secureStringMirror[_cloudApiTokenKey] = secureCloudToken;
     }
-    final secureDeviceToken = await _secureStorage.read(key: _secureDeviceTokenKey);
-    if (secureDeviceToken != null) {
-      _secureStringMirror[_secureDeviceTokenKey] = secureDeviceToken;
-    }
+    // Phase 1 security split:
+    // - cloud_api_token and recoveryKey stay in FlutterSecureStorage.
+    // - deviceToken is application identity data and is stored back inside
+    //   app_identity_v1 in the local database. Keep this legacy secure key only
+    //   long enough to migrate devices that used the previous secure-token build.
+    final legacySecureDeviceToken =
+        (await _secureStorage.read(key: _legacySecureDeviceTokenKey))?.trim() ?? '';
     final secureRecoveryKey = await _secureStorage.read(key: _secureRecoveryKeyKey);
     if (secureRecoveryKey != null) {
       _secureStringMirror[_secureRecoveryKeyKey] = secureRecoveryKey;
@@ -170,19 +88,27 @@ class LocalDatabaseService {
     final rawIdentity = _rawScalarValue(_appIdentityKey);
     if (rawIdentity != null && rawIdentity.trim().isNotEmpty) {
       final decoded = _tryDecodeJsonMap(rawIdentity);
-      final legacyDeviceToken = (decoded?['deviceToken'] ?? decoded?['device_token'] ?? '').toString().trim();
-      if (legacyDeviceToken.isNotEmpty && (_secureStringMirror[_secureDeviceTokenKey] ?? '').isEmpty) {
-        await _secureStorage.write(key: _secureDeviceTokenKey, value: legacyDeviceToken);
-        _secureStringMirror[_secureDeviceTokenKey] = legacyDeviceToken;
+      if (decoded != null) {
+        final legacyDeviceToken =
+            (decoded['deviceToken'] ?? decoded['device_token'] ?? '').toString().trim();
+        if (legacyDeviceToken.isEmpty && legacySecureDeviceToken.isNotEmpty) {
+          decoded['deviceToken'] = legacySecureDeviceToken;
+        }
+        final legacyRecoveryKey =
+            (decoded['recoveryKey'] ?? decoded['recovery_key'] ?? '').toString().trim();
+        if (legacyRecoveryKey.isNotEmpty &&
+            (_secureStringMirror[_secureRecoveryKeyKey] ?? '').isEmpty) {
+          final cleanRecoveryKey = legacyRecoveryKey.toUpperCase();
+          await _secureStorage.write(key: _secureRecoveryKeyKey, value: cleanRecoveryKey);
+          _secureStringMirror[_secureRecoveryKeyKey] = cleanRecoveryKey;
+        }
+        final sanitized = _sanitizeAppIdentityJson(jsonEncode(decoded));
+        if (sanitized != rawIdentity) await _writeRawScalarValue(_appIdentityKey, sanitized);
       }
-      final legacyRecoveryKey = (decoded?['recoveryKey'] ?? decoded?['recovery_key'] ?? '').toString().trim();
-      if (legacyRecoveryKey.isNotEmpty && (_secureStringMirror[_secureRecoveryKeyKey] ?? '').isEmpty) {
-        final cleanRecoveryKey = legacyRecoveryKey.toUpperCase();
-        await _secureStorage.write(key: _secureRecoveryKeyKey, value: cleanRecoveryKey);
-        _secureStringMirror[_secureRecoveryKeyKey] = cleanRecoveryKey;
-      }
-      final sanitized = _sanitizeAppIdentityJson(rawIdentity);
-      if (sanitized != rawIdentity) await _writeRawScalarValue(_appIdentityKey, sanitized);
+    }
+    if (legacySecureDeviceToken.isNotEmpty) {
+      await _secureStorage.delete(key: _legacySecureDeviceTokenKey);
+      _secureStringMirror.remove(_legacySecureDeviceTokenKey);
     }
   }
 
@@ -197,20 +123,16 @@ class LocalDatabaseService {
   static String _sanitizeAppIdentityJson(String value) {
     final decoded = _tryDecodeJsonMap(value);
     if (decoded == null) return value;
-    decoded.remove('deviceToken');
-    decoded.remove('device_token');
     decoded.remove('recoveryKey');
     decoded.remove('recovery_key');
     return jsonEncode(decoded);
   }
 
   static String _mergeSecureIdentitySecretsIntoIdentityJson(String value) {
-    final token = (_secureStringMirror[_secureDeviceTokenKey] ?? '').trim();
     final recoveryKey = (_secureStringMirror[_secureRecoveryKeyKey] ?? '').trim();
-    if (token.isEmpty && recoveryKey.isEmpty) return value;
+    if (recoveryKey.isEmpty) return value;
     final decoded = _tryDecodeJsonMap(value);
     if (decoded == null) return value;
-    if (token.isNotEmpty) decoded['deviceToken'] = token;
     if (recoveryKey.isNotEmpty) decoded['recoveryKey'] = recoveryKey;
     return jsonEncode(decoded);
   }
@@ -218,10 +140,7 @@ class LocalDatabaseService {
   static String? _rawScalarValue(String key) {
     final memory = _memoryStore;
     if (memory != null) return memory[key];
-    if (_sqliteReady) return _sqliteMirror[key];
-    final box = _box;
-    if (box == null || !box.isOpen) return null;
-    return box.get(key);
+    return _sqliteMirror[key];
   }
 
   static Future<void> _writeRawScalarValue(String key, String value) async {
@@ -242,7 +161,7 @@ class LocalDatabaseService {
         return;
       }
     }
-    await _requireBox.put(key, value);
+    throw StateError('SQLite database has not been initialized.');
   }
 
   static Future<void> _deleteRawScalarValue(String key) async {
@@ -263,8 +182,7 @@ class LocalDatabaseService {
         return;
       }
     }
-    final box = _box;
-    if (box != null && box.isOpen) await box.delete(key);
+
   }
 
   static String? getString(String key) {
@@ -277,16 +195,6 @@ class LocalDatabaseService {
     }
     return value;
   }
-
-  static String? getRawHiveString(String key) {
-    final memory = _memoryStore;
-    if (memory != null) return memory[key];
-    final box = _box;
-    if (box == null || !box.isOpen) return null;
-    return box.get(key);
-  }
-
-
 
   static Future<String?> getBusinessEntityListJson(String key) async {
     final memory = _memoryStore;
@@ -305,7 +213,7 @@ class LocalDatabaseService {
       if (value != null) _sqliteMirror[key] = value;
       return value;
     }
-    return _requireBox.get(key);
+    return null;
   }
 
   static Future<void> upsertBusinessEntityJson(String key, Map<String, dynamic> payloadJson, {int? sortIndex}) async {
@@ -347,11 +255,6 @@ class LocalDatabaseService {
     }
     if (key == _appIdentityKey) {
       final decoded = _tryDecodeJsonMap(value);
-      final token = (decoded?['deviceToken'] ?? decoded?['device_token'] ?? '').toString().trim();
-      if (token.isNotEmpty) {
-        await _secureStorage.write(key: _secureDeviceTokenKey, value: token);
-        _secureStringMirror[_secureDeviceTokenKey] = token;
-      }
       final recoveryKey = (decoded?['recoveryKey'] ?? decoded?['recovery_key'] ?? '').toString().trim();
       if (recoveryKey.isNotEmpty) {
         final cleanRecoveryKey = recoveryKey.toUpperCase();
@@ -370,7 +273,7 @@ class LocalDatabaseService {
     if (_sqliteReady) {
       return _sqliteMirror.containsKey(key);
     }
-    return _requireBox.containsKey(key);
+    return false;
   }
 
   static Future<void> deleteString(String key) async {
@@ -381,9 +284,9 @@ class LocalDatabaseService {
       return;
     }
     if (key == _appIdentityKey) {
-      await _secureStorage.delete(key: _secureDeviceTokenKey);
+      await _secureStorage.delete(key: _legacySecureDeviceTokenKey);
       await _secureStorage.delete(key: _secureRecoveryKeyKey);
-      _secureStringMirror.remove(_secureDeviceTokenKey);
+      _secureStringMirror.remove(_legacySecureDeviceTokenKey);
       _secureStringMirror.remove(_secureRecoveryKeyKey);
     }
     final memory = _memoryStore;
@@ -403,15 +306,15 @@ class LocalDatabaseService {
         return;
       }
     }
-    await _requireBox.delete(key);
+    return;
   }
 
   static Future<void> clearAll() async {
     await _secureStorage.delete(key: _cloudApiTokenKey);
-    await _secureStorage.delete(key: _secureDeviceTokenKey);
+    await _secureStorage.delete(key: _legacySecureDeviceTokenKey);
     await _secureStorage.delete(key: _secureRecoveryKeyKey);
     _secureStringMirror.remove(_cloudApiTokenKey);
-    _secureStringMirror.remove(_secureDeviceTokenKey);
+    _secureStringMirror.remove(_legacySecureDeviceTokenKey);
     _secureStringMirror.remove(_secureRecoveryKeyKey);
     final memory = _memoryStore;
     if (memory != null) {
@@ -431,11 +334,9 @@ class LocalDatabaseService {
           SyncSqliteStore.syncQueueKey: '[]',
           SyncSqliteStore.syncSequenceKey: '0',
         });
-      // Do not clear/write Hive during normal app operation after SQLite is authoritative.
-      // Hive is kept only as a migration backup source for upgraded devices.
       return;
     }
-    await _requireBox.clear();
+    return;
   }
 
 
@@ -443,17 +344,14 @@ class LocalDatabaseService {
     final memory = _memoryStore;
     if (memory != null) return memory.keys.toList()..sort();
     if (_sqliteReady) return _sqliteMirror.keys.toList()..sort();
-    final keys = <String>{..._requireBox.keys.map((key) => key.toString())};
-    return keys.toList()..sort();
+    return const <String>[];
   }
 
   static Map<String, String> allEntries() {
     final memory = _memoryStore;
     if (memory != null) return Map<String, String>.from(memory);
     if (_sqliteReady) return Map<String, String>.from(_sqliteMirror);
-    return <String, String>{
-      for (final key in _requireBox.keys) key.toString(): _requireBox.get(key)?.toString() ?? '',
-    };
+    return const <String, String>{};
   }
 
   /// Full diagnostic/admin snapshot for the Database page.
@@ -479,25 +377,12 @@ class LocalDatabaseService {
       }
       return entries;
     }
-    return <String, String>{
-      for (final key in _requireBox.keys) key.toString(): _requireBox.get(key)?.toString() ?? '',
-    };
+    return const <String, String>{};
   }
-  static Map<String, String> allRawHiveEntries() {
-    final memory = _memoryStore;
-    if (memory != null) return Map<String, String>.from(memory);
-    final box = _box;
-    if (box == null || !box.isOpen) return const <String, String>{};
-    return <String, String>{
-      for (final key in box.keys) key.toString(): box.get(key)?.toString() ?? '',
-    };
-  }
-
-
   static bool get isEmpty {
     final memory = _memoryStore;
     if (memory != null) return memory.isEmpty;
     if (_sqliteReady) return _sqliteMirror.isEmpty;
-    return _requireBox.isEmpty;
+    return true;
   }
 }

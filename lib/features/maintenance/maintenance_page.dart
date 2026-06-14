@@ -22,6 +22,7 @@ class _MaintenancePageState extends State<MaintenancePage> {
   MaintenanceSummary? _summary;
   bool _loading = true;
   bool _lastRunWasDeep = false;
+  bool _showDatabaseExplorer = false;
   bool get _showAdvancedTools => false;
 
   @override
@@ -131,6 +132,52 @@ class _MaintenancePageState extends State<MaintenancePage> {
             .whereType<MaintenanceRepairAction>()
             .toSet() ??
         const <MaintenanceRepairAction>{};
+
+    if (_showDatabaseExplorer) {
+      return Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Row(
+              children: [
+                IconButton(
+                  onPressed: () => setState(() => _showDatabaseExplorer = false),
+                  icon: const Icon(Icons.arrow_back),
+                  tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+                ),
+                const SizedBox(width: 8),
+                const Icon(Icons.storage_outlined),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        tr.text('database_explorer'),
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleLarge
+                            ?.copyWith(fontWeight: FontWeight.w800),
+                      ),
+                      Text(
+                        tr.text('maintenance_center'),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant,
+                            ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Expanded(child: DatabasePage(store: widget.store)),
+        ],
+      );
+    }
 
     return RefreshIndicator(
       onRefresh: () => _refresh(deep: false),
@@ -293,6 +340,11 @@ class _MaintenancePageState extends State<MaintenancePage> {
               icon: const Icon(Icons.description_outlined),
               label: Text(tr.text('export_technical_report')),
             ),
+            OutlinedButton.icon(
+              onPressed: () => setState(() => _showDatabaseExplorer = true),
+              icon: const Icon(Icons.storage_outlined),
+              label: Text(tr.text('database_explorer')),
+            ),
             if (availableRepairActions
                 .contains(MaintenanceRepairAction.repairMissingCloudQueue))
               OutlinedButton.icon(
@@ -322,15 +374,6 @@ class _MaintenancePageState extends State<MaintenancePage> {
               spacing: 12,
               runSpacing: 12,
               children: [
-                FilledButton.icon(
-                  onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => DatabasePage(store: widget.store),
-                    ),
-                  ),
-                  icon: const Icon(Icons.storage_outlined),
-                  label: Text(tr.text('database_explorer')),
-                ),
                 FilledButton.icon(
                   onPressed: () => Navigator.of(context).push(
                     MaterialPageRoute(
@@ -952,13 +995,7 @@ String _localizedMaintenanceIssueMessage(
       if (!issue.message.startsWith('SQLite database file found')) {
         return tr.text('maintenance_issue_database_location_missing');
       }
-      return issue.details['legacyHiveExists'] == true
-          ? tr.text('maintenance_issue_database_location_found_hive')
-          : tr.text('maintenance_issue_database_location_found_no_hive');
-    case 'sqlite_migration_status':
-      return issue.message.startsWith('SQLite migration is complete')
-          ? tr.text('maintenance_issue_sqlite_migration_ok')
-          : tr.text('maintenance_issue_sqlite_migration_warning');
+      return tr.text('maintenance_issue_database_location_found_sqlite');
     case 'local_database_keys':
       return tr.format('maintenance_issue_local_database_keys_message',
           {'count': _leadingCount(issue.message) ?? 0});

@@ -8,9 +8,9 @@ import 'ventio_drift_database.dart';
 
 /// SQLite-backed storage for Ventio sync data.
 ///
-/// Phase 2 moves sync state out of Hive's large JSON blob rewrite path while
+/// Phase 2 moves sync state out of legacy JSON storage's large JSON blob rewrite path while
 /// keeping the public LocalDatabaseService get/set API unchanged for the rest
-/// of the app. Business data continues to live in Hive until Phase 3.
+/// of the app. Business data continues to live in legacy JSON storage until Phase 3.
 class SyncSqliteStore {
   SyncSqliteStore._();
 
@@ -153,7 +153,7 @@ class SyncSqliteStore {
     );
   }
 
-  static Future<void> migrateFromHiveIfNeeded(
+  static Future<void> migrateFromLegacyJsonIfNeeded(
     VentioDriftDatabase db, {
     required String? syncChangesJson,
     required String? syncQueueJson,
@@ -191,7 +191,7 @@ class SyncSqliteStore {
   static Future<void> replaceSyncChanges(VentioDriftDatabase db, List<SyncChange> changes) async {
     // Performance fix: merge changes instead of deleting/reinserting the whole
     // sync history. With thousands of pending changes, the old path made every
-    // normal save rewrite thousands of rows and kept the old Hive slowdown alive.
+    // normal save rewrite thousands of rows and kept the old legacy JSON storage slowdown alive.
     final existingEventRows = await db.customSelect('''
       SELECT id, payload_json, is_synced, synced_at, sequence
       FROM sync_events

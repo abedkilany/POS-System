@@ -4,10 +4,10 @@ import 'sqlite_database_connection.dart';
 
 /// Drift-backed SQLite foundation for Ventio.
 ///
-/// Phase 3 keeps SQLite as the authoritative local store. Hive is retained only
+/// Phase 3 keeps SQLite as the authoritative local store. legacy JSON storage is retained only
 /// as a one-time safety backup source for devices upgrading from older builds.
 /// The tables below track migration progress, sync state, and the app key/value
-/// data that previously lived in Hive.
+/// data that previously lived in legacy JSON storage.
 class VentioDriftDatabase extends GeneratedDatabase {
   VentioDriftDatabase([QueryExecutor? executor]) : super(executor ?? openVentioSqliteConnection());
 
@@ -40,7 +40,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
         status TEXT NOT NULL,
         started_at TEXT NOT NULL,
         finished_at TEXT,
-        hive_backup_json TEXT,
+        legacy_backup_json TEXT,
         message TEXT NOT NULL DEFAULT ''
       );
     ''');
