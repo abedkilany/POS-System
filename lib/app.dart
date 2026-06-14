@@ -16,6 +16,7 @@ import 'core/services/google_drive_backup_service.dart';
 import 'core/services/lan_sync_service.dart';
 import 'core/services/local_auto_backup_service.dart';
 import 'core/services/app_update_service.dart';
+import 'core/services/account_auth_service.dart';
 import 'data/app_store.dart';
 import 'models/user_role.dart';
 import 'features/accounting/accounting_page.dart';
@@ -34,6 +35,7 @@ import 'features/sales/delivery_notes_page.dart';
 import 'features/security/login_gate_page.dart';
 import 'features/settings/settings_page.dart';
 import 'features/dev_tools/stress_lab_page.dart';
+import 'features/admin/admin_subscribers_page.dart';
 import 'features/suppliers/suppliers_page.dart';
 
 class _AutoSnapshotProgressState {
@@ -677,7 +679,17 @@ class _MainShellState extends State<MainShell> {
             storeName == tr.text('my_store')
         ? 'Ventio'
         : storeName;
+    final authCache = AccountAuthCache.load();
+    final isPlatformAdmin =
+        (authCache?.accountType == 'platform_admin') ||
+            (authCache?.storeSlug == 'ventio');
     final items = [
+      if (isPlatformAdmin)
+        const _ShellItem(
+            label: 'Subscribers',
+            icon: Icons.admin_panel_settings_outlined,
+            selectedIcon: Icons.admin_panel_settings,
+            page: AdminSubscribersPage()),
       _ShellItem(
           label: tr.text('dashboard'),
           icon: Icons.dashboard_outlined,

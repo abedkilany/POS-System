@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { sql, sendError } from '../_db.js';
 
-function normalizeUsername(value) {
+function normalizePart(value) {
   return String(value || '').trim().toLowerCase();
 }
 
@@ -15,13 +15,19 @@ function hashPassword(password) {
   return `pbkdf2_sha256$120000$${salt}$${hash}`;
 }
 
+function isValidSlug(value) {
+  return /^[a-z0-9][a-z0-9_-]{2,31}$/.test(value);
+}
+
 async function ensureTables() {
   await sql`
     create table if not exists app_accounts (
       id text primary key,
-      username text not null unique,
+      username text not null,
+      namespace_slug text not null default '',
       password_hash text not null,
       full_name text not null default '',
+      account_type text not null default 'store_owner',
       status text not null default 'active',
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
@@ -31,6 +37,7 @@ async function ensureTables() {
     create table if not exists app_stores (
       id text primary key,
       owner_account_id text not null references app_accounts(id) on delete cascade,
+      slug text,
       name text not null default 'My Store',
       status text not null default 'active',
       created_at timestamptz not null default now(),
@@ -49,6 +56,30 @@ async function ensureTables() {
       updated_at timestamptz not null default now()
     )
   `;
+
+  await sql`alter table app_accounts add column if not exists namespace_slug text not null default ''`;
+  await sql`alter table app_accounts add column if not exists account_type text not null default 'store_owner'`;
+  await sql`alter table app_stores add column if not exists slug text`;
+
+  await sql`
+    update app_stores
+    set slug = lower(regexp_replace(coalesce(nullif(name, ''), id), '[^a-zA-Z0-9_-]+', '', 'g'))
+    where slug is null or trim(slug) = ''
+  `;
+  await sql`update app_stores set slug = id where slug is null or trim(slug) = ''`;
+  await sql`
+    update app_accounts a
+    set namespace_slug = s.slug
+    from app_stores s
+    where s.owner_account_id = a.id
+      and (a.namespace_slug is null or trim(a.namespace_slug) = '')
+  `;
+
+  await sql`alter table app_stores alter column slug set not null`;
+  await sql`alter table app_accounts alter column namespace_slug set not null`;
+  await sql`alter table app_accounts drop constraint if exists app_accounts_username_key`;
+  await sql`create unique index if not exists app_stores_slug_key on app_stores (slug)`;
+  await sql`create unique index if not exists app_accounts_username_namespace_key on app_accounts (username, namespace_slug)`;
 }
 
 export default async function handler(req, res) {
@@ -57,17 +88,24 @@ export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Method not allowed' });
 
     const body = req.body || {};
-    const username = normalizeUsername(body.username);
+    const username = normalizePart(body.username);
     const password = String(body.password || '');
     const fullName = String(body.fullName || body.full_name || 'Administrator').trim() || 'Administrator';
-    const storeName = String(body.storeName || body.store_name || 'My Store').trim() || 'My Store';
+    const storeNameInput = String(body.storeName || body.store_name || '').trim();
+    const storeSlug = normalizePart(storeNameInput);
     const trialDays = Math.min(Math.max(Number(body.trialDays || body.trial_days || 14), 1), 365);
 
-    if (username.length < 3) return res.status(400).json({ ok: false, error: 'Username must be at least 3 characters.' });
+    if (username.includes('@')) return res.status(400).json({ ok: false, error: 'Use username only during registration. Online login will be username@store.' });
+    if (!isValidSlug(username)) return res.status(400).json({ ok: false, error: 'Username must be 3-32 characters: letters, numbers, underscore, or hyphen. No spaces.' });
+    if (!isValidSlug(storeSlug)) return res.status(400).json({ ok: false, error: 'Store name must be 3-32 characters: letters, numbers, underscore, or hyphen. No spaces.' });
+    if (storeSlug === 'ventio') return res.status(400).json({ ok: false, error: 'This store name is reserved.' });
     if (password.trim().length < 6) return res.status(400).json({ ok: false, error: 'Password must be at least 6 characters.' });
 
-    const existing = await sql`select id from app_accounts where username = ${username} limit 1`;
-    if (existing.length) return res.status(409).json({ ok: false, error: 'Username already exists.' });
+    const existingStore = await sql`select id from app_stores where slug = ${storeSlug} limit 1`;
+    if (existingStore.length) return res.status(409).json({ ok: false, error: 'Store name already exists.' });
+
+    const existingAccount = await sql`select id from app_accounts where username = ${username} and namespace_slug = ${storeSlug} limit 1`;
+    if (existingAccount.length) return res.status(409).json({ ok: false, error: 'Username already exists for this store.' });
 
     const accountId = randomId('acct');
     const storeId = randomId('store');
@@ -76,12 +114,12 @@ export default async function handler(req, res) {
     const trialEndsAt = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000).toISOString();
 
     await sql`
-      insert into app_accounts (id, username, password_hash, full_name)
-      values (${accountId}, ${username}, ${passwordHash}, ${fullName})
+      insert into app_accounts (id, username, namespace_slug, password_hash, full_name, account_type)
+      values (${accountId}, ${username}, ${storeSlug}, ${passwordHash}, ${fullName}, 'store_owner')
     `;
     await sql`
-      insert into app_stores (id, owner_account_id, name)
-      values (${storeId}, ${accountId}, ${storeName})
+      insert into app_stores (id, owner_account_id, slug, name)
+      values (${storeId}, ${accountId}, ${storeSlug}, ${storeNameInput || storeSlug})
     `;
     await sql`
       insert into app_subscriptions (id, store_id, plan, status, trial_ends_at, devices_limit)
@@ -93,6 +131,9 @@ export default async function handler(req, res) {
       message: 'Trial account created.',
       accountId,
       storeId,
+      username,
+      storeSlug,
+      loginName: `${username}@${storeSlug}`,
       subscriptionStatus: 'trial',
       trialEndsAt,
       devicesLimit: 2,

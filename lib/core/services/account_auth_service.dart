@@ -12,8 +12,14 @@ class AccountAuthResult {
     this.accountId = '',
     this.storeId = '',
     this.subscriptionStatus = '',
+    this.username = '',
+    this.storeSlug = '',
+    this.storeName = '',
+    this.loginName = '',
+    this.accountType = '',
     this.trialEndsAt,
     this.devicesLimit,
+    this.adminToken = '',
   });
 
   final bool ok;
@@ -21,8 +27,14 @@ class AccountAuthResult {
   final String accountId;
   final String storeId;
   final String subscriptionStatus;
+  final String username;
+  final String storeSlug;
+  final String storeName;
+  final String loginName;
+  final String accountType;
   final DateTime? trialEndsAt;
   final int? devicesLimit;
+  final String adminToken;
 
   factory AccountAuthResult.fromJson(Map<String, dynamic> json) {
     return AccountAuthResult(
@@ -33,12 +45,18 @@ class AccountAuthResult {
       subscriptionStatus:
           (json['subscriptionStatus'] ?? json['subscription_status'] ?? '')
               .toString(),
+      username: (json['username'] ?? '').toString(),
+      storeSlug: (json['storeSlug'] ?? json['store_slug'] ?? '').toString(),
+      storeName: (json['storeName'] ?? json['store_name'] ?? '').toString(),
+      loginName: (json['loginName'] ?? json['login_name'] ?? '').toString(),
+      accountType: (json['accountType'] ?? json['account_type'] ?? '').toString(),
       trialEndsAt: DateTime.tryParse(
         (json['trialEndsAt'] ?? json['trial_ends_at'] ?? '').toString(),
       ),
       devicesLimit: int.tryParse(
         (json['devicesLimit'] ?? json['devices_limit'] ?? '').toString(),
       ),
+      adminToken: (json['adminToken'] ?? json['admin_token'] ?? '').toString(),
     );
   }
 }
@@ -49,8 +67,14 @@ class AccountAuthCache {
     required this.accountId,
     required this.storeId,
     required this.subscriptionStatus,
+    this.username = '',
+    this.storeSlug = '',
+    this.storeName = '',
+    this.loginName = '',
+    this.accountType = '',
     this.trialEndsAt,
     this.devicesLimit,
+    this.adminToken = '',
     this.lastVerifiedAt,
   });
 
@@ -60,8 +84,14 @@ class AccountAuthCache {
   final String accountId;
   final String storeId;
   final String subscriptionStatus;
+  final String username;
+  final String storeSlug;
+  final String storeName;
+  final String loginName;
+  final String accountType;
   final DateTime? trialEndsAt;
   final int? devicesLimit;
+  final String adminToken;
   final DateTime? lastVerifiedAt;
 
   Map<String, dynamic> toJson() => {
@@ -69,9 +99,15 @@ class AccountAuthCache {
         'accountId': accountId,
         'storeId': storeId,
         'subscriptionStatus': subscriptionStatus,
+        'username': username,
+        'storeSlug': storeSlug,
+        'storeName': storeName,
+        'loginName': loginName,
+        'accountType': accountType,
         'trialEndsAt': trialEndsAt?.toIso8601String() ?? '',
         'devicesLimit': devicesLimit,
         'lastVerifiedAt': lastVerifiedAt?.toIso8601String() ?? '',
+        'adminToken': adminToken,
       };
 
   static AccountAuthCache? load() {
@@ -85,10 +121,16 @@ class AccountAuthCache {
         accountId: (json['accountId'] ?? '').toString(),
         storeId: (json['storeId'] ?? '').toString(),
         subscriptionStatus: (json['subscriptionStatus'] ?? '').toString(),
+        username: (json['username'] ?? '').toString(),
+        storeSlug: (json['storeSlug'] ?? '').toString(),
+        storeName: (json['storeName'] ?? '').toString(),
+        loginName: (json['loginName'] ?? '').toString(),
+        accountType: (json['accountType'] ?? '').toString(),
         trialEndsAt: DateTime.tryParse((json['trialEndsAt'] ?? '').toString()),
         devicesLimit: int.tryParse((json['devicesLimit'] ?? '').toString()),
         lastVerifiedAt:
             DateTime.tryParse((json['lastVerifiedAt'] ?? '').toString()),
+        adminToken: (json['adminToken'] ?? '').toString(),
       );
     } catch (_) {
       return null;
@@ -97,6 +139,68 @@ class AccountAuthCache {
 
   static Future<void> save(AccountAuthCache cache) async {
     await LocalDatabaseService.setString(key, jsonEncode(cache.toJson()));
+  }
+}
+
+
+
+class AdminSubscribersResult {
+  const AdminSubscribersResult({
+    required this.ok,
+    this.message = '',
+    this.summary = const <String, dynamic>{},
+    this.subscribers = const <AdminSubscriber>[],
+  });
+
+  final bool ok;
+  final String message;
+  final Map<String, dynamic> summary;
+  final List<AdminSubscriber> subscribers;
+}
+
+class AdminSubscriber {
+  const AdminSubscriber({
+    required this.username,
+    required this.storeSlug,
+    required this.storeName,
+    required this.plan,
+    required this.subscriptionStatus,
+    required this.accountStatus,
+    required this.devicesLimit,
+    required this.deviceCount,
+    this.trialEndsAt,
+    this.createdAt,
+    this.lastSeenAt,
+  });
+
+  final String username;
+  final String storeSlug;
+  final String storeName;
+  final String plan;
+  final String subscriptionStatus;
+  final String accountStatus;
+  final int devicesLimit;
+  final int deviceCount;
+  final DateTime? trialEndsAt;
+  final DateTime? createdAt;
+  final DateTime? lastSeenAt;
+
+  String get loginName => storeSlug.isEmpty ? username : '$username@$storeSlug';
+
+  factory AdminSubscriber.fromJson(Map<String, dynamic> json) {
+    return AdminSubscriber(
+      username: (json['username'] ?? '').toString(),
+      storeSlug: (json['store_slug'] ?? json['storeSlug'] ?? '').toString(),
+      storeName: (json['store_name'] ?? json['storeName'] ?? '').toString(),
+      plan: (json['plan'] ?? '').toString(),
+      subscriptionStatus: (json['subscription_status'] ?? json['subscriptionStatus'] ?? '').toString(),
+      accountStatus: (json['account_status'] ?? json['accountStatus'] ?? '').toString(),
+      devicesLimit: int.tryParse((json['devices_limit'] ?? json['devicesLimit'] ?? '0').toString()) ?? 0,
+      deviceCount: int.tryParse((json['device_count'] ?? json['deviceCount'] ?? '0').toString()) ?? 0,
+      trialEndsAt: DateTime.tryParse((json['trial_ends_at'] ?? json['trialEndsAt'] ?? '').toString()),
+      createdAt: DateTime.tryParse((json['account_created_at'] ?? json['createdAt'] ?? '').toString()),
+      lastSeenAt: DateTime.tryParse((json['last_seen_at'] ?? json['lastSeenAt'] ?? '').toString()),
+    );
   }
 }
 
@@ -128,10 +232,10 @@ class AccountAuthService {
       _endpoint('/api/auth/register'),
       headers: const {'Content-Type': 'application/json'},
       body: jsonEncode({
-        'username': username.trim(),
+        'username': username.trim().toLowerCase(),
         'password': password,
         'fullName': fullName.trim(),
-        'storeName': storeName.trim().isEmpty ? 'My Store' : storeName.trim(),
+        'storeName': storeName.trim().toLowerCase(),
         'trialDays': 14,
       }),
     );
@@ -146,11 +250,50 @@ class AccountAuthService {
       _endpoint('/api/auth/login'),
       headers: const {'Content-Type': 'application/json'},
       body: jsonEncode({
-        'username': username.trim(),
+        'username': username.trim().toLowerCase(),
         'password': password,
       }),
     );
     return _decode(response);
+  }
+
+
+
+  Future<AdminSubscribersResult> fetchAdminSubscribers({required String adminToken}) async {
+    if (adminToken.trim().isEmpty) {
+      return const AdminSubscribersResult(ok: false, message: 'Admin token is missing. Sign in as admin@ventio.');
+    }
+    final response = await _client.get(
+      _endpoint('/api/admin/subscribers'),
+      headers: {
+        'Accept': 'application/json',
+        'Authorization': 'Bearer ${adminToken.trim()}',
+      },
+    );
+    Map<String, dynamic> body = <String, dynamic>{};
+    try {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map) body = Map<String, dynamic>.from(decoded);
+    } catch (_) {
+      body = {'ok': false, 'error': response.body};
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300 || body['ok'] != true) {
+      return AdminSubscribersResult(
+        ok: false,
+        message: (body['error'] ?? body['message'] ?? 'Failed to load subscribers (${response.statusCode}).').toString(),
+      );
+    }
+    final rawSubscribers = body['subscribers'];
+    final subscribers = rawSubscribers is List
+        ? rawSubscribers
+            .whereType<Map>()
+            .map((item) => AdminSubscriber.fromJson(Map<String, dynamic>.from(item)))
+            .toList(growable: false)
+        : const <AdminSubscriber>[];
+    final summary = body['summary'] is Map
+        ? Map<String, dynamic>.from(body['summary'] as Map)
+        : const <String, dynamic>{};
+    return AdminSubscribersResult(ok: true, summary: summary, subscribers: subscribers);
   }
 
   AccountAuthResult _decode(http.Response response) {
@@ -173,8 +316,14 @@ class AccountAuthService {
       accountId: result.accountId,
       storeId: result.storeId,
       subscriptionStatus: result.subscriptionStatus,
+      username: result.username,
+      storeSlug: result.storeSlug,
+      storeName: result.storeName,
+      loginName: result.loginName,
+      accountType: result.accountType,
       trialEndsAt: result.trialEndsAt,
       devicesLimit: result.devicesLimit,
+      adminToken: result.adminToken,
     );
   }
 
@@ -188,8 +337,14 @@ class AccountAuthService {
         accountId: result.accountId,
         storeId: result.storeId,
         subscriptionStatus: result.subscriptionStatus,
+        username: result.username,
+        storeSlug: result.storeSlug,
+        storeName: result.storeName,
+        loginName: result.loginName,
+        accountType: result.accountType,
         trialEndsAt: result.trialEndsAt,
         devicesLimit: result.devicesLimit,
+        adminToken: result.adminToken,
         lastVerifiedAt: DateTime.now(),
       ),
     );

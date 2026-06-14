@@ -25,12 +25,10 @@ class LoginGatePage extends StatefulWidget {
 class _LoginGatePageState extends State<LoginGatePage> {
   final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
-  final TextEditingController _fullNameController =
-      TextEditingController(text: 'Administrator');
   final TextEditingController _confirmPasswordController =
       TextEditingController();
   final TextEditingController _storeNameController =
-      TextEditingController(text: 'My Store');
+      TextEditingController(text: 'my_store');
 
   bool _savingSetup = false;
   bool _loggingIn = false;
@@ -45,19 +43,31 @@ class _LoginGatePageState extends State<LoginGatePage> {
     super.initState();
     _rememberLogin = widget.store.rememberLogin;
     _storeNameController.text = widget.store.storeProfile.name.trim().isEmpty
-        ? 'My Store'
-        : widget.store.storeProfile.name.trim();
+        ? 'my_store'
+        : _normalizeLoginPart(widget.store.storeProfile.name.trim());
   }
 
   @override
   void dispose() {
     _usernameController.dispose();
     _passwordController.dispose();
-    _fullNameController.dispose();
     _confirmPasswordController.dispose();
     _storeNameController.dispose();
     super.dispose();
   }
+
+  String _normalizeLoginPart(String value) {
+    return value.trim().toLowerCase().replaceAll(RegExp(r'\s+'), '');
+  }
+
+  bool _isValidLoginPart(String value) {
+    return RegExp(r'^[a-z0-9][a-z0-9_-]{2,31}$').hasMatch(value);
+  }
+
+  void _showAuthMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
 
   Future<void> _checkSuspensionStatus() async {
     if (!widget.store.appIdentity.isClient) return;
@@ -265,11 +275,19 @@ class _LoginGatePageState extends State<LoginGatePage> {
     final messenger = ScaffoldMessenger.of(context);
 
     setState(() => _loggingIn = true);
+    var localUsername = _usernameController.text.trim();
 
     if (_onlineMode) {
+      final onlineUsername = _normalizeLoginPart(_usernameController.text);
+      if (!onlineUsername.contains('@') || onlineUsername.split('@').length != 2) {
+        setState(() => _loggingIn = false);
+        _showAuthMessage('Online login must be username@store, for example admin@oday.');
+        return;
+      }
+      localUsername = onlineUsername.split('@').first;
       try {
         final onlineResult = await AccountAuthService().login(
-          username: _usernameController.text,
+          username: onlineUsername,
           password: _passwordController.text,
         );
         if (!mounted) return;
@@ -294,7 +312,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
     }
 
     final ok = await widget.store.login(
-      _usernameController.text,
+      localUsername,
       _passwordController.text,
       remember: _rememberLogin,
     );
@@ -313,6 +331,25 @@ class _LoginGatePageState extends State<LoginGatePage> {
 
   Future<void> _completeInitialSetup() async {
     final password = _passwordController.text.trim();
+    final username = _normalizeLoginPart(_usernameController.text);
+    final storeName = _normalizeLoginPart(_storeNameController.text);
+
+    if (!_isValidLoginPart(username)) {
+      _showAuthMessage('Username must be 3-32 characters: letters, numbers, underscore, or hyphen. No spaces.');
+      return;
+    }
+    if (username.contains('@')) {
+      _showAuthMessage('Register with username only. Online login will become username@store.');
+      return;
+    }
+    if (!_isValidLoginPart(storeName)) {
+      _showAuthMessage('Store name must be 3-32 characters: letters, numbers, underscore, or hyphen. No spaces.');
+      return;
+    }
+    if (storeName == 'ventio') {
+      _showAuthMessage('ventio is reserved for platform accounts. Choose another store name.');
+      return;
+    }
 
     if (password != _confirmPasswordController.text.trim()) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -327,10 +364,10 @@ class _LoginGatePageState extends State<LoginGatePage> {
       AccountAuthResult? onlineResult;
       if (_onlineMode) {
         onlineResult = await AccountAuthService().register(
-          username: _usernameController.text,
+          username: username,
           password: password,
-          fullName: _fullNameController.text,
-          storeName: _storeNameController.text,
+          fullName: 'Administrator',
+          storeName: storeName,
         );
         if (!onlineResult.ok) {
           throw StateError(onlineResult.message.isEmpty
@@ -341,8 +378,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
       }
 
       await widget.store.completeInitialAdminSetup(
-        fullName: _fullNameController.text,
-        username: _usernameController.text,
+        fullName: 'Administrator',
+        username: username,
         password: password,
       );
 
@@ -379,7 +416,6 @@ class _LoginGatePageState extends State<LoginGatePage> {
 
     if (_showRegister && !kIsWeb && widget.store.needsInitialAdminSetup) {
       return _InitialAdminSetupCard(
-        fullNameController: _fullNameController,
         storeNameController: _storeNameController,
         usernameController: _usernameController,
         passwordController: _passwordController,
@@ -505,8 +541,10 @@ class _LoginGatePageState extends State<LoginGatePage> {
                         enabled: !_loggingIn,
                         autofocus: true,
                         textInputAction: TextInputAction.next,
-                        decoration:
-                            InputDecoration(labelText: tr.text('username')),
+                        decoration: InputDecoration(
+                          labelText: tr.text('username'),
+                          helperText: _onlineMode ? 'Online: username@store' : null,
+                        ),
                       ),
                       const SizedBox(height: 12),
                       TextField(
@@ -628,7 +666,6 @@ class _LoginGatePageState extends State<LoginGatePage> {
 
 class _InitialAdminSetupCard extends StatefulWidget {
   const _InitialAdminSetupCard({
-    required this.fullNameController,
     required this.usernameController,
     required this.storeNameController,
     required this.passwordController,
@@ -638,7 +675,6 @@ class _InitialAdminSetupCard extends StatefulWidget {
     required this.onCancel,
   });
 
-  final TextEditingController fullNameController;
   final TextEditingController usernameController;
   final TextEditingController storeNameController;
   final TextEditingController passwordController;
@@ -688,19 +724,13 @@ class _InitialAdminSetupCardState extends State<_InitialAdminSetupCard> {
                       ),
                       const SizedBox(height: 20),
                       TextField(
-                        controller: widget.fullNameController,
-                        enabled: !widget.saving,
-                        textInputAction: TextInputAction.next,
-                        decoration:
-                            InputDecoration(labelText: tr.text('admin_name')),
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
                         controller: widget.storeNameController,
                         enabled: !widget.saving,
                         textInputAction: TextInputAction.next,
-                        decoration:
-                            InputDecoration(labelText: tr.text('store_name')),
+                        decoration: InputDecoration(
+                          labelText: tr.text('store_name'),
+                          helperText: 'Use letters/numbers only, no spaces. Example: oday',
+                        ),
                       ),
                       const SizedBox(height: 12),
                       TextField(
@@ -708,8 +738,10 @@ class _InitialAdminSetupCardState extends State<_InitialAdminSetupCard> {
                         enabled: !widget.saving,
                         autofocus: true,
                         textInputAction: TextInputAction.next,
-                        decoration:
-                            InputDecoration(labelText: tr.text('new_username')),
+                        decoration: InputDecoration(
+                          labelText: tr.text('new_username'),
+                          helperText: 'Example: admin. Online login becomes admin@store.',
+                        ),
                       ),
                       const SizedBox(height: 12),
                       TextField(
