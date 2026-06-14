@@ -15,6 +15,7 @@ import 'core/services/cloud_sync_service.dart';
 import 'core/services/google_drive_backup_service.dart';
 import 'core/services/lan_sync_service.dart';
 import 'core/services/local_auto_backup_service.dart';
+import 'core/services/app_update_service.dart';
 import 'data/app_store.dart';
 import 'models/user_role.dart';
 import 'features/accounting/accounting_page.dart';
@@ -527,6 +528,128 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell> {
   int selectedIndex = 0;
   bool _drawerNavigationLocked = false;
+  late final AppUpdateService _updateService = getAppUpdateService();
+  AppUpdateInfo? _availableUpdate;
+  bool _checkingForUpdate = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_checkForUpdates());
+  }
+
+  Future<void> _checkForUpdates() async {
+    if (!kReleaseMode || !_updateService.isSupported || _checkingForUpdate) {
+      return;
+    }
+    setState(() => _checkingForUpdate = true);
+    try {
+      final update = await _updateService.checkForUpdate();
+      if (!mounted) return;
+      setState(() => _availableUpdate = update);
+    } catch (_) {
+      // Update checks must never interrupt store operations.
+    } finally {
+      if (mounted) setState(() => _checkingForUpdate = false);
+    }
+  }
+
+  Future<void> _showUpdateDialog(AppUpdateInfo update) async {
+    final tr = AppLocalizations.of(context);
+    var installing = false;
+    double? progress;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: !update.required,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(tr.text('update_available')),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 460),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(tr.format('update_available_desc', {
+                  'version': update.displayVersion,
+                })),
+                if (update.notes.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  ...update.notes.take(5).map(
+                        (note) => Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text('• '),
+                              Expanded(child: Text(note)),
+                            ],
+                          ),
+                        ),
+                      ),
+                ],
+                if (installing) ...[
+                  const SizedBox(height: 16),
+                  LinearProgressIndicator(value: progress),
+                  const SizedBox(height: 8),
+                  Text(progress == null
+                      ? tr.text('downloading')
+                      : '${tr.text('downloading')} ${(progress! * 100).clamp(0, 100).toStringAsFixed(0)}%'),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: installing || update.required
+                  ? null
+                  : () => Navigator.of(dialogContext).pop(),
+              child: Text(tr.text('later')),
+            ),
+            FilledButton.icon(
+              onPressed: installing
+                  ? null
+                  : () async {
+                      setDialogState(() {
+                        installing = true;
+                        progress = null;
+                      });
+                      try {
+                        await _updateService.downloadAndInstall(
+                          update,
+                          onProgress: (value) =>
+                              setDialogState(() => progress = value),
+                        );
+                        if (!dialogContext.mounted) return;
+                        Navigator.of(dialogContext).pop();
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                              content:
+                                  Text(tr.text('update_installer_started'))),
+                        );
+                      } catch (error) {
+                        setDialogState(() {
+                          installing = false;
+                          progress = null;
+                        });
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                              content: Text(tr.format('update_failed', {
+                            'error': error.toString(),
+                          }))),
+                        );
+                      }
+                    },
+              icon: const Icon(Icons.system_update_alt_outlined),
+              label: Text(tr.text('update_now')),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Future<void> _selectDrawerItem(BuildContext drawerContext, int index) async {
     if (_drawerNavigationLocked) return;
@@ -677,6 +800,19 @@ class _MainShellState extends State<MainShell> {
             title: Text('$shellTitle • ${resolvedItems[selectedIndex].label}',
                 overflow: TextOverflow.ellipsis),
             actions: [
+              if (_availableUpdate != null)
+                IconButton(
+                  tooltip: tr.format('update_available_tooltip', {
+                    'version': _availableUpdate!.displayVersion,
+                  }),
+                  onPressed: () => _showUpdateDialog(_availableUpdate!),
+                  icon: Badge(
+                    label: const Text('1'),
+                    child: Icon(_availableUpdate!.required
+                        ? Icons.priority_high_outlined
+                        : Icons.system_update_alt_outlined),
+                  ),
+                ),
               LocalAutoBackupIndicator(),
               HostConnectionIndicator(store: widget.store),
               PopupMenuButton<String>(
