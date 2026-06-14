@@ -84,12 +84,13 @@ $manifest = [ordered]@{
 
 $manifestJson = $manifest | ConvertTo-Json -Depth 6
 $manifestPath = Join-Path $manifestOutDir "latest.json"
-Set-Content -LiteralPath $manifestPath -Value $manifestJson -Encoding UTF8
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($manifestPath, $manifestJson, $utf8NoBom)
 
 if ($PublishToWebReleases) {
   New-Item -ItemType Directory -Force -Path $webWindowsReleaseDir | Out-Null
   Copy-Item -LiteralPath $installerPath -Destination (Join-Path $webWindowsReleaseDir $installerName) -Force
-  Set-Content -LiteralPath (Join-Path $webReleaseDir "latest.json") -Value $manifestJson -Encoding UTF8
+  [System.IO.File]::WriteAllText((Join-Path $webReleaseDir "latest.json"), $manifestJson, $utf8NoBom)
 }
 
 Write-Host "Ventio Windows installer created:"
