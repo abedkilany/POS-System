@@ -442,6 +442,7 @@ class LocalDatabaseService {
   static List<String> keys() {
     final memory = _memoryStore;
     if (memory != null) return memory.keys.toList()..sort();
+    if (_webStore != null) return _webStore!.keys.toList()..sort();
     if (_sqliteReady) return _sqliteMirror.keys.toList()..sort();
     return const <String>[];
   }
@@ -449,6 +450,7 @@ class LocalDatabaseService {
   static Map<String, String> allEntries() {
     final memory = _memoryStore;
     if (memory != null) return Map<String, String>.from(memory);
+    if (_webStore != null) return Map<String, String>.from(_webStore!);
     if (_sqliteReady) return Map<String, String>.from(_sqliteMirror);
     return const <String, String>{};
   }
@@ -462,6 +464,7 @@ class LocalDatabaseService {
   static Future<Map<String, String>> adminEntries() async {
     final memory = _memoryStore;
     if (memory != null) return Map<String, String>.from(memory);
+    if (_webStore != null) return Map<String, String>.from(_webStore!);
     if (_sqliteReady) {
       final db = SqliteMigrationManager.database;
       if (db == null) return Map<String, String>.from(_sqliteMirror);

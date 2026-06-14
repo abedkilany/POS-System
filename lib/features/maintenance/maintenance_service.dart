@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
+
 import '../../core/services/local_database_service.dart';
 import '../../core/services/google_drive_backup_service.dart';
 import '../../core/services/local_auto_backup_service.dart';
@@ -116,11 +118,13 @@ class MaintenanceService {
   }
 
   MaintenanceIssue _localKeysIssue(int localKeys) {
+    final isExpectedEmpty = kIsWeb || store.appIdentity.isClient;
     return MaintenanceIssue(
       id: 'local_database_keys',
       title: 'Local database keys',
-      severity:
-          localKeys > 0 ? MaintenanceSeverity.ok : MaintenanceSeverity.warning,
+      severity: localKeys > 0 || isExpectedEmpty
+          ? MaintenanceSeverity.ok
+          : MaintenanceSeverity.warning,
       message: '$localKeys persisted keys found.',
     );
   }
