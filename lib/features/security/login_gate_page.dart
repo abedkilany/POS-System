@@ -429,6 +429,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
     if (storeAccountUnlocked && authCache != null) {
       return StoreAccountDashboardPage(
         cache: authCache,
+        onRecoverExistingStore: () => _recoverExistingStore(context),
         onLogout: () async {
           await AccountAuthCache.clear();
           if (mounted) setState(() {});
@@ -651,13 +652,6 @@ class _LoginGatePageState extends State<LoginGatePage> {
                                       },
                                 icon: const Icon(Icons.link),
                                 label: Text(tr.text('connect_to_store')),
-                              ),
-                              OutlinedButton.icon(
-                                onPressed: _loggingIn
-                                    ? null
-                                    : () => _recoverExistingStore(context),
-                                icon: const Icon(Icons.key_outlined),
-                                label: Text(tr.text('recover_existing_store')),
                               ),
                             ];
                             return Align(

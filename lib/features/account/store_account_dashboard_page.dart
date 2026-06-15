@@ -7,10 +7,12 @@ class StoreAccountDashboardPage extends StatelessWidget {
   const StoreAccountDashboardPage({
     super.key,
     required this.cache,
+    required this.onRecoverExistingStore,
     required this.onLogout,
   });
 
   final AccountAuthCache cache;
+  final VoidCallback onRecoverExistingStore;
   final Future<void> Function() onLogout;
 
   String _formatDate(DateTime? value) {
@@ -181,16 +183,21 @@ class StoreAccountDashboardPage extends StatelessWidget {
                           Wrap(
                             spacing: 12,
                             runSpacing: 12,
-                            children: const [
-                              _ComingSoonButton(
+                            children: [
+                              OutlinedButton.icon(
+                                onPressed: onRecoverExistingStore,
+                                icon: const Icon(Icons.key_outlined),
+                                label: const Text('Recover existing store'),
+                              ),
+                              const _ComingSoonButton(
                                 icon: Icons.credit_card_outlined,
                                 label: 'Manage subscription',
                               ),
-                              _ComingSoonButton(
+                              const _ComingSoonButton(
                                 icon: Icons.devices_other_outlined,
                                 label: 'Manage devices',
                               ),
-                              _ComingSoonButton(
+                              const _ComingSoonButton(
                                 icon: Icons.storefront_outlined,
                                 label: 'Online store settings',
                               ),
