@@ -1,11 +1,11 @@
 {
-    "version":  "1.0.8",
-    "build":  18,
+    "version":  "1.0.9",
+    "build":  19,
     "channel":  "stable",
     "windows":  {
-                    "url":  "https://ventio.duckdns.org/releases/windows/VentioSetup-1.0.8-build18.exe",
-                    "sha256":  "df9dad153361ce5a77300dcabed8c196d48dc4da4efa46b8f53ece7446fe9bf8",
-                    "size":  16707152
+                    "url":  "https://ventio.duckdns.org/releases/windows/VentioSetup-1.0.9-build19.exe",
+                    "sha256":  "28c0410fb4a03349e15c2e2a28a482906a25ac5b6ababb8d201ce5d68610e022",
+                    "size":  16706285
                 },
     "android":  {
                     "source":  "play_store"

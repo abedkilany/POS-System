@@ -306,7 +306,6 @@ class _LoginGatePageState extends State<LoginGatePage> {
             'Online login must be username@store, for example user@store.');
         return;
       }
-      localUsername = parts.first;
       try {
         final onlineResult = await AccountAuthService().login(
           username: onlineUsername,
@@ -323,24 +322,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
           return;
         }
         await AccountAuthService.cacheOnlineResult(onlineResult, mode: 'login');
-        if (onlineResult.accountType == 'store_owner' &&
-            onlineResult.storeSlug != 'ventio') {
-          await widget.store.recoverOnlineStoreOwnerIdentity(
-            storeId: onlineResult.storeId,
-            branchId: onlineResult.branchId,
-            storeName: onlineResult.storeName,
-            username: parts.first,
-            password: _passwordController.text,
-          );
-          if (!mounted) return;
-          setState(() => _loggingIn = false);
-          return;
-        }
-        if (onlineResult.accountType == 'platform_admin' ||
-            onlineResult.storeSlug == 'ventio') {
-          setState(() => _loggingIn = false);
-          return;
-        }
+        setState(() => _loggingIn = false);
+        return;
       } catch (error) {
         if (!mounted) return;
         setState(() => _loggingIn = false);
@@ -420,8 +403,6 @@ class _LoginGatePageState extends State<LoginGatePage> {
             ? tr.text('online_register_failed')
             : onlineResult.message);
       }
-      await AccountAuthService.cacheOnlineResult(onlineResult, mode: 'trial');
-
       await widget.store.recoverOnlineStoreOwnerIdentity(
         storeId: onlineResult.storeId,
         branchId: onlineResult.branchId,
@@ -431,6 +412,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
         password: password,
       );
 
+      await AccountAuthCache.clear();
       await widget.store.logout();
       if (mounted) {
         setState(() {
