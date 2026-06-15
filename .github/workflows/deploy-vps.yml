@@ -21,6 +21,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.44.1'
           channel: stable
           cache: true
 
@@ -61,7 +62,7 @@ jobs:
           rsync -az --delete -e "ssh -i ~/.ssh/ventio_deploy_key -p ${VPS_PORT:-22}" \
             "${api_items[@]}" \
             "$VPS_USER@$VPS_HOST:$VPS_APP_DIR/"
-          rsync -az --delete -e "ssh -i ~/.ssh/ventio_deploy_key -p ${VPS_PORT:-22}" \
+          rsync -azc --delete -e "ssh -i ~/.ssh/ventio_deploy_key -p ${VPS_PORT:-22}" \
             build/web/ \
             "$VPS_USER@$VPS_HOST:$VPS_WEB_DIR/"
 
