@@ -37,7 +37,6 @@ class _LoginGatePageState extends State<LoginGatePage> {
   bool _showRegister = false;
   bool _showPassword = false;
   bool _checkingSuspension = false;
-  bool _onlineMode = true;
 
   @override
   void initState() {
@@ -278,14 +277,18 @@ class _LoginGatePageState extends State<LoginGatePage> {
     setState(() => _loggingIn = true);
     var localUsername = _usernameController.text.trim();
 
-    if (_onlineMode) {
-      final onlineUsername = _normalizeLoginPart(_usernameController.text);
-      if (!onlineUsername.contains('@') || onlineUsername.split('@').length != 2) {
+    final typedUsername = _usernameController.text.trim();
+    final isOnlineLogin = typedUsername.contains('@');
+
+    if (isOnlineLogin) {
+      final onlineUsername = _normalizeLoginPart(typedUsername);
+      final parts = onlineUsername.split('@');
+      if (parts.length != 2 || parts.first.isEmpty || parts.last.isEmpty) {
         setState(() => _loggingIn = false);
         _showAuthMessage('Online login must be username@store, for example admin@oday.');
         return;
       }
-      localUsername = onlineUsername.split('@').first;
+      localUsername = parts.first;
       try {
         final onlineResult = await AccountAuthService().login(
           username: onlineUsername,
@@ -368,21 +371,18 @@ class _LoginGatePageState extends State<LoginGatePage> {
     setState(() => _savingSetup = true);
 
     try {
-      AccountAuthResult? onlineResult;
-      if (_onlineMode) {
-        onlineResult = await AccountAuthService().register(
-          username: username,
-          password: password,
-          fullName: 'Administrator',
-          storeName: storeName,
-        );
-        if (!onlineResult.ok) {
-          throw StateError(onlineResult.message.isEmpty
-              ? AppLocalizations.of(context).text('online_register_failed')
-              : onlineResult.message);
-        }
-        await AccountAuthService.cacheOnlineResult(onlineResult, mode: 'trial');
+      final onlineResult = await AccountAuthService().register(
+        username: username,
+        password: password,
+        fullName: 'Administrator',
+        storeName: storeName,
+      );
+      if (!onlineResult.ok) {
+        throw StateError(onlineResult.message.isEmpty
+            ? AppLocalizations.of(context).text('online_register_failed')
+            : onlineResult.message);
       }
+      await AccountAuthService.cacheOnlineResult(onlineResult, mode: 'trial');
 
       await widget.store.completeInitialAdminSetup(
         fullName: 'Administrator',
@@ -520,35 +520,30 @@ class _LoginGatePageState extends State<LoginGatePage> {
                       const SizedBox(height: 8),
                       Text(tr.text('signin_hint'), textAlign: TextAlign.center),
                       const SizedBox(height: 16),
-                      SegmentedButton<bool>(
-                        segments: [
-                          ButtonSegment<bool>(
-                            value: true,
-                            icon: const Icon(Icons.cloud_done_outlined),
-                            label: Text(tr.text('online')),
-                          ),
-                          ButtonSegment<bool>(
-                            value: false,
-                            icon: const Icon(Icons.computer_outlined),
-                            label: Text(tr.text('offline')),
-                          ),
-                        ],
-                        selected: {_onlineMode},
-                        onSelectionChanged: _loggingIn ||
-                                (widget.store.needsInitialAdminSetup && _onlineMode)
-                            ? null
-                            : (values) {
-                                final next = values.first;
-                                if (!next && widget.store.needsInitialAdminSetup) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text(tr.text('first_run_online_required')),
-                                    ),
-                                  );
-                                  return;
-                                }
-                                setState(() => _onlineMode = next);
-                              },
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.45),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(
+                              Icons.info_outline,
+                              size: 20,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'اكتب admin للدخول Offline، أو admin@store للدخول Online.',
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                       if (widget.store.needsInitialAdminSetup) ...[
                         const SizedBox(height: 8),
@@ -566,7 +561,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
                         textInputAction: TextInputAction.next,
                         decoration: InputDecoration(
                           labelText: tr.text('username'),
-                          helperText: _onlineMode ? 'Online: username@store' : null,
+                          helperText: 'Offline: admin  |  Online: admin@store',
                         ),
                       ),
                       const SizedBox(height: 12),
