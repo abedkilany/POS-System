@@ -140,6 +140,10 @@ class AccountAuthCache {
   static Future<void> save(AccountAuthCache cache) async {
     await LocalDatabaseService.setString(key, jsonEncode(cache.toJson()));
   }
+
+  static Future<void> clear() async {
+    await LocalDatabaseService.deleteString(key);
+  }
 }
 
 
@@ -160,7 +164,11 @@ class AdminSubscribersResult {
 
 class AdminSubscriber {
   const AdminSubscriber({
+    required this.accountId,
+    required this.storeId,
+    required this.subscriptionId,
     required this.username,
+    required this.fullName,
     required this.storeSlug,
     required this.storeName,
     required this.plan,
@@ -173,7 +181,11 @@ class AdminSubscriber {
     this.lastSeenAt,
   });
 
+  final String accountId;
+  final String storeId;
+  final String subscriptionId;
   final String username;
+  final String fullName;
   final String storeSlug;
   final String storeName;
   final String plan;
@@ -189,7 +201,11 @@ class AdminSubscriber {
 
   factory AdminSubscriber.fromJson(Map<String, dynamic> json) {
     return AdminSubscriber(
+      accountId: (json['account_id'] ?? json['accountId'] ?? '').toString(),
+      storeId: (json['store_id'] ?? json['storeId'] ?? '').toString(),
+      subscriptionId: (json['subscription_id'] ?? json['subscriptionId'] ?? '').toString(),
       username: (json['username'] ?? '').toString(),
+      fullName: (json['full_name'] ?? json['fullName'] ?? '').toString(),
       storeSlug: (json['store_slug'] ?? json['storeSlug'] ?? '').toString(),
       storeName: (json['store_name'] ?? json['storeName'] ?? '').toString(),
       plan: (json['plan'] ?? '').toString(),
@@ -294,6 +310,63 @@ class AccountAuthService {
         ? Map<String, dynamic>.from(body['summary'] as Map)
         : const <String, dynamic>{};
     return AdminSubscribersResult(ok: true, summary: summary, subscribers: subscribers);
+  }
+
+
+  Future<AccountAuthResult> updateAdminSubscriber({
+    required String adminToken,
+    required AdminSubscriber subscriber,
+    required String username,
+    required String fullName,
+    required String storeName,
+    required String storeSlug,
+    required String accountStatus,
+    required String plan,
+    required String subscriptionStatus,
+    required int devicesLimit,
+    required DateTime? trialEndsAt,
+  }) async {
+    if (adminToken.trim().isEmpty) {
+      return const AccountAuthResult(ok: false, message: 'Admin token is missing. Sign in as admin@ventio.');
+    }
+    final response = await _client.patch(
+      _endpoint('/api/admin/subscribers'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ${adminToken.trim()}',
+      },
+      body: jsonEncode({
+        'accountId': subscriber.accountId,
+        'username': username.trim().toLowerCase(),
+        'fullName': fullName.trim(),
+        'storeName': storeName.trim(),
+        'storeSlug': storeSlug.trim().toLowerCase(),
+        'accountStatus': accountStatus.trim().toLowerCase(),
+        'plan': plan.trim().toLowerCase(),
+        'subscriptionStatus': subscriptionStatus.trim().toLowerCase(),
+        'devicesLimit': devicesLimit,
+        'trialEndsAt': trialEndsAt?.toUtc().toIso8601String() ?? '',
+      }),
+    );
+    return _decode(response);
+  }
+
+  Future<AccountAuthResult> deleteAdminSubscriber({
+    required String adminToken,
+    required AdminSubscriber subscriber,
+  }) async {
+    if (adminToken.trim().isEmpty) {
+      return const AccountAuthResult(ok: false, message: 'Admin token is missing. Sign in as admin@ventio.');
+    }
+    final response = await _client.delete(
+      _endpoint('/api/admin/subscribers'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ${adminToken.trim()}',
+      },
+      body: jsonEncode({'accountId': subscriber.accountId}),
+    );
+    return _decode(response);
   }
 
   AccountAuthResult _decode(http.Response response) {

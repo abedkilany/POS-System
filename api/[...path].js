@@ -82,7 +82,7 @@ function normalizePath(req) {
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS');
   res.setHeader(
     'Access-Control-Allow-Headers',
     'Content-Type, Accept, Authorization, X-Device-Id, X-Device-Token, X-Device-Role, X-Sync-Transport, X-Store-Id, X-Branch-Id',

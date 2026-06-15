@@ -301,6 +301,11 @@ class _LoginGatePageState extends State<LoginGatePage> {
           return;
         }
         await AccountAuthService.cacheOnlineResult(onlineResult, mode: 'login');
+        if (onlineResult.accountType == 'platform_admin' ||
+            onlineResult.storeSlug == 'ventio') {
+          setState(() => _loggingIn = false);
+          return;
+        }
       } catch (error) {
         if (!mounted) return;
         setState(() => _loggingIn = false);
@@ -412,7 +417,10 @@ class _LoginGatePageState extends State<LoginGatePage> {
 
   @override
   Widget build(BuildContext context) {
-    if (widget.store.activeUser != null) return widget.child;
+    final authCache = AccountAuthCache.load();
+    final platformAdminUnlocked =
+        authCache?.accountType == 'platform_admin' || authCache?.storeSlug == 'ventio';
+    if (widget.store.activeUser != null || platformAdminUnlocked) return widget.child;
 
     if (_showRegister && !kIsWeb && widget.store.needsInitialAdminSetup) {
       return _InitialAdminSetupCard(

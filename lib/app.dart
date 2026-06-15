@@ -836,6 +836,7 @@ class _MainShellState extends State<MainShell> {
                     widget.onLocaleChanged(const Locale('ar'));
                   } else if (value == 'logout') {
                     await widget.onLogout?.call();
+                    await AccountAuthCache.clear();
                     await widget.store.logout();
                   }
                 },
