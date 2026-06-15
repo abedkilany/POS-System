@@ -170,7 +170,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                         children: [
                           Expanded(
                             child: DropdownButtonFormField<String>(
-                              value: accountStatus,
+                              initialValue: accountStatus,
                               decoration: const InputDecoration(labelText: 'Account status'),
                               items: const [
                                 DropdownMenuItem(value: 'active', child: Text('Active')),
@@ -183,7 +183,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                           const SizedBox(width: 12),
                           Expanded(
                             child: DropdownButtonFormField<String>(
-                              value: plan,
+                              initialValue: plan,
                               decoration: const InputDecoration(labelText: 'Plan'),
                               items: const [
                                 DropdownMenuItem(value: 'trial', child: Text('Trial')),
@@ -200,7 +200,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                         children: [
                           Expanded(
                             child: DropdownButtonFormField<String>(
-                              value: subscriptionStatus,
+                              initialValue: subscriptionStatus,
                               decoration: const InputDecoration(labelText: 'Subscription status'),
                               items: const [
                                 DropdownMenuItem(value: 'trial', child: Text('Trial')),
@@ -579,7 +579,7 @@ class _SubscribersToolbar extends StatelessWidget {
         SizedBox(
           width: 180,
           child: DropdownButtonFormField<String>(
-            value: statusFilter,
+            initialValue: statusFilter,
             decoration: InputDecoration(
               labelText: 'Status',
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),

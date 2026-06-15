@@ -368,6 +368,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
       return;
     }
 
+    final tr = AppLocalizations.of(context);
     setState(() => _savingSetup = true);
 
     try {
@@ -379,7 +380,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
       );
       if (!onlineResult.ok) {
         throw StateError(onlineResult.message.isEmpty
-            ? AppLocalizations.of(context).text('online_register_failed')
+            ? tr.text('online_register_failed')
             : onlineResult.message);
       }
       await AccountAuthService.cacheOnlineResult(onlineResult, mode: 'trial');
@@ -397,11 +398,9 @@ class _LoginGatePageState extends State<LoginGatePage> {
           _passwordController.clear();
           _confirmPasswordController.clear();
         });
-        final message = onlineResult == null
-            ? AppLocalizations.of(context).text('admin_created_sign_in')
-            : AppLocalizations.of(context).format('trial_created_sign_in', {
-                'days': '14',
-              });
+        final message = tr.format('trial_created_sign_in', {
+          'days': '14',
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(message)),
         );
@@ -525,7 +524,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
                         width: double.infinity,
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.45),
+                          color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Row(
