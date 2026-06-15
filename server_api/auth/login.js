@@ -61,6 +61,7 @@ async function ensureTables() {
     create table if not exists app_stores (
       id text primary key,
       owner_account_id text not null references app_accounts(id) on delete cascade,
+      branch_id text not null default 'BR-MAIN',
       slug text,
       name text not null default 'My Store',
       status text not null default 'active',
@@ -84,6 +85,7 @@ async function ensureTables() {
   await sql`alter table app_accounts add column if not exists namespace_slug text not null default ''`;
   await sql`alter table app_accounts add column if not exists account_type text not null default 'store_owner'`;
   await sql`alter table app_stores add column if not exists slug text`;
+  await sql`alter table app_stores add column if not exists branch_id text not null default 'BR-MAIN'`;
   await sql`
     update app_stores
     set slug = lower(regexp_replace(coalesce(nullif(name, ''), id), '[^a-zA-Z0-9_-]+', '', 'g'))
@@ -119,7 +121,7 @@ export default async function handler(req, res) {
     const rows = await sql`
       select a.id as account_id, a.username, a.namespace_slug, a.password_hash,
              a.status as account_status, a.account_type,
-             s.id as store_id, s.slug as store_slug, s.name as store_name,
+             s.id as store_id, s.branch_id, s.slug as store_slug, s.name as store_name,
              sub.status as subscription_status, sub.trial_ends_at, sub.devices_limit
       from app_accounts a
       left join app_stores s on s.owner_account_id = a.id and s.slug = a.namespace_slug
@@ -141,6 +143,7 @@ export default async function handler(req, res) {
       message: 'Online account verified.',
       accountId: row.account_id,
       storeId: row.store_id || '',
+      branchId: row.branch_id || '',
       username: row.username,
       storeSlug: row.store_slug || row.namespace_slug || '',
       storeName: row.store_name || '',

@@ -11,6 +11,7 @@ class AccountAuthResult {
     this.message = '',
     this.accountId = '',
     this.storeId = '',
+    this.branchId = '',
     this.subscriptionStatus = '',
     this.username = '',
     this.storeSlug = '',
@@ -26,6 +27,7 @@ class AccountAuthResult {
   final String message;
   final String accountId;
   final String storeId;
+  final String branchId;
   final String subscriptionStatus;
   final String username;
   final String storeSlug;
@@ -42,6 +44,7 @@ class AccountAuthResult {
       message: (json['message'] ?? json['error'] ?? '').toString(),
       accountId: (json['accountId'] ?? json['account_id'] ?? '').toString(),
       storeId: (json['storeId'] ?? json['store_id'] ?? '').toString(),
+      branchId: (json['branchId'] ?? json['branch_id'] ?? '').toString(),
       subscriptionStatus:
           (json['subscriptionStatus'] ?? json['subscription_status'] ?? '')
               .toString(),
@@ -49,7 +52,8 @@ class AccountAuthResult {
       storeSlug: (json['storeSlug'] ?? json['store_slug'] ?? '').toString(),
       storeName: (json['storeName'] ?? json['store_name'] ?? '').toString(),
       loginName: (json['loginName'] ?? json['login_name'] ?? '').toString(),
-      accountType: (json['accountType'] ?? json['account_type'] ?? '').toString(),
+      accountType:
+          (json['accountType'] ?? json['account_type'] ?? '').toString(),
       trialEndsAt: DateTime.tryParse(
         (json['trialEndsAt'] ?? json['trial_ends_at'] ?? '').toString(),
       ),
@@ -66,6 +70,7 @@ class AccountAuthCache {
     required this.mode,
     required this.accountId,
     required this.storeId,
+    required this.branchId,
     required this.subscriptionStatus,
     this.username = '',
     this.storeSlug = '',
@@ -83,6 +88,7 @@ class AccountAuthCache {
   final String mode;
   final String accountId;
   final String storeId;
+  final String branchId;
   final String subscriptionStatus;
   final String username;
   final String storeSlug;
@@ -98,6 +104,7 @@ class AccountAuthCache {
         'mode': mode,
         'accountId': accountId,
         'storeId': storeId,
+        'branchId': branchId,
         'subscriptionStatus': subscriptionStatus,
         'username': username,
         'storeSlug': storeSlug,
@@ -120,6 +127,7 @@ class AccountAuthCache {
         mode: (json['mode'] ?? '').toString(),
         accountId: (json['accountId'] ?? '').toString(),
         storeId: (json['storeId'] ?? '').toString(),
+        branchId: (json['branchId'] ?? '').toString(),
         subscriptionStatus: (json['subscriptionStatus'] ?? '').toString(),
         username: (json['username'] ?? '').toString(),
         storeSlug: (json['storeSlug'] ?? '').toString(),
@@ -145,8 +153,6 @@ class AccountAuthCache {
     await LocalDatabaseService.deleteString(key);
   }
 }
-
-
 
 class AdminSubscribersResult {
   const AdminSubscribersResult({
@@ -203,19 +209,32 @@ class AdminSubscriber {
     return AdminSubscriber(
       accountId: (json['account_id'] ?? json['accountId'] ?? '').toString(),
       storeId: (json['store_id'] ?? json['storeId'] ?? '').toString(),
-      subscriptionId: (json['subscription_id'] ?? json['subscriptionId'] ?? '').toString(),
+      subscriptionId:
+          (json['subscription_id'] ?? json['subscriptionId'] ?? '').toString(),
       username: (json['username'] ?? '').toString(),
       fullName: (json['full_name'] ?? json['fullName'] ?? '').toString(),
       storeSlug: (json['store_slug'] ?? json['storeSlug'] ?? '').toString(),
       storeName: (json['store_name'] ?? json['storeName'] ?? '').toString(),
       plan: (json['plan'] ?? '').toString(),
-      subscriptionStatus: (json['subscription_status'] ?? json['subscriptionStatus'] ?? '').toString(),
-      accountStatus: (json['account_status'] ?? json['accountStatus'] ?? '').toString(),
-      devicesLimit: int.tryParse((json['devices_limit'] ?? json['devicesLimit'] ?? '0').toString()) ?? 0,
-      deviceCount: int.tryParse((json['device_count'] ?? json['deviceCount'] ?? '0').toString()) ?? 0,
-      trialEndsAt: DateTime.tryParse((json['trial_ends_at'] ?? json['trialEndsAt'] ?? '').toString()),
-      createdAt: DateTime.tryParse((json['account_created_at'] ?? json['createdAt'] ?? '').toString()),
-      lastSeenAt: DateTime.tryParse((json['last_seen_at'] ?? json['lastSeenAt'] ?? '').toString()),
+      subscriptionStatus:
+          (json['subscription_status'] ?? json['subscriptionStatus'] ?? '')
+              .toString(),
+      accountStatus:
+          (json['account_status'] ?? json['accountStatus'] ?? '').toString(),
+      devicesLimit: int.tryParse(
+              (json['devices_limit'] ?? json['devicesLimit'] ?? '0')
+                  .toString()) ??
+          0,
+      deviceCount: int.tryParse(
+              (json['device_count'] ?? json['deviceCount'] ?? '0')
+                  .toString()) ??
+          0,
+      trialEndsAt: DateTime.tryParse(
+          (json['trial_ends_at'] ?? json['trialEndsAt'] ?? '').toString()),
+      createdAt: DateTime.tryParse(
+          (json['account_created_at'] ?? json['createdAt'] ?? '').toString()),
+      lastSeenAt: DateTime.tryParse(
+          (json['last_seen_at'] ?? json['lastSeenAt'] ?? '').toString()),
     );
   }
 }
@@ -273,11 +292,12 @@ class AccountAuthService {
     return _decode(response);
   }
 
-
-
-  Future<AdminSubscribersResult> fetchAdminSubscribers({required String adminToken}) async {
+  Future<AdminSubscribersResult> fetchAdminSubscribers(
+      {required String adminToken}) async {
     if (adminToken.trim().isEmpty) {
-      return const AdminSubscribersResult(ok: false, message: 'Admin token is missing. Sign in as admin@ventio.');
+      return const AdminSubscribersResult(
+          ok: false,
+          message: 'Admin token is missing. Sign in as admin@ventio.');
     }
     final response = await _client.get(
       _endpoint('/api/admin/subscribers'),
@@ -293,25 +313,31 @@ class AccountAuthService {
     } catch (_) {
       body = {'ok': false, 'error': response.body};
     }
-    if (response.statusCode < 200 || response.statusCode >= 300 || body['ok'] != true) {
+    if (response.statusCode < 200 ||
+        response.statusCode >= 300 ||
+        body['ok'] != true) {
       return AdminSubscribersResult(
         ok: false,
-        message: (body['error'] ?? body['message'] ?? 'Failed to load subscribers (${response.statusCode}).').toString(),
+        message: (body['error'] ??
+                body['message'] ??
+                'Failed to load subscribers (${response.statusCode}).')
+            .toString(),
       );
     }
     final rawSubscribers = body['subscribers'];
     final subscribers = rawSubscribers is List
         ? rawSubscribers
             .whereType<Map>()
-            .map((item) => AdminSubscriber.fromJson(Map<String, dynamic>.from(item)))
+            .map((item) =>
+                AdminSubscriber.fromJson(Map<String, dynamic>.from(item)))
             .toList(growable: false)
         : const <AdminSubscriber>[];
     final summary = body['summary'] is Map
         ? Map<String, dynamic>.from(body['summary'] as Map)
         : const <String, dynamic>{};
-    return AdminSubscribersResult(ok: true, summary: summary, subscribers: subscribers);
+    return AdminSubscribersResult(
+        ok: true, summary: summary, subscribers: subscribers);
   }
-
 
   Future<AccountAuthResult> updateAdminSubscriber({
     required String adminToken,
@@ -327,7 +353,9 @@ class AccountAuthService {
     required DateTime? trialEndsAt,
   }) async {
     if (adminToken.trim().isEmpty) {
-      return const AccountAuthResult(ok: false, message: 'Admin token is missing. Sign in as admin@ventio.');
+      return const AccountAuthResult(
+          ok: false,
+          message: 'Admin token is missing. Sign in as admin@ventio.');
     }
     final response = await _client.patch(
       _endpoint('/api/admin/subscribers'),
@@ -356,7 +384,9 @@ class AccountAuthService {
     required AdminSubscriber subscriber,
   }) async {
     if (adminToken.trim().isEmpty) {
-      return const AccountAuthResult(ok: false, message: 'Admin token is missing. Sign in as admin@ventio.');
+      return const AccountAuthResult(
+          ok: false,
+          message: 'Admin token is missing. Sign in as admin@ventio.');
     }
     final response = await _client.delete(
       _endpoint('/api/admin/subscribers'),
@@ -388,6 +418,7 @@ class AccountAuthService {
           : result.message,
       accountId: result.accountId,
       storeId: result.storeId,
+      branchId: result.branchId,
       subscriptionStatus: result.subscriptionStatus,
       username: result.username,
       storeSlug: result.storeSlug,
@@ -409,6 +440,7 @@ class AccountAuthService {
         mode: mode,
         accountId: result.accountId,
         storeId: result.storeId,
+        branchId: result.branchId,
         subscriptionStatus: result.subscriptionStatus,
         username: result.username,
         storeSlug: result.storeSlug,

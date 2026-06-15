@@ -935,6 +935,97 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> recoverOnlineStoreOwnerIdentity({
+    required String storeId,
+    required String branchId,
+    required String storeName,
+    required String username,
+    required String password,
+  }) async {
+    final cleanStoreId = storeId.trim().toUpperCase();
+    final cleanBranchId = branchId.trim().toUpperCase();
+    final cleanUsername = username.trim().toLowerCase();
+    final cleanPassword = password.trim();
+    if (!RegExp(r'^ST-[A-Z0-9]{6,}$').hasMatch(cleanStoreId)) {
+      throw ArgumentError('Online login did not return a valid Store ID.');
+    }
+    if (!RegExp(r'^BR-[A-Z0-9]{6,}$').hasMatch(cleanBranchId)) {
+      throw ArgumentError('Online login did not return a valid Branch ID.');
+    }
+    if (cleanUsername.length < 3) {
+      throw ArgumentError('Username must be at least 3 characters.');
+    }
+    if (cleanPassword.length < 6) {
+      throw ArgumentError('Password must be at least 6 characters.');
+    }
+    final platform = _detectPlatform();
+    if (platform == AppPlatformType.web) {
+      throw StateError(
+        'Web devices cannot recover a Host. Use a desktop device, then import the backup.',
+      );
+    }
+
+    final now = DateTime.now();
+    final recoveredIdentity = _normalizedLocalIdentity(
+      appIdentity.copyWith(
+        storeId: cleanStoreId,
+        branchId: cleanBranchId,
+        deviceRole: DeviceRole.host,
+        syncMode: SyncMode.localOnly,
+        activeSyncTransport: '',
+        hostDeviceId: '',
+        deviceId: _deviceId,
+        platform: platform,
+        updatedAt: now,
+      ),
+    );
+    _assertLanCloudRoleRules(recoveredIdentity,
+        source: 'online store recovery');
+    _appIdentity = recoveredIdentity;
+    await LocalDatabaseService.setString(
+      _appIdentityKey,
+      jsonEncode(recoveredIdentity.toJson()),
+    );
+
+    final cleanStoreName = storeName.trim();
+    if (cleanStoreName.isNotEmpty) {
+      _storeProfile = _storeProfile.copyWith(name: cleanStoreName);
+    }
+
+    final passwordHash = await _hashPasswordAsync(cleanPassword);
+    final existingIndex = _users.indexWhere(
+      (user) => user.username.trim().toLowerCase() == cleanUsername,
+    );
+    final recoveredUser = existingIndex == -1
+        ? AppUser(
+            id: 'owner_${now.microsecondsSinceEpoch}',
+            fullName: cleanUsername,
+            username: cleanUsername,
+            passwordHash: passwordHash,
+            roleId: 'admin',
+            isSystem: true,
+            createdAt: now,
+            updatedAt: now,
+            lastLoginAt: now,
+          )
+        : _users[existingIndex].copyWith(
+            passwordHash: passwordHash,
+            roleId: 'admin',
+            updatedAt: now,
+            lastLoginAt: now,
+          );
+    if (existingIndex == -1) {
+      _users.add(recoveredUser);
+    } else {
+      _users[existingIndex] = recoveredUser;
+    }
+    _activeUser = recoveredUser;
+    await LocalDatabaseService.setString(_activeUserKey, recoveredUser.id);
+    await _saveRolesAndUsers();
+    await _saveAll();
+    notifyListeners();
+  }
+
   UserRole? roleById(String id) {
     for (final role in _roles) {
       if (role.id == id) return role;
@@ -9007,8 +9098,7 @@ class AppStore extends ChangeNotifier {
     }
     final decoded = jsonDecode(rawJson) as Map<String, dynamic>;
     final currentIdentityBeforeImport = appIdentity;
-    final preservePairedHostIdentity = currentIdentityBeforeImport.isHost &&
-        (currentIdentityBeforeImport.isCloudEnabled || _isLanHostConfigured);
+    final preservePairedHostIdentity = currentIdentityBeforeImport.isHost;
     final liveHostConnectionEntries = preservePairedHostIdentity
         ? Map<String, String>.fromEntries(
             LocalDatabaseService.allEntries().entries.where(

@@ -114,6 +114,43 @@ void main() {
       expect(restored.storeProfile.name, 'Seeded Store');
       expect(restored.totalSalesAmount, 24);
     });
+
+    test('online recovery keeps server identity when importing a backup',
+        () async {
+      final seeded = await readyStore();
+      await seeded.updateStoreProfile(
+          StoreProfile.defaults.copyWith(name: 'Backup Store'));
+      await seeded.addOrUpdateProduct(product());
+      final raw = seeded.exportBackupJson();
+
+      SharedPreferences.setMockInitialValues(const <String, Object>{});
+      LocalDatabaseService.useInMemoryStoreForTesting();
+      final recovered = AppStore();
+      await recovered.initialize();
+      await recovered.recoverOnlineStoreOwnerIdentity(
+        storeId: 'ST-CLOUD1',
+        branchId: 'BR-CLOUD1',
+        storeName: 'Server Store',
+        username: 'owner',
+        password: 'OwnerPass123',
+      );
+
+      expect(recovered.appIdentity.storeId, 'ST-CLOUD1');
+      expect(recovered.appIdentity.branchId, 'BR-CLOUD1');
+      expect(recovered.appIdentity.deviceRole, DeviceRole.host);
+      expect(recovered.appIdentity.syncMode, SyncMode.localOnly);
+      expect(recovered.appIdentity.activeSyncTransport, isEmpty);
+      expect(recovered.activeUser?.username, 'owner');
+      expect(await recovered.login('owner', 'OwnerPass123'), isTrue);
+
+      await recovered.importBackupJson(raw);
+
+      expect(recovered.products.single.code, 'P001');
+      expect(recovered.storeProfile.name, 'Backup Store');
+      expect(recovered.appIdentity.storeId, 'ST-CLOUD1');
+      expect(recovered.appIdentity.branchId, 'BR-CLOUD1');
+      expect(recovered.appIdentity.deviceRole, DeviceRole.host);
+    });
   });
 
   group('AppStore product, customer, supplier, catalog, and expense workflows',

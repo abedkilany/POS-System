@@ -65,9 +65,9 @@ class _LoginGatePageState extends State<LoginGatePage> {
   }
 
   void _showAuthMessage(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
-
 
   Future<void> _checkSuspensionStatus() async {
     if (!widget.store.appIdentity.isClient) return;
@@ -82,13 +82,19 @@ class _LoginGatePageState extends State<LoginGatePage> {
           : await UnifiedSyncFactory.lanEngine(widget.store).syncNow();
       if (!mounted) return;
       if (result.ok && !widget.store.isSuspendedByHost) {
-        messenger.showSnackBar(SnackBar(content: Text(tr.text('client_resume_detected'))));
+        messenger.showSnackBar(
+            SnackBar(content: Text(tr.text('client_resume_detected'))));
         setState(() {});
       } else {
-        messenger.showSnackBar(SnackBar(content: Text(result.message.isEmpty ? tr.text('client_still_suspended') : localizeRuntimeMessage(result.message, tr))));
+        messenger.showSnackBar(SnackBar(
+            content: Text(result.message.isEmpty
+                ? tr.text('client_still_suspended')
+                : localizeRuntimeMessage(result.message, tr))));
       }
     } catch (error) {
-      if (mounted) messenger.showSnackBar(SnackBar(content: Text(error.toString())));
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(content: Text(error.toString())));
+      }
     } finally {
       if (mounted) setState(() => _checkingSuspension = false);
     }
@@ -154,14 +160,16 @@ class _LoginGatePageState extends State<LoginGatePage> {
 
         return StatefulBuilder(
           builder: (context, setState) => AlertDialog(
-            title: Text(AppLocalizations.of(context).text('recover_existing_store')),
+            title: Text(
+                AppLocalizations.of(context).text('recover_existing_store')),
             content: ResponsiveDialogBox(
               maxWidth: VentioResponsive.modalMaxWidth(context, 460),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(AppLocalizations.of(context).text('recover_existing_store_desc')),
+                  Text(AppLocalizations.of(context)
+                      .text('recover_existing_store_desc')),
                   const SizedBox(height: 12),
                   SizedBox(
                     width: double.infinity,
@@ -175,14 +183,16 @@ class _LoginGatePageState extends State<LoginGatePage> {
                         onLoaded: () => refresh(setState),
                       ),
                       icon: const Icon(Icons.upload_file_outlined),
-                      label: Text(AppLocalizations.of(context).text('upload_recovery_file')),
+                      label: Text(AppLocalizations.of(context)
+                          .text('upload_recovery_file')),
                     ),
                   ),
                   const SizedBox(height: 12),
                   TextField(
                     controller: apiUrlController,
                     decoration: InputDecoration(
-                      labelText: AppLocalizations.of(context).text('cloud_api_url'),
+                      labelText:
+                          AppLocalizations.of(context).text('cloud_api_url'),
                       hintText: 'https://your-cloud-api.vercel.app',
                       border: const OutlineInputBorder(),
                     ),
@@ -204,8 +214,10 @@ class _LoginGatePageState extends State<LoginGatePage> {
                     controller: branchIdController,
                     textCapitalization: TextCapitalization.characters,
                     decoration: InputDecoration(
-                      labelText: AppLocalizations.of(context).text('branch_id_optional'),
-                      hintText: AppLocalizations.of(context).text('branch_id_recover_hint'),
+                      labelText: AppLocalizations.of(context)
+                          .text('branch_id_optional'),
+                      hintText: AppLocalizations.of(context)
+                          .text('branch_id_recover_hint'),
                       border: const OutlineInputBorder(),
                     ),
                   ),
@@ -214,7 +226,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
                     controller: recoveryKeyController,
                     textCapitalization: TextCapitalization.characters,
                     decoration: InputDecoration(
-                      labelText: AppLocalizations.of(context).text('recovery_key'),
+                      labelText:
+                          AppLocalizations.of(context).text('recovery_key'),
                       hintText: 'RK-XXXX-XXXX-XXXX',
                       border: const OutlineInputBorder(),
                     ),
@@ -229,7 +242,9 @@ class _LoginGatePageState extends State<LoginGatePage> {
                 child: Text(AppLocalizations.of(context).text('cancel')),
               ),
               FilledButton(
-                onPressed: canRecover ? () => Navigator.pop(dialogContext, true) : null,
+                onPressed: canRecover
+                    ? () => Navigator.pop(dialogContext, true)
+                    : null,
                 child: Text(AppLocalizations.of(context).text('recover')),
               ),
             ],
@@ -245,7 +260,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
         clearLastPullCursor: true,
       );
       await recoverySettings.save();
-      final result = await CloudSyncService(widget.store).recoverExistingStoreFromCloud(
+      final result =
+          await CloudSyncService(widget.store).recoverExistingStoreFromCloud(
         recoverySettings,
         storeId: storeIdController.text,
         branchId: branchIdController.text,
@@ -271,7 +287,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
   }
 
   Future<void> _unlock() async {
-    final invalidLoginMessage = AppLocalizations.of(context).text('invalid_login');
+    final invalidLoginMessage =
+        AppLocalizations.of(context).text('invalid_login');
     final messenger = ScaffoldMessenger.of(context);
 
     setState(() => _loggingIn = true);
@@ -285,7 +302,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
       final parts = onlineUsername.split('@');
       if (parts.length != 2 || parts.first.isEmpty || parts.last.isEmpty) {
         setState(() => _loggingIn = false);
-        _showAuthMessage('Online login must be username@store, for example admin@oday.');
+        _showAuthMessage(
+            'Online login must be username@store, for example user@store.');
         return;
       }
       localUsername = parts.first;
@@ -305,8 +323,20 @@ class _LoginGatePageState extends State<LoginGatePage> {
           return;
         }
         await AccountAuthService.cacheOnlineResult(onlineResult, mode: 'login');
+        if (onlineResult.accountType == 'store_owner' &&
+            onlineResult.storeSlug != 'ventio') {
+          await widget.store.recoverOnlineStoreOwnerIdentity(
+            storeId: onlineResult.storeId,
+            branchId: onlineResult.branchId,
+            storeName: onlineResult.storeName,
+            username: parts.first,
+            password: _passwordController.text,
+          );
+          if (!mounted) return;
+          setState(() => _loggingIn = false);
+          return;
+        }
         if (onlineResult.accountType == 'platform_admin' ||
-            onlineResult.accountType == 'store_owner' ||
             onlineResult.storeSlug == 'ventio') {
           setState(() => _loggingIn = false);
           return;
@@ -315,7 +345,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
         if (!mounted) return;
         setState(() => _loggingIn = false);
         messenger.showSnackBar(SnackBar(
-          content: Text('${AppLocalizations.of(context).text('online_login_failed')}: $error'),
+          content: Text(
+              '${AppLocalizations.of(context).text('online_login_failed')}: $error'),
         ));
         return;
       }
@@ -345,25 +376,31 @@ class _LoginGatePageState extends State<LoginGatePage> {
     final storeName = _normalizeLoginPart(_storeNameController.text);
 
     if (!_isValidLoginPart(username)) {
-      _showAuthMessage('Username must be 3-32 characters: letters, numbers, underscore, or hyphen. No spaces.');
+      _showAuthMessage(
+          'Username must be 3-32 characters: letters, numbers, underscore, or hyphen. No spaces.');
       return;
     }
     if (username.contains('@')) {
-      _showAuthMessage('Register with username only. Online login will become username@store.');
+      _showAuthMessage(
+          'Register with username only. Online login will become username@store.');
       return;
     }
     if (!_isValidLoginPart(storeName)) {
-      _showAuthMessage('Store name must be 3-32 characters: letters, numbers, underscore, or hyphen. No spaces.');
+      _showAuthMessage(
+          'Store name must be 3-32 characters: letters, numbers, underscore, or hyphen. No spaces.');
       return;
     }
     if (storeName == 'ventio') {
-      _showAuthMessage('ventio is reserved for platform accounts. Choose another store name.');
+      _showAuthMessage(
+          'ventio is reserved for platform accounts. Choose another store name.');
       return;
     }
 
     if (password != _confirmPasswordController.text.trim()) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(AppLocalizations.of(context).text('passwords_do_not_match'))),
+        SnackBar(
+            content: Text(
+                AppLocalizations.of(context).text('passwords_do_not_match'))),
       );
       return;
     }
@@ -385,8 +422,11 @@ class _LoginGatePageState extends State<LoginGatePage> {
       }
       await AccountAuthService.cacheOnlineResult(onlineResult, mode: 'trial');
 
-      await widget.store.completeInitialAdminSetup(
-        fullName: 'Administrator',
+      await widget.store.recoverOnlineStoreOwnerIdentity(
+        storeId: onlineResult.storeId,
+        branchId: onlineResult.branchId,
+        storeName:
+            onlineResult.storeName.isEmpty ? storeName : onlineResult.storeName,
         username: username,
         password: password,
       );
@@ -419,12 +459,13 @@ class _LoginGatePageState extends State<LoginGatePage> {
   @override
   Widget build(BuildContext context) {
     final authCache = AccountAuthCache.load();
-    final platformAdminUnlocked =
-        authCache?.accountType == 'platform_admin' || authCache?.storeSlug == 'ventio';
+    final platformAdminUnlocked = authCache?.accountType == 'platform_admin' ||
+        authCache?.storeSlug == 'ventio';
     final storeAccountUnlocked = authCache?.accountType == 'store_owner' &&
         (authCache?.storeSlug ?? '').trim().isNotEmpty &&
         authCache?.storeSlug != 'ventio';
     if (platformAdminUnlocked) return widget.child;
+    if (widget.store.activeUser != null) return widget.child;
     if (storeAccountUnlocked && authCache != null) {
       return StoreAccountDashboardPage(
         cache: authCache,
@@ -435,7 +476,6 @@ class _LoginGatePageState extends State<LoginGatePage> {
         },
       );
     }
-    if (widget.store.activeUser != null) return widget.child;
 
     if (_showRegister && !kIsWeb && widget.store.needsInitialAdminSetup) {
       return _InitialAdminSetupCard(
@@ -445,7 +485,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
         confirmPasswordController: _confirmPasswordController,
         saving: _savingSetup,
         onSubmit: _completeInitialSetup,
-        onCancel: _savingSetup ? null : () => setState(() => _showRegister = false),
+        onCancel:
+            _savingSetup ? null : () => setState(() => _showRegister = false),
       );
     }
 
@@ -461,7 +502,9 @@ class _LoginGatePageState extends State<LoginGatePage> {
             child: SingleChildScrollView(
               padding: VentioResponsive.pageInsets(context),
               child: ConstrainedBox(
-                constraints: BoxConstraints(maxWidth: VentioResponsive.clampToScreen(context, 460, min: 280, horizontalPadding: 32)),
+                constraints: BoxConstraints(
+                    maxWidth: VentioResponsive.clampToScreen(context, 460,
+                        min: 280, horizontalPadding: 32)),
                 child: Card(
                   margin: EdgeInsets.zero,
                   child: Padding(
@@ -469,17 +512,29 @@ class _LoginGatePageState extends State<LoginGatePage> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const CircleAvatar(radius: 34, child: Icon(Icons.pause_circle_outline, size: 34)),
+                        const CircleAvatar(
+                            radius: 34,
+                            child: Icon(Icons.pause_circle_outline, size: 34)),
                         const SizedBox(height: 16),
-                        Text(tr.text('client_suspended_by_host'), style: Theme.of(context).textTheme.headlineSmall, textAlign: TextAlign.center),
+                        Text(tr.text('client_suspended_by_host'),
+                            style: Theme.of(context).textTheme.headlineSmall,
+                            textAlign: TextAlign.center),
                         const SizedBox(height: 8),
                         Text(reason, textAlign: TextAlign.center),
                         const SizedBox(height: 18),
                         SizedBox(
                           width: double.infinity,
                           child: FilledButton.icon(
-                            onPressed: _checkingSuspension ? null : _checkSuspensionStatus,
-                            icon: _checkingSuspension ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.refresh),
+                            onPressed: _checkingSuspension
+                                ? null
+                                : _checkSuspensionStatus,
+                            icon: _checkingSuspension
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2))
+                                : const Icon(Icons.refresh),
                             label: Text(tr.text('check_resume_status')),
                           ),
                         ),
@@ -500,7 +555,9 @@ class _LoginGatePageState extends State<LoginGatePage> {
           child: SingleChildScrollView(
             padding: VentioResponsive.pageInsets(context),
             child: ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: VentioResponsive.clampToScreen(context, 420, min: 280, horizontalPadding: 32)),
+              constraints: BoxConstraints(
+                  maxWidth: VentioResponsive.clampToScreen(context, 420,
+                      min: 280, horizontalPadding: 32)),
               child: Card(
                 margin: EdgeInsets.zero,
                 child: Padding(
@@ -519,40 +576,6 @@ class _LoginGatePageState extends State<LoginGatePage> {
                       ),
                       const SizedBox(height: 8),
                       Text(tr.text('signin_hint'), textAlign: TextAlign.center),
-                      const SizedBox(height: 16),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Icon(
-                              Icons.info_outline,
-                              size: 20,
-                              color: Theme.of(context).colorScheme.primary,
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                'اكتب admin للدخول Offline، أو admin@store للدخول Online.',
-                                style: Theme.of(context).textTheme.bodySmall,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      if (widget.store.needsInitialAdminSetup) ...[
-                        const SizedBox(height: 8),
-                        Text(
-                          tr.text('first_run_online_required'),
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      ],
                       const SizedBox(height: 20),
                       TextField(
                         controller: _usernameController,
@@ -561,7 +584,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
                         textInputAction: TextInputAction.next,
                         decoration: InputDecoration(
                           labelText: tr.text('username'),
-                          helperText: 'Offline: admin  |  Online: admin@store',
+                          helperText: 'Offline: user  |  Online: user@store',
                         ),
                       ),
                       const SizedBox(height: 12),
@@ -577,7 +600,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
                                 : tr.text('show_password'),
                             onPressed: _loggingIn
                                 ? null
-                                : () => setState(() => _showPassword = !_showPassword),
+                                : () => setState(
+                                    () => _showPassword = !_showPassword),
                             icon: Icon(_showPassword
                                 ? Icons.visibility_off_outlined
                                 : Icons.visibility_outlined),
@@ -594,14 +618,23 @@ class _LoginGatePageState extends State<LoginGatePage> {
                         controlAffinity: ListTileControlAffinity.leading,
                         title: Text(tr.text('remember_me')),
                         subtitle: Text(tr.text('remember_me_desc')),
-                        onChanged: _loggingIn ? null : (value) => setState(() => _rememberLogin = value ?? false),
+                        onChanged: _loggingIn
+                            ? null
+                            : (value) =>
+                                setState(() => _rememberLogin = value ?? false),
                       ),
                       const SizedBox(height: 8),
                       SizedBox(
                         width: double.infinity,
                         child: FilledButton.icon(
                           onPressed: _loggingIn ? null : _unlock,
-                          icon: _loggingIn ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.login),
+                          icon: _loggingIn
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2))
+                              : const Icon(Icons.login),
                           label: Text(tr.text('login')),
                         ),
                       ),
@@ -609,11 +642,15 @@ class _LoginGatePageState extends State<LoginGatePage> {
                       Align(
                         alignment: AlignmentDirectional.centerEnd,
                         child: TextButton(
-                          onPressed: _loggingIn ? null : () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text(tr.text('password_recovery_not_configured'))),
-                            );
-                          },
+                          onPressed: _loggingIn
+                              ? null
+                              : () {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                        content: Text(tr.text(
+                                            'password_recovery_not_configured'))),
+                                  );
+                                },
                           child: Text(tr.text('forgot_password')),
                         ),
                       ),
@@ -627,7 +664,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
                                 OutlinedButton.icon(
                                   onPressed: _loggingIn
                                       ? null
-                                      : () => setState(() => _showRegister = true),
+                                      : () =>
+                                          setState(() => _showRegister = true),
                                   icon: const Icon(Icons.person_add_alt_1),
                                   label: Text(tr.text('register')),
                                 ),
@@ -640,7 +678,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
                                             builder: (_) => SyncSetupPage(
                                               store: widget.store,
                                               onDone: () async {
-                                                if (Navigator.of(context).canPop()) {
+                                                if (Navigator.of(context)
+                                                    .canPop()) {
                                                   Navigator.of(context).pop();
                                                 }
                                               },
@@ -711,7 +750,9 @@ class _InitialAdminSetupCardState extends State<_InitialAdminSetupCard> {
           child: SingleChildScrollView(
             padding: VentioResponsive.pageInsets(context),
             child: ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: VentioResponsive.clampToScreen(context, 460, min: 280, horizontalPadding: 32)),
+              constraints: BoxConstraints(
+                  maxWidth: VentioResponsive.clampToScreen(context, 460,
+                      min: 280, horizontalPadding: 32)),
               child: Card(
                 margin: EdgeInsets.zero,
                 child: Padding(
@@ -740,7 +781,8 @@ class _InitialAdminSetupCardState extends State<_InitialAdminSetupCard> {
                         textInputAction: TextInputAction.next,
                         decoration: InputDecoration(
                           labelText: tr.text('store_name'),
-                          helperText: 'Use letters/numbers only, no spaces. Example: oday',
+                          helperText:
+                              'Use letters/numbers only, no spaces. Example: oday',
                         ),
                       ),
                       const SizedBox(height: 12),
@@ -751,7 +793,8 @@ class _InitialAdminSetupCardState extends State<_InitialAdminSetupCard> {
                         textInputAction: TextInputAction.next,
                         decoration: InputDecoration(
                           labelText: tr.text('new_username'),
-                          helperText: 'Example: admin. Online login becomes admin@store.',
+                          helperText:
+                              'Example: user. Online login becomes user@store.',
                         ),
                       ),
                       const SizedBox(height: 12),
@@ -768,7 +811,8 @@ class _InitialAdminSetupCardState extends State<_InitialAdminSetupCard> {
                                 : tr.text('show_password'),
                             onPressed: widget.saving
                                 ? null
-                                : () => setState(() => _showPassword = !_showPassword),
+                                : () => setState(
+                                    () => _showPassword = !_showPassword),
                             icon: Icon(_showPassword
                                 ? Icons.visibility_off_outlined
                                 : Icons.visibility_outlined),
@@ -791,7 +835,8 @@ class _InitialAdminSetupCardState extends State<_InitialAdminSetupCard> {
                                 : tr.text('show_password'),
                             onPressed: widget.saving
                                 ? null
-                                : () => setState(() => _showConfirmPassword = !_showConfirmPassword),
+                                : () => setState(() => _showConfirmPassword =
+                                    !_showConfirmPassword),
                             icon: Icon(_showConfirmPassword
                                 ? Icons.visibility_off_outlined
                                 : Icons.visibility_outlined),

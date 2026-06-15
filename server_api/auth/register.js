@@ -9,6 +9,10 @@ function randomId(prefix) {
   return `${prefix}_${crypto.randomBytes(12).toString('hex')}`;
 }
 
+function ventioId(prefix) {
+  return `${prefix}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+}
+
 function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString('hex');
   const hash = crypto.pbkdf2Sync(String(password), salt, 120000, 32, 'sha256').toString('hex');
@@ -37,6 +41,7 @@ async function ensureTables() {
     create table if not exists app_stores (
       id text primary key,
       owner_account_id text not null references app_accounts(id) on delete cascade,
+      branch_id text not null default 'BR-MAIN',
       slug text,
       name text not null default 'My Store',
       status text not null default 'active',
@@ -60,6 +65,7 @@ async function ensureTables() {
   await sql`alter table app_accounts add column if not exists namespace_slug text not null default ''`;
   await sql`alter table app_accounts add column if not exists account_type text not null default 'store_owner'`;
   await sql`alter table app_stores add column if not exists slug text`;
+  await sql`alter table app_stores add column if not exists branch_id text not null default 'BR-MAIN'`;
 
   await sql`
     update app_stores
@@ -108,7 +114,8 @@ export default async function handler(req, res) {
     if (existingAccount.length) return res.status(409).json({ ok: false, error: 'Username already exists for this store.' });
 
     const accountId = randomId('acct');
-    const storeId = randomId('store');
+    const storeId = ventioId('ST');
+    const branchId = ventioId('BR');
     const subscriptionId = randomId('sub');
     const passwordHash = hashPassword(password);
     const trialEndsAt = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000).toISOString();
@@ -118,8 +125,8 @@ export default async function handler(req, res) {
       values (${accountId}, ${username}, ${storeSlug}, ${passwordHash}, ${fullName}, 'store_owner')
     `;
     await sql`
-      insert into app_stores (id, owner_account_id, slug, name)
-      values (${storeId}, ${accountId}, ${storeSlug}, ${storeNameInput || storeSlug})
+      insert into app_stores (id, owner_account_id, branch_id, slug, name)
+      values (${storeId}, ${accountId}, ${branchId}, ${storeSlug}, ${storeNameInput || storeSlug})
     `;
     await sql`
       insert into app_subscriptions (id, store_id, plan, status, trial_ends_at, devices_limit)
@@ -131,8 +138,10 @@ export default async function handler(req, res) {
       message: 'Trial account created.',
       accountId,
       storeId,
+      branchId,
       username,
       storeSlug,
+      storeName: storeNameInput || storeSlug,
       loginName: `${username}@${storeSlug}`,
       subscriptionStatus: 'trial',
       trialEndsAt,
