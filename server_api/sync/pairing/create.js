@@ -1,5 +1,13 @@
 import { randomBytes, createHash } from 'crypto';
-import { sql, assertSyncToken, assertStoreAllowed, assertDeviceAllowed, sendError } from '../../_db.js';
+import {
+  sql,
+  assertSyncToken,
+  assertAccountStoreToken,
+  assertCloudSyncEnabled,
+  assertStoreAllowed,
+  assertDeviceAllowed,
+  sendError,
+} from '../../_db.js';
 
 async function ensurePairingTable() {
   await sql`
@@ -54,7 +62,6 @@ function makeCode() {
 
 export default async function handler(req, res) {
   try {
-    assertSyncToken(req);
     if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Method not allowed' });
     await ensurePairingTable();
     await ensureRecoveryTable();
@@ -69,7 +76,25 @@ export default async function handler(req, res) {
     if (!storeId) return res.status(400).json({ ok: false, error: 'storeId is required.' });
     if (!hostDeviceId) return res.status(400).json({ ok: false, error: 'hostDeviceId is required.' });
     assertStoreAllowed(storeId);
-    await assertDeviceAllowed(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: transport === 'cloud' ? ['cloud'] : [] });
+    try {
+      assertSyncToken(req);
+      if (transport === 'cloud') await assertCloudSyncEnabled(storeId);
+    } catch (_) {
+      try {
+        await assertDeviceAllowed(req, {
+          storeId,
+          branchId,
+          allowedRoles: ['host'],
+          allowedTransports: transport === 'cloud' ? ['cloud'] : [],
+          force: true,
+        });
+        if (transport === 'cloud') await assertCloudSyncEnabled(storeId);
+      } catch (deviceError) {
+        if (transport !== 'cloud') throw deviceError;
+        assertAccountStoreToken(req, { storeId, branchId });
+        await assertCloudSyncEnabled(storeId);
+      }
+    }
 
     await sql`delete from device_pairing_codes where expires_at < now() or claimed_at is not null`;
     let code = makeCode();

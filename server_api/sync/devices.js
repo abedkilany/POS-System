@@ -1,4 +1,13 @@
-import { sql, assertSyncToken, assertDeviceAllowed, assertStoreAllowed, ensureDeviceAuthColumns, sendError } from '../_db.js';
+import {
+  sql,
+  assertSyncToken,
+  assertAccountStoreToken,
+  assertCloudSyncEnabled,
+  assertDeviceAllowed,
+  assertStoreAllowed,
+  ensureDeviceAuthColumns,
+  sendError,
+} from '../_db.js';
 
 function asIso(value) {
   if (!value) return null;
@@ -96,31 +105,6 @@ export default async function handler(req, res) {
       if (!deviceId) return res.status(400).json({ ok: false, error: 'deviceId is required.' });
       assertStoreAllowed(storeId);
 
-      // Client Cloud ACK is sent through this heartbeat endpoint after the
-      // device has applied authoritative events locally. Hosts may still use
-      // the deployment token, but paired Clients usually only have their
-      // device-scoped token. Accept either auth mode, and when device auth is
-      // used make sure the body cannot update another device row.
-      let usedDeviceAuth = false;
-      try {
-        assertSyncToken(req);
-      } catch (_) {
-        await assertDeviceAllowed(req, {
-          storeId,
-          branchId,
-          allowedRoles: ['host', 'client'],
-          allowedTransports: ['cloud'],
-          force: true,
-        });
-        usedDeviceAuth = true;
-      }
-      if (usedDeviceAuth) {
-        const headerDeviceId = String(req.headers['x-device-id'] || req.headers['X-Device-Id'] || '').trim();
-        if (headerDeviceId !== deviceId) {
-          return res.status(403).json({ ok: false, error: 'Device credentials cannot update another device.' });
-        }
-      }
-
       const deviceName = String(body.deviceName || body.device_name || '').trim();
       const platform = String(body.platform || '').trim();
       const role = String(body.role || '').trim();
@@ -135,6 +119,41 @@ export default async function handler(req, res) {
       const lastAckCursor = safeIso(body.lastAckCursor || body.last_ack_cursor || lastAppliedCursor);
       const lastAppliedSequence = Math.max(Number(body.lastAppliedSequence || body.last_applied_sequence || 0), 0);
       const lastAckSequence = Math.max(Number(body.lastAckSequence || body.last_ack_sequence || lastAppliedSequence || 0), 0);
+
+      // Client Cloud ACK is sent through this heartbeat endpoint after the
+      // device has applied authoritative events locally. Hosts may still use
+      // the deployment token, but paired Clients usually only have their
+      // device-scoped token. Accept either auth mode, and when device auth is
+      // used make sure the body cannot update another device row.
+      let usedDeviceAuth = false;
+      try {
+        assertSyncToken(req);
+        await assertCloudSyncEnabled(storeId);
+      } catch (_) {
+        try {
+          await assertDeviceAllowed(req, {
+            storeId,
+            branchId,
+            allowedRoles: ['host', 'client'],
+            allowedTransports: ['cloud'],
+            force: true,
+          });
+          usedDeviceAuth = true;
+          await assertCloudSyncEnabled(storeId);
+        } catch (deviceError) {
+          if (String(role || '').trim() !== 'host' || activeTransport !== 'cloud') {
+            throw deviceError;
+          }
+          assertAccountStoreToken(req, { storeId, branchId });
+          await assertCloudSyncEnabled(storeId);
+        }
+      }
+      if (usedDeviceAuth) {
+        const headerDeviceId = String(req.headers['x-device-id'] || req.headers['X-Device-Id'] || '').trim();
+        if (headerDeviceId !== deviceId) {
+          return res.status(403).json({ ok: false, error: 'Device credentials cannot update another device.' });
+        }
+      }
 
       const rows = await sql`
         insert into store_devices (

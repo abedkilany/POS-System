@@ -125,6 +125,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
     String accountStatus = subscriber.accountStatus.isEmpty ? 'active' : subscriber.accountStatus;
     String plan = subscriber.plan.isEmpty ? 'trial' : subscriber.plan;
     String subscriptionStatus = subscriber.subscriptionStatus.isEmpty ? 'trial' : subscriber.subscriptionStatus;
+    var cloudSyncEnabled = subscriber.cloudSyncEnabled;
     String? localError;
 
     final saved = await showDialog<bool>(
@@ -231,6 +232,15 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                           helperText: 'Example: 2026-06-28T19:08:06 or leave empty',
                         ),
                       ),
+                      const SizedBox(height: 12),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Cloud Sync'),
+                        subtitle: const Text('Allow this store to use Cloud Sync.'),
+                        value: cloudSyncEnabled,
+                        onChanged: (value) =>
+                            setDialogState(() => cloudSyncEnabled = value),
+                      ),
                     ],
                   ),
                 ),
@@ -279,6 +289,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                       plan: plan,
                       subscriptionStatus: subscriptionStatus,
                       devicesLimit: limit,
+                      cloudSyncEnabled: cloudSyncEnabled,
                       trialEndsAt: trialEndsAt,
                     );
                     if (!context.mounted) return;
@@ -408,6 +419,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                             DataColumn(label: Text('Status')),
                             DataColumn(label: Text('Trial')),
                             DataColumn(label: Text('Devices')),
+                            DataColumn(label: Text('Cloud Sync')),
                             DataColumn(label: Text('Created')),
                             DataColumn(label: Text('Last seen')),
                             DataColumn(label: Text('Actions')),
@@ -432,6 +444,15 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                                       subscriber.trialEndsAt!.toLocal().isBefore(DateTime.now()),
                                 )),
                                 DataCell(Text('${subscriber.deviceCount}/${subscriber.devicesLimit}')),
+                                DataCell(_StatusBadge(
+                                  label: subscriber.cloudSyncEnabled ? 'enabled' : 'off',
+                                  color: subscriber.cloudSyncEnabled
+                                      ? Colors.green.shade700
+                                      : Theme.of(context).colorScheme.onSurfaceVariant,
+                                  background: subscriber.cloudSyncEnabled
+                                      ? Colors.green.withValues(alpha: 0.10)
+                                      : Theme.of(context).colorScheme.surfaceContainerHighest,
+                                )),
                                 DataCell(Text(_formatDate(subscriber.createdAt))),
                                 DataCell(Text(_formatDate(subscriber.lastSeenAt))),
                                 DataCell(_ActionsCell(

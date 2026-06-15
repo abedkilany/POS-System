@@ -2,7 +2,8 @@ import { createHash } from 'crypto';
 import {
   sql,
   assertSyncToken,
-  assertSyncTokenOrDevice,
+  assertAccountStoreToken,
+  assertCloudSyncEnabled,
   assertStoreAllowed,
   assertDeviceAllowed,
   sendError,
@@ -62,8 +63,6 @@ export default async function handler(req, res) {
     await ensureHeartbeatTable();
 
     if (req.method === 'POST') {
-      assertSyncToken(req);
-
       const body = req.body || {};
       const storeId = String(body.storeId || body.store_id || '').trim();
       const branchId = String(body.branchId || body.branch_id || 'main').trim() || 'main';
@@ -79,12 +78,24 @@ export default async function handler(req, res) {
 
       assertStoreAllowed(storeId);
 
-      await assertDeviceAllowed(req, {
-        storeId,
-        branchId,
-        allowedRoles: ['host'],
-        allowedTransports: ['cloud'],
-      });
+      try {
+        assertSyncToken(req);
+        await assertCloudSyncEnabled(storeId);
+      } catch (_) {
+        try {
+          await assertDeviceAllowed(req, {
+            storeId,
+            branchId,
+            allowedRoles: ['host'],
+            allowedTransports: ['cloud'],
+            force: true,
+          });
+          await assertCloudSyncEnabled(storeId);
+        } catch (deviceError) {
+          assertAccountStoreToken(req, { storeId, branchId });
+          await assertCloudSyncEnabled(storeId);
+        }
+      }
 
       const hostDeviceName = String(body.hostDeviceName || body.host_device_name || '').trim();
       const platform = String(body.platform || '').trim();

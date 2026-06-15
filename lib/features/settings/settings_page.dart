@@ -823,9 +823,6 @@ class SettingsPage extends StatelessWidget {
                 _SecureRecoveryLine(
                     title: tr.text('branch_id'), value: identity.branchId),
                 _SecureRecoveryLine(
-                    title: tr.text('cloud_api_url'),
-                    value: cloud.apiBaseUrl.isEmpty ? '—' : cloud.apiBaseUrl),
-                _SecureRecoveryLine(
                     title: tr.text('recovery_key'),
                     value: identity.recoveryKey),
                 const SizedBox(height: 12),
@@ -1051,7 +1048,10 @@ class SettingsPage extends StatelessWidget {
   Future<void> _recoverExistingStore(BuildContext context) async {
     final tr = AppLocalizations.of(context);
     final cloud = CloudSyncSettings.load();
-    final apiUrlController = TextEditingController(text: cloud.apiBaseUrl);
+    final apiUrlController = TextEditingController(
+        text: cloud.apiBaseUrl.trim().isNotEmpty
+            ? cloud.apiBaseUrl.trim()
+            : CloudSyncSettings.bundledApiBaseUrl);
     final storeIdController =
         TextEditingController(text: store.appIdentity.storeId);
     final branchIdController = TextEditingController();
@@ -1062,8 +1062,7 @@ class SettingsPage extends StatelessWidget {
       builder: (dialogContext) {
         var canRecover = false;
         void refresh(StateSetter setState) {
-          setState(() => canRecover = apiUrlController.text.trim().isNotEmpty &&
-              storeIdController.text.trim().isNotEmpty &&
+          setState(() => canRecover = storeIdController.text.trim().isNotEmpty &&
               recoveryKeyController.text.trim().isNotEmpty);
         }
 
@@ -1097,16 +1096,6 @@ class SettingsPage extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  TextField(
-                    controller: apiUrlController,
-                    decoration: InputDecoration(
-                        labelText:
-                            AppLocalizations.of(context).text('cloud_api_url'),
-                        hintText: 'https://your-cloud-api.vercel.app',
-                        border: const OutlineInputBorder()),
-                    onChanged: (_) => refresh(setState),
-                  ),
-                  const SizedBox(height: 8),
                   TextField(
                     controller: storeIdController,
                     textCapitalization: TextCapitalization.characters,
@@ -1160,7 +1149,9 @@ class SettingsPage extends StatelessWidget {
     try {
       final recoverySettings = cloud.copyWith(
           enabled: true,
-          apiBaseUrl: apiUrlController.text.trim(),
+          apiBaseUrl: apiUrlController.text.trim().isNotEmpty
+              ? apiUrlController.text.trim()
+              : CloudSyncSettings.bundledApiBaseUrl,
           clearLastPullCursor: true);
       await recoverySettings.save();
       final result =
@@ -2828,8 +2819,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         _lanHostController.text.trim() != lan.host.trim() ||
         _lanPortController.text.trim() != lan.port.toString() ||
         _lanIntervalController.text.trim() != lan.intervalSeconds.toString() ||
-        _cloudApiController.text.trim() != cloud.apiBaseUrl.trim() ||
-        _cloudTokenController.text.trim() != cloud.apiToken.trim() ||
         _cloudIntervalController.text.trim() !=
             cloud.intervalSeconds.toString();
   }
@@ -3002,20 +2991,17 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
 
   CloudSyncSettings _cloudSettings(
       {bool enabled = true, bool? autoSyncEnabled}) {
-    final fallback = kIsWeb ? Uri.base.origin : '';
-    final normalizedUrl = CloudSyncSettings.normalizeApiBaseUrl(
-      _cloudApiController.text.trim().isEmpty
-          ? fallback
-          : _cloudApiController.text.trim(),
-      fallback: fallback,
-    );
-    if (_cloudApiController.text.trim() != normalizedUrl) {
-      _cloudApiController.text = normalizedUrl;
-    }
-    return CloudSyncSettings.load().copyWith(
+    final current = CloudSyncSettings.load();
+    final normalizedUrl = current.apiBaseUrl.trim().isNotEmpty
+        ? current.apiBaseUrl
+        : CloudSyncSettings.normalizeApiBaseUrl(
+            CloudSyncSettings.bundledApiBaseUrl,
+            fallback: kIsWeb ? Uri.base.origin : '',
+          );
+    return current.copyWith(
       enabled: enabled,
       apiBaseUrl: normalizedUrl,
-      apiToken: _cloudTokenController.text.trim(),
+      apiToken: current.apiToken,
       autoSyncEnabled: autoSyncEnabled ?? enabled,
       intervalSeconds: _cloudInterval,
     );
@@ -3441,14 +3427,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       }
       if (payload.host.isNotEmpty) _lanHostController.text = payload.host;
       if (payload.port.isNotEmpty) _lanPortController.text = payload.port;
-      if (payload.apiBaseUrl.isNotEmpty) {
-        try {
-          _cloudApiController.text =
-              CloudSyncSettings.normalizeApiBaseUrl(payload.apiBaseUrl);
-        } catch (_) {
-          _cloudApiController.text = payload.apiBaseUrl;
-        }
-      }
       if (_clientSyncMode == SyncMode.lanOnly) {
         _lanTokenController.text = payload.code;
       } else {
@@ -4373,13 +4351,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                       ] else ...[
                         TextField(
                             enabled: !dialogBusy,
-                            controller: _cloudApiController,
-                            decoration: InputDecoration(
-                                labelText: tr.text('api_url'),
-                                border: const OutlineInputBorder())),
-                        const SizedBox(height: 12),
-                        TextField(
-                            enabled: !dialogBusy,
                             controller: _cloudPairingCodeController,
                             decoration: InputDecoration(
                                 labelText: tr.text('pairing_code_from_host'),
@@ -4449,10 +4420,9 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                                     .setActiveSyncTransport('cloud');
                               }
                             } else {
-                              final apiUrl = _cloudApiController.text.trim();
                               final code =
                                   _cloudPairingCodeController.text.trim();
-                              if (apiUrl.isEmpty || code.isEmpty) {
+                              if (code.isEmpty) {
                                 setDialogState(() => dialogBusy = false);
                                 return;
                               }
@@ -4462,11 +4432,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                               final settings =
                                   CloudSyncSettings.load().copyWith(
                                 enabled: true,
-                                apiBaseUrl:
-                                    CloudSyncSettings.normalizeApiBaseUrl(
-                                        apiUrl,
-                                        fallback:
-                                            kIsWeb ? Uri.base.origin : ''),
                                 autoSyncEnabled: previousActive == 'cloud',
                               );
                               await settings.save();
@@ -4650,11 +4615,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                             : (cloudConfigured
                                 ? Icons.lock_outline
                                 : Icons.link_off_outlined)),
-                    _readOnlyTransportLine(
-                        context,
-                        tr.text('api_url'),
-                        cloud.apiBaseUrl.isEmpty ? '—' : cloud.apiBaseUrl,
-                        Icons.cloud_outlined),
                     _readOnlyTransportLine(
                         context,
                         tr.text('sync_interval'),
@@ -5591,7 +5551,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
               child: QrImageView(
                 data: jsonEncode({
                   'transport': 'cloud',
-                  'apiBaseUrl': _cloudApiController.text.trim(),
                   'pairingCode': code,
                   'storeId': widget.store.appIdentity.storeId,
                   'branchId': widget.store.appIdentity.branchId,
@@ -5612,11 +5571,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                 color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
           const SizedBox(height: 12),
-          _manualPairingValueTile(
-              label: tr.text('api_url'),
-              value: _cloudApiController.text.trim(),
-              copiedMessage: tr.text('copied_to_clipboard')),
-          const SizedBox(height: 10),
           _manualPairingValueTile(
               label: tr.text('cloud_pairing_code'),
               value: code,
@@ -5674,14 +5628,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       ];
 
   List<Widget> _cloudFields({required bool showPairingCode}) => [
-        TextField(
-          controller: _cloudApiController,
-          decoration: InputDecoration(
-            labelText: AppLocalizations.of(context).text('cloud_api_url'),
-            border: const OutlineInputBorder(),
-          ),
-        ),
-        const SizedBox(height: 12),
         if (showPairingCode)
           TextField(
             controller: _cloudPairingCodeController,
@@ -5691,19 +5637,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
               border: const OutlineInputBorder(),
             ),
           ),
-        if (showPairingCode) const SizedBox(height: 12),
         if (!showPairingCode) ...[
-          TextField(
-            controller: _cloudTokenController,
-            obscureText: true,
-            decoration: InputDecoration(
-              labelText: AppLocalizations.of(context).text('cloud_token_label'),
-              helperText: AppLocalizations.of(context)
-                  .text('cloud_token_helper_professional'),
-              border: const OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 12),
           TextField(
             controller: _cloudIntervalController,
             keyboardType: TextInputType.number,

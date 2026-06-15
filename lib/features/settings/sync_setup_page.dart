@@ -239,19 +239,11 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
         final host = (decoded['host'] ?? decoded['hostIp'] ?? decoded['ip'] ?? '').toString();
         final port = (decoded['port'] ?? '').toString();
         final token = (decoded['pairingCode'] ?? decoded['pairing_code'] ?? decoded['code'] ?? decoded['token'] ?? decoded['pairingToken'] ?? '').toString();
-        final apiBaseUrl = (decoded['apiBaseUrl'] ?? decoded['apiUrl'] ?? decoded['cloudApiUrl'] ?? '').toString();
         final expiresAtRaw = (decoded['expiresAt'] ?? decoded['expires_at'] ?? '').toString();
         _qrExpiresAt = DateTime.tryParse(expiresAtRaw);
 
         if (host.trim().isNotEmpty) _hostController.text = host.trim();
         if (port.trim().isNotEmpty) _portController.text = port.trim();
-        if (apiBaseUrl.trim().isNotEmpty) {
-          try {
-            _cloudApiController.text = CloudSyncSettings.normalizeApiBaseUrl(apiBaseUrl.trim());
-          } catch (_) {
-            _cloudApiController.text = apiBaseUrl.trim();
-          }
-        }
 
         code = token.trim().isNotEmpty ? token.trim() : raw;
       }
@@ -338,17 +330,13 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       }
 
       final existing = CloudSyncSettings.load();
-      final normalizedApiBaseUrl = CloudSyncSettings.normalizeApiBaseUrl(
-        _cloudApiController.text.trim(),
-        fallback: existing.apiBaseUrl,
-      );
+      final normalizedApiBaseUrl = existing.apiBaseUrl.trim().isNotEmpty
+          ? existing.apiBaseUrl.trim()
+          : CloudSyncSettings.bundledApiBaseUrl;
       _cloudApiController.text = normalizedApiBaseUrl;
       final settings = CloudSyncSettings(
         enabled: true,
         apiBaseUrl: normalizedApiBaseUrl,
-        // Client pairing only needs API URL + single-use pairing code.
-        // Preserve an existing deployment token for Host/admin settings, but do
-        // not expose or require it in Connect to Store.
         apiToken: existing.apiToken,
         autoSyncEnabled: true,
       );
@@ -801,16 +789,6 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       ];
 
   List<Widget> _buildCloudFields(AppLocalizations tr) => [
-        TextField(
-          controller: _cloudApiController,
-          enabled: !_busy,
-          decoration: InputDecoration(
-            labelText: tr.text('cloud_api_url'),
-            helperText: tr.text('cloud_api_url_helper'),
-            border: const OutlineInputBorder(),
-          ),
-        ),
-        const SizedBox(height: 12),
         TextField(
           controller: _cloudPairingCodeController,
           enabled: !_busy,

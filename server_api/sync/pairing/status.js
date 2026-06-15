@@ -1,4 +1,12 @@
-import { sql, assertSyncToken, assertStoreAllowed, assertDeviceAllowed, sendError } from '../../_db.js';
+import {
+  sql,
+  assertSyncToken,
+  assertAccountStoreToken,
+  assertCloudSyncEnabled,
+  assertStoreAllowed,
+  assertDeviceAllowed,
+  sendError,
+} from '../../_db.js';
 
 async function ensurePairingTable() {
   await sql`
@@ -24,7 +32,6 @@ function toIso(value) {
 
 export default async function handler(req, res) {
   try {
-    assertSyncToken(req);
     if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Method not allowed' });
     await ensurePairingTable();
     const body = req.body || {};
@@ -34,7 +41,24 @@ export default async function handler(req, res) {
     if (!code) return res.status(400).json({ ok: false, error: 'Pairing code is required.' });
     if (!storeId) return res.status(400).json({ ok: false, error: 'storeId is required.' });
     assertStoreAllowed(storeId);
-    await assertDeviceAllowed(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: [] });
+    try {
+      assertSyncToken(req);
+      await assertCloudSyncEnabled(storeId);
+    } catch (_) {
+      try {
+        await assertDeviceAllowed(req, {
+          storeId,
+          branchId,
+          allowedRoles: ['host'],
+          allowedTransports: ['cloud'],
+          force: true,
+        });
+        await assertCloudSyncEnabled(storeId);
+      } catch (deviceError) {
+        assertAccountStoreToken(req, { storeId, branchId });
+        await assertCloudSyncEnabled(storeId);
+      }
+    }
 
     const rows = await sql`
       select code, store_id, branch_id, host_device_id, transport, expires_at, claimed_by_device_id, claimed_at

@@ -73,6 +73,7 @@ async function ensureTables() {
   await sql`alter table app_accounts add column if not exists namespace_slug text not null default ''`;
   await sql`alter table app_accounts add column if not exists account_type text not null default 'store_owner'`;
   await sql`alter table app_stores add column if not exists slug text`;
+  await sql`alter table app_stores add column if not exists cloud_sync_enabled boolean not null default false`;
   await sql`update app_stores set slug = lower(regexp_replace(name, '[^a-zA-Z0-9_-]+', '', 'g')) where slug is null or slug = ''`;
   await sql`alter table app_stores alter column slug set not null`;
   await sql`create unique index if not exists app_stores_slug_key on app_stores(slug)`;
@@ -92,6 +93,7 @@ async function listSubscribers(res) {
       s.slug as store_slug,
       s.name as store_name,
       s.status as store_status,
+      s.cloud_sync_enabled,
       sub.id as subscription_id,
       sub.plan,
       sub.status as subscription_status,
@@ -155,6 +157,7 @@ async function updateSubscriber(req, res) {
   const plan = cleanSimple(body.plan || 'trial') || 'trial';
   const subscriptionStatus = cleanSimple(body.subscriptionStatus ?? body.subscription_status ?? 'trial') || 'trial';
   const devicesLimit = Math.max(1, Number.parseInt(String(body.devicesLimit ?? body.devices_limit ?? '2'), 10) || 2);
+  const cloudSyncEnabled = body.cloudSyncEnabled === true || body.cloud_sync_enabled === true;
   const trialEndsAtRaw = String(body.trialEndsAt ?? body.trial_ends_at ?? '').trim();
 
   if (!username) return res.status(400).json({ ok: false, error: 'Username is required.' });
@@ -187,7 +190,7 @@ async function updateSubscriber(req, res) {
   if (storeId) {
     await sql`
       update app_stores
-      set name = ${storeName}, slug = ${storeSlug}, status = ${storeStatus}, updated_at = now()
+      set name = ${storeName}, slug = ${storeSlug}, status = ${storeStatus}, cloud_sync_enabled = ${cloudSyncEnabled}, updated_at = now()
       where id = ${storeId}
     `;
   }

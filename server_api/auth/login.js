@@ -33,6 +33,24 @@ function createAdminToken(row) {
   return `${payloadB64}.${signature}`;
 }
 
+function createAccountToken(row) {
+  const secret = process.env.ACCOUNT_JWT_SECRET || process.env.ADMIN_JWT_SECRET || process.env.CLOUD_SYNC_TOKEN || '';
+  if (!secret) return '';
+  if (String(row.account_type || '') === 'platform_admin') return '';
+  const payload = {
+    type: 'store_account',
+    accountId: row.account_id,
+    username: row.username,
+    namespace: row.namespace_slug,
+    storeId: row.store_id || '',
+    branchId: row.branch_id || '',
+    exp: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
+  };
+  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = crypto.createHmac('sha256', secret).update(payloadB64).digest('base64url');
+  return `${payloadB64}.${signature}`;
+}
+
 function verifyPassword(password, encoded) {
   const parts = String(encoded || '').split('$');
   if (parts.length !== 4 || parts[0] !== 'pbkdf2_sha256') return false;
@@ -86,6 +104,7 @@ async function ensureTables() {
   await sql`alter table app_accounts add column if not exists account_type text not null default 'store_owner'`;
   await sql`alter table app_stores add column if not exists slug text`;
   await sql`alter table app_stores add column if not exists branch_id text not null default 'BR-MAIN'`;
+  await sql`alter table app_stores add column if not exists cloud_sync_enabled boolean not null default false`;
   await sql`
     update app_stores
     set slug = lower(regexp_replace(coalesce(nullif(name, ''), id), '[^a-zA-Z0-9_-]+', '', 'g'))
@@ -122,6 +141,7 @@ export default async function handler(req, res) {
       select a.id as account_id, a.username, a.namespace_slug, a.password_hash,
              a.status as account_status, a.account_type,
              s.id as store_id, s.branch_id, s.slug as store_slug, s.name as store_name,
+             s.cloud_sync_enabled,
              sub.status as subscription_status, sub.trial_ends_at, sub.devices_limit
       from app_accounts a
       left join app_stores s on s.owner_account_id = a.id and s.slug = a.namespace_slug
@@ -137,6 +157,7 @@ export default async function handler(req, res) {
     if (!verifyPassword(password, row.password_hash)) return res.status(401).json({ ok: false, error: 'Invalid username or password.' });
 
     const adminToken = createAdminToken(row);
+    const accountToken = createAccountToken(row);
 
     return res.status(200).json({
       ok: true,
@@ -153,6 +174,8 @@ export default async function handler(req, res) {
       trialEndsAt: row.trial_ends_at ? new Date(row.trial_ends_at).toISOString() : null,
       devicesLimit: Number(row.devices_limit || 0) || null,
       adminToken,
+      accountToken,
+      cloudSyncEnabled: row.cloud_sync_enabled === true,
     });
   } catch (error) {
     return sendError(res, error);

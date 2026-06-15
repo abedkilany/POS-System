@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { neon } from '@neondatabase/serverless';
 import pg from 'pg';
 
@@ -51,6 +52,79 @@ export function assertStoreAllowed(storeId) {
   const allowed = (process.env.CLOUD_SYNC_STORE_ID || '').trim();
   if (allowed && storeId !== allowed) {
     const err = new Error('This sync token is not allowed to access the requested store_id.');
+    err.statusCode = 403;
+    throw err;
+  }
+}
+
+function accountSecret() {
+  return process.env.ACCOUNT_JWT_SECRET || process.env.ADMIN_JWT_SECRET || process.env.CLOUD_SYNC_TOKEN || '';
+}
+
+export function verifyAccountToken(token) {
+  const secret = accountSecret();
+  if (!secret) return null;
+  const parts = String(token || '').split('.');
+  if (parts.length !== 2) return null;
+  const [payloadB64, signature] = parts;
+  const expected = crypto.createHmac('sha256', secret).update(payloadB64).digest('base64url');
+  try {
+    const a = Buffer.from(signature);
+    const b = Buffer.from(expected);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  } catch (_) {
+    return null;
+  }
+  try {
+    const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+    if (payload?.type !== 'store_account') return null;
+    if (Number(payload?.exp || 0) < Math.floor(Date.now() / 1000)) return null;
+    return payload;
+  } catch (_) {
+    return null;
+  }
+}
+
+export function accountTokenFromRequest(req) {
+  const header = req.headers.authorization || req.headers.Authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+  return verifyAccountToken(token);
+}
+
+export function assertAccountStoreToken(req, { storeId, branchId = '' } = {}) {
+  const payload = accountTokenFromRequest(req);
+  if (!payload) {
+    const err = new Error('Invalid or missing account session.');
+    err.statusCode = 401;
+    throw err;
+  }
+  if (storeId && String(payload.storeId || '') !== String(storeId)) {
+    const err = new Error('This account is not allowed to access the requested store_id.');
+    err.statusCode = 403;
+    throw err;
+  }
+  if (branchId && String(payload.branchId || '') !== String(branchId)) {
+    const err = new Error('This account is not allowed to access the requested branch_id.');
+    err.statusCode = 403;
+    throw err;
+  }
+  return payload;
+}
+
+export async function ensureCloudSyncAccessColumn() {
+  await sql`alter table app_stores add column if not exists cloud_sync_enabled boolean not null default false`;
+}
+
+export async function assertCloudSyncEnabled(storeId) {
+  await ensureCloudSyncAccessColumn();
+  const rows = await sql`
+    select cloud_sync_enabled
+    from app_stores
+    where store_id = ${storeId}
+    limit 1
+  `;
+  if (!rows.length || rows[0].cloud_sync_enabled !== true) {
+    const err = new Error('Cloud Sync is not enabled for this store.');
     err.statusCode = 403;
     throw err;
   }
@@ -116,11 +190,18 @@ export async function assertDeviceAllowed(req, { storeId, branchId = 'main', all
 
 
 export async function assertSyncTokenOrDevice(req, options = {}) {
+  const requireCloudAccess = async () => {
+    if ((options.allowedTransports || []).includes('cloud') && options.storeId) {
+      await assertCloudSyncEnabled(options.storeId);
+    }
+  };
   try {
     assertSyncToken(req);
+    await requireCloudAccess();
     return;
   } catch (authError) {
     await assertDeviceAllowed(req, { ...options, force: true });
+    await requireCloudAccess();
   }
 }
 

@@ -142,7 +142,10 @@ class _LoginGatePageState extends State<LoginGatePage> {
   Future<void> _recoverExistingStore(BuildContext context) async {
     final tr = AppLocalizations.of(context);
     final cloud = CloudSyncSettings.load();
-    final apiUrlController = TextEditingController(text: cloud.apiBaseUrl);
+    final apiUrlController = TextEditingController(
+        text: cloud.apiBaseUrl.trim().isNotEmpty
+            ? cloud.apiBaseUrl.trim()
+            : CloudSyncSettings.bundledApiBaseUrl);
     final storeIdController =
         TextEditingController(text: widget.store.appIdentity.storeId);
     final branchIdController = TextEditingController();
@@ -153,8 +156,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
       builder: (dialogContext) {
         var canRecover = false;
         void refresh(StateSetter setState) {
-          setState(() => canRecover = apiUrlController.text.trim().isNotEmpty &&
-              storeIdController.text.trim().isNotEmpty &&
+          setState(() => canRecover = storeIdController.text.trim().isNotEmpty &&
               recoveryKeyController.text.trim().isNotEmpty);
         }
 
@@ -188,17 +190,6 @@ class _LoginGatePageState extends State<LoginGatePage> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  TextField(
-                    controller: apiUrlController,
-                    decoration: InputDecoration(
-                      labelText:
-                          AppLocalizations.of(context).text('cloud_api_url'),
-                      hintText: 'https://your-cloud-api.vercel.app',
-                      border: const OutlineInputBorder(),
-                    ),
-                    onChanged: (_) => refresh(setState),
-                  ),
-                  const SizedBox(height: 8),
                   TextField(
                     controller: storeIdController,
                     textCapitalization: TextCapitalization.characters,
@@ -256,7 +247,9 @@ class _LoginGatePageState extends State<LoginGatePage> {
     try {
       final recoverySettings = cloud.copyWith(
         enabled: true,
-        apiBaseUrl: apiUrlController.text.trim(),
+        apiBaseUrl: apiUrlController.text.trim().isNotEmpty
+            ? apiUrlController.text.trim()
+            : CloudSyncSettings.bundledApiBaseUrl,
         clearLastPullCursor: true,
       );
       await recoverySettings.save();
@@ -403,6 +396,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
             ? tr.text('online_register_failed')
             : onlineResult.message);
       }
+      await AccountAuthService.cacheOnlineResult(
+          onlineResult, mode: 'registered_local');
       await widget.store.recoverOnlineStoreOwnerIdentity(
         storeId: onlineResult.storeId,
         branchId: onlineResult.branchId,
@@ -412,7 +407,6 @@ class _LoginGatePageState extends State<LoginGatePage> {
         password: password,
       );
 
-      await AccountAuthCache.clear();
       await widget.store.logout();
       if (mounted) {
         setState(() {
@@ -444,6 +438,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
     final platformAdminUnlocked = authCache?.accountType == 'platform_admin' ||
         authCache?.storeSlug == 'ventio';
     final storeAccountUnlocked = authCache?.accountType == 'store_owner' &&
+        authCache?.mode == 'login' &&
         (authCache?.storeSlug ?? '').trim().isNotEmpty &&
         authCache?.storeSlug != 'ventio';
     if (platformAdminUnlocked) return widget.child;

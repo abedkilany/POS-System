@@ -21,6 +21,8 @@ class AccountAuthResult {
     this.trialEndsAt,
     this.devicesLimit,
     this.adminToken = '',
+    this.accountToken = '',
+    this.cloudSyncEnabled = false,
   });
 
   final bool ok;
@@ -37,6 +39,8 @@ class AccountAuthResult {
   final DateTime? trialEndsAt;
   final int? devicesLimit;
   final String adminToken;
+  final String accountToken;
+  final bool cloudSyncEnabled;
 
   factory AccountAuthResult.fromJson(Map<String, dynamic> json) {
     return AccountAuthResult(
@@ -61,6 +65,10 @@ class AccountAuthResult {
         (json['devicesLimit'] ?? json['devices_limit'] ?? '').toString(),
       ),
       adminToken: (json['adminToken'] ?? json['admin_token'] ?? '').toString(),
+      accountToken:
+          (json['accountToken'] ?? json['account_token'] ?? '').toString(),
+      cloudSyncEnabled:
+          json['cloudSyncEnabled'] == true || json['cloud_sync_enabled'] == true,
     );
   }
 }
@@ -80,6 +88,8 @@ class AccountAuthCache {
     this.trialEndsAt,
     this.devicesLimit,
     this.adminToken = '',
+    this.accountToken = '',
+    this.cloudSyncEnabled = false,
     this.lastVerifiedAt,
   });
 
@@ -98,6 +108,8 @@ class AccountAuthCache {
   final DateTime? trialEndsAt;
   final int? devicesLimit;
   final String adminToken;
+  final String accountToken;
+  final bool cloudSyncEnabled;
   final DateTime? lastVerifiedAt;
 
   Map<String, dynamic> toJson() => {
@@ -115,6 +127,8 @@ class AccountAuthCache {
         'devicesLimit': devicesLimit,
         'lastVerifiedAt': lastVerifiedAt?.toIso8601String() ?? '',
         'adminToken': adminToken,
+        'accountToken': accountToken,
+        'cloudSyncEnabled': cloudSyncEnabled,
       };
 
   static AccountAuthCache? load() {
@@ -139,6 +153,8 @@ class AccountAuthCache {
         lastVerifiedAt:
             DateTime.tryParse((json['lastVerifiedAt'] ?? '').toString()),
         adminToken: (json['adminToken'] ?? '').toString(),
+        accountToken: (json['accountToken'] ?? '').toString(),
+        cloudSyncEnabled: json['cloudSyncEnabled'] == true,
       );
     } catch (_) {
       return null;
@@ -182,6 +198,7 @@ class AdminSubscriber {
     required this.accountStatus,
     required this.devicesLimit,
     required this.deviceCount,
+    required this.cloudSyncEnabled,
     this.trialEndsAt,
     this.createdAt,
     this.lastSeenAt,
@@ -199,6 +216,7 @@ class AdminSubscriber {
   final String accountStatus;
   final int devicesLimit;
   final int deviceCount;
+  final bool cloudSyncEnabled;
   final DateTime? trialEndsAt;
   final DateTime? createdAt;
   final DateTime? lastSeenAt;
@@ -229,6 +247,8 @@ class AdminSubscriber {
               (json['device_count'] ?? json['deviceCount'] ?? '0')
                   .toString()) ??
           0,
+      cloudSyncEnabled:
+          json['cloud_sync_enabled'] == true || json['cloudSyncEnabled'] == true,
       trialEndsAt: DateTime.tryParse(
           (json['trial_ends_at'] ?? json['trialEndsAt'] ?? '').toString()),
       createdAt: DateTime.tryParse(
@@ -350,6 +370,7 @@ class AccountAuthService {
     required String plan,
     required String subscriptionStatus,
     required int devicesLimit,
+    required bool cloudSyncEnabled,
     required DateTime? trialEndsAt,
   }) async {
     if (adminToken.trim().isEmpty) {
@@ -373,6 +394,7 @@ class AccountAuthService {
         'plan': plan.trim().toLowerCase(),
         'subscriptionStatus': subscriptionStatus.trim().toLowerCase(),
         'devicesLimit': devicesLimit,
+        'cloudSyncEnabled': cloudSyncEnabled,
         'trialEndsAt': trialEndsAt?.toUtc().toIso8601String() ?? '',
       }),
     );
@@ -428,6 +450,8 @@ class AccountAuthService {
       trialEndsAt: result.trialEndsAt,
       devicesLimit: result.devicesLimit,
       adminToken: result.adminToken,
+      accountToken: result.accountToken,
+      cloudSyncEnabled: result.cloudSyncEnabled,
     );
   }
 
@@ -450,6 +474,8 @@ class AccountAuthService {
         trialEndsAt: result.trialEndsAt,
         devicesLimit: result.devicesLimit,
         adminToken: result.adminToken,
+        accountToken: result.accountToken,
+        cloudSyncEnabled: result.cloudSyncEnabled,
         lastVerifiedAt: DateTime.now(),
       ),
     );

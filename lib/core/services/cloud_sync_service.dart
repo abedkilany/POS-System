@@ -29,7 +29,8 @@ class CloudSyncSettings {
   static const _bundledCloudApiBaseUrl =
       String.fromEnvironment('CLOUD_API_BASE_URL');
   static const _bundledPublicApiBaseUrl =
-      String.fromEnvironment('PUBLIC_API_BASE_URL');
+      String.fromEnvironment('PUBLIC_API_BASE_URL',
+          defaultValue: 'https://ventio.duckdns.org');
 
   static Future<void> clearSavedPullCursor() async {
     await LocalDatabaseService.deleteString(_lastPullCursorKey);
@@ -46,6 +47,20 @@ class CloudSyncSettings {
   final int intervalSeconds;
 
   bool get hasDeploymentToken => apiToken.trim().isNotEmpty;
+  String get accountToken {
+    final raw = LocalDatabaseService.getString('account_auth_cache_v1') ?? '';
+    if (raw.trim().isEmpty) return '';
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        return (decoded['accountToken'] ?? '').toString().trim();
+      }
+    } catch (_) {
+      return '';
+    }
+    return '';
+  }
+
   bool get hasDeviceCredentials {
     final raw = LocalDatabaseService.getString('app_identity_v1') ?? '';
     try {
@@ -61,7 +76,9 @@ class CloudSyncSettings {
   bool get isConfigured =>
       enabled &&
       apiBaseUrl.trim().isNotEmpty &&
-      (hasDeploymentToken || hasDeviceCredentials);
+      (hasDeploymentToken ||
+          hasDeviceCredentials ||
+          accountToken.trim().isNotEmpty);
 
   static String get bundledApiBaseUrl {
     final cloudUrl = _bundledCloudApiBaseUrl.trim();
@@ -748,9 +765,9 @@ class CloudSyncService {
       return const CloudPairingCodeResult(
           ok: false, message: 'يمكن لجهاز المضيف فقط إنشاء رموز الاقتران.');
     }
-    if (!settings.hasDeploymentToken || settings.apiBaseUrl.trim().isEmpty) {
+    if (settings.apiBaseUrl.trim().isEmpty) {
       return const CloudPairingCodeResult(
-          ok: false, message: 'رابط واجهة السحابة ورمز نشر المضيف مطلوبان.');
+          ok: false, message: 'Cloud Sync is not ready yet.');
     }
     try {
       final response = await _client
@@ -817,11 +834,11 @@ class CloudSyncService {
           status: 'invalid',
           message: 'يمكن لجهاز المضيف فقط التحقق من حالة رمز الاقتران.');
     }
-    if (!settings.hasDeploymentToken || settings.apiBaseUrl.trim().isEmpty) {
+    if (settings.apiBaseUrl.trim().isEmpty) {
       return const CloudPairingStatusResult(
           ok: false,
           status: 'invalid',
-          message: 'رابط واجهة السحابة ورمز نشر المضيف مطلوبان.');
+          message: 'Cloud Sync is not ready yet.');
     }
     try {
       final response = await _client
@@ -1350,7 +1367,7 @@ class CloudSyncService {
     }
     if (!settings.isConfigured) {
       return const CloudSyncResult(
-          ok: false, message: 'رابط واجهة السحابة والرمز مطلوبان.');
+          ok: false, message: 'Cloud Sync is not ready yet.');
     }
     final cleanGeneration = snapshotGeneration.trim();
     if (cleanGeneration.isNotEmpty &&
@@ -1726,8 +1743,11 @@ class CloudSyncService {
       'Accept': 'application/json',
       // Clients authenticate with their own per-device token. Local/Host admin
       // flows may still need the deployment token for setup and health checks.
-      if (!identity.isClient && settings.apiToken.trim().isNotEmpty)
-        'Authorization': 'Bearer ${settings.apiToken.trim()}',
+      if (!identity.isClient &&
+          (settings.apiToken.trim().isNotEmpty ||
+              settings.accountToken.trim().isNotEmpty))
+        'Authorization':
+            'Bearer ${(settings.accountToken.trim().isNotEmpty ? settings.accountToken : settings.apiToken).trim()}',
       'X-Device-Id': store.deviceId,
       'X-Device-Token': identity.deviceToken,
       'X-Device-Role': identity.deviceRole.name,

@@ -19,6 +19,23 @@ function hashPassword(password) {
   return `pbkdf2_sha256$120000$${salt}$${hash}`;
 }
 
+function createAccountToken({ accountId, username, storeSlug, storeId, branchId }) {
+  const secret = process.env.ACCOUNT_JWT_SECRET || process.env.ADMIN_JWT_SECRET || process.env.CLOUD_SYNC_TOKEN || '';
+  if (!secret) return '';
+  const payload = {
+    type: 'store_account',
+    accountId,
+    username,
+    namespace: storeSlug,
+    storeId,
+    branchId,
+    exp: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
+  };
+  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = crypto.createHmac('sha256', secret).update(payloadB64).digest('base64url');
+  return `${payloadB64}.${signature}`;
+}
+
 function isValidSlug(value) {
   return /^[a-z0-9][a-z0-9_-]{2,31}$/.test(value);
 }
@@ -66,6 +83,7 @@ async function ensureTables() {
   await sql`alter table app_accounts add column if not exists account_type text not null default 'store_owner'`;
   await sql`alter table app_stores add column if not exists slug text`;
   await sql`alter table app_stores add column if not exists branch_id text not null default 'BR-MAIN'`;
+  await sql`alter table app_stores add column if not exists cloud_sync_enabled boolean not null default false`;
 
   await sql`
     update app_stores
@@ -119,6 +137,7 @@ export default async function handler(req, res) {
     const subscriptionId = randomId('sub');
     const passwordHash = hashPassword(password);
     const trialEndsAt = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000).toISOString();
+    const accountToken = createAccountToken({ accountId, username, storeSlug, storeId, branchId });
 
     await sql`
       insert into app_accounts (id, username, namespace_slug, password_hash, full_name, account_type)
@@ -146,6 +165,8 @@ export default async function handler(req, res) {
       subscriptionStatus: 'trial',
       trialEndsAt,
       devicesLimit: 2,
+      accountToken,
+      cloudSyncEnabled: false,
     });
   } catch (error) {
     return sendError(res, error);
