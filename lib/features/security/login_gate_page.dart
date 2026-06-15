@@ -11,6 +11,7 @@ import '../../core/utils/responsive.dart';
 import '../../core/sync_unified/sync_unified.dart';
 import '../../data/app_store.dart';
 import '../settings/sync_setup_page.dart';
+import '../account/store_account_dashboard_page.dart';
 
 class LoginGatePage extends StatefulWidget {
   const LoginGatePage({super.key, required this.store, required this.child});
@@ -302,6 +303,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
         }
         await AccountAuthService.cacheOnlineResult(onlineResult, mode: 'login');
         if (onlineResult.accountType == 'platform_admin' ||
+            onlineResult.accountType == 'store_owner' ||
             onlineResult.storeSlug == 'ventio') {
           setState(() => _loggingIn = false);
           return;
@@ -420,7 +422,20 @@ class _LoginGatePageState extends State<LoginGatePage> {
     final authCache = AccountAuthCache.load();
     final platformAdminUnlocked =
         authCache?.accountType == 'platform_admin' || authCache?.storeSlug == 'ventio';
-    if (widget.store.activeUser != null || platformAdminUnlocked) return widget.child;
+    final storeAccountUnlocked = authCache?.accountType == 'store_owner' &&
+        (authCache?.storeSlug ?? '').trim().isNotEmpty &&
+        authCache?.storeSlug != 'ventio';
+    if (platformAdminUnlocked) return widget.child;
+    if (storeAccountUnlocked && authCache != null) {
+      return StoreAccountDashboardPage(
+        cache: authCache,
+        onLogout: () async {
+          await AccountAuthCache.clear();
+          if (mounted) setState(() {});
+        },
+      );
+    }
+    if (widget.store.activeUser != null) return widget.child;
 
     if (_showRegister && !kIsWeb && widget.store.needsInitialAdminSetup) {
       return _InitialAdminSetupCard(
