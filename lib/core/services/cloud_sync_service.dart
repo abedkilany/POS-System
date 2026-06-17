@@ -2681,6 +2681,14 @@ class CloudSyncService {
         storeId: store.appIdentity.storeId,
         branchId: store.appIdentity.branchId,
       ).requestManifest();
+      final remoteSequence = manifest.syncGeneratedSequence ?? 0;
+      if (remoteSequence > 0 && state.lastAppliedSequence >= remoteSequence) {
+        _syncDiag(
+          'snapshotFreshness:skip localSequence=${state.lastAppliedSequence} '
+          'remoteSequence=$remoteSequence',
+        );
+        return false;
+      }
       final commandId =
           (manifest.hostRestoreCommandId ?? manifest.restoreCommandId ?? '')
               .trim();
