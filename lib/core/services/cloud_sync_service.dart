@@ -2740,7 +2740,6 @@ class CloudSyncService {
     try {
       await _pollSubmittedClientRequests(settings);
       var pulled = 0;
-      final initialCursor = settings.lastPullCursor;
       // Freeze the sequence watermark for the whole paginated pull. Reading
       // lastAppliedSequence after every page can skip pages: page 1 advances the
       // local state, then page 2 asks Cloud for sequence > the new value while
@@ -2748,10 +2747,17 @@ class CloudSyncService {
       // events, which showed up as product count differences across devices.
       final baseLastAppliedSequence =
           SyncDeviceStateStore.load(store.appIdentity).lastAppliedSequence;
+      // If a Client only has a legacy timestamp cursor but no authoritative
+      // sequence, the timestamp can be ahead of Cloud received_at because older
+      // records were written with local-time values. Treat that as first pull
+      // and let Cloud return the materialized snapshot plus a sequence marker.
+      final initialCursor =
+          baseLastAppliedSequence > 0 ? settings.lastPullCursor : null;
       _syncDiag(
         'clientPull:start device=${identity.deviceId} store=${identity.storeId} '
         'branch=${identity.branchId} apiBase=${settings.apiBaseUrl} '
         'initialCursor=${initialCursor?.toIso8601String() ?? 'null'} '
+        'savedCursor=${settings.lastPullCursor?.toIso8601String() ?? 'null'} '
         'baseLastAppliedSequence=$baseLastAppliedSequence '
         'minSnapshotUpdatedAt=${minSnapshotUpdatedAt?.toIso8601String() ?? 'null'}',
       );
@@ -3051,7 +3057,6 @@ class CloudSyncService {
             settings, 'cloud_host', '/api/sync/requests/push');
       }
 
-      final initialCursor = settings.lastPullCursor;
       // Freeze the sequence watermark for the whole paginated pull. Reading
       // lastAppliedSequence after every page can skip pages: page 1 advances the
       // local state, then page 2 asks Cloud for sequence > the new value while
@@ -3059,6 +3064,8 @@ class CloudSyncService {
       // events, which showed up as product count differences across devices.
       final baseLastAppliedSequence =
           SyncDeviceStateStore.load(store.appIdentity).lastAppliedSequence;
+      final initialCursor =
+          baseLastAppliedSequence > 0 ? settings.lastPullCursor : null;
       if (await _cloudSnapshotIsNewerThanLocal(settings)) {
         onProgress?.call(0.32,
             'تم العثور على Snapshot أحدث من المضيف. جارٍ إعادة بناء بيانات هذا الجهاز...');
