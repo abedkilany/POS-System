@@ -1,4 +1,4 @@
-import { sql, assertSyncTokenOrDevice, assertStoreAllowed, ensureDeviceAuthColumns, sendError } from '../_db.js';
+import { sql, assertAccountOrDevice, assertStoreAllowed, ensureDeviceAuthColumns, sendError } from '../_db.js';
 
 function safeDate(value) {
   if (!value) return null;
@@ -285,7 +285,7 @@ export default async function handler(req, res) {
       const storeId = String(fallback.storeId);
       const branchId = String(fallback.branchId || 'main');
       assertStoreAllowed(storeId);
-      await assertSyncTokenOrDevice(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['cloud'] });
+      await assertAccountOrDevice(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['cloud'] });
     }
 
     const ackIds = [];

@@ -337,7 +337,6 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       final settings = CloudSyncSettings(
         enabled: true,
         apiBaseUrl: normalizedApiBaseUrl,
-        apiToken: existing.apiToken,
         autoSyncEnabled: true,
       );
       await settings.save();

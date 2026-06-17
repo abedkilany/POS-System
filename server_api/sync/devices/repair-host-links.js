@@ -1,8 +1,7 @@
-import { sql, assertSyncToken, assertStoreAllowed, assertDeviceAllowed, ensureDeviceAuthColumns, sendError } from '../../_db.js';
+import { sql, assertStoreAllowed, assertAccountOrDevice, ensureDeviceAuthColumns, sendError } from '../../_db.js';
 
 export default async function handler(req, res) {
   try {
-    assertSyncToken(req);
     if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Method not allowed' });
 
     const body = req.body || {};
@@ -18,7 +17,7 @@ export default async function handler(req, res) {
     if (!clientDeviceIds.length) return res.status(200).json({ ok: true, checked: 0, repaired: 0, repairedDeviceIds: [] });
 
     assertStoreAllowed(storeId);
-    await assertDeviceAllowed(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['cloud'] });
+    await assertAccountOrDevice(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['cloud'] });
     await ensureDeviceAuthColumns();
     await sql`alter table store_devices add column if not exists host_device_id text default ''`;
     await sql`

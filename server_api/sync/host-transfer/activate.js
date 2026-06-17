@@ -1,4 +1,4 @@
-import { assertStoreAllowed, assertSyncTokenOrDevice, sendError } from '../../_db.js';
+import { assertStoreAllowed, assertAccountOrDevice, sendError } from '../../_db.js';
 import { sql } from '../../_db.js';
 import { ensureHostTransferTables, transferDto } from './_shared.js';
 
@@ -13,7 +13,7 @@ export default async function handler(req, res) {
     if (!storeId) return res.status(400).json({ ok: false, error: 'storeId is required.' });
     if (!newHostDeviceId) return res.status(400).json({ ok: false, error: 'newHostDeviceId is required.' });
     assertStoreAllowed(storeId);
-    await assertSyncTokenOrDevice(req, { storeId, branchId, allowedRoles: ['client'], allowedTransports: ['cloud', 'lan'] });
+    await assertAccountOrDevice(req, { storeId, branchId, allowedRoles: ['client'], allowedTransports: ['cloud', 'lan'] });
     const rows = await sql`
       update host_transfer_requests
       set status = 'activated', activated_at = now(), updated_at = now()

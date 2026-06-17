@@ -12,7 +12,6 @@ class LocalDatabaseService {
   LocalDatabaseService._();
 
   static const FlutterSecureStorage _secureStorage = FlutterSecureStorage();
-  static const String _cloudApiTokenKey = 'cloud_api_token';
   static const String _appIdentityKey = 'app_identity_v1';
   static const String _legacySecureDeviceTokenKey =
       'app_identity_device_token_v1';
@@ -84,12 +83,8 @@ class LocalDatabaseService {
   }
 
   static Future<void> _hydrateAndMigrateSecureScalars() async {
-    final secureCloudToken = await _secureStorage.read(key: _cloudApiTokenKey);
-    if (secureCloudToken != null) {
-      _secureStringMirror[_cloudApiTokenKey] = secureCloudToken;
-    }
     // Phase 1 security split:
-    // - cloud_api_token and recoveryKey stay in FlutterSecureStorage.
+    // - recoveryKey stays in FlutterSecureStorage.
     // - deviceToken is application identity data and is stored back inside
     //   app_identity_v1 in the local database. Keep this legacy secure key only
     //   long enough to migrate devices that used the previous secure-token build.
@@ -102,14 +97,7 @@ class LocalDatabaseService {
       _secureStringMirror[_secureRecoveryKeyKey] = secureRecoveryKey;
     }
 
-    final legacyCloudToken = _rawScalarValue(_cloudApiTokenKey)?.trim() ?? '';
-    if (legacyCloudToken.isNotEmpty &&
-        (_secureStringMirror[_cloudApiTokenKey] ?? '').isEmpty) {
-      await _secureStorage.write(
-          key: _cloudApiTokenKey, value: legacyCloudToken);
-      _secureStringMirror[_cloudApiTokenKey] = legacyCloudToken;
-    }
-    await _deleteRawScalarValue(_cloudApiTokenKey);
+    await _deleteRawScalarValue('cloud_api_token');
 
     final rawIdentity = _rawScalarValue(_appIdentityKey);
     if (rawIdentity != null && rawIdentity.trim().isNotEmpty) {
@@ -231,12 +219,6 @@ class LocalDatabaseService {
   }
 
   static String? getString(String key) {
-    if (key == _cloudApiTokenKey) {
-      final memory = _memoryStore;
-      if (memory != null) return memory[_cloudApiTokenKey] ?? '';
-      if (_webStore != null) return _webStore![_cloudApiTokenKey] ?? '';
-      return _secureStringMirror[_cloudApiTokenKey] ?? '';
-    }
     final value = _rawScalarValue(key);
     if (key == _appIdentityKey && value != null) {
       return _mergeSecureIdentitySecretsIntoIdentityJson(value);
@@ -293,37 +275,6 @@ class LocalDatabaseService {
   }
 
   static Future<void> setString(String key, String value) async {
-    if (key == _cloudApiTokenKey) {
-      final clean = value.trim();
-      final memory = _memoryStore;
-      if (memory != null) {
-        if (clean.isEmpty) {
-          memory.remove(_cloudApiTokenKey);
-        } else {
-          memory[_cloudApiTokenKey] = clean;
-        }
-        return;
-      }
-      if (_webStore != null) {
-        if (clean.isEmpty) {
-          _webStore!.remove(_cloudApiTokenKey);
-          await _deleteWebString(_cloudApiTokenKey);
-        } else {
-          _webStore![_cloudApiTokenKey] = clean;
-          await _persistWebString(_cloudApiTokenKey, clean);
-        }
-        return;
-      }
-      if (clean.isEmpty) {
-        await _secureStorage.delete(key: _cloudApiTokenKey);
-        _secureStringMirror.remove(_cloudApiTokenKey);
-      } else {
-        await _secureStorage.write(key: _cloudApiTokenKey, value: clean);
-        _secureStringMirror[_cloudApiTokenKey] = clean;
-      }
-      await _deleteRawScalarValue(_cloudApiTokenKey);
-      return;
-    }
     if (key == _appIdentityKey) {
       if (_memoryStore != null || _webStore != null) {
         await _writeRawScalarValue(key, value);
@@ -368,12 +319,6 @@ class LocalDatabaseService {
       return;
     }
 
-    if (key == _cloudApiTokenKey) {
-      await _secureStorage.delete(key: _cloudApiTokenKey);
-      _secureStringMirror.remove(_cloudApiTokenKey);
-      await _deleteRawScalarValue(_cloudApiTokenKey);
-      return;
-    }
     if (key == _appIdentityKey) {
       await _secureStorage.delete(key: _legacySecureDeviceTokenKey);
       await _secureStorage.delete(key: _secureRecoveryKeyKey);
@@ -413,10 +358,8 @@ class LocalDatabaseService {
       }
       return;
     }
-    await _secureStorage.delete(key: _cloudApiTokenKey);
     await _secureStorage.delete(key: _legacySecureDeviceTokenKey);
     await _secureStorage.delete(key: _secureRecoveryKeyKey);
-    _secureStringMirror.remove(_cloudApiTokenKey);
     _secureStringMirror.remove(_legacySecureDeviceTokenKey);
     _secureStringMirror.remove(_secureRecoveryKeyKey);
     final db = SqliteMigrationManager.database;

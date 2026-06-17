@@ -116,8 +116,6 @@ String localizeRuntimeMessage(String message, AppLocalizations tr) {
     'Host is still uploading store data. Download will continue automatically.':
         'host_still_uploading_store_data',
     'Cloud API URL and token are required.': 'cloud_api_url_token_required',
-    'Cloud API URL and Host deployment token are required.':
-        'cloud_api_url_host_token_required',
     'Cloud Sync is not enabled for this store.':
         'cloud_sync_not_enabled_for_store',
     'Cloud Sync is not ready yet.': 'cloud_sync_not_ready_yet',

@@ -17,7 +17,7 @@ function parseLoginName(value) {
 
 
 function createAdminToken(row) {
-  const secret = process.env.ADMIN_JWT_SECRET || process.env.CLOUD_SYNC_TOKEN || '';
+  const secret = process.env.ADMIN_JWT_SECRET || '';
   if (!secret) return '';
   if (String(row.account_type || '') !== 'platform_admin') return '';
   if (String(row.namespace_slug || '') !== 'ventio') return '';
@@ -34,7 +34,7 @@ function createAdminToken(row) {
 }
 
 function createAccountToken(row) {
-  const secret = process.env.ACCOUNT_JWT_SECRET || process.env.ADMIN_JWT_SECRET || process.env.CLOUD_SYNC_TOKEN || '';
+  const secret = process.env.ACCOUNT_JWT_SECRET || process.env.ADMIN_JWT_SECRET || '';
   if (!secret) return '';
   if (String(row.account_type || '') === 'platform_admin') return '';
   const payload = {

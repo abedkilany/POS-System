@@ -1,4 +1,4 @@
-import { sql, assertSyncTokenOrDevice, assertStoreAllowed, ensureDeviceAuthColumns, sendError } from '../_db.js';
+import { sql, assertAccountOrDevice, assertStoreAllowed, ensureDeviceAuthColumns, sendError } from '../_db.js';
 
 function toInt(value, fallback, min, max) {
   const parsed = Number(value);
@@ -54,7 +54,7 @@ export default async function handler(req, res) {
     const hostDeviceId = String(body.hostDeviceId || body.host_device_id || body.deviceId || body.device_id || req.headers['x-device-id'] || '').trim();
     if (!storeId) return res.status(400).json({ ok: false, error: 'storeId is required.' });
     assertStoreAllowed(storeId);
-    await assertSyncTokenOrDevice(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['cloud'] });
+    await assertAccountOrDevice(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['cloud'] });
     await assertHostDevice({ storeId, branchId, hostDeviceId });
 
     const keepRecentEvents = toInt(body.keepRecentEvents || body.keep_recent_events, 200, 50, 5000);

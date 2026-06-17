@@ -2697,7 +2697,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   final _lanIntervalController = TextEditingController();
   final _lanTokenController = TextEditingController();
   final _cloudApiController = TextEditingController();
-  final _cloudTokenController = TextEditingController();
   final _cloudPairingCodeController = TextEditingController();
   final _cloudIntervalController = TextEditingController();
   final _transferDeviceController = TextEditingController();
@@ -2751,7 +2750,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     _lanIntervalController.text = lan.intervalSeconds.toString();
     _lanTokenController.text = lan.secret.trim();
     _cloudApiController.text = cloud.apiBaseUrl;
-    _cloudTokenController.text = cloud.apiToken;
     _cloudIntervalController.text = cloud.intervalSeconds.toString();
     for (final controller in [
       _lanHostController,
@@ -2759,7 +2757,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       _lanIntervalController,
       _lanTokenController,
       _cloudApiController,
-      _cloudTokenController,
       _cloudPairingCodeController,
       _cloudIntervalController,
     ]) {
@@ -2779,7 +2776,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     _lanIntervalController.dispose();
     _lanTokenController.dispose();
     _cloudApiController.dispose();
-    _cloudTokenController.dispose();
     _cloudPairingCodeController.dispose();
     _cloudIntervalController.dispose();
     _transferDeviceController.dispose();
@@ -2839,7 +2835,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       _lanPortController.text = lan.port.toString();
       _lanIntervalController.text = lan.intervalSeconds.toString();
       _cloudApiController.text = cloud.apiBaseUrl;
-      _cloudTokenController.text = cloud.apiToken;
       _cloudIntervalController.text = cloud.intervalSeconds.toString();
       _status = status ?? AppLocalizations.of(context).text('cancelled');
     });
@@ -3002,7 +2997,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     return current.copyWith(
       enabled: enabled,
       apiBaseUrl: normalizedUrl,
-      apiToken: current.apiToken,
       autoSyncEnabled: autoSyncEnabled ?? enabled,
       intervalSeconds: _cloudInterval,
     );

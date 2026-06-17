@@ -2,7 +2,7 @@ import { sql, assertStoreAllowed, ensureDeviceAuthColumns, sendError } from '../
 
 export default async function handler(req, res) {
   try {
-    // A wiped Client may no longer have or be able to use the deployment token.
+    // A wiped Client may no longer have or be able to use its normal session.
     // Authenticate the ACK with the per-device token issued during pairing.
     if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Method not allowed' });
     const body = req.body || {};

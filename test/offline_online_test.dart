@@ -4,12 +4,21 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ventio/core/services/cloud_sync_service.dart';
+import 'package:ventio/core/services/local_database_service.dart';
 import 'package:ventio/data/app_store.dart';
 
 void main() {
   group('Offline/online behavior', () {
-    const settings = CloudSyncSettings(
-        enabled: true, apiBaseUrl: 'https://sync.test', apiToken: 'token');
+    setUp(() {
+      LocalDatabaseService.useInMemoryStoreForTesting({
+        'account_auth_cache_v1': '{"accountToken":"account-token"}',
+      });
+    });
+
+    tearDown(LocalDatabaseService.clearInMemoryStoreForTesting);
+
+    const settings =
+        CloudSyncSettings(enabled: true, apiBaseUrl: 'https://sync.test');
 
     test('offline connection returns a failed result instead of throwing',
         () async {

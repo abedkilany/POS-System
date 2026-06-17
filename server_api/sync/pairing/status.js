@@ -1,10 +1,8 @@
 import {
   sql,
-  assertSyncToken,
-  assertAccountStoreToken,
+  assertAccountOrDevice,
   assertCloudSyncEnabled,
   assertStoreAllowed,
-  assertDeviceAllowed,
   sendError,
 } from '../../_db.js';
 
@@ -41,24 +39,13 @@ export default async function handler(req, res) {
     if (!code) return res.status(400).json({ ok: false, error: 'Pairing code is required.' });
     if (!storeId) return res.status(400).json({ ok: false, error: 'storeId is required.' });
     assertStoreAllowed(storeId);
-    try {
-      assertSyncToken(req);
-      await assertCloudSyncEnabled(storeId);
-    } catch (_) {
-      try {
-        await assertDeviceAllowed(req, {
-          storeId,
-          branchId,
-          allowedRoles: ['host'],
-          allowedTransports: ['cloud'],
-          force: true,
-        });
-        await assertCloudSyncEnabled(storeId);
-      } catch (deviceError) {
-        assertAccountStoreToken(req, { storeId, branchId });
-        await assertCloudSyncEnabled(storeId);
-      }
-    }
+    await assertCloudSyncEnabled(storeId);
+    await assertAccountOrDevice(req, {
+      storeId,
+      branchId,
+      allowedRoles: ['host'],
+      allowedTransports: ['cloud'],
+    });
 
     const rows = await sql`
       select code, store_id, branch_id, host_device_id, transport, expires_at, claimed_by_device_id, claimed_at

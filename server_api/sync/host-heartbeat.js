@@ -1,11 +1,8 @@
 import { createHash } from 'crypto';
 import {
   sql,
-  assertSyncToken,
-  assertAccountStoreToken,
-  assertCloudSyncEnabled,
+  assertAccountOrDevice,
   assertStoreAllowed,
-  assertDeviceAllowed,
   sendError,
 } from '../_db.js';
 
@@ -78,24 +75,12 @@ export default async function handler(req, res) {
 
       assertStoreAllowed(storeId);
 
-      try {
-        assertSyncToken(req);
-        await assertCloudSyncEnabled(storeId);
-      } catch (_) {
-        try {
-          await assertDeviceAllowed(req, {
-            storeId,
-            branchId,
-            allowedRoles: ['host'],
-            allowedTransports: ['cloud'],
-            force: true,
-          });
-          await assertCloudSyncEnabled(storeId);
-        } catch (deviceError) {
-          assertAccountStoreToken(req, { storeId, branchId });
-          await assertCloudSyncEnabled(storeId);
-        }
-      }
+      await assertAccountOrDevice(req, {
+        storeId,
+        branchId,
+        allowedRoles: ['host'],
+        allowedTransports: ['cloud'],
+      });
 
       const hostDeviceName = String(body.hostDeviceName || body.host_device_name || '').trim();
       const platform = String(body.platform || '').trim();
@@ -213,7 +198,7 @@ export default async function handler(req, res) {
 
       assertStoreAllowed(storeId);
 
-      await assertSyncTokenOrDevice(req, {
+      await assertAccountOrDevice(req, {
         storeId,
         branchId,
         allowedRoles: ['host', 'client'],

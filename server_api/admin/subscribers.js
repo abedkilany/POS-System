@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { sql, sendError } from '../_db.js';
 
 function getAdminSecret() {
-  return process.env.ADMIN_JWT_SECRET || process.env.CLOUD_SYNC_TOKEN || '';
+  return process.env.ADMIN_JWT_SECRET || '';
 }
 
 function verifyAdminToken(token) {

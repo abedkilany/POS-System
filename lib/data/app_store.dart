@@ -9476,7 +9476,6 @@ class AppStore extends ChangeNotifier {
         key == _deviceIdKey ||
         key == 'lan_sync_settings_v2' ||
         key == 'cloud_api_base_url' ||
-        key == 'cloud_api_token' ||
         key == 'cloud_auto_sync_enabled' ||
         key == 'cloud_auto_sync_interval_seconds' ||
         key == 'host_authoritative_sync_device_state_v1' ||

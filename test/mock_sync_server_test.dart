@@ -5,14 +5,22 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:ventio/core/services/cloud_sync_service.dart';
+import 'package:ventio/core/services/local_database_service.dart';
 import 'package:ventio/data/app_store.dart';
 
 void main() {
   group('Mock cloud sync server', () {
+    setUp(() {
+      LocalDatabaseService.useInMemoryStoreForTesting({
+        'account_auth_cache_v1': jsonEncode({'accountToken': 'account-token'}),
+      });
+    });
+
+    tearDown(LocalDatabaseService.clearInMemoryStoreForTesting);
+
     CloudSyncSettings settings() => const CloudSyncSettings(
           enabled: true,
           apiBaseUrl: 'https://sync.test',
-          apiToken: 'token',
         );
 
     test('reports healthy cloud API responses as online', () async {
@@ -20,7 +28,7 @@ void main() {
         AppStore(),
         client: MockClient((request) async {
           expect(request.url.path, '/api/health');
-          expect(request.headers['Authorization'], 'Bearer token');
+          expect(request.headers['Authorization'], 'Bearer account-token');
           return http.Response('{"ok":true}', 200);
         }),
       );

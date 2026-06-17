@@ -1,5 +1,5 @@
 import { randomBytes } from 'crypto';
-import { sql, assertStoreAllowed, ensureDeviceAuthColumns, sendError } from '../../_db.js';
+import { sql, assertCloudSyncEnabled, assertStoreAllowed, ensureDeviceAuthColumns, sendError } from '../../_db.js';
 
 async function ensurePairingTable() {
   await sql`
@@ -48,7 +48,7 @@ function makeDeviceToken() {
 
 export default async function handler(req, res) {
   try {
-    // Claiming a pairing code must not require the Host deployment token.
+    // Claiming a pairing code must not require the Host account session.
     // The single-use pairing code is the Client's bootstrap secret.
     if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Method not allowed' });
     await ensurePairingTable();
@@ -71,6 +71,8 @@ export default async function handler(req, res) {
     if (!lookup.length) return res.status(404).json({ ok: false, error: 'Pairing code was not found.' });
     if (new Date(lookup[0].expires_at).getTime() < Date.now()) return res.status(410).json({ ok: false, error: 'Pairing code expired or already used. Ask the Host device for a new code.' });
     if (lookup[0].claimed_at) return res.status(409).json({ ok: false, error: 'Pairing code expired or already used. Ask the Host device for a new code.' });
+    assertStoreAllowed(lookup[0].store_id);
+    if (lookup[0].transport === 'cloud') await assertCloudSyncEnabled(lookup[0].store_id);
 
     // Atomic single-use claim: if two devices submit the same code, only the
     // oldest request that reaches the server updates claimed_at. Later requests

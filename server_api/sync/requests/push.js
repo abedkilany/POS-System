@@ -1,4 +1,4 @@
-import { sql, assertSyncTokenOrDevice, assertStoreAllowed, sendError } from '../../_db.js';
+import { sql, assertAccountOrDevice, assertStoreAllowed, sendError } from '../../_db.js';
 
 function normalizeChange(raw, fallback) {
   if (!raw || typeof raw !== 'object') throw new Error('Invalid sync change.');
@@ -40,7 +40,7 @@ export default async function handler(req, res) {
       const storeId = String(fallback.storeId);
       const branchId = String(fallback.branchId || 'main');
       assertStoreAllowed(storeId);
-      await assertSyncTokenOrDevice(req, { storeId, branchId, allowedRoles: ['client'], allowedTransports: ['cloud'] });
+      await assertAccountOrDevice(req, { storeId, branchId, allowedRoles: ['client'], allowedTransports: ['cloud'] });
     }
 
     const ackIds = [];

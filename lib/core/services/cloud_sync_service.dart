@@ -17,14 +17,12 @@ class CloudSyncSettings {
   const CloudSyncSettings({
     required this.enabled,
     required this.apiBaseUrl,
-    required this.apiToken,
     this.lastPullCursor,
     this.autoSyncEnabled = true,
     this.intervalSeconds = 15,
   });
 
   static const _apiBaseUrlKey = 'cloud_api_base_url';
-  static const _apiTokenKey = 'cloud_api_token';
   static const _lastPullCursorKey = 'cloud_last_pull_cursor';
   static const _bundledCloudApiBaseUrl =
       String.fromEnvironment('CLOUD_API_BASE_URL');
@@ -41,12 +39,10 @@ class CloudSyncSettings {
 
   final bool enabled;
   final String apiBaseUrl;
-  final String apiToken;
   final DateTime? lastPullCursor;
   final bool autoSyncEnabled;
   final int intervalSeconds;
 
-  bool get hasDeploymentToken => apiToken.trim().isNotEmpty;
   String get accountToken {
     final raw = LocalDatabaseService.getString('account_auth_cache_v1') ?? '';
     if (raw.trim().isEmpty) return '';
@@ -76,9 +72,7 @@ class CloudSyncSettings {
   bool get isConfigured =>
       enabled &&
       apiBaseUrl.trim().isNotEmpty &&
-      (hasDeploymentToken ||
-          hasDeviceCredentials ||
-          accountToken.trim().isNotEmpty);
+      (hasDeviceCredentials || accountToken.trim().isNotEmpty);
 
   static String get bundledApiBaseUrl {
     final cloudUrl = _bundledCloudApiBaseUrl.trim();
@@ -121,7 +115,6 @@ class CloudSyncSettings {
   CloudSyncSettings copyWith({
     bool? enabled,
     String? apiBaseUrl,
-    String? apiToken,
     DateTime? lastPullCursor,
     bool clearLastPullCursor = false,
     bool? autoSyncEnabled,
@@ -130,7 +123,6 @@ class CloudSyncSettings {
       CloudSyncSettings(
         enabled: enabled ?? this.enabled,
         apiBaseUrl: apiBaseUrl ?? this.apiBaseUrl,
-        apiToken: apiToken ?? this.apiToken,
         lastPullCursor: clearLastPullCursor
             ? null
             : (lastPullCursor ?? this.lastPullCursor),
@@ -140,7 +132,6 @@ class CloudSyncSettings {
 
   static CloudSyncSettings load() {
     final base = LocalDatabaseService.getString(_apiBaseUrlKey);
-    final token = LocalDatabaseService.getString(_apiTokenKey) ?? '';
     final cursorRaw = LocalDatabaseService.getString(_lastPullCursorKey) ?? '';
     final autoRaw = LocalDatabaseService.getString(_autoSyncKey);
     final intervalRaw = LocalDatabaseService.getString(_intervalKey);
@@ -157,7 +148,6 @@ class CloudSyncSettings {
     return CloudSyncSettings(
       enabled: true,
       apiBaseUrl: normalizedBaseUrl,
-      apiToken: token,
       lastPullCursor: DateTime.tryParse(cursorRaw),
       autoSyncEnabled: autoRaw == null ? true : autoRaw == 'true',
       intervalSeconds:
@@ -169,7 +159,6 @@ class CloudSyncSettings {
     final normalizedBaseUrl = normalizeApiBaseUrl(apiBaseUrl,
         fallback: kIsWeb ? Uri.base.origin : '');
     await LocalDatabaseService.setString(_apiBaseUrlKey, normalizedBaseUrl);
-    await LocalDatabaseService.setString(_apiTokenKey, apiToken.trim());
     await LocalDatabaseService.setString(
         _autoSyncKey, autoSyncEnabled ? 'true' : 'false');
     await LocalDatabaseService.setString(
@@ -993,7 +982,7 @@ class CloudSyncService {
     // should run at a time. Pairing Cloud is therefore allowed for an existing
     // LAN Client as long as it is not a Host.
     // Client bootstrap pairing intentionally requires only the Cloud API URL and
-    // a single-use pairing code. The Host deployment token must stay on Host devices.
+    // a single-use pairing code. Account sessions stay on Host devices.
     if (!settings.enabled || settings.apiBaseUrl.trim().isEmpty) {
       return const CloudPairingClaimResult(
           ok: false, message: 'رابط واجهة السحابة مطلوب.');
@@ -1204,8 +1193,8 @@ class CloudSyncService {
               'Content-Type': 'application/json',
               'Accept': 'application/json',
               if (store.appIdentity.isHost &&
-                  settings.apiToken.trim().isNotEmpty)
-                'Authorization': 'Bearer ${settings.apiToken.trim()}',
+                  settings.accountToken.trim().isNotEmpty)
+                'Authorization': 'Bearer ${settings.accountToken.trim()}',
             },
             body: jsonEncode({
               'storeId': cleanStoreId,
@@ -1777,13 +1766,10 @@ class CloudSyncService {
     return {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
-      // Clients authenticate with their own per-device token. Local/Host admin
-      // flows may still need the deployment token for setup and health checks.
-      if (!identity.isClient &&
-          (settings.apiToken.trim().isNotEmpty ||
-              settings.accountToken.trim().isNotEmpty))
-        'Authorization':
-            'Bearer ${(settings.accountToken.trim().isNotEmpty ? settings.accountToken : settings.apiToken).trim()}',
+      // Clients authenticate with their own per-device token. Host/account
+      // flows authenticate with the online account session.
+      if (!identity.isClient && settings.accountToken.trim().isNotEmpty)
+        'Authorization': 'Bearer ${settings.accountToken.trim()}',
       'X-Device-Id': store.deviceId,
       'X-Device-Token': identity.deviceToken,
       'X-Device-Role': identity.deviceRole.name,
@@ -1808,8 +1794,8 @@ class CloudSyncService {
               'Content-Type': 'application/json',
               'Accept': 'application/json',
               if (store.appIdentity.isHost &&
-                  settings.apiToken.trim().isNotEmpty)
-                'Authorization': 'Bearer ${settings.apiToken.trim()}',
+                  settings.accountToken.trim().isNotEmpty)
+                'Authorization': 'Bearer ${settings.accountToken.trim()}',
               'X-Device-Id': deviceId,
               'X-Device-Token': deviceToken,
               'X-Device-Role': 'client',
@@ -2334,7 +2320,7 @@ class CloudSyncService {
     final identity = store.appIdentity;
     if (!identity.isHost ||
         !identity.isCloudEnabled ||
-        !settings.hasDeploymentToken) {
+        !settings.isConfigured) {
       return 0;
     }
     await store.removeLegacyCloudBootstrapSnapshotQueue();
@@ -2362,7 +2348,7 @@ class CloudSyncService {
     final identity = store.appIdentity;
     if (!identity.isHost ||
         !identity.isCloudEnabled ||
-        !settings.hasDeploymentToken) {
+        !settings.isConfigured) {
       return 0;
     }
     await store.removeLegacyCloudBootstrapSnapshotQueue();

@@ -1,4 +1,4 @@
-import { sql, assertSyncToken, assertStoreAllowed, assertDeviceAllowed, sendError } from '../../_db.js';
+import { sql, assertStoreAllowed, assertAccountOrDevice, sendError } from '../../_db.js';
 
 function asIso(value) {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
@@ -6,7 +6,6 @@ function asIso(value) {
 
 export default async function handler(req, res) {
   try {
-    assertSyncToken(req);
     await sql`alter table cloud_change_requests add column if not exists store_epoch integer not null default 1`;
     await sql`alter table cloud_change_requests add column if not exists sequence integer not null default 0`;
     if (req.method !== 'GET') return res.status(405).json({ ok: false, error: 'Method not allowed' });
@@ -14,7 +13,7 @@ export default async function handler(req, res) {
     const storeId = String(req.query.store_id || req.query.storeId || 'default-store');
     const branchId = String(req.query.branch_id || req.query.branchId || 'main');
     assertStoreAllowed(storeId);
-    await assertDeviceAllowed(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['cloud'] });
+    await assertAccountOrDevice(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['cloud'] });
     const limit = Math.min(Number(req.query.limit || 1000), 5000);
 
     const rows = await sql`

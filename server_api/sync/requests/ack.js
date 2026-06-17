@@ -1,15 +1,14 @@
-import { sql, assertSyncToken, assertStoreAllowed, assertDeviceAllowed, sendError } from '../../_db.js';
+import { sql, assertStoreAllowed, assertAccountOrDevice, sendError } from '../../_db.js';
 
 export default async function handler(req, res) {
   try {
-    assertSyncToken(req);
     if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Method not allowed' });
     const body = req.body || {};
     const storeId = String(body.storeId || body.store_id || '').trim();
     const branchId = String(body.branchId || body.branch_id || 'main').trim();
     if (!storeId) return res.status(400).json({ ok: false, error: 'storeId is required.' });
     assertStoreAllowed(storeId);
-    await assertDeviceAllowed(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['cloud'] });
+    await assertAccountOrDevice(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['cloud'] });
     await sql`alter table cloud_change_requests add column if not exists rejection_reason text default ''`;
     const ackIds = Array.isArray(body.ackIds) ? body.ackIds.map((id) => String(id)).filter(Boolean) : [];
     const rejectedRaw = Array.isArray(body.rejected) ? body.rejected : [];

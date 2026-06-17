@@ -1,5 +1,5 @@
 import zlib from 'zlib';
-import { sql, assertSyncTokenOrDevice, assertStoreAllowed, ensureDeviceAuthColumns, sendError } from '../_db.js';
+import { sql, assertAccountOrDevice, assertStoreAllowed, ensureDeviceAuthColumns, sendError } from '../_db.js';
 
 const collectionTypes = {
   products: 'product',
@@ -157,7 +157,7 @@ export default async function handler(req, res) {
       const storeId = String(req.query.store_id || req.query.storeId || 'default-store');
       const branchId = String(req.query.branch_id || req.query.branchId || 'main');
       assertStoreAllowed(storeId);
-      await assertSyncTokenOrDevice(req, { storeId, branchId, allowedRoles: ['host', 'client'], allowedTransports: ['cloud'] });
+      await assertAccountOrDevice(req, { storeId, branchId, allowedRoles: ['host', 'client'], allowedTransports: ['cloud'] });
       const mode = String(req.query.mode || '').trim().toLowerCase();
       const jobIdQuery = String(req.query.job_id || req.query.jobId || '').trim();
       const latestJobRows = jobIdQuery
@@ -247,7 +247,7 @@ export default async function handler(req, res) {
     if (!jobId) return res.status(400).json({ ok: false, error: 'Missing snapshot jobId.' });
     if (!collection) return res.status(400).json({ ok: false, error: 'Missing snapshot collection.' });
     assertStoreAllowed(storeId);
-    await assertSyncTokenOrDevice(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['cloud'] });
+    await assertAccountOrDevice(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['cloud'] });
 
     await sql`
       insert into unified_snapshot_chunks (store_id, branch_id, job_id, ordinal, total_chunks, chunk, snapshot_manifest, sync_generated_at, sync_generated_sequence, updated_at)

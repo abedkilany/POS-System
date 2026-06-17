@@ -1,8 +1,7 @@
-import { sql, assertSyncToken, assertStoreAllowed, assertDeviceAllowed, ensureDeviceAuthColumns, sendError } from '../_db.js';
+import { sql, assertStoreAllowed, assertAccountOrDevice, ensureDeviceAuthColumns, sendError } from '../_db.js';
 
 export default async function handler(req, res) {
   try {
-    assertSyncToken(req);
     if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Method not allowed' });
     const body = req.body || {};
     const storeId = String(body.storeId || body.store_id || '').trim();
@@ -13,7 +12,7 @@ export default async function handler(req, res) {
     if (!deviceId) return res.status(400).json({ ok: false, error: 'deviceId is required.' });
     assertStoreAllowed(storeId);
     await ensureDeviceAuthColumns();
-    await assertDeviceAllowed(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['cloud'] });
+    await assertAccountOrDevice(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['cloud'] });
     const rows = await sql`
       update store_devices
       set suspended = ${suspended}, updated_at = now()

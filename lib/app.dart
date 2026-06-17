@@ -1146,8 +1146,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     final provisioning = identity.isClient &&
         identity.activeSyncTransportNormalized == 'cloud' &&
         CloudProvisioningStatus.isPending;
-    final hasSavedCloudSettings = settings.apiBaseUrl.trim().isNotEmpty &&
-        (settings.hasDeploymentToken || settings.hasDeviceCredentials);
+    final hasSavedCloudSettings = settings.isConfigured;
     final cloudEnabledForRole = identity.isHost
         ? identity.isCloudEnabled && hasSavedCloudSettings
         : identity.isClient &&
@@ -1266,9 +1265,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
 
     final lanSettings = LanSyncSettings.load();
     final cloudSettings = CloudSyncSettings.load();
-    final hasSavedCloudSettings = cloudSettings.apiBaseUrl.trim().isNotEmpty &&
-        (cloudSettings.hasDeploymentToken ||
-            cloudSettings.hasDeviceCredentials);
+    final hasSavedCloudSettings = cloudSettings.isConfigured;
     final lanEnabled = identity.isHost
         ? lanSettings.setupComplete && lanSettings.isHost
         : identity.isClient &&

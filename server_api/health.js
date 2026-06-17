@@ -1,21 +1,19 @@
 import {
   sql,
-  assertSyncToken,
-  assertAccountStoreToken,
-  assertCloudSyncEnabled,
+  assertAccountOrDevice,
   sendError,
 } from './_db.js';
 
 export default async function handler(req, res) {
   try {
-    try {
-      assertSyncToken(req);
-    } catch (_) {
-      const storeId = String(req.headers['x-store-id'] || req.headers['X-Store-Id'] || '').trim();
-      const branchId = String(req.headers['x-branch-id'] || req.headers['X-Branch-Id'] || '').trim();
-      assertAccountStoreToken(req, { storeId, branchId });
-      if (storeId) await assertCloudSyncEnabled(storeId);
-    }
+    const storeId = String(req.headers['x-store-id'] || req.headers['X-Store-Id'] || '').trim();
+    const branchId = String(req.headers['x-branch-id'] || req.headers['X-Branch-Id'] || '').trim();
+    await assertAccountOrDevice(req, {
+      storeId,
+      branchId,
+      allowedRoles: ['host', 'client'],
+      allowedTransports: ['cloud'],
+    });
     const rows = await sql`select now() as now`;
     res.status(200).json({ ok: true, service: 'pos-sync-api', databaseTime: rows[0].now });
   } catch (error) {

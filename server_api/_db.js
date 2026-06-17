@@ -32,33 +32,17 @@ if (isLocalDatabase) {
 
 export { sql };
 
-export function assertSyncToken(req) {
-  const expected = process.env.CLOUD_SYNC_TOKEN || '';
-  if (!expected) {
-    const err = new Error('CLOUD_SYNC_TOKEN is not configured. Refusing unauthenticated cloud sync.');
-    err.statusCode = 500;
-    throw err;
-  }
-  const header = req.headers.authorization || req.headers.Authorization || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
-  if (token !== expected) {
-    const err = new Error('Invalid or missing cloud sync token.');
-    err.statusCode = 401;
-    throw err;
-  }
-}
-
 export function assertStoreAllowed(storeId) {
   const allowed = (process.env.CLOUD_SYNC_STORE_ID || '').trim();
   if (allowed && storeId !== allowed) {
-    const err = new Error('This sync token is not allowed to access the requested store_id.');
+    const err = new Error('This deployment is not allowed to access the requested store_id.');
     err.statusCode = 403;
     throw err;
   }
 }
 
 function accountSecret() {
-  return process.env.ACCOUNT_JWT_SECRET || process.env.ADMIN_JWT_SECRET || process.env.CLOUD_SYNC_TOKEN || '';
+  return process.env.ACCOUNT_JWT_SECRET || process.env.ADMIN_JWT_SECRET || '';
 }
 
 export function verifyAccountToken(token) {
@@ -120,7 +104,7 @@ export async function assertCloudSyncEnabled(storeId) {
   const rows = await sql`
     select cloud_sync_enabled
     from app_stores
-    where store_id = ${storeId}
+    where id = ${storeId}
     limit 1
   `;
   if (!rows.length || rows[0].cloud_sync_enabled !== true) {
@@ -189,19 +173,25 @@ export async function assertDeviceAllowed(req, { storeId, branchId = 'main', all
 }
 
 
-export async function assertSyncTokenOrDevice(req, options = {}) {
+export async function assertAccountOrDevice(req, options = {}) {
   const requireCloudAccess = async () => {
     if ((options.allowedTransports || []).includes('cloud') && options.storeId) {
       await assertCloudSyncEnabled(options.storeId);
     }
   };
+  const allowedRoles = options.allowedRoles || [];
+  const accountCanAuthorize =
+    options.allowAccount !== false &&
+    (!allowedRoles.length || allowedRoles.includes('host'));
   try {
-    assertSyncToken(req);
+    if (!accountCanAuthorize) throw new Error('Account authorization is not allowed for this endpoint.');
+    assertAccountStoreToken(req, { storeId: options.storeId, branchId: options.branchId || 'main' });
     await requireCloudAccess();
-    return;
-  } catch (authError) {
+    return { mode: 'account' };
+  } catch (_) {
     await assertDeviceAllowed(req, { ...options, force: true });
     await requireCloudAccess();
+    return { mode: 'device' };
   }
 }
 

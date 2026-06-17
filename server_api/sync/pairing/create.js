@@ -1,11 +1,9 @@
 import { randomBytes, createHash } from 'crypto';
 import {
   sql,
-  assertSyncToken,
-  assertAccountStoreToken,
+  assertAccountOrDevice,
   assertCloudSyncEnabled,
   assertStoreAllowed,
-  assertDeviceAllowed,
   sendError,
 } from '../../_db.js';
 
@@ -76,25 +74,13 @@ export default async function handler(req, res) {
     if (!storeId) return res.status(400).json({ ok: false, error: 'storeId is required.' });
     if (!hostDeviceId) return res.status(400).json({ ok: false, error: 'hostDeviceId is required.' });
     assertStoreAllowed(storeId);
-    try {
-      assertSyncToken(req);
-      if (transport === 'cloud') await assertCloudSyncEnabled(storeId);
-    } catch (_) {
-      try {
-        await assertDeviceAllowed(req, {
-          storeId,
-          branchId,
-          allowedRoles: ['host'],
-          allowedTransports: transport === 'cloud' ? ['cloud'] : [],
-          force: true,
-        });
-        if (transport === 'cloud') await assertCloudSyncEnabled(storeId);
-      } catch (deviceError) {
-        if (transport !== 'cloud') throw deviceError;
-        assertAccountStoreToken(req, { storeId, branchId });
-        await assertCloudSyncEnabled(storeId);
-      }
-    }
+    if (transport === 'cloud') await assertCloudSyncEnabled(storeId);
+    await assertAccountOrDevice(req, {
+      storeId,
+      branchId,
+      allowedRoles: ['host'],
+      allowedTransports: transport === 'cloud' ? ['cloud'] : [],
+    });
 
     await sql`delete from device_pairing_codes where expires_at < now() or claimed_at is not null`;
     let code = makeCode();

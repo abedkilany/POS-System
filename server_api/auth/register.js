@@ -20,7 +20,7 @@ function hashPassword(password) {
 }
 
 function createAccountToken({ accountId, username, storeSlug, storeId, branchId }) {
-  const secret = process.env.ACCOUNT_JWT_SECRET || process.env.ADMIN_JWT_SECRET || process.env.CLOUD_SYNC_TOKEN || '';
+  const secret = process.env.ACCOUNT_JWT_SECRET || process.env.ADMIN_JWT_SECRET || '';
   if (!secret) return '';
   const payload = {
     type: 'store_account',

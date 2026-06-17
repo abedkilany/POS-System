@@ -1,4 +1,4 @@
-import { sql, assertSyncTokenOrDevice, assertStoreAllowed, sendError } from '../../_db.js';
+import { sql, assertAccountOrDevice, assertStoreAllowed, sendError } from '../../_db.js';
 
 export default async function handler(req, res) {
   try {
@@ -11,7 +11,7 @@ export default async function handler(req, res) {
     if (!storeId) return res.status(400).json({ ok: false, error: 'storeId is required.' });
     await sql`alter table cloud_change_requests add column if not exists rejection_reason text default ''`;
     assertStoreAllowed(storeId);
-    await assertSyncTokenOrDevice(req, { storeId, branchId, allowedRoles: ['client'], allowedTransports: ['cloud'] });
+    await assertAccountOrDevice(req, { storeId, branchId, allowedRoles: ['client'], allowedTransports: ['cloud'] });
     if (!requestIds.length) return res.status(200).json({ ok: true, acceptedIds: [], rejected: [], pendingIds: [] });
 
     const rows = await sql`

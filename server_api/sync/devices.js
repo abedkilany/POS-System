@@ -1,8 +1,6 @@
 import {
   sql,
-  assertSyncToken,
-  assertAccountStoreToken,
-  assertCloudSyncEnabled,
+  assertAccountOrDevice,
   assertDeviceAllowed,
   assertStoreAllowed,
   ensureDeviceAuthColumns,
@@ -120,33 +118,28 @@ export default async function handler(req, res) {
       const lastAppliedSequence = Math.max(Number(body.lastAppliedSequence || body.last_applied_sequence || 0), 0);
       const lastAckSequence = Math.max(Number(body.lastAckSequence || body.last_ack_sequence || lastAppliedSequence || 0), 0);
 
-      // Client Cloud ACK is sent through this heartbeat endpoint after the
-      // device has applied authoritative events locally. Hosts may still use
-      // the deployment token, but paired Clients usually only have their
-      // device-scoped token. Accept either auth mode, and when device auth is
-      // used make sure the body cannot update another device row.
+      // Hosts can register with their account session. Paired Clients update
+      // only themselves with their device-scoped token.
       let usedDeviceAuth = false;
       try {
-        assertSyncToken(req);
-        await assertCloudSyncEnabled(storeId);
-      } catch (_) {
-        try {
-          await assertDeviceAllowed(req, {
-            storeId,
-            branchId,
-            allowedRoles: ['host', 'client'],
-            allowedTransports: ['cloud'],
-            force: true,
-          });
-          usedDeviceAuth = true;
-          await assertCloudSyncEnabled(storeId);
-        } catch (deviceError) {
-          if (String(role || '').trim() !== 'host' || activeTransport !== 'cloud') {
-            throw deviceError;
-          }
-          assertAccountStoreToken(req, { storeId, branchId });
-          await assertCloudSyncEnabled(storeId);
+        await assertDeviceAllowed(req, {
+          storeId,
+          branchId,
+          allowedRoles: ['host', 'client'],
+          allowedTransports: ['cloud'],
+          force: true,
+        });
+        usedDeviceAuth = true;
+      } catch (deviceError) {
+        if (String(role || '').trim() !== 'host' || activeTransport !== 'cloud') {
+          throw deviceError;
         }
+        await assertAccountOrDevice(req, {
+          storeId,
+          branchId,
+          allowedRoles: ['host'],
+          allowedTransports: ['cloud'],
+        });
       }
       if (usedDeviceAuth) {
         const headerDeviceId = String(req.headers['x-device-id'] || req.headers['X-Device-Id'] || '').trim();
@@ -189,11 +182,11 @@ export default async function handler(req, res) {
     }
 
     if (req.method === 'GET') {
-      assertSyncToken(req);
       const storeId = String(req.query.store_id || req.query.storeId || '').trim();
       const branchId = String(req.query.branch_id || req.query.branchId || 'main').trim() || 'main';
       if (!storeId) return res.status(400).json({ ok: false, error: 'store_id is required.' });
       assertStoreAllowed(storeId);
+      await assertAccountOrDevice(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['cloud'] });
       const rows = await sql`
         select store_id, branch_id, device_id, device_name, platform, role, transport, active_transport, last_sync_transport,
           app_version, host_device_id, store_epoch, revoked, suspended, wipe_pending, online, last_applied_cursor, last_ack_cursor, last_applied_sequence, last_ack_sequence, last_ack_at, last_seen_at
