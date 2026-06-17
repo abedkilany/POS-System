@@ -19,7 +19,6 @@ function parseLoginName(value) {
 function createAdminToken(row) {
   const secret = process.env.ADMIN_JWT_SECRET || '';
   if (!secret) return '';
-  if (String(row.account_type || '') !== 'platform_admin') return '';
   if (String(row.namespace_slug || '') !== 'ventio') return '';
   const payload = {
     type: 'platform_admin',
@@ -36,6 +35,7 @@ function createAdminToken(row) {
 function createAccountToken(row) {
   const secret = process.env.ACCOUNT_JWT_SECRET || process.env.ADMIN_JWT_SECRET || '';
   if (!secret) return '';
+  if (String(row.namespace_slug || '') === 'ventio') return '';
   if (String(row.account_type || '') === 'platform_admin') return '';
   const payload = {
     type: 'store_account',
@@ -156,6 +156,7 @@ export default async function handler(req, res) {
     if (row.account_status !== 'active') return res.status(403).json({ ok: false, error: 'Account is not active.' });
     if (!verifyPassword(password, row.password_hash)) return res.status(401).json({ ok: false, error: 'Invalid username or password.' });
 
+    const isPlatformNamespace = String(row.namespace_slug || '') === 'ventio';
     const adminToken = createAdminToken(row);
     const accountToken = createAccountToken(row);
 
@@ -169,7 +170,9 @@ export default async function handler(req, res) {
       storeSlug: row.store_slug || row.namespace_slug || '',
       storeName: row.store_name || '',
       loginName: `${row.username}@${row.namespace_slug}`,
-      accountType: row.account_type || 'store_owner',
+      accountType: isPlatformNamespace
+        ? 'platform_admin'
+        : (row.account_type || 'store_owner'),
       subscriptionStatus: row.subscription_status || '',
       trialEndsAt: row.trial_ends_at ? new Date(row.trial_ends_at).toISOString() : null,
       devicesLimit: Number(row.devices_limit || 0) || null,

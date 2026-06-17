@@ -316,6 +316,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
           return;
         }
         await AccountAuthService.cacheOnlineResult(onlineResult, mode: 'login');
+        await widget.store.logout();
         setState(() => _loggingIn = false);
         return;
       } catch (error) {
@@ -443,7 +444,6 @@ class _LoginGatePageState extends State<LoginGatePage> {
         (authCache?.storeSlug ?? '').trim().isNotEmpty &&
         authCache?.storeSlug != 'ventio';
     if (platformAdminUnlocked) return widget.child;
-    if (widget.store.activeUser != null) return widget.child;
     if (storeAccountUnlocked && authCache != null) {
       return StoreAccountDashboardPage(
         cache: authCache,
@@ -454,6 +454,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
         },
       );
     }
+    if (widget.store.activeUser != null) return widget.child;
 
     if (_showRegister && !kIsWeb && widget.store.needsInitialAdminSetup) {
       return _InitialAdminSetupCard(
