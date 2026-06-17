@@ -16,8 +16,15 @@ function parseLoginName(value) {
 }
 
 
+function adminTokenSecret() {
+  return process.env.ADMIN_JWT_SECRET
+    || process.env.ACCOUNT_JWT_SECRET
+    || process.env.DATABASE_URL
+    || 'ventio-platform-admin-secret';
+}
+
 function createAdminToken(row) {
-  const secret = process.env.ADMIN_JWT_SECRET || '';
+  const secret = adminTokenSecret();
   if (!secret) return '';
   if (String(row.namespace_slug || '') !== 'ventio') return '';
   const payload = {
@@ -33,18 +40,18 @@ function createAdminToken(row) {
 }
 
 function createAccountToken(row) {
-  const secret = process.env.ACCOUNT_JWT_SECRET || process.env.ADMIN_JWT_SECRET || '';
+  const secret = adminTokenSecret();
   if (!secret) return '';
-  if (String(row.namespace_slug || '') === 'ventio') return '';
-  if (String(row.account_type || '') === 'platform_admin') return '';
+  const isPlatform = String(row.namespace_slug || '') === 'ventio'
+    || String(row.account_type || '') === 'platform_admin';
   const payload = {
-    type: 'store_account',
+    type: isPlatform ? 'platform_admin' : 'store_account',
     accountId: row.account_id,
     username: row.username,
     namespace: row.namespace_slug,
     storeId: row.store_id || '',
     branchId: row.branch_id || '',
-    exp: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
+    exp: Math.floor(Date.now() / 1000) + (isPlatform ? 8 * 60 * 60 : 30 * 24 * 60 * 60),
   };
   const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
   const signature = crypto.createHmac('sha256', secret).update(payloadB64).digest('base64url');

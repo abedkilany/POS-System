@@ -32,14 +32,21 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
     super.dispose();
   }
 
+  String _platformAccessToken(AccountAuthCache? cache) {
+    final adminToken = cache?.adminToken.trim() ?? '';
+    if (adminToken.isNotEmpty) return adminToken;
+    return cache?.accountToken.trim() ?? '';
+  }
+
   Future<void> _load() async {
     setState(() {
       _loading = true;
       _error = '';
     });
     final cache = AccountAuthCache.load();
+    final adminAccessToken = _platformAccessToken(cache);
     final result = await _service.fetchAdminSubscribers(
-      adminToken: cache?.adminToken ?? '',
+      adminToken: adminAccessToken,
     );
     if (!mounted) return;
     setState(() {
@@ -279,7 +286,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                     }
                     final cache = AccountAuthCache.load();
                     final result = await _service.updateAdminSubscriber(
-                      adminToken: cache?.adminToken ?? '',
+                      adminToken: _platformAccessToken(cache),
                       subscriber: subscriber,
                       username: username,
                       fullName: fullNameController.text,
@@ -339,7 +346,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
     if (confirmed != true) return;
     final cache = AccountAuthCache.load();
     final result = await _service.deleteAdminSubscriber(
-      adminToken: cache?.adminToken ?? '',
+      adminToken: _platformAccessToken(cache),
       subscriber: subscriber,
     );
     if (!mounted) return;

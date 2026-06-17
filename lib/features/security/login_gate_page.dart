@@ -12,6 +12,7 @@ import '../../core/sync_unified/sync_unified.dart';
 import '../../data/app_store.dart';
 import '../settings/sync_setup_page.dart';
 import '../account/store_account_dashboard_page.dart';
+import '../admin/admin_subscribers_page.dart';
 
 class LoginGatePage extends StatefulWidget {
   const LoginGatePage({super.key, required this.store, required this.child});
@@ -437,13 +438,20 @@ class _LoginGatePageState extends State<LoginGatePage> {
   @override
   Widget build(BuildContext context) {
     final authCache = AccountAuthCache.load();
-    final platformAdminUnlocked = authCache?.accountType == 'platform_admin' &&
-        (authCache?.adminToken ?? '').trim().isNotEmpty;
+    final platformAdminUnlocked = authCache?.accountType == 'platform_admin';
     final storeAccountUnlocked = authCache?.accountType == 'store_owner' &&
         authCache?.mode == 'login' &&
         (authCache?.storeSlug ?? '').trim().isNotEmpty &&
         authCache?.storeSlug != 'ventio';
-    if (platformAdminUnlocked) return widget.child;
+    if (platformAdminUnlocked && authCache != null) {
+      return PlatformAdminDashboardPage(
+        cache: authCache,
+        onLogout: () async {
+          await AccountAuthCache.clear();
+          if (mounted) setState(() {});
+        },
+      );
+    }
     if (storeAccountUnlocked && authCache != null) {
       return StoreAccountDashboardPage(
         cache: authCache,
@@ -857,6 +865,43 @@ class _InitialAdminSetupCardState extends State<_InitialAdminSetupCard> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class PlatformAdminDashboardPage extends StatelessWidget {
+  const PlatformAdminDashboardPage({
+    super.key,
+    required this.cache,
+    required this.onLogout,
+  });
+
+  final AccountAuthCache cache;
+  final Future<void> Function() onLogout;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Ventio • Subscribers'),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Center(
+              child: Text(
+                cache.loginName.isEmpty ? 'Platform admin' : cache.loginName,
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Sign out',
+            onPressed: onLogout,
+            icon: const Icon(Icons.logout),
+          ),
+        ],
+      ),
+      body: const AdminSubscribersPage(),
     );
   }
 }

@@ -37,8 +37,11 @@ class UnifiedSyncFactory {
   static bool get isCloudConfigured => CloudSyncSettings.load().isConfigured;
   static bool cloudCanCheck(AppStore store) {
     final identity = store.appIdentity;
-    final allowed = identity.isHost ? identity.isCloudEnabled : identity.isClient && identity.activeSyncTransportNormalized == 'cloud';
-    return allowed && CloudSyncSettings.load().isConfigured;
+    final settings = CloudSyncSettings.load();
+    final allowed = identity.isHost
+        ? identity.isCloudEnabled && settings.cloudSyncAllowedByPlatform
+        : identity.isClient && identity.activeSyncTransportNormalized == 'cloud';
+    return allowed && settings.isConfigured;
   }
 }
 
@@ -213,7 +216,10 @@ class UnifiedAutoCloudSyncController {
 
   bool _cloudAllowedForCurrentRole() {
     final identity = store.appIdentity;
-    if (identity.isHost) return identity.isCloudEnabled;
+    if (identity.isHost) {
+      return identity.isCloudEnabled &&
+          CloudSyncSettings.load().cloudSyncAllowedByPlatform;
+    }
     if (!identity.isClient) return false;
     return identity.activeSyncTransportNormalized == 'cloud';
   }

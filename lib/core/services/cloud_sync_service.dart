@@ -57,6 +57,21 @@ class CloudSyncSettings {
     return '';
   }
 
+  bool get cloudSyncAllowedByPlatform {
+    final raw = LocalDatabaseService.getString('account_auth_cache_v1') ?? '';
+    if (raw.trim().isEmpty) return false;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        return decoded['cloudSyncEnabled'] == true ||
+            decoded['cloud_sync_enabled'] == true;
+      }
+    } catch (_) {
+      return false;
+    }
+    return false;
+  }
+
   bool get hasDeviceCredentials {
     final raw = LocalDatabaseService.getString('app_identity_v1') ?? '';
     try {
@@ -759,6 +774,12 @@ class CloudSyncService {
           ok: false, message: 'Cloud Sync is not ready yet.');
     }
     try {
+      if (transport == 'cloud' && !settings.cloudSyncAllowedByPlatform) {
+        return const CloudPairingCodeResult(
+            ok: false,
+            message:
+                'Cloud Sync is not enabled for this store. Ask Ventio platform admin to enable Cloud Sync for this subscription.');
+      }
       if (transport == 'cloud' && settings.accountToken.trim().isEmpty) {
         return const CloudPairingCodeResult(
             ok: false,
