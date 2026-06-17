@@ -680,9 +680,8 @@ class _MainShellState extends State<MainShell> {
         ? 'Ventio'
         : storeName;
     final authCache = AccountAuthCache.load();
-    final isPlatformAdmin =
-        (authCache?.accountType == 'platform_admin') ||
-            (authCache?.storeSlug == 'ventio');
+    final isPlatformAdmin = authCache?.accountType == 'platform_admin' &&
+        (authCache?.adminToken ?? '').trim().isNotEmpty;
     final items = [
       if (isPlatformAdmin)
         const _ShellItem(

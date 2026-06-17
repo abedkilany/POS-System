@@ -759,6 +759,21 @@ class CloudSyncService {
           ok: false, message: 'Cloud Sync is not ready yet.');
     }
     try {
+      if (transport == 'cloud' && settings.accountToken.trim().isEmpty) {
+        return const CloudPairingCodeResult(
+            ok: false,
+            message:
+                'Cloud account session is missing. Sign in online with username@store, then generate the Cloud code again.');
+      }
+      if (transport == 'cloud') {
+        final registration =
+            await registerCurrentDevice(settings, transport: 'cloud');
+        if (!registration.ok) {
+          return CloudPairingCodeResult(
+              ok: false,
+              message: 'Pairing code failed: ${registration.message}');
+        }
+      }
       final response = await _client
           .post(
             settings.endpoint('/api/sync/pairing/create'),

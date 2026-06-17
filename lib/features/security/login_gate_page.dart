@@ -156,8 +156,9 @@ class _LoginGatePageState extends State<LoginGatePage> {
       builder: (dialogContext) {
         var canRecover = false;
         void refresh(StateSetter setState) {
-          setState(() => canRecover = storeIdController.text.trim().isNotEmpty &&
-              recoveryKeyController.text.trim().isNotEmpty);
+          setState(() => canRecover =
+              storeIdController.text.trim().isNotEmpty &&
+                  recoveryKeyController.text.trim().isNotEmpty);
         }
 
         return StatefulBuilder(
@@ -396,8 +397,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
             ? tr.text('online_register_failed')
             : onlineResult.message);
       }
-      await AccountAuthService.cacheOnlineResult(
-          onlineResult, mode: 'registered_local');
+      await AccountAuthService.cacheOnlineResult(onlineResult,
+          mode: 'registered_local');
       await widget.store.recoverOnlineStoreOwnerIdentity(
         storeId: onlineResult.storeId,
         branchId: onlineResult.branchId,
@@ -435,8 +436,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
   @override
   Widget build(BuildContext context) {
     final authCache = AccountAuthCache.load();
-    final platformAdminUnlocked = authCache?.accountType == 'platform_admin' ||
-        authCache?.storeSlug == 'ventio';
+    final platformAdminUnlocked = authCache?.accountType == 'platform_admin' &&
+        (authCache?.adminToken ?? '').trim().isNotEmpty;
     final storeAccountUnlocked = authCache?.accountType == 'store_owner' &&
         authCache?.mode == 'login' &&
         (authCache?.storeSlug ?? '').trim().isNotEmpty &&
