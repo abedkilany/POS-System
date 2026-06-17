@@ -97,7 +97,7 @@ class UnifiedAutoLanSyncController {
     store.removeListener(_onStoreChanged);
     store.addListener(_onStoreChanged);
     _periodicTimer?.cancel();
-    final interval = Duration(seconds: settings.intervalSeconds.clamp(5, 3600).toInt());
+    final interval = Duration(seconds: LanSyncSettings.defaultIntervalSeconds);
     _periodicTimer = Timer.periodic(interval, (_) => _syncBecauseOfTimer());
 
     if (store.appIdentity.isClient && settings.autoSyncEnabled && settings.isClient) {
@@ -241,7 +241,7 @@ class UnifiedAutoCloudSyncController {
     store.removeListener(_onStoreChanged);
     store.addListener(_onStoreChanged);
 
-    final interval = Duration(seconds: settings.intervalSeconds.clamp(5, 3600).toInt());
+    final interval = Duration(seconds: CloudSyncSettings.defaultIntervalSeconds);
     _timer = Timer.periodic(interval, (_) => _tick());
     await _tick();
   }

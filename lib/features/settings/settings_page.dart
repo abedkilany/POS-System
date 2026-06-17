@@ -2784,16 +2784,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   }
 
   int get _lanPort => int.tryParse(_lanPortController.text.trim()) ?? 8787;
-  int get _lanInterval =>
-      int.tryParse(_lanIntervalController.text.trim())
-          ?.clamp(5, 3600)
-          .toInt() ??
-      LanSyncSettings.defaultIntervalSeconds;
-  int get _cloudInterval =>
-      int.tryParse(_cloudIntervalController.text.trim())
-          ?.clamp(5, 3600)
-          .toInt() ??
-      15;
+  int get _lanInterval => LanSyncSettings.defaultIntervalSeconds;
+  int get _cloudInterval => CloudSyncSettings.defaultIntervalSeconds;
 
   void _onSyncDraftChanged() {
     if (mounted) setState(() {});
@@ -2814,10 +2806,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         _lanEnabledForHost != lanEnabled ||
         _cloudEnabled != cloudEnabled ||
         _lanHostController.text.trim() != lan.host.trim() ||
-        _lanPortController.text.trim() != lan.port.toString() ||
-        _lanIntervalController.text.trim() != lan.intervalSeconds.toString() ||
-        _cloudIntervalController.text.trim() !=
-            cloud.intervalSeconds.toString();
+        _lanPortController.text.trim() != lan.port.toString();
   }
 
   void _resetSyncDraft({String? status}) {
@@ -4554,12 +4543,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                         tr.text('pairing_token'),
                         lan.secret.trim().isEmpty ? '—' : '••••••••',
                         Icons.vpn_key_outlined),
-                    _readOnlyTransportLine(
-                        context,
-                        tr.text('sync_interval'),
-                        tr.format('seconds_count',
-                            {'count': '${lan.intervalSeconds}'}),
-                        Icons.timer_outlined),
                   ],
           ),
           const Divider(height: 20),
@@ -4610,12 +4593,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                             : (cloudConfigured
                                 ? Icons.lock_outline
                                 : Icons.link_off_outlined)),
-                    _readOnlyTransportLine(
-                        context,
-                        tr.text('sync_interval'),
-                        tr.format('seconds_count',
-                            {'count': '${cloud.intervalSeconds}'}),
-                        Icons.timer_outlined),
                   ],
           ),
         ],
@@ -5597,18 +5574,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                 labelText: AppLocalizations.of(context).text('port'),
                 border: const OutlineInputBorder())),
         const SizedBox(height: 12),
-        TextField(
-          controller: _lanIntervalController,
-          keyboardType: TextInputType.number,
-          decoration: InputDecoration(
-            labelText:
-                AppLocalizations.of(context).text('auto_sync_interval_seconds'),
-            helperText:
-                AppLocalizations.of(context).text('sync_interval_range_hint'),
-            border: const OutlineInputBorder(),
-          ),
-        ),
-        const SizedBox(height: 12),
         if (!forHost) ...[
           TextField(
             controller: _lanTokenController,
@@ -5632,17 +5597,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
               border: const OutlineInputBorder(),
             ),
           ),
-        if (!showPairingCode) ...[
-          TextField(
-            controller: _cloudIntervalController,
-            keyboardType: TextInputType.number,
-            decoration: InputDecoration(
-              labelText: AppLocalizations.of(context)
-                  .text('auto_sync_interval_seconds'),
-              border: const OutlineInputBorder(),
-            ),
-          ),
-        ],
         const SizedBox(height: 12),
       ];
 }

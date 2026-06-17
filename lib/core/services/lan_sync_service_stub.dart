@@ -138,7 +138,7 @@ class LanSyncSettings {
     required this.port,
     required this.autoSyncEnabled,
     required this.hostModeEnabled,
-    this.intervalSeconds = 15,
+    this.intervalSeconds = defaultIntervalSeconds,
     this.setupComplete = false,
     this.mode = LanSyncDeviceMode.unconfigured,
     this.secret = '',
@@ -150,7 +150,7 @@ class LanSyncSettings {
   }) : hostRegistry = hostRegistry ?? const <String, HostRegistryDevice>{};
 
   static const String storageKey = 'lan_sync_settings_v2';
-  static const int defaultIntervalSeconds = 15;
+  static const int defaultIntervalSeconds = 300;
 
   final String host;
   final int port;
@@ -240,7 +240,7 @@ class LanSyncSettings {
       port: json['port'] as int? ?? int.tryParse('${json['port']}') ?? 8787,
       autoSyncEnabled: json['autoSyncEnabled'] as bool? ?? true,
       hostModeEnabled: json['hostModeEnabled'] as bool? ?? mode == LanSyncDeviceMode.host,
-      intervalSeconds: (json['intervalSeconds'] as num?)?.toInt().clamp(5, 3600) ?? defaultIntervalSeconds,
+      intervalSeconds: defaultIntervalSeconds,
       setupComplete: json['setupComplete'] as bool? ?? false,
       mode: mode,
       secret: json['secret'] as String? ?? '',
