@@ -92,10 +92,11 @@ jobs:
           pm2 save
 
           if [ -n "${VPS_HEALTH_URL:-}" ]; then
-            if [ -n "${VPS_HEALTH_TOKEN:-}" ]; then
-              curl -fsS -H "Authorization: Bearer $VPS_HEALTH_TOKEN" "$VPS_HEALTH_URL" >/dev/null
-            else
-              curl -fsS "$VPS_HEALTH_URL" >/dev/null
-            fi
+            HEALTH_URL="$VPS_HEALTH_URL"
+            case "$HEALTH_URL" in
+              */api/health) HEALTH_URL="${HEALTH_URL%/health}/deploy-health" ;;
+              */health) HEALTH_URL="${HEALTH_URL%/health}/deploy-health" ;;
+            esac
+            curl -fsS "$HEALTH_URL" >/dev/null
           fi
           DEPLOY

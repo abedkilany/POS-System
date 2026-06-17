@@ -7,6 +7,7 @@ export const config = {
 };
 
 import health from '../server_api/health.js';
+import deployHealth from '../server_api/deploy-health.js';
 import authRegister from '../server_api/auth/register.js';
 import authLogin from '../server_api/auth/login.js';
 import adminSubscribers from '../server_api/admin/subscribers.js';
@@ -39,6 +40,7 @@ import googleDriveRefresh from '../server_api/google-drive/refresh.js';
 
 const routes = new Map([
   ['health', health],
+  ['deploy-health', deployHealth],
   ['auth/register', authRegister],
   ['auth/login', authLogin],
   ['admin/subscribers', adminSubscribers],
