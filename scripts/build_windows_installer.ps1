@@ -1,5 +1,5 @@
 param(
-  [string]$UpdateBaseUrl = "https://ventio.duckdns.org/releases/windows",
+  [string]$UpdateBaseUrl = "https://ventioapp.com/releases/windows",
   [switch]$SkipFlutterBuild,
   [switch]$PublishToWebReleases
 )

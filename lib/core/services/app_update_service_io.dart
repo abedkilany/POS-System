@@ -69,7 +69,7 @@ class AppUpdateService {
 
   static const _manifestUrl = String.fromEnvironment(
     'VENTIO_UPDATE_URL',
-    defaultValue: 'https://ventio.duckdns.org/releases/latest.json',
+    defaultValue: 'https://ventioapp.com/releases/latest.json',
   );
 
   final http.Client _client;

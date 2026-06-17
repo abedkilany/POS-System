@@ -39,7 +39,7 @@ class UnifiedSyncFactory {
     final identity = store.appIdentity;
     final settings = CloudSyncSettings.load();
     final allowed = identity.isHost
-        ? identity.isCloudEnabled && settings.cloudSyncAllowedByPlatform
+        ? identity.isCloudEnabled
         : identity.isClient && identity.activeSyncTransportNormalized == 'cloud';
     return allowed && settings.isConfigured;
   }
@@ -217,8 +217,7 @@ class UnifiedAutoCloudSyncController {
   bool _cloudAllowedForCurrentRole() {
     final identity = store.appIdentity;
     if (identity.isHost) {
-      return identity.isCloudEnabled &&
-          CloudSyncSettings.load().cloudSyncAllowedByPlatform;
+      return identity.isCloudEnabled;
     }
     if (!identity.isClient) return false;
     return identity.activeSyncTransportNormalized == 'cloud';

@@ -264,7 +264,7 @@ class AccountAuthService {
 
   static const _defaultApiBaseUrl = String.fromEnvironment(
     'PUBLIC_API_BASE_URL',
-    defaultValue: 'https://ventio.duckdns.org',
+    defaultValue: 'https://ventioapp.com',
   );
 
   final http.Client _client;

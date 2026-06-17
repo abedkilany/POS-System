@@ -28,7 +28,7 @@ class CloudSyncSettings {
       String.fromEnvironment('CLOUD_API_BASE_URL');
   static const _bundledPublicApiBaseUrl = String.fromEnvironment(
       'PUBLIC_API_BASE_URL',
-      defaultValue: 'https://ventio.duckdns.org');
+      defaultValue: 'https://ventioapp.com');
 
   static Future<void> clearSavedPullCursor() async {
     await LocalDatabaseService.deleteString(_lastPullCursorKey);
