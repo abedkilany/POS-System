@@ -14,6 +14,10 @@ import '../sync_unified/sync_device_state.dart';
 import '../snapshot/unified_snapshot_transfer.dart';
 
 const bool _temporarySyncDiagnostics = true;
+const String _temporarySyncDiagnosticsBuild =
+    'ventio-1.0.14+24-sync-sequence-rebuild-fix';
+
+String get temporarySyncDiagnosticsBuild => _temporarySyncDiagnosticsBuild;
 
 void _syncDiag(String message) {
   if (_temporarySyncDiagnostics) {

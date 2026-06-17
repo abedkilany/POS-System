@@ -187,6 +187,17 @@ export default async function handler(req, res) {
         const first = rows[0];
         if (!first) return res.status(404).json({ ok: false, error: 'Snapshot manifest not found.' });
         const chunk = first.chunk || {};
+        const snapshotSequence = Number(first.sync_generated_sequence || 0);
+        const safeGeneratedRows = snapshotSequence > 0
+          ? await sql`
+              select coalesce(max(received_at), ${first.sync_generated_at}::timestamptz) as generated_at
+              from sync_events
+              where store_id = ${storeId}
+                and branch_id = ${branchId}
+                and sequence <= ${snapshotSequence}
+            `
+          : [];
+        const safeGeneratedAt = safeGeneratedRows[0]?.generated_at || first.sync_generated_at;
         return res.status(200).json({
           ok: true,
           jobId,
@@ -195,8 +206,8 @@ export default async function handler(req, res) {
           snapshotKind: chunk.snapshotKind,
           snapshotManifest: first.snapshot_manifest || chunk.snapshotManifest || {},
           totalChunks: Number(first.total_chunks || chunk.totalChunks || 0),
-          syncGeneratedAt: new Date(first.sync_generated_at).toISOString(),
-          syncGeneratedSequence: Number(first.sync_generated_sequence || 0),
+          syncGeneratedAt: new Date(safeGeneratedAt).toISOString(),
+          syncGeneratedSequence: snapshotSequence,
           hostSnapshotGeneration: String(chunk.hostSnapshotGeneration || chunk.snapshotGeneration || chunk.restoreGeneration || ''),
           snapshotGeneration: String(chunk.hostSnapshotGeneration || chunk.snapshotGeneration || chunk.restoreGeneration || ''),
           hostRestoreCommandId: String(chunk.hostRestoreCommandId || chunk.restoreCommandId || chunk.rebuildCommandId || ''),

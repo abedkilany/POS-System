@@ -293,7 +293,8 @@ class UnifiedAutoCloudSyncController {
         Duration(seconds: CloudSyncSettings.defaultIntervalSeconds);
     _syncDiag(
       'autoCloud:start device=${store.appIdentity.deviceId} '
-      'role=${_identityRoleLabel(store)} interval=${interval.inSeconds}s '
+      'role=${_identityRoleLabel(store)} build=$temporarySyncDiagnosticsBuild '
+      'interval=${interval.inSeconds}s '
       'apiBase=${settings.apiBaseUrl} auto=${settings.autoSyncEnabled} '
       'configured=${settings.isConfigured}',
     );
