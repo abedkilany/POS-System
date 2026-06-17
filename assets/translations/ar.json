@@ -228,6 +228,8 @@
   "cloud_sync_settings": "إعدادات المزامنة السحابية",
   "cloud_sync_token": "رمز مزامنة Cloud",
   "cloud_sync_token_helper": "للاستخدام المتقدم فقط. اتركه كما هو إذا كان مهيأ مسبقاً.",
+  "cloud_sync_not_enabled_for_store": "مزامنة Cloud غير مفعّلة لهذا المتجر. فعّلها من Admin > Subscribers ثم سجّل الدخول من جديد.",
+  "cloud_sync_not_ready_yet": "مزامنة Cloud ليست جاهزة بعد. سجّل الدخول أونلاين واحفظ إعدادات Cloud Sync أولاً.",
   "cloud_tenant": "مستأجر السحابة",
   "cloud_tenant_id": "معرّف مستأجر السحابة / Neon مستقبلاً",
   "cloud_token_helper_professional": "للـ Host فقط. أجهزة العميل تتصل باستخدام رمز ربط آمن لمرة واحدة.",

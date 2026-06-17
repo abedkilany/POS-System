@@ -28,9 +28,9 @@ class CloudSyncSettings {
   static const _lastPullCursorKey = 'cloud_last_pull_cursor';
   static const _bundledCloudApiBaseUrl =
       String.fromEnvironment('CLOUD_API_BASE_URL');
-  static const _bundledPublicApiBaseUrl =
-      String.fromEnvironment('PUBLIC_API_BASE_URL',
-          defaultValue: 'https://ventio.duckdns.org');
+  static const _bundledPublicApiBaseUrl = String.fromEnvironment(
+      'PUBLIC_API_BASE_URL',
+      defaultValue: 'https://ventio.duckdns.org');
 
   static Future<void> clearSavedPullCursor() async {
     await LocalDatabaseService.deleteString(_lastPullCursorKey);
@@ -786,6 +786,23 @@ class CloudSyncService {
           )
           .timeout(const Duration(seconds: 10));
       if (response.statusCode < 200 || response.statusCode >= 300) {
+        var serverMessage = '';
+        try {
+          final decoded = jsonDecode(response.body);
+          if (decoded is Map) {
+            serverMessage =
+                (decoded['error'] ?? decoded['message'] ?? '').toString();
+          }
+        } catch (_) {
+          serverMessage = response.body;
+        }
+        serverMessage = serverMessage.trim().isEmpty
+            ? '${response.statusCode} ${response.body}'
+            : serverMessage.trim();
+        return CloudPairingCodeResult(
+            ok: false, message: 'Pairing code failed: $serverMessage');
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
         return CloudPairingCodeResult(
             ok: false,
             message:
@@ -852,6 +869,25 @@ class CloudSyncService {
             }),
           )
           .timeout(const Duration(seconds: 8));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        var serverMessage = '';
+        try {
+          final decoded = jsonDecode(response.body);
+          if (decoded is Map) {
+            serverMessage =
+                (decoded['error'] ?? decoded['message'] ?? '').toString();
+          }
+        } catch (_) {
+          serverMessage = response.body;
+        }
+        serverMessage = serverMessage.trim().isEmpty
+            ? '${response.statusCode} ${response.body}'
+            : serverMessage.trim();
+        return CloudPairingStatusResult(
+            ok: false,
+            status: 'invalid',
+            message: 'Pairing code failed: $serverMessage');
+      }
       if (response.statusCode < 200 || response.statusCode >= 300) {
         return CloudPairingStatusResult(
             ok: false,

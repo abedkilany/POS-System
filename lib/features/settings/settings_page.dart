@@ -1062,8 +1062,9 @@ class SettingsPage extends StatelessWidget {
       builder: (dialogContext) {
         var canRecover = false;
         void refresh(StateSetter setState) {
-          setState(() => canRecover = storeIdController.text.trim().isNotEmpty &&
-              recoveryKeyController.text.trim().isNotEmpty);
+          setState(() => canRecover =
+              storeIdController.text.trim().isNotEmpty &&
+                  recoveryKeyController.text.trim().isNotEmpty);
         }
 
         return StatefulBuilder(
@@ -3187,7 +3188,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     final code = _latestCloudPairingCode.trim();
     if (code.isEmpty || !widget.store.appIdentity.isHost) return;
     final settings = _cloudSettings(enabled: true);
-    if (!settings.isConfigured || !settings.hasDeploymentToken) return;
+    if (!settings.isConfigured) return;
     final result =
         await CloudSyncService(widget.store).pairingCodeStatus(settings, code);
     if (!mounted || !result.ok) return;

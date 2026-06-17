@@ -228,6 +228,8 @@
   "cloud_sync_settings": "Cloud sync settings",
   "cloud_sync_token": "Cloud Sync Token",
   "cloud_sync_token_helper": "Advanced only. Leave unchanged if already configured.",
+  "cloud_sync_not_enabled_for_store": "Cloud Sync is not enabled for this store. Enable it from Admin > Subscribers, then sign in again.",
+  "cloud_sync_not_ready_yet": "Cloud Sync is not ready yet. Sign in online and save Cloud Sync settings first.",
   "cloud_tenant": "Cloud tenant",
   "cloud_tenant_id": "Cloud tenant ID / future Neon tenant",
   "cloud_token_helper_professional": "Host only. Client devices connect using a secure one-time pairing code.",
