@@ -1,4 +1,4 @@
-import { randomBytes, createHash } from 'crypto';
+import { randomBytes, createHash, timingSafeEqual } from 'crypto';
 import {
   sql,
   assertAccountOrDevice,
@@ -48,6 +48,111 @@ async function ensureRecoveryTable() {
   `;
 }
 
+
+async function ensureStoreDevicesTable() {
+  await sql`
+    create table if not exists store_devices (
+      store_id text not null,
+      branch_id text not null default 'main',
+      device_id text not null,
+      device_name text default '',
+      platform text default '',
+      role text default '',
+      transport text default '',
+      app_version text default '',
+      store_epoch integer not null default 1,
+      revoked boolean not null default false,
+      suspended boolean not null default false,
+      wipe_pending boolean not null default false,
+      wipe_requested_at timestamptz,
+      device_token text default '',
+      host_device_id text default '',
+      active_transport text default '',
+      last_sync_transport text default '',
+      last_applied_cursor timestamptz,
+      last_ack_cursor timestamptz,
+      last_applied_sequence bigint not null default 0,
+      last_ack_sequence bigint not null default 0,
+      last_ack_at timestamptz,
+      online boolean not null default false,
+      last_seen_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      primary key (store_id, branch_id, device_id)
+    )
+  `;
+}
+
+async function authorizeLocalHostOrAccount(req, {
+  storeId,
+  branchId,
+  hostDeviceId,
+  hostDeviceName,
+  recoveryKey,
+  transport,
+}) {
+  try {
+    await assertAccountOrDevice(req, {
+      storeId,
+      branchId,
+      allowedRoles: ['host'],
+      allowedTransports: transport === 'cloud' ? ['cloud'] : [],
+    });
+    return;
+  } catch (accountOrDeviceError) {
+    if (transport !== 'cloud') throw accountOrDeviceError;
+  }
+
+  if (!recoveryKey) {
+    const err = new Error('Recovery Key is required to create a Cloud pairing code from a local Host.');
+    err.statusCode = 401;
+    throw err;
+  }
+
+  const existing = await sql`
+    select recovery_key_hash
+    from store_recovery_keys
+    where store_id = ${storeId}
+      and branch_id = ${branchId}
+    limit 1
+  `;
+  if (existing.length && existing[0].recovery_key_hash) {
+    const expectedHash = String(existing[0].recovery_key_hash || '');
+    const providedHash = hashRecoveryKey(recoveryKey);
+    const a = Buffer.from(expectedHash, 'hex');
+    const b = Buffer.from(providedHash, 'hex');
+    if (a.length !== b.length || !timingSafeEqual(a, b)) {
+      const err = new Error('Invalid Recovery Key for this Store ID.');
+      err.statusCode = 403;
+      throw err;
+    }
+  }
+
+  const deviceToken = String(req.headers['x-device-token'] || req.headers['X-Device-Token'] || '').trim();
+  await ensureStoreDevicesTable();
+  await sql`
+    insert into store_devices (
+      store_id, branch_id, device_id, device_name, role, transport, active_transport,
+      last_sync_transport, device_token, host_device_id, online, last_seen_at, updated_at
+    ) values (
+      ${storeId}, ${branchId}, ${hostDeviceId}, ${hostDeviceName}, 'host', 'cloud', 'cloud',
+      'cloud', ${deviceToken}, ${hostDeviceId}, true, now(), now()
+    )
+    on conflict (store_id, branch_id, device_id) do update set
+      device_name = excluded.device_name,
+      role = 'host',
+      transport = 'cloud',
+      active_transport = 'cloud',
+      last_sync_transport = 'cloud',
+      device_token = case when excluded.device_token <> '' then excluded.device_token else store_devices.device_token end,
+      host_device_id = excluded.host_device_id,
+      revoked = false,
+      suspended = false,
+      online = true,
+      last_seen_at = now(),
+      updated_at = now()
+  `;
+}
+
 function makeCode() {
   // Mixed-case alphanumeric pairing code. Ambiguous characters are omitted
   // to reduce copy/scan mistakes while keeping much higher entropy than 6 digits.
@@ -75,11 +180,13 @@ export default async function handler(req, res) {
     if (!hostDeviceId) return res.status(400).json({ ok: false, error: 'hostDeviceId is required.' });
     assertStoreAllowed(storeId);
     if (transport === 'cloud') await assertCloudSyncEnabled(storeId);
-    await assertAccountOrDevice(req, {
+    await authorizeLocalHostOrAccount(req, {
       storeId,
       branchId,
-      allowedRoles: ['host'],
-      allowedTransports: transport === 'cloud' ? ['cloud'] : [],
+      hostDeviceId,
+      hostDeviceName,
+      recoveryKey,
+      transport,
     });
 
     await sql`delete from device_pairing_codes where expires_at < now() or claimed_at is not null`;

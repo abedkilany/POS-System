@@ -774,27 +774,10 @@ class CloudSyncService {
           ok: false, message: 'Cloud Sync is not ready yet.');
     }
     try {
-      if (transport == 'cloud' && !settings.cloudSyncAllowedByPlatform) {
-        return const CloudPairingCodeResult(
-            ok: false,
-            message:
-                'Cloud Sync is not enabled for this store. Ask Ventio platform admin to enable Cloud Sync for this subscription.');
-      }
-      if (transport == 'cloud' && settings.accountToken.trim().isEmpty) {
-        return const CloudPairingCodeResult(
-            ok: false,
-            message:
-                'Cloud account session is missing. Sign in online with username@store, then generate the Cloud code again.');
-      }
-      if (transport == 'cloud') {
-        final registration =
-            await registerCurrentDevice(settings, transport: 'cloud');
-        if (!registration.ok) {
-          return CloudPairingCodeResult(
-              ok: false,
-              message: 'Pairing code failed: ${registration.message}');
-        }
-      }
+      // Local Host devices are allowed to request a Cloud pairing code without
+      // an online account session. The platform permission is enforced by the
+      // server from app_stores.cloud_sync_enabled, so the local app must not
+      // block this action only because account_auth_cache_v1 is empty.
       final response = await _client
           .post(
             settings.endpoint('/api/sync/pairing/create'),
