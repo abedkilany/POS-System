@@ -1563,13 +1563,17 @@ class CloudSyncService {
             store.syncSnapshotGeneratedAtFromJson(jsonEncode(envelope));
         final sequence =
             store.syncSnapshotGeneratedSequenceFromJson(jsonEncode(envelope));
-        await SyncDeviceStateStore.recordSyncResult(
-          store.appIdentity,
-          transport: 'cloud',
-          appliedCursor: cursor,
-          ackCursor: cursor,
-          appliedSequence: sequence,
-          ackSequence: sequence,
+        // A successful Cloud rebuild establishes the Client baseline. Persist
+        // the pull cursor and publish the device progress to the server;
+        // otherwise the server keeps seeing this Client at sequence 0 and the
+        // next Cloud cycle may re-enter provisioning/rebuild instead of pulling
+        // incremental sync_events.
+        await settings.copyWith(lastPullCursor: cursor).save();
+        await _recordDeviceSyncState(
+          'cloud',
+          cursor,
+          sequence: sequence,
+          settings: settings.copyWith(lastPullCursor: cursor),
         );
         onProgress?.call(1.0, 'اكتملت إعادة البناء السحابية.');
         return CloudSyncResult(
