@@ -13,6 +13,20 @@ import 'unified_sync_core_service.dart';
 import '../sync_unified/sync_device_state.dart';
 import '../snapshot/unified_snapshot_transfer.dart';
 
+const bool _temporarySyncDiagnostics = true;
+
+void _syncDiag(String message) {
+  if (_temporarySyncDiagnostics) {
+    debugPrint('[SYNC_DIAG] $message');
+  }
+}
+
+String _identityRoleLabel(AppIdentity identity) {
+  if (identity.isHost) return 'host';
+  if (identity.isClient) return 'client';
+  return 'unknown';
+}
+
 class CloudSyncSettings {
   const CloudSyncSettings({
     required this.enabled,
@@ -36,7 +50,8 @@ class CloudSyncSettings {
 
   static const _autoSyncKey = 'cloud_auto_sync_enabled';
   static const _intervalKey = 'cloud_auto_sync_interval_seconds';
-  static const int defaultIntervalSeconds = 300;
+  // Temporary diagnostic interval while investigating Cloud host/client lag.
+  static const int defaultIntervalSeconds = 5;
 
   final bool enabled;
   final String apiBaseUrl;
@@ -744,6 +759,12 @@ class CloudSyncService {
     int sequence = 0,
     CloudSyncSettings? settings,
   }) async {
+    _syncDiag(
+      'recordDeviceSyncState device=${store.appIdentity.deviceId} '
+      'role=${_identityRoleLabel(store.appIdentity)} transport=$transport '
+      'cursor=${cursor?.toIso8601String() ?? 'null'} sequence=$sequence '
+      'willRegisterAck=${settings != null && store.appIdentity.isClient && cursor != null}',
+    );
     await SyncDeviceStateStore.recordSyncResult(
       store.appIdentity,
       transport: transport,
@@ -2727,7 +2748,16 @@ class CloudSyncService {
       // events, which showed up as product count differences across devices.
       final baseLastAppliedSequence =
           SyncDeviceStateStore.load(store.appIdentity).lastAppliedSequence;
+      _syncDiag(
+        'clientPull:start device=${identity.deviceId} store=${identity.storeId} '
+        'branch=${identity.branchId} apiBase=${settings.apiBaseUrl} '
+        'initialCursor=${initialCursor?.toIso8601String() ?? 'null'} '
+        'baseLastAppliedSequence=$baseLastAppliedSequence '
+        'minSnapshotUpdatedAt=${minSnapshotUpdatedAt?.toIso8601String() ?? 'null'}',
+      );
       if (await _cloudSnapshotIsNewerThanLocal(settings)) {
+        _syncDiag(
+            'clientPull:snapshotNewerThanLocal -> rebuildFromCloudHostSnapshot');
         onProgress?.call(0.32,
             'تم العثور على Snapshot أحدث من المضيف. جارٍ إعادة بناء بيانات هذا الجهاز...');
         await CloudSyncSettings.clearSavedPullCursor();
@@ -2772,16 +2802,24 @@ class CloudSyncService {
               minSnapshotUpdatedAt.toIso8601String();
         }
         if (pageCursor.isNotEmpty) query['cursor'] = pageCursor;
+        final endpoint = settings.endpoint('/api/sync/pull', query);
 
         final pullProgress =
             (0.35 + (pageCount - 1) * 0.08).clamp(0.35, 0.82).toDouble();
         onProgress?.call(
             pullProgress, 'جارٍ سحب تغييرات السحابة - صفحة $pageCount...');
+        _syncDiag(
+            'clientPull:request page=$pageCount url=$endpoint query=$query');
         final pull = await _client
-            .get(settings.endpoint('/api/sync/pull', query),
-                headers: _headers(settings))
+            .get(endpoint, headers: _headers(settings))
             .timeout(const Duration(seconds: 20));
+        _syncDiag(
+          'clientPull:response page=$pageCount status=${pull.statusCode} '
+          'bodyBytes=${pull.bodyBytes.length}',
+        );
         if (pull.statusCode < 200 || pull.statusCode >= 300) {
+          _syncDiag(
+              'clientPull:error status=${pull.statusCode} body=${pull.body}');
           return CloudSyncResult(
               ok: false,
               message: 'فشل السحب السحابي: ${pull.statusCode} ${pull.body}');
@@ -2807,6 +2845,7 @@ class CloudSyncService {
           );
         }
         if (decodedPull['needsSnapshot'] == true) {
+          _syncDiag('clientPull:needsSnapshot source=${decodedPull['source']}');
           await CloudSyncSettings.clearSavedPullCursor();
           final generation = _remoteHostSnapshotGeneration(decodedPull);
           final commandId = _remoteHostRestoreCommandId(decodedPull);
@@ -2840,6 +2879,13 @@ class CloudSyncService {
               .decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
         );
         final source = (decodedPull['source'] ?? '').toString();
+        _syncDiag(
+          'clientPull:decoded page=$pageCount source=$source '
+          'changes=${changes.length} hasMore=${decodedPull['hasMore']} '
+          'generatedAt=${decodedPull['generatedAt']} '
+          'generatedSequence=${decodedPull['generatedSequence']} '
+          'allSectionsComplete=$allSnapshotSectionsComplete',
+        );
         final restoreMarker = changes.any((item) =>
             item.entityType == 'system' &&
             item.operation == 'cloud_restore_snapshot_ready');
@@ -2874,7 +2920,10 @@ class CloudSyncService {
         onProgress?.call(
             (0.42 + (pageCount - 1) * 0.08).clamp(0.42, 0.86).toDouble(),
             'جارٍ تطبيق ${changes.length} تغيير/تغييرات سحابية من الصفحة $pageCount...');
-        pulled += await _syncCore.applyAuthoritativeChanges(changes);
+        final applied = await _syncCore.applyAuthoritativeChanges(changes);
+        pulled += applied;
+        _syncDiag(
+            'clientPull:applied page=$pageCount applied=$applied totalPulled=$pulled');
 
         final hasMore = decodedPull['hasMore'] == true;
         pageCursor = (decodedPull['nextCursor'] ?? '').toString();
@@ -2905,6 +2954,10 @@ class CloudSyncService {
       } else {
         onProgress?.call(0.90, 'جارٍ حفظ مؤشر المزامنة السحابية...');
         if (finalPullCursor != null) {
+          _syncDiag(
+            'clientPull:saveCursor cursor=${finalPullCursor.toIso8601String()} '
+            'sequence=$finalPullSequence pulled=$pulled',
+          );
           await settings.copyWith(lastPullCursor: finalPullCursor).save();
           await _recordDeviceSyncState('cloud', finalPullCursor,
               sequence: finalPullSequence, settings: settings);
@@ -2929,6 +2982,7 @@ class CloudSyncService {
         message: 'اكتمل السحب السحابي. تم سحب $pulled تغيير/تغييرات معتمدة.',
       );
     } catch (error) {
+      _syncDiag('clientPull:exception $error');
       return CloudSyncResult(ok: false, message: 'فشل السحب السحابي: $error');
     }
   }
