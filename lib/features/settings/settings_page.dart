@@ -2798,17 +2798,55 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   Future<void> _refreshCloudSyncPlanAccess() async {
     final cache = AccountAuthCache.load();
     bool? planAllowed = cache?.cloudSyncEnabled;
+    final identityAtStart = widget.store.appIdentity;
+    final cloudAtStart = CloudSyncSettings.load();
+
+    String boolLabel(bool? value) {
+      if (value == null) return 'unknown';
+      return value ? 'true' : 'false';
+    }
+
+    SyncDiagnosticsLog.add(
+      '[SYNC_TRACE] cloudPlanAccess:start '
+      'device=${identityAtStart.deviceId} '
+      'role=${identityAtStart.deviceRole.name} '
+      'store=${identityAtStart.storeId} '
+      'branch=${identityAtStart.branchId} '
+      'syncMode=${identityAtStart.syncMode.name} '
+      'activeTransport=${identityAtStart.activeSyncTransportNormalized} '
+      'apiBase=${cloudAtStart.apiBaseUrl} '
+      'cloudConfigured=${cloudAtStart.isConfigured} '
+      'hasDeviceToken=${identityAtStart.deviceToken.trim().isNotEmpty} '
+      'cacheExists=${cache != null} '
+      'cacheMode=${cache?.mode ?? ''} '
+      'cacheStore=${cache?.storeId ?? ''} '
+      'cacheBranch=${cache?.branchId ?? ''} '
+      'hasAccountToken=${cache?.accountToken.trim().isNotEmpty == true} '
+      'cacheAllowed=${boolLabel(planAllowed)}',
+    );
 
     try {
       final token = cache?.accountToken.trim() ?? '';
       if (token.isNotEmpty) {
         final result =
             await AccountAuthService().refreshSession(accountToken: token);
+        SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] cloudPlanAccess:session '
+          'ok=${result.ok} '
+          'store=${result.storeId} '
+          'branch=${result.branchId} '
+          'status=${result.subscriptionStatus} '
+          'allowed=${result.cloudSyncEnabled} '
+          'message=${result.message}',
+        );
         if (result.ok) {
           await AccountAuthService.cacheOnlineResult(result,
               mode: cache?.mode ?? 'login');
           planAllowed = result.cloudSyncEnabled;
         }
+      } else {
+        SyncDiagnosticsLog.add(
+            '[SYNC_TRACE] cloudPlanAccess:session skipped=noAccountToken');
       }
 
       // Fallback for local Host sessions. After the user signs in locally as
@@ -2818,6 +2856,11 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       if (planAllowed != true) {
         final fallbackAllowed = await CloudSyncService(widget.store)
             .checkCloudSyncPlanAccess(CloudSyncSettings.load());
+        SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] cloudPlanAccess:fallback '
+          'allowed=$fallbackAllowed '
+          'previous=${boolLabel(planAllowed)}',
+        );
         if (fallbackAllowed) planAllowed = true;
       }
 
@@ -2827,6 +2870,14 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         _cloudSyncPlanAllowed = planAllowed;
         _cloudEnabled = identity.isCloudEnabled && planAllowed != false;
       });
+      SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] cloudPlanAccess:final '
+        'allowed=${boolLabel(planAllowed)} '
+        'denied=${planAllowed == false} '
+        'uiAllows=${planAllowed != false} '
+        'identityCloud=${identity.isCloudEnabled} '
+        'switchValue=$_cloudEnabled',
+      );
     } catch (error) {
       SyncDiagnosticsLog.add(
           '[SYNC_TRACE] cloudPlanAccess:refreshFailed $error');

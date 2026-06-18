@@ -498,14 +498,28 @@ class CloudSyncService {
   late final UnifiedSyncCoreService _syncCore = UnifiedSyncCoreService(store);
   static final Set<String> _activeSnapshotGenerationRebuilds = <String>{};
 
-
   Future<bool> checkCloudSyncPlanAccess(CloudSyncSettings settings) async {
     final identity = store.appIdentity;
     final storeId = identity.storeId.trim();
-    final branchId = identity.branchId.trim().isEmpty
-        ? 'main'
-        : identity.branchId.trim();
+    final branchId =
+        identity.branchId.trim().isEmpty ? 'main' : identity.branchId.trim();
+    SyncDiagnosticsLog.add(
+      '[SYNC_TRACE] cloudAccess:start '
+      'device=${identity.deviceId} '
+      'role=${identity.deviceRole.name} '
+      'store=$storeId '
+      'branch=$branchId '
+      'apiBase=${settings.apiBaseUrl} '
+      'configured=${settings.isConfigured} '
+      'hasAccountToken=${settings.accountToken.trim().isNotEmpty} '
+      'hasDeviceToken=${identity.deviceToken.trim().isNotEmpty} '
+      'transport=${identity.transportType}',
+    );
     if (settings.apiBaseUrl.trim().isEmpty || storeId.isEmpty) {
+      SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] cloudAccess:skipped '
+        'reason=${settings.apiBaseUrl.trim().isEmpty ? 'emptyApiBase' : 'emptyStoreId'}',
+      );
       return false;
     }
 
@@ -529,10 +543,17 @@ class CloudSyncService {
       }
       final decoded = jsonDecode(response.body);
       if (decoded is Map) {
-        return decoded['cloudSyncEnabled'] == true ||
+        final allowed = decoded['cloudSyncEnabled'] == true ||
             decoded['cloud_sync_enabled'] == true ||
             decoded['allowed'] == true;
+        SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] cloudAccess:decoded '
+          'allowed=$allowed body=$decoded',
+        );
+        return allowed;
       }
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] cloudAccess:decodedUnexpected type=${decoded.runtimeType}');
     } catch (error) {
       SyncDiagnosticsLog.add('[SYNC_TRACE] cloudAccess:error $error');
       return false;
