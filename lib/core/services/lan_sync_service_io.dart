@@ -172,7 +172,9 @@ class LanSyncSettings {
   }) : hostRegistry = hostRegistry ?? const <String, HostRegistryDevice>{};
 
   static const String storageKey = 'lan_sync_settings_v2';
-  static const int defaultIntervalSeconds = 300;
+  static const int defaultIntervalSeconds = 30;
+  static const int minIntervalSeconds = 5;
+  static const int maxIntervalSeconds = 60;
 
   final String host;
   final int port;
@@ -277,7 +279,7 @@ class LanSyncSettings {
           : '192.168.1.100',
       port: json['port'] as int? ?? int.tryParse('${json['port']}') ?? 8787,
       autoSyncEnabled: json['autoSyncEnabled'] as bool? ?? true,
-      intervalSeconds: defaultIntervalSeconds,
+      intervalSeconds: normalizeIntervalSeconds(json['intervalSeconds']),
       hostModeEnabled:
           json['hostModeEnabled'] as bool? ?? mode == LanSyncDeviceMode.host,
       setupComplete: json['setupComplete'] as bool? ?? false,
@@ -386,6 +388,13 @@ class LanSyncSettings {
       autoSyncEnabled: false,
       hostModeEnabled: false,
     );
+  }
+
+  static int normalizeIntervalSeconds(Object? value) {
+    final parsed = value is int
+        ? value
+        : int.tryParse(value?.toString() ?? '') ?? defaultIntervalSeconds;
+    return parsed.clamp(minIntervalSeconds, maxIntervalSeconds).toInt();
   }
 
   Future<void> save() async {

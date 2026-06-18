@@ -52,7 +52,8 @@ class HostRegistryDevice {
     return HostRegistryDevice(
       clientDeviceId: clientDeviceId ?? this.clientDeviceId,
       deviceToken: deviceToken ?? this.deviceToken,
-      hostDeviceId: clearHostDeviceId ? '' : (hostDeviceId ?? this.hostDeviceId),
+      hostDeviceId:
+          clearHostDeviceId ? '' : (hostDeviceId ?? this.hostDeviceId),
       deviceName: clearDeviceName ? '' : (deviceName ?? this.deviceName),
       status: status ?? this.status,
       source: source ?? this.source,
@@ -75,14 +76,20 @@ class HostRegistryDevice {
       };
 
   factory HostRegistryDevice.fromJson(Map<String, dynamic> json) {
-    final clientDeviceId = (json['clientDeviceId'] ?? json['deviceId'] ?? '').toString().trim();
+    final clientDeviceId =
+        (json['clientDeviceId'] ?? json['deviceId'] ?? '').toString().trim();
     return HostRegistryDevice(
       clientDeviceId: clientDeviceId,
-      deviceToken: (json['deviceToken'] ?? json['token'] ?? '').toString().trim(),
+      deviceToken:
+          (json['deviceToken'] ?? json['token'] ?? '').toString().trim(),
       hostDeviceId: (json['hostDeviceId'] ?? '').toString().trim(),
       deviceName: (json['deviceName'] ?? json['name'] ?? '').toString().trim(),
-      status: (json['status'] ?? 'active').toString().trim().isEmpty ? 'active' : (json['status'] ?? 'active').toString().trim(),
-      source: (json['source'] ?? 'host_registry').toString().trim().isEmpty ? 'host_registry' : (json['source'] ?? 'host_registry').toString().trim(),
+      status: (json['status'] ?? 'active').toString().trim().isEmpty
+          ? 'active'
+          : (json['status'] ?? 'active').toString().trim(),
+      source: (json['source'] ?? 'host_registry').toString().trim().isEmpty
+          ? 'host_registry'
+          : (json['source'] ?? 'host_registry').toString().trim(),
       pairedAt: DateTime.tryParse((json['pairedAt'] ?? '').toString()),
       lastSeenAt: DateTime.tryParse((json['lastSeenAt'] ?? '').toString()),
       lastSyncAt: DateTime.tryParse((json['lastSyncAt'] ?? '').toString()),
@@ -94,17 +101,23 @@ class HostRegistryDevice {
     final result = <String, HostRegistryDevice>{};
     for (final entry in raw.entries) {
       if (entry.value is! Map) continue;
-      final device = HostRegistryDevice.fromJson(Map<String, dynamic>.from(entry.value as Map));
-      final id = device.clientDeviceId.trim().isNotEmpty ? device.clientDeviceId.trim() : '${entry.key}'.trim();
+      final device = HostRegistryDevice.fromJson(
+          Map<String, dynamic>.from(entry.value as Map));
+      final id = device.clientDeviceId.trim().isNotEmpty
+          ? device.clientDeviceId.trim()
+          : '${entry.key}'.trim();
       if (id.isEmpty) continue;
-      result[id] = device.clientDeviceId.trim().isEmpty ? device.copyWith(clientDeviceId: id) : device;
+      result[id] = device.clientDeviceId.trim().isEmpty
+          ? device.copyWith(clientDeviceId: id)
+          : device;
     }
     return Map.unmodifiable(result);
   }
 
   static Map<String, HostRegistryDevice> migrateFromPairedDevices(
     Map<String, String> pairedDevices, {
-    Map<String, HostRegistryDevice> existing = const <String, HostRegistryDevice>{},
+    Map<String, HostRegistryDevice> existing =
+        const <String, HostRegistryDevice>{},
     String hostDeviceId = '',
   }) {
     final registry = <String, HostRegistryDevice>{...existing};
@@ -124,7 +137,9 @@ class HostRegistryDevice {
               ))
           .copyWith(
         deviceToken: deviceToken,
-        hostDeviceId: hostDeviceId.trim().isEmpty ? current?.hostDeviceId : hostDeviceId.trim(),
+        hostDeviceId: hostDeviceId.trim().isEmpty
+            ? current?.hostDeviceId
+            : hostDeviceId.trim(),
         status: 'active',
       );
     }
@@ -150,7 +165,9 @@ class LanSyncSettings {
   }) : hostRegistry = hostRegistry ?? const <String, HostRegistryDevice>{};
 
   static const String storageKey = 'lan_sync_settings_v2';
-  static const int defaultIntervalSeconds = 300;
+  static const int defaultIntervalSeconds = 30;
+  static const int minIntervalSeconds = 5;
+  static const int maxIntervalSeconds = 60;
 
   final String host;
   final int port;
@@ -164,6 +181,7 @@ class LanSyncSettings {
   final DateTime? lastConnectionAt;
   final DateTime? lastSyncAt;
   final Map<String, String> pairedDevices;
+
   /// Host-owned registry of Clients that belong to this Host.
   /// This is the new single source of truth for Sync Monitoring. It is
   /// initially migrated from pairedDevices so existing Clients do not need
@@ -171,7 +189,8 @@ class LanSyncSettings {
   final Map<String, HostRegistryDevice> hostRegistry;
 
   bool get isHost => mode == LanSyncDeviceMode.host || hostModeEnabled;
-  bool get isClient => mode == LanSyncDeviceMode.client || (!hostModeEnabled && setupComplete);
+  bool get isClient =>
+      mode == LanSyncDeviceMode.client || (!hostModeEnabled && setupComplete);
 
   LanSyncSettings copyWith({
     String? host,
@@ -190,7 +209,8 @@ class LanSyncSettings {
     bool clearLastPullCursor = false,
     bool clearLastConnectionAt = false,
     bool clearLastSyncAt = false,
-  }) => LanSyncSettings(
+  }) =>
+      LanSyncSettings(
         host: host ?? this.host,
         port: port ?? this.port,
         autoSyncEnabled: autoSyncEnabled ?? this.autoSyncEnabled,
@@ -199,11 +219,15 @@ class LanSyncSettings {
         setupComplete: setupComplete ?? this.setupComplete,
         mode: mode ?? this.mode,
         secret: secret ?? this.secret,
-        lastPullCursor: clearLastPullCursor ? null : (lastPullCursor ?? this.lastPullCursor),
-        lastConnectionAt: clearLastConnectionAt ? null : (lastConnectionAt ?? this.lastConnectionAt),
+        lastPullCursor: clearLastPullCursor
+            ? null
+            : (lastPullCursor ?? this.lastPullCursor),
+        lastConnectionAt: clearLastConnectionAt
+            ? null
+            : (lastConnectionAt ?? this.lastConnectionAt),
         lastSyncAt: clearLastSyncAt ? null : (lastSyncAt ?? this.lastSyncAt),
         pairedDevices: pairedDevices ?? this.pairedDevices,
-      hostRegistry: hostRegistry ?? this.hostRegistry,
+        hostRegistry: hostRegistry ?? this.hostRegistry,
       );
 
   Map<String, dynamic> toJson() => {
@@ -219,33 +243,42 @@ class LanSyncSettings {
         'lastConnectionAt': lastConnectionAt?.toIso8601String(),
         'lastSyncAt': lastSyncAt?.toIso8601String(),
         'pairedDevices': pairedDevices,
-        'hostRegistry': hostRegistry.map((key, value) => MapEntry(key, value.toJson())),
+        'hostRegistry':
+            hostRegistry.map((key, value) => MapEntry(key, value.toJson())),
       };
 
   factory LanSyncSettings.fromJson(Map<String, dynamic> json) {
     final modeName = json['mode'] as String? ?? '';
     final mode = LanSyncDeviceMode.values.firstWhere(
       (item) => item.name == modeName,
-      orElse: () => (json['hostModeEnabled'] as bool? ?? false) ? LanSyncDeviceMode.host : LanSyncDeviceMode.client,
+      orElse: () => (json['hostModeEnabled'] as bool? ?? false)
+          ? LanSyncDeviceMode.host
+          : LanSyncDeviceMode.client,
     );
     final pairedDevices = (json['pairedDevices'] is Map)
-        ? Map<String, String>.from((json['pairedDevices'] as Map).map((key, value) => MapEntry('$key', '$value')))
+        ? Map<String, String>.from((json['pairedDevices'] as Map)
+            .map((key, value) => MapEntry('$key', '$value')))
         : const <String, String>{};
     final hostRegistry = HostRegistryDevice.migrateFromPairedDevices(
       pairedDevices,
       existing: HostRegistryDevice.fromJsonMap(json['hostRegistry']),
     );
     return LanSyncSettings(
-      host: (json['host'] as String?)?.trim().isNotEmpty == true ? (json['host'] as String).trim() : '192.168.1.100',
+      host: (json['host'] as String?)?.trim().isNotEmpty == true
+          ? (json['host'] as String).trim()
+          : '192.168.1.100',
       port: json['port'] as int? ?? int.tryParse('${json['port']}') ?? 8787,
       autoSyncEnabled: json['autoSyncEnabled'] as bool? ?? true,
-      hostModeEnabled: json['hostModeEnabled'] as bool? ?? mode == LanSyncDeviceMode.host,
-      intervalSeconds: defaultIntervalSeconds,
+      hostModeEnabled:
+          json['hostModeEnabled'] as bool? ?? mode == LanSyncDeviceMode.host,
+      intervalSeconds: normalizeIntervalSeconds(json['intervalSeconds']),
       setupComplete: json['setupComplete'] as bool? ?? false,
       mode: mode,
       secret: json['secret'] as String? ?? '',
-      lastPullCursor: DateTime.tryParse(json['lastPullCursor'] as String? ?? ''),
-      lastConnectionAt: DateTime.tryParse(json['lastConnectionAt'] as String? ?? ''),
+      lastPullCursor:
+          DateTime.tryParse(json['lastPullCursor'] as String? ?? ''),
+      lastConnectionAt:
+          DateTime.tryParse(json['lastConnectionAt'] as String? ?? ''),
       lastSyncAt: DateTime.tryParse(json['lastSyncAt'] as String? ?? ''),
       pairedDevices: pairedDevices,
       hostRegistry: hostRegistry,
@@ -280,8 +313,12 @@ class LanSyncSettings {
     final cleanClientId = clientDeviceId.trim();
     if (cleanHostId.isEmpty || cleanClientId.isEmpty) return this;
     final existing = hostRegistry[cleanClientId];
-    final cleanToken = deviceToken.trim().isNotEmpty ? deviceToken.trim() : (existing?.deviceToken.trim() ?? '');
-    final cleanName = deviceName.trim().isNotEmpty ? deviceName.trim() : (existing?.deviceName.trim() ?? '');
+    final cleanToken = deviceToken.trim().isNotEmpty
+        ? deviceToken.trim()
+        : (existing?.deviceToken.trim() ?? '');
+    final cleanName = deviceName.trim().isNotEmpty
+        ? deviceName.trim()
+        : (existing?.deviceName.trim() ?? '');
     final registry = <String, HostRegistryDevice>{...hostRegistry};
     registry[cleanClientId] = (existing ??
             HostRegistryDevice(
@@ -326,22 +363,38 @@ class LanSyncSettings {
     final rawV2 = LocalDatabaseService.getString(storageKey);
     if (rawV2 != null && rawV2.trim().isNotEmpty) {
       try {
-        return LanSyncSettings.fromJson(Map<String, dynamic>.from(jsonDecode(rawV2) as Map));
+        return LanSyncSettings.fromJson(
+            Map<String, dynamic>.from(jsonDecode(rawV2) as Map));
       } catch (_) {}
     }
-    return const LanSyncSettings(host: '192.168.1.100', port: 8787, autoSyncEnabled: true, hostModeEnabled: false);
+    return const LanSyncSettings(
+        host: '192.168.1.100',
+        port: 8787,
+        autoSyncEnabled: true,
+        hostModeEnabled: false);
   }
 
-  Future<void> save() async => LocalDatabaseService.setString(storageKey, jsonEncode(toJson()));
-  static Future<void> resetSetup() async => LocalDatabaseService.deleteString(storageKey);
+  static int normalizeIntervalSeconds(Object? value) {
+    final parsed = value is int
+        ? value
+        : int.tryParse(value?.toString() ?? '') ?? defaultIntervalSeconds;
+    return parsed.clamp(minIntervalSeconds, maxIntervalSeconds).toInt();
+  }
+
+  Future<void> save() async =>
+      LocalDatabaseService.setString(storageKey, jsonEncode(toJson()));
+  static Future<void> resetSetup() async =>
+      LocalDatabaseService.deleteString(storageKey);
   static String generateSecret() {
     const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     final random = Random.secure();
-    return List.generate(16, (_) => alphabet[random.nextInt(alphabet.length)]).join();
+    return List.generate(16, (_) => alphabet[random.nextInt(alphabet.length)])
+        .join();
   }
 
   static String generatePairingCode() => generateSecret().substring(0, 8);
-  static String generateDeviceToken() => 'lan_${DateTime.now().microsecondsSinceEpoch}';
+  static String generateDeviceToken() =>
+      'lan_${DateTime.now().microsecondsSinceEpoch}';
 
   static Future<List<String>> localIpv4Addresses() async => const <String>[];
 }
@@ -359,21 +412,60 @@ class LanSyncService {
   int? get port => null;
   Future<void> startHost({int port = 8787}) async {}
   Future<void> stopHost() async {}
-  Future<LanSyncResult> testConnection(String host, {int port = 8787, String token = ''}) async =>
-      const LanSyncResult(ok: false, message: 'LAN sync is not available in the web build. Use Cloud Sync/API instead.');
-  Future<LanSyncResult> claimPairingCode(String host, {int port = 8787, required String code, LanSyncProgressCallback? onProgress}) async =>
-      const LanSyncResult(ok: false, message: 'LAN pairing is not available in the web build.');
-  Future<LanSyncResult> initialClone(String host, {int port = 8787, String token = '', LanSyncProgressCallback? onProgress}) async =>
-      const LanSyncResult(ok: false, message: 'LAN initial clone is not available in the web build.');
-  Future<LanSyncResult> pullNow(String host, {int port = 8787, String token = '', LanSyncProgressCallback? onProgress}) async =>
-      const LanSyncResult(ok: false, message: 'LAN pull is not available in the web build.');
-  Future<LanSyncResult> pushPendingOnly(String host, {int port = 8787, String token = '', LanSyncProgressCallback? onProgress}) async =>
-      const LanSyncResult(ok: false, message: 'LAN push is not available in the web build.');
-  Future<bool> waitForRealtimeSignal(String host, {int port = 8787, String token = '', Duration wait = const Duration(seconds: 25)}) async => false;
-  Future<LanSyncResult> pullChangesOnly(String host, {int port = 8787, String token = '', LanSyncProgressCallback? onProgress}) async =>
-      const LanSyncResult(ok: false, message: 'LAN pull is not available in the web build.');
-  Future<LanSyncResult> repairFromHostSnapshot(String host, {int port = 8787, String token = '', LanSyncProgressCallback? onProgress}) async =>
-      const LanSyncResult(ok: false, message: 'LAN repair is not available in the web build. Use Cloud Sync/API instead.');
-  Future<LanSyncResult> syncNow(String host, {int port = 8787, String token = '', LanSyncProgressCallback? onProgress}) async =>
-      const LanSyncResult(ok: false, message: 'LAN sync is not available in the web build.');
+  Future<LanSyncResult> testConnection(String host,
+          {int port = 8787, String token = ''}) async =>
+      const LanSyncResult(
+          ok: false,
+          message:
+              'LAN sync is not available in the web build. Use Cloud Sync/API instead.');
+  Future<LanSyncResult> claimPairingCode(String host,
+          {int port = 8787,
+          required String code,
+          LanSyncProgressCallback? onProgress}) async =>
+      const LanSyncResult(
+          ok: false, message: 'LAN pairing is not available in the web build.');
+  Future<LanSyncResult> initialClone(String host,
+          {int port = 8787,
+          String token = '',
+          LanSyncProgressCallback? onProgress}) async =>
+      const LanSyncResult(
+          ok: false,
+          message: 'LAN initial clone is not available in the web build.');
+  Future<LanSyncResult> pullNow(String host,
+          {int port = 8787,
+          String token = '',
+          LanSyncProgressCallback? onProgress}) async =>
+      const LanSyncResult(
+          ok: false, message: 'LAN pull is not available in the web build.');
+  Future<LanSyncResult> pushPendingOnly(String host,
+          {int port = 8787,
+          String token = '',
+          LanSyncProgressCallback? onProgress}) async =>
+      const LanSyncResult(
+          ok: false, message: 'LAN push is not available in the web build.');
+  Future<bool> waitForRealtimeSignal(String host,
+          {int port = 8787,
+          String token = '',
+          Duration wait = const Duration(seconds: 25)}) async =>
+      false;
+  Future<LanSyncResult> pullChangesOnly(String host,
+          {int port = 8787,
+          String token = '',
+          LanSyncProgressCallback? onProgress}) async =>
+      const LanSyncResult(
+          ok: false, message: 'LAN pull is not available in the web build.');
+  Future<LanSyncResult> repairFromHostSnapshot(String host,
+          {int port = 8787,
+          String token = '',
+          LanSyncProgressCallback? onProgress}) async =>
+      const LanSyncResult(
+          ok: false,
+          message:
+              'LAN repair is not available in the web build. Use Cloud Sync/API instead.');
+  Future<LanSyncResult> syncNow(String host,
+          {int port = 8787,
+          String token = '',
+          LanSyncProgressCallback? onProgress}) async =>
+      const LanSyncResult(
+          ok: false, message: 'LAN sync is not available in the web build.');
 }

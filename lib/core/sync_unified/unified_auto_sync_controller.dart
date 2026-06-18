@@ -70,8 +70,19 @@ class UnifiedAutoLanSyncController {
         settings.host.trim(),
         settings.port,
         settings.autoSyncEnabled,
+        settings.intervalSeconds,
         settings.secret.trim(),
       ].join('|');
+
+  void _restartPeriodicTimer(LanSyncSettings settings) {
+    _periodicTimer?.cancel();
+    final interval = Duration(
+      seconds: LanSyncSettings.normalizeIntervalSeconds(
+        settings.intervalSeconds,
+      ),
+    );
+    _periodicTimer = Timer.periodic(interval, (_) => _syncBecauseOfTimer());
+  }
 
   bool _lanAllowedForCurrentRole(LanSyncSettings settings) {
     final identity = store.appIdentity;
@@ -106,9 +117,7 @@ class UnifiedAutoLanSyncController {
 
     store.removeListener(_onStoreChanged);
     store.addListener(_onStoreChanged);
-    _periodicTimer?.cancel();
-    final interval = Duration(seconds: LanSyncSettings.defaultIntervalSeconds);
-    _periodicTimer = Timer.periodic(interval, (_) => _syncBecauseOfTimer());
+    _restartPeriodicTimer(settings);
 
     if (allowed &&
         store.appIdentity.isClient &&
@@ -167,6 +176,7 @@ class UnifiedAutoLanSyncController {
     if (signature != _lastSettingsSignature) {
       _lastSettingsSignature = signature;
       unawaited(_applySettingsChange(settings));
+      _restartPeriodicTimer(settings);
     }
 
     final hasPendingClientWork =
@@ -179,7 +189,7 @@ class UnifiedAutoLanSyncController {
     }
 
     _debounceTimer?.cancel();
-    _debounceTimer = Timer(const Duration(seconds: 3), () => _runClientSync());
+    _debounceTimer = Timer(const Duration(seconds: 1), () => _runClientSync());
   }
 
   void _syncBecauseOfTimer() {
@@ -188,6 +198,7 @@ class UnifiedAutoLanSyncController {
     if (signature != _lastSettingsSignature) {
       _lastSettingsSignature = signature;
       unawaited(_applySettingsChange(settings));
+      _restartPeriodicTimer(settings);
     }
     if (!_lanAllowedForCurrentRole(settings)) {
       unawaited(UnifiedSyncFactory.lanEngine(store, settings: settings)
@@ -301,16 +312,37 @@ class UnifiedAutoCloudSyncController {
   bool _signalLoopRunning = false;
   int _lastCloudQueueCount = 0;
   int _lastRelayQueueCount = 0;
+  String _lastSettingsSignature = '';
 
   bool _cloudReady(CloudSyncSettings settings) =>
       settings.autoSyncEnabled &&
       settings.isConfigured &&
       _cloudAllowedForCurrentRole();
 
+  String _settingsSignature(CloudSyncSettings settings) => [
+        settings.autoSyncEnabled,
+        settings.isConfigured,
+        settings.apiBaseUrl.trim(),
+        settings.intervalSeconds,
+        store.appIdentity.deviceRole.name,
+        store.appIdentity.activeSyncTransportNormalized,
+      ].join('|');
+
+  void _restartPeriodicTimer(CloudSyncSettings settings) {
+    _timer?.cancel();
+    final interval = Duration(
+      seconds: CloudSyncSettings.normalizeIntervalSeconds(
+        settings.intervalSeconds,
+      ),
+    );
+    _timer = Timer.periodic(interval, (_) => _tick());
+  }
+
   Future<void> start() async {
     stop();
     _disposed = false;
     final settings = CloudSyncSettings.load();
+    _lastSettingsSignature = _settingsSignature(settings);
     SyncDiagnosticsLog.add(
       '[SYNC_TRACE] autoCloud:start device=${store.deviceId} '
       'role=${store.appIdentity.deviceRole.name} '
@@ -326,9 +358,7 @@ class UnifiedAutoCloudSyncController {
     store.removeListener(_onStoreChanged);
     store.addListener(_onStoreChanged);
 
-    final interval =
-        Duration(seconds: CloudSyncSettings.defaultIntervalSeconds);
-    _timer = Timer.periodic(interval, (_) => _tick());
+    _restartPeriodicTimer(settings);
     unawaited(_signalLoop());
     if (_cloudReady(settings)) {
       await _tick();
@@ -381,6 +411,11 @@ class UnifiedAutoCloudSyncController {
   void _onStoreChanged() {
     if (_disposed) return;
     final settings = CloudSyncSettings.load();
+    final signature = _settingsSignature(settings);
+    if (signature != _lastSettingsSignature) {
+      _lastSettingsSignature = signature;
+      _restartPeriodicTimer(settings);
+    }
     if (!settings.autoSyncEnabled ||
         !settings.isConfigured ||
         !_cloudAllowedForCurrentRole()) {
@@ -402,7 +437,7 @@ class UnifiedAutoCloudSyncController {
     if (!hasPendingCloudWork) return;
 
     _debounceTimer?.cancel();
-    _debounceTimer = Timer(const Duration(seconds: 3), () => _tick());
+    _debounceTimer = Timer(const Duration(seconds: 1), () => _tick());
   }
 
   bool _hostHasUnpublishedCloudAuthority() {

@@ -37,7 +37,9 @@ class CloudSyncSettings {
 
   static const _autoSyncKey = 'cloud_auto_sync_enabled';
   static const _intervalKey = 'cloud_auto_sync_interval_seconds';
-  static const int defaultIntervalSeconds = 300;
+  static const int defaultIntervalSeconds = 30;
+  static const int minIntervalSeconds = 5;
+  static const int maxIntervalSeconds = 60;
 
   final bool enabled;
   final String apiBaseUrl;
@@ -151,6 +153,7 @@ class CloudSyncSettings {
     final base = LocalDatabaseService.getString(_apiBaseUrlKey);
     final cursorRaw = LocalDatabaseService.getString(_lastPullCursorKey) ?? '';
     final autoRaw = LocalDatabaseService.getString(_autoSyncKey);
+    final intervalRaw = LocalDatabaseService.getString(_intervalKey);
     final bundledOrigin = bundledApiBaseUrl;
     final currentOrigin = kIsWeb ? Uri.base.origin : bundledOrigin;
     var normalizedBaseUrl = currentOrigin;
@@ -166,8 +169,15 @@ class CloudSyncSettings {
       apiBaseUrl: normalizedBaseUrl,
       lastPullCursor: DateTime.tryParse(cursorRaw),
       autoSyncEnabled: autoRaw == null ? true : autoRaw == 'true',
-      intervalSeconds: defaultIntervalSeconds,
+      intervalSeconds: normalizeIntervalSeconds(intervalRaw),
     );
+  }
+
+  static int normalizeIntervalSeconds(Object? value) {
+    final parsed = value is int
+        ? value
+        : int.tryParse(value?.toString() ?? '') ?? defaultIntervalSeconds;
+    return parsed.clamp(minIntervalSeconds, maxIntervalSeconds).toInt();
   }
 
   Future<void> save() async {
@@ -177,7 +187,7 @@ class CloudSyncSettings {
     await LocalDatabaseService.setString(
         _autoSyncKey, autoSyncEnabled ? 'true' : 'false');
     await LocalDatabaseService.setString(
-        _intervalKey, defaultIntervalSeconds.toString());
+        _intervalKey, normalizeIntervalSeconds(intervalSeconds).toString());
     if (lastPullCursor == null) {
       await LocalDatabaseService.deleteString(_lastPullCursorKey);
     } else {
