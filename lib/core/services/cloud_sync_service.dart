@@ -501,19 +501,30 @@ class CloudSyncService {
 
   Future<bool> checkCloudSyncPlanAccess(CloudSyncSettings settings) async {
     final identity = store.appIdentity;
-    if (settings.apiBaseUrl.trim().isEmpty ||
-        identity.storeId.trim().isEmpty ||
-        identity.branchId.trim().isEmpty) {
+    final storeId = identity.storeId.trim();
+    final branchId = identity.branchId.trim().isEmpty
+        ? 'main'
+        : identity.branchId.trim();
+    if (settings.apiBaseUrl.trim().isEmpty || storeId.isEmpty) {
       return false;
     }
+
     try {
+      // Use the same identity headers used by cloud push/pull. The endpoint also
+      // receives store/branch as query params so older proxies or middleware
+      // cannot drop the entitlement context.
       final response = await _client
           .get(
-            settings.endpoint('/api/sync/cloud-access'),
+            settings.endpoint('/api/sync/cloud-access', {
+              'storeId': storeId,
+              'branchId': branchId,
+            }),
             headers: _headers(settings),
           )
           .timeout(const Duration(seconds: 10));
       if (response.statusCode < 200 || response.statusCode >= 300) {
+        SyncDiagnosticsLog.add(
+            '[SYNC_TRACE] cloudAccess:failed status=${response.statusCode} body=${response.body}');
         return false;
       }
       final decoded = jsonDecode(response.body);
@@ -522,7 +533,8 @@ class CloudSyncService {
             decoded['cloud_sync_enabled'] == true ||
             decoded['allowed'] == true;
       }
-    } catch (_) {
+    } catch (error) {
+      SyncDiagnosticsLog.add('[SYNC_TRACE] cloudAccess:error $error');
       return false;
     }
     return false;
