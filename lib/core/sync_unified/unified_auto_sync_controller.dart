@@ -88,16 +88,11 @@ class UnifiedAutoLanSyncController {
     final settings = LanSyncSettings.load();
     _lastSettingsSignature = _settingsSignature(settings);
 
-    if (!_lanAllowedForCurrentRole(settings)) {
+    final allowed = _lanAllowedForCurrentRole(settings);
+    if (!allowed) {
       await UnifiedSyncFactory.lanEngine(store, settings: settings)
           .transportStopHostIfSupported();
-      store.removeListener(_onStoreChanged);
-      _periodicTimer?.cancel();
-      _debounceTimer?.cancel();
-      return;
-    }
-
-    if (store.appIdentity.isHost && settings.isHost) {
+    } else if (store.appIdentity.isHost && settings.isHost) {
       await UnifiedSyncFactory.lanEngine(store, settings: settings)
           .registerCurrentHost(transportName: 'lan');
     }
@@ -108,7 +103,8 @@ class UnifiedAutoLanSyncController {
     final interval = Duration(seconds: LanSyncSettings.defaultIntervalSeconds);
     _periodicTimer = Timer.periodic(interval, (_) => _syncBecauseOfTimer());
 
-    if (store.appIdentity.isClient &&
+    if (allowed &&
+        store.appIdentity.isClient &&
         settings.autoSyncEnabled &&
         settings.isClient) {
       unawaited(_signalLoop());
@@ -289,12 +285,15 @@ class UnifiedAutoCloudSyncController {
   int _lastCloudQueueCount = 0;
   int _lastRelayQueueCount = 0;
 
+  bool _cloudReady(CloudSyncSettings settings) =>
+      settings.autoSyncEnabled &&
+      settings.isConfigured &&
+      _cloudAllowedForCurrentRole();
+
   Future<void> start() async {
     stop();
     _disposed = false;
-    if (!_cloudAllowedForCurrentRole()) return;
     final settings = CloudSyncSettings.load();
-    if (!settings.autoSyncEnabled || !settings.isConfigured) return;
 
     _lastCloudQueueCount =
         store.pendingSyncQueueForTarget('cloud', readyOnly: false).length;
@@ -307,7 +306,9 @@ class UnifiedAutoCloudSyncController {
         Duration(seconds: CloudSyncSettings.defaultIntervalSeconds);
     _timer = Timer.periodic(interval, (_) => _tick());
     unawaited(_signalLoop());
-    await _tick();
+    if (_cloudReady(settings)) {
+      await _tick();
+    }
   }
 
   void stop() {
@@ -322,16 +323,21 @@ class UnifiedAutoCloudSyncController {
   Future<void> _signalLoop() async {
     if (_signalLoopRunning) return;
     _signalLoopRunning = true;
+    var wasReady = false;
     try {
       while (!_disposed) {
         final settings = CloudSyncSettings.load();
-        if (!settings.autoSyncEnabled ||
-            !settings.isConfigured ||
-            !_cloudAllowedForCurrentRole()) {
+        final ready = _cloudReady(settings);
+        if (!ready) {
+          wasReady = false;
           await Future<void>.delayed(const Duration(seconds: 5));
           continue;
         }
         try {
+          if (!wasReady) {
+            wasReady = true;
+            await _tick();
+          }
           final changed =
               await CloudSyncService(store).waitForRealtimeSignal(settings);
           if (changed && !_disposed) {
