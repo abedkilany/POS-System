@@ -2872,7 +2872,9 @@ class CloudSyncService {
       // and let Cloud return the materialized snapshot plus a sequence marker.
       final initialCursor =
           baseLastAppliedSequence > 0 ? settings.lastPullCursor : null;
-      if (await _cloudSnapshotIsNewerThanLocal(settings)) {
+      final shouldUseSnapshotBootstrap = baseLastAppliedSequence <= 0;
+      if (shouldUseSnapshotBootstrap &&
+          await _cloudSnapshotIsNewerThanLocal(settings)) {
         onProgress?.call(0.32,
             'تم العثور على Snapshot أحدث من المضيف. جارٍ إعادة بناء بيانات هذا الجهاز...');
         await CloudSyncSettings.clearSavedPullCursor();
@@ -3176,7 +3178,9 @@ class CloudSyncService {
           SyncDeviceStateStore.load(store.appIdentity).lastAppliedSequence;
       final initialCursor =
           baseLastAppliedSequence > 0 ? settings.lastPullCursor : null;
-      if (await _cloudSnapshotIsNewerThanLocal(settings)) {
+      final shouldUseSnapshotBootstrap = baseLastAppliedSequence <= 0;
+      if (shouldUseSnapshotBootstrap &&
+          await _cloudSnapshotIsNewerThanLocal(settings)) {
         onProgress?.call(0.32,
             'تم العثور على Snapshot أحدث من المضيف. جارٍ إعادة بناء بيانات هذا الجهاز...');
         await CloudSyncSettings.clearSavedPullCursor();
