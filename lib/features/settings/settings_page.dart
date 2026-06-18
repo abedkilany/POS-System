@@ -2738,15 +2738,32 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   String get _initialCloudHostReadyKey =>
       'cloud_initial_snapshot_ready_${widget.store.appIdentity.storeId}';
 
-  bool? _cloudSyncPlanAllowed = AccountAuthCache.load()?.cloudSyncEnabled;
+  bool? _cloudSyncPlanAllowed;
 
   bool get _cloudSyncPlanDenied => _cloudSyncPlanAllowed == false;
   bool get _cloudSyncPlanAllowsUi => !_cloudSyncPlanDenied;
   bool get _effectiveCloudEnabled => _cloudEnabled && _cloudSyncPlanAllowsUi;
 
+  bool? _cachedCloudPlanAccessForUi(AccountAuthCache? cache) {
+    if (cache == null) return null;
+    if (cache.cloudSyncEnabled) return true;
+
+    // A local Host created before Cloud Sync is enabled usually has a cached
+    // registered_local=false result and no account token. That is not an
+    // authoritative denial; the server will enforce the entitlement when a
+    // Cloud pairing code is requested.
+    if (widget.store.appIdentity.isHost && cache.accountToken.trim().isEmpty) {
+      return null;
+    }
+
+    return false;
+  }
+
   @override
   void initState() {
     super.initState();
+    _cloudSyncPlanAllowed =
+        _cachedCloudPlanAccessForUi(AccountAuthCache.load());
     unawaited(_refreshCloudSyncPlanAccess());
     final identity = widget.store.appIdentity;
     final lan = LanSyncSettings.load();
@@ -2797,7 +2814,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
 
   Future<void> _refreshCloudSyncPlanAccess() async {
     final cache = AccountAuthCache.load();
-    bool? planAllowed = cache?.cloudSyncEnabled;
+    bool? planAllowed = _cachedCloudPlanAccessForUi(cache);
     final identityAtStart = widget.store.appIdentity;
     final cloudAtStart = CloudSyncSettings.load();
 
