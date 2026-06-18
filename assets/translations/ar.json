@@ -1585,5 +1585,9 @@
   "first_run_online_required": "أول تشغيل يجب أن يبقى أونلاين لإنشاء حساب التجربة على السيرفر.",
   "online_login_failed": "فشل تسجيل الدخول أونلاين",
   "online_register_failed": "فشل التسجيل أونلاين",
-  "trial_created_sign_in": "تم إنشاء حساب التجربة. لديك {days} يوم. سجّل الدخول."
+  "trial_created_sign_in": "تم إنشاء حساب التجربة. لديك {days} يوم. سجّل الدخول.",
+  "cloud_sync_plan_required": "مزامنة Cloud غير متاحة ضمن خطة هذا المتجر.",
+  "cloud_sync_plan_locked_short": "مقفلة حسب الخطة",
+  "cloud_sync_plan_locked_title": "مزامنة Cloud مقفلة",
+  "cloud_sync_plan_locked_desc": "هذا المتجر غير مشترك بخدمة مزامنة Cloud. فعّلها من لوحة الإدارة > المشتركين."
 }

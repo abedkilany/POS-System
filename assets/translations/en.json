@@ -1585,5 +1585,9 @@
   "first_run_online_required": "First run must stay Online to create the trial account on the server.",
   "online_login_failed": "Online login failed",
   "online_register_failed": "Online registration failed",
-  "trial_created_sign_in": "Trial account created. You have {days} days. Please sign in."
+  "trial_created_sign_in": "Trial account created. You have {days} days. Please sign in.",
+  "cloud_sync_plan_required": "Cloud Sync is not included in this store plan.",
+  "cloud_sync_plan_locked_short": "Locked by plan",
+  "cloud_sync_plan_locked_title": "Cloud Sync is locked",
+  "cloud_sync_plan_locked_desc": "This store is not subscribed to Cloud Sync. Ask the administrator to enable it from Admin > Subscribers."
 }

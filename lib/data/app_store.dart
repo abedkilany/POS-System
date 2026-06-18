@@ -979,8 +979,12 @@ class AppStore extends ChangeNotifier {
         storeId: cleanStoreId,
         branchId: cleanBranchId,
         deviceRole: DeviceRole.host,
-        syncMode: SyncMode.cloudConnected,
-        activeSyncTransport: 'cloud',
+        // Online registration/recovery of the store owner identity must not
+        // automatically enable Cloud Sync. Cloud Sync is a paid/explicit
+        // feature and should only be enabled from the Sync settings page after
+        // the user turns it on and the server allows it for this store.
+        syncMode: SyncMode.localOnly,
+        activeSyncTransport: 'local',
         hostDeviceId: '',
         deviceId: _deviceId,
         platform: platform,

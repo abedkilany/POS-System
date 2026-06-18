@@ -312,6 +312,24 @@ class AccountAuthService {
     return _decode(response);
   }
 
+
+  Future<AccountAuthResult> refreshSession({required String accountToken}) async {
+    if (accountToken.trim().isEmpty) {
+      return const AccountAuthResult(
+        ok: false,
+        message: 'Online account session is missing.',
+      );
+    }
+    final response = await _client.get(
+      _endpoint('/api/auth/session'),
+      headers: {
+        'Accept': 'application/json',
+        'Authorization': 'Bearer ${accountToken.trim()}',
+      },
+    );
+    return _decode(response);
+  }
+
   Future<AdminSubscribersResult> fetchAdminSubscribers(
       {required String adminToken}) async {
     if (adminToken.trim().isEmpty) {
@@ -473,8 +491,12 @@ class AccountAuthService {
         accountType: result.accountType,
         trialEndsAt: result.trialEndsAt,
         devicesLimit: result.devicesLimit,
-        adminToken: result.adminToken,
-        accountToken: result.accountToken,
+        adminToken: result.adminToken.isNotEmpty
+            ? result.adminToken
+            : (AccountAuthCache.load()?.adminToken ?? ''),
+        accountToken: result.accountToken.isNotEmpty
+            ? result.accountToken
+            : (AccountAuthCache.load()?.accountToken ?? ''),
         cloudSyncEnabled: result.cloudSyncEnabled,
         lastVerifiedAt: DateTime.now(),
       ),

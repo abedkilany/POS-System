@@ -498,6 +498,36 @@ class CloudSyncService {
   late final UnifiedSyncCoreService _syncCore = UnifiedSyncCoreService(store);
   static final Set<String> _activeSnapshotGenerationRebuilds = <String>{};
 
+
+  Future<bool> checkCloudSyncPlanAccess(CloudSyncSettings settings) async {
+    final identity = store.appIdentity;
+    if (settings.apiBaseUrl.trim().isEmpty ||
+        identity.storeId.trim().isEmpty ||
+        identity.branchId.trim().isEmpty) {
+      return false;
+    }
+    try {
+      final response = await _client
+          .get(
+            settings.endpoint('/api/sync/cloud-access'),
+            headers: _headers(settings),
+          )
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return false;
+      }
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map) {
+        return decoded['cloudSyncEnabled'] == true ||
+            decoded['cloud_sync_enabled'] == true ||
+            decoded['allowed'] == true;
+      }
+    } catch (_) {
+      return false;
+    }
+    return false;
+  }
+
   String _snapshotGenerationKey(String transport) =>
       'applied_host_snapshot_generation_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}';
 
