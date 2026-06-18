@@ -67,8 +67,8 @@ class AccountAuthResult {
       adminToken: (json['adminToken'] ?? json['admin_token'] ?? '').toString(),
       accountToken:
           (json['accountToken'] ?? json['account_token'] ?? '').toString(),
-      cloudSyncEnabled:
-          json['cloudSyncEnabled'] == true || json['cloud_sync_enabled'] == true,
+      cloudSyncEnabled: json['cloudSyncEnabled'] == true ||
+          json['cloud_sync_enabled'] == true,
     );
   }
 }
@@ -154,7 +154,8 @@ class AccountAuthCache {
             DateTime.tryParse((json['lastVerifiedAt'] ?? '').toString()),
         adminToken: (json['adminToken'] ?? '').toString(),
         accountToken: (json['accountToken'] ?? '').toString(),
-        cloudSyncEnabled: json['cloudSyncEnabled'] == true,
+        cloudSyncEnabled: json['cloudSyncEnabled'] == true ||
+            json['cloud_sync_enabled'] == true,
       );
     } catch (_) {
       return null;
@@ -247,8 +248,8 @@ class AdminSubscriber {
               (json['device_count'] ?? json['deviceCount'] ?? '0')
                   .toString()) ??
           0,
-      cloudSyncEnabled:
-          json['cloud_sync_enabled'] == true || json['cloudSyncEnabled'] == true,
+      cloudSyncEnabled: json['cloud_sync_enabled'] == true ||
+          json['cloudSyncEnabled'] == true,
       trialEndsAt: DateTime.tryParse(
           (json['trial_ends_at'] ?? json['trialEndsAt'] ?? '').toString()),
       createdAt: DateTime.tryParse(
@@ -312,8 +313,8 @@ class AccountAuthService {
     return _decode(response);
   }
 
-
-  Future<AccountAuthResult> refreshSession({required String accountToken}) async {
+  Future<AccountAuthResult> refreshSession(
+      {required String accountToken}) async {
     if (accountToken.trim().isEmpty) {
       return const AccountAuthResult(
         ok: false,
@@ -334,8 +335,7 @@ class AccountAuthService {
       {required String adminToken}) async {
     if (adminToken.trim().isEmpty) {
       return const AdminSubscribersResult(
-          ok: false,
-          message: 'Please sign in again as admin@ventio.');
+          ok: false, message: 'Please sign in again as admin@ventio.');
     }
     final response = await _client.get(
       _endpoint('/api/admin/subscribers'),
@@ -393,8 +393,7 @@ class AccountAuthService {
   }) async {
     if (adminToken.trim().isEmpty) {
       return const AccountAuthResult(
-          ok: false,
-          message: 'Please sign in again as admin@ventio.');
+          ok: false, message: 'Please sign in again as admin@ventio.');
     }
     final response = await _client.patch(
       _endpoint('/api/admin/subscribers'),
@@ -425,8 +424,7 @@ class AccountAuthService {
   }) async {
     if (adminToken.trim().isEmpty) {
       return const AccountAuthResult(
-          ok: false,
-          message: 'Please sign in again as admin@ventio.');
+          ok: false, message: 'Please sign in again as admin@ventio.');
     }
     final response = await _client.delete(
       _endpoint('/api/admin/subscribers'),

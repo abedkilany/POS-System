@@ -20,6 +20,7 @@ import '../../core/services/lan_sync_service.dart';
 import '../../core/services/local_database_service.dart';
 import '../../core/services/local_auto_backup_service.dart';
 import '../../core/services/app_update_service.dart';
+import '../../core/services/sync_diagnostics_log.dart';
 import '../../core/shortcuts/app_shortcuts.dart';
 import '../../core/sync_unified/sync_device_state.dart';
 import '../../core/sync_unified/sync_unified.dart';
@@ -2740,8 +2741,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   bool _cloudSyncPlanAllowed =
       AccountAuthCache.load()?.cloudSyncEnabled == true;
 
-  bool get _effectiveCloudEnabled =>
-      _cloudEnabled && _cloudSyncPlanAllowed;
+  bool get _effectiveCloudEnabled => _cloudEnabled && _cloudSyncPlanAllowed;
 
   @override
   void initState() {
@@ -2755,7 +2755,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         ? SyncMode.cloudConnected
         : SyncMode.lanOnly;
     _lanEnabledForHost = identity.isHost && lan.setupComplete && lan.isHost;
-    _cloudEnabled = identity.isCloudEnabled && cloud.isConfigured && _cloudSyncPlanAllowed;
+    _cloudEnabled = identity.isCloudEnabled && _cloudSyncPlanAllowed;
     _lanHostController.text = lan.host;
     _lanPortController.text = lan.port.toString();
     _lanIntervalController.text = lan.intervalSeconds.toString();
@@ -2794,7 +2794,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     super.dispose();
   }
 
-
   Future<void> _refreshCloudSyncPlanAccess() async {
     final cache = AccountAuthCache.load();
     var planAllowed = cache?.cloudSyncEnabled == true;
@@ -2822,13 +2821,18 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
 
       if (!mounted) return;
       final identity = widget.store.appIdentity;
-      final cloud = CloudSyncSettings.load();
       setState(() {
         _cloudSyncPlanAllowed = planAllowed;
-        _cloudEnabled =
-            identity.isCloudEnabled && cloud.isConfigured && planAllowed;
+        _cloudEnabled = identity.isCloudEnabled && planAllowed;
       });
-    } catch (_) {
+    } catch (error) {
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] cloudPlanAccess:refreshFailed $error');
+      if (mounted && !_cloudSyncPlanAllowed) {
+        setState(() {
+          _status = 'Could not verify Cloud Sync access.';
+        });
+      }
       // Keep the cached plan state if the server cannot be reached.
     }
   }
@@ -2844,13 +2848,12 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   bool get _hasUnsavedSyncChanges {
     final identity = widget.store.appIdentity;
     final lan = LanSyncSettings.load();
-    final cloud = CloudSyncSettings.load();
     final role = identity.isClient ? DeviceRole.client : DeviceRole.host;
     final clientMode = identity.activeSyncTransportNormalized == 'cloud'
         ? SyncMode.cloudConnected
         : SyncMode.lanOnly;
     final lanEnabled = identity.isHost && lan.setupComplete && lan.isHost;
-    final cloudEnabled = identity.isCloudEnabled && cloud.isConfigured && _cloudSyncPlanAllowed;
+    final cloudEnabled = identity.isCloudEnabled && _cloudSyncPlanAllowed;
     return _deviceRole != role ||
         _clientSyncMode != clientMode ||
         _lanEnabledForHost != lanEnabled ||
@@ -2869,7 +2872,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           ? SyncMode.cloudConnected
           : SyncMode.lanOnly;
       _lanEnabledForHost = identity.isHost && lan.setupComplete && lan.isHost;
-      _cloudEnabled = identity.isCloudEnabled && cloud.isConfigured && _cloudSyncPlanAllowed;
+      _cloudEnabled = identity.isCloudEnabled && _cloudSyncPlanAllowed;
       _lanHostController.text = lan.host;
       _lanPortController.text = lan.port.toString();
       _lanIntervalController.text = lan.intervalSeconds.toString();
@@ -3892,7 +3895,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         isHost ? _lanEnabledForHost : identity.syncMode == SyncMode.lanOnly;
     final cloudActive = isHost
         ? _effectiveCloudEnabled
-        : (identity.syncMode == SyncMode.cloudConnected && _cloudSyncPlanAllowed);
+        : (identity.syncMode == SyncMode.cloudConnected &&
+            _cloudSyncPlanAllowed);
     final hostActionLabel = tr.text('sync_now');
     final allGood = widget.store.pendingSyncCount == 0 &&
         (lanActive || cloudActive || !isHost);
@@ -4628,7 +4632,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                       if (!cloudPlanAllowed) ...[
                         Icon(Icons.lock_outline,
                             size: 18,
-                            color: Theme.of(context).colorScheme.onSurfaceVariant),
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant),
                         const SizedBox(width: 8),
                       ],
                       Switch(
@@ -7271,7 +7276,8 @@ class _SystemStatusPanel extends StatelessWidget {
             ? tr.text('connection_state_active')
             : tr.text('connection_state_disabled');
 
-    final healthy = pending == 0 && (lanActive || cloudActive || transport == 'local');
+    final healthy =
+        pending == 0 && (lanActive || cloudActive || transport == 'local');
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -7343,7 +7349,8 @@ class _SystemStatusPanel extends StatelessWidget {
 enum _StatusBulletState { ok, warning, disabled, info }
 
 class _StatusBullet extends StatelessWidget {
-  const _StatusBullet({required this.label, this.state = _StatusBulletState.ok});
+  const _StatusBullet(
+      {required this.label, this.state = _StatusBulletState.ok});
   final String label;
   final _StatusBulletState state;
 
