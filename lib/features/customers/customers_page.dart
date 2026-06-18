@@ -25,10 +25,17 @@ class _CustomersPageState extends State<CustomersPage> {
     final tr = AppLocalizations.of(context);
     final customers = widget.store.customers.where((customer) {
       final value = query.toLowerCase();
-      final isWalkIn = customer.id == AppStore.walkInCustomerId || customer.name.trim().toLowerCase() == AppStore.walkInCustomerName.toLowerCase();
+      final isWalkIn = customer.id == AppStore.walkInCustomerId ||
+          customer.name.trim().toLowerCase() ==
+              AppStore.walkInCustomerName.toLowerCase();
       if (isWalkIn) return false;
-      return customer.name.toLowerCase().contains(value) || customer.phone.toLowerCase().contains(value);
+      return customer.name.toLowerCase().contains(value) ||
+          customer.phone.toLowerCase().contains(value);
     }).toList();
+    debugPrint(
+      '[SYNC_TRACE] customersPage:build query="$query" '
+      'visible=${customers.length} names=${customers.map((item) => item.name).join(',')}',
+    );
 
     return Padding(
       padding: VentioResponsive.pageInsets(context),
@@ -45,13 +52,18 @@ class _CustomersPageState extends State<CustomersPage> {
           ),
           const SizedBox(height: 16),
           TextField(
-            decoration: InputDecoration(hintText: tr.text('search_customer'), prefixIcon: const Icon(Icons.search)),
+            decoration: InputDecoration(
+                hintText: tr.text('search_customer'),
+                prefixIcon: const Icon(Icons.search)),
             onChanged: (value) => setState(() => query = value),
           ),
           const SizedBox(height: 16),
           Expanded(
             child: customers.isEmpty
-                ? EmptyStateCard(icon: Icons.people_outline, title: tr.text('no_customers'), subtitle: tr.text('no_customers_desc'))
+                ? EmptyStateCard(
+                    icon: Icons.people_outline,
+                    title: tr.text('no_customers'),
+                    subtitle: tr.text('no_customers_desc'))
                 : Card(
                     child: ListView.separated(
                       itemCount: customers.length,
@@ -59,7 +71,8 @@ class _CustomersPageState extends State<CustomersPage> {
                       itemBuilder: (context, index) {
                         final customer = customers[index];
                         return ListTile(
-                          leading: const CircleAvatar(child: Icon(Icons.person_outline)),
+                          leading: const CircleAvatar(
+                              child: Icon(Icons.person_outline)),
                           title: Text(customer.name),
                           subtitle: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -67,8 +80,12 @@ class _CustomersPageState extends State<CustomersPage> {
                               Text('${customer.phone} • ${customer.address}'),
                               const SizedBox(height: 4),
                               Text(
-                                accountBalanceText(context, widget.store, 'customer', customer.id),
-                                style: TextStyle(color: accountBalanceColor(context, widget.store, 'customer', customer.id), fontWeight: FontWeight.w700),
+                                accountBalanceText(context, widget.store,
+                                    'customer', customer.id),
+                                style: TextStyle(
+                                    color: accountBalanceColor(context,
+                                        widget.store, 'customer', customer.id),
+                                    fontWeight: FontWeight.w700),
                               ),
                             ],
                           ),
@@ -76,24 +93,80 @@ class _CustomersPageState extends State<CustomersPage> {
                               ? PopupMenuButton<String>(
                                   tooltip: tr.text('actions'),
                                   onSelected: (value) {
-                                    if (value == 'ledger') showAccountLedgerSheet(context: context, store: widget.store, accountType: 'customer', accountId: customer.id, accountName: customer.name);
-                                    if (value == 'payment') showAccountPaymentDialog(context: context, store: widget.store, accountType: 'customer', accountId: customer.id, accountName: customer.name);
-                                    if (value == 'edit') _openCustomerForm(context, customer: customer);
-                                    if (value == 'delete') _deleteCustomer(context, customer);
+                                    if (value == 'ledger') {
+                                      showAccountLedgerSheet(
+                                          context: context,
+                                          store: widget.store,
+                                          accountType: 'customer',
+                                          accountId: customer.id,
+                                          accountName: customer.name);
+                                    }
+                                    if (value == 'payment') {
+                                      showAccountPaymentDialog(
+                                          context: context,
+                                          store: widget.store,
+                                          accountType: 'customer',
+                                          accountId: customer.id,
+                                          accountName: customer.name);
+                                    }
+                                    if (value == 'edit') {
+                                      _openCustomerForm(context,
+                                          customer: customer);
+                                    }
+                                    if (value == 'delete') {
+                                      _deleteCustomer(context, customer);
+                                    }
                                   },
                                   itemBuilder: (context) => [
-                                    PopupMenuItem(value: 'ledger', child: Text(tr.text('account_ledger'))),
-                                    PopupMenuItem(value: 'payment', child: Text(tr.text('receive_payment'))),
-                                    PopupMenuItem(value: 'edit', child: Text(tr.text('edit'))),
-                                    PopupMenuItem(value: 'delete', child: Text(tr.text('delete'))),
+                                    PopupMenuItem(
+                                        value: 'ledger',
+                                        child: Text(tr.text('account_ledger'))),
+                                    PopupMenuItem(
+                                        value: 'payment',
+                                        child:
+                                            Text(tr.text('receive_payment'))),
+                                    PopupMenuItem(
+                                        value: 'edit',
+                                        child: Text(tr.text('edit'))),
+                                    PopupMenuItem(
+                                        value: 'delete',
+                                        child: Text(tr.text('delete'))),
                                   ],
                                 )
                               : Wrap(
                                   children: [
-                                    IconButton(onPressed: () => showAccountLedgerSheet(context: context, store: widget.store, accountType: 'customer', accountId: customer.id, accountName: customer.name), icon: const Icon(Icons.receipt_long_outlined), tooltip: tr.text('account_ledger')),
-                                    IconButton(onPressed: () => showAccountPaymentDialog(context: context, store: widget.store, accountType: 'customer', accountId: customer.id, accountName: customer.name), icon: const Icon(Icons.payments_outlined), tooltip: tr.text('receive_payment')),
-                                    IconButton(onPressed: () => _openCustomerForm(context, customer: customer), icon: const Icon(Icons.edit_outlined), tooltip: tr.text('edit')),
-                                    IconButton(onPressed: () => _deleteCustomer(context, customer), icon: const Icon(Icons.delete_outline), tooltip: tr.text('delete')),
+                                    IconButton(
+                                        onPressed: () => showAccountLedgerSheet(
+                                            context: context,
+                                            store: widget.store,
+                                            accountType: 'customer',
+                                            accountId: customer.id,
+                                            accountName: customer.name),
+                                        icon: const Icon(
+                                            Icons.receipt_long_outlined),
+                                        tooltip: tr.text('account_ledger')),
+                                    IconButton(
+                                        onPressed: () =>
+                                            showAccountPaymentDialog(
+                                                context: context,
+                                                store: widget.store,
+                                                accountType: 'customer',
+                                                accountId: customer.id,
+                                                accountName: customer.name),
+                                        icon:
+                                            const Icon(Icons.payments_outlined),
+                                        tooltip: tr.text('receive_payment')),
+                                    IconButton(
+                                        onPressed: () => _openCustomerForm(
+                                            context,
+                                            customer: customer),
+                                        icon: const Icon(Icons.edit_outlined),
+                                        tooltip: tr.text('edit')),
+                                    IconButton(
+                                        onPressed: () =>
+                                            _deleteCustomer(context, customer),
+                                        icon: const Icon(Icons.delete_outline),
+                                        tooltip: tr.text('delete')),
                                   ],
                                 ),
                         );
@@ -114,10 +187,13 @@ class _CustomersPageState extends State<CustomersPage> {
         title: Text(tr.text('confirm_delete')),
         content: Text('${tr.text('delete_confirm_message')} ${customer.name}?'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: Text(tr.text('cancel'))),
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: Text(tr.text('cancel'))),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            style: FilledButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.error),
+            style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.error),
             child: Text(tr.text('delete')),
           ),
         ],
@@ -126,11 +202,15 @@ class _CustomersPageState extends State<CustomersPage> {
     if (confirmed != true) return;
     await widget.store.deleteCustomer(customer.id);
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('customer_deleted').replaceAll('{name}', customer.name))));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(tr
+              .text('customer_deleted')
+              .replaceAll('{name}', customer.name))));
     }
   }
 
-  Future<void> _openCustomerForm(BuildContext context, {Customer? customer}) async {
+  Future<void> _openCustomerForm(BuildContext context,
+      {Customer? customer}) async {
     final result = await showDialog<Customer>(
       context: context,
       builder: (_) => _CustomerDialog(customer: customer),
@@ -138,7 +218,9 @@ class _CustomersPageState extends State<CustomersPage> {
     if (result != null) {
       await widget.store.addOrUpdateCustomer(result);
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text(customer == null ? 'customer_saved' : 'customer_updated'))));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(AppLocalizations.of(context).text(
+                customer == null ? 'customer_saved' : 'customer_updated'))));
       }
     }
   }
@@ -180,7 +262,9 @@ class _CustomerDialogState extends State<_CustomerDialog> {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     return AlertDialog(
-      title: Text(widget.customer == null ? tr.text('add_customer') : tr.text('edit_customer')),
+      title: Text(widget.customer == null
+          ? tr.text('add_customer')
+          : tr.text('edit_customer')),
       content: ResponsiveDialogBox(
         maxWidth: VentioResponsive.modalMaxWidth(context, 400),
         child: Form(
@@ -188,24 +272,35 @@ class _CustomerDialogState extends State<_CustomerDialog> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              TextFormField(controller: nameController, decoration: InputDecoration(labelText: tr.text('customer_name')), validator: _required),
+              TextFormField(
+                  controller: nameController,
+                  decoration:
+                      InputDecoration(labelText: tr.text('customer_name')),
+                  validator: _required),
               const SizedBox(height: 12),
-              TextFormField(controller: phoneController, decoration: InputDecoration(labelText: tr.text('phone'))),
+              TextFormField(
+                  controller: phoneController,
+                  decoration: InputDecoration(labelText: tr.text('phone'))),
               const SizedBox(height: 12),
-              TextFormField(controller: addressController, decoration: InputDecoration(labelText: tr.text('address'))),
+              TextFormField(
+                  controller: addressController,
+                  decoration: InputDecoration(labelText: tr.text('address'))),
             ],
           ),
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: Text(tr.text('cancel'))),
+        TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(tr.text('cancel'))),
         FilledButton(
           onPressed: () {
             if (!_formKey.currentState!.validate()) return;
             Navigator.pop(
               context,
               Customer(
-                id: widget.customer?.id ?? DateTime.now().microsecondsSinceEpoch.toString(),
+                id: widget.customer?.id ??
+                    DateTime.now().microsecondsSinceEpoch.toString(),
                 name: nameController.text.trim(),
                 phone: phoneController.text.trim(),
                 address: addressController.text.trim(),
@@ -218,5 +313,6 @@ class _CustomerDialogState extends State<_CustomerDialog> {
     );
   }
 
-  String? _required(String? value) => value == null || value.trim().isEmpty ? 'Required' : null;
+  String? _required(String? value) =>
+      value == null || value.trim().isEmpty ? 'Required' : null;
 }

@@ -377,6 +377,12 @@ class AppStore extends ChangeNotifier {
   @override
   void notifyListeners() {
     _invalidateDerivedDataCaches();
+    debugPrint(
+      '[SYNC_TRACE] notifyListeners device=$_deviceId role=${appIdentity.deviceRole.name} '
+      'customers=${_customers.length} visibleCustomers=${customers.length} '
+      'seq=$_syncSequence pendingQueue=${pendingSyncQueue.length} '
+      'pendingChanges=${pendingSyncChanges.length}',
+    );
     super.notifyListeners();
   }
 
@@ -10697,15 +10703,52 @@ class AppStore extends ChangeNotifier {
         acceptedSourceCommandIds: acceptedSourceCommandIds,
         lastAppliedSequence: lastAppliedSequence,
       )) {
+        if (change.entityType == 'customer') {
+          debugPrint(
+            '[SYNC_TRACE] applyRemote:skipDuplicate entity=customer '
+            'id=${change.entityId} op=${change.operation} seq=${change.sequence} '
+            'changeId=${change.id} device=${change.deviceId} '
+            'lastAppliedSequence=$lastAppliedSequence',
+          );
+        }
         continue;
       }
       final incomingEpoch = change.storeEpoch;
       if (incomingEpoch < currentEpoch &&
           !(change.entityType == 'system' &&
               change.operation == 'reset_store_data')) {
+        if (change.entityType == 'customer') {
+          debugPrint(
+            '[SYNC_TRACE] applyRemote:skipEpoch entity=customer '
+            'id=${change.entityId} op=${change.operation} seq=${change.sequence} '
+            'incomingEpoch=$incomingEpoch currentEpoch=$currentEpoch',
+          );
+        }
         continue;
       }
+      if (change.entityType == 'customer') {
+        debugPrint(
+          '[SYNC_TRACE] applyRemote:before entity=customer '
+          'id=${change.entityId} name=${change.payload['name']} '
+          'op=${change.operation} seq=${change.sequence} '
+          'sourceDevice=${change.deviceId} localDevice=$_deviceId '
+          'countBefore=${_customers.length} '
+          'existsBefore=${_customers.any((item) => item.id == change.entityId)}',
+        );
+      }
       await _applySyncChangePayload(change);
+      if (change.entityType == 'customer') {
+        final storedIndex =
+            _customers.indexWhere((item) => item.id == change.entityId);
+        final stored = storedIndex == -1 ? null : _customers[storedIndex];
+        debugPrint(
+          '[SYNC_TRACE] applyRemote:after entity=customer '
+          'id=${change.entityId} name=${stored?.name} '
+          'deletedAt=${stored?.deletedAt?.toIso8601String()} '
+          'syncStatus=${stored?.syncStatus} version=${stored?.version} '
+          'countAfter=${_customers.length}',
+        );
+      }
       _rememberRemoteSqliteBusinessRows(change);
       markEntityDirty(change);
       final shouldMirrorToCloud =
@@ -10779,8 +10822,14 @@ class AppStore extends ChangeNotifier {
       _ensureCatalogDefaults();
       _normalizeCustomers();
       if (saveAllBusinessData) {
+        debugPrint(
+            '[SYNC_TRACE] applyRemote:saveAll customersChanged=$customersChanged');
         await _saveAll();
       } else {
+        debugPrint(
+          '[SYNC_TRACE] applyRemote:saveDirty customersChanged=$customersChanged '
+          'productsChanged=$productsChanged sync=true',
+        );
         await Future.wait([
           if (rolesUsersChanged) _saveRolesAndUsers(),
           _saveDirty(
@@ -10808,6 +10857,10 @@ class AppStore extends ChangeNotifier {
           ),
         ]);
       }
+      debugPrint(
+        '[SYNC_TRACE] applyRemote:notify changed=true customers=${_customers.length} '
+        'visibleCustomers=${customers.length}',
+      );
       notifyListeners();
     }
   }
@@ -11228,12 +11281,42 @@ class AppStore extends ChangeNotifier {
         break;
       case 'customer':
         if (change.operation == 'delete' && p.isEmpty) {
+          debugPrint(
+            '[SYNC_TRACE] applyPayload:customer deleteEmpty id=${change.entityId} '
+            'before=${_customers.length}',
+          );
           _customers.removeWhere((item) => item.id == change.entityId);
         } else {
+          final incoming = Customer.fromJson(p);
+          final beforeIndex =
+              _customers.indexWhere((item) => item.id == incoming.id);
+          final before = beforeIndex == -1 ? null : _customers[beforeIndex];
+          debugPrint(
+            '[SYNC_TRACE] applyPayload:customer upsert id=${incoming.id} '
+            'name=${incoming.name} op=${change.operation} seq=${change.sequence} '
+            'incomingUpdatedAt=${incoming.updatedAt.toIso8601String()} '
+            'incomingDeletedAt=${incoming.deletedAt?.toIso8601String()} '
+            'incomingStatus=${incoming.syncStatus} incomingVersion=${incoming.version} '
+            'beforeExists=${before != null} '
+            'beforeUpdatedAt=${before?.updatedAt.toIso8601String()} '
+            'beforeDeletedAt=${before?.deletedAt?.toIso8601String()} '
+            'beforeStatus=${before?.syncStatus} beforeVersion=${before?.version}',
+          );
           _upsertByUpdatedAt<Customer>(
             _customers,
-            Customer.fromJson(p),
+            incoming,
             (item) => item.id,
+          );
+          final afterIndex =
+              _customers.indexWhere((item) => item.id == incoming.id);
+          final after = afterIndex == -1 ? null : _customers[afterIndex];
+          debugPrint(
+            '[SYNC_TRACE] applyPayload:customer result id=${incoming.id} '
+            'afterExists=${after != null} afterName=${after?.name} '
+            'afterUpdatedAt=${after?.updatedAt.toIso8601String()} '
+            'afterDeletedAt=${after?.deletedAt?.toIso8601String()} '
+            'afterStatus=${after?.syncStatus} afterVersion=${after?.version} '
+            'total=${_customers.length}',
           );
         }
         break;

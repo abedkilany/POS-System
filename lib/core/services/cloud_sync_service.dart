@@ -2826,6 +2826,14 @@ class CloudSyncService {
         }
 
         final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
+        debugPrint(
+          '[SYNC_TRACE] cloudPull:decoded page=$pageCount '
+          'source=${decodedPull['source']} '
+          'changes=${(decodedPull['changes'] as List<dynamic>? ?? const <dynamic>[]).length} '
+          'hasMore=${decodedPull['hasMore']} '
+          'generatedAt=${decodedPull['generatedAt']} '
+          'generatedSequence=${decodedPull['generatedSequence']}',
+        );
         final generationRebuild = await _rebuildIfHostSnapshotGenerationChanged(
           settings,
           decodedPull,
@@ -2914,6 +2922,10 @@ class CloudSyncService {
             'جارٍ تطبيق ${changes.length} تغيير/تغييرات سحابية من الصفحة $pageCount...');
         final applied = await _syncCore.applyAuthoritativeChanges(changes);
         pulled += applied;
+        debugPrint(
+          '[SYNC_TRACE] cloudPull:applied page=$pageCount '
+          'decodedChanges=${changes.length} applied=$applied totalPulled=$pulled',
+        );
 
         final hasMore = decodedPull['hasMore'] == true;
         pageCursor = (decodedPull['nextCursor'] ?? '').toString();
@@ -3105,6 +3117,14 @@ class CloudSyncService {
         }
 
         final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
+        debugPrint(
+          '[SYNC_TRACE] cloudSyncNow:decoded page=$pageCount '
+          'source=${decodedPull['source']} '
+          'changes=${(decodedPull['changes'] as List<dynamic>? ?? const <dynamic>[]).length} '
+          'hasMore=${decodedPull['hasMore']} '
+          'generatedAt=${decodedPull['generatedAt']} '
+          'generatedSequence=${decodedPull['generatedSequence']}',
+        );
         final generationRebuild = await _rebuildIfHostSnapshotGenerationChanged(
           settings,
           decodedPull,
@@ -3193,6 +3213,10 @@ class CloudSyncService {
             (0.42 + (pageCount - 1) * 0.08).clamp(0.42, 0.86).toDouble(),
             'جارٍ تطبيق ${changes.length} تغيير/تغييرات سحابية من الصفحة $pageCount...');
         pulled += await _syncCore.applyAuthoritativeChanges(changes);
+        debugPrint(
+          '[SYNC_TRACE] cloudSyncNow:applied page=$pageCount '
+          'decodedChanges=${changes.length} totalPulled=$pulled',
+        );
 
         final hasMore = decodedPull['hasMore'] == true;
         pageCursor = (decodedPull['nextCursor'] ?? '').toString();
