@@ -4,6 +4,7 @@ import '../../data/app_store.dart';
 import '../../models/sync_change.dart';
 import '../services/cloud_sync_service.dart';
 import '../services/lan_sync_service.dart';
+import '../services/sync_diagnostics_log.dart';
 import 'cloud_sync_transport_adapter.dart';
 import 'lan_sync_transport_adapter.dart';
 import 'sync_device_state.dart';
@@ -89,6 +90,12 @@ class UnifiedAutoLanSyncController {
     _lastSettingsSignature = _settingsSignature(settings);
 
     final allowed = _lanAllowedForCurrentRole(settings);
+    SyncDiagnosticsLog.add(
+      '[SYNC_TRACE] autoLan:start device=${store.deviceId} '
+      'role=${store.appIdentity.deviceRole.name} allowed=$allowed '
+      'auto=${settings.autoSyncEnabled} mode=${settings.mode.name} '
+      'host=${settings.host}:${settings.port}',
+    );
     if (!allowed) {
       await UnifiedSyncFactory.lanEngine(store, settings: settings)
           .transportStopHostIfSupported();
@@ -252,9 +259,19 @@ class UnifiedAutoLanSyncController {
 
     _running = true;
     try {
+      SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] autoLan:runClientSync start device=${store.deviceId} '
+        'queue=${store.pendingSyncQueueForTarget('host', readyOnly: false).length}',
+      );
       await store.retryFailedSyncQueue(target: 'host');
-      await UnifiedSyncFactory.lanEngine(store, settings: settings).syncNow(
+      final result =
+          await UnifiedSyncFactory.lanEngine(store, settings: settings).syncNow(
         onProgress: _snapshotOnlyProgress('LAN'),
+      );
+      SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] autoLan:runClientSync done ok=${result.ok} '
+        'pushed=${result.pushed} pulled=${result.pulled} '
+        'message=${result.message}',
       );
     } finally {
       _running = false;
@@ -294,6 +311,13 @@ class UnifiedAutoCloudSyncController {
     stop();
     _disposed = false;
     final settings = CloudSyncSettings.load();
+    SyncDiagnosticsLog.add(
+      '[SYNC_TRACE] autoCloud:start device=${store.deviceId} '
+      'role=${store.appIdentity.deviceRole.name} '
+      'ready=${_cloudReady(settings)} auto=${settings.autoSyncEnabled} '
+      'configured=${settings.isConfigured} apiBase=${settings.apiBaseUrl} '
+      'transport=${store.appIdentity.activeSyncTransportNormalized}',
+    );
 
     _lastCloudQueueCount =
         store.pendingSyncQueueForTarget('cloud', readyOnly: false).length;
@@ -429,11 +453,22 @@ class UnifiedAutoCloudSyncController {
 
   Future<void> _tick() async {
     if (_running || _disposed) {
+      SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] autoCloud:tickSkipped running=$_running disposed=$_disposed',
+      );
       return;
     }
     _running = true;
     try {
       var settings = CloudSyncSettings.load();
+      SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] autoCloud:tick start device=${store.deviceId} '
+        'role=${store.appIdentity.deviceRole.name} '
+        'ready=${_cloudReady(settings)} auto=${settings.autoSyncEnabled} '
+        'configured=${settings.isConfigured} cursor=${settings.lastPullCursor?.toIso8601String()} '
+        'cloudQueue=${store.pendingSyncQueueForTarget('cloud', readyOnly: false).length} '
+        'relayQueue=${store.pendingSyncQueueForTarget('cloud_host', readyOnly: false).length}',
+      );
       if (settings.autoSyncEnabled &&
           settings.isConfigured &&
           _cloudAllowedForCurrentRole()) {
@@ -490,16 +525,29 @@ class UnifiedAutoCloudSyncController {
             settings = CloudSyncSettings.load();
           }
         }
-        await UnifiedSyncFactory.cloudEngine(store, settings: settings).syncNow(
+        final result =
+            await UnifiedSyncFactory.cloudEngine(store, settings: settings)
+                .syncNow(
           onProgress: _snapshotOnlyProgress('Cloud'),
+        );
+        SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] autoCloud:tick syncDone ok=${result.ok} '
+          'pushed=${result.pushed} pulled=${result.pulled} '
+          'restored=${result.restoredSnapshot} message=${result.message}',
         );
         _lastCloudQueueCount =
             store.pendingSyncQueueForTarget('cloud', readyOnly: false).length;
         _lastRelayQueueCount = store
             .pendingSyncQueueForTarget('cloud_host', readyOnly: false)
             .length;
+      } else {
+        SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] autoCloud:tick notReady auto=${settings.autoSyncEnabled} '
+          'configured=${settings.isConfigured} allowed=${_cloudAllowedForCurrentRole()}',
+        );
       }
     } finally {
+      SyncDiagnosticsLog.add('[SYNC_TRACE] autoCloud:tick end');
       _running = false;
     }
   }

@@ -9,6 +9,7 @@ import '../../data/app_store.dart';
 import '../../models/app_identity.dart';
 import '../../models/sync_change.dart';
 import 'local_database_service.dart';
+import 'sync_diagnostics_log.dart';
 import 'unified_sync_core_service.dart';
 import '../sync_unified/sync_device_state.dart';
 import '../snapshot/unified_snapshot_transfer.dart';
@@ -2826,14 +2827,23 @@ class CloudSyncService {
         }
 
         final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
-        debugPrint(
+        final rawChanges =
+            decodedPull['changes'] as List<dynamic>? ?? const <dynamic>[];
+        SyncDiagnosticsLog.add(
           '[SYNC_TRACE] cloudPull:decoded page=$pageCount '
           'source=${decodedPull['source']} '
-          'changes=${(decodedPull['changes'] as List<dynamic>? ?? const <dynamic>[]).length} '
+          'changes=${rawChanges.length} '
           'hasMore=${decodedPull['hasMore']} '
           'generatedAt=${decodedPull['generatedAt']} '
           'generatedSequence=${decodedPull['generatedSequence']}',
         );
+        for (final raw in rawChanges.take(40)) {
+          final change =
+              SyncChange.fromJson(Map<String, dynamic>.from(raw as Map));
+          SyncDiagnosticsLog.add(
+            '[SYNC_TRACE] cloudPull:rawChange ${SyncDiagnosticsLog.summarizeChange(change)}',
+          );
+        }
         final generationRebuild = await _rebuildIfHostSnapshotGenerationChanged(
           settings,
           decodedPull,
@@ -2881,9 +2891,12 @@ class CloudSyncService {
             expectedRestoreCommandId: commandId,
           );
         }
-        final changes = _syncCore.filterOutLocalEchoes(
-          _syncCore
-              .decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
+        final decodedChanges = _syncCore.decodeRemoteChanges(rawChanges);
+        final changes = _syncCore.filterOutLocalEchoes(decodedChanges);
+        SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] cloudPull:filtered page=$pageCount '
+          'decoded=${decodedChanges.length} afterEchoFilter=${changes.length} '
+          'localDevice=${store.deviceId}',
         );
         final source = (decodedPull['source'] ?? '').toString();
         final restoreMarker = changes.any((item) =>
@@ -2922,7 +2935,7 @@ class CloudSyncService {
             'جارٍ تطبيق ${changes.length} تغيير/تغييرات سحابية من الصفحة $pageCount...');
         final applied = await _syncCore.applyAuthoritativeChanges(changes);
         pulled += applied;
-        debugPrint(
+        SyncDiagnosticsLog.add(
           '[SYNC_TRACE] cloudPull:applied page=$pageCount '
           'decodedChanges=${changes.length} applied=$applied totalPulled=$pulled',
         );
@@ -3117,14 +3130,23 @@ class CloudSyncService {
         }
 
         final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
-        debugPrint(
+        final rawChanges =
+            decodedPull['changes'] as List<dynamic>? ?? const <dynamic>[];
+        SyncDiagnosticsLog.add(
           '[SYNC_TRACE] cloudSyncNow:decoded page=$pageCount '
           'source=${decodedPull['source']} '
-          'changes=${(decodedPull['changes'] as List<dynamic>? ?? const <dynamic>[]).length} '
+          'changes=${rawChanges.length} '
           'hasMore=${decodedPull['hasMore']} '
           'generatedAt=${decodedPull['generatedAt']} '
           'generatedSequence=${decodedPull['generatedSequence']}',
         );
+        for (final raw in rawChanges.take(40)) {
+          final change =
+              SyncChange.fromJson(Map<String, dynamic>.from(raw as Map));
+          SyncDiagnosticsLog.add(
+            '[SYNC_TRACE] cloudSyncNow:rawChange ${SyncDiagnosticsLog.summarizeChange(change)}',
+          );
+        }
         final generationRebuild = await _rebuildIfHostSnapshotGenerationChanged(
           settings,
           decodedPull,
@@ -3173,9 +3195,12 @@ class CloudSyncService {
             expectedRestoreCommandId: commandId,
           );
         }
-        final changes = _syncCore.filterOutLocalEchoes(
-          _syncCore
-              .decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
+        final decodedChanges = _syncCore.decodeRemoteChanges(rawChanges);
+        final changes = _syncCore.filterOutLocalEchoes(decodedChanges);
+        SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] cloudSyncNow:filtered page=$pageCount '
+          'decoded=${decodedChanges.length} afterEchoFilter=${changes.length} '
+          'localDevice=${store.deviceId}',
         );
         final source = (decodedPull['source'] ?? '').toString();
         final restoreMarker = changes.any((item) =>
@@ -3212,10 +3237,11 @@ class CloudSyncService {
         onProgress?.call(
             (0.42 + (pageCount - 1) * 0.08).clamp(0.42, 0.86).toDouble(),
             'جارٍ تطبيق ${changes.length} تغيير/تغييرات سحابية من الصفحة $pageCount...');
-        pulled += await _syncCore.applyAuthoritativeChanges(changes);
-        debugPrint(
+        final applied = await _syncCore.applyAuthoritativeChanges(changes);
+        pulled += applied;
+        SyncDiagnosticsLog.add(
           '[SYNC_TRACE] cloudSyncNow:applied page=$pageCount '
-          'decodedChanges=${changes.length} totalPulled=$pulled',
+          'decodedChanges=${changes.length} applied=$applied totalPulled=$pulled',
         );
 
         final hasMore = decodedPull['hasMore'] == true;

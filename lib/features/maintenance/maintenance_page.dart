@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/services/backup_download_service.dart';
+import '../../core/services/sync_diagnostics_log.dart';
 import '../../data/app_store.dart';
 import '../../core/localization/app_localizations.dart';
 import '../database/database_page.dart';
@@ -141,7 +143,8 @@ class _MaintenancePageState extends State<MaintenancePage> {
             child: Row(
               children: [
                 IconButton(
-                  onPressed: () => setState(() => _showDatabaseExplorer = false),
+                  onPressed: () =>
+                      setState(() => _showDatabaseExplorer = false),
                   icon: const Icon(Icons.arrow_back),
                   tooltip: MaterialLocalizations.of(context).backButtonTooltip,
                 ),
@@ -209,6 +212,8 @@ class _MaintenancePageState extends State<MaintenancePage> {
           ),
           const SizedBox(height: 16),
           _buildMaintenanceActionsCard(tr, summary, availableRepairActions),
+          const SizedBox(height: 16),
+          _SyncDiagnosticsLogCard(store: widget.store),
           const SizedBox(height: 16),
           if (_loading)
             const LinearProgressIndicator()
@@ -388,6 +393,150 @@ class _MaintenancePageState extends State<MaintenancePage> {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _SyncDiagnosticsLogCard extends StatelessWidget {
+  const _SyncDiagnosticsLogCard({required this.store});
+
+  final AppStore store;
+
+  Future<void> _copy(BuildContext context, List<String> lines) async {
+    final identity = store.appIdentity;
+    final header = [
+      'SYNC DIAGNOSTICS',
+      'device=${store.deviceId}',
+      'role=${identity.deviceRole.name}',
+      'store=${identity.storeId}',
+      'branch=${identity.branchId}',
+      'transport=${identity.activeSyncTransportNormalized}',
+      'customers=${store.customers.length}',
+      'customerNames=${store.customers.map((item) => item.name).join(',')}',
+      'pendingQueue=${store.pendingSyncQueue.length}',
+      'pendingChanges=${store.pendingSyncChanges.length}',
+      '',
+    ].join('\n');
+    await Clipboard.setData(ClipboardData(text: '$header${lines.join('\n')}'));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Copied ${lines.length} sync log line(s).')),
+    );
+  }
+
+  void _snapshot() {
+    final identity = store.appIdentity;
+    SyncDiagnosticsLog.add(
+      'MANUAL_SNAPSHOT role=${identity.deviceRole.name} device=${store.deviceId} '
+      'store=${identity.storeId} branch=${identity.branchId} '
+      'transport=${identity.activeSyncTransportNormalized} '
+      'customers=${store.customers.length} '
+      'customerNames=${store.customers.map((item) => item.name).join(',')} '
+      'pendingQueue=${store.pendingSyncQueue.length} '
+      'pendingChanges=${store.pendingSyncChanges.length}',
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme;
+    return ValueListenableBuilder<List<String>>(
+      valueListenable: SyncDiagnosticsLog.lines,
+      builder: (context, lines, _) {
+        final latest = lines.reversed.take(220).toList().reversed.toList();
+        return Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.manage_search_outlined),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Temporary Sync Diagnostics',
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleMedium
+                                ?.copyWith(fontWeight: FontWeight.w800),
+                          ),
+                          Text(
+                            'Live Host/Client sync trace for this device.',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(color: color.onSurfaceVariant),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Text('${lines.length}'),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed:
+                          lines.isEmpty ? null : () => _copy(context, lines),
+                      icon: const Icon(Icons.copy_outlined),
+                      label: const Text('Copy log'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: _snapshot,
+                      icon: const Icon(Icons.add_chart_outlined),
+                      label: const Text('Add snapshot'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed:
+                          lines.isEmpty ? null : SyncDiagnosticsLog.clear,
+                      icon: const Icon(Icons.clear_all_outlined),
+                      label: const Text('Clear'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  constraints:
+                      const BoxConstraints(minHeight: 160, maxHeight: 360),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color:
+                        color.surfaceContainerHighest.withValues(alpha: 0.45),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: color.outlineVariant),
+                  ),
+                  child: latest.isEmpty
+                      ? Text(
+                          'No sync diagnostics yet. Add a change on Host or Client, then watch this panel.',
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodyMedium
+                              ?.copyWith(color: color.onSurfaceVariant),
+                        )
+                      : SingleChildScrollView(
+                          reverse: true,
+                          child: SelectableText(
+                            latest.join('\n'),
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(fontFamily: 'monospace'),
+                          ),
+                        ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

@@ -9,6 +9,7 @@ import 'package:pointycastle/export.dart' as pc;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/services/local_database_service.dart';
+import '../core/services/sync_diagnostics_log.dart';
 import '../core/sync_unified/sync_device_state.dart';
 import '../core/snapshot/unified_snapshot.dart';
 import '../core/utils/currency_utils.dart';
@@ -377,12 +378,13 @@ class AppStore extends ChangeNotifier {
   @override
   void notifyListeners() {
     _invalidateDerivedDataCaches();
-    debugPrint(
-      '[SYNC_TRACE] notifyListeners device=$_deviceId role=${appIdentity.deviceRole.name} '
-      'customers=${_customers.length} visibleCustomers=${customers.length} '
-      'seq=$_syncSequence pendingQueue=${pendingSyncQueue.length} '
-      'pendingChanges=${pendingSyncChanges.length}',
-    );
+    final line =
+        'notifyListeners device=$_deviceId role=${appIdentity.deviceRole.name} '
+        'customers=${_customers.length} visibleCustomers=${customers.length} '
+        'seq=$_syncSequence pendingQueue=${pendingSyncQueue.length} '
+        'pendingChanges=${pendingSyncChanges.length} '
+        'customerNames=${customers.map((item) => item.name).join(',')}';
+    SyncDiagnosticsLog.add('[SYNC_TRACE] $line');
     super.notifyListeners();
   }
 
@@ -10595,6 +10597,17 @@ class AppStore extends ChangeNotifier {
         }
         return a.createdAt.compareTo(b.createdAt);
       });
+    SyncDiagnosticsLog.add(
+      '[SYNC_TRACE] applyRemote:start incoming=${incoming.length} '
+      'sorted=${sorted.length} markApplied=$markAppliedAsSynced '
+      'mirrorToCloud=$mirrorToCloud lastAppliedSequence=$lastAppliedSequence '
+      'currentEpoch=$currentEpoch',
+    );
+    for (final change in sorted.take(40)) {
+      SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] applyRemote:item ${SyncDiagnosticsLog.summarizeChange(change)}',
+      );
+    }
     var changed = false;
     var saveAllBusinessData = false;
     var storeProfileChanged = false;
@@ -10703,45 +10716,36 @@ class AppStore extends ChangeNotifier {
         acceptedSourceCommandIds: acceptedSourceCommandIds,
         lastAppliedSequence: lastAppliedSequence,
       )) {
-        if (change.entityType == 'customer') {
-          debugPrint(
-            '[SYNC_TRACE] applyRemote:skipDuplicate entity=customer '
-            'id=${change.entityId} op=${change.operation} seq=${change.sequence} '
-            'changeId=${change.id} device=${change.deviceId} '
-            'lastAppliedSequence=$lastAppliedSequence',
-          );
-        }
+        SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] applyRemote:skipDuplicate '
+          '${SyncDiagnosticsLog.summarizeChange(change)} '
+          'lastAppliedSequence=$lastAppliedSequence',
+        );
         continue;
       }
       final incomingEpoch = change.storeEpoch;
       if (incomingEpoch < currentEpoch &&
           !(change.entityType == 'system' &&
               change.operation == 'reset_store_data')) {
-        if (change.entityType == 'customer') {
-          debugPrint(
-            '[SYNC_TRACE] applyRemote:skipEpoch entity=customer '
-            'id=${change.entityId} op=${change.operation} seq=${change.sequence} '
-            'incomingEpoch=$incomingEpoch currentEpoch=$currentEpoch',
-          );
-        }
+        SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] applyRemote:skipEpoch '
+          '${SyncDiagnosticsLog.summarizeChange(change)} '
+          'incomingEpoch=$incomingEpoch currentEpoch=$currentEpoch',
+        );
         continue;
       }
-      if (change.entityType == 'customer') {
-        debugPrint(
-          '[SYNC_TRACE] applyRemote:before entity=customer '
-          'id=${change.entityId} name=${change.payload['name']} '
-          'op=${change.operation} seq=${change.sequence} '
-          'sourceDevice=${change.deviceId} localDevice=$_deviceId '
-          'countBefore=${_customers.length} '
-          'existsBefore=${_customers.any((item) => item.id == change.entityId)}',
-        );
-      }
+      SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] applyRemote:before '
+        '${SyncDiagnosticsLog.summarizeChange(change)} '
+        'localDevice=$_deviceId countBeforeCustomers=${_customers.length} '
+        'existsBefore=${_customers.any((item) => item.id == change.entityId)}',
+      );
       await _applySyncChangePayload(change);
       if (change.entityType == 'customer') {
         final storedIndex =
             _customers.indexWhere((item) => item.id == change.entityId);
         final stored = storedIndex == -1 ? null : _customers[storedIndex];
-        debugPrint(
+        SyncDiagnosticsLog.add(
           '[SYNC_TRACE] applyRemote:after entity=customer '
           'id=${change.entityId} name=${stored?.name} '
           'deletedAt=${stored?.deletedAt?.toIso8601String()} '
@@ -10822,11 +10826,11 @@ class AppStore extends ChangeNotifier {
       _ensureCatalogDefaults();
       _normalizeCustomers();
       if (saveAllBusinessData) {
-        debugPrint(
+        SyncDiagnosticsLog.add(
             '[SYNC_TRACE] applyRemote:saveAll customersChanged=$customersChanged');
         await _saveAll();
       } else {
-        debugPrint(
+        SyncDiagnosticsLog.add(
           '[SYNC_TRACE] applyRemote:saveDirty customersChanged=$customersChanged '
           'productsChanged=$productsChanged sync=true',
         );
@@ -10857,11 +10861,17 @@ class AppStore extends ChangeNotifier {
           ),
         ]);
       }
-      debugPrint(
+      SyncDiagnosticsLog.add(
         '[SYNC_TRACE] applyRemote:notify changed=true customers=${_customers.length} '
-        'visibleCustomers=${customers.length}',
+        'visibleCustomers=${customers.length} '
+        'customerNames=${customers.map((item) => item.name).join(',')}',
       );
       notifyListeners();
+    } else {
+      SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] applyRemote:done changed=false customers=${_customers.length} '
+        'visibleCustomers=${customers.length}',
+      );
     }
   }
 
@@ -11281,7 +11291,7 @@ class AppStore extends ChangeNotifier {
         break;
       case 'customer':
         if (change.operation == 'delete' && p.isEmpty) {
-          debugPrint(
+          SyncDiagnosticsLog.add(
             '[SYNC_TRACE] applyPayload:customer deleteEmpty id=${change.entityId} '
             'before=${_customers.length}',
           );
@@ -11291,7 +11301,7 @@ class AppStore extends ChangeNotifier {
           final beforeIndex =
               _customers.indexWhere((item) => item.id == incoming.id);
           final before = beforeIndex == -1 ? null : _customers[beforeIndex];
-          debugPrint(
+          SyncDiagnosticsLog.add(
             '[SYNC_TRACE] applyPayload:customer upsert id=${incoming.id} '
             'name=${incoming.name} op=${change.operation} seq=${change.sequence} '
             'incomingUpdatedAt=${incoming.updatedAt.toIso8601String()} '
@@ -11310,7 +11320,7 @@ class AppStore extends ChangeNotifier {
           final afterIndex =
               _customers.indexWhere((item) => item.id == incoming.id);
           final after = afterIndex == -1 ? null : _customers[afterIndex];
-          debugPrint(
+          SyncDiagnosticsLog.add(
             '[SYNC_TRACE] applyPayload:customer result id=${incoming.id} '
             'afterExists=${after != null} afterName=${after?.name} '
             'afterUpdatedAt=${after?.updatedAt.toIso8601String()} '

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
+import '../../core/services/sync_diagnostics_log.dart';
 import '../../core/utils/responsive.dart';
 import '../../data/app_store.dart';
 import '../../models/customer.dart';
@@ -32,7 +33,7 @@ class _CustomersPageState extends State<CustomersPage> {
       return customer.name.toLowerCase().contains(value) ||
           customer.phone.toLowerCase().contains(value);
     }).toList();
-    debugPrint(
+    SyncDiagnosticsLog.add(
       '[SYNC_TRACE] customersPage:build query="$query" '
       'visible=${customers.length} names=${customers.map((item) => item.name).join(',')}',
     );

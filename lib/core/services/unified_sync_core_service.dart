@@ -1,5 +1,6 @@
 import '../../data/app_store.dart';
 import '../../models/sync_change.dart';
+import 'sync_diagnostics_log.dart';
 
 /// Transport-independent Host-authority sync logic.
 ///
@@ -24,12 +25,14 @@ class UnifiedSyncCoreService {
     return store.markSyncQueueChangesInProgress(changeIds);
   }
 
-  Future<void> markPushSubmitted(Iterable<String> ackIds, {Iterable<String> fallbackIds = const <String>[]}) {
+  Future<void> markPushSubmitted(Iterable<String> ackIds,
+      {Iterable<String> fallbackIds = const <String>[]}) {
     final ids = ackIds.isEmpty ? fallbackIds : ackIds;
     return store.markSyncChangesSubmittedByIds(ids);
   }
 
-  Future<void> markPushAcknowledged(Iterable<String> ackIds, {Iterable<String> fallbackIds = const <String>[]}) {
+  Future<void> markPushAcknowledged(Iterable<String> ackIds,
+      {Iterable<String> fallbackIds = const <String>[]}) {
     final ids = ackIds.isEmpty ? fallbackIds : ackIds;
     return store.markSyncChangesSyncedByIds(ids);
   }
@@ -48,16 +51,33 @@ class UnifiedSyncCoreService {
 
   List<SyncChange> decodeRemoteChanges(List<dynamic>? raw) {
     return (raw ?? const <dynamic>[])
-        .map((item) => SyncChange.fromJson(Map<String, dynamic>.from(item as Map)))
+        .map((item) =>
+            SyncChange.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
   }
 
   List<SyncChange> filterOutLocalEchoes(Iterable<SyncChange> changes) {
-    return changes.where((item) => item.deviceId != store.deviceId).toList();
+    final list = changes.toList();
+    final filtered =
+        list.where((item) => item.deviceId != store.deviceId).toList();
+    if (list.length != filtered.length) {
+      SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] core:echoFilter input=${list.length} output=${filtered.length} '
+        'localDevice=${store.deviceId} removed=${list.length - filtered.length}',
+      );
+      for (final change
+          in list.where((item) => item.deviceId == store.deviceId).take(20)) {
+        SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] core:echoRemoved ${SyncDiagnosticsLog.summarizeChange(change)}',
+        );
+      }
+    }
+    return filtered;
   }
 
   bool containsHostOnlyOperation(Iterable<SyncChange> changes) {
-    return changes.any((item) => item.entityType == 'system' && item.operation == 'reset_store_data');
+    return changes.any((item) =>
+        item.entityType == 'system' && item.operation == 'reset_store_data');
   }
 
   /// Applies Client drafts on the Host using the same acceptance rules for LAN
@@ -69,7 +89,10 @@ class UnifiedSyncCoreService {
   }) async {
     final received = filterOutLocalEchoes(remoteChanges);
     if (received.isEmpty) {
-      return const HostAcceptedChanges(ackIds: <String>[], accepted: <SyncChange>[], discardedBecauseOfReset: 0);
+      return const HostAcceptedChanges(
+          ackIds: <String>[],
+          accepted: <SyncChange>[],
+          discardedBecauseOfReset: 0);
     }
 
     final latestResetAt = store.latestResetSyncAt;
@@ -105,7 +128,8 @@ class UnifiedSyncCoreService {
     return HostAcceptedChanges(
       ackIds: applicable.map((item) => item.id).toList(),
       accepted: applicable,
-      discardedBecauseOfReset: rejected.values.where((item) => item.contains('reset')).length,
+      discardedBecauseOfReset:
+          rejected.values.where((item) => item.contains('reset')).length,
       rejected: rejected,
     );
   }
@@ -115,13 +139,23 @@ class UnifiedSyncCoreService {
     bool cleanupSoftDeleted = false,
   }) async {
     final remoteList = remoteChanges.toList();
+    SyncDiagnosticsLog.add(
+      '[SYNC_TRACE] core:applyAuthoritative start remote=${remoteList.length} '
+      'cleanupSoftDeleted=$cleanupSoftDeleted localDevice=${store.deviceId}',
+    );
+    for (final change in remoteList.take(40)) {
+      SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] core:authoritative ${SyncDiagnosticsLog.summarizeChange(change)}',
+      );
+    }
 
     // Host confirmation rule: drafts pushed to a relay are only final after
     // the Host republishes them as authoritative changes. If this device is
     // the origin, the matching local queue row is confirmed here instead of
     // being confirmed by the relay ACK.
     await store.markSyncChangesSyncedByIds(remoteList.expand((item) {
-      final meta = Map<String, dynamic>.from(item.payload['_syncV2'] as Map? ?? const {});
+      final meta = Map<String, dynamic>.from(
+          item.payload['_syncV2'] as Map? ?? const {});
       return <String>[
         item.id,
         (meta['eventId'] ?? '').toString(),
@@ -131,10 +165,16 @@ class UnifiedSyncCoreService {
     }));
 
     final changes = filterOutLocalEchoes(remoteList);
+    SyncDiagnosticsLog.add(
+      '[SYNC_TRACE] core:applyAuthoritative afterEchoFilter=${changes.length}',
+    );
     await store.applyRemoteSyncChanges(changes, markAppliedAsSynced: true);
     if (cleanupSoftDeleted && changes.isNotEmpty) {
       await store.cleanupSoftDeletedRecords();
     }
+    SyncDiagnosticsLog.add(
+      '[SYNC_TRACE] core:applyAuthoritative done countedApplied=${changes.length}',
+    );
     return changes.length;
   }
 }
