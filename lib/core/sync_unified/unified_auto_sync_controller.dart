@@ -545,7 +545,7 @@ class UnifiedAutoCloudSyncController {
         if (pendingProvisioning) {
           if (hasAppliedCloudBaseline) {
             await CloudProvisioningStatus.markComplete(
-              message: 'تم تثبيت بيانات المتجر الأولية.',
+              message: 'Initial Store data installed.',
             );
           } else {
             final lastAttempt = CloudProvisioningStatus.lastAttemptAt;

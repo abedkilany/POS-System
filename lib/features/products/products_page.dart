@@ -63,7 +63,7 @@ class _ProductsPageState extends State<ProductsPage> {
       ..sort();
     final productRows = products
         .map((product) => _ProductRowData.fromStore(
-            product, widget.store, widget.store.storeProfile))
+            product, widget.store, widget.store.storeProfile, tr))
         .toList(growable: false);
 
     return Padding(
@@ -457,8 +457,8 @@ class _ProductRowData {
   final String meta;
   final String purchaseMeta;
 
-  factory _ProductRowData.fromStore(
-      Product product, AppStore store, StoreProfile storeProfile) {
+  factory _ProductRowData.fromStore(Product product, AppStore store,
+      StoreProfile storeProfile, AppLocalizations tr) {
     final subtitle = [
       product.code,
       product.barcode,
@@ -470,13 +470,14 @@ class _ProductRowData {
     final supplierCount = store.supplierCountForProduct(product.id);
     final meta = product.trackStock
         ? '${product.stock} ${product.unit} • ${formatUsdReferenceAmount(product.price, storeProfile)}'
-        : 'خدمة / بدون مخزون • ${formatUsdReferenceAmount(product.price, storeProfile)}';
+        : '${tr.text('quantity_type_service')} • ${formatUsdReferenceAmount(product.price, storeProfile)}';
     final purchaseMeta = [
       if (lastPurchase != null)
-        'آخر تكلفة ${formatUsdReferenceAmount(lastPurchase, storeProfile)}',
+        '${tr.text('last_cost')}: ${formatUsdReferenceAmount(lastPurchase, storeProfile)}',
       if (avgPurchase > 0)
-        'متوسط التكلفة ${formatUsdReferenceAmount(avgPurchase, storeProfile)}',
-      if (supplierCount > 0) '$supplierCount مورد',
+        '${tr.text('average_cost')}: ${formatUsdReferenceAmount(avgPurchase, storeProfile)}',
+      if (supplierCount > 0)
+        tr.format('suppliers_count', {'count': supplierCount}),
     ].join(' • ');
     return _ProductRowData(
         product: product,
@@ -535,6 +536,7 @@ class _ProductDialogState extends State<_ProductDialog> {
   @override
   void initState() {
     super.initState();
+    final tr = AppLocalizations.of(context);
     final product = widget.product;
     _productId =
         product?.id ?? DateTime.now().microsecondsSinceEpoch.toString();
@@ -569,7 +571,7 @@ class _ProductDialogState extends State<_ProductDialog> {
             ? widget.store.categories.first.code.isNotEmpty
                 ? widget.store.categories.first.code
                 : widget.store.categories.first.nameEn
-            : 'عام');
+            : tr.text('general'));
     brand = product?.brand ?? '';
     unit = product?.unit ??
         (widget.store.units.isNotEmpty ? widget.store.units.first.code : 'pcs');
@@ -1070,6 +1072,7 @@ class _SupplierPricesEditor extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     final canAdd = suppliers.isNotEmpty;
     final rows = prices.where((item) => !item.isDeleted).toList()
       ..sort((a, b) {
@@ -1084,7 +1087,7 @@ class _SupplierPricesEditor extends StatelessWidget {
         LayoutBuilder(
           builder: (context, constraints) {
             final description = Text(
-              'احتفظ بأسعار الشراء الرسمية لكل مورد. يبقى سجل الشراء متاحاً بشكل منفصل.',
+              tr.text('supplier_prices_desc'),
               style: Theme.of(context).textTheme.bodySmall,
             );
             final actions = Wrap(
@@ -1099,7 +1102,7 @@ class _SupplierPricesEditor extends StatelessWidget {
                 FilledButton.icon(
                   onPressed: canAdd ? () => _openEditor(context) : null,
                   icon: const Icon(Icons.add),
-                  label: const Text('إضافة'),
+                  label: Text(tr.text('add')),
                 ),
               ],
             );
@@ -1120,7 +1123,7 @@ class _SupplierPricesEditor extends StatelessWidget {
         ),
         if (!canAdd) ...[
           const SizedBox(height: 8),
-          const Text('أضف الموردين أولاً لإدارة أسعار الموردين.'),
+          Text(tr.text('add_suppliers_first_for_prices')),
         ],
         const SizedBox(height: 12),
         if (rows.isNotEmpty)
@@ -1129,19 +1132,19 @@ class _SupplierPricesEditor extends StatelessWidget {
               padding: const EdgeInsets.all(12),
               child: Text([
                 if (rows.any((item) => item.isPreferred))
-                  'المورد المفضل: ${_supplierName(rows.firstWhere((item) => item.isPreferred).supplierId)}',
-                'أفضل سعر: ${_supplierName((rows.toList()..sort((a, b) => a.cost.compareTo(b.cost))).first.supplierId)}',
+                  '${tr.text('preferred_supplier')}: ${_supplierName(rows.firstWhere((item) => item.isPreferred).supplierId)}',
+                '${tr.text('best_price')}: ${_supplierName((rows.toList()..sort((a, b) => a.cost.compareTo(b.cost))).first.supplierId)}',
                 if (rows.any((item) => item.leadTimeDays != null))
-                  'الأسرع: ${_supplierName((rows.where((item) => item.leadTimeDays != null).toList()..sort((a, b) => a.leadTimeDays!.compareTo(b.leadTimeDays!))).first.supplierId)}',
+                  '${tr.text('fastest_supplier')}: ${_supplierName((rows.where((item) => item.leadTimeDays != null).toList()..sort((a, b) => a.leadTimeDays!.compareTo(b.leadTimeDays!))).first.supplierId)}',
               ].join(' • ')),
             ),
           ),
         if (rows.isNotEmpty) const SizedBox(height: 8),
         if (rows.isEmpty)
-          const Card(
+          Card(
             child: Padding(
-              padding: EdgeInsets.all(16),
-              child: Text('لا توجد أسعار موردين بعد.'),
+              padding: const EdgeInsets.all(16),
+              child: Text(tr.text('no_supplier_prices')),
             ),
           )
         else
@@ -1154,23 +1157,31 @@ class _SupplierPricesEditor extends StatelessWidget {
       BuildContext context, SupplierProductPrice item) {
     final subtitle = [
       formatCurrency(item.cost, currency: item.currency),
-      if (item.isPreferred) 'مفضل',
-      if (item.supplierSku.trim().isNotEmpty) 'رمز المورد: ${item.supplierSku.trim()}',
-      if (item.minOrderQty != null) 'الحد الأدنى: ${item.minOrderQty}',
-      if (item.leadTimeDays != null) '${item.leadTimeDays} يوم',
-      if (item.priceHistory.isNotEmpty) 'السجل: ${item.priceHistory.length}',
+      if (item.isPreferred) AppLocalizations.of(context).text('preferred'),
+      if (item.supplierSku.trim().isNotEmpty)
+        AppLocalizations.of(context)
+            .format('supplier_sku_prefix', {'value': item.supplierSku.trim()}),
+      if (item.minOrderQty != null)
+        AppLocalizations.of(context)
+            .format('min_order_qty_prefix', {'value': item.minOrderQty}),
+      if (item.leadTimeDays != null)
+        AppLocalizations.of(context)
+            .format('lead_time_days', {'count': item.leadTimeDays}),
+      if (item.priceHistory.isNotEmpty)
+        AppLocalizations.of(context)
+            .format('history_count', {'count': item.priceHistory.length}),
       if (item.notes.trim().isNotEmpty) item.notes.trim(),
     ].join(' • ');
     final actions = Wrap(
       spacing: 4,
       children: [
         IconButton(
-          tooltip: 'تعديل',
+          tooltip: AppLocalizations.of(context).text('edit'),
           onPressed: () => _openEditor(context, item: item),
           icon: const Icon(Icons.edit_outlined),
         ),
         IconButton(
-          tooltip: 'حذف',
+          tooltip: AppLocalizations.of(context).text('delete'),
           onPressed: () {
             onChanged(prices.where((row) => row.id != item.id).toList());
           },
@@ -1303,7 +1314,9 @@ class _SupplierPricesEditor extends StatelessWidget {
     }
     onChanged(updated);
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('csv_import_completed'))));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content:
+              Text(AppLocalizations.of(context).text('csv_import_completed'))));
     }
   }
 
@@ -1404,12 +1417,13 @@ class _SupplierPriceDialogState extends State<_SupplierPriceDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     final dialogWidth =
         math.min(MediaQuery.sizeOf(context).width - 32, 420).toDouble();
     return AlertDialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 24),
-      title: Text(
-          widget.price == null ? 'إضافة سعر مورد' : 'تعديل سعر مورد'),
+      title: Text(tr.text(
+          widget.price == null ? 'add_supplier_price' : 'edit_supplier_price')),
       content: ConstrainedBox(
         constraints: BoxConstraints(
           maxWidth: dialogWidth,
@@ -1423,7 +1437,7 @@ class _SupplierPriceDialogState extends State<_SupplierPriceDialog> {
               children: [
                 DropdownButtonFormField<String>(
                   initialValue: supplierId.isEmpty ? null : supplierId,
-                  decoration: const InputDecoration(labelText: 'المورد'),
+                  decoration: InputDecoration(labelText: tr.text('supplier')),
                   items: widget.suppliers
                       .map((supplier) => DropdownMenuItem(
                             value: supplier.id,
@@ -1434,26 +1448,27 @@ class _SupplierPriceDialogState extends State<_SupplierPriceDialog> {
                       .toList(),
                   onChanged: (value) =>
                       setState(() => supplierId = value ?? ''),
-                  validator: (value) =>
-                      value == null || value.trim().isEmpty ? 'مطلوب' : null,
+                  validator: (value) => value == null || value.trim().isEmpty
+                      ? tr.text('required_field')
+                      : null,
                 ),
                 const SizedBox(height: 12),
                 TextFormField(
                   controller: costController,
-                  decoration: const InputDecoration(labelText: 'التكلفة'),
+                  decoration: InputDecoration(labelText: tr.text('cost')),
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
                   validator: (value) {
                     final number = double.tryParse((value ?? '').trim());
                     return number == null || number < 0
-                        ? 'رقم غير صالح'
+                        ? tr.text('invalid_number')
                         : null;
                   },
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
                   initialValue: currency,
-                  decoration: const InputDecoration(labelText: 'العملة'),
+                  decoration: InputDecoration(labelText: tr.text('currency')),
                   items: const [
                     DropdownMenuItem(value: 'USD', child: Text('USD')),
                     DropdownMenuItem(value: 'LBP', child: Text('LBP')),
@@ -1464,49 +1479,48 @@ class _SupplierPriceDialogState extends State<_SupplierPriceDialog> {
                 const SizedBox(height: 12),
                 TextFormField(
                   controller: supplierSkuController,
-                  decoration: const InputDecoration(
-                      labelText: 'رمز المورد / الكود (اختياري)'),
+                  decoration:
+                      InputDecoration(labelText: tr.text('supplier_sku')),
                 ),
                 const SizedBox(height: 12),
                 TextFormField(
                   controller: minOrderQtyController,
-                  decoration: const InputDecoration(
-                      labelText: 'الحد الأدنى لكمية الطلب (اختياري)'),
+                  decoration:
+                      InputDecoration(labelText: tr.text('min_order_qty')),
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
                   validator: (value) {
                     if ((value ?? '').trim().isEmpty) return null;
                     final number = double.tryParse((value ?? '').trim());
                     return number == null || number < 0
-                        ? 'رقم غير صالح'
+                        ? tr.text('invalid_number')
                         : null;
                   },
                 ),
                 const SizedBox(height: 12),
                 TextFormField(
                   controller: leadTimeDaysController,
-                  decoration: const InputDecoration(
-                      labelText: 'مدة التوريد بالأيام (اختياري)'),
+                  decoration: InputDecoration(labelText: tr.text('lead_time')),
                   keyboardType: TextInputType.number,
                   validator: (value) {
                     if ((value ?? '').trim().isEmpty) return null;
                     final number = int.tryParse((value ?? '').trim());
                     return number == null || number < 0
-                        ? 'رقم غير صالح'
+                        ? tr.text('invalid_number')
                         : null;
                   },
                 ),
                 const SizedBox(height: 12),
                 TextFormField(
                   controller: notesController,
-                  decoration: const InputDecoration(labelText: 'ملاحظات'),
+                  decoration: InputDecoration(labelText: tr.text('notes')),
                   minLines: 1,
                   maxLines: 3,
                 ),
                 const SizedBox(height: 8),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('مورد مفضل'),
+                  title: Text(tr.text('preferred_supplier')),
                   value: isPreferred,
                   onChanged: (value) => setState(() => isPreferred = value),
                 ),
@@ -1514,7 +1528,7 @@ class _SupplierPriceDialogState extends State<_SupplierPriceDialog> {
                   const Divider(),
                   Align(
                     alignment: Alignment.centerLeft,
-                    child: Text('سجل الأسعار',
+                    child: Text(tr.text('price_history'),
                         style: Theme.of(context).textTheme.titleSmall),
                   ),
                   const SizedBox(height: 4),
@@ -1536,8 +1550,8 @@ class _SupplierPriceDialogState extends State<_SupplierPriceDialog> {
       actions: [
         TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('إلغاء')),
-        FilledButton(onPressed: _save, child: const Text('حفظ')),
+            child: Text(tr.text('cancel'))),
+        FilledButton(onPressed: _save, child: Text(tr.text('save'))),
       ],
     );
   }
@@ -1551,9 +1565,9 @@ class _SupplierPriceDialogState extends State<_SupplierPriceDialog> {
         item.productId == widget.productId &&
         item.supplierId == supplierId);
     if (duplicate) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content:
-              Text('هذا المورد لديه سعر مسجل لهذا المنتج بالفعل.')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+              AppLocalizations.of(context).text('supplier_price_duplicate'))));
       return;
     }
     Navigator.pop(

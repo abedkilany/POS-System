@@ -272,5 +272,18 @@ String localizeRuntimeMessage(String message, AppLocalizations tr) {
     return value.replaceFirst('Sync completed.', tr.text('sync_completed'));
   }
 
+  if (tr.isArabic) {
+    var localized = value
+        .replaceAll('Cloud Sync', 'مزامنة الاتصال السحابي')
+        .replaceAll('Cloud API', 'واجهة الاتصال السحابي')
+        .replaceAll('Cloud', 'اتصال سحابي')
+        .replaceAll('LAN Sync', 'مزامنة الشبكة المحلية')
+        .replaceAll('LAN', 'شبكة محلية')
+        .replaceAll('Host', 'المضيف')
+        .replaceAll('Client', 'العميل')
+        .replaceAll('Store', 'المتجر');
+    if (localized != value) return localized;
+  }
+
   return message;
 }

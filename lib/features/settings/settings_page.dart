@@ -7276,24 +7276,27 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
   AppUpdateInfo? _latest;
   DateTime? _lastCheckedAt;
   bool _checking = false;
-  String _status = "You're up to date";
+  String _statusKey = 'you_are_up_to_date';
+  String _statusValue = '';
 
   bool get _hasUpdate =>
       _latest?.isNewerThan(AppBrand.versionName, AppBrand.buildNumber) ?? false;
 
-  String _lastCheckedText() {
+  String _lastCheckedText(AppLocalizations tr) {
     final value = _lastCheckedAt;
-    if (value == null) return 'Last checked: Not checked yet';
+    if (value == null) return tr.text('last_checked_not_checked');
     final local = value.toLocal();
     final date = DateFormat('MMM d, h:mm a').format(local);
-    return 'Last checked: $date';
+    return tr.format('last_checked_at', {'time': date});
   }
 
   Future<void> _check() async {
     if (_checking) return;
+    final tr = AppLocalizations.of(context);
     setState(() {
       _checking = true;
-      _status = 'Checking for updates...';
+      _statusKey = 'checking_for_updates';
+      _statusValue = '';
     });
     try {
       final latest = await _service.fetchLatest();
@@ -7301,18 +7304,20 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
       setState(() {
         _latest = latest;
         _lastCheckedAt = DateTime.now();
-        _status = _hasUpdate
-            ? 'Update available: ${latest?.displayVersion ?? ''}'
-            : "You're up to date";
+        _statusKey = _hasUpdate ? 'update_available' : 'you_are_up_to_date';
+        _statusValue = latest?.displayVersion ?? '';
       });
     } catch (error) {
       if (!mounted) return;
       setState(() {
         _lastCheckedAt = DateTime.now();
-        _status = 'Could not check for updates';
+        _statusKey = 'could_not_check_updates';
+        _statusValue = '';
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Update check failed: $error')),
+        SnackBar(
+            content: Text(
+                tr.format('update_check_failed', {'error': error.toString()}))),
       );
     } finally {
       if (mounted) setState(() => _checking = false);
@@ -7326,12 +7331,17 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
       await _service.downloadAndInstall(update);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Update installer started.')),
+        SnackBar(
+            content: Text(
+                AppLocalizations.of(context).text('update_installer_started'))),
       );
     } catch (error) {
       if (!mounted) return;
+      final tr = AppLocalizations.of(context);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Update failed: $error')),
+        SnackBar(
+            content:
+                Text(tr.format('update_failed', {'error': error.toString()}))),
       );
     }
   }
@@ -7339,6 +7349,7 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
   @override
   Widget build(BuildContext context) {
     if (!_service.isSupported) return const SizedBox.shrink();
+    final tr = AppLocalizations.of(context);
     final colorScheme = Theme.of(context).colorScheme;
     final iconColor = _hasUpdate ? colorScheme.primary : Colors.blue.shade700;
     return Container(
@@ -7381,14 +7392,16 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                _status,
+                _statusKey == 'update_available' && _statusValue.isNotEmpty
+                    ? '${tr.text(_statusKey)}: $_statusValue'
+                    : tr.text(_statusKey),
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.w800,
                     ),
               ),
               const SizedBox(height: 4),
               Text(
-                _lastCheckedText(),
+                _lastCheckedText(tr),
                 style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                       color: colorScheme.onSurfaceVariant,
                     ),
@@ -7399,7 +7412,7 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
               ? FilledButton.icon(
                   onPressed: _checking ? null : _downloadUpdate,
                   icon: const Icon(Icons.download_outlined),
-                  label: const Text('Install update'),
+                  label: Text(tr.text('install_update')),
                 )
               : FilledButton(
                   onPressed: _checking ? null : _check,
@@ -7409,7 +7422,7 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
                           height: 18,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Text('Check for updates'),
+                      : Text(tr.text('check_for_updates')),
                 );
           if (compact) {
             return Column(
