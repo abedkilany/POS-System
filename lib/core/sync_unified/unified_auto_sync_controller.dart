@@ -5,6 +5,7 @@ import '../services/cloud_sync_service.dart';
 import '../services/lan_sync_service.dart';
 import 'cloud_sync_transport_adapter.dart';
 import 'lan_sync_transport_adapter.dart';
+import 'sync_device_state.dart';
 import 'unified_sync_engine.dart';
 
 typedef AutoSnapshotProgressPresenter = void Function(
@@ -351,23 +352,33 @@ class UnifiedAutoCloudSyncController {
                 .pendingSyncQueueForTarget('cloud_host', readyOnly: false)
                 .isNotEmpty;
         final now = DateTime.now().toUtc();
+        final deviceState = SyncDeviceStateStore.load(store.appIdentity);
+        final hasAppliedCloudBaseline =
+            store.appIdentity.isClient && deviceState.lastAppliedSequence > 0;
         final pendingProvisioning =
             store.appIdentity.isClient && CloudProvisioningStatus.isPending;
         if (pendingProvisioning) {
-          final lastAttempt = CloudProvisioningStatus.lastAttemptAt;
-          final shouldRequest = lastAttempt == null ||
-              now.difference(lastAttempt) > const Duration(minutes: 10);
-          if (shouldRequest) {
-            await CloudProvisioningStatus.markAttempted(now);
-            final requestedAt = CloudProvisioningStatus.requestedAt ?? now;
-            await CloudSyncService(store)
-                .requestFreshHostSnapshot(settings, requestedAt: requestedAt);
-            settings = settings.copyWith(clearLastPullCursor: true);
+          if (hasAppliedCloudBaseline) {
+            await CloudProvisioningStatus.markComplete(
+              message: 'تم تثبيت بيانات المتجر الأولية.',
+            );
+          } else {
+            final lastAttempt = CloudProvisioningStatus.lastAttemptAt;
+            final shouldRequest = lastAttempt == null ||
+                now.difference(lastAttempt) > const Duration(minutes: 10);
+            if (shouldRequest) {
+              await CloudProvisioningStatus.markAttempted(now);
+              final requestedAt = CloudProvisioningStatus.requestedAt ?? now;
+              await CloudSyncService(store)
+                  .requestFreshHostSnapshot(settings, requestedAt: requestedAt);
+              settings = settings.copyWith(clearLastPullCursor: true);
+            }
           }
         }
 
         final cursor = settings.lastPullCursor;
         final staleClient = store.appIdentity.isClient &&
+            !hasAppliedCloudBaseline &&
             cursor != null &&
             now.difference(cursor.toUtc()) > const Duration(days: 7);
         await store.recoverStaleInProgressSyncQueue(target: 'cloud');
