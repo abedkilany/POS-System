@@ -392,12 +392,35 @@ class UnifiedAutoCloudSyncController {
             wasReady = true;
             await _tick();
           }
-          final changed =
-              await CloudSyncService(store).waitForRealtimeSignal(settings);
-          if (changed && !_disposed) {
+          await for (final signal
+              in CloudSyncService(store).watchRealtimeSignals(settings)) {
+            if (_disposed) break;
+            final current = CloudSyncSettings.load();
+            if (!_cloudReady(current) ||
+                _settingsSignature(current) != _settingsSignature(settings)) {
+              break;
+            }
+            SyncDiagnosticsLog.add(
+              '[SYNC_TRACE] autoCloud:realtimeWake type=${signal.type} '
+              'latestSequence=${signal.latestSequence} '
+              'pendingRequests=${signal.pendingRequests}',
+            );
             await _tick();
           }
-        } catch (_) {
+          if (!_disposed) {
+            await Future<void>.delayed(const Duration(seconds: 2));
+          }
+        } catch (error) {
+          SyncDiagnosticsLog.add(
+            '[SYNC_TRACE] autoCloud:realtimeFallback error=$error',
+          );
+          try {
+            final changed =
+                await CloudSyncService(store).waitForRealtimeSignal(settings);
+            if (changed && !_disposed) {
+              await _tick();
+            }
+          } catch (_) {}
           if (!_disposed) {
             await Future<void>.delayed(const Duration(seconds: 5));
           }

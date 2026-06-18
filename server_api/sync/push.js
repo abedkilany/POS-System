@@ -1,4 +1,5 @@
 import { sql, assertAccountOrDevice, assertStoreAllowed, ensureDeviceAuthColumns, sendError } from '../_db.js';
+import { notifySyncChanged } from './realtime.js';
 
 function safeDate(value) {
   if (!value) return null;
@@ -360,6 +361,10 @@ export default async function handler(req, res) {
           and branch_id = ${branchId}
           and device_id = ${deviceId}
       `;
+    }
+
+    if (storeId && latestAcceptedSequence > 0) {
+      notifySyncChanged({ storeId, branchId, latestSequence: latestAcceptedSequence });
     }
 
     res.status(200).json({ ok: true, ackIds, acceptedSequence: latestAcceptedSequence, serverTime: new Date().toISOString() });

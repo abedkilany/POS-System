@@ -1,4 +1,5 @@
 import { sql, assertAccountOrDevice, assertStoreAllowed, sendError } from '../../_db.js';
+import { notifyHostRequests } from '../realtime.js';
 
 function normalizeChange(raw, fallback) {
   if (!raw || typeof raw !== 'object') throw new Error('Invalid sync change.');
@@ -44,6 +45,9 @@ export default async function handler(req, res) {
     }
 
     const ackIds = [];
+    let insertedRequests = 0;
+    let notifyStoreId = String(fallback.storeId || '').trim();
+    let notifyBranchId = String(fallback.branchId || 'main').trim() || 'main';
     for (const raw of changes) {
       const change = normalizeChange(raw, fallback);
       assertStoreAllowed(change.storeId);
@@ -68,15 +72,29 @@ export default async function handler(req, res) {
           continue;
         }
       }
-      await sql`
+      const inserted = await sql`
         insert into cloud_change_requests (
           id, store_id, branch_id, device_id, entity_type, entity_id, operation, payload, created_at, store_epoch, sequence, status, request_id
         ) values (
           ${change.id}, ${change.storeId}, ${change.branchId}, ${change.deviceId}, ${change.entityType}, ${change.entityId}, ${change.operation}, ${JSON.stringify(change.payload)}, ${change.createdAt}, ${change.storeEpoch}, ${change.sequence}, 'pending', ${change.requestId}
         )
         on conflict (id) do nothing
+        returning id
       `;
+      if (inserted.length > 0) {
+        insertedRequests += 1;
+        notifyStoreId = change.storeId;
+        notifyBranchId = change.branchId;
+      }
       ackIds.push(change.id);
+    }
+
+    if (insertedRequests > 0 && notifyStoreId) {
+      notifyHostRequests({
+        storeId: notifyStoreId,
+        branchId: notifyBranchId,
+        pendingRequests: insertedRequests,
+      });
     }
 
     res.status(200).json({ ok: true, ackIds, relay: 'host_inbox', serverTime: new Date().toISOString() });

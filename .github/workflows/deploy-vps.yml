@@ -64,7 +64,7 @@ jobs:
           VPS_WEB_DIR: ${{ secrets.VPS_WEB_DIR }}
         run: |
           set -euo pipefail
-          api_items=(api server_api package.json scripts)
+          api_items=(api server_api package.json scripts server.js)
           if [ -f package-lock.json ]; then
             api_items+=(package-lock.json)
           fi

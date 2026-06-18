@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../app_brand.dart';
 import '../../data/app_store.dart';
@@ -131,6 +132,11 @@ class CloudSyncSettings {
         : uri.replace(queryParameters: {...uri.queryParameters, ...query});
   }
 
+  Uri realtimeEndpoint(String path, [Map<String, String>? query]) {
+    final uri = endpoint(path, query);
+    return uri.replace(scheme: uri.scheme == 'http' ? 'ws' : 'wss');
+  }
+
   CloudSyncSettings copyWith({
     bool? enabled,
     String? apiBaseUrl,
@@ -213,6 +219,18 @@ class HostHeartbeatStatus {
   final String hostDeviceId;
   final String hostDeviceName;
   final String message;
+}
+
+class CloudRealtimeSignal {
+  const CloudRealtimeSignal({
+    required this.type,
+    this.latestSequence = 0,
+    this.pendingRequests = 0,
+  });
+
+  final String type;
+  final int latestSequence;
+  final int pendingRequests;
 }
 
 class CloudDeviceStatus {
@@ -2256,6 +2274,84 @@ class CloudSyncService {
     }
     final decoded = jsonDecode(response.body) as Map<String, dynamic>;
     return decoded['changed'] == true;
+  }
+
+  Stream<CloudRealtimeSignal> watchRealtimeSignals(
+    CloudSyncSettings settings,
+  ) async* {
+    final identity = store.appIdentity;
+    if (!_cloudAllowedForIdentity(identity) || !settings.isConfigured) {
+      return;
+    }
+    final state = SyncDeviceStateStore.load(identity);
+    final ticketQuery = <String, String>{
+      'store_id': identity.storeId,
+      'branch_id': identity.branchId,
+      'role': identity.isHost ? 'host' : 'client',
+    };
+    final ticketResponse = await _client
+        .get(settings.endpoint('/api/sync/realtime-ticket', ticketQuery),
+            headers: _headers(settings))
+        .timeout(const Duration(seconds: 8));
+    if (ticketResponse.statusCode < 200 || ticketResponse.statusCode >= 300) {
+      throw StateError(
+          'Realtime ticket failed: ${ticketResponse.statusCode} ${ticketResponse.body}');
+    }
+    final ticketPayload = jsonDecode(ticketResponse.body);
+    final ticket = ticketPayload is Map ? (ticketPayload['ticket'] ?? '') : '';
+    if (ticket.toString().trim().isEmpty) {
+      throw StateError('Realtime ticket response is missing ticket.');
+    }
+    final query = <String, String>{
+      'ticket': ticket.toString(),
+    };
+    if (identity.isClient && state.lastAppliedSequence > 0) {
+      query['since_sequence'] = state.lastAppliedSequence.toString();
+    }
+    final uri = settings.realtimeEndpoint('/api/sync/realtime', query);
+    SyncDiagnosticsLog.add(
+      '[SYNC_TRACE] cloudRealtime:connect role=${identity.deviceRole.name} '
+      'device=${identity.deviceId} url=${uri.replace(queryParameters: {
+            ...uri.queryParameters,
+            'ticket': '***',
+          })}',
+    );
+    final channel = WebSocketChannel.connect(uri);
+    try {
+      await for (final raw in channel.stream) {
+        final decoded = jsonDecode(raw.toString());
+        if (decoded is! Map) continue;
+        final type = (decoded['type'] ?? '').toString();
+        if (type == 'realtime_welcome') {
+          SyncDiagnosticsLog.add(
+            '[SYNC_TRACE] cloudRealtime:connected role=${identity.deviceRole.name} '
+            'device=${identity.deviceId}',
+          );
+          continue;
+        }
+        final changed = decoded['changed'] == true;
+        if (!changed) continue;
+        final latestSequence =
+            int.tryParse((decoded['latestSequence'] ?? '0').toString()) ?? 0;
+        final pendingRequests =
+            int.tryParse((decoded['pendingRequests'] ?? '0').toString()) ?? 0;
+        SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] cloudRealtime:event type=$type '
+          'latestSequence=$latestSequence pendingRequests=$pendingRequests',
+        );
+        yield CloudRealtimeSignal(
+          type: type,
+          latestSequence: latestSequence,
+          pendingRequests: pendingRequests,
+        );
+      }
+    } finally {
+      SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] cloudRealtime:closed role=${identity.deviceRole.name} '
+        'device=${identity.deviceId}',
+      );
+      unawaited(channel.sink.close());
+    }
   }
 
   Future<HostHeartbeatStatus> getHostHeartbeatStatus(CloudSyncSettings settings,
