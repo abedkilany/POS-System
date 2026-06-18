@@ -2878,7 +2878,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           'allowed=$fallbackAllowed '
           'previous=${boolLabel(planAllowed)}',
         );
-        if (fallbackAllowed) planAllowed = true;
+        if (fallbackAllowed != null) planAllowed = fallbackAllowed;
       }
 
       if (!mounted) return;

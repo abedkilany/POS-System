@@ -498,7 +498,7 @@ class CloudSyncService {
   late final UnifiedSyncCoreService _syncCore = UnifiedSyncCoreService(store);
   static final Set<String> _activeSnapshotGenerationRebuilds = <String>{};
 
-  Future<bool> checkCloudSyncPlanAccess(CloudSyncSettings settings) async {
+  Future<bool?> checkCloudSyncPlanAccess(CloudSyncSettings settings) async {
     final identity = store.appIdentity;
     final storeId = identity.storeId.trim();
     final branchId =
@@ -520,7 +520,7 @@ class CloudSyncService {
         '[SYNC_TRACE] cloudAccess:skipped '
         'reason=${settings.apiBaseUrl.trim().isEmpty ? 'emptyApiBase' : 'emptyStoreId'}',
       );
-      return false;
+      return null;
     }
 
     try {
@@ -539,7 +539,7 @@ class CloudSyncService {
       if (response.statusCode < 200 || response.statusCode >= 300) {
         SyncDiagnosticsLog.add(
             '[SYNC_TRACE] cloudAccess:failed status=${response.statusCode} body=${response.body}');
-        return false;
+        return null;
       }
       final decoded = jsonDecode(response.body);
       if (decoded is Map) {
@@ -556,9 +556,9 @@ class CloudSyncService {
           '[SYNC_TRACE] cloudAccess:decodedUnexpected type=${decoded.runtimeType}');
     } catch (error) {
       SyncDiagnosticsLog.add('[SYNC_TRACE] cloudAccess:error $error');
-      return false;
+      return null;
     }
-    return false;
+    return null;
   }
 
   String _snapshotGenerationKey(String transport) =>
