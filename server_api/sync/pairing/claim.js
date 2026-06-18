@@ -1,5 +1,5 @@
 import { randomBytes } from 'crypto';
-import { sql, assertCloudSyncEnabled, assertStoreAllowed, ensureDeviceAuthColumns, sendError } from '../../_db.js';
+import { sql, assertCloudSyncEnabled, assertClientDeviceSlotAvailable, assertStoreAllowed, ensureDeviceAuthColumns, sendError } from '../../_db.js';
 
 async function ensurePairingTable() {
   await sql`
@@ -73,6 +73,11 @@ export default async function handler(req, res) {
     if (lookup[0].claimed_at) return res.status(409).json({ ok: false, error: 'Pairing code expired or already used. Ask the Host device for a new code.' });
     assertStoreAllowed(lookup[0].store_id);
     if (lookup[0].transport === 'cloud') await assertCloudSyncEnabled(lookup[0].store_id);
+    if (lookup[0].transport === 'cloud') {
+      await assertClientDeviceSlotAvailable(lookup[0].store_id, {
+        excludeDeviceId: deviceId,
+      });
+    }
 
     // Atomic single-use claim: if two devices submit the same code, only the
     // oldest request that reaches the server updates claimed_at. Later requests

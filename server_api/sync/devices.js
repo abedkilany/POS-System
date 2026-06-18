@@ -1,7 +1,9 @@
 import {
   sql,
   assertAccountOrDevice,
+  assertClientDeviceSlotAvailable,
   assertDeviceAllowed,
+  getClientDeviceLimitStatus,
   assertStoreAllowed,
   ensureDeviceAuthColumns,
   sendError,
@@ -147,6 +149,9 @@ export default async function handler(req, res) {
           return res.status(403).json({ ok: false, error: 'Device credentials cannot update another device.' });
         }
       }
+      if (role === 'client') {
+        await assertClientDeviceSlotAvailable(storeId, { excludeDeviceId: deviceId });
+      }
 
       const rows = await sql`
         insert into store_devices (
@@ -196,7 +201,29 @@ export default async function handler(req, res) {
         order by last_seen_at desc
         limit 100
       `;
-      return res.status(200).json({ ok: true, devices: rows.map(rowToDevice), serverTime: new Date().toISOString() });
+      const limit = await getClientDeviceLimitStatus(storeId);
+      return res.status(200).json({ ok: true, devices: rows.map(rowToDevice), deviceLimit: limit, serverTime: new Date().toISOString() });
+    }
+
+    if (req.method === 'DELETE') {
+      const body = req.body || {};
+      const storeId = String(body.storeId || body.store_id || req.query?.storeId || req.query?.store_id || '').trim();
+      const branchId = String(body.branchId || body.branch_id || req.query?.branchId || req.query?.branch_id || 'main').trim() || 'main';
+      const deviceId = String(body.deviceId || body.device_id || req.query?.deviceId || req.query?.device_id || '').trim();
+      if (!storeId) return res.status(400).json({ ok: false, error: 'storeId is required.' });
+      if (!deviceId) return res.status(400).json({ ok: false, error: 'deviceId is required.' });
+      assertStoreAllowed(storeId);
+      await assertAccountOrDevice(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['cloud'] });
+      const rows = await sql`
+        delete from store_devices
+        where store_id = ${storeId}
+          and branch_id = ${branchId}
+          and device_id = ${deviceId}
+          and role = 'client'
+        returning device_id
+      `;
+      const limit = await getClientDeviceLimitStatus(storeId);
+      return res.status(200).json({ ok: true, deleted: rows.map((row) => row.device_id), deviceLimit: limit });
     }
 
     return res.status(405).json({ ok: false, error: 'Method not allowed' });

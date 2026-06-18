@@ -117,6 +117,96 @@ export async function assertCloudSyncEnabled(storeId) {
   }
 }
 
+async function ensureStoreDevicesTableForLimits() {
+  await sql`
+    create table if not exists store_devices (
+      store_id text not null,
+      branch_id text not null default 'main',
+      device_id text not null,
+      device_name text default '',
+      platform text default '',
+      role text default '',
+      transport text default '',
+      app_version text default '',
+      store_epoch integer not null default 1,
+      revoked boolean not null default false,
+      suspended boolean not null default false,
+      wipe_pending boolean not null default false,
+      wipe_requested_at timestamptz,
+      device_token text default '',
+      host_device_id text default '',
+      active_transport text default '',
+      last_sync_transport text default '',
+      last_applied_cursor timestamptz,
+      last_ack_cursor timestamptz,
+      last_applied_sequence bigint not null default 0,
+      last_ack_sequence bigint not null default 0,
+      last_ack_at timestamptz,
+      online boolean not null default false,
+      last_seen_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      primary key (store_id, branch_id, device_id)
+    )
+  `;
+}
+
+export async function getClientDeviceLimitStatus(storeId, { excludeDeviceId = '' } = {}) {
+  await sql`
+    create table if not exists app_subscriptions (
+      id text primary key,
+      store_id text not null,
+      plan text not null default 'trial',
+      status text not null default 'trial',
+      trial_ends_at timestamptz,
+      devices_limit integer not null default 2,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    )
+  `;
+  await ensureStoreDevicesTableForLimits();
+  await ensureDeviceAuthColumns();
+  const limitRows = await sql`
+    select coalesce(max(devices_limit), 0)::int as devices_limit
+    from app_subscriptions
+    where store_id = ${storeId}
+  `;
+  const allowed = Math.max(Number(limitRows[0]?.devices_limit || 0), 0);
+  const linkedRows = excludeDeviceId
+    ? await sql`
+        select count(*)::int as linked
+        from store_devices
+        where store_id = ${storeId}
+          and role = 'client'
+          and revoked = false
+          and device_id <> ${excludeDeviceId}
+      `
+    : await sql`
+        select count(*)::int as linked
+        from store_devices
+        where store_id = ${storeId}
+          and role = 'client'
+          and revoked = false
+      `;
+  const linked = Math.max(Number(linkedRows[0]?.linked || 0), 0);
+  return {
+    allowed,
+    linked,
+    available: Math.max(allowed - linked, 0),
+    limitReached: linked >= allowed,
+  };
+}
+
+export async function assertClientDeviceSlotAvailable(storeId, { excludeDeviceId = '' } = {}) {
+  const status = await getClientDeviceLimitStatus(storeId, { excludeDeviceId });
+  if (status.limitReached) {
+    const err = new Error('Device limit reached.');
+    err.statusCode = 403;
+    err.details = status;
+    throw err;
+  }
+  return status;
+}
+
 export async function ensureDeviceAuthColumns() {
   await sql`alter table store_devices add column if not exists device_token text default ''`;
   await sql`alter table store_devices add column if not exists host_device_id text default ''`;

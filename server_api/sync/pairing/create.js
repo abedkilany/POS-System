@@ -3,6 +3,7 @@ import {
   sql,
   assertAccountOrDevice,
   assertCloudSyncEnabled,
+  assertClientDeviceSlotAvailable,
   assertStoreAllowed,
   sendError,
 } from '../../_db.js';
@@ -179,7 +180,10 @@ export default async function handler(req, res) {
     if (!storeId) return res.status(400).json({ ok: false, error: 'storeId is required.' });
     if (!hostDeviceId) return res.status(400).json({ ok: false, error: 'hostDeviceId is required.' });
     assertStoreAllowed(storeId);
-    if (transport === 'cloud') await assertCloudSyncEnabled(storeId);
+    if (transport === 'cloud') {
+      await assertCloudSyncEnabled(storeId);
+      await assertClientDeviceSlotAvailable(storeId);
+    }
     await authorizeLocalHostOrAccount(req, {
       storeId,
       branchId,

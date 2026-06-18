@@ -1589,5 +1589,12 @@
   "cloud_sync_plan_required": "Cloud Sync is not included in this store plan.",
   "cloud_sync_plan_locked_short": "Locked by plan",
   "cloud_sync_plan_locked_title": "Cloud Sync is locked",
-  "cloud_sync_plan_locked_desc": "This store is not subscribed to Cloud Sync. Ask the administrator to enable it from Admin > Subscribers."
+  "cloud_sync_plan_locked_desc": "This store is not subscribed to Cloud Sync. Ask the administrator to enable it from Admin > Subscribers.",
+  "device_limit_no_devices": "No devices are linked to this store.",
+  "device_limit_reached": "You have reached the maximum number of devices allowed by your subscription.\n\nTo add more devices, please contact Ventio Support.",
+  "device_limit_available": "You can link {count} additional device{plural}.",
+  "device_limit_allowed": "Allowed devices: {count}",
+  "device_limit_linked": "Currently linked: {count}",
+  "device_limit_slots": "Available slots: {count}",
+  "device_limit_local_list": "Local list: {count}"
 }

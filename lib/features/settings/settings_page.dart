@@ -3353,6 +3353,16 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       setState(() => _status = tr.text('enable_cloud_before_pairing_code'));
       return;
     }
+    try {
+      final devices = await CloudSyncService(widget.store)
+          .listDevicesWithLimit(_cloudSettings(enabled: true));
+      if (devices.limit?.limitReached == true) {
+        setState(() => _status = tr.text('device_limit_reached'));
+        return;
+      }
+    } catch (_) {
+      // The server still enforces the limit when creating/claiming the code.
+    }
     if (_hasActiveCloudPairingCode) _expireCloudPairingCode();
     await _createCloudPairingCode();
   }
@@ -5772,7 +5782,7 @@ class _AdvancedSyncDebugCard extends StatefulWidget {
 }
 
 class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
-  Future<List<CloudDeviceStatus>>? _cloudDevicesFuture;
+  Future<_CloudMonitoringSnapshot>? _cloudMonitoringFuture;
 
   @override
   void initState() {
@@ -5783,25 +5793,29 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
   void _refreshCloudDevices() {
     final cloudSettings = CloudSyncSettings.load();
     if (widget.store.appIdentity.isHost && cloudSettings.isConfigured) {
-      _cloudDevicesFuture = _loadAndAdoptCloudDevices(cloudSettings)
-          .catchError((_) => <CloudDeviceStatus>[]);
+      _cloudMonitoringFuture = _loadAndAdoptCloudDevices(cloudSettings)
+          .catchError((_) => const _CloudMonitoringSnapshot(
+                devices: <CloudDeviceStatus>[],
+              ));
     } else {
-      _cloudDevicesFuture =
-          Future<List<CloudDeviceStatus>>.value(const <CloudDeviceStatus>[]);
+      _cloudMonitoringFuture = Future<_CloudMonitoringSnapshot>.value(
+          const _CloudMonitoringSnapshot(devices: <CloudDeviceStatus>[]));
     }
   }
 
-  Future<List<CloudDeviceStatus>> _loadAndAdoptCloudDevices(
+  Future<_CloudMonitoringSnapshot> _loadAndAdoptCloudDevices(
       CloudSyncSettings cloudSettings) async {
     final service = CloudSyncService(widget.store);
-    var devices = await service.listDevices(cloudSettings);
-    final repaired =
-        await _repairLegacyCloudDeviceLinks(service, cloudSettings, devices);
+    var result = await service.listDevicesWithLimit(cloudSettings);
+    var devices = result.devices;
+    final repaired = await _repairLegacyCloudDeviceLinks(
+        service, cloudSettings, result.devices);
     if (repaired) {
-      devices = await service.listDevices(cloudSettings);
+      result = await service.listDevicesWithLimit(cloudSettings);
+      devices = result.devices;
     }
     await _adoptCloudRegistryDevices(devices);
-    return devices;
+    return _CloudMonitoringSnapshot(devices: devices, limit: result.limit);
   }
 
   Future<bool> _repairLegacyCloudDeviceLinks(
@@ -5908,9 +5922,10 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
 
   Future<void> _refresh() async {
     setState(_refreshCloudDevices);
-    final cloudDevices = await (_cloudDevicesFuture ??
-        Future<List<CloudDeviceStatus>>.value(const <CloudDeviceStatus>[]));
-    await _finalizeCloudWipeAcknowledgements(cloudDevices);
+    final snapshot = await (_cloudMonitoringFuture ??
+        Future<_CloudMonitoringSnapshot>.value(
+            const _CloudMonitoringSnapshot(devices: <CloudDeviceStatus>[])));
+    await _finalizeCloudWipeAcknowledgements(snapshot.devices);
     if (mounted) setState(() {});
   }
 
@@ -6031,6 +6046,11 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
     if (confirmed != true) return;
 
     await _permanentlyDeleteDeviceRecord(deviceId);
+    final cloudSettings = CloudSyncSettings.load();
+    if (cloudSettings.isConfigured) {
+      await CloudSyncService(widget.store)
+          .deleteDeviceRecord(cloudSettings, deviceId);
+    }
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(tr.text('sync_device_permanently_deleted'))));
@@ -6060,11 +6080,13 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         children: [
           if (isHost)
-            FutureBuilder<List<CloudDeviceStatus>>(
-              future: _cloudDevicesFuture,
+            FutureBuilder<_CloudMonitoringSnapshot>(
+              future: _cloudMonitoringFuture,
               builder: (context, snapshot) => _HostSyncMonitoringTable(
                 store: widget.store,
-                cloudDevices: snapshot.data ?? const <CloudDeviceStatus>[],
+                cloudDevices:
+                    snapshot.data?.devices ?? const <CloudDeviceStatus>[],
+                deviceLimit: snapshot.data?.limit,
                 peerStates: peerById,
                 lanSettings: lanSettings,
                 loadingCloudDevices:
@@ -6089,10 +6111,21 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
   }
 }
 
+class _CloudMonitoringSnapshot {
+  const _CloudMonitoringSnapshot({
+    required this.devices,
+    this.limit,
+  });
+
+  final List<CloudDeviceStatus> devices;
+  final CloudDeviceLimitStatus? limit;
+}
+
 class _HostSyncMonitoringTable extends StatefulWidget {
   const _HostSyncMonitoringTable({
     required this.store,
     required this.cloudDevices,
+    required this.deviceLimit,
     required this.peerStates,
     required this.lanSettings,
     required this.loadingCloudDevices,
@@ -6104,6 +6137,7 @@ class _HostSyncMonitoringTable extends StatefulWidget {
 
   final AppStore store;
   final List<CloudDeviceStatus> cloudDevices;
+  final CloudDeviceLimitStatus? deviceLimit;
   final Map<String, HostPeerSyncState> peerStates;
   final LanSyncSettings lanSettings;
   final bool loadingCloudDevices;
@@ -6147,6 +6181,7 @@ class _HostSyncMonitoringTableState extends State<_HostSyncMonitoringTable> {
     final deviceIds = registryById.keys.toSet()
       ..removeWhere((id) => deleted.contains(id));
     final pairedDeviceIds = deviceIds.toList()..sort();
+    final limitPanel = _deviceLimitPanel(context, pairedDeviceIds.length);
 
     final header = _HostStatusMonitoringCard(
       store: widget.store,
@@ -6160,6 +6195,10 @@ class _HostSyncMonitoringTableState extends State<_HostSyncMonitoringTable> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           header,
+          if (limitPanel != null) ...[
+            const SizedBox(height: 12),
+            limitPanel,
+          ],
           const SizedBox(height: 12),
           Align(
             alignment: AlignmentDirectional.centerStart,
@@ -6187,6 +6226,10 @@ class _HostSyncMonitoringTableState extends State<_HostSyncMonitoringTable> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         header,
+        if (limitPanel != null) ...[
+          const SizedBox(height: 12),
+          limitPanel,
+        ],
         const SizedBox(height: 12),
         Row(
           children: [
@@ -6281,6 +6324,58 @@ class _HostSyncMonitoringTableState extends State<_HostSyncMonitoringTable> {
           },
         ),
       ],
+    );
+  }
+
+  Widget? _deviceLimitPanel(BuildContext context, int localLinkedClients) {
+    final limit = widget.deviceLimit;
+    if (limit == null) return null;
+    final theme = Theme.of(context);
+    final linked = limit.linked;
+    final available = limit.available;
+    final reached = limit.limitReached;
+    final tr = AppLocalizations.of(context);
+    final message = linked == 0
+        ? tr.text('device_limit_no_devices')
+        : reached
+            ? tr.text('device_limit_reached')
+            : tr.format('device_limit_available', {
+                'count': available,
+                'plural': available == 1 ? '' : 's',
+              });
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: reached
+            ? theme.colorScheme.errorContainer.withValues(alpha: 0.35)
+            : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: reached
+              ? theme.colorScheme.error.withValues(alpha: 0.45)
+              : theme.dividerColor,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(message, style: theme.textTheme.bodyMedium),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 16,
+            runSpacing: 6,
+            children: [
+              Text(tr.format('device_limit_allowed', {'count': limit.allowed})),
+              Text(tr.format('device_limit_linked', {'count': linked})),
+              Text(tr.format('device_limit_slots', {'count': available})),
+              if (localLinkedClients != linked)
+                Text(tr.format(
+                    'device_limit_local_list', {'count': localLinkedClients})),
+            ],
+          ),
+        ],
+      ),
     );
   }
 

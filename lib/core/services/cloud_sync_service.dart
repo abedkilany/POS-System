@@ -328,6 +328,44 @@ class CloudDeviceStatus {
       );
 }
 
+class CloudDeviceLimitStatus {
+  const CloudDeviceLimitStatus({
+    required this.allowed,
+    required this.linked,
+    required this.available,
+    required this.limitReached,
+  });
+
+  final int allowed;
+  final int linked;
+  final int available;
+  final bool limitReached;
+
+  factory CloudDeviceLimitStatus.fromJson(Map<String, dynamic> json) {
+    final allowed = int.tryParse((json['allowed'] ?? '').toString()) ?? 0;
+    final linked = int.tryParse((json['linked'] ?? '').toString()) ?? 0;
+    final available = int.tryParse((json['available'] ?? '').toString()) ??
+        (allowed - linked).clamp(0, 1 << 30).toInt();
+    return CloudDeviceLimitStatus(
+      allowed: allowed,
+      linked: linked,
+      available: available,
+      limitReached:
+          json['limitReached'] == true || json['limit_reached'] == true,
+    );
+  }
+}
+
+class CloudDevicesResult {
+  const CloudDevicesResult({
+    required this.devices,
+    this.limit,
+  });
+
+  final List<CloudDeviceStatus> devices;
+  final CloudDeviceLimitStatus? limit;
+}
+
 class CloudProvisioningStatus {
   const CloudProvisioningStatus._();
 
@@ -1875,6 +1913,41 @@ class CloudSyncService {
     }
   }
 
+  Future<CloudSyncResult> deleteDeviceRecord(
+      CloudSyncSettings settings, String deviceId) async {
+    final identity = store.appIdentity;
+    if (!identity.isHost) {
+      return const CloudSyncResult(
+          ok: false, message: 'Only the Host can remove devices.');
+    }
+    if (!settings.isConfigured) {
+      return const CloudSyncResult(
+          ok: false, message: 'Cloud API URL and token are required.');
+    }
+    try {
+      final response = await _client
+          .delete(
+            settings.endpoint('/api/sync/devices'),
+            headers: _headers(settings),
+            body: jsonEncode({
+              'storeId': identity.storeId,
+              'branchId': identity.branchId,
+              'deviceId': deviceId,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
+      return CloudSyncResult(
+        ok: response.statusCode >= 200 && response.statusCode < 300,
+        message: response.statusCode >= 200 && response.statusCode < 300
+            ? 'Device record removed.'
+            : 'Device remove failed: ${response.statusCode} ${response.body}',
+      );
+    } catch (error) {
+      return CloudSyncResult(
+          ok: false, message: 'Device remove failed: $error');
+    }
+  }
+
   Map<String, String> _headers(CloudSyncSettings settings) {
     final identity = store.appIdentity;
     return {
@@ -2084,8 +2157,16 @@ class CloudSyncService {
 
   Future<List<CloudDeviceStatus>> listDevices(
       CloudSyncSettings settings) async {
+    final result = await listDevicesWithLimit(settings);
+    return result.devices;
+  }
+
+  Future<CloudDevicesResult> listDevicesWithLimit(
+      CloudSyncSettings settings) async {
     final identity = store.appIdentity;
-    if (!settings.isConfigured) return const <CloudDeviceStatus>[];
+    if (!settings.isConfigured) {
+      return const CloudDevicesResult(devices: <CloudDeviceStatus>[]);
+    }
     final response = await _client
         .get(
           settings.endpoint('/api/sync/devices', {
@@ -2096,13 +2177,18 @@ class CloudSyncService {
         )
         .timeout(const Duration(seconds: 10));
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      return const <CloudDeviceStatus>[];
+      return const CloudDevicesResult(devices: <CloudDeviceStatus>[]);
     }
     final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-    return (decoded['devices'] as List<dynamic>? ?? [])
+    final devices = (decoded['devices'] as List<dynamic>? ?? [])
         .map((item) =>
             CloudDeviceStatus.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
+    final limitRaw = decoded['deviceLimit'] ?? decoded['device_limit'];
+    final limit = limitRaw is Map
+        ? CloudDeviceLimitStatus.fromJson(Map<String, dynamic>.from(limitRaw))
+        : null;
+    return CloudDevicesResult(devices: devices, limit: limit);
   }
 
   Future<CloudSyncResult> repairLegacyCloudDeviceLinks(

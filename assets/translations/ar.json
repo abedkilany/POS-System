@@ -1589,5 +1589,12 @@
   "cloud_sync_plan_required": "مزامنة Cloud غير متاحة ضمن خطة هذا المتجر.",
   "cloud_sync_plan_locked_short": "مقفلة حسب الخطة",
   "cloud_sync_plan_locked_title": "مزامنة Cloud مقفلة",
-  "cloud_sync_plan_locked_desc": "هذا المتجر غير مشترك بخدمة مزامنة Cloud. فعّلها من لوحة الإدارة > المشتركين."
+  "cloud_sync_plan_locked_desc": "هذا المتجر غير مشترك بخدمة مزامنة Cloud. فعّلها من لوحة الإدارة > المشتركين.",
+  "device_limit_no_devices": "لا توجد أجهزة عميلة مرتبطة بهذا المتجر.",
+  "device_limit_reached": "وصلت إلى الحد الأقصى للأجهزة المسموح بها ضمن الاشتراك.\n\nلإضافة أجهزة أكثر، تواصل مع دعم Ventio.",
+  "device_limit_available": "يمكنك ربط {count} جهاز إضافي.",
+  "device_limit_allowed": "الأجهزة المسموحة: {count}",
+  "device_limit_linked": "الأجهزة المرتبطة حالياً: {count}",
+  "device_limit_slots": "الخانات المتاحة: {count}",
+  "device_limit_local_list": "القائمة المحلية: {count}"
 }
