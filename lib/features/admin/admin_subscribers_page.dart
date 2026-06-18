@@ -118,20 +118,30 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
     return color.withValues(alpha: 0.10);
   }
 
-
-
   Future<void> _editSubscriber(AdminSubscriber subscriber) async {
     final usernameController = TextEditingController(text: subscriber.username);
     final fullNameController = TextEditingController(text: subscriber.fullName);
-    final storeNameController = TextEditingController(text: subscriber.storeName);
-    final storeSlugController = TextEditingController(text: subscriber.storeSlug);
-    final devicesLimitController = TextEditingController(text: subscriber.devicesLimit <= 0 ? '2' : subscriber.devicesLimit.toString());
+    final storeNameController =
+        TextEditingController(text: subscriber.storeName);
+    final storeSlugController =
+        TextEditingController(text: subscriber.storeSlug);
+    final devicesLimitController =
+        TextEditingController(text: subscriber.devicesLimit.toString());
     final trialEndsController = TextEditingController(
-      text: subscriber.trialEndsAt == null ? '' : subscriber.trialEndsAt!.toLocal().toIso8601String().split('.').first,
+      text: subscriber.trialEndsAt == null
+          ? ''
+          : subscriber.trialEndsAt!
+              .toLocal()
+              .toIso8601String()
+              .split('.')
+              .first,
     );
-    String accountStatus = subscriber.accountStatus.isEmpty ? 'active' : subscriber.accountStatus;
+    String accountStatus =
+        subscriber.accountStatus.isEmpty ? 'active' : subscriber.accountStatus;
     String plan = subscriber.plan.isEmpty ? 'trial' : subscriber.plan;
-    String subscriptionStatus = subscriber.subscriptionStatus.isEmpty ? 'trial' : subscriber.subscriptionStatus;
+    String subscriptionStatus = subscriber.subscriptionStatus.isEmpty
+        ? 'trial'
+        : subscriber.subscriptionStatus;
     var cloudSyncEnabled = subscriber.cloudSyncEnabled;
     String? localError;
 
@@ -158,47 +168,74 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                             color: theme.colorScheme.errorContainer,
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          child: Text(localError!, style: TextStyle(color: theme.colorScheme.onErrorContainer)),
+                          child: Text(localError!,
+                              style: TextStyle(
+                                  color: theme.colorScheme.onErrorContainer)),
                         ),
                         const SizedBox(height: 12),
                       ],
                       Row(
                         children: [
-                          Expanded(child: TextField(controller: usernameController, decoration: const InputDecoration(labelText: 'Username'))),
+                          Expanded(
+                              child: TextField(
+                                  controller: usernameController,
+                                  decoration: const InputDecoration(
+                                      labelText: 'Username'))),
                           const SizedBox(width: 12),
-                          Expanded(child: TextField(controller: storeSlugController, decoration: const InputDecoration(labelText: 'Store slug'))),
+                          Expanded(
+                              child: TextField(
+                                  controller: storeSlugController,
+                                  decoration: const InputDecoration(
+                                      labelText: 'Store slug'))),
                         ],
                       ),
                       const SizedBox(height: 12),
-                      TextField(controller: storeNameController, decoration: const InputDecoration(labelText: 'Store name')),
+                      TextField(
+                          controller: storeNameController,
+                          decoration:
+                              const InputDecoration(labelText: 'Store name')),
                       const SizedBox(height: 12),
-                      TextField(controller: fullNameController, decoration: const InputDecoration(labelText: 'Full name / note')),
+                      TextField(
+                          controller: fullNameController,
+                          decoration: const InputDecoration(
+                              labelText: 'Full name / note')),
                       const SizedBox(height: 12),
                       Row(
                         children: [
                           Expanded(
                             child: DropdownButtonFormField<String>(
                               initialValue: accountStatus,
-                              decoration: const InputDecoration(labelText: 'Account status'),
+                              decoration: const InputDecoration(
+                                  labelText: 'Account status'),
                               items: const [
-                                DropdownMenuItem(value: 'active', child: Text('Active')),
-                                DropdownMenuItem(value: 'blocked', child: Text('Blocked')),
-                                DropdownMenuItem(value: 'suspended', child: Text('Suspended')),
+                                DropdownMenuItem(
+                                    value: 'active', child: Text('Active')),
+                                DropdownMenuItem(
+                                    value: 'blocked', child: Text('Blocked')),
+                                DropdownMenuItem(
+                                    value: 'suspended',
+                                    child: Text('Suspended')),
                               ],
-                              onChanged: (value) => setDialogState(() => accountStatus = value ?? 'active'),
+                              onChanged: (value) => setDialogState(
+                                  () => accountStatus = value ?? 'active'),
                             ),
                           ),
                           const SizedBox(width: 12),
                           Expanded(
                             child: DropdownButtonFormField<String>(
                               initialValue: plan,
-                              decoration: const InputDecoration(labelText: 'Plan'),
+                              decoration:
+                                  const InputDecoration(labelText: 'Plan'),
                               items: const [
-                                DropdownMenuItem(value: 'trial', child: Text('Trial')),
-                                DropdownMenuItem(value: 'basic', child: Text('Basic')),
-                                DropdownMenuItem(value: 'pro', child: Text('Pro')),
+                                DropdownMenuItem(
+                                    value: 'trial', child: Text('Trial')),
+                                DropdownMenuItem(
+                                    value: 'basic', child: Text('Basic')),
+                                DropdownMenuItem(
+                                    value: 'pro', child: Text('Pro')),
                               ],
-                              onChanged: (value) => setDialogState(() => plan = value ?? 'trial'),
+                              onChanged: (value) =>
+                                  setDialogState(() => plan = value ?? 'trial'),
                             ),
                           ),
                         ],
@@ -209,16 +246,25 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                           Expanded(
                             child: DropdownButtonFormField<String>(
                               initialValue: subscriptionStatus,
-                              decoration: const InputDecoration(labelText: 'Subscription status'),
+                              decoration: const InputDecoration(
+                                  labelText: 'Subscription status'),
                               items: const [
-                                DropdownMenuItem(value: 'trial', child: Text('Trial')),
-                                DropdownMenuItem(value: 'active', child: Text('Active')),
-                                DropdownMenuItem(value: 'expired', child: Text('Expired')),
-                                DropdownMenuItem(value: 'past_due', child: Text('Past due')),
-                                DropdownMenuItem(value: 'cancelled', child: Text('Cancelled')),
-                                DropdownMenuItem(value: 'blocked', child: Text('Blocked')),
+                                DropdownMenuItem(
+                                    value: 'trial', child: Text('Trial')),
+                                DropdownMenuItem(
+                                    value: 'active', child: Text('Active')),
+                                DropdownMenuItem(
+                                    value: 'expired', child: Text('Expired')),
+                                DropdownMenuItem(
+                                    value: 'past_due', child: Text('Past due')),
+                                DropdownMenuItem(
+                                    value: 'cancelled',
+                                    child: Text('Cancelled')),
+                                DropdownMenuItem(
+                                    value: 'blocked', child: Text('Blocked')),
                               ],
-                              onChanged: (value) => setDialogState(() => subscriptionStatus = value ?? 'trial'),
+                              onChanged: (value) => setDialogState(
+                                  () => subscriptionStatus = value ?? 'trial'),
                             ),
                           ),
                           const SizedBox(width: 12),
@@ -226,7 +272,8 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                             child: TextField(
                               controller: devicesLimitController,
                               keyboardType: TextInputType.number,
-                              decoration: const InputDecoration(labelText: 'Device limit'),
+                              decoration: const InputDecoration(
+                                  labelText: 'Device limit'),
                             ),
                           ),
                         ],
@@ -236,14 +283,16 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                         controller: trialEndsController,
                         decoration: const InputDecoration(
                           labelText: 'Trial ends at',
-                          helperText: 'Example: 2026-06-28T19:08:06 or leave empty',
+                          helperText:
+                              'Example: 2026-06-28T19:08:06 or leave empty',
                         ),
                       ),
                       const SizedBox(height: 12),
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
                         title: const Text('Cloud Sync'),
-                        subtitle: const Text('Allow this store to use Cloud Sync.'),
+                        subtitle:
+                            const Text('Allow this store to use Cloud Sync.'),
                         value: cloudSyncEnabled,
                         onChanged: (value) =>
                             setDialogState(() => cloudSyncEnabled = value),
@@ -253,35 +302,46 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                 ),
               ),
               actions: [
-                TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancel')),
+                TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(false),
+                    child: const Text('Cancel')),
                 FilledButton.icon(
                   icon: const Icon(Icons.save_outlined),
                   label: const Text('Save'),
                   onPressed: () async {
-                    final username = usernameController.text.trim().toLowerCase();
+                    final username =
+                        usernameController.text.trim().toLowerCase();
                     final storeName = storeNameController.text.trim();
-                    final storeSlug = storeSlugController.text.trim().toLowerCase();
-                    final limit = int.tryParse(devicesLimitController.text.trim()) ?? 0;
+                    final storeSlug =
+                        storeSlugController.text.trim().toLowerCase();
+                    final limit =
+                        int.tryParse(devicesLimitController.text.trim()) ?? 0;
                     final trialText = trialEndsController.text.trim();
-                    final trialEndsAt = trialText.isEmpty ? null : DateTime.tryParse(trialText);
+                    final trialEndsAt =
+                        trialText.isEmpty ? null : DateTime.tryParse(trialText);
                     if (username.isEmpty || username.contains(' ')) {
-                      setDialogState(() => localError = 'Username is required and must not contain spaces.');
+                      setDialogState(() => localError =
+                          'Username is required and must not contain spaces.');
                       return;
                     }
                     if (storeName.isEmpty) {
-                      setDialogState(() => localError = 'Store name is required.');
+                      setDialogState(
+                          () => localError = 'Store name is required.');
                       return;
                     }
                     if (storeSlug.isEmpty || storeSlug.contains(' ')) {
-                      setDialogState(() => localError = 'Store slug is required and must not contain spaces.');
+                      setDialogState(() => localError =
+                          'Store slug is required and must not contain spaces.');
                       return;
                     }
-                    if (limit <= 0) {
-                      setDialogState(() => localError = 'Device limit must be greater than zero.');
+                    if (limit < 0) {
+                      setDialogState(() =>
+                          localError = 'Device limit cannot be negative.');
                       return;
                     }
                     if (trialText.isNotEmpty && trialEndsAt == null) {
-                      setDialogState(() => localError = 'Trial date format is invalid.');
+                      setDialogState(
+                          () => localError = 'Trial date format is invalid.');
                       return;
                     }
                     final cache = AccountAuthCache.load();
@@ -321,7 +381,8 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
     trialEndsController.dispose();
     if (saved == true) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Subscriber updated.')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Subscriber updated.')));
       await _load();
     }
   }
@@ -331,11 +392,15 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Delete subscriber?'),
-        content: Text('This will delete ${subscriber.loginName}, the linked store, subscription, and cloud sync records for that store. This action cannot be undone.'),
+        content: Text(
+            'This will delete ${subscriber.loginName}, the linked store, subscription, and cloud sync records for that store. This action cannot be undone.'),
         actions: [
-          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancel')),
+          TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel')),
           FilledButton.icon(
-            style: FilledButton.styleFrom(backgroundColor: Theme.of(dialogContext).colorScheme.error),
+            style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(dialogContext).colorScheme.error),
             icon: const Icon(Icons.delete_outline),
             label: const Text('Delete'),
             onPressed: () => Navigator.of(dialogContext).pop(true),
@@ -351,10 +416,12 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
     );
     if (!mounted) return;
     if (!result.ok) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result.message)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(result.message)));
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Subscriber deleted.')));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('Subscriber deleted.')));
     await _load();
   }
 
@@ -434,34 +501,49 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                           rows: visibleSubscribers.map((subscriber) {
                             return DataRow(
                               cells: [
-                                DataCell(_SubscriberIdentity(subscriber: subscriber)),
+                                DataCell(_SubscriberIdentity(
+                                    subscriber: subscriber)),
                                 DataCell(_StoreCell(subscriber: subscriber)),
                                 DataCell(_PlanBadge(plan: subscriber.plan)),
                                 DataCell(_StatusBadge(
                                   label: subscriber.subscriptionStatus.isEmpty
                                       ? 'unknown'
                                       : subscriber.subscriptionStatus,
-                                  color: _statusColor(context, subscriber.subscriptionStatus),
-                                  background: _statusBackground(context, subscriber.subscriptionStatus),
+                                  color: _statusColor(
+                                      context, subscriber.subscriptionStatus),
+                                  background: _statusBackground(
+                                      context, subscriber.subscriptionStatus),
                                 )),
                                 DataCell(_TrialCell(
                                   date: _formatDate(subscriber.trialEndsAt),
-                                  remaining: _formatTrialDays(subscriber.trialEndsAt),
+                                  remaining:
+                                      _formatTrialDays(subscriber.trialEndsAt),
                                   isExpired: subscriber.trialEndsAt != null &&
-                                      subscriber.trialEndsAt!.toLocal().isBefore(DateTime.now()),
+                                      subscriber.trialEndsAt!
+                                          .toLocal()
+                                          .isBefore(DateTime.now()),
                                 )),
-                                DataCell(Text('${subscriber.deviceCount}/${subscriber.devicesLimit}')),
+                                DataCell(Text(
+                                    '${subscriber.deviceCount}/${subscriber.devicesLimit}')),
                                 DataCell(_StatusBadge(
-                                  label: subscriber.cloudSyncEnabled ? 'enabled' : 'off',
+                                  label: subscriber.cloudSyncEnabled
+                                      ? 'enabled'
+                                      : 'off',
                                   color: subscriber.cloudSyncEnabled
                                       ? Colors.green.shade700
-                                      : Theme.of(context).colorScheme.onSurfaceVariant,
+                                      : Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant,
                                   background: subscriber.cloudSyncEnabled
                                       ? Colors.green.withValues(alpha: 0.10)
-                                      : Theme.of(context).colorScheme.surfaceContainerHighest,
+                                      : Theme.of(context)
+                                          .colorScheme
+                                          .surfaceContainerHighest,
                                 )),
-                                DataCell(Text(_formatDate(subscriber.createdAt))),
-                                DataCell(Text(_formatDate(subscriber.lastSeenAt))),
+                                DataCell(
+                                    Text(_formatDate(subscriber.createdAt))),
+                                DataCell(
+                                    Text(_formatDate(subscriber.lastSeenAt))),
                                 DataCell(_ActionsCell(
                                   onEdit: () => _editSubscriber(subscriber),
                                   onDelete: () => _deleteSubscriber(subscriber),
@@ -511,18 +593,22 @@ class _AdminHeader extends StatelessWidget {
               color: theme.colorScheme.primary,
               borderRadius: BorderRadius.circular(18),
             ),
-            child: Icon(Icons.admin_panel_settings, color: theme.colorScheme.onPrimary),
+            child: Icon(Icons.admin_panel_settings,
+                color: theme.colorScheme.onPrimary),
           ),
           const SizedBox(width: 16),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Ventio Admin Console', style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+                Text('Ventio Admin Console',
+                    style: theme.textTheme.headlineSmall
+                        ?.copyWith(fontWeight: FontWeight.w800)),
                 const SizedBox(height: 6),
                 Text(
                   'Manage platform subscribers, stores, trial status, and device limits from one place.',
-                  style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                  style: theme.textTheme.bodyMedium
+                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
                 ),
               ],
             ),
@@ -559,11 +645,20 @@ class _OverviewGrid extends StatelessWidget {
       spacing: 12,
       runSpacing: 12,
       children: [
-        _SummaryCard(label: 'Accounts', value: accounts, icon: Icons.people_alt_outlined),
-        _SummaryCard(label: 'Stores', value: stores, icon: Icons.storefront_outlined),
-        _SummaryCard(label: 'Trials', value: trials, icon: Icons.hourglass_top_outlined),
-        _SummaryCard(label: 'Active', value: active, icon: Icons.verified_outlined),
-        _SummaryCard(label: 'Expired trials', value: expiredTrials, icon: Icons.warning_amber_outlined),
+        _SummaryCard(
+            label: 'Accounts',
+            value: accounts,
+            icon: Icons.people_alt_outlined),
+        _SummaryCard(
+            label: 'Stores', value: stores, icon: Icons.storefront_outlined),
+        _SummaryCard(
+            label: 'Trials', value: trials, icon: Icons.hourglass_top_outlined),
+        _SummaryCard(
+            label: 'Active', value: active, icon: Icons.verified_outlined),
+        _SummaryCard(
+            label: 'Expired trials',
+            value: expiredTrials,
+            icon: Icons.warning_amber_outlined),
       ],
     );
   }
@@ -599,7 +694,8 @@ class _SubscribersToolbar extends StatelessWidget {
             decoration: InputDecoration(
               prefixIcon: const Icon(Icons.search),
               hintText: 'Search username, store, plan...',
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+              border:
+                  OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
               isDense: true,
             ),
           ),
@@ -610,7 +706,8 @@ class _SubscribersToolbar extends StatelessWidget {
             initialValue: statusFilter,
             decoration: InputDecoration(
               labelText: 'Status',
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+              border:
+                  OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
               isDense: true,
             ),
             items: const [
@@ -648,7 +745,9 @@ class _SubscriberIdentity extends StatelessWidget {
         CircleAvatar(
           radius: 18,
           child: Text(
-            subscriber.username.isEmpty ? '?' : subscriber.username.characters.first.toUpperCase(),
+            subscriber.username.isEmpty
+                ? '?'
+                : subscriber.username.characters.first.toUpperCase(),
             style: const TextStyle(fontWeight: FontWeight.w800),
           ),
         ),
@@ -657,10 +756,14 @@ class _SubscriberIdentity extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(subscriber.loginName, style: const TextStyle(fontWeight: FontWeight.w700)),
+            Text(subscriber.loginName,
+                style: const TextStyle(fontWeight: FontWeight.w700)),
             Text(
-              subscriber.accountStatus.isEmpty ? 'account' : subscriber.accountStatus,
-              style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+              subscriber.accountStatus.isEmpty
+                  ? 'account'
+                  : subscriber.accountStatus,
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
           ],
         ),
@@ -677,14 +780,19 @@ class _StoreCell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final name = subscriber.storeName.isEmpty ? subscriber.storeSlug : subscriber.storeName;
+    final name = subscriber.storeName.isEmpty
+        ? subscriber.storeSlug
+        : subscriber.storeName;
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(name.isEmpty ? '-' : name, style: const TextStyle(fontWeight: FontWeight.w700)),
+        Text(name.isEmpty ? '-' : name,
+            style: const TextStyle(fontWeight: FontWeight.w700)),
         if (subscriber.storeSlug.isNotEmpty)
-          Text('@${subscriber.storeSlug}', style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+          Text('@${subscriber.storeSlug}',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
       ],
     );
   }
@@ -705,13 +813,17 @@ class _PlanBadge extends StatelessWidget {
         color: theme.colorScheme.secondaryContainer,
         borderRadius: BorderRadius.circular(999),
       ),
-      child: Text(label, style: TextStyle(color: theme.colorScheme.onSecondaryContainer, fontWeight: FontWeight.w700)),
+      child: Text(label,
+          style: TextStyle(
+              color: theme.colorScheme.onSecondaryContainer,
+              fontWeight: FontWeight.w700)),
     );
   }
 }
 
 class _StatusBadge extends StatelessWidget {
-  const _StatusBadge({required this.label, required this.color, required this.background});
+  const _StatusBadge(
+      {required this.label, required this.color, required this.background});
 
   final String label;
   final Color color;
@@ -726,13 +838,15 @@ class _StatusBadge extends StatelessWidget {
         borderRadius: BorderRadius.circular(999),
         border: Border.all(color: color.withValues(alpha: 0.18)),
       ),
-      child: Text(label, style: TextStyle(color: color, fontWeight: FontWeight.w800)),
+      child: Text(label,
+          style: TextStyle(color: color, fontWeight: FontWeight.w800)),
     );
   }
 }
 
 class _TrialCell extends StatelessWidget {
-  const _TrialCell({required this.date, required this.remaining, required this.isExpired});
+  const _TrialCell(
+      {required this.date, required this.remaining, required this.isExpired});
 
   final String date;
   final String remaining;
@@ -749,7 +863,9 @@ class _TrialCell extends StatelessWidget {
         Text(
           remaining,
           style: theme.textTheme.bodySmall?.copyWith(
-            color: isExpired ? theme.colorScheme.error : theme.colorScheme.onSurfaceVariant,
+            color: isExpired
+                ? theme.colorScheme.error
+                : theme.colorScheme.onSurfaceVariant,
             fontWeight: FontWeight.w600,
           ),
         ),
@@ -757,7 +873,6 @@ class _TrialCell extends StatelessWidget {
     );
   }
 }
-
 
 class _ActionsCell extends StatelessWidget {
   const _ActionsCell({required this.onEdit, required this.onDelete});
@@ -780,7 +895,8 @@ class _ActionsCell extends StatelessWidget {
         Tooltip(
           message: 'Delete subscriber',
           child: IconButton(
-            icon: Icon(Icons.delete_outline, color: Theme.of(context).colorScheme.error),
+            icon: Icon(Icons.delete_outline,
+                color: Theme.of(context).colorScheme.error),
             onPressed: onDelete,
           ),
         ),
@@ -807,7 +923,10 @@ class _ErrorCard extends StatelessWidget {
             Icon(Icons.error_outline, color: theme.colorScheme.error),
             const SizedBox(width: 12),
             Expanded(child: Text(message)),
-            TextButton.icon(onPressed: onRetry, icon: const Icon(Icons.refresh), label: const Text('Retry')),
+            TextButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Retry')),
           ],
         ),
       ),
@@ -826,11 +945,16 @@ class _EmptyState extends StatelessWidget {
       child: Center(
         child: Column(
           children: [
-            Icon(Icons.inbox_outlined, size: 56, color: theme.colorScheme.onSurfaceVariant),
+            Icon(Icons.inbox_outlined,
+                size: 56, color: theme.colorScheme.onSurfaceVariant),
             const SizedBox(height: 12),
-            Text('No subscribers found', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+            Text('No subscribers found',
+                style: theme.textTheme.titleMedium
+                    ?.copyWith(fontWeight: FontWeight.w800)),
             const SizedBox(height: 6),
-            Text('Try changing the search text or status filter.', style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+            Text('Try changing the search text or status filter.',
+                style: theme.textTheme.bodyMedium
+                    ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
           ],
         ),
       ),
@@ -839,7 +963,8 @@ class _EmptyState extends StatelessWidget {
 }
 
 class _SummaryCard extends StatelessWidget {
-  const _SummaryCard({required this.label, required this.value, required this.icon});
+  const _SummaryCard(
+      {required this.label, required this.value, required this.icon});
 
   final String label;
   final int value;
@@ -874,9 +999,15 @@ class _SummaryCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.labelLarge?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+                    Text(label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.labelLarge?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant)),
                     const SizedBox(height: 4),
-                    Text(value.toString(), style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900)),
+                    Text(value.toString(),
+                        style: theme.textTheme.headlineSmall
+                            ?.copyWith(fontWeight: FontWeight.w900)),
                   ],
                 ),
               ),

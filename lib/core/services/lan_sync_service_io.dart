@@ -7,6 +7,7 @@ import 'dart:math';
 import '../../data/app_store.dart';
 import '../../models/app_identity.dart';
 import '../../models/sync_change.dart';
+import 'account_auth_service.dart';
 import 'local_database_service.dart';
 import 'unified_sync_core_service.dart';
 import '../sync_unified/sync_device_state.dart';
@@ -866,6 +867,21 @@ class LanSyncService {
     };
   }
 
+  bool _clientDeviceLimitReached(LanSyncSettings settings,
+      {String excludeDeviceId = ''}) {
+    final allowed = AccountAuthCache.load()?.devicesLimit;
+    if (allowed == null) return false;
+    final normalizedAllowed = allowed < 0 ? 0 : allowed;
+    final hostDeviceId = store.deviceId.trim();
+    final excluded = excludeDeviceId.trim();
+    final linked = settings.hostRegistry.values.where((device) {
+      final id = device.clientDeviceId.trim();
+      if (id.isEmpty || id == hostDeviceId || id == excluded) return false;
+      return device.isActive;
+    }).length;
+    return linked >= normalizedAllowed;
+  }
+
   Future<void> _handleRequest(HttpRequest request) async {
     try {
       request.response.headers.add('Access-Control-Allow-Origin', '*');
@@ -905,6 +921,14 @@ class LanSyncService {
             : AppIdentity.defaults(
                     deviceId: '', platform: AppPlatformType.unknown)
                 .deviceId;
+        if (_clientDeviceLimitReached(settings, excludeDeviceId: deviceId)) {
+          await _json(
+            request,
+            {'ok': false, 'error': 'Device limit reached.'},
+            status: HttpStatus.forbidden,
+          );
+          return;
+        }
         final deviceToken = LanSyncSettings.generateDeviceToken();
         final paired = Map<String, String>.from(settings.pairedDevices);
         paired[deviceId] = deviceToken;

@@ -1,3 +1,4 @@
+import '../services/account_auth_service.dart';
 import '../services/lan_sync_service.dart';
 import 'sync_contracts.dart';
 import 'sync_device_state.dart';
@@ -24,12 +25,15 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
         ? UnifiedSyncErrorCode.expiredPairingCode
         : lower.contains('snapshot')
             ? UnifiedSyncErrorCode.snapshotUnavailable
-            : lower.contains('host devices cannot') || lower.contains('already a cloud client')
+            : lower.contains('host devices cannot') ||
+                    lower.contains('already a cloud client')
                 ? UnifiedSyncErrorCode.forbiddenRole
-                : lower.contains('not supported') || lower.contains('handled by the existing')
+                : lower.contains('not supported') ||
+                        lower.contains('handled by the existing')
                     ? UnifiedSyncErrorCode.unsupported
                     : UnifiedSyncErrorCode.unknown;
-    return UnifiedSyncError(code: code, userMessage: message, debugMessage: message);
+    return UnifiedSyncError(
+        code: code, userMessage: message, debugMessage: message);
   }
 
   DateTime? get _unifiedCursor => SyncDeviceStateStore.cursorForTransport(
@@ -53,7 +57,21 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
     return _settings.copyWith(lastPullCursor: cursor);
   }
 
-  Future<void> _recordLanResult(DateTime? cursor) => SyncDeviceStateStore.recordSyncResult(
+  bool _clientDeviceLimitReached(LanSyncSettings settings) {
+    final allowed = AccountAuthCache.load()?.devicesLimit;
+    if (allowed == null) return false;
+    final normalizedAllowed = allowed < 0 ? 0 : allowed;
+    final hostDeviceId = _service.store.deviceId.trim();
+    final linked = settings.hostRegistry.values.where((device) {
+      final id = device.clientDeviceId.trim();
+      if (id.isEmpty || id == hostDeviceId) return false;
+      return device.isActive;
+    }).length;
+    return linked >= normalizedAllowed;
+  }
+
+  Future<void> _recordLanResult(DateTime? cursor) =>
+      SyncDeviceStateStore.recordSyncResult(
         _service.store.appIdentity,
         transport: 'lan',
         appliedCursor: cursor,
@@ -72,7 +90,6 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
   @override
   String get deviceToken => _service.store.appIdentity.deviceToken;
 
-
   Future<void> stopHostIfSupported() => _service.stopHost();
 
   @override
@@ -83,7 +100,11 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
       token: _settings.secret,
     );
     await _recordLanResult(_unifiedCursor);
-    return UnifiedSyncResult(ok: result.ok, message: result.message, error: _errorFor(result.ok, result.message), cursor: _cursor());
+    return UnifiedSyncResult(
+        ok: result.ok,
+        message: result.message,
+        error: _errorFor(result.ok, result.message),
+        cursor: _cursor());
   }
 
   @override
@@ -109,17 +130,20 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
     try {
       await _service.startHost(port: _settings.port);
       final migratedSettings = LanSyncSettings.load();
-      await migratedSettings.copyWith(
-        setupComplete: true,
-        hostModeEnabled: true,
-        mode: LanSyncDeviceMode.host,
-      ).save();
+      await migratedSettings
+          .copyWith(
+            setupComplete: true,
+            hostModeEnabled: true,
+            mode: LanSyncDeviceMode.host,
+          )
+          .save();
       return const UnifiedSyncResult(
         ok: true,
         message: 'LAN Host is active and ready for local devices.',
       );
     } catch (error) {
-      final message = 'LAN Host could not start on port ${_settings.port}: $error';
+      final message =
+          'LAN Host could not start on port ${_settings.port}: $error';
       return UnifiedSyncResult(
         ok: false,
         message: message,
@@ -139,17 +163,35 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
   }) async {
     return const UnifiedSyncResult(
       ok: true,
-      message: 'LAN initial Host snapshot is served live by the Local Host API.',
+      message:
+          'LAN initial Host snapshot is served live by the Local Host API.',
       restoredSnapshot: true,
     );
   }
 
   @override
-  Future<UnifiedPairingCodeResult> createPairingCode({int ttlMinutes = 5}) async {
+  Future<UnifiedPairingCodeResult> createPairingCode(
+      {int ttlMinutes = 5}) async {
     final savedSettings = LanSyncSettings.load();
-    final lanEnabled = _service.store.appIdentity.isHost && savedSettings.setupComplete && savedSettings.isHost;
+    final lanEnabled = _service.store.appIdentity.isHost &&
+        savedSettings.setupComplete &&
+        savedSettings.isHost;
     if (!lanEnabled) {
-      const message = 'Enable LAN Sync and save settings before generating a pairing code.';
+      const message =
+          'Enable LAN Sync and save settings before generating a pairing code.';
+      return const UnifiedPairingCodeResult(
+        ok: false,
+        message: message,
+        error: UnifiedSyncError(
+          code: UnifiedSyncErrorCode.forbiddenRole,
+          userMessage: message,
+          debugMessage: message,
+        ),
+      );
+    }
+    if (_clientDeviceLimitReached(savedSettings)) {
+      const message =
+          'You have reached the maximum number of devices allowed by your subscription. To add more devices, please contact Ventio Support.';
       return const UnifiedPairingCodeResult(
         ok: false,
         message: message,
@@ -165,7 +207,8 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
     final expiresAt = DateTime.now().add(Duration(minutes: ttlMinutes));
     try {
       await _service.startHost(port: _settings.port);
-      final migratedSettings = savedSettings.withMigratedHostRegistry(_service.store.deviceId);
+      final migratedSettings =
+          savedSettings.withMigratedHostRegistry(_service.store.deviceId);
       await migratedSettings.copyWith(secret: code).save();
       return UnifiedPairingCodeResult(
         ok: true,
@@ -184,7 +227,8 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
         ),
       );
     } catch (error) {
-      final message = 'LAN Host could not start on port ${_settings.port}: $error';
+      final message =
+          'LAN Host could not start on port ${_settings.port}: $error';
       return UnifiedPairingCodeResult(
         ok: false,
         message: message,
@@ -198,7 +242,8 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
   }
 
   @override
-  Future<UnifiedPairingClaimResult> claimPairingCode(String code, {void Function(double value, String label)? onProgress}) async {
+  Future<UnifiedPairingClaimResult> claimPairingCode(String code,
+      {void Function(double value, String label)? onProgress}) async {
     final result = await _service.claimPairingCode(
       _settings.host,
       port: _settings.port,
@@ -216,7 +261,8 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
   @override
   Future<UnifiedSyncResult> pushPending(UnifiedSyncPushRequest request) async {
     final effectiveSettings = _settingsWithUnifiedCursor();
-    final pendingCount = _service.store.pendingSyncChangesForTarget('host').length;
+    final pendingCount =
+        _service.store.pendingSyncChangesForTarget('host').length;
     final result = await _service.pushPendingOnly(
       effectiveSettings.host,
       port: effectiveSettings.port,
@@ -258,7 +304,8 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
   }
 
   @override
-  Future<UnifiedSyncResult> rebuildFromHostSnapshot({void Function(double value, String label)? onProgress}) async {
+  Future<UnifiedSyncResult> rebuildFromHostSnapshot(
+      {void Function(double value, String label)? onProgress}) async {
     final effectiveSettings = _settingsWithUnifiedCursor();
     final result = await _service.repairFromHostSnapshot(
       effectiveSettings.host,
@@ -266,9 +313,12 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
       token: effectiveSettings.secret,
       onProgress: onProgress,
     );
-    return UnifiedSyncResult(ok: result.ok, message: result.message, error: _errorFor(result.ok, result.message), cursor: _cursor());
+    return UnifiedSyncResult(
+        ok: result.ok,
+        message: result.message,
+        error: _errorFor(result.ok, result.message),
+        cursor: _cursor());
   }
-
 
   @override
   Future<void> compactAfterSuccessfulSync() async {
@@ -286,9 +336,11 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
   }
 
   @override
-  Future<UnifiedSyncResult> syncNow({void Function(double value, String label)? onProgress}) async {
+  Future<UnifiedSyncResult> syncNow(
+      {void Function(double value, String label)? onProgress}) async {
     if (_service.store.appIdentity.isHost || _settings.isHost) {
-      onProgress?.call(1.0, 'LAN Host is active. Host devices do not run LAN client sync.');
+      onProgress?.call(
+          1.0, 'LAN Host is active. Host devices do not run LAN client sync.');
       try {
         await _service.startHost(port: _settings.port);
       } catch (_) {
@@ -303,7 +355,8 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
     }
 
     onProgress?.call(0.08, 'Preparing LAN sync...');
-    final push = await pushPending(UnifiedSyncPushRequest(deviceId: deviceId, deviceToken: deviceToken));
+    final push = await pushPending(
+        UnifiedSyncPushRequest(deviceId: deviceId, deviceToken: deviceToken));
     if (!push.ok) {
       onProgress?.call(1.0, 'LAN sync failed while sending local changes.');
       return push;
@@ -326,7 +379,8 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
       onProgress?.call(1.0, 'LAN sync completed.');
       return UnifiedSyncResult(
         ok: true,
-        message: 'LAN sync completed. Pushed ${push.pushed} change(s), pulled ${pull.pulled} change(s).',
+        message:
+            'LAN sync completed. Pushed ${push.pushed} change(s), pulled ${pull.pulled} change(s).',
         pushed: push.pushed,
         pulled: pull.pulled,
         restoredSnapshot: pull.restoredSnapshot,

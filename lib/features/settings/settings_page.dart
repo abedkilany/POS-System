@@ -3375,6 +3375,11 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       setState(() => _status = tr.text('enable_lan_before_pairing_code'));
       return;
     }
+    final limit = _localClientDeviceLimitStatus(widget.store, lan);
+    if (limit?.limitReached == true) {
+      setState(() => _status = tr.text('device_limit_reached'));
+      return;
+    }
     if (_hasActiveLanPairingCode) _expireLanPairingCode();
     await _generateLanToken();
   }
@@ -5799,7 +5804,16 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
               ));
     } else {
       _cloudMonitoringFuture = Future<_CloudMonitoringSnapshot>.value(
-          const _CloudMonitoringSnapshot(devices: <CloudDeviceStatus>[]));
+        _CloudMonitoringSnapshot(
+          devices: const <CloudDeviceStatus>[],
+          limit: widget.store.appIdentity.isHost
+              ? _localClientDeviceLimitStatus(
+                  widget.store,
+                  LanSyncSettings.load(),
+                )
+              : null,
+        ),
+      );
     }
   }
 
@@ -5815,7 +5829,11 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
       devices = result.devices;
     }
     await _adoptCloudRegistryDevices(devices);
-    return _CloudMonitoringSnapshot(devices: devices, limit: result.limit);
+    return _CloudMonitoringSnapshot(
+      devices: devices,
+      limit: result.limit ??
+          _localClientDeviceLimitStatus(widget.store, LanSyncSettings.load()),
+    );
   }
 
   Future<bool> _repairLegacyCloudDeviceLinks(
@@ -6119,6 +6137,29 @@ class _CloudMonitoringSnapshot {
 
   final List<CloudDeviceStatus> devices;
   final CloudDeviceLimitStatus? limit;
+}
+
+CloudDeviceLimitStatus? _localClientDeviceLimitStatus(
+  AppStore store,
+  LanSyncSettings settings, {
+  String excludeDeviceId = '',
+}) {
+  final allowed = AccountAuthCache.load()?.devicesLimit;
+  if (allowed == null) return null;
+  final hostDeviceId = store.deviceId.trim();
+  final excluded = excludeDeviceId.trim();
+  final linked = settings.hostRegistry.values.where((device) {
+    final id = device.clientDeviceId.trim();
+    if (id.isEmpty || id == hostDeviceId || id == excluded) return false;
+    return device.isActive;
+  }).length;
+  final normalizedAllowed = allowed < 0 ? 0 : allowed;
+  return CloudDeviceLimitStatus(
+    allowed: normalizedAllowed,
+    linked: linked,
+    available: (normalizedAllowed - linked).clamp(0, 1 << 30).toInt(),
+    limitReached: linked >= normalizedAllowed,
+  );
 }
 
 class _HostSyncMonitoringTable extends StatefulWidget {

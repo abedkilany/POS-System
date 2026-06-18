@@ -182,7 +182,7 @@ export default async function handler(req, res) {
         : (row.account_type || 'store_owner'),
       subscriptionStatus: row.subscription_status || '',
       trialEndsAt: row.trial_ends_at ? new Date(row.trial_ends_at).toISOString() : null,
-      devicesLimit: Number(row.devices_limit || 0) || null,
+      devicesLimit: row.devices_limit == null ? null : Number(row.devices_limit),
       adminToken,
       accountToken,
       cloudSyncEnabled: row.cloud_sync_enabled === true,

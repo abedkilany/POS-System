@@ -109,6 +109,7 @@ async function listSubscribers(res) {
     left join (
       select store_id, count(*)::int as device_count, max(last_seen_at) as last_seen_at
       from store_devices
+      where role = 'client' and revoked = false
       group by store_id
     ) dev on dev.store_id = s.id
     where coalesce(a.namespace_slug, '') <> 'ventio'
@@ -158,7 +159,8 @@ async function updateSubscriber(req, res) {
   const storeStatus = cleanSimple(body.storeStatus ?? body.store_status ?? 'active') || 'active';
   const plan = cleanSimple(body.plan || 'trial') || 'trial';
   const subscriptionStatus = cleanSimple(body.subscriptionStatus ?? body.subscription_status ?? 'trial') || 'trial';
-  const devicesLimit = Math.max(1, Number.parseInt(String(body.devicesLimit ?? body.devices_limit ?? '2'), 10) || 2);
+  const parsedDevicesLimit = Number.parseInt(String(body.devicesLimit ?? body.devices_limit ?? '2'), 10);
+  const devicesLimit = Math.max(0, Number.isFinite(parsedDevicesLimit) ? parsedDevicesLimit : 2);
   const cloudSyncEnabled = body.cloudSyncEnabled === true || body.cloud_sync_enabled === true;
   const trialEndsAtRaw = String(body.trialEndsAt ?? body.trial_ends_at ?? '').trim();
 
