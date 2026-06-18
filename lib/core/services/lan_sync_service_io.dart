@@ -838,6 +838,25 @@ class LanSyncService {
     };
   }
 
+  Map<String, dynamic> _lanSignalPayload({
+    DateTime? since,
+    int sinceSequence = 0,
+  }) {
+    final decoded = jsonDecode(store.exportSyncChangesJson(
+        since: since, sinceSequence: sinceSequence)) as Map<String, dynamic>;
+    final changes = decoded['changes'] as List<dynamic>? ?? const <dynamic>[];
+    return {
+      'ok': true,
+      'changed': changes.isNotEmpty,
+      'changeCount': changes.length,
+      'latestSequence':
+          int.tryParse(decoded['generatedSequence']?.toString() ?? '') ?? 0,
+      'generatedAt': decoded['generatedAt']?.toString() ??
+          DateTime.now().toIso8601String(),
+      'serverTime': DateTime.now().toIso8601String(),
+    };
+  }
+
   Future<void> _handleRequest(HttpRequest request) async {
     try {
       request.response.headers.add('Access-Control-Allow-Origin', '*');
@@ -970,6 +989,29 @@ class LanSyncService {
           'generatedAt': DateTime.now().toIso8601String(),
         });
         return;
+      }
+
+      if (request.method == 'GET' && request.uri.path == '/changes/signal') {
+        final since =
+            DateTime.tryParse(request.uri.queryParameters['since'] ?? '');
+        final sinceSequence =
+            int.tryParse(request.uri.queryParameters['since_sequence'] ?? '') ??
+                0;
+        final waitSeconds =
+            (int.tryParse(request.uri.queryParameters['wait_seconds'] ?? '') ??
+                    25)
+                .clamp(1, 25);
+        final deadline =
+            DateTime.now().add(Duration(seconds: waitSeconds.toInt()));
+        while (true) {
+          final payload =
+              _lanSignalPayload(since: since, sinceSequence: sinceSequence);
+          if (payload['changed'] == true || DateTime.now().isAfter(deadline)) {
+            await _json(request, payload);
+            return;
+          }
+          await Future<void>.delayed(const Duration(seconds: 1));
+        }
       }
 
       if (request.method == 'GET' && request.uri.path == '/snapshot/manifest') {
@@ -1616,6 +1658,40 @@ class LanSyncService {
     } catch (error) {
       await _syncCore.markPushFailed(pendingIds, error.toString());
       return LanSyncResult(ok: false, message: 'LAN push failed: $error');
+    }
+  }
+
+  Future<bool> waitForRealtimeSignal(String host,
+      {int port = 8787,
+      String token = '',
+      Duration wait = const Duration(seconds: 25)}) async {
+    try {
+      final settings = LanSyncSettings.load();
+      final client = _client();
+      final lastSequence =
+          SyncDeviceStateStore.load(store.appIdentity).lastAppliedSequence;
+      final query = <String, String>{
+        'wait_seconds': wait.inSeconds.clamp(1, 25).toString(),
+        'since_sequence': lastSequence.toString(),
+      };
+      if (settings.lastPullCursor != null) {
+        query['since'] = settings.lastPullCursor!.toIso8601String();
+      }
+      final path =
+          Uri(path: '/changes/signal', queryParameters: query).toString();
+      final request = await client.get(host.trim(), port, path);
+      _attachToken(request, token);
+      final response =
+          await request.close().timeout(wait + const Duration(seconds: 8));
+      final body = await utf8.decoder.bind(response).join();
+      client.close(force: true);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return false;
+      }
+      final decoded = jsonDecode(body) as Map<String, dynamic>;
+      return decoded['changed'] == true;
+    } catch (_) {
+      return false;
     }
   }
 

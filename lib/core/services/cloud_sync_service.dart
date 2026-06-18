@@ -2218,6 +2218,35 @@ class CloudSyncService {
     }
   }
 
+  Future<bool> waitForRealtimeSignal(
+    CloudSyncSettings settings, {
+    Duration wait = const Duration(seconds: 25),
+  }) async {
+    final identity = store.appIdentity;
+    if (!_cloudAllowedForIdentity(identity) || !settings.isConfigured) {
+      return false;
+    }
+    final state = SyncDeviceStateStore.load(identity);
+    final query = <String, String>{
+      'store_id': identity.storeId,
+      'branch_id': identity.branchId,
+      'role': identity.isHost ? 'host' : 'client',
+      'wait_seconds': wait.inSeconds.clamp(1, 25).toString(),
+    };
+    if (identity.isClient && state.lastAppliedSequence > 0) {
+      query['since_sequence'] = state.lastAppliedSequence.toString();
+    }
+    final response = await _client
+        .get(settings.endpoint('/api/sync/signal', query),
+            headers: _headers(settings))
+        .timeout(wait + const Duration(seconds: 8));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      return false;
+    }
+    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+    return decoded['changed'] == true;
+  }
+
   Future<HostHeartbeatStatus> getHostHeartbeatStatus(CloudSyncSettings settings,
       {Duration staleAfter = const Duration(seconds: 90)}) async {
     final identity = store.appIdentity;

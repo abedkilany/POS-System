@@ -314,7 +314,9 @@ class LanSyncSettings {
       final registryDevice = hostRegistry[clientDeviceId];
       if (registryDevice == null) return true;
       if (registryDevice.deviceToken.trim() != deviceToken) return true;
-      if (hostId.isNotEmpty && registryDevice.hostDeviceId.trim() != hostId) return true;
+      if (hostId.isNotEmpty && registryDevice.hostDeviceId.trim() != hostId) {
+        return true;
+      }
       if (!registryDevice.isActive) return true;
     }
     return false;
@@ -367,6 +369,7 @@ class LanSyncService {
       const LanSyncResult(ok: false, message: 'LAN pull is not available in the web build.');
   Future<LanSyncResult> pushPendingOnly(String host, {int port = 8787, String token = '', LanSyncProgressCallback? onProgress}) async =>
       const LanSyncResult(ok: false, message: 'LAN push is not available in the web build.');
+  Future<bool> waitForRealtimeSignal(String host, {int port = 8787, String token = '', Duration wait = const Duration(seconds: 25)}) async => false;
   Future<LanSyncResult> pullChangesOnly(String host, {int port = 8787, String token = '', LanSyncProgressCallback? onProgress}) async =>
       const LanSyncResult(ok: false, message: 'LAN pull is not available in the web build.');
   Future<LanSyncResult> repairFromHostSnapshot(String host, {int port = 8787, String token = '', LanSyncProgressCallback? onProgress}) async =>

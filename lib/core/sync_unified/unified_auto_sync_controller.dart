@@ -58,6 +58,7 @@ class UnifiedAutoLanSyncController {
   Timer? _debounceTimer;
   bool _running = false;
   bool _disposed = false;
+  bool _signalLoopRunning = false;
   int _lastPendingCount = 0;
   String _lastSettingsSignature = '';
 
@@ -111,6 +112,7 @@ class UnifiedAutoLanSyncController {
     if (store.appIdentity.isClient &&
         settings.autoSyncEnabled &&
         settings.isClient) {
+      unawaited(_signalLoop());
       unawaited(_runClientSync());
     }
   }
@@ -121,6 +123,39 @@ class UnifiedAutoLanSyncController {
     _periodicTimer?.cancel();
     _debounceTimer?.cancel();
     await UnifiedSyncFactory.lanEngine(store).transportStopHostIfSupported();
+  }
+
+  Future<void> _signalLoop() async {
+    if (_signalLoopRunning) return;
+    _signalLoopRunning = true;
+    try {
+      while (!_disposed) {
+        final settings = LanSyncSettings.load();
+        if (!_lanAllowedForCurrentRole(settings) ||
+            !settings.autoSyncEnabled ||
+            !settings.isClient ||
+            settings.host.trim().isEmpty) {
+          await Future<void>.delayed(const Duration(seconds: 5));
+          continue;
+        }
+        try {
+          final changed = await LanSyncService(store).waitForRealtimeSignal(
+            settings.host,
+            port: settings.port,
+            token: settings.secret,
+          );
+          if (changed && !_disposed) {
+            await _runClientSync();
+          }
+        } catch (_) {
+          if (!_disposed) {
+            await Future<void>.delayed(const Duration(seconds: 5));
+          }
+        }
+      }
+    } finally {
+      _signalLoopRunning = false;
+    }
   }
 
   void _onStoreChanged() {
@@ -256,6 +291,7 @@ class UnifiedAutoCloudSyncController {
   Timer? _debounceTimer;
   bool _running = false;
   bool _disposed = false;
+  bool _signalLoopRunning = false;
   int _lastCloudQueueCount = 0;
   int _lastRelayQueueCount = 0;
 
@@ -276,6 +312,7 @@ class UnifiedAutoCloudSyncController {
     final interval =
         Duration(seconds: CloudSyncSettings.defaultIntervalSeconds);
     _timer = Timer.periodic(interval, (_) => _tick());
+    unawaited(_signalLoop());
     await _tick();
   }
 
@@ -286,6 +323,35 @@ class UnifiedAutoCloudSyncController {
     _debounceTimer?.cancel();
     _timer = null;
     _debounceTimer = null;
+  }
+
+  Future<void> _signalLoop() async {
+    if (_signalLoopRunning) return;
+    _signalLoopRunning = true;
+    try {
+      while (!_disposed) {
+        final settings = CloudSyncSettings.load();
+        if (!settings.autoSyncEnabled ||
+            !settings.isConfigured ||
+            !_cloudAllowedForCurrentRole()) {
+          await Future<void>.delayed(const Duration(seconds: 5));
+          continue;
+        }
+        try {
+          final changed =
+              await CloudSyncService(store).waitForRealtimeSignal(settings);
+          if (changed && !_disposed) {
+            await _tick();
+          }
+        } catch (_) {
+          if (!_disposed) {
+            await Future<void>.delayed(const Duration(seconds: 5));
+          }
+        }
+      }
+    } finally {
+      _signalLoopRunning = false;
+    }
   }
 
   void _onStoreChanged() {
