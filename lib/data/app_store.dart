@@ -3006,7 +3006,7 @@ class AppStore extends ChangeNotifier {
 
   Future<void> recoverExistingStoreIdentity({
     required String storeId,
-    required String recoveryKey,
+    String recoveryKey = '',
     String? branchId,
     String? hostDeviceId,
     String? deviceToken,
@@ -3016,8 +3016,8 @@ class AppStore extends ChangeNotifier {
   }) async {
     final cleanStoreId = storeId.trim().toUpperCase();
     final cleanRecoveryKey = recoveryKey.trim().toUpperCase();
-    if (!cleanStoreId.startsWith('ST-') || cleanRecoveryKey.isEmpty) {
-      throw ArgumentError('A valid Store ID and Recovery Key are required.');
+    if (!cleanStoreId.startsWith('ST-')) {
+      throw ArgumentError('A valid Store ID is required.');
     }
     final cleanBranchId = (branchId == null || branchId.trim().isEmpty)
         ? appIdentity.branchId
@@ -3026,7 +3026,7 @@ class AppStore extends ChangeNotifier {
     final recoveredIdentity = appIdentity.copyWith(
       storeId: cleanStoreId,
       branchId: cleanBranchId,
-      recoveryKey: cleanRecoveryKey,
+      recoveryKey: cleanRecoveryKey.isEmpty ? appIdentity.recoveryKey : cleanRecoveryKey,
       hostDeviceId: hostDeviceId ??
           (nextRole == DeviceRole.host ? _deviceId : appIdentity.hostDeviceId),
       deviceToken: (deviceToken == null || deviceToken.trim().isEmpty)

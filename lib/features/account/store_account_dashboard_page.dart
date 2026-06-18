@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/localization/app_localizations.dart';
 import '../../core/services/account_auth_service.dart';
 import '../../core/utils/responsive.dart';
 
@@ -9,11 +10,13 @@ class StoreAccountDashboardPage extends StatefulWidget {
     required this.cache,
     required this.onRecoverExistingStore,
     required this.onLogout,
+    required this.onLocaleChanged,
   });
 
   final AccountAuthCache cache;
   final VoidCallback onRecoverExistingStore;
   final Future<void> Function() onLogout;
+  final ValueChanged<Locale> onLocaleChanged;
 
   @override
   State<StoreAccountDashboardPage> createState() =>
@@ -25,8 +28,8 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
 
   AccountAuthCache get cache => widget.cache;
 
-  String _formatDate(DateTime? value) {
-    if (value == null) return 'Not set';
+  String _formatDate(BuildContext context, DateTime? value) {
+    if (value == null) return AppLocalizations.of(context).text('account_not_set');
     final local = value.toLocal();
     String two(int n) => n.toString().padLeft(2, '0');
     return '${local.year}-${two(local.month)}-${two(local.day)} ${two(local.hour)}:${two(local.minute)}';
@@ -50,6 +53,7 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
       context: context,
       barrierDismissible: !saving,
       builder: (dialogContext) {
+        final tr = AppLocalizations.of(dialogContext);
         return StatefulBuilder(
           builder: (context, setDialogState) {
             Future<void> submit() async {
@@ -65,17 +69,17 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
               if (result.ok) {
                 Navigator.of(dialogContext).pop();
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(result.message.isEmpty ? 'Password changed successfully.' : result.message)),
+                  SnackBar(content: Text(result.message.isEmpty ? tr.text('account_password_changed_success') : result.message)),
                 );
               } else {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(result.message.isEmpty ? 'Could not change password.' : result.message)),
+                  SnackBar(content: Text(result.message.isEmpty ? tr.text('account_password_change_failed') : result.message)),
                 );
               }
             }
 
             return AlertDialog(
-              title: const Text('Change password'),
+              title: Text(tr.text('account_change_password')),
               content: Form(
                 key: formKey,
                 child: SizedBox(
@@ -86,24 +90,24 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
                       TextFormField(
                         controller: currentController,
                         obscureText: true,
-                        decoration: const InputDecoration(
-                          labelText: 'Current password',
+                        decoration: InputDecoration(
+                          labelText: tr.text('account_current_password'),
                           prefixIcon: Icon(Icons.lock_outline),
                         ),
-                        validator: (value) => (value ?? '').isEmpty ? 'Enter current password.' : null,
+                        validator: (value) => (value ?? '').isEmpty ? tr.text('account_enter_current_password') : null,
                       ),
                       const SizedBox(height: 12),
                       TextFormField(
                         controller: newController,
                         obscureText: true,
-                        decoration: const InputDecoration(
-                          labelText: 'New password',
+                        decoration: InputDecoration(
+                          labelText: tr.text('account_new_password'),
                           prefixIcon: Icon(Icons.password_outlined),
                         ),
                         validator: (value) {
                           final text = value ?? '';
-                          if (text.length < 6) return 'Password must be at least 6 characters.';
-                          if (text == currentController.text) return 'New password must be different.';
+                          if (text.length < 6) return tr.text('account_password_min_6');
+                          if (text == currentController.text) return tr.text('account_password_must_be_different');
                           return null;
                         },
                       ),
@@ -111,11 +115,11 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
                       TextFormField(
                         controller: confirmController,
                         obscureText: true,
-                        decoration: const InputDecoration(
-                          labelText: 'Confirm new password',
+                        decoration: InputDecoration(
+                          labelText: tr.text('account_confirm_new_password'),
                           prefixIcon: Icon(Icons.check_circle_outline),
                         ),
-                        validator: (value) => value != newController.text ? 'Passwords do not match.' : null,
+                        validator: (value) => value != newController.text ? tr.text('account_passwords_do_not_match') : null,
                         onFieldSubmitted: (_) => saving ? null : submit(),
                       ),
                     ],
@@ -125,7 +129,7 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
               actions: [
                 TextButton(
                   onPressed: saving ? null : () => Navigator.of(dialogContext).pop(),
-                  child: const Text('Cancel'),
+                  child: Text(tr.text('cancel')),
                 ),
                 FilledButton.icon(
                   onPressed: saving ? null : submit,
@@ -136,7 +140,7 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.save_outlined),
-                  label: Text(saving ? 'Saving...' : 'Save password'),
+                  label: Text(saving ? tr.text('saving') : tr.text('account_save_password')),
                 ),
               ],
             );
@@ -152,6 +156,7 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
 
   Widget _buildAccountSettings(BuildContext context) {
     final theme = Theme.of(context);
+    final tr = AppLocalizations.of(context);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -159,25 +164,25 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Account settings',
+              tr.text('account_settings'),
               style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 8),
             Text(
-              'Manage the online account connected to this store.',
+              tr.text('account_settings_description'),
               style: theme.textTheme.bodyMedium,
             ),
             const SizedBox(height: 20),
-            _InfoRow(label: 'Login name', value: cache.loginName),
-            _InfoRow(label: 'Username', value: cache.username),
-            _InfoRow(label: 'Store', value: cache.storeName.trim().isEmpty ? cache.storeSlug : cache.storeName),
-            _InfoRow(label: 'Subscription', value: cache.subscriptionStatus),
+            _InfoRow(label: tr.text('account_login_name'), value: cache.loginName),
+            _InfoRow(label: tr.text('username'), value: cache.username),
+            _InfoRow(label: tr.text('store'), value: cache.storeName.trim().isEmpty ? cache.storeSlug : cache.storeName),
+            _InfoRow(label: tr.text('subscription'), value: cache.subscriptionStatus),
             const Divider(height: 32),
             ListTile(
               contentPadding: EdgeInsets.zero,
               leading: const CircleAvatar(child: Icon(Icons.password_outlined)),
-              title: const Text('Change password'),
-              subtitle: const Text('Update the server password for this online account.'),
+              title: Text(tr.text('account_change_password')),
+              subtitle: Text(tr.text('account_change_password_subtitle')),
               trailing: const Icon(Icons.chevron_right),
               onTap: _changePassword,
             ),
@@ -189,9 +194,10 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
 
   Widget _buildOverview(BuildContext context) {
     final theme = Theme.of(context);
+    final tr = AppLocalizations.of(context);
     final daysLeft = _trialDaysLeft();
     final status = cache.subscriptionStatus.trim().isEmpty
-        ? 'unknown'
+        ? tr.text('unknown')
         : cache.subscriptionStatus.trim();
     final storeName = cache.storeName.trim().isEmpty
         ? cache.storeSlug
@@ -223,7 +229,7 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          storeName.isEmpty ? 'Your store' : storeName,
+                          storeName.isEmpty ? tr.text('your_store') : storeName,
                           style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
                         ),
                         const SizedBox(height: 4),
@@ -250,21 +256,21 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
             final cards = [
               _MetricCard(
                 icon: Icons.workspace_premium_outlined,
-                title: 'Plan',
-                value: status == 'trial' ? 'Trial' : status,
-                subtitle: 'Current subscription',
+                title: tr.text('plan'),
+                value: status == 'trial' ? tr.text('trial') : status,
+                subtitle: tr.text('current_subscription'),
               ),
               _MetricCard(
                 icon: Icons.event_available_outlined,
-                title: 'Trial remaining',
-                value: daysLeft == null ? '—' : '$daysLeft days',
-                subtitle: 'Ends ${_formatDate(cache.trialEndsAt)}',
+                title: tr.text('trial_remaining'),
+                value: daysLeft == null ? '—' : tr.format('days_count', {'count': daysLeft}),
+                subtitle: tr.format('ends_date', {'date': _formatDate(context, cache.trialEndsAt)}),
               ),
               _MetricCard(
                 icon: Icons.devices_outlined,
-                title: 'Device limit',
+                title: tr.text('device_limit'),
                 value: cache.devicesLimit?.toString() ?? '—',
-                subtitle: 'Allowed devices for this store',
+                subtitle: tr.text('allowed_devices_for_store'),
               ),
             ];
             if (!wide) {
@@ -297,19 +303,19 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Account management',
+                  tr.text('account_management'),
                   style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'This is the online account area for your store. The POS and inventory system stay available from Offline login on this device.',
+                  tr.text('account_management_description'),
                   style: theme.textTheme.bodyMedium,
                 ),
                 const SizedBox(height: 20),
-                _InfoRow(label: 'Account ID', value: cache.accountId),
-                _InfoRow(label: 'Store ID', value: cache.storeId),
-                _InfoRow(label: 'Store slug', value: cache.storeSlug),
-                _InfoRow(label: 'Last verified', value: _formatDate(cache.lastVerifiedAt)),
+                _InfoRow(label: tr.text('account_id'), value: cache.accountId),
+                _InfoRow(label: tr.text('store_id'), value: cache.storeId),
+                _InfoRow(label: tr.text('store_slug'), value: cache.storeSlug),
+                _InfoRow(label: tr.text('last_verified'), value: _formatDate(context, cache.lastVerifiedAt)),
                 const SizedBox(height: 20),
                 Wrap(
                   spacing: 12,
@@ -318,24 +324,24 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
                     OutlinedButton.icon(
                       onPressed: widget.onRecoverExistingStore,
                       icon: const Icon(Icons.key_outlined),
-                      label: const Text('Recover existing store'),
+                      label: Text(tr.text('recover_existing_store')),
                     ),
                     OutlinedButton.icon(
                       onPressed: () => setState(() => _selectedIndex = 1),
                       icon: const Icon(Icons.manage_accounts_outlined),
-                      label: const Text('Account settings'),
+                      label: Text(tr.text('account_settings')),
                     ),
-                    const _ComingSoonButton(
+                    _ComingSoonButton(
                       icon: Icons.credit_card_outlined,
-                      label: 'Manage subscription',
+                      label: tr.text('manage_subscription'),
                     ),
-                    const _ComingSoonButton(
+                    _ComingSoonButton(
                       icon: Icons.devices_other_outlined,
-                      label: 'Manage devices',
+                      label: tr.text('manage_devices'),
                     ),
-                    const _ComingSoonButton(
+                    _ComingSoonButton(
                       icon: Icons.storefront_outlined,
-                      label: 'Online store settings',
+                      label: tr.text('online_store_settings'),
                     ),
                   ],
                 ),
@@ -358,6 +364,7 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     final wide = MediaQuery.sizeOf(context).width >= 900;
     final page = SafeArea(
       child: SingleChildScrollView(
@@ -373,12 +380,41 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Store account'),
+        title: Text(tr.text('store_account')),
         actions: [
+          PopupMenuButton<Locale>(
+            tooltip: tr.text('language'),
+            onSelected: widget.onLocaleChanged,
+            itemBuilder: (context) {
+              final currentLocale = Localizations.localeOf(context);
+              final isArabic = currentLocale.languageCode == 'ar';
+              return [
+                PopupMenuItem<Locale>(
+                  value: const Locale('en'),
+                  child: Row(children: [
+                    const Text('🇺🇸'),
+                    const SizedBox(width: 10),
+                    Expanded(child: Text(tr.text('language_english'))),
+                    if (!isArabic) const Icon(Icons.check, size: 18),
+                  ]),
+                ),
+                PopupMenuItem<Locale>(
+                  value: const Locale('ar'),
+                  child: Row(children: [
+                    const Text('🇱🇧'),
+                    const SizedBox(width: 10),
+                    Expanded(child: Text(tr.text('language_arabic'))),
+                    if (isArabic) const Icon(Icons.check, size: 18),
+                  ]),
+                ),
+              ];
+            },
+            icon: const Icon(Icons.language_outlined),
+          ),
           TextButton.icon(
             onPressed: widget.onLogout,
             icon: const Icon(Icons.logout),
-            label: const Text('Logout'),
+            label: Text(tr.text('logout')),
           ),
           const SizedBox(width: 8),
         ],
@@ -417,16 +453,16 @@ class _AccountNavigation extends StatelessWidget {
         padding: EdgeInsets.symmetric(vertical: 16),
         child: Icon(Icons.storefront_outlined),
       ),
-      destinations: const [
+      destinations: [
         NavigationRailDestination(
           icon: Icon(Icons.dashboard_outlined),
           selectedIcon: Icon(Icons.dashboard),
-          label: Text('Overview'),
+          label: Text(AppLocalizations.of(context).text('overview')),
         ),
         NavigationRailDestination(
           icon: Icon(Icons.manage_accounts_outlined),
           selectedIcon: Icon(Icons.manage_accounts),
-          label: Text('Account settings'),
+          label: Text(AppLocalizations.of(context).text('account_settings')),
         ),
       ],
     );
@@ -511,7 +547,7 @@ class _ComingSoonButton extends StatelessWidget {
     return OutlinedButton.icon(
       onPressed: null,
       icon: Icon(icon),
-      label: Text('$label · soon'),
+      label: Text(AppLocalizations.of(context).format('coming_soon_label', {'label': label})),
     );
   }
 }

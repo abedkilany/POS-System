@@ -1,6 +1,3 @@
-import 'dart:convert';
-
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
@@ -15,10 +12,16 @@ import '../account/store_account_dashboard_page.dart';
 import '../admin/admin_subscribers_page.dart';
 
 class LoginGatePage extends StatefulWidget {
-  const LoginGatePage({super.key, required this.store, required this.child});
+  const LoginGatePage({
+    super.key,
+    required this.store,
+    required this.child,
+    required this.onLocaleChanged,
+  });
 
   final AppStore store;
   final Widget child;
+  final ValueChanged<Locale> onLocaleChanged;
 
   @override
   State<LoginGatePage> createState() => _LoginGatePageState();
@@ -101,166 +104,78 @@ class _LoginGatePageState extends State<LoginGatePage> {
     }
   }
 
-  Future<void> _loadRecoveryFileIntoFields(
-    BuildContext context, {
-    required TextEditingController apiUrlController,
-    required TextEditingController storeIdController,
-    required TextEditingController branchIdController,
-    required TextEditingController recoveryKeyController,
-    required VoidCallback onLoaded,
-  }) async {
-    final tr = AppLocalizations.of(context);
-    try {
-      final result = await FilePicker.platform.pickFiles(
-          type: FileType.custom,
-          allowedExtensions: const ['json'],
-          withData: true);
-      if (result == null || result.files.isEmpty) return;
-      final bytes = result.files.single.bytes;
-      if (bytes == null || bytes.isEmpty) {
-        throw Exception(tr.text('empty_recovery_file'));
-      }
-      final data = widget.store.parseRecoveryFileJson(utf8.decode(bytes));
-      if ((data['cloudApiUrl'] ?? '').isNotEmpty) {
-        apiUrlController.text = data['cloudApiUrl']!;
-      }
-      storeIdController.text = data['storeId'] ?? '';
-      branchIdController.text = data['branchId'] ?? '';
-      recoveryKeyController.text = data['recoveryKey'] ?? '';
-      onLoaded();
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(tr.text('recovery_file_loaded'))));
-      }
-    } catch (error) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('${tr.text('invalid_recovery_file')}: $error')));
-      }
-    }
-  }
-
   Future<void> _recoverExistingStore(BuildContext context) async {
     final tr = AppLocalizations.of(context);
+    final cache = AccountAuthCache.load();
     final cloud = CloudSyncSettings.load();
-    final apiUrlController = TextEditingController(
-        text: cloud.apiBaseUrl.trim().isNotEmpty
-            ? cloud.apiBaseUrl.trim()
-            : CloudSyncSettings.bundledApiBaseUrl);
-    final storeIdController =
-        TextEditingController(text: widget.store.appIdentity.storeId);
-    final branchIdController = TextEditingController();
-    final recoveryKeyController = TextEditingController();
+    final storeId = (cache?.storeId.trim().isNotEmpty == true
+            ? cache!.storeId
+            : widget.store.appIdentity.storeId)
+        .trim()
+        .toUpperCase();
+    final branchId = (cache?.branchId.trim().isNotEmpty == true
+            ? cache!.branchId
+            : widget.store.appIdentity.branchId)
+        .trim()
+        .toUpperCase();
+
+    if (cache == null || cache.accountToken.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Online account session is required. Please sign in again.')),
+      );
+      return;
+    }
+    if (!storeId.startsWith('ST-')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('A valid Store ID was not found for this account.')),
+      );
+      return;
+    }
+
     final confirmed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) {
-        var canRecover = false;
-        void refresh(StateSetter setState) {
-          setState(() => canRecover =
-              storeIdController.text.trim().isNotEmpty &&
-                  recoveryKeyController.text.trim().isNotEmpty);
-        }
-
-        return StatefulBuilder(
-          builder: (context, setState) => AlertDialog(
-            title: Text(
-                AppLocalizations.of(context).text('recover_existing_store')),
-            content: ResponsiveDialogBox(
-              maxWidth: VentioResponsive.modalMaxWidth(context, 460),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(AppLocalizations.of(context)
-                      .text('recover_existing_store_desc')),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: () => _loadRecoveryFileIntoFields(
-                        context,
-                        apiUrlController: apiUrlController,
-                        storeIdController: storeIdController,
-                        branchIdController: branchIdController,
-                        recoveryKeyController: recoveryKeyController,
-                        onLoaded: () => refresh(setState),
-                      ),
-                      icon: const Icon(Icons.upload_file_outlined),
-                      label: Text(AppLocalizations.of(context)
-                          .text('upload_recovery_file')),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: storeIdController,
-                    textCapitalization: TextCapitalization.characters,
-                    decoration: InputDecoration(
-                      labelText: AppLocalizations.of(context).text('store_id'),
-                      hintText: 'ST-XXXXXX',
-                      border: const OutlineInputBorder(),
-                    ),
-                    onChanged: (_) => refresh(setState),
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: branchIdController,
-                    textCapitalization: TextCapitalization.characters,
-                    decoration: InputDecoration(
-                      labelText: AppLocalizations.of(context)
-                          .text('branch_id_optional'),
-                      hintText: AppLocalizations.of(context)
-                          .text('branch_id_recover_hint'),
-                      border: const OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: recoveryKeyController,
-                    textCapitalization: TextCapitalization.characters,
-                    decoration: InputDecoration(
-                      labelText:
-                          AppLocalizations.of(context).text('recovery_key'),
-                      hintText: 'RK-XXXX-XXXX-XXXX',
-                      border: const OutlineInputBorder(),
-                    ),
-                    onChanged: (_) => refresh(setState),
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext, false),
-                child: Text(AppLocalizations.of(context).text('cancel')),
-              ),
-              FilledButton(
-                onPressed: canRecover
-                    ? () => Navigator.pop(dialogContext, true)
-                    : null,
-                child: Text(AppLocalizations.of(context).text('recover')),
-              ),
+      builder: (dialogContext) => AlertDialog(
+        title: Text(tr.text('recover_existing_store')),
+        content: ResponsiveDialogBox(
+          maxWidth: VentioResponsive.modalMaxWidth(context, 460),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(tr.text('recover_existing_store_desc')),
+              const SizedBox(height: 12),
+              Text('Store ID: $storeId'),
+              if (branchId.isNotEmpty) Text('Branch ID: $branchId'),
             ],
           ),
-        );
-      },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(tr.text('cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(tr.text('recover')),
+          ),
+        ],
+      ),
     );
     if (confirmed != true) return;
     try {
       final recoverySettings = cloud.copyWith(
         enabled: true,
-        apiBaseUrl: apiUrlController.text.trim().isNotEmpty
-            ? apiUrlController.text.trim()
+        apiBaseUrl: cloud.apiBaseUrl.trim().isNotEmpty
+            ? cloud.apiBaseUrl.trim()
             : CloudSyncSettings.bundledApiBaseUrl,
         clearLastPullCursor: true,
       );
       await recoverySettings.save();
-      final result =
-          await CloudSyncService(widget.store).recoverExistingStoreFromCloud(
+      final result = await CloudSyncService(widget.store).recoverExistingStoreFromCloud(
         recoverySettings,
-        storeId: storeIdController.text,
-        branchId: branchIdController.text,
-        recoveryKey: recoveryKeyController.text,
+        storeId: storeId,
+        branchId: branchId,
       );
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -273,11 +188,6 @@ class _LoginGatePageState extends State<LoginGatePage> {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(error.toString())));
       }
-    } finally {
-      apiUrlController.dispose();
-      storeIdController.dispose();
-      branchIdController.dispose();
-      recoveryKeyController.dispose();
     }
   }
 
@@ -460,6 +370,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
           await AccountAuthCache.clear();
           if (mounted) setState(() {});
         },
+        onLocaleChanged: widget.onLocaleChanged,
       );
     }
     if (widget.store.activeUser != null) return widget.child;

@@ -230,6 +230,7 @@ class _VentioAppState extends State<VentioApp> {
           home: _store.isReady
               ? LoginGatePage(
                   store: _store,
+                  onLocaleChanged: _changeLocale,
                   child: MainShell(
                     store: _store,
                     onLogout: _stopSyncForLogout,

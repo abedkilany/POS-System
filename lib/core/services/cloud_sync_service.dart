@@ -1313,7 +1313,7 @@ class CloudSyncService {
   Future<CloudStoreRecoveryResult> recoverExistingStoreFromCloud(
     CloudSyncSettings settings, {
     required String storeId,
-    required String recoveryKey,
+    String recoveryKey = '',
     String? branchId,
     CloudSyncProgressCallback? onProgress,
   }) async {
@@ -1326,28 +1326,29 @@ class CloudSyncService {
       return const CloudStoreRecoveryResult(
           ok: false, message: 'Cloud API URL is required.');
     }
-    if (!cleanStoreId.startsWith('ST-') || cleanRecoveryKey.isEmpty) {
+    if (!cleanStoreId.startsWith('ST-')) {
       return const CloudStoreRecoveryResult(
-          ok: false,
-          message: 'A valid Store ID and Recovery Key are required.');
+          ok: false, message: 'A valid Store ID is required.');
+    }
+    if (settings.accountToken.trim().isEmpty) {
+      return const CloudStoreRecoveryResult(
+          ok: false, message: 'Online account session is required. Please sign in again.');
     }
 
     try {
-      onProgress?.call(0.10, 'Verifying Store ID and Recovery Key...');
+      onProgress?.call(0.10, 'Verifying online account and Store access...');
       final claimResponse = await _client
           .post(
             settings.endpoint('/api/sync/recovery/claim'),
             headers: {
               'Content-Type': 'application/json',
               'Accept': 'application/json',
-              if (store.appIdentity.isHost &&
-                  settings.accountToken.trim().isNotEmpty)
-                'Authorization': 'Bearer ${settings.accountToken.trim()}',
+              'Authorization': 'Bearer ${settings.accountToken.trim()}',
             },
             body: jsonEncode({
               'storeId': cleanStoreId,
               'branchId': cleanBranchId,
-              'recoveryKey': cleanRecoveryKey,
+              if (cleanRecoveryKey.isNotEmpty) 'recoveryKey': cleanRecoveryKey,
               'deviceId': store.deviceId,
               'deviceName': store.appIdentity.deviceName,
               'platform': store.appIdentity.platform.name,

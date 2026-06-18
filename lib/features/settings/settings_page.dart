@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:archive/archive.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -779,29 +778,68 @@ class SettingsPage extends StatelessWidget {
     }
   }
 
-  Future<String?> _askPassword(BuildContext context,
-      {required String title}) async {
-    final controller = TextEditingController();
-    return showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(title),
-        content: TextField(
-          controller: controller,
-          obscureText: true,
-          decoration: InputDecoration(
-              labelText: AppLocalizations.of(context).text('password_min_6')),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: Text(AppLocalizations.of(context).text('cancel'))),
-          FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, controller.text),
-              child: Text(AppLocalizations.of(context).text('save'))),
-        ],
-      ),
-    );
+  Future<void> _downloadBackupFile(BuildContext context) async {
+    final tr = AppLocalizations.of(context);
+    try {
+      final filename =
+          'ventio_backup_${DateTime.now().millisecondsSinceEpoch}.json';
+      await downloadTextFile(
+        filename: filename,
+        content: store.exportBackupJson(),
+        dialogTitle: tr.text('export'),
+        cancelMessage: tr.text('file_save_cancelled'),
+      );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr.text('backup_downloaded'))),
+        );
+      }
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr.text('backup_download_not_supported'))),
+        );
+      }
+    }
+  }
+
+  Future<void> _importBackupFile(BuildContext context) async {
+    final tr = AppLocalizations.of(context);
+    try {
+      final picked = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['json'],
+        withData: true,
+      );
+      final bytes = picked?.files.single.bytes;
+      if (bytes == null || bytes.isEmpty) return;
+
+      var rawJson = utf8.decode(bytes, allowMalformed: true).trim();
+      if (rawJson.startsWith('RESET_PROTECTION_TOKEN:')) {
+        final jsonStart = rawJson.indexOf('{');
+        if (jsonStart >= 0) {
+          rawJson = rawJson.substring(jsonStart).trim();
+        }
+      }
+
+      final plan = store.inspectBackupJson(rawJson);
+      if (!context.mounted) return;
+      final selectedSections = await _confirmBackupImport(context, plan);
+      if (selectedSections == null || selectedSections.isEmpty) return;
+
+      await store.importBackupJson(rawJson, selectedSectionIds: selectedSections);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr.text('backup_imported'))),
+        );
+      }
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${tr.text('backup_import_failed')}: $error')),
+        );
+      }
+    }
   }
 
   Future<void> _downloadRecoveryFile(BuildContext context) async {
@@ -875,301 +913,84 @@ class SettingsPage extends StatelessWidget {
     }
   }
 
-  Future<void> _loadRecoveryFileIntoFields(
-    BuildContext context, {
-    required TextEditingController apiUrlController,
-    required TextEditingController storeIdController,
-    required TextEditingController branchIdController,
-    required TextEditingController recoveryKeyController,
-    required VoidCallback onLoaded,
-  }) async {
+  Future<void> _recoverExistingStore(BuildContext context) async {
     final tr = AppLocalizations.of(context);
-    try {
-      final result = await FilePicker.platform.pickFiles(
-          type: FileType.custom,
-          allowedExtensions: const ['json', 'vtb', 'zip'],
-          withData: true);
-      if (result == null || result.files.isEmpty) return;
-      final bytes = result.files.single.bytes;
-      if (bytes == null || bytes.isEmpty) {
-        throw Exception(tr.text('empty_recovery_file'));
-      }
-      final data = store.parseRecoveryFileJson(utf8.decode(bytes));
-      if ((data['cloudApiUrl'] ?? '').isNotEmpty) {
-        apiUrlController.text = data['cloudApiUrl']!;
-      }
-      storeIdController.text = data['storeId'] ?? '';
-      branchIdController.text = data['branchId'] ?? '';
-      recoveryKeyController.text = data['recoveryKey'] ?? '';
-      onLoaded();
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(tr.text('recovery_file_loaded'))));
-      }
-    } catch (error) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('${tr.text('invalid_recovery_file')}: $error')));
-      }
-    }
-  }
+    final cache = AccountAuthCache.load();
+    final cloud = CloudSyncSettings.load();
+    final storeId = (cache?.storeId.trim().isNotEmpty == true
+            ? cache!.storeId
+            : store.appIdentity.storeId)
+        .trim()
+        .toUpperCase();
+    final branchId = (cache?.branchId.trim().isNotEmpty == true
+            ? cache!.branchId
+            : store.appIdentity.branchId)
+        .trim()
+        .toUpperCase();
 
-  Future<void> _downloadBackupFile(BuildContext context) async {
-    final tr = AppLocalizations.of(context);
-    final filename =
-        'store_backup_${DateTime.now().millisecondsSinceEpoch}.json';
-
-    try {
-      await downloadTextFile(
-          filename: filename,
-          content: store.exportBackupJson(),
-          dialogTitle: tr.text('save_backup_file'),
-          cancelMessage: tr.text('file_save_cancelled'));
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(tr.text('backup_file_downloaded'))));
-      }
-    } catch (_) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(tr.text('backup_download_not_supported'))));
-      }
-    }
-  }
-
-  String _extractBackupJsonFromPickedFile(
-    PlatformFile file,
-    List<int> bytes,
-    AppLocalizations tr,
-  ) {
-    final lowerName = file.name.toLowerCase();
-    final isArchive = lowerName.endsWith('.vtb') ||
-        lowerName.endsWith('.zip') ||
-        _looksLikeZipArchive(bytes);
-
-    if (!isArchive) {
-      return utf8.decode(bytes);
-    }
-
-    try {
-      final archive = ZipDecoder().decodeBytes(bytes, verify: true);
-      ArchiveFile? backupFile;
-      for (final entry in archive.files) {
-        final entryName = entry.name.replaceAll('\\', '/').toLowerCase();
-        if (entry.isFile && entryName.split('/').last == 'backup.json') {
-          backupFile = entry;
-          break;
-        }
-      }
-
-      if (backupFile == null) {
-        throw Exception(tr.text('invalid_backup_file'));
-      }
-
-      final content = backupFile.content;
-      return utf8.decode(content);
-    } catch (_) {
-      throw Exception(tr.text('invalid_backup_file'));
-    }
-  }
-
-  bool _looksLikeZipArchive(List<int> bytes) {
-    return bytes.length >= 4 &&
-        bytes[0] == 0x50 &&
-        bytes[1] == 0x4B &&
-        (bytes[2] == 0x03 || bytes[2] == 0x05 || bytes[2] == 0x07) &&
-        (bytes[3] == 0x04 || bytes[3] == 0x06 || bytes[3] == 0x08);
-  }
-
-  Future<void> _importBackupFile(BuildContext context) async {
-    final tr = AppLocalizations.of(context);
-    if (store.appIdentity.isClient) {
+    if (cache == null || cache.accountToken.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(tr.text('import_backup_host_only'))));
+        const SnackBar(content: Text('Online account session is required. Please sign in again.')),
+      );
+      return;
+    }
+    if (!storeId.startsWith('ST-')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('A valid Store ID was not found for this account.')),
+      );
       return;
     }
 
-    try {
-      final result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: const ['json', 'vtb', 'zip'],
-        withData: true,
-      );
-
-      if (result == null || result.files.isEmpty) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(tr.text('no_backup_file_selected'))));
-        }
-        return;
-      }
-
-      final file = result.files.single;
-      final bytes = file.bytes;
-      if (bytes == null || bytes.isEmpty) {
-        throw Exception(tr.text('empty_backup_file'));
-      }
-
-      var raw = _extractBackupJsonFromPickedFile(file, bytes, tr);
-      if (raw.trim().startsWith('{') &&
-          raw.contains('store_manager_pro_encrypted_backup')) {
-        if (!context.mounted) return;
-        final password = await _askPassword(context,
-            title: AppLocalizations.of(context).text('backup_password'));
-        if (password == null) return;
-        if (!context.mounted) return;
-        raw = store.decryptBackupJson(raw, password);
-      }
-      if (raw.trim().isEmpty) {
-        throw Exception(tr.text('empty_backup_file'));
-      }
-
-      final validation = store.validateBackupJson(raw);
-      if (!validation.isValid || validation.summary == null) {
-        throw Exception(
-            validation.errorMessage ?? tr.text('invalid_backup_file'));
-      }
-      final importPlan = store.inspectBackupJson(raw);
-
-      if (!context.mounted) return;
-      final selectedSections = await _confirmBackupImport(context, importPlan);
-      if (!context.mounted || selectedSections == null) return;
-
-      await store.importBackupJson(raw, selectedSectionIds: selectedSections);
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(tr.text('backup_file_imported'))));
-        await _pushHostCriticalEventToCloud(
-            context, tr.text('import_backup_action'));
-      }
-    } catch (_) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(tr.text('backup_file_import_failed'))));
-      }
-    }
-  }
-
-  Future<void> _recoverExistingStore(BuildContext context) async {
-    final tr = AppLocalizations.of(context);
-    final cloud = CloudSyncSettings.load();
-    final apiUrlController = TextEditingController(
-        text: cloud.apiBaseUrl.trim().isNotEmpty
-            ? cloud.apiBaseUrl.trim()
-            : CloudSyncSettings.bundledApiBaseUrl);
-    final storeIdController =
-        TextEditingController(text: store.appIdentity.storeId);
-    final branchIdController = TextEditingController();
-    final recoveryKeyController = TextEditingController();
     final confirmed = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) {
-        var canRecover = false;
-        void refresh(StateSetter setState) {
-          setState(() => canRecover =
-              storeIdController.text.trim().isNotEmpty &&
-                  recoveryKeyController.text.trim().isNotEmpty);
-        }
-
-        return StatefulBuilder(
-          builder: (context, setState) => AlertDialog(
-            title: Text(
-                AppLocalizations.of(context).text('recover_existing_store')),
-            content: ResponsiveDialogBox(
-              maxWidth: VentioResponsive.modalMaxWidth(context, 460),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(AppLocalizations.of(context)
-                      .text('recover_existing_store_desc')),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: () => _loadRecoveryFileIntoFields(
-                        context,
-                        apiUrlController: apiUrlController,
-                        storeIdController: storeIdController,
-                        branchIdController: branchIdController,
-                        recoveryKeyController: recoveryKeyController,
-                        onLoaded: () => refresh(setState),
-                      ),
-                      icon: const Icon(Icons.upload_file_outlined),
-                      label: Text(AppLocalizations.of(context)
-                          .text('upload_recovery_file')),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: storeIdController,
-                    textCapitalization: TextCapitalization.characters,
-                    decoration: InputDecoration(
-                        labelText:
-                            AppLocalizations.of(context).text('store_id'),
-                        hintText: 'ST-XXXXXX',
-                        border: const OutlineInputBorder()),
-                    onChanged: (_) => refresh(setState),
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: branchIdController,
-                    textCapitalization: TextCapitalization.characters,
-                    decoration: InputDecoration(
-                        labelText: AppLocalizations.of(context)
-                            .text('branch_id_optional'),
-                        hintText: AppLocalizations.of(context)
-                            .text('branch_id_recover_hint'),
-                        border: const OutlineInputBorder()),
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: recoveryKeyController,
-                    textCapitalization: TextCapitalization.characters,
-                    decoration: InputDecoration(
-                        labelText:
-                            AppLocalizations.of(context).text('recovery_key'),
-                        hintText: 'RK-XXXX-XXXX-XXXX',
-                        border: const OutlineInputBorder()),
-                    onChanged: (_) => refresh(setState),
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(dialogContext, false),
-                  child: Text(AppLocalizations.of(context).text('cancel'))),
-              FilledButton(
-                  onPressed: canRecover
-                      ? () => Navigator.pop(dialogContext, true)
-                      : null,
-                  child: Text(AppLocalizations.of(context).text('recover'))),
+      builder: (dialogContext) => AlertDialog(
+        title: Text(tr.text('recover_existing_store')),
+        content: ResponsiveDialogBox(
+          maxWidth: VentioResponsive.modalMaxWidth(context, 460),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(tr.text('recover_existing_store_desc')),
+              const SizedBox(height: 12),
+              Text('Store ID: $storeId'),
+              if (branchId.isNotEmpty) Text('Branch ID: $branchId'),
             ],
           ),
-        );
-      },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(tr.text('cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(tr.text('recover')),
+          ),
+        ],
+      ),
     );
     if (confirmed != true) return;
     try {
       final recoverySettings = cloud.copyWith(
-          enabled: true,
-          apiBaseUrl: apiUrlController.text.trim().isNotEmpty
-              ? apiUrlController.text.trim()
-              : CloudSyncSettings.bundledApiBaseUrl,
-          clearLastPullCursor: true);
+        enabled: true,
+        apiBaseUrl: cloud.apiBaseUrl.trim().isNotEmpty
+            ? cloud.apiBaseUrl.trim()
+            : CloudSyncSettings.bundledApiBaseUrl,
+        clearLastPullCursor: true,
+      );
       await recoverySettings.save();
-      final result =
-          await CloudSyncService(store).recoverExistingStoreFromCloud(
+      final result = await CloudSyncService(store).recoverExistingStoreFromCloud(
         recoverySettings,
-        storeId: storeIdController.text,
-        branchId: branchIdController.text,
-        recoveryKey: recoveryKeyController.text,
+        storeId: storeId,
+        branchId: branchId,
       );
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(localizeRuntimeMessage(result.message, tr))));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(localizeRuntimeMessage(result.message, tr))),
+        );
+        
       }
     } catch (error) {
       if (context.mounted) {
@@ -1247,88 +1068,6 @@ class SettingsPage extends StatelessWidget {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content:
               Text(AppLocalizations.of(context).text('device_reset_sign_in'))));
-    }
-  }
-
-  Future<void> _pushHostCriticalEventToCloud(
-      BuildContext context, String actionName) async {
-    final tr = AppLocalizations.of(context);
-    final identity = store.appIdentity;
-    final cloud = CloudSyncSettings.load();
-    if (!identity.isHost || !identity.isCloudEnabled || !cloud.isConfigured) {
-      return;
-    }
-
-    final progress = ValueNotifier<_OperationProgress>(
-      _OperationProgress(0.05, tr.text('uploading_host_event')),
-    );
-    NavigatorState? rootNavigator;
-    var dialogShown = false;
-    if (context.mounted) {
-      rootNavigator = Navigator.of(context, rootNavigator: true);
-      dialogShown = true;
-      showDialog<void>(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => AlertDialog(
-          title: Text('$actionName • ${tr.text('cloud_push')}'),
-          content: ValueListenableBuilder<_OperationProgress>(
-            valueListenable: progress,
-            builder: (_, value, __) => UnifiedSnapshotProgressView(
-              value: value.value,
-              label: value.label,
-            ),
-          ),
-        ),
-      );
-    }
-
-    UnifiedSyncResult? result;
-    Object? failure;
-    try {
-      final service = CloudSyncService(store);
-      // Backup import replaces the full Host dataset. Publish a fresh materialized
-      // Cloud snapshot before pushing the small restore marker, so Clients that
-      // receive the marker can immediately rebuild from the new Host data.
-      await service.publishBootstrapSnapshotToCloud(
-        cloud,
-        force: true,
-        onProgress: (value, label) =>
-            progress.value = _OperationProgress(value, label),
-      );
-      progress.value = _OperationProgress(0.86, tr.text('sync_completed'));
-      result = await UnifiedSyncEngine(
-        CloudSyncTransportAdapter(
-          service: service,
-          settings: cloud,
-        ),
-      ).syncNow(
-        onProgress: (value, label) {
-          final scaled = (0.86 + value * 0.14).clamp(0.86, 1.0).toDouble();
-          progress.value =
-              _OperationProgress(scaled, localizeRuntimeMessage(label, tr));
-        },
-      );
-      progress.value = _OperationProgress(1.0, tr.text('sync_completed'));
-    } catch (error) {
-      failure = error;
-    } finally {
-      if (dialogShown && rootNavigator != null && rootNavigator.canPop()) {
-        rootNavigator.pop();
-      }
-      progress.dispose();
-    }
-
-    if (context.mounted) {
-      final ok = failure == null && result?.ok == true;
-      final message = failure != null
-          ? '$actionName ${tr.text('cloud_push_failed')}: $failure'
-          : ok
-              ? '$actionName ${tr.text('cloud_push_success')}'
-              : '$actionName ${tr.text('cloud_push_failed')}: ${localizeRuntimeMessage(result?.message ?? '', tr)}';
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
-      );
     }
   }
 
