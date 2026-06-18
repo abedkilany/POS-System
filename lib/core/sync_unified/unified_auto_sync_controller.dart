@@ -1,7 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
-
 import '../../data/app_store.dart';
 import '../services/cloud_sync_service.dart';
 import '../services/lan_sync_service.dart';
@@ -11,21 +9,6 @@ import 'unified_sync_engine.dart';
 
 typedef AutoSnapshotProgressPresenter = void Function(
     String transport, double value, String label);
-
-const bool _temporarySyncDiagnostics = true;
-
-void _syncDiag(String message) {
-  if (_temporarySyncDiagnostics) {
-    debugPrint('[SYNC_DIAG] $message');
-  }
-}
-
-String _identityRoleLabel(AppStore store) {
-  final identity = store.appIdentity;
-  if (identity.isHost) return 'host';
-  if (identity.isClient) return 'client';
-  return 'unknown';
-}
 
 class UnifiedSyncFactory {
   const UnifiedSyncFactory._();
@@ -291,13 +274,6 @@ class UnifiedAutoCloudSyncController {
 
     final interval =
         Duration(seconds: CloudSyncSettings.defaultIntervalSeconds);
-    _syncDiag(
-      'autoCloud:start device=${store.appIdentity.deviceId} '
-      'role=${_identityRoleLabel(store)} build=$temporarySyncDiagnosticsBuild '
-      'interval=${interval.inSeconds}s '
-      'apiBase=${settings.apiBaseUrl} auto=${settings.autoSyncEnabled} '
-      'configured=${settings.isConfigured}',
-    );
     _timer = Timer.periodic(interval, (_) => _tick());
     await _tick();
   }
@@ -360,7 +336,6 @@ class UnifiedAutoCloudSyncController {
 
   Future<void> _tick() async {
     if (_running || _disposed) {
-      _syncDiag('autoCloud:skip running=$_running disposed=$_disposed');
       return;
     }
     _running = true;
@@ -375,13 +350,6 @@ class UnifiedAutoCloudSyncController {
             store
                 .pendingSyncQueueForTarget('cloud_host', readyOnly: false)
                 .isNotEmpty;
-        _syncDiag(
-          'autoCloud:tick device=${store.appIdentity.deviceId} '
-          'role=${_identityRoleLabel(store)} apiBase=${settings.apiBaseUrl} '
-          'cursor=${settings.lastPullCursor?.toIso8601String() ?? 'null'} '
-          'cloudQueue=${store.pendingSyncQueueForTarget('cloud', readyOnly: false).length} '
-          'relayQueue=${store.pendingSyncQueueForTarget('cloud_host', readyOnly: false).length}',
-        );
         final now = DateTime.now().toUtc();
         final pendingProvisioning =
             store.appIdentity.isClient && CloudProvisioningStatus.isPending;
@@ -422,21 +390,11 @@ class UnifiedAutoCloudSyncController {
         await UnifiedSyncFactory.cloudEngine(store, settings: settings).syncNow(
           onProgress: _snapshotOnlyProgress('Cloud'),
         );
-        _syncDiag(
-          'autoCloud:tickDone cloudQueue=${store.pendingSyncQueueForTarget('cloud', readyOnly: false).length} '
-          'relayQueue=${store.pendingSyncQueueForTarget('cloud_host', readyOnly: false).length}',
-        );
         _lastCloudQueueCount =
             store.pendingSyncQueueForTarget('cloud', readyOnly: false).length;
         _lastRelayQueueCount = store
             .pendingSyncQueueForTarget('cloud_host', readyOnly: false)
             .length;
-      } else {
-        _syncDiag(
-          'autoCloud:notAllowed auto=${settings.autoSyncEnabled} '
-          'configured=${settings.isConfigured} allowed=${_cloudAllowedForCurrentRole()} '
-          'device=${store.appIdentity.deviceId} role=${_identityRoleLabel(store)}',
-        );
       }
     } finally {
       _running = false;
