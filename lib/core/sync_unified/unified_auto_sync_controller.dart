@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../../data/app_store.dart';
+import '../../models/sync_change.dart';
 import '../services/cloud_sync_service.dart';
 import '../services/lan_sync_service.dart';
 import 'cloud_sync_transport_adapter.dart';
@@ -59,7 +60,6 @@ class UnifiedAutoLanSyncController {
   bool _running = false;
   bool _disposed = false;
   bool _signalLoopRunning = false;
-  int _lastPendingCount = 0;
   String _lastSettingsSignature = '';
 
   String _settingsSignature(LanSyncSettings settings) => [
@@ -87,7 +87,6 @@ class UnifiedAutoLanSyncController {
     _disposed = false;
     final settings = LanSyncSettings.load();
     _lastSettingsSignature = _settingsSignature(settings);
-    _lastPendingCount = store.pendingSyncCount;
 
     if (!_lanAllowedForCurrentRole(settings)) {
       await UnifiedSyncFactory.lanEngine(store, settings: settings)
@@ -167,13 +166,12 @@ class UnifiedAutoLanSyncController {
       unawaited(_applySettingsChange(settings));
     }
 
-    final pending = store.pendingSyncCount;
-    final pendingIncreased = pending > _lastPendingCount;
-    _lastPendingCount = pending;
+    final hasPendingClientWork =
+        store.pendingSyncQueueForTarget('host', readyOnly: false).isNotEmpty;
     if (!_lanAllowedForCurrentRole(settings) ||
         !settings.autoSyncEnabled ||
         !settings.isClient ||
-        !pendingIncreased) {
+        !hasPendingClientWork) {
       return;
     }
 
@@ -259,13 +257,9 @@ class UnifiedAutoLanSyncController {
     _running = true;
     try {
       await store.retryFailedSyncQueue(target: 'host');
-      final result =
-          await UnifiedSyncFactory.lanEngine(store, settings: settings).syncNow(
+      await UnifiedSyncFactory.lanEngine(store, settings: settings).syncNow(
         onProgress: _snapshotOnlyProgress('LAN'),
       );
-      if (result.ok) {
-        _lastPendingCount = store.pendingSyncCount;
-      }
     } finally {
       _running = false;
     }
@@ -367,14 +361,40 @@ class UnifiedAutoCloudSyncController {
         store.pendingSyncQueueForTarget('cloud', readyOnly: false).length;
     final relayCount =
         store.pendingSyncQueueForTarget('cloud_host', readyOnly: false).length;
-    final hasNewCloudWork =
-        cloudCount > _lastCloudQueueCount || relayCount > _lastRelayQueueCount;
+    final hostHasUnpublishedAuthority = _hostHasUnpublishedCloudAuthority();
+    final hasPendingCloudWork =
+        cloudCount > 0 || relayCount > 0 || hostHasUnpublishedAuthority;
+    final cloudWorkChanged = cloudCount != _lastCloudQueueCount ||
+        relayCount != _lastRelayQueueCount;
     _lastCloudQueueCount = cloudCount;
     _lastRelayQueueCount = relayCount;
-    if (!hasNewCloudWork) return;
+    if (!hasPendingCloudWork && !cloudWorkChanged) return;
+    if (!hasPendingCloudWork) return;
 
     _debounceTimer?.cancel();
     _debounceTimer = Timer(const Duration(seconds: 3), () => _tick());
+  }
+
+  bool _hostHasUnpublishedCloudAuthority() {
+    final identity = store.appIdentity;
+    if (!identity.isHost || !identity.isCloudEnabled) return false;
+    return store.pendingSyncChanges.any(_isUnpublishedHostAuthority);
+  }
+
+  bool _isUnpublishedHostAuthority(SyncChange change) {
+    if (change.isSynced) return false;
+    final identity = store.appIdentity;
+    if (change.storeId.isNotEmpty && change.storeId != identity.storeId) {
+      return false;
+    }
+    if (change.branchId.isNotEmpty && change.branchId != identity.branchId) {
+      return false;
+    }
+
+    final syncMeta = change.payload['_syncV2'];
+    final kind = syncMeta is Map ? syncMeta['kind']?.toString() ?? '' : '';
+    if (kind.isEmpty) return change.deviceId == store.deviceId;
+    return kind == 'authoritativeEvent';
   }
 
   void Function(double value, String label)? _snapshotOnlyProgress(
