@@ -28,10 +28,20 @@ jobs:
       - name: Build web
         run: |
           set -euo pipefail
+          APP_VERSION="$(awk '/^version:/ {print $2; exit}' pubspec.yaml)"
+          if [ -z "$APP_VERSION" ]; then
+            echo "Could not read app version from pubspec.yaml" >&2
+            exit 1
+          fi
           flutter --version
           flutter config --enable-web
           flutter pub get
-          flutter build web --release
+          flutter build web --release --dart-define=APP_VERSION="$APP_VERSION"
+          grep -q "$APP_VERSION" build/web/main.dart.js
+          printf '{"version":"%s","commit":"%s","builtAt":"%s"}\n' \
+            "$APP_VERSION" "$GITHUB_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > build/web/version.json
+          printf '%s\n' "$GITHUB_SHA" > build/web/.last_build_id
 
       - name: Configure SSH
         env:
