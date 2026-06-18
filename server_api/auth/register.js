@@ -20,7 +20,10 @@ function hashPassword(password) {
 }
 
 function createAccountToken({ accountId, username, storeSlug, storeId, branchId }) {
-  const secret = process.env.ACCOUNT_JWT_SECRET || process.env.ADMIN_JWT_SECRET || '';
+  const secret = process.env.ACCOUNT_JWT_SECRET
+    || process.env.ADMIN_JWT_SECRET
+    || process.env.DATABASE_URL
+    || 'ventio-platform-admin-secret';
   if (!secret) return '';
   const payload = {
     type: 'store_account',
