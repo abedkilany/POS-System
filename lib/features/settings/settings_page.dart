@@ -2738,10 +2738,11 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   String get _initialCloudHostReadyKey =>
       'cloud_initial_snapshot_ready_${widget.store.appIdentity.storeId}';
 
-  bool _cloudSyncPlanAllowed =
-      AccountAuthCache.load()?.cloudSyncEnabled == true;
+  bool? _cloudSyncPlanAllowed = AccountAuthCache.load()?.cloudSyncEnabled;
 
-  bool get _effectiveCloudEnabled => _cloudEnabled && _cloudSyncPlanAllowed;
+  bool get _cloudSyncPlanDenied => _cloudSyncPlanAllowed == false;
+  bool get _cloudSyncPlanAllowsUi => !_cloudSyncPlanDenied;
+  bool get _effectiveCloudEnabled => _cloudEnabled && _cloudSyncPlanAllowsUi;
 
   @override
   void initState() {
@@ -2755,7 +2756,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         ? SyncMode.cloudConnected
         : SyncMode.lanOnly;
     _lanEnabledForHost = identity.isHost && lan.setupComplete && lan.isHost;
-    _cloudEnabled = identity.isCloudEnabled && _cloudSyncPlanAllowed;
+    _cloudEnabled = identity.isCloudEnabled && _cloudSyncPlanAllowsUi;
     _lanHostController.text = lan.host;
     _lanPortController.text = lan.port.toString();
     _lanIntervalController.text = lan.intervalSeconds.toString();
@@ -2796,7 +2797,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
 
   Future<void> _refreshCloudSyncPlanAccess() async {
     final cache = AccountAuthCache.load();
-    var planAllowed = cache?.cloudSyncEnabled == true;
+    bool? planAllowed = cache?.cloudSyncEnabled;
 
     try {
       final token = cache?.accountToken.trim() ?? '';
@@ -2814,21 +2815,22 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       // admin, account_auth_cache_v1 may be missing or stale, while the device
       // still has valid store/device credentials. Ask the server directly for
       // this store's Cloud Sync entitlement using device auth.
-      if (!planAllowed) {
-        planAllowed = await CloudSyncService(widget.store)
+      if (planAllowed != true) {
+        final fallbackAllowed = await CloudSyncService(widget.store)
             .checkCloudSyncPlanAccess(CloudSyncSettings.load());
+        if (fallbackAllowed) planAllowed = true;
       }
 
       if (!mounted) return;
       final identity = widget.store.appIdentity;
       setState(() {
         _cloudSyncPlanAllowed = planAllowed;
-        _cloudEnabled = identity.isCloudEnabled && planAllowed;
+        _cloudEnabled = identity.isCloudEnabled && planAllowed != false;
       });
     } catch (error) {
       SyncDiagnosticsLog.add(
           '[SYNC_TRACE] cloudPlanAccess:refreshFailed $error');
-      if (mounted && !_cloudSyncPlanAllowed) {
+      if (mounted && _cloudSyncPlanAllowed != true) {
         setState(() {
           _status = 'Could not verify Cloud Sync access.';
         });
@@ -2853,7 +2855,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         ? SyncMode.cloudConnected
         : SyncMode.lanOnly;
     final lanEnabled = identity.isHost && lan.setupComplete && lan.isHost;
-    final cloudEnabled = identity.isCloudEnabled && _cloudSyncPlanAllowed;
+    final cloudEnabled = identity.isCloudEnabled && _cloudSyncPlanAllowsUi;
     return _deviceRole != role ||
         _clientSyncMode != clientMode ||
         _lanEnabledForHost != lanEnabled ||
@@ -2872,7 +2874,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           ? SyncMode.cloudConnected
           : SyncMode.lanOnly;
       _lanEnabledForHost = identity.isHost && lan.setupComplete && lan.isHost;
-      _cloudEnabled = identity.isCloudEnabled && _cloudSyncPlanAllowed;
+      _cloudEnabled = identity.isCloudEnabled && _cloudSyncPlanAllowsUi;
       _lanHostController.text = lan.host;
       _lanPortController.text = lan.port.toString();
       _lanIntervalController.text = lan.intervalSeconds.toString();
@@ -2919,7 +2921,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         final identity = widget.store.appIdentity;
         final tr = AppLocalizations.of(context);
         if (_deviceRole == DeviceRole.host) {
-          if (_cloudEnabled && !_cloudSyncPlanAllowed) {
+          if (_cloudEnabled && _cloudSyncPlanDenied) {
             throw Exception(tr.text('cloud_sync_plan_required'));
           }
           final effectiveCloudEnabled = _effectiveCloudEnabled;
@@ -2970,7 +2972,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           if (activeTransport == 'lan' && !lanConfigured) {
             throw Exception(tr.text('lan_not_configured_cannot_switch'));
           }
-          if (activeTransport == 'cloud' && !_cloudSyncPlanAllowed) {
+          if (activeTransport == 'cloud' && _cloudSyncPlanDenied) {
             throw Exception(tr.text('cloud_sync_plan_required'));
           }
           if (activeTransport == 'cloud' && !cloudConfigured) {
@@ -3896,7 +3898,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     final cloudActive = isHost
         ? _effectiveCloudEnabled
         : (identity.syncMode == SyncMode.cloudConnected &&
-            _cloudSyncPlanAllowed);
+            _cloudSyncPlanAllowsUi);
     final hostActionLabel = tr.text('sync_now');
     final allGood = widget.store.pendingSyncCount == 0 &&
         (lanActive || cloudActive || !isHost);
@@ -4535,10 +4537,11 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     final cloud = CloudSyncSettings.load();
     final lanConfigured =
         isHost ? _lanEnabledForHost : _isLanClientConfigured(lan);
-    final cloudPlanAllowed = _cloudSyncPlanAllowed;
+    final cloudPlanDenied = _cloudSyncPlanDenied;
+    final cloudPlanAllowsUi = _cloudSyncPlanAllowsUi;
     final cloudConfigured = isHost
         ? _effectiveCloudEnabled
-        : (_isCloudClientConfigured(cloud) && cloudPlanAllowed);
+        : (_isCloudClientConfigured(cloud) && cloudPlanAllowsUi);
     return _plainSyncPanel(
       context,
       icon: Icons.hub_outlined,
@@ -4615,7 +4618,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
             icon: Icons.cloud_outlined,
             title: tr.text('cloud_sync'),
             subtitle: isHost
-                ? (!cloudPlanAllowed
+                ? (cloudPlanDenied
                     ? tr.text('cloud_sync_plan_locked_short')
                     : (cloudConfigured
                         ? tr.text('connection_state_active')
@@ -4629,7 +4632,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                 ? Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      if (!cloudPlanAllowed) ...[
+                      if (cloudPlanDenied) ...[
                         Icon(Icons.lock_outline,
                             size: 18,
                             color:
@@ -4638,7 +4641,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                       ],
                       Switch(
                         value: _effectiveCloudEnabled,
-                        onChanged: (_busy || !cloudPlanAllowed)
+                        onChanged: (_busy || cloudPlanDenied)
                             ? null
                             : (value) => setState(() => _cloudEnabled = value),
                       ),
@@ -4646,20 +4649,20 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                   )
                 : (!cloudConfigured
                     ? TextButton.icon(
-                        onPressed: (_busy || !cloudPlanAllowed)
+                        onPressed: (_busy || cloudPlanDenied)
                             ? null
                             : () => _openConnectToStoreDialog(
                                 SyncMode.cloudConnected),
-                        icon: Icon(cloudPlanAllowed
+                        icon: Icon(cloudPlanAllowsUi
                             ? Icons.add_link_outlined
                             : Icons.lock_outline),
-                        label: Text(cloudPlanAllowed
+                        label: Text(cloudPlanAllowsUi
                             ? tr.text('connect_to_store')
                             : tr.text('cloud_sync_plan_locked_short')))
                     : null),
             children: isHost
                 ? [
-                    if (!cloudPlanAllowed)
+                    if (cloudPlanDenied)
                       _softNotice(
                         context,
                         Icons.lock_outline,
@@ -4694,7 +4697,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       {required bool lanConfigured, required bool cloudConfigured}) {
     final tr = AppLocalizations.of(context);
     final canSwitchToLan = lanConfigured;
-    final canSwitchToCloud = cloudConfigured && _cloudSyncPlanAllowed;
+    final canSwitchToCloud = cloudConfigured && _cloudSyncPlanAllowsUi;
     final alternateConfigured =
         _clientSyncMode == SyncMode.lanOnly ? cloudConfigured : lanConfigured;
     return Card.outlined(
