@@ -76,7 +76,7 @@ class AppUpdateService {
 
   bool get isSupported => !kIsWeb && Platform.isWindows;
 
-  Future<AppUpdateInfo?> checkForUpdate() async {
+  Future<AppUpdateInfo?> fetchLatest() async {
     if (!isSupported || _manifestUrl.trim().isEmpty) return null;
     final response = await _client
         .get(Uri.parse(_manifestUrl.trim()))
@@ -89,6 +89,12 @@ class AppUpdateService {
     if (decoded is! Map) throw StateError('Update manifest is invalid.');
     final update = AppUpdateInfo.fromJson(Map<String, dynamic>.from(decoded));
     if (update.version.isEmpty || !update.hasWindowsInstaller) return null;
+    return update;
+  }
+
+  Future<AppUpdateInfo?> checkForUpdate() async {
+    final update = await fetchLatest();
+    if (update == null) return null;
     return update.isNewerThan(AppBrand.versionName, AppBrand.buildNumber)
         ? update
         : null;

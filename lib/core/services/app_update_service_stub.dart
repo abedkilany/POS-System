@@ -20,12 +20,21 @@ class AppUpdateInfo {
   final bool required;
 
   String get displayVersion => '$version+$build';
+
+  bool isNewerThan(String currentVersion, int currentBuild) {
+    final versionCompare =
+        _compareSemanticVersion(version, currentVersion.trim());
+    if (versionCompare != 0) return versionCompare > 0;
+    return build > currentBuild;
+  }
 }
 
 class AppUpdateService {
   const AppUpdateService();
 
   bool get isSupported => false;
+
+  Future<AppUpdateInfo?> fetchLatest() async => null;
 
   Future<AppUpdateInfo?> checkForUpdate() async => null;
 
@@ -38,3 +47,22 @@ class AppUpdateService {
 }
 
 AppUpdateService getAppUpdateService() => const AppUpdateService();
+
+int _compareSemanticVersion(String a, String b) {
+  final left = _semanticParts(a);
+  final right = _semanticParts(b);
+  for (var i = 0; i < 3; i += 1) {
+    final diff = left[i].compareTo(right[i]);
+    if (diff != 0) return diff;
+  }
+  return 0;
+}
+
+List<int> _semanticParts(String value) {
+  final clean = value.split('+').first.trim();
+  final parts = clean.split('.');
+  return List<int>.generate(
+    3,
+    (index) => index < parts.length ? int.tryParse(parts[index]) ?? 0 : 0,
+  );
+}

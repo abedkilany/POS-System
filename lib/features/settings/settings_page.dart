@@ -6,6 +6,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
@@ -17,6 +18,7 @@ import '../../core/services/google_drive_backup_service.dart';
 import '../../core/services/lan_sync_service.dart';
 import '../../core/services/local_database_service.dart';
 import '../../core/services/local_auto_backup_service.dart';
+import '../../core/services/app_update_service.dart';
 import '../../core/shortcuts/app_shortcuts.dart';
 import '../../core/sync_unified/sync_device_state.dart';
 import '../../core/sync_unified/sync_unified.dart';
@@ -279,6 +281,7 @@ class SettingsPage extends StatelessWidget {
                     identity.isHost ? tr.text('host') : identity.syncMode.name),
               ],
             ),
+            const _WindowsUpdateStatusCard(),
           ],
         ),
       ),
@@ -6921,17 +6924,20 @@ class _VentioBrandHeader extends StatelessWidget {
             height: 72,
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: colorScheme.surface,
+              color: const Color(0xFF0D1218),
               borderRadius: BorderRadius.circular(18),
               border: Border.all(color: colorScheme.outlineVariant),
             ),
-            child: Image.asset(
-              'assets/branding/ventio_symbol_transparent.png',
-              fit: BoxFit.contain,
-              errorBuilder: (context, error, stackTrace) => Icon(
-                Icons.storefront_outlined,
-                color: colorScheme.primary,
-                size: 34,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: Image.asset(
+                'assets/branding/ventio_app_icon_1024.png',
+                fit: BoxFit.cover,
+                errorBuilder: (context, error, stackTrace) => Icon(
+                  Icons.storefront_outlined,
+                  color: colorScheme.primary,
+                  size: 34,
+                ),
               ),
             ),
           ),
@@ -6958,6 +6964,185 @@ class _VentioBrandHeader extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _WindowsUpdateStatusCard extends StatefulWidget {
+  const _WindowsUpdateStatusCard();
+
+  @override
+  State<_WindowsUpdateStatusCard> createState() =>
+      _WindowsUpdateStatusCardState();
+}
+
+class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
+  late final AppUpdateService _service = getAppUpdateService();
+  AppUpdateInfo? _latest;
+  DateTime? _lastCheckedAt;
+  bool _checking = false;
+  String _status = "You're up to date";
+
+  bool get _hasUpdate =>
+      _latest?.isNewerThan(AppBrand.versionName, AppBrand.buildNumber) ?? false;
+
+  String _lastCheckedText() {
+    final value = _lastCheckedAt;
+    if (value == null) return 'Last checked: Not checked yet';
+    final local = value.toLocal();
+    final date = DateFormat('MMM d, h:mm a').format(local);
+    return 'Last checked: $date';
+  }
+
+  Future<void> _check() async {
+    if (_checking) return;
+    setState(() {
+      _checking = true;
+      _status = 'Checking for updates...';
+    });
+    try {
+      final latest = await _service.fetchLatest();
+      if (!mounted) return;
+      setState(() {
+        _latest = latest;
+        _lastCheckedAt = DateTime.now();
+        _status = _hasUpdate
+            ? 'Update available: ${latest?.displayVersion ?? ''}'
+            : "You're up to date";
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _lastCheckedAt = DateTime.now();
+        _status = 'Could not check for updates';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Update check failed: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _checking = false);
+    }
+  }
+
+  Future<void> _downloadUpdate() async {
+    final update = _latest;
+    if (update == null || !_hasUpdate) return;
+    try {
+      await _service.downloadAndInstall(update);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Update installer started.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Update failed: $error')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_service.isSupported) return const SizedBox.shrink();
+    final colorScheme = Theme.of(context).colorScheme;
+    final iconColor = _hasUpdate ? colorScheme.primary : Colors.blue.shade700;
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 18),
+      padding: VentioResponsive.cardInsets(context),
+      decoration: BoxDecoration(
+        color: colorScheme.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: colorScheme.outlineVariant),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 620;
+          final statusIcon = Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Icon(Icons.sync_outlined, size: 58, color: iconColor),
+              Positioned(
+                right: -4,
+                bottom: -2,
+                child: Container(
+                  width: 26,
+                  height: 26,
+                  decoration: BoxDecoration(
+                    color: _hasUpdate ? colorScheme.primary : Colors.green,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: colorScheme.surface, width: 2),
+                  ),
+                  child: Icon(
+                    _hasUpdate ? Icons.arrow_downward : Icons.check,
+                    color: Colors.white,
+                    size: 16,
+                  ),
+                ),
+              ),
+            ],
+          );
+          final statusText = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _status,
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                _lastCheckedText(),
+                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+              ),
+            ],
+          );
+          final action = _hasUpdate
+              ? FilledButton.icon(
+                  onPressed: _checking ? null : _downloadUpdate,
+                  icon: const Icon(Icons.download_outlined),
+                  label: const Text('Install update'),
+                )
+              : FilledButton(
+                  onPressed: _checking ? null : _check,
+                  child: _checking
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Check for updates'),
+                );
+          if (compact) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    statusIcon,
+                    const SizedBox(width: 24),
+                    Expanded(child: statusText),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Align(alignment: Alignment.centerRight, child: action),
+              ],
+            );
+          }
+          return Row(
+            children: [
+              statusIcon,
+              const SizedBox(width: 24),
+              Expanded(child: statusText),
+              const SizedBox(width: 16),
+              action,
+            ],
+          );
+        },
       ),
     );
   }
