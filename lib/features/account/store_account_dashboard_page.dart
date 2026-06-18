@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/services/account_auth_service.dart';
 import '../../core/utils/responsive.dart';
 
-class StoreAccountDashboardPage extends StatelessWidget {
+class StoreAccountDashboardPage extends StatefulWidget {
   const StoreAccountDashboardPage({
     super.key,
     required this.cache,
@@ -14,6 +14,16 @@ class StoreAccountDashboardPage extends StatelessWidget {
   final AccountAuthCache cache;
   final VoidCallback onRecoverExistingStore;
   final Future<void> Function() onLogout;
+
+  @override
+  State<StoreAccountDashboardPage> createState() =>
+      _StoreAccountDashboardPageState();
+}
+
+class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
+  var _selectedIndex = 0;
+
+  AccountAuthCache get cache => widget.cache;
 
   String _formatDate(DateTime? value) {
     if (value == null) return 'Not set';
@@ -29,8 +39,155 @@ class StoreAccountDashboardPage extends StatelessWidget {
     return diff < 0 ? 0 : diff;
   }
 
-  @override
-  Widget build(BuildContext context) {
+  Future<void> _changePassword() async {
+    final currentController = TextEditingController();
+    final newController = TextEditingController();
+    final confirmController = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+    var saving = false;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: !saving,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            Future<void> submit() async {
+              if (!(formKey.currentState?.validate() ?? false)) return;
+              setDialogState(() => saving = true);
+              final result = await AccountAuthService().changePassword(
+                accountToken: cache.accountToken,
+                currentPassword: currentController.text,
+                newPassword: newController.text,
+              );
+              if (!dialogContext.mounted) return;
+              setDialogState(() => saving = false);
+              if (result.ok) {
+                Navigator.of(dialogContext).pop();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(result.message.isEmpty ? 'Password changed successfully.' : result.message)),
+                );
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(result.message.isEmpty ? 'Could not change password.' : result.message)),
+                );
+              }
+            }
+
+            return AlertDialog(
+              title: const Text('Change password'),
+              content: Form(
+                key: formKey,
+                child: SizedBox(
+                  width: 420,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextFormField(
+                        controller: currentController,
+                        obscureText: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Current password',
+                          prefixIcon: Icon(Icons.lock_outline),
+                        ),
+                        validator: (value) => (value ?? '').isEmpty ? 'Enter current password.' : null,
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: newController,
+                        obscureText: true,
+                        decoration: const InputDecoration(
+                          labelText: 'New password',
+                          prefixIcon: Icon(Icons.password_outlined),
+                        ),
+                        validator: (value) {
+                          final text = value ?? '';
+                          if (text.length < 6) return 'Password must be at least 6 characters.';
+                          if (text == currentController.text) return 'New password must be different.';
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: confirmController,
+                        obscureText: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Confirm new password',
+                          prefixIcon: Icon(Icons.check_circle_outline),
+                        ),
+                        validator: (value) => value != newController.text ? 'Passwords do not match.' : null,
+                        onFieldSubmitted: (_) => saving ? null : submit(),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: saving ? null : () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton.icon(
+                  onPressed: saving ? null : submit,
+                  icon: saving
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.save_outlined),
+                  label: Text(saving ? 'Saving...' : 'Save password'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    currentController.dispose();
+    newController.dispose();
+    confirmController.dispose();
+  }
+
+  Widget _buildAccountSettings(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Account settings',
+              style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Manage the online account connected to this store.',
+              style: theme.textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 20),
+            _InfoRow(label: 'Login name', value: cache.loginName),
+            _InfoRow(label: 'Username', value: cache.username),
+            _InfoRow(label: 'Store', value: cache.storeName.trim().isEmpty ? cache.storeSlug : cache.storeName),
+            _InfoRow(label: 'Subscription', value: cache.subscriptionStatus),
+            const Divider(height: 32),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const CircleAvatar(child: Icon(Icons.password_outlined)),
+              title: const Text('Change password'),
+              subtitle: const Text('Update the server password for this online account.'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: _changePassword,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOverview(BuildContext context) {
     final theme = Theme.of(context);
     final daysLeft = _trialDaysLeft();
     final status = cache.subscriptionStatus.trim().isEmpty
@@ -40,179 +197,238 @@ class StoreAccountDashboardPage extends StatelessWidget {
         ? cache.storeSlug
         : cache.storeName.trim();
 
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              runSpacing: 20,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircleAvatar(
+                      radius: 30,
+                      child: Text(
+                        storeName.isEmpty ? 'V' : storeName.substring(0, 1).toUpperCase(),
+                        style: theme.textTheme.headlineSmall,
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          storeName.isEmpty ? 'Your store' : storeName,
+                          style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          cache.loginName.isEmpty ? '${cache.username}@${cache.storeSlug}' : cache.loginName,
+                          style: theme.textTheme.bodyMedium,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                Chip(
+                  avatar: const Icon(Icons.verified_outlined, size: 18),
+                  label: Text(status.toUpperCase()),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final wide = constraints.maxWidth >= 760;
+            final cards = [
+              _MetricCard(
+                icon: Icons.workspace_premium_outlined,
+                title: 'Plan',
+                value: status == 'trial' ? 'Trial' : status,
+                subtitle: 'Current subscription',
+              ),
+              _MetricCard(
+                icon: Icons.event_available_outlined,
+                title: 'Trial remaining',
+                value: daysLeft == null ? '—' : '$daysLeft days',
+                subtitle: 'Ends ${_formatDate(cache.trialEndsAt)}',
+              ),
+              _MetricCard(
+                icon: Icons.devices_outlined,
+                title: 'Device limit',
+                value: cache.devicesLimit?.toString() ?? '—',
+                subtitle: 'Allowed devices for this store',
+              ),
+            ];
+            if (!wide) {
+              return Column(
+                children: cards
+                    .map((card) => Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: card,
+                        ))
+                    .toList(),
+              );
+            }
+            return Row(
+              children: cards
+                  .map((card) => Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.only(right: 12),
+                          child: card,
+                        ),
+                      ))
+                  .toList(),
+            );
+          },
+        ),
+        const SizedBox(height: 16),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Account management',
+                  style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'This is the online account area for your store. The POS and inventory system stay available from Offline login on this device.',
+                  style: theme.textTheme.bodyMedium,
+                ),
+                const SizedBox(height: 20),
+                _InfoRow(label: 'Account ID', value: cache.accountId),
+                _InfoRow(label: 'Store ID', value: cache.storeId),
+                _InfoRow(label: 'Store slug', value: cache.storeSlug),
+                _InfoRow(label: 'Last verified', value: _formatDate(cache.lastVerifiedAt)),
+                const SizedBox(height: 20),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: widget.onRecoverExistingStore,
+                      icon: const Icon(Icons.key_outlined),
+                      label: const Text('Recover existing store'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: () => setState(() => _selectedIndex = 1),
+                      icon: const Icon(Icons.manage_accounts_outlined),
+                      label: const Text('Account settings'),
+                    ),
+                    const _ComingSoonButton(
+                      icon: Icons.credit_card_outlined,
+                      label: 'Manage subscription',
+                    ),
+                    const _ComingSoonButton(
+                      icon: Icons.devices_other_outlined,
+                      label: 'Manage devices',
+                    ),
+                    const _ComingSoonButton(
+                      icon: Icons.storefront_outlined,
+                      label: 'Online store settings',
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _pageForSelection(BuildContext context) {
+    switch (_selectedIndex) {
+      case 1:
+        return _buildAccountSettings(context);
+      default:
+        return _buildOverview(context);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final wide = MediaQuery.sizeOf(context).width >= 900;
+    final page = SafeArea(
+      child: SingleChildScrollView(
+        padding: VentioResponsive.pageInsets(context),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 1100),
+            child: _pageForSelection(context),
+          ),
+        ),
+      ),
+    );
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Store account'),
         actions: [
           TextButton.icon(
-            onPressed: onLogout,
+            onPressed: widget.onLogout,
             icon: const Icon(Icons.logout),
             label: const Text('Logout'),
           ),
           const SizedBox(width: 8),
         ],
       ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: VentioResponsive.pageInsets(context),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 1100),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Wrap(
-                        alignment: WrapAlignment.spaceBetween,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        runSpacing: 20,
-                        children: [
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              CircleAvatar(
-                                radius: 30,
-                                child: Text(
-                                  storeName.isEmpty
-                                      ? 'V'
-                                      : storeName.substring(0, 1).toUpperCase(),
-                                  style: theme.textTheme.headlineSmall,
-                                ),
-                              ),
-                              const SizedBox(width: 16),
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    storeName.isEmpty ? 'Your store' : storeName,
-                                    style: theme.textTheme.headlineSmall?.copyWith(
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    cache.loginName.isEmpty
-                                        ? '${cache.username}@${cache.storeSlug}'
-                                        : cache.loginName,
-                                    style: theme.textTheme.bodyMedium,
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                          Chip(
-                            avatar: const Icon(Icons.verified_outlined, size: 18),
-                            label: Text(status.toUpperCase()),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      final wide = constraints.maxWidth >= 760;
-                      final cards = [
-                        _MetricCard(
-                          icon: Icons.workspace_premium_outlined,
-                          title: 'Plan',
-                          value: status == 'trial' ? 'Trial' : status,
-                          subtitle: 'Current subscription',
-                        ),
-                        _MetricCard(
-                          icon: Icons.event_available_outlined,
-                          title: 'Trial remaining',
-                          value: daysLeft == null ? '—' : '$daysLeft days',
-                          subtitle: 'Ends ${_formatDate(cache.trialEndsAt)}',
-                        ),
-                        _MetricCard(
-                          icon: Icons.devices_outlined,
-                          title: 'Device limit',
-                          value: cache.devicesLimit?.toString() ?? '—',
-                          subtitle: 'Allowed devices for this store',
-                        ),
-                      ];
-                      if (!wide) {
-                        return Column(
-                          children: cards
-                              .map((card) => Padding(
-                                    padding: const EdgeInsets.only(bottom: 12),
-                                    child: card,
-                                  ))
-                              .toList(),
-                        );
-                      }
-                      return Row(
-                        children: cards
-                            .map((card) => Expanded(
-                                  child: Padding(
-                                    padding: const EdgeInsets.only(right: 12),
-                                    child: card,
-                                  ),
-                                ))
-                            .toList(),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Account management',
-                            style: theme.textTheme.titleLarge?.copyWith(
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'This is the online account area for your store. The POS and inventory system stay available from Offline login on this device.',
-                            style: theme.textTheme.bodyMedium,
-                          ),
-                          const SizedBox(height: 20),
-                          _InfoRow(label: 'Account ID', value: cache.accountId),
-                          _InfoRow(label: 'Store ID', value: cache.storeId),
-                          _InfoRow(label: 'Store slug', value: cache.storeSlug),
-                          _InfoRow(label: 'Last verified', value: _formatDate(cache.lastVerifiedAt)),
-                          const SizedBox(height: 20),
-                          Wrap(
-                            spacing: 12,
-                            runSpacing: 12,
-                            children: [
-                              OutlinedButton.icon(
-                                onPressed: onRecoverExistingStore,
-                                icon: const Icon(Icons.key_outlined),
-                                label: const Text('Recover existing store'),
-                              ),
-                              const _ComingSoonButton(
-                                icon: Icons.credit_card_outlined,
-                                label: 'Manage subscription',
-                              ),
-                              const _ComingSoonButton(
-                                icon: Icons.devices_other_outlined,
-                                label: 'Manage devices',
-                              ),
-                              const _ComingSoonButton(
-                                icon: Icons.storefront_outlined,
-                                label: 'Online store settings',
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+      drawer: wide ? null : Drawer(child: _AccountNavigation(selectedIndex: _selectedIndex, onSelected: (index) {
+        Navigator.of(context).pop();
+        setState(() => _selectedIndex = index);
+      })),
+      body: Row(
+        children: [
+          if (wide)
+            _AccountNavigation(
+              selectedIndex: _selectedIndex,
+              onSelected: (index) => setState(() => _selectedIndex = index),
             ),
-          ),
-        ),
+          Expanded(child: page),
+        ],
       ),
+    );
+  }
+}
+
+class _AccountNavigation extends StatelessWidget {
+  const _AccountNavigation({required this.selectedIndex, required this.onSelected});
+
+  final int selectedIndex;
+  final ValueChanged<int> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return NavigationRail(
+      selectedIndex: selectedIndex,
+      onDestinationSelected: onSelected,
+      extended: MediaQuery.sizeOf(context).width >= 1100,
+      leading: const Padding(
+        padding: EdgeInsets.symmetric(vertical: 16),
+        child: Icon(Icons.storefront_outlined),
+      ),
+      destinations: const [
+        NavigationRailDestination(
+          icon: Icon(Icons.dashboard_outlined),
+          selectedIcon: Icon(Icons.dashboard),
+          label: Text('Overview'),
+        ),
+        NavigationRailDestination(
+          icon: Icon(Icons.manage_accounts_outlined),
+          selectedIcon: Icon(Icons.manage_accounts),
+          label: Text('Account settings'),
+        ),
+      ],
     );
   }
 }
@@ -245,9 +461,7 @@ class _MetricCard extends StatelessWidget {
             const SizedBox(height: 6),
             Text(
               value,
-              style: theme.textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.w800,
-              ),
+              style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 6),
             Text(subtitle, style: theme.textTheme.bodySmall),
@@ -276,14 +490,10 @@ class _InfoRow extends StatelessWidget {
             width: 130,
             child: Text(
               label,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
+              style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700),
             ),
           ),
-          Expanded(
-            child: SelectableText(value.trim().isEmpty ? '—' : value),
-          ),
+          Expanded(child: SelectableText(value.trim().isEmpty ? '—' : value)),
         ],
       ),
     );

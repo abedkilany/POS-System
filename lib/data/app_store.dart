@@ -94,6 +94,37 @@ class BackupSummary {
   final String storeName;
 }
 
+
+class BackupImportSection {
+  const BackupImportSection({
+    required this.id,
+    required this.label,
+    required this.group,
+    required this.available,
+    required this.selectedByDefault,
+    this.count,
+    this.warning,
+  });
+
+  final String id;
+  final String label;
+  final String group;
+  final bool available;
+  final bool selectedByDefault;
+  final int? count;
+  final String? warning;
+}
+
+class BackupImportPlan {
+  const BackupImportPlan({
+    required this.summary,
+    required this.sections,
+  });
+
+  final BackupSummary summary;
+  final List<BackupImportSection> sections;
+}
+
 class DataConflict {
   const DataConflict({
     required this.entityType,
@@ -4530,6 +4561,11 @@ class AppStore extends ChangeNotifier {
     return null;
   }
 
+  // Default import-section selector for internal full-replace/reset paths.
+  // The manual Backup Import flow defines a local `wants` function that
+  // shadows this method and uses the user-selected section IDs.
+  bool wants(String id) => true;
+
   Product? findProductByCode(String code) {
     final normalized = code.trim().toLowerCase();
     final matches = _products
@@ -4575,7 +4611,9 @@ class AppStore extends ChangeNotifier {
     _syncChanges.clear();
     _syncQueue.clear();
     _resetBusinessDataInMemory(keepStoreProfile: keepStoreProfile);
-    await LocalDatabaseService.deleteString('cloud_last_pull_cursor');
+    if (wants('syncChanges') || wants('syncQueue') || wants('localDatabaseEntries')) {
+      await LocalDatabaseService.deleteString('cloud_last_pull_cursor');
+    }
     await _saveAll();
     notifyListeners();
   }
@@ -4591,7 +4629,9 @@ class AppStore extends ChangeNotifier {
     _syncChanges.clear();
     _syncQueue.clear();
     _resetBusinessDataInMemory(keepStoreProfile: keepStoreProfile);
-    await LocalDatabaseService.deleteString('cloud_last_pull_cursor');
+    if (wants('syncChanges') || wants('syncQueue') || wants('localDatabaseEntries')) {
+      await LocalDatabaseService.deleteString('cloud_last_pull_cursor');
+    }
     final lanRaw = LocalDatabaseService.getString('lan_sync_settings_v2');
     if (lanRaw != null && lanRaw.trim().isNotEmpty) {
       try {
@@ -4690,7 +4730,9 @@ class AppStore extends ChangeNotifier {
     );
     await LocalDatabaseService.setString(_activeUserKey, '');
     await LocalDatabaseService.setString(_rememberLoginKey, 'false');
-    await LocalDatabaseService.deleteString('cloud_last_pull_cursor');
+    if (wants('syncChanges') || wants('syncQueue') || wants('localDatabaseEntries')) {
+      await LocalDatabaseService.deleteString('cloud_last_pull_cursor');
+    }
     await LocalDatabaseService.deleteString('lan_sync_settings_v2');
     await _saveAll();
     notifyListeners();
@@ -4895,7 +4937,9 @@ class AppStore extends ChangeNotifier {
 
   Future<void> updateStoreProfile(StoreProfile profile) async {
     requirePermission(AppPermission.settingsManage);
-    _storeProfile = profile;
+    if (wants('storeProfile')) {
+      _storeProfile = profile;
+    }
     _recordSyncChange(
       entityType: 'store_profile',
       entityId: 'store',
@@ -9103,12 +9147,14 @@ class AppStore extends ChangeNotifier {
     return diff == 0;
   }
 
-  Future<void> importBackupJson(String rawJson) async {
+  Future<void> importBackupJson(String rawJson, {Set<String>? selectedSectionIds}) async {
     requirePermission(AppPermission.backupRestore);
     if (appIdentity.isClient) {
       throw StateError('Import Backup is only available on the Host device.');
     }
     final decoded = jsonDecode(rawJson) as Map<String, dynamic>;
+    bool wants(String id) => selectedSectionIds == null || selectedSectionIds.contains(id);
+    final customImport = selectedSectionIds != null;
     final currentIdentityBeforeImport = appIdentity;
     final preservePairedHostIdentity = currentIdentityBeforeImport.isHost;
     final liveHostConnectionEntries = preservePairedHostIdentity
@@ -9239,62 +9285,96 @@ class AppStore extends ChangeNotifier {
             Map<String, dynamic>.from(decoded['storeProfile'] as Map),
           );
 
-    _products
-      ..clear()
-      ..addAll(products);
-    _customers
-      ..clear()
-      ..addAll(customers);
-    _sales
-      ..clear()
-      ..addAll(sales);
-    _deliveryNotes
-      ..clear()
-      ..addAll(deliveryNotes);
-    _billsOfMaterials
-      ..clear()
-      ..addAll(billsOfMaterials);
-    _manufacturingOrders
-      ..clear()
-      ..addAll(manufacturingOrders);
-    _saleQuotations
-      ..clear()
-      ..addAll(saleQuotations);
-    _suppliers
-      ..clear()
-      ..addAll(suppliers);
-    _supplierProductPrices
-      ..clear()
-      ..addAll(supplierProductPrices);
-    _categories
-      ..clear()
-      ..addAll(categories);
-    _brands
-      ..clear()
-      ..addAll(brands);
-    _units
-      ..clear()
-      ..addAll(units);
+    if (wants('products')) {
+      _products
+        ..clear()
+        ..addAll(products);
+    }
+    if (wants('customers')) {
+      _customers
+        ..clear()
+        ..addAll(customers);
+    }
+    if (wants('sales')) {
+      _sales
+        ..clear()
+        ..addAll(sales);
+    }
+    if (wants('deliveryNotes')) {
+      _deliveryNotes
+        ..clear()
+        ..addAll(deliveryNotes);
+    }
+    if (wants('manufacturing')) {
+      _billsOfMaterials
+        ..clear()
+        ..addAll(billsOfMaterials);
+      _manufacturingOrders
+        ..clear()
+        ..addAll(manufacturingOrders);
+    }
+    if (wants('saleQuotations')) {
+      _saleQuotations
+        ..clear()
+        ..addAll(saleQuotations);
+    }
+    if (wants('suppliers')) {
+      _suppliers
+        ..clear()
+        ..addAll(suppliers);
+    }
+    if (wants('supplierProductPrices')) {
+      _supplierProductPrices
+        ..clear()
+        ..addAll(supplierProductPrices);
+    }
+    if (wants('categories')) {
+      _categories
+        ..clear()
+        ..addAll(categories);
+    }
+    if (wants('brands')) {
+      _brands
+        ..clear()
+        ..addAll(brands);
+    }
+    if (wants('units')) {
+      _units
+        ..clear()
+        ..addAll(units);
+    }
     _ensureCatalogDefaults();
-    _expenses
-      ..clear()
-      ..addAll(expenses);
-    _purchases
-      ..clear()
-      ..addAll(purchases);
-    _stockMovements
-      ..clear()
-      ..addAll(stockMovements);
-    _inventoryCounts
-      ..clear()
-      ..addAll(inventoryCounts);
-    _warehouses
-      ..clear()
-      ..addAll(warehouses);
+    if (wants('expenses')) {
+      _expenses
+        ..clear()
+        ..addAll(expenses);
+    }
+    if (wants('purchases')) {
+      _purchases
+        ..clear()
+        ..addAll(purchases);
+    }
+    if (wants('stockMovements')) {
+      _stockMovements
+        ..clear()
+        ..addAll(stockMovements);
+    }
+    if (wants('inventoryCounts')) {
+      _inventoryCounts
+        ..clear()
+        ..addAll(inventoryCounts);
+    }
+    if (wants('warehouses')) {
+      _warehouses
+        ..clear()
+        ..addAll(warehouses);
+    }
     _ensureDefaultWarehouse();
-    _accountTransactions
-      ..clear()
-      ..addAll(accountTransactions);
+    if (wants('accountTransactions')) {
+      _accountTransactions
+        ..clear()
+        ..addAll(accountTransactions);
+    }
     _invalidateAccountLedgerCache();
     final restoreFullDeviceBackup =
         decoded['backupType']?.toString() == 'full_device_backup';
@@ -9319,51 +9399,66 @@ class AppStore extends ChangeNotifier {
             )
             .toList()
         : const <SyncQueueItem>[];
-    _syncChanges
-      ..clear()
-      ..addAll(
-        preservePairedHostIdentity ? const <SyncChange>[] : importedSyncChanges,
-      );
-    _syncQueue
-      ..clear()
-      ..addAll(
-        preservePairedHostIdentity
-            ? const <SyncQueueItem>[]
-            : importedSyncQueue,
-      );
-    if (restoreFullDeviceBackup &&
+    if (wants('syncChanges')) {
+      _syncChanges
+        ..clear()
+        ..addAll(
+          preservePairedHostIdentity ? const <SyncChange>[] : importedSyncChanges,
+        );
+    }
+    if (wants('syncQueue')) {
+      _syncQueue
+        ..clear()
+        ..addAll(
+          preservePairedHostIdentity
+              ? const <SyncQueueItem>[]
+              : importedSyncQueue,
+        );
+    }
+    if (wants('deviceId') &&
+        restoreFullDeviceBackup &&
         !preservePairedHostIdentity &&
         decoded['deviceId']?.toString().trim().isNotEmpty == true) {
       _deviceId = decoded['deviceId'].toString().trim();
       await LocalDatabaseService.setString(_deviceIdKey, _deviceId);
     }
-    _storeProfile = profile;
+    if (wants('storeProfile')) {
+      _storeProfile = profile;
+    }
     // Business Backup may contain an old Store/Branch identity. When this
     // device is already a paired Host, keep the current sync identity so
     // existing Clients remain attached to the same store after Restore. The
     // restored file replaces business data only; it must not move the Host to a
     // different cloud/LAN store namespace and make Clients miss the rebuild
     // marker.
-    final importedStoreId = decoded['storeId']?.toString().trim() ?? '';
-    final importedBranchId = decoded['branchId']?.toString().trim() ?? '';
-    if (restoreFullDeviceBackup &&
-        decoded['appIdentity'] is Map &&
-        !preservePairedHostIdentity) {
-      _appIdentity = AppIdentity.fromJson(
-        Map<String, dynamic>.from(decoded['appIdentity'] as Map),
-      );
+    if (wants('appIdentity')) {
+      final importedStoreId = decoded['storeId']?.toString().trim() ?? '';
+      final importedBranchId = decoded['branchId']?.toString().trim() ?? '';
+      if (restoreFullDeviceBackup &&
+          decoded['appIdentity'] is Map &&
+          !preservePairedHostIdentity) {
+        _appIdentity = AppIdentity.fromJson(
+          Map<String, dynamic>.from(decoded['appIdentity'] as Map),
+        );
+      } else {
+        _appIdentity = currentIdentityBeforeImport.copyWith(
+          storeId: preservePairedHostIdentity
+              ? currentIdentityBeforeImport.storeId
+              : (importedStoreId.isNotEmpty
+                  ? importedStoreId.toUpperCase()
+                  : currentIdentityBeforeImport.storeId),
+          branchId: preservePairedHostIdentity
+              ? currentIdentityBeforeImport.branchId
+              : (importedBranchId.isNotEmpty
+                  ? importedBranchId.toUpperCase()
+                  : currentIdentityBeforeImport.branchId),
+          deviceId: _deviceId,
+          platform: _detectPlatform(),
+          updatedAt: DateTime.now(),
+        );
+      }
     } else {
       _appIdentity = currentIdentityBeforeImport.copyWith(
-        storeId: preservePairedHostIdentity
-            ? currentIdentityBeforeImport.storeId
-            : (importedStoreId.isNotEmpty
-                ? importedStoreId.toUpperCase()
-                : currentIdentityBeforeImport.storeId),
-        branchId: preservePairedHostIdentity
-            ? currentIdentityBeforeImport.branchId
-            : (importedBranchId.isNotEmpty
-                ? importedBranchId.toUpperCase()
-                : currentIdentityBeforeImport.branchId),
         deviceId: _deviceId,
         platform: _detectPlatform(),
         updatedAt: DateTime.now(),
@@ -9373,30 +9468,36 @@ class AppStore extends ChangeNotifier {
       _appIdentityKey,
       jsonEncode(_appIdentity!.toJson()),
     );
-    if (decoded['themeMode'] is String) {
+    if (wants('themeMode') && decoded['themeMode'] is String) {
       await LocalDatabaseService.setString(
         _themeModeKey,
         decoded['themeMode'].toString(),
       );
     }
-    await LocalDatabaseService.deleteString('cloud_last_pull_cursor');
-    if (roles.isNotEmpty) {
-      _roles
-        ..clear()
-        ..addAll(roles);
+    if (wants('syncChanges') || wants('syncQueue') || wants('localDatabaseEntries')) {
+      await LocalDatabaseService.deleteString('cloud_last_pull_cursor');
     }
-    if (users.isNotEmpty) {
-      _replaceUsersWithoutDuplicates(users);
+    if (wants('usersAndRoles')) {
+      if (roles.isNotEmpty) {
+        _roles
+          ..clear()
+          ..addAll(roles);
+      }
+      if (users.isNotEmpty) {
+        _replaceUsersWithoutDuplicates(users);
+      }
+      await _ensureDefaultAdminUser();
     }
-    await _ensureDefaultAdminUser();
-    final importedCounter = (decoded['invoiceCounter'] as num?)?.toInt() ?? 0;
-    _invoiceCounter =
-        importedCounter > 0 ? importedCounter : _loadInvoiceCounter();
-    final importedPurchaseCounter =
-        (decoded['purchaseCounter'] as num?)?.toInt() ?? 0;
-    _purchaseCounter = importedPurchaseCounter > 0
-        ? importedPurchaseCounter
-        : _loadPurchaseCounter();
+    if (wants('counters')) {
+      final importedCounter = (decoded['invoiceCounter'] as num?)?.toInt() ?? 0;
+      _invoiceCounter =
+          importedCounter > 0 ? importedCounter : _loadInvoiceCounter();
+      final importedPurchaseCounter =
+          (decoded['purchaseCounter'] as num?)?.toInt() ?? 0;
+      _purchaseCounter = importedPurchaseCounter > 0
+          ? importedPurchaseCounter
+          : _loadPurchaseCounter();
+    }
     _normalizeCustomers();
 
     // Full-device backups are expected to restore the whole local database, not
@@ -9405,13 +9506,13 @@ class AppStore extends ChangeNotifier {
     // save the typed collections and finally re-apply the raw exported entries
     // (settings, identity, cursors, login/session flags, feature preferences,
     // and any future keys not represented by AppStore fields yet).
-    if (restoreFullDeviceBackup && localDatabaseEntries.isNotEmpty) {
+    if (!customImport && restoreFullDeviceBackup && localDatabaseEntries.isNotEmpty) {
       await LocalDatabaseService.clearAll();
     }
 
     await _saveAll();
 
-    if (restoreFullDeviceBackup && localDatabaseEntries.isNotEmpty) {
+    if (wants('localDatabaseEntries') && restoreFullDeviceBackup && localDatabaseEntries.isNotEmpty) {
       // Restore raw exported keys, but keep the current paired Host connection
       // keys. The import remains a full data restore; the live Host/client link
       // is intentionally device-local and must keep using the current tokens,
@@ -9999,61 +10100,95 @@ class AppStore extends ChangeNotifier {
             Map<String, dynamic>.from(decoded['storeProfile'] as Map),
           );
 
-    _products
-      ..clear()
-      ..addAll(products);
-    _customers
-      ..clear()
-      ..addAll(customers);
-    _sales
-      ..clear()
-      ..addAll(sales);
-    _saleQuotations
-      ..clear()
-      ..addAll(saleQuotations);
-    _deliveryNotes
-      ..clear()
-      ..addAll(deliveryNotes);
-    _billsOfMaterials
-      ..clear()
-      ..addAll(billsOfMaterials);
-    _manufacturingOrders
-      ..clear()
-      ..addAll(manufacturingOrders);
-    _suppliers
-      ..clear()
-      ..addAll(suppliers);
-    _supplierProductPrices
-      ..clear()
-      ..addAll(supplierProductPrices);
-    _categories
-      ..clear()
-      ..addAll(categories);
-    _brands
-      ..clear()
-      ..addAll(brands);
-    _units
-      ..clear()
-      ..addAll(units);
-    _expenses
-      ..clear()
-      ..addAll(expenses);
-    _purchases
-      ..clear()
-      ..addAll(purchases);
-    _stockMovements
-      ..clear()
-      ..addAll(stockMovements);
-    _inventoryCounts
-      ..clear()
-      ..addAll(inventoryCounts);
-    _warehouses
-      ..clear()
-      ..addAll(warehouses);
+    if (wants('products')) {
+      _products
+        ..clear()
+        ..addAll(products);
+    }
+    if (wants('customers')) {
+      _customers
+        ..clear()
+        ..addAll(customers);
+    }
+    if (wants('sales')) {
+      _sales
+        ..clear()
+        ..addAll(sales);
+    }
+    if (wants('saleQuotations')) {
+      _saleQuotations
+        ..clear()
+        ..addAll(saleQuotations);
+    }
+    if (wants('deliveryNotes')) {
+      _deliveryNotes
+        ..clear()
+        ..addAll(deliveryNotes);
+    }
+    if (wants('manufacturing')) {
+      _billsOfMaterials
+        ..clear()
+        ..addAll(billsOfMaterials);
+      _manufacturingOrders
+        ..clear()
+        ..addAll(manufacturingOrders);
+    }
+    if (wants('suppliers')) {
+      _suppliers
+        ..clear()
+        ..addAll(suppliers);
+    }
+    if (wants('supplierProductPrices')) {
+      _supplierProductPrices
+        ..clear()
+        ..addAll(supplierProductPrices);
+    }
+    if (wants('categories')) {
+      _categories
+        ..clear()
+        ..addAll(categories);
+    }
+    if (wants('brands')) {
+      _brands
+        ..clear()
+        ..addAll(brands);
+    }
+    if (wants('units')) {
+      _units
+        ..clear()
+        ..addAll(units);
+    }
+    if (wants('expenses')) {
+      _expenses
+        ..clear()
+        ..addAll(expenses);
+    }
+    if (wants('purchases')) {
+      _purchases
+        ..clear()
+        ..addAll(purchases);
+    }
+    if (wants('stockMovements')) {
+      _stockMovements
+        ..clear()
+        ..addAll(stockMovements);
+    }
+    if (wants('inventoryCounts')) {
+      _inventoryCounts
+        ..clear()
+        ..addAll(inventoryCounts);
+    }
+    if (wants('warehouses')) {
+      _warehouses
+        ..clear()
+        ..addAll(warehouses);
+    }
     _ensureDefaultWarehouse();
-    _accountTransactions
-      ..clear()
-      ..addAll(accountTransactions);
+    if (wants('accountTransactions')) {
+      _accountTransactions
+        ..clear()
+        ..addAll(accountTransactions);
+    }
     _invalidateAccountLedgerCache();
     _syncChanges
       ..clear()
@@ -10067,7 +10202,9 @@ class AppStore extends ChangeNotifier {
       );
     _syncQueue.clear();
     if (!preserveLocalIdentityForLanClient) _syncQueue.addAll(syncQueue);
-    _storeProfile = profile;
+    if (wants('storeProfile')) {
+      _storeProfile = profile;
+    }
     if (preserveLocalIdentityForLanClient) {
       _appIdentity = _identityForLanSnapshotImport(decoded);
       await LocalDatabaseService.setString(
@@ -11968,64 +12105,124 @@ class AppStore extends ChangeNotifier {
         storeName: _storeProfile.name,
       );
 
+
+  BackupImportPlan inspectBackupJson(String rawJson) {
+    final decoded = jsonDecode(rawJson);
+    if (decoded is! Map) {
+      throw const FormatException('Backup content must be a JSON object.');
+    }
+    final map = Map<String, dynamic>.from(decoded);
+
+    int listCount(String key) =>
+        (map[key] is List) ? (map[key] as List<dynamic>).length : 0;
+    bool hasList(String key) => map[key] is List;
+    bool hasMap(String key) => map[key] is Map;
+    bool hasValue(String key) => map.containsKey(key) && map[key] != null;
+
+    final generatedAtRaw = map['generatedAt'];
+    DateTime? generatedAt;
+    if (generatedAtRaw is String && generatedAtRaw.trim().isNotEmpty) {
+      generatedAt = DateTime.tryParse(generatedAtRaw);
+    }
+    final storeProfileMap = map['storeProfile'] is Map
+        ? Map<String, dynamic>.from(map['storeProfile'] as Map)
+        : <String, dynamic>{};
+    final storeName = (storeProfileMap['name'] as String?)?.trim();
+    final summary = BackupSummary(
+      version: (map['version'] as num?)?.toInt() ?? 0,
+      generatedAt: generatedAt,
+      productsCount: listCount('products'),
+      customersCount: listCount('customers'),
+      salesCount: listCount('sales'),
+      suppliersCount: listCount('suppliers'),
+      expensesCount: listCount('expenses'),
+      storeName: (storeName == null || storeName.isEmpty) ? 'My Store' : storeName,
+    );
+
+    BackupImportSection business(
+      String id,
+      String label,
+      bool available, {
+      int? count,
+    }) =>
+        BackupImportSection(
+          id: id,
+          label: label,
+          group: 'Business data',
+          available: available,
+          selectedByDefault: available,
+          count: count,
+        );
+
+    BackupImportSection system(
+      String id,
+      String label,
+      bool available, {
+      int? count,
+      String? warning,
+    }) =>
+        BackupImportSection(
+          id: id,
+          label: label,
+          group: 'System data',
+          available: available,
+          selectedByDefault: false,
+          count: count,
+          warning: warning,
+        );
+
+    final hasQuotation = hasList('saleQuotations') || hasList('quotations');
+    final quotationCount = hasList('saleQuotations')
+        ? listCount('saleQuotations')
+        : listCount('quotations');
+    final restoreFullDeviceBackup =
+        map['backupType']?.toString() == 'full_device_backup';
+
+    return BackupImportPlan(
+      summary: summary,
+      sections: [
+        business('products', 'Products', hasList('products'), count: listCount('products')),
+        business('categories', 'Categories', hasList('categories'), count: listCount('categories')),
+        business('brands', 'Brands', hasList('brands'), count: listCount('brands')),
+        business('units', 'Units', hasList('units'), count: listCount('units')),
+        business('customers', 'Customers', hasList('customers'), count: listCount('customers')),
+        business('suppliers', 'Suppliers', hasList('suppliers'), count: listCount('suppliers')),
+        business('supplierProductPrices', 'Supplier product prices', hasList('supplierProductPrices'), count: listCount('supplierProductPrices')),
+        business('sales', 'Sales', hasList('sales'), count: listCount('sales')),
+        business('saleQuotations', 'Sale quotations', hasQuotation, count: quotationCount),
+        business('deliveryNotes', 'Delivery notes', hasList('deliveryNotes'), count: listCount('deliveryNotes')),
+        business('purchases', 'Purchases', hasList('purchases'), count: listCount('purchases')),
+        business('stockMovements', 'Stock movements', hasList('stockMovements'), count: listCount('stockMovements')),
+        business('inventoryCounts', 'Inventory counts', hasList('inventoryCounts'), count: listCount('inventoryCounts')),
+        business('warehouses', 'Warehouses', hasList('warehouses'), count: listCount('warehouses')),
+        business('expenses', 'Expenses', hasList('expenses'), count: listCount('expenses')),
+        business('accountTransactions', 'Account transactions', hasList('accountTransactions'), count: listCount('accountTransactions')),
+        business('manufacturing', 'Manufacturing', hasList('billsOfMaterials') || hasList('manufacturingOrders'), count: listCount('billsOfMaterials') + listCount('manufacturingOrders')),
+        business('usersAndRoles', 'Users and roles', hasList('users') || hasList('roles'), count: listCount('users') + listCount('roles')),
+        business('storeProfile', 'Store settings', hasMap('storeProfile')),
+        business('counters', 'Invoice and purchase counters', hasValue('invoiceCounter') || hasValue('purchaseCounter')),
+        system('themeMode', 'Theme mode', hasValue('themeMode')),
+        system('appIdentity', 'App identity / Store ID', hasMap('appIdentity') || hasValue('storeId') || hasValue('branchId'), warning: 'May change the current device/store identity.'),
+        system('deviceId', 'Device ID', hasValue('deviceId'), warning: 'May conflict with the current device identity.'),
+        system('syncChanges', 'Sync changes log', restoreFullDeviceBackup && hasList('syncChanges'), count: listCount('syncChanges'), warning: 'May affect sync/rebuild behavior.'),
+        system('syncQueue', 'Sync queue', restoreFullDeviceBackup && hasList('syncQueue'), count: listCount('syncQueue'), warning: 'May replay old pending sync work.'),
+        system('localDatabaseEntries', 'Raw local database entries', restoreFullDeviceBackup && hasMap('localDatabaseEntries'), count: hasMap('localDatabaseEntries') ? (map['localDatabaseEntries'] as Map).length : null, warning: 'Advanced option. It may override local settings and connection state.'),
+      ],
+    );
+  }
+
   BackupValidationResult validateBackupJson(String rawJson) {
     try {
-      final decoded = jsonDecode(rawJson);
-      if (decoded is! Map) {
+      final plan = inspectBackupJson(rawJson);
+      final hasAnyAvailableSection = plan.sections.any((section) => section.available);
+      if (!hasAnyAvailableSection) {
         return const BackupValidationResult(
           isValid: false,
           summary: null,
-          errorMessage: 'Backup content must be a JSON object.',
+          errorMessage: 'Backup does not contain any importable sections.',
         );
       }
-
-      final map = Map<String, dynamic>.from(decoded);
-      if (!map.containsKey('products') ||
-          !map.containsKey('customers') ||
-          !map.containsKey('sales')) {
-        return const BackupValidationResult(
-          isValid: false,
-          summary: null,
-          errorMessage: 'Missing required backup sections.',
-        );
-      }
-
-      final products =
-          (map['products'] as List<dynamic>? ?? const <dynamic>[]).length;
-      final customers =
-          (map['customers'] as List<dynamic>? ?? const <dynamic>[]).length;
-      final sales =
-          (map['sales'] as List<dynamic>? ?? const <dynamic>[]).length;
-      final suppliers =
-          (map['suppliers'] as List<dynamic>? ?? const <dynamic>[]).length;
-      final expenses =
-          (map['expenses'] as List<dynamic>? ?? const <dynamic>[]).length;
-
-      DateTime? generatedAt;
-      final generatedAtRaw = map['generatedAt'];
-      if (generatedAtRaw is String && generatedAtRaw.trim().isNotEmpty) {
-        generatedAt = DateTime.tryParse(generatedAtRaw);
-      }
-
-      final storeProfileMap = map['storeProfile'] is Map
-          ? Map<String, dynamic>.from(map['storeProfile'] as Map)
-          : <String, dynamic>{};
-      final storeName = (storeProfileMap['name'] as String?)?.trim();
-
-      return BackupValidationResult(
-        isValid: true,
-        summary: BackupSummary(
-          version: (map['version'] as num?)?.toInt() ?? 0,
-          generatedAt: generatedAt,
-          productsCount: products,
-          customersCount: customers,
-          salesCount: sales,
-          suppliersCount: suppliers,
-          expensesCount: expenses,
-          storeName:
-              (storeName == null || storeName.isEmpty) ? 'My Store' : storeName,
-        ),
-      );
+      return BackupValidationResult(isValid: true, summary: plan.summary);
     } catch (_) {
       return const BackupValidationResult(
         isValid: false,

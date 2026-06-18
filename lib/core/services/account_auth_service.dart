@@ -331,6 +331,32 @@ class AccountAuthService {
     return _decode(response);
   }
 
+
+  Future<AccountAuthResult> changePassword({
+    required String accountToken,
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    if (accountToken.trim().isEmpty) {
+      return const AccountAuthResult(
+        ok: false,
+        message: 'Online account session is missing.',
+      );
+    }
+    final response = await _client.post(
+      _endpoint('/api/account/change-password'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ${accountToken.trim()}',
+      },
+      body: jsonEncode({
+        'currentPassword': currentPassword,
+        'newPassword': newPassword,
+      }),
+    );
+    return _decode(response);
+  }
+
   Future<AdminSubscribersResult> fetchAdminSubscribers(
       {required String adminToken}) async {
     if (adminToken.trim().isEmpty) {

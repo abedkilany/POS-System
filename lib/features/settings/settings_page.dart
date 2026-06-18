@@ -1029,13 +1029,13 @@ class SettingsPage extends StatelessWidget {
         throw Exception(
             validation.errorMessage ?? tr.text('invalid_backup_file'));
       }
+      final importPlan = store.inspectBackupJson(raw);
 
       if (!context.mounted) return;
-      final confirmed =
-          await _confirmBackupImport(context, validation.summary!);
-      if (!context.mounted || confirmed != true) return;
+      final selectedSections = await _confirmBackupImport(context, importPlan);
+      if (!context.mounted || selectedSections == null) return;
 
-      await store.importBackupJson(raw);
+      await store.importBackupJson(raw, selectedSectionIds: selectedSections);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text(tr.text('backup_file_imported'))));
@@ -1663,27 +1663,108 @@ class SettingsPage extends StatelessWidget {
     }
   }
 
-  Future<bool?> _confirmBackupImport(
-      BuildContext context, BackupSummary summary) async {
+  Future<Set<String>?> _confirmBackupImport(
+      BuildContext context, BackupImportPlan plan) async {
     final tr = AppLocalizations.of(context);
-    return showDialog<bool>(
+    final selected = plan.sections
+        .where((section) => section.available && section.selectedByDefault)
+        .map((section) => section.id)
+        .toSet();
+    return showDialog<Set<String>>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(tr.text('confirm_backup_import')),
-        content: ResponsiveDialogBox(
-          maxWidth: VentioResponsive.modalMaxWidth(context, 420),
-          child: _BackupSummaryDetails(summary: summary),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: Text(tr.text('cancel')),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: Text(tr.text('restore')),
-          ),
-        ],
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) {
+          final businessSections = plan.sections
+              .where((section) => section.group == 'Business data')
+              .toList();
+          final systemSections = plan.sections
+              .where((section) => section.group == 'System data')
+              .toList();
+          final selectedAvailableCount = plan.sections
+              .where((section) => section.available && selected.contains(section.id))
+              .length;
+
+          Widget sectionTile(BackupImportSection section) {
+            final checked = selected.contains(section.id);
+            final subtitleParts = <String>[];
+            if (section.count != null) {
+              subtitleParts.add('${section.count} item${section.count == 1 ? '' : 's'}');
+            }
+            if (!section.available) {
+              subtitleParts.add('Not available in this backup');
+            }
+            if (section.warning != null && checked) {
+              subtitleParts.add(section.warning!);
+            }
+            return CheckboxListTile(
+              value: section.available && checked,
+              onChanged: section.available
+                  ? (value) {
+                      setState(() {
+                        if (value == true) {
+                          selected.add(section.id);
+                        } else {
+                          selected.remove(section.id);
+                        }
+                      });
+                    }
+                  : null,
+              title: Text(section.label),
+              subtitle: subtitleParts.isEmpty ? null : Text(subtitleParts.join(' • ')),
+              controlAffinity: ListTileControlAffinity.leading,
+            );
+          }
+
+          Widget group(String title, List<BackupImportSection> sections) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 12),
+                Text(title, style: Theme.of(context).textTheme.titleSmall),
+                const SizedBox(height: 6),
+                ...sections.map(sectionTile),
+              ],
+            );
+          }
+
+          return AlertDialog(
+            title: Text(tr.text('confirm_backup_import')),
+            content: ResponsiveDialogBox(
+              maxWidth: VentioResponsive.modalMaxWidth(context, 560),
+              child: SizedBox(
+                width: 560,
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _BackupSummaryDetails(summary: plan.summary),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Review backup sections. Business data is selected by default. System data is available but left unchecked by default.',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                      group('Business data', businessSections),
+                      group('System data', systemSections),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: Text(tr.text('cancel')),
+              ),
+              FilledButton(
+                onPressed: selectedAvailableCount == 0
+                    ? null
+                    : () => Navigator.pop(dialogContext, Set<String>.from(selected)),
+                child: Text(tr.text('restore')),
+              ),
+            ],
+          );
+        },
       ),
     );
   }

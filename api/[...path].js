@@ -11,6 +11,7 @@ import deployHealth from '../server_api/deploy-health.js';
 import authRegister from '../server_api/auth/register.js';
 import authLogin from '../server_api/auth/login.js';
 import authSession from '../server_api/auth/session.js';
+import accountChangePassword from '../server_api/account/change-password.js';
 import adminSubscribers from '../server_api/admin/subscribers.js';
 import deviceRevoke from '../server_api/sync/device-revoke.js';
 import deviceWipeAck from '../server_api/sync/device-wipe-ack.js';
@@ -48,6 +49,7 @@ const routes = new Map([
   ['auth/register', authRegister],
   ['auth/login', authLogin],
   ['auth/session', authSession],
+  ['account/change-password', accountChangePassword],
   ['admin/subscribers', adminSubscribers],
   ['sync/device-revoke', deviceRevoke],
   ['sync/device-wipe-ack', deviceWipeAck],
