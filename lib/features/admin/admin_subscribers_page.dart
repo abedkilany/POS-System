@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/services/account_auth_service.dart';
+import '../../core/utils/responsive.dart';
 
 class AdminSubscribersPage extends StatefulWidget {
   const AdminSubscribersPage({super.key});
@@ -153,9 +154,11 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
+              insetPadding: VentioResponsive.dialogInsets(context),
+              constraints: VentioResponsive.dialogConstraints(context),
               title: const Text('Edit subscriber'),
               content: SizedBox(
-                width: 560,
+                width: VentioResponsive.dialogLargeWidth(context),
                 child: SingleChildScrollView(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,

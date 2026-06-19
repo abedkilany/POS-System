@@ -551,12 +551,14 @@ class SettingsPage extends StatelessWidget {
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (context, setState) => AlertDialog(
+            insetPadding: VentioResponsive.dialogInsets(context),
+            constraints: VentioResponsive.dialogConstraints(context),
             title: Text(tr.text('financial_settings')),
             content: ResponsiveDialogBox(
-              maxWidth: VentioResponsive.modalMaxWidth(context, 560),
+              maxWidth: VentioResponsive.dialogLargeWidth(context),
               child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
+                child: ResponsiveFormGrid(
+                  breakpoint: 760,
                   children: [
                     TextFormField(
                       controller: rateController,
@@ -568,7 +570,6 @@ class SettingsPage extends StatelessWidget {
                         FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))
                       ],
                     ),
-                    const SizedBox(height: 16),
                     DropdownButtonFormField<String>(
                       initialValue: displayMode,
                       decoration: InputDecoration(
@@ -587,7 +588,6 @@ class SettingsPage extends StatelessWidget {
                       onChanged: (value) =>
                           setState(() => displayMode = value ?? 'usd'),
                     ),
-                    const SizedBox(height: 16),
                     DropdownButtonFormField<String>(
                       initialValue: defaultCurrency,
                       decoration: InputDecoration(
@@ -599,7 +599,6 @@ class SettingsPage extends StatelessWidget {
                       onChanged: (value) =>
                           setState(() => defaultCurrency = value ?? 'USD'),
                     ),
-                    const SizedBox(height: 16),
                     DropdownButtonFormField<String>(
                       initialValue: defaultSaleInvoiceCurrency,
                       decoration: InputDecoration(
@@ -611,7 +610,6 @@ class SettingsPage extends StatelessWidget {
                       onChanged: (value) => setState(
                           () => defaultSaleInvoiceCurrency = value ?? 'USD'),
                     ),
-                    const SizedBox(height: 16),
                     DropdownButtonFormField<String>(
                       initialValue: defaultSalePaymentCurrency,
                       decoration: InputDecoration(
@@ -623,7 +621,6 @@ class SettingsPage extends StatelessWidget {
                       onChanged: (value) => setState(
                           () => defaultSalePaymentCurrency = value ?? 'USD'),
                     ),
-                    const SizedBox(height: 16),
                     DropdownButtonFormField<int>(
                       initialValue: rounding,
                       decoration:
@@ -696,28 +693,27 @@ class SettingsPage extends StatelessWidget {
         return StatefulBuilder(
           builder: (context, setState) {
             return AlertDialog(
+              insetPadding: VentioResponsive.dialogInsets(context),
+              constraints: VentioResponsive.dialogConstraints(context),
               title: Text(tr.text('edit_store_profile')),
               content: ResponsiveDialogBox(
-                maxWidth: VentioResponsive.modalMaxWidth(context, 520),
+                maxWidth: VentioResponsive.dialogLargeWidth(context),
                 child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
+                  child: ResponsiveFormGrid(
+                    breakpoint: 760,
                     children: [
                       TextField(
                           controller: nameController,
                           decoration: InputDecoration(
                               labelText: tr.text('store_name'))),
-                      const SizedBox(height: 12),
                       TextField(
                           controller: phoneController,
                           decoration:
                               InputDecoration(labelText: tr.text('phone'))),
-                      const SizedBox(height: 12),
                       TextField(
                           controller: addressController,
                           decoration:
                               InputDecoration(labelText: tr.text('address'))),
-                      const SizedBox(height: 12),
                       TextField(
                         controller: footerController,
                         minLines: 2,
@@ -827,7 +823,8 @@ class SettingsPage extends StatelessWidget {
       final selectedSections = await _confirmBackupImport(context, plan);
       if (selectedSections == null || selectedSections.isEmpty) return;
 
-      await store.importBackupJson(rawJson, selectedSectionIds: selectedSections);
+      await store.importBackupJson(rawJson,
+          selectedSectionIds: selectedSections);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(tr.text('backup_imported'))),
@@ -852,9 +849,14 @@ class SettingsPage extends StatelessWidget {
       barrierDismissible: false,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
+          insetPadding: VentioResponsive.dialogInsets(context),
+          constraints: VentioResponsive.dialogConstraints(
+            context,
+            maxWidth: VentioResponsive.dialogMediumWidth(context),
+          ),
           title: Text(tr.text('store_recovery_security')),
           content: ResponsiveDialogBox(
-            maxWidth: VentioResponsive.modalMaxWidth(context, 540),
+            maxWidth: VentioResponsive.dialogMediumWidth(context),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -930,13 +932,16 @@ class SettingsPage extends StatelessWidget {
 
     if (cache == null || cache.accountToken.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Online account session is required. Please sign in again.')),
+        const SnackBar(
+            content: Text(
+                'Online account session is required. Please sign in again.')),
       );
       return;
     }
     if (!storeId.startsWith('ST-')) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('A valid Store ID was not found for this account.')),
+        const SnackBar(
+            content: Text('A valid Store ID was not found for this account.')),
       );
       return;
     }
@@ -945,9 +950,14 @@ class SettingsPage extends StatelessWidget {
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) => AlertDialog(
+        insetPadding: VentioResponsive.dialogInsets(context),
+        constraints: VentioResponsive.dialogConstraints(
+          context,
+          maxWidth: VentioResponsive.dialogSmallWidth(context),
+        ),
         title: Text(tr.text('recover_existing_store')),
         content: ResponsiveDialogBox(
-          maxWidth: VentioResponsive.modalMaxWidth(context, 460),
+          maxWidth: VentioResponsive.dialogSmallWidth(context),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -981,7 +991,8 @@ class SettingsPage extends StatelessWidget {
         clearLastPullCursor: true,
       );
       await recoverySettings.save();
-      final result = await CloudSyncService(store).recoverExistingStoreFromCloud(
+      final result =
+          await CloudSyncService(store).recoverExistingStoreFromCloud(
         recoverySettings,
         storeId: storeId,
         branchId: branchId,
@@ -990,7 +1001,6 @@ class SettingsPage extends StatelessWidget {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(localizeRuntimeMessage(result.message, tr))),
         );
-        
       }
     } catch (error) {
       if (context.mounted) {
@@ -1420,14 +1430,16 @@ class SettingsPage extends StatelessWidget {
               .where((section) => section.group == 'System data')
               .toList();
           final selectedAvailableCount = plan.sections
-              .where((section) => section.available && selected.contains(section.id))
+              .where((section) =>
+                  section.available && selected.contains(section.id))
               .length;
 
           Widget sectionTile(BackupImportSection section) {
             final checked = selected.contains(section.id);
             final subtitleParts = <String>[];
             if (section.count != null) {
-              subtitleParts.add('${section.count} item${section.count == 1 ? '' : 's'}');
+              subtitleParts
+                  .add('${section.count} item${section.count == 1 ? '' : 's'}');
             }
             if (!section.available) {
               subtitleParts.add('Not available in this backup');
@@ -1449,7 +1461,9 @@ class SettingsPage extends StatelessWidget {
                     }
                   : null,
               title: Text(section.label),
-              subtitle: subtitleParts.isEmpty ? null : Text(subtitleParts.join(' • ')),
+              subtitle: subtitleParts.isEmpty
+                  ? null
+                  : Text(subtitleParts.join(' • ')),
               controlAffinity: ListTileControlAffinity.leading,
             );
           }
@@ -1466,27 +1480,47 @@ class SettingsPage extends StatelessWidget {
             );
           }
 
+          final dialogWidth = VentioResponsive.dialogLargeWidth(context);
+          final wideLayout = VentioResponsive.isWideDialogLayout(context);
+          final sectionsLayout = wideLayout
+              ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: group('Business data', businessSections)),
+                    const SizedBox(width: 24),
+                    Expanded(child: group('System data', systemSections)),
+                  ],
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    group('Business data', businessSections),
+                    group('System data', systemSections),
+                  ],
+                );
+
           return AlertDialog(
+            insetPadding: EdgeInsets.symmetric(
+              horizontal: VentioResponsive.pagePadding(context),
+              vertical: 24,
+            ),
+            constraints: BoxConstraints(maxWidth: dialogWidth),
             title: Text(tr.text('confirm_backup_import')),
-            content: ResponsiveDialogBox(
-              maxWidth: VentioResponsive.modalMaxWidth(context, 560),
-              child: SizedBox(
-                width: 560,
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _BackupSummaryDetails(summary: plan.summary),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Review backup sections. Business data is selected by default. System data is available but left unchecked by default.',
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      ),
-                      group('Business data', businessSections),
-                      group('System data', systemSections),
-                    ],
-                  ),
+            content: SizedBox(
+              width: dialogWidth,
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _BackupSummaryDetails(summary: plan.summary),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Review backup sections. Business data is selected by default. System data is available but left unchecked by default.',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    sectionsLayout,
+                  ],
                 ),
               ),
             ),
@@ -1498,7 +1532,8 @@ class SettingsPage extends StatelessWidget {
               FilledButton(
                 onPressed: selectedAvailableCount == 0
                     ? null
-                    : () => Navigator.pop(dialogContext, Set<String>.from(selected)),
+                    : () => Navigator.pop(
+                        dialogContext, Set<String>.from(selected)),
                 child: Text(tr.text('restore')),
               ),
             ],
@@ -2114,9 +2149,14 @@ class _GoogleDriveBackupSettingsCardState
       final selected = await showDialog<GoogleDriveBackupFile>(
         context: context,
         builder: (dialogContext) => AlertDialog(
+          insetPadding: VentioResponsive.dialogInsets(context),
+          constraints: VentioResponsive.dialogConstraints(
+            context,
+            maxWidth: VentioResponsive.dialogMediumWidth(context),
+          ),
           title: const Text('Download backup from Drive'),
           content: SizedBox(
-            width: VentioResponsive.modalMaxWidth(context, 520),
+            width: VentioResponsive.dialogMediumWidth(context),
             child: ListView.separated(
               shrinkWrap: true,
               itemCount: files.length,

@@ -41,8 +41,14 @@ class _ExpensesPageState extends State<ExpensesPage> {
           expense.notes.toLowerCase().contains(normalizedQuery) ||
           expense.cancelReason.toLowerCase().contains(normalizedQuery);
     }).toList();
-    final filteredTotal = expenses.where((expense) => expense.isPosted).fold<double>(0, (sum, expense) => sum + expense.amount);
-    final categoriesCount = widget.store.expenses.map((expense) => expense.category.trim()).where((value) => value.isNotEmpty).toSet().length;
+    final filteredTotal = expenses
+        .where((expense) => expense.isPosted)
+        .fold<double>(0, (sum, expense) => sum + expense.amount);
+    final categoriesCount = widget.store.expenses
+        .map((expense) => expense.category.trim())
+        .where((value) => value.isNotEmpty)
+        .toSet()
+        .length;
 
     return ResponsivePage(
       child: Column(
@@ -60,16 +66,35 @@ class _ExpensesPageState extends State<ExpensesPage> {
           const SizedBox(height: 16),
           LayoutBuilder(
             builder: (context, constraints) {
-              final columns = VentioResponsive.columnsForWidth(constraints.maxWidth, mobile: 1, tablet: 3, desktop: 3);
+              final columns = VentioResponsive.columnsForWidth(
+                  constraints.maxWidth,
+                  mobile: 1,
+                  tablet: 3,
+                  desktop: 3);
               final gap = VentioResponsive.gap(context);
-              final cardWidth = (constraints.maxWidth - (gap * (columns - 1))) / columns;
+              final cardWidth =
+                  (constraints.maxWidth - (gap * (columns - 1))) / columns;
               return Wrap(
                 spacing: gap,
                 runSpacing: gap,
                 children: [
-                  _MiniCard(width: cardWidth, title: tr.text('total'), value: formatUsdReferenceAmount(widget.store.totalExpensesAmount, widget.store.storeProfile), icon: Icons.payments_outlined),
-                  _MiniCard(width: cardWidth, title: tr.text('expenses_count'), value: '${widget.store.expenses.length}', icon: Icons.receipt_outlined),
-                  _MiniCard(width: cardWidth, title: tr.text('category'), value: '$categoriesCount', icon: Icons.category_outlined),
+                  _MiniCard(
+                      width: cardWidth,
+                      title: tr.text('total'),
+                      value: formatUsdReferenceAmount(
+                          widget.store.totalExpensesAmount,
+                          widget.store.storeProfile),
+                      icon: Icons.payments_outlined),
+                  _MiniCard(
+                      width: cardWidth,
+                      title: tr.text('expenses_count'),
+                      value: '${widget.store.expenses.length}',
+                      icon: Icons.receipt_outlined),
+                  _MiniCard(
+                      width: cardWidth,
+                      title: tr.text('category'),
+                      value: '$categoriesCount',
+                      icon: Icons.category_outlined),
                 ],
               );
             },
@@ -79,7 +104,11 @@ class _ExpensesPageState extends State<ExpensesPage> {
             decoration: InputDecoration(
               hintText: tr.text('search_expense'),
               prefixIcon: const Icon(Icons.search),
-              suffixIcon: query.isEmpty ? null : IconButton(onPressed: () => setState(() => query = ''), icon: const Icon(Icons.close)),
+              suffixIcon: query.isEmpty
+                  ? null
+                  : IconButton(
+                      onPressed: () => setState(() => query = ''),
+                      icon: const Icon(Icons.close)),
             ),
             onChanged: (value) => setState(() => query = value),
           ),
@@ -88,36 +117,73 @@ class _ExpensesPageState extends State<ExpensesPage> {
             scrollDirection: Axis.horizontal,
             child: Row(
               children: [
-                ChoiceChip(label: Text('${tr.text('all')} (${widget.store.expenses.length})'), selected: statusFilter == 'all', onSelected: (_) => setState(() => statusFilter = 'all')),
+                ChoiceChip(
+                    label: Text(
+                        '${tr.text('all')} (${widget.store.expenses.length})'),
+                    selected: statusFilter == 'all',
+                    onSelected: (_) => setState(() => statusFilter = 'all')),
                 const SizedBox(width: 8),
-                ChoiceChip(label: Text('${tr.text('draft')} (${widget.store.expenses.where((e) => e.isDraft).length})'), selected: statusFilter == 'draft', onSelected: (_) => setState(() => statusFilter = 'draft')),
+                ChoiceChip(
+                    label: Text(
+                        '${tr.text('draft')} (${widget.store.expenses.where((e) => e.isDraft).length})'),
+                    selected: statusFilter == 'draft',
+                    onSelected: (_) => setState(() => statusFilter = 'draft')),
                 const SizedBox(width: 8),
-                ChoiceChip(label: Text('${tr.text('posted')} (${widget.store.expenses.where((e) => e.isPosted).length})'), selected: statusFilter == 'posted', onSelected: (_) => setState(() => statusFilter = 'posted')),
+                ChoiceChip(
+                    label: Text(
+                        '${tr.text('posted')} (${widget.store.expenses.where((e) => e.isPosted).length})'),
+                    selected: statusFilter == 'posted',
+                    onSelected: (_) => setState(() => statusFilter = 'posted')),
                 const SizedBox(width: 8),
-                ChoiceChip(label: Text('${tr.text('cancelled')} (${widget.store.expenses.where((e) => e.isCancelled).length})'), selected: statusFilter == 'cancelled', onSelected: (_) => setState(() => statusFilter = 'cancelled')),
+                ChoiceChip(
+                    label: Text(
+                        '${tr.text('cancelled')} (${widget.store.expenses.where((e) => e.isCancelled).length})'),
+                    selected: statusFilter == 'cancelled',
+                    onSelected: (_) =>
+                        setState(() => statusFilter = 'cancelled')),
               ],
             ),
           ),
           if (normalizedQuery.isNotEmpty) ...[
             const SizedBox(height: 8),
-            Text('${tr.text('total')}: ${formatUsdReferenceAmount(filteredTotal, widget.store.storeProfile)}', style: Theme.of(context).textTheme.bodyMedium),
+            Text(
+                '${tr.text('total')}: ${formatUsdReferenceAmount(filteredTotal, widget.store.storeProfile)}',
+                style: Theme.of(context).textTheme.bodyMedium),
           ],
           const SizedBox(height: 16),
           Expanded(
             child: expenses.isEmpty
-                ? EmptyStateCard(icon: Icons.payments_outlined, title: tr.text('no_expenses'), subtitle: tr.text('no_expenses_desc'))
+                ? EmptyStateCard(
+                    icon: Icons.payments_outlined,
+                    title: tr.text('no_expenses'),
+                    subtitle: tr.text('no_expenses_desc'))
                 : ListView.separated(
-                    keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+                    keyboardDismissBehavior:
+                        ScrollViewKeyboardDismissBehavior.onDrag,
                     itemCount: expenses.length,
                     separatorBuilder: (_, __) => const SizedBox(height: 10),
                     itemBuilder: (context, index) => _ExpenseCard(
                       expense: expenses[index],
                       storeProfile: widget.store.storeProfile,
-                      onEdit: expenses[index].isDraft ? () => _openExpenseForm(context, expense: expenses[index]) : null,
-                      onPost: expenses[index].isDraft ? () => _postExpense(context, expenses[index]) : null,
-                      onCancel: expenses[index].isPosted ? () => _cancelExpense(context, expenses[index]) : null,
-                      onDeleteDraft: expenses[index].isDraft ? () => _deleteExpense(context, expenses[index]) : null,
-                      onPermanentDelete: expenses[index].isCancelled && widget.store.hasPermission(AppPermission.databaseManage) ? () => _permanentlyDeleteExpense(context, expenses[index]) : null,
+                      onEdit: expenses[index].isDraft
+                          ? () => _openExpenseForm(context,
+                              expense: expenses[index])
+                          : null,
+                      onPost: expenses[index].isDraft
+                          ? () => _postExpense(context, expenses[index])
+                          : null,
+                      onCancel: expenses[index].isPosted
+                          ? () => _cancelExpense(context, expenses[index])
+                          : null,
+                      onDeleteDraft: expenses[index].isDraft
+                          ? () => _deleteExpense(context, expenses[index])
+                          : null,
+                      onPermanentDelete: expenses[index].isCancelled &&
+                              widget.store
+                                  .hasPermission(AppPermission.databaseManage)
+                          ? () => _permanentlyDeleteExpense(
+                              context, expenses[index])
+                          : null,
                     ),
                   ),
           ),
@@ -134,7 +200,9 @@ class _ExpensesPageState extends State<ExpensesPage> {
         title: Text(tr.text('confirm_delete')),
         content: Text(expense.title),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('cancel'))),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(tr.text('cancel'))),
           FilledButton.tonalIcon(
             onPressed: () => Navigator.pop(context, true),
             icon: const Icon(Icons.delete_outline),
@@ -147,10 +215,16 @@ class _ExpensesPageState extends State<ExpensesPage> {
     try {
       await widget.store.deleteDraftExpense(expense.id);
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('expense_deleted').replaceAll('{title}', expense.title))));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(tr
+                .text('expense_deleted')
+                .replaceAll('{title}', expense.title))));
       }
     } catch (error) {
-      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
     }
   }
 
@@ -162,17 +236,27 @@ class _ExpensesPageState extends State<ExpensesPage> {
         title: Text(tr.text('post_expense')),
         content: Text(tr.text('post_expense_desc')),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('cancel'))),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(tr.text('confirm'))),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(tr.text('cancel'))),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(tr.text('confirm'))),
         ],
       ),
     );
     if (confirmed != true) return;
     try {
       await widget.store.postExpense(expense.id);
-      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('expense_posted'))));
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(tr.text('expense_posted'))));
+      }
     } catch (error) {
-      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
     }
   }
 
@@ -189,12 +273,20 @@ class _ExpensesPageState extends State<ExpensesPage> {
           children: [
             Text(tr.text('cancel_expense_desc')),
             const SizedBox(height: 12),
-            TextField(controller: reasonController, maxLines: 2, decoration: InputDecoration(labelText: tr.text('cancel_reason_optional'))),
+            TextField(
+                controller: reasonController,
+                maxLines: 2,
+                decoration: InputDecoration(
+                    labelText: tr.text('cancel_reason_optional'))),
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('cancel'))),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(tr.text('confirm'))),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(tr.text('cancel'))),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(tr.text('confirm'))),
         ],
       ),
     );
@@ -206,13 +298,20 @@ class _ExpensesPageState extends State<ExpensesPage> {
     reasonController.dispose();
     try {
       await widget.store.cancelExpense(expense.id, reason: reason);
-      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('expense_cancelled'))));
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(tr.text('expense_cancelled'))));
+      }
     } catch (error) {
-      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
     }
   }
 
-  Future<void> _permanentlyDeleteExpense(BuildContext context, Expense expense) async {
+  Future<void> _permanentlyDeleteExpense(
+      BuildContext context, Expense expense) async {
     final tr = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
@@ -220,40 +319,65 @@ class _ExpensesPageState extends State<ExpensesPage> {
         title: Text(tr.text('permanently_delete_expense')),
         content: Text(tr.text('permanently_delete_expense_desc')),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('cancel'))),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(tr.text('permanently_delete'))),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(tr.text('cancel'))),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(tr.text('permanently_delete'))),
         ],
       ),
     );
     if (confirmed != true) return;
     try {
       await widget.store.permanentlyDeleteCancelledExpense(expense.id);
-      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('expense_permanently_deleted'))));
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(tr.text('expense_permanently_deleted'))));
+      }
     } catch (error) {
-      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
     }
   }
 
-  Future<void> _openExpenseForm(BuildContext context, {Expense? expense}) async {
+  Future<void> _openExpenseForm(BuildContext context,
+      {Expense? expense}) async {
     final result = await showDialog<Expense>(
       context: context,
-      builder: (_) => _ExpenseDialog(expense: expense, storeProfile: widget.store.storeProfile),
+      builder: (_) => _ExpenseDialog(
+          expense: expense, storeProfile: widget.store.storeProfile),
     );
     if (result != null) {
       try {
         await widget.store.addOrUpdateExpense(result);
         if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text(expense == null ? 'expense_saved_as_draft' : 'expense_updated'))));
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text(AppLocalizations.of(context).text(expense == null
+                  ? 'expense_saved_as_draft'
+                  : 'expense_updated'))));
         }
       } catch (error) {
-        if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+        if (context.mounted) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(error.toString())));
+        }
       }
     }
   }
 }
 
 class _ExpenseCard extends StatelessWidget {
-  const _ExpenseCard({required this.expense, required this.storeProfile, this.onEdit, this.onPost, this.onCancel, this.onDeleteDraft, this.onPermanentDelete});
+  const _ExpenseCard(
+      {required this.expense,
+      required this.storeProfile,
+      this.onEdit,
+      this.onPost,
+      this.onCancel,
+      this.onDeleteDraft,
+      this.onPermanentDelete});
 
   final Expense expense;
   final StoreProfile storeProfile;
@@ -267,10 +391,21 @@ class _ExpenseCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final date = DateFormat('yyyy-MM-dd HH:mm').format(expense.date.toLocal());
-    final originalAmount = formatCurrency(expense.originalAmount ?? expense.amount, currency: expense.originalCurrency);
-    final referenceAmount = formatUsdReferenceAmount(expense.amount, storeProfile);
-    final statusText = expense.isCancelled ? tr.text('cancelled') : expense.isPosted ? tr.text('posted') : tr.text('draft');
-    final statusIcon = expense.isCancelled ? Icons.block_outlined : expense.isPosted ? Icons.verified_outlined : Icons.edit_note_outlined;
+    final originalAmount = formatCurrency(
+        expense.originalAmount ?? expense.amount,
+        currency: expense.originalCurrency);
+    final referenceAmount =
+        formatUsdReferenceAmount(expense.amount, storeProfile);
+    final statusText = expense.isCancelled
+        ? tr.text('cancelled')
+        : expense.isPosted
+            ? tr.text('posted')
+            : tr.text('draft');
+    final statusIcon = expense.isCancelled
+        ? Icons.block_outlined
+        : expense.isPosted
+            ? Icons.verified_outlined
+            : Icons.edit_note_outlined;
 
     return Card(
       child: Padding(
@@ -284,30 +419,46 @@ class _ExpenseCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(expense.title, style: Theme.of(context).textTheme.titleMedium),
+                  Text(expense.title,
+                      style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(height: 6),
                   Wrap(
                     spacing: 8,
                     runSpacing: 6,
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
-                      Chip(label: Text(expense.category), visualDensity: VisualDensity.compact),
-                      Chip(avatar: Icon(statusIcon, size: 16), label: Text(statusText), visualDensity: VisualDensity.compact),
+                      Chip(
+                          label: Text(expense.category),
+                          visualDensity: VisualDensity.compact),
+                      Chip(
+                          avatar: Icon(statusIcon, size: 16),
+                          label: Text(statusText),
+                          visualDensity: VisualDensity.compact),
                       Text(date, style: Theme.of(context).textTheme.bodySmall),
                     ],
                   ),
                   if (expense.notes.trim().isNotEmpty) ...[
                     const SizedBox(height: 6),
-                    Text(expense.notes.trim(), maxLines: 2, overflow: TextOverflow.ellipsis),
+                    Text(expense.notes.trim(),
+                        maxLines: 2, overflow: TextOverflow.ellipsis),
                   ],
-                  if (expense.isCancelled && expense.cancelReason.trim().isNotEmpty) ...[
+                  if (expense.isCancelled &&
+                      expense.cancelReason.trim().isNotEmpty) ...[
                     const SizedBox(height: 6),
-                    Text('${tr.text('cancel_reason_optional')}: ${expense.cancelReason.trim()}', maxLines: 2, overflow: TextOverflow.ellipsis),
+                    Text(
+                        '${tr.text('cancel_reason_optional')}: ${expense.cancelReason.trim()}',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis),
                   ],
                   const SizedBox(height: 8),
                   Text(
-                    expense.originalCurrency == 'USD' ? referenceAmount : '$originalAmount • $referenceAmount',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                    expense.originalCurrency == 'USD'
+                        ? referenceAmount
+                        : '$originalAmount • $referenceAmount',
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w700),
                   ),
                 ],
               ),
@@ -333,11 +484,22 @@ class _ExpenseCard extends StatelessWidget {
                 }
               },
               itemBuilder: (context) => [
-                if (onEdit != null) PopupMenuItem(value: 'edit', child: Text(tr.text('edit_expense'))),
-                if (onPost != null) PopupMenuItem(value: 'post', child: Text(tr.text('post_expense'))),
-                if (onCancel != null) PopupMenuItem(value: 'cancel', child: Text(tr.text('cancel_expense'))),
-                if (onDeleteDraft != null) PopupMenuItem(value: 'delete', child: Text(tr.text('delete'))),
-                if (onPermanentDelete != null) PopupMenuItem(value: 'permanent_delete', child: Text(tr.text('permanently_delete'))),
+                if (onEdit != null)
+                  PopupMenuItem(
+                      value: 'edit', child: Text(tr.text('edit_expense'))),
+                if (onPost != null)
+                  PopupMenuItem(
+                      value: 'post', child: Text(tr.text('post_expense'))),
+                if (onCancel != null)
+                  PopupMenuItem(
+                      value: 'cancel', child: Text(tr.text('cancel_expense'))),
+                if (onDeleteDraft != null)
+                  PopupMenuItem(
+                      value: 'delete', child: Text(tr.text('delete'))),
+                if (onPermanentDelete != null)
+                  PopupMenuItem(
+                      value: 'permanent_delete',
+                      child: Text(tr.text('permanently_delete'))),
               ],
             ),
           ],
@@ -372,8 +534,10 @@ class _ExpenseDialogState extends State<_ExpenseDialog> {
     final expense = widget.expense;
     titleController = TextEditingController(text: expense?.title ?? '');
     categoryController = TextEditingController(text: expense?.category ?? '');
-    amountCurrency = expense?.originalCurrency ?? widget.storeProfile.defaultProductCurrency;
-    amountController = TextEditingController(text: (expense?.originalAmount ?? expense?.amount)?.toString() ?? '');
+    amountCurrency =
+        expense?.originalCurrency ?? widget.storeProfile.defaultProductCurrency;
+    amountController = TextEditingController(
+        text: (expense?.originalAmount ?? expense?.amount)?.toString() ?? '');
     notesController = TextEditingController(text: expense?.notes ?? '');
     selectedDate = expense?.date ?? DateTime.now();
   }
@@ -391,18 +555,27 @@ class _ExpenseDialogState extends State<_ExpenseDialog> {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     return AlertDialog(
-      title: Text(widget.expense == null ? tr.text('add_expense') : tr.text('edit_expense')),
+      insetPadding: VentioResponsive.dialogInsets(context),
+      constraints: VentioResponsive.dialogConstraints(context),
+      title: Text(widget.expense == null
+          ? tr.text('add_expense')
+          : tr.text('edit_expense')),
       content: ResponsiveDialogBox(
-        maxWidth: VentioResponsive.modalMaxWidth(context, 460),
+        maxWidth: VentioResponsive.dialogLargeWidth(context),
         child: Form(
           key: _formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+          child: ResponsiveFormGrid(
+            breakpoint: 760,
             children: [
-              TextFormField(controller: titleController, decoration: InputDecoration(labelText: tr.text('expense_title')), validator: _required),
-              const SizedBox(height: 12),
-              TextFormField(controller: categoryController, decoration: InputDecoration(labelText: tr.text('category')), validator: _required),
-              const SizedBox(height: 12),
+              TextFormField(
+                  controller: titleController,
+                  decoration:
+                      InputDecoration(labelText: tr.text('expense_title')),
+                  validator: _required),
+              TextFormField(
+                  controller: categoryController,
+                  decoration: InputDecoration(labelText: tr.text('category')),
+                  validator: _required),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -411,8 +584,12 @@ class _ExpenseDialogState extends State<_ExpenseDialog> {
                     child: TextFormField(
                       controller: amountController,
                       decoration: InputDecoration(labelText: tr.text('amount')),
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}$'))],
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      inputFormatters: [
+                        FilteringTextInputFormatter.allow(
+                            RegExp(r'^\d*\.?\d{0,2}$'))
+                      ],
                       validator: _amountValidator,
                     ),
                   ),
@@ -420,42 +597,52 @@ class _ExpenseDialogState extends State<_ExpenseDialog> {
                   Expanded(
                     child: DropdownButtonFormField<String>(
                       initialValue: amountCurrency,
-                      decoration: InputDecoration(labelText: tr.text('currency')),
+                      decoration:
+                          InputDecoration(labelText: tr.text('currency')),
                       items: const [
                         DropdownMenuItem(value: 'USD', child: Text('USD')),
                         DropdownMenuItem(value: 'LBP', child: Text('LBP')),
                       ],
-                      onChanged: (value) => setState(() => amountCurrency = value ?? 'USD'),
+                      onChanged: (value) =>
+                          setState(() => amountCurrency = value ?? 'USD'),
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
               InkWell(
                 borderRadius: BorderRadius.circular(12),
                 onTap: _pickDate,
                 child: InputDecorator(
-                  decoration: InputDecoration(labelText: tr.text('date'), prefixIcon: const Icon(Icons.calendar_today_outlined)),
-                  child: Text(DateFormat('yyyy-MM-dd HH:mm').format(selectedDate.toLocal())),
+                  decoration: InputDecoration(
+                      labelText: tr.text('date'),
+                      prefixIcon: const Icon(Icons.calendar_today_outlined)),
+                  child: Text(DateFormat('yyyy-MM-dd HH:mm')
+                      .format(selectedDate.toLocal())),
                 ),
               ),
-              const SizedBox(height: 12),
-              TextFormField(controller: notesController, decoration: InputDecoration(labelText: tr.text('notes')), maxLines: 3),
+              TextFormField(
+                  controller: notesController,
+                  decoration: InputDecoration(labelText: tr.text('notes')),
+                  maxLines: 3),
             ],
           ),
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: Text(tr.text('cancel'))),
+        TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(tr.text('cancel'))),
         FilledButton(
           onPressed: () {
             if (!_formKey.currentState!.validate()) return;
             final originalAmount = double.parse(amountController.text.trim());
-            final amount = toUsdReferencePrice(originalAmount, amountCurrency, widget.storeProfile);
+            final amount = toUsdReferencePrice(
+                originalAmount, amountCurrency, widget.storeProfile);
             Navigator.pop(
               context,
               Expense(
-                id: widget.expense?.id ?? DateTime.now().microsecondsSinceEpoch.toString(),
+                id: widget.expense?.id ??
+                    DateTime.now().microsecondsSinceEpoch.toString(),
                 title: titleController.text.trim(),
                 category: categoryController.text.trim(),
                 amount: amount,
@@ -476,7 +663,8 @@ class _ExpenseDialogState extends State<_ExpenseDialog> {
                 storeId: widget.expense?.storeId ?? '',
                 branchId: widget.expense?.branchId ?? '',
                 version: widget.expense?.version ?? 1,
-                lastModifiedByDeviceId: widget.expense?.lastModifiedByDeviceId ?? '',
+                lastModifiedByDeviceId:
+                    widget.expense?.lastModifiedByDeviceId ?? '',
               ),
             );
           },
@@ -494,26 +682,36 @@ class _ExpenseDialogState extends State<_ExpenseDialog> {
       lastDate: DateTime.now().add(const Duration(days: 365)),
     );
     if (date == null || !mounted) return;
-    final time = await showTimePicker(context: context, initialTime: TimeOfDay.fromDateTime(selectedDate));
+    final time = await showTimePicker(
+        context: context, initialTime: TimeOfDay.fromDateTime(selectedDate));
     if (!mounted) return;
     setState(() {
-      selectedDate = DateTime(date.year, date.month, date.day, time?.hour ?? selectedDate.hour, time?.minute ?? selectedDate.minute);
+      selectedDate = DateTime(date.year, date.month, date.day,
+          time?.hour ?? selectedDate.hour, time?.minute ?? selectedDate.minute);
     });
   }
 
-  String? _required(String? value) => value == null || value.trim().isEmpty ? AppLocalizations.of(context).text('required') : null;
+  String? _required(String? value) => value == null || value.trim().isEmpty
+      ? AppLocalizations.of(context).text('required')
+      : null;
 
   String? _amountValidator(String? value) {
     final trimmed = value?.trim() ?? '';
     if (trimmed.isEmpty) return AppLocalizations.of(context).text('required');
     final number = double.tryParse(trimmed);
-    if (number == null || number <= 0) return AppLocalizations.of(context).text('invalid_number');
+    if (number == null || number <= 0) {
+      return AppLocalizations.of(context).text('invalid_number');
+    }
     return null;
   }
 }
 
 class _MiniCard extends StatelessWidget {
-  const _MiniCard({required this.width, required this.title, required this.value, required this.icon});
+  const _MiniCard(
+      {required this.width,
+      required this.title,
+      required this.value,
+      required this.icon});
 
   final double width;
   final String title;

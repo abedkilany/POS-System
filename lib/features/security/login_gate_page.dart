@@ -121,13 +121,16 @@ class _LoginGatePageState extends State<LoginGatePage> {
 
     if (cache == null || cache.accountToken.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Online account session is required. Please sign in again.')),
+        const SnackBar(
+            content: Text(
+                'Online account session is required. Please sign in again.')),
       );
       return;
     }
     if (!storeId.startsWith('ST-')) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('A valid Store ID was not found for this account.')),
+        const SnackBar(
+            content: Text('A valid Store ID was not found for this account.')),
       );
       return;
     }
@@ -136,9 +139,11 @@ class _LoginGatePageState extends State<LoginGatePage> {
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) => AlertDialog(
+        insetPadding: VentioResponsive.dialogInsets(context),
+        constraints: VentioResponsive.dialogConstraints(context),
         title: Text(tr.text('recover_existing_store')),
         content: ResponsiveDialogBox(
-          maxWidth: VentioResponsive.modalMaxWidth(context, 460),
+          maxWidth: VentioResponsive.dialogLargeWidth(context),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -172,7 +177,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
         clearLastPullCursor: true,
       );
       await recoverySettings.save();
-      final result = await CloudSyncService(widget.store).recoverExistingStoreFromCloud(
+      final result =
+          await CloudSyncService(widget.store).recoverExistingStoreFromCloud(
         recoverySettings,
         storeId: storeId,
         branchId: branchId,

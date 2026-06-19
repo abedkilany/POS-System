@@ -608,8 +608,7 @@ class _ProductDialogState extends State<_ProductDialog> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final width =
-        math.min(MediaQuery.sizeOf(context).width - 32, 760).toDouble();
+    final width = VentioResponsive.dialogLargeWidth(context);
     return AlertDialog(
       title: Text(widget.product == null
           ? tr.text('add_product')
@@ -2140,13 +2139,18 @@ class _CatalogManagerDialogState extends State<_CatalogManagerDialog> {
     final tr = AppLocalizations.of(context);
     final language = tr.locale.languageCode;
     return AlertDialog(
+      insetPadding: VentioResponsive.dialogInsets(context),
+      constraints: VentioResponsive.dialogConstraints(
+        context,
+        maxWidth: VentioResponsive.dialogMediumWidth(context),
+      ),
       title: Text(widget.type == 'category'
           ? tr.text('manage_categories')
           : widget.type == 'unit'
               ? tr.text('manage_units')
               : tr.text('manage_lookup_items')),
       content: ResponsiveDialogBox(
-        maxWidth: VentioResponsive.modalMaxWidth(context, 520),
+        maxWidth: VentioResponsive.dialogMediumWidth(context),
         child: ListView.separated(
           shrinkWrap: true,
           itemCount: _items.length,
