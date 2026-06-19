@@ -204,8 +204,8 @@ class ResponsiveDialogBox extends StatelessWidget {
         final targetWidth = math
             .max(260.0, math.min(maxWidth, safeWidth - (inset * 2)))
             .toDouble();
-        return ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: targetWidth),
+        return SizedBox(
+          width: targetWidth,
           child: SingleChildScrollView(
             keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             child: Padding(
