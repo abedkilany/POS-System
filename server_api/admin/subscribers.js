@@ -2,10 +2,15 @@ import crypto from 'crypto';
 import { sql, sendError } from '../_db.js';
 
 function getAdminSecret() {
-  return process.env.ADMIN_JWT_SECRET
-    || process.env.ACCOUNT_JWT_SECRET
-    || process.env.DATABASE_URL
-    || 'ventio-platform-admin-secret';
+  const configuredSecret =
+    process.env.ADMIN_JWT_SECRET || process.env.ACCOUNT_JWT_SECRET || '';
+  if (configuredSecret.trim()) return configuredSecret;
+  if ((process.env.NODE_ENV || '').toLowerCase() === 'production') {
+    throw new Error(
+      'ADMIN_JWT_SECRET or ACCOUNT_JWT_SECRET must be configured in production.',
+    );
+  }
+  return process.env.DATABASE_URL || 'ventio-platform-admin-secret';
 }
 
 function verifyAdminToken(token) {

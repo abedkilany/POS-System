@@ -22,9 +22,16 @@ function hashPassword(password) {
 function createAccountToken({ accountId, username, storeSlug, storeId, branchId }) {
   const secret = process.env.ACCOUNT_JWT_SECRET
     || process.env.ADMIN_JWT_SECRET
-    || process.env.DATABASE_URL
-    || 'ventio-platform-admin-secret';
-  if (!secret) return '';
+    || '';
+  if (!secret.trim()) {
+    if ((process.env.NODE_ENV || '').toLowerCase() === 'production') {
+      throw new Error(
+        'ACCOUNT_JWT_SECRET or ADMIN_JWT_SECRET must be configured in production.',
+      );
+    }
+  }
+  const signingSecret = secret.trim() || process.env.DATABASE_URL || 'ventio-platform-admin-secret';
+  if (!signingSecret) return '';
   const payload = {
     type: 'store_account',
     accountId,
@@ -35,7 +42,10 @@ function createAccountToken({ accountId, username, storeSlug, storeId, branchId 
     exp: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
   };
   const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
-  const signature = crypto.createHmac('sha256', secret).update(payloadB64).digest('base64url');
+  const signature = crypto
+    .createHmac('sha256', signingSecret)
+    .update(payloadB64)
+    .digest('base64url');
   return `${payloadB64}.${signature}`;
 }
 
