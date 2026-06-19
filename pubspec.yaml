@@ -1,7 +1,7 @@
 name: ventio
 description: Ventio offline-first merchant and marketplace management app.
 publish_to: 'none'
-version: 1.0.24+34
+version: 1.0.27+37
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
