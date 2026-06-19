@@ -263,26 +263,26 @@ class _CustomerDialogState extends State<_CustomerDialog> {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     return AlertDialog(
-      insetPadding: VentioResponsive.dialogInsets(context),
-      constraints: VentioResponsive.dialogConstraints(context),
       title: Text(widget.customer == null
           ? tr.text('add_customer')
           : tr.text('edit_customer')),
       content: ResponsiveDialogBox(
-        maxWidth: VentioResponsive.dialogLargeWidth(context),
+        maxWidth: VentioResponsive.modalMaxWidth(context, 400),
         child: Form(
           key: _formKey,
-          child: ResponsiveFormGrid(
-            breakpoint: 760,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
               TextFormField(
                   controller: nameController,
                   decoration:
                       InputDecoration(labelText: tr.text('customer_name')),
                   validator: _required),
+              const SizedBox(height: 12),
               TextFormField(
                   controller: phoneController,
                   decoration: InputDecoration(labelText: tr.text('phone'))),
+              const SizedBox(height: 12),
               TextFormField(
                   controller: addressController,
                   decoration: InputDecoration(labelText: tr.text('address'))),

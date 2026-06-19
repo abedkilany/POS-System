@@ -1,3 +1,4 @@
+
 import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
@@ -44,25 +45,16 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
           for (final role in store.roles)
             Card(
               child: ListTile(
-                leading: Icon(
-                    role.isSystem ? Icons.lock_outline : Icons.badge_outlined),
+                leading: Icon(role.isSystem ? Icons.lock_outline : Icons.badge_outlined),
                 title: Text(role.name),
-                subtitle: Text(role.isAdmin
-                    ? tr.text('all_permissions')
-                    : '${role.permissions.length} permissions'),
+                subtitle: Text(role.isAdmin ? tr.text('all_permissions') : '${role.permissions.length} permissions'),
                 trailing: role.isSystem
                     ? null
                     : Wrap(
                         spacing: 8,
                         children: [
-                          IconButton(
-                              onPressed: () => _editRole(role: role),
-                              icon: const Icon(Icons.edit_outlined),
-                              tooltip: tr.text('edit')),
-                          IconButton(
-                              onPressed: () => _deleteRole(role),
-                              icon: const Icon(Icons.delete_outline),
-                              tooltip: tr.text('delete')),
+                          IconButton(onPressed: () => _editRole(role: role), icon: const Icon(Icons.edit_outlined), tooltip: tr.text('edit')),
+                          IconButton(onPressed: () => _deleteRole(role), icon: const Icon(Icons.delete_outline), tooltip: tr.text('delete')),
                         ],
                       ),
               ),
@@ -79,25 +71,15 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
           for (final user in store.users)
             Card(
               child: ListTile(
-                leading: CircleAvatar(
-                    child: Text(user.fullName.isEmpty
-                        ? '?'
-                        : user.fullName.substring(0, 1).toUpperCase())),
+                leading: CircleAvatar(child: Text(user.fullName.isEmpty ? '?' : user.fullName.substring(0, 1).toUpperCase())),
                 title: Text('${user.fullName} (${user.username})'),
-                subtitle: Text(
-                    '${store.roleById(user.roleId)?.name ?? user.roleId} • ${user.isActive ? tr.text('active') : tr.text('disabled')}'),
+                subtitle: Text('${store.roleById(user.roleId)?.name ?? user.roleId} • ${user.isActive ? tr.text('active') : tr.text('disabled')}'),
                 trailing: Wrap(
                   spacing: 8,
                   children: [
-                    IconButton(
-                        onPressed: () => _editUser(user: user),
-                        icon: const Icon(Icons.edit_outlined),
-                        tooltip: tr.text('edit')),
+                    IconButton(onPressed: () => _editUser(user: user), icon: const Icon(Icons.edit_outlined), tooltip: tr.text('edit')),
                     if (!user.isSystem)
-                      IconButton(
-                          onPressed: () => _deleteUser(user),
-                          icon: const Icon(Icons.delete_outline),
-                          tooltip: tr.text('delete')),
+                      IconButton(onPressed: () => _deleteUser(user), icon: const Icon(Icons.delete_outline), tooltip: tr.text('delete')),
                   ],
                 ),
               ),
@@ -116,25 +98,18 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          insetPadding: VentioResponsive.dialogInsets(context),
-          constraints: VentioResponsive.dialogConstraints(context),
-          title:
-              Text(role == null ? tr.text('add_role') : tr.text('edit_role')),
+          title: Text(role == null ? tr.text('add_role') : tr.text('edit_role')),
           content: ResponsiveDialogBox(
-            maxWidth: VentioResponsive.dialogLargeWidth(context),
+            maxWidth: VentioResponsive.modalMaxWidth(context, 520),
             child: SingleChildScrollView(
               child: Column(
                 children: [
-                  TextField(
-                      controller: nameController,
-                      decoration:
-                          InputDecoration(labelText: tr.text('role_name'))),
+                  TextField(controller: nameController, decoration: InputDecoration(labelText: tr.text('role_name'))),
                   const SizedBox(height: 16),
                   for (final permission in AppPermission.all)
                     CheckboxListTile(
                       value: permissions.contains(permission),
-                      title:
-                          Text(AppPermission.labels[permission] ?? permission),
+                      title: Text(AppPermission.labels[permission] ?? permission),
                       subtitle: Text(permission),
                       onChanged: (value) {
                         setDialogState(() {
@@ -151,9 +126,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
             ),
           ),
           actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(dialogContext),
-                child: Text(tr.text('cancel'))),
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: Text(tr.text('cancel'))),
             FilledButton(
               onPressed: () {
                 Navigator.pop(
@@ -178,10 +151,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
       await widget.store.addOrUpdateRole(result);
       if (mounted) setState(() {});
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(e.toString())));
-      }
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
     }
   }
 
@@ -193,13 +163,10 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
         title: Text(tr.text('confirm_delete')),
         content: Text('${tr.text('delete_confirm_message')} ${role.name}?'),
         actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: Text(tr.text('cancel'))),
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: Text(tr.text('cancel'))),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            style: FilledButton.styleFrom(
-                backgroundColor: Theme.of(context).colorScheme.error),
+            style: FilledButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.error),
             child: Text(tr.text('delete')),
           ),
         ],
@@ -210,102 +177,65 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
       await widget.store.deleteRole(role.id);
       if (mounted) setState(() {});
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(e.toString())));
-      }
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
     }
   }
 
   Future<void> _editUser({AppUser? user}) async {
     final tr = AppLocalizations.of(context);
     final nameController = TextEditingController(text: user?.fullName ?? '');
-    final usernameController =
-        TextEditingController(text: user?.username ?? '');
+    final usernameController = TextEditingController(text: user?.username ?? '');
     final passwordController = TextEditingController();
     String roleId = user?.roleId ?? widget.store.roles.first.id;
     bool isActive = user?.isActive ?? true;
     final extra = Set<String>.from(user?.extraPermissions ?? const <String>{});
-    final denied =
-        Set<String>.from(user?.deniedPermissions ?? const <String>{});
+    final denied = Set<String>.from(user?.deniedPermissions ?? const <String>{});
 
     final result = await showDialog<_UserEditResult>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          insetPadding: VentioResponsive.dialogInsets(context),
-          constraints: VentioResponsive.dialogConstraints(context),
-          title:
-              Text(user == null ? tr.text('add_user') : tr.text('edit_user')),
+          title: Text(user == null ? tr.text('add_user') : tr.text('edit_user')),
           content: ResponsiveDialogBox(
-            maxWidth: VentioResponsive.dialogLargeWidth(context),
+            maxWidth: VentioResponsive.modalMaxWidth(context, 560),
             child: SingleChildScrollView(
               child: Column(
                 children: [
-                  ResponsiveFormGrid(
-                    breakpoint: 760,
-                    children: [
-                      TextField(
-                          controller: nameController,
-                          decoration:
-                              InputDecoration(labelText: tr.text('full_name'))),
-                      TextField(
-                          controller: usernameController,
-                          decoration:
-                              InputDecoration(labelText: tr.text('username'))),
-                      TextField(
-                        controller: passwordController,
-                        obscureText: true,
-                        decoration: InputDecoration(
-                            labelText: user == null
-                                ? tr.text('password')
-                                : tr.text('new_password_keep_current')),
-                      ),
-                      DropdownButtonFormField<String>(
-                        initialValue: roleId,
-                        decoration: InputDecoration(labelText: tr.text('role')),
-                        items: [
-                          for (final role in widget.store.roles)
-                            DropdownMenuItem(
-                                value: role.id, child: Text(role.name)),
-                        ],
-                        onChanged: (value) =>
-                            setDialogState(() => roleId = value ?? roleId),
-                      ),
-                    ],
+                  TextField(controller: nameController, decoration: InputDecoration(labelText: tr.text('full_name'))),
+                  const SizedBox(height: 12),
+                  TextField(controller: usernameController, decoration: InputDecoration(labelText: tr.text('username'))),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: passwordController,
+                    obscureText: true,
+                    decoration: InputDecoration(labelText: user == null ? tr.text('password') : tr.text('new_password_keep_current')),
                   ),
                   const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: roleId,
+                    decoration: InputDecoration(labelText: tr.text('role')),
+                    items: [
+                      for (final role in widget.store.roles) DropdownMenuItem(value: role.id, child: Text(role.name)),
+                    ],
+                    onChanged: (value) => setDialogState(() => roleId = value ?? roleId),
+                  ),
                   SwitchListTile(
                     value: isActive,
                     title: Text(tr.text('active')),
-                    onChanged: user?.isSystem == true
-                        ? null
-                        : (value) => setDialogState(() => isActive = value),
+                    onChanged: user?.isSystem == true ? null : (value) => setDialogState(() => isActive = value),
                   ),
                   const Divider(),
-                  Align(
-                      alignment: AlignmentDirectional.centerStart,
-                      child: Text(tr.text('user_specific_overrides'),
-                          style: const TextStyle(fontWeight: FontWeight.bold))),
+                  Align(alignment: AlignmentDirectional.centerStart, child: Text(tr.text('user_specific_overrides'), style: const TextStyle(fontWeight: FontWeight.bold))),
                   for (final permission in AppPermission.all)
                     ListTile(
-                      title:
-                          Text(AppPermission.labels[permission] ?? permission),
+                      title: Text(AppPermission.labels[permission] ?? permission),
                       subtitle: Text(permission),
                       trailing: DropdownButton<String>(
-                        value: denied.contains(permission)
-                            ? 'deny'
-                            : extra.contains(permission)
-                                ? 'allow'
-                                : 'inherit',
+                        value: denied.contains(permission) ? 'deny' : extra.contains(permission) ? 'allow' : 'inherit',
                         items: [
-                          DropdownMenuItem(
-                              value: 'inherit',
-                              child: Text(tr.text('inherit'))),
-                          DropdownMenuItem(
-                              value: 'allow', child: Text(tr.text('allow'))),
-                          DropdownMenuItem(
-                              value: 'deny', child: Text(tr.text('deny'))),
+                          DropdownMenuItem(value: 'inherit', child: Text(tr.text('inherit'))),
+                          DropdownMenuItem(value: 'allow', child: Text(tr.text('allow'))),
+                          DropdownMenuItem(value: 'deny', child: Text(tr.text('deny'))),
                         ],
                         onChanged: (value) {
                           setDialogState(() {
@@ -322,9 +252,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
             ),
           ),
           actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(dialogContext),
-                child: Text(tr.text('cancel'))),
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: Text(tr.text('cancel'))),
             FilledButton(
               onPressed: () {
                 Navigator.pop(
@@ -344,9 +272,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                       updatedAt: user?.updatedAt,
                       lastLoginAt: user?.lastLoginAt,
                     ),
-                    password: passwordController.text.trim().isEmpty
-                        ? null
-                        : passwordController.text.trim(),
+                    password: passwordController.text.trim().isEmpty ? null : passwordController.text.trim(),
                   ),
                 );
               },
@@ -358,14 +284,10 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
     );
     if (result == null) return;
     try {
-      await widget.store
-          .addOrUpdateUser(result.user, password: result.password);
+      await widget.store.addOrUpdateUser(result.user, password: result.password);
       if (mounted) setState(() {});
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(e.toString())));
-      }
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
     }
   }
 
@@ -375,16 +297,12 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: Text(tr.text('confirm_delete')),
-        content: Text(
-            '${tr.text('delete_confirm_message')} ${user.fullName} (${user.username})?'),
+        content: Text('${tr.text('delete_confirm_message')} ${user.fullName} (${user.username})?'),
         actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: Text(tr.text('cancel'))),
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: Text(tr.text('cancel'))),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            style: FilledButton.styleFrom(
-                backgroundColor: Theme.of(context).colorScheme.error),
+            style: FilledButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.error),
             child: Text(tr.text('delete')),
           ),
         ],
@@ -395,10 +313,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
       await widget.store.deleteUser(user.id);
       if (mounted) setState(() {});
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(e.toString())));
-      }
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
     }
   }
 }
@@ -419,8 +334,7 @@ class _SectionHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Expanded(
-            child: Text(title, style: Theme.of(context).textTheme.titleLarge)),
+        Expanded(child: Text(title, style: Theme.of(context).textTheme.titleLarge)),
         action,
       ],
     );
