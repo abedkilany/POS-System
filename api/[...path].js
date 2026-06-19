@@ -92,13 +92,47 @@ function normalizePath(req) {
   return pathname.replace(/^\/api\//, '').replace(/^\/+|\/+$/g, '');
 }
 
-export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+function allowedOrigins() {
+  const raw = (process.env.VENTIO_API_ALLOWED_ORIGINS || '').trim();
+  if (!raw) return (process.env.NODE_ENV || '').toLowerCase() === 'production' ? [] : ['*'];
+  return raw
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function applyCors(req, res) {
+  const origins = allowedOrigins();
+  const origin = String(req.headers.origin || '').trim();
+  const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+
+  if (origins.includes('*')) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  } else if (origin && origins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  } else if (origin && !isProduction) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  } else if (origin && isProduction) {
+    return false;
+  }
+
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS');
   res.setHeader(
     'Access-Control-Allow-Headers',
     'Content-Type, Accept, Authorization, X-Device-Id, X-Device-Token, X-Device-Role, X-Sync-Transport, X-Store-Id, X-Branch-Id',
   );
+  return true;
+}
+
+export default async function handler(req, res) {
+  if (!applyCors(req, res)) {
+    return res.status(403).json({
+      ok: false,
+      error: 'Origin is not allowed.',
+    });
+  }
 
   if (req.method === 'OPTIONS') {
     return res.status(204).end();

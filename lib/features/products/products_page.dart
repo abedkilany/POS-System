@@ -2135,34 +2135,152 @@ class _CatalogManagerDialogState extends State<_CatalogManagerDialog> {
     await _saveItem(result);
   }
 
+  bool get _supportsDelete => widget.type == 'category' || widget.type == 'unit';
+
+  Future<void> _delete(BuildContext context, CatalogItem item) async {
+    if (!_supportsDelete) return;
+    final tr = AppLocalizations.of(context);
+    final language = tr.locale.languageCode;
+    final usageCount = widget.store.productsUsingCatalogItem(widget.type, item);
+    final alternatives = _items.where((entry) => entry.id != item.id).toList();
+
+    if (alternatives.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr.text('catalog_delete_last_item_error'))),
+      );
+      return;
+    }
+
+    CatalogItem? replacement = alternatives.isNotEmpty ? alternatives.first : null;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: Text(tr.text('confirm_delete')),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                usageCount == 0
+                    ? tr
+                        .text('catalog_delete_unused_confirm')
+                        .replaceAll('{name}', item.displayName(language))
+                    : tr
+                        .text('catalog_replace_delete_confirm')
+                        .replaceAll('{name}', item.displayName(language))
+                        .replaceAll('{count}', usageCount.toString()),
+              ),
+              if (usageCount > 0) ...[
+                const SizedBox(height: 16),
+                DropdownButtonFormField<CatalogItem>(
+                  initialValue: replacement,
+                  decoration: InputDecoration(
+                    labelText: tr.text('catalog_replacement_item'),
+                  ),
+                  items: alternatives
+                      .map(
+                        (entry) => DropdownMenuItem<CatalogItem>(
+                          value: entry,
+                          child: Text(entry.displayName(language)),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) =>
+                      setDialogState(() => replacement = value),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: Text(tr.text('cancel')),
+            ),
+            FilledButton.icon(
+              onPressed: usageCount > 0 && replacement == null
+                  ? null
+                  : () => Navigator.pop(dialogContext, true),
+              icon: const Icon(Icons.delete_outline),
+              label: Text(usageCount > 0
+                  ? tr.text('replace_and_delete')
+                  : tr.text('delete')),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      await widget.store.replaceAndDeleteCatalogItem(
+        type: widget.type,
+        item: item,
+        replacement: usageCount > 0 ? replacement : null,
+      );
+      if (!mounted) return;
+      setState(() {});
+      ScaffoldMessenger.of(this.context).showSnackBar(
+        SnackBar(content: Text(tr.text('catalog_item_deleted'))),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(this.context).showSnackBar(
+        SnackBar(content: Text(error.toString())),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final language = tr.locale.languageCode;
+    final dialogWidth = VentioResponsive.modalMaxWidth(context, 840);
     return AlertDialog(
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: VentioResponsive.pagePadding(context),
+        vertical: 24,
+      ),
+      constraints: BoxConstraints(maxWidth: dialogWidth),
       title: Text(widget.type == 'category'
           ? tr.text('manage_categories')
           : widget.type == 'unit'
               ? tr.text('manage_units')
               : tr.text('manage_lookup_items')),
-      content: ResponsiveDialogBox(
-        maxWidth: VentioResponsive.modalMaxWidth(context, 520),
-        child: ListView.separated(
-          shrinkWrap: true,
-          itemCount: _items.length,
-          separatorBuilder: (_, __) => const Divider(height: 1),
-          itemBuilder: (context, index) {
-            final item = _items[index];
-            return ListTile(
-              title: Text(item.displayName(language)),
-              subtitle: Text([item.nameEn, item.nameAr, item.code]
-                  .where((value) => value.trim().isNotEmpty)
-                  .join(' • ')),
-              trailing: IconButton(
-                  onPressed: () => _edit(context, item),
-                  icon: const Icon(Icons.edit_outlined)),
-            );
-          },
+      content: SizedBox(
+        width: dialogWidth,
+        child: ResponsiveDialogBox(
+          maxWidth: dialogWidth,
+          child: ListView.separated(
+            shrinkWrap: true,
+            itemCount: _items.length,
+            separatorBuilder: (_, __) => const Divider(height: 1),
+            itemBuilder: (context, index) {
+              final item = _items[index];
+              return ListTile(
+                title: Text(item.displayName(language)),
+                subtitle: Text([item.nameEn, item.nameAr, item.code]
+                    .where((value) => value.trim().isNotEmpty)
+                    .join(' • ')),
+                trailing: Wrap(
+                  spacing: 4,
+                  children: [
+                    IconButton(
+                      tooltip: tr.text('edit'),
+                      onPressed: () => _edit(context, item),
+                      icon: const Icon(Icons.edit_outlined),
+                    ),
+                    if (_supportsDelete)
+                      IconButton(
+                        tooltip: tr.text('delete'),
+                        onPressed: () => _delete(context, item),
+                        icon: const Icon(Icons.delete_outline),
+                      ),
+                  ],
+                ),
+              );
+            },
+          ),
         ),
       ),
       actions: [
@@ -2177,3 +2295,4 @@ class _CatalogManagerDialogState extends State<_CatalogManagerDialog> {
     );
   }
 }
+

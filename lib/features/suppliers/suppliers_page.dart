@@ -186,26 +186,35 @@ class _SupplierDialogState extends State<_SupplierDialog> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
+    final dialogWidth = VentioResponsive.modalMaxWidth(context, 640);
     return AlertDialog(
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: VentioResponsive.pagePadding(context),
+        vertical: 24,
+      ),
+      constraints: BoxConstraints(maxWidth: dialogWidth),
       title: Text(widget.supplier == null ? tr.text('add_supplier') : tr.text('edit_supplier')),
-      content: ResponsiveDialogBox(
-        maxWidth: VentioResponsive.modalMaxWidth(context, 420),
-        child: Form(
-          key: _formKey,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextFormField(controller: nameEnController, decoration: InputDecoration(labelText: tr.text('name_en')), validator: _required),
-                const SizedBox(height: 12),
-                TextFormField(controller: nameArController, decoration: InputDecoration(labelText: tr.text('name_ar'))),
-                const SizedBox(height: 12),
-                TextFormField(controller: phoneController, decoration: InputDecoration(labelText: tr.text('phone'))),
-                const SizedBox(height: 12),
-                TextFormField(controller: addressController, decoration: InputDecoration(labelText: tr.text('address'))),
-                const SizedBox(height: 12),
-                TextFormField(controller: notesController, decoration: InputDecoration(labelText: tr.text('notes')), maxLines: 3),
-              ],
+      content: SizedBox(
+        width: dialogWidth,
+        child: ResponsiveDialogBox(
+          maxWidth: dialogWidth,
+          child: Form(
+            key: _formKey,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextFormField(controller: nameEnController, decoration: InputDecoration(labelText: tr.text('name_en')), validator: _required),
+                  const SizedBox(height: 12),
+                  TextFormField(controller: nameArController, decoration: InputDecoration(labelText: tr.text('name_ar'))),
+                  const SizedBox(height: 12),
+                  TextFormField(controller: phoneController, decoration: InputDecoration(labelText: tr.text('phone'))),
+                  const SizedBox(height: 12),
+                  TextFormField(controller: addressController, decoration: InputDecoration(labelText: tr.text('address'))),
+                  const SizedBox(height: 12),
+                  TextFormField(controller: notesController, decoration: InputDecoration(labelText: tr.text('notes')), maxLines: 3),
+                ],
+              ),
             ),
           ),
         ),

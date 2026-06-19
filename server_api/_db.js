@@ -42,10 +42,15 @@ export function assertStoreAllowed(storeId) {
 }
 
 function accountSecret() {
-  return process.env.ACCOUNT_JWT_SECRET
-    || process.env.ADMIN_JWT_SECRET
-    || process.env.DATABASE_URL
-    || 'ventio-platform-admin-secret';
+  const configuredSecret =
+    process.env.ACCOUNT_JWT_SECRET || process.env.ADMIN_JWT_SECRET || '';
+  if (configuredSecret.trim()) return configuredSecret;
+  if ((process.env.NODE_ENV || '').toLowerCase() === 'production') {
+    throw new Error(
+      'ACCOUNT_JWT_SECRET or ADMIN_JWT_SECRET must be configured in production.',
+    );
+  }
+  return process.env.DATABASE_URL || 'ventio-platform-admin-secret';
 }
 
 export function verifyAccountToken(token) {
@@ -229,7 +234,10 @@ export async function ensureDeviceAuthColumns() {
 export async function assertDeviceAllowed(req, { storeId, branchId = 'main', allowedRoles = [], allowedTransports = [], force = false } = {}) {
   // Backward-compatible by default. Set REQUIRE_DEVICE_TOKEN_AUTH=true after all
   // deployed devices have paired and have a device-scoped token.
-  if (!force && (process.env.REQUIRE_DEVICE_TOKEN_AUTH || '').toLowerCase() !== 'true') return;
+  const requireDeviceAuth =
+    (process.env.NODE_ENV || '').toLowerCase() === 'production' ||
+    (process.env.REQUIRE_DEVICE_TOKEN_AUTH || '').toLowerCase() === 'true';
+  if (!force && !requireDeviceAuth) return;
   const deviceId = String(req.headers['x-device-id'] || req.headers['X-Device-Id'] || '').trim();
   const deviceToken = String(req.headers['x-device-token'] || req.headers['X-Device-Token'] || '').trim();
   if (!deviceId || !deviceToken) {

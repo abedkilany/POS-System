@@ -390,58 +390,67 @@ class _ExpenseDialogState extends State<_ExpenseDialog> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
+    final dialogWidth = VentioResponsive.modalMaxWidth(context, 700);
     return AlertDialog(
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: VentioResponsive.pagePadding(context),
+        vertical: 24,
+      ),
+      constraints: BoxConstraints(maxWidth: dialogWidth),
       title: Text(widget.expense == null ? tr.text('add_expense') : tr.text('edit_expense')),
-      content: ResponsiveDialogBox(
-        maxWidth: VentioResponsive.modalMaxWidth(context, 460),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextFormField(controller: titleController, decoration: InputDecoration(labelText: tr.text('expense_title')), validator: _required),
-              const SizedBox(height: 12),
-              TextFormField(controller: categoryController, decoration: InputDecoration(labelText: tr.text('category')), validator: _required),
-              const SizedBox(height: 12),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    flex: 2,
-                    child: TextFormField(
-                      controller: amountController,
-                      decoration: InputDecoration(labelText: tr.text('amount')),
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}$'))],
-                      validator: _amountValidator,
+      content: SizedBox(
+        width: dialogWidth,
+        child: ResponsiveDialogBox(
+          maxWidth: dialogWidth,
+          child: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextFormField(controller: titleController, decoration: InputDecoration(labelText: tr.text('expense_title')), validator: _required),
+                const SizedBox(height: 12),
+                TextFormField(controller: categoryController, decoration: InputDecoration(labelText: tr.text('category')), validator: _required),
+                const SizedBox(height: 12),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      flex: 2,
+                      child: TextFormField(
+                        controller: amountController,
+                        decoration: InputDecoration(labelText: tr.text('amount')),
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}$'))],
+                        validator: _amountValidator,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      initialValue: amountCurrency,
-                      decoration: InputDecoration(labelText: tr.text('currency')),
-                      items: const [
-                        DropdownMenuItem(value: 'USD', child: Text('USD')),
-                        DropdownMenuItem(value: 'LBP', child: Text('LBP')),
-                      ],
-                      onChanged: (value) => setState(() => amountCurrency = value ?? 'USD'),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: DropdownButtonFormField<String>(
+                        initialValue: amountCurrency,
+                        decoration: InputDecoration(labelText: tr.text('currency')),
+                        items: const [
+                          DropdownMenuItem(value: 'USD', child: Text('USD')),
+                          DropdownMenuItem(value: 'LBP', child: Text('LBP')),
+                        ],
+                        onChanged: (value) => setState(() => amountCurrency = value ?? 'USD'),
+                      ),
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              InkWell(
-                borderRadius: BorderRadius.circular(12),
-                onTap: _pickDate,
-                child: InputDecorator(
-                  decoration: InputDecoration(labelText: tr.text('date'), prefixIcon: const Icon(Icons.calendar_today_outlined)),
-                  child: Text(DateFormat('yyyy-MM-dd HH:mm').format(selectedDate.toLocal())),
+                  ],
                 ),
-              ),
-              const SizedBox(height: 12),
-              TextFormField(controller: notesController, decoration: InputDecoration(labelText: tr.text('notes')), maxLines: 3),
-            ],
+                const SizedBox(height: 12),
+                InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: _pickDate,
+                  child: InputDecorator(
+                    decoration: InputDecoration(labelText: tr.text('date'), prefixIcon: const Icon(Icons.calendar_today_outlined)),
+                    child: Text(DateFormat('yyyy-MM-dd HH:mm').format(selectedDate.toLocal())),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextFormField(controller: notesController, decoration: InputDecoration(labelText: tr.text('notes')), maxLines: 3),
+              ],
+            ),
           ),
         ),
       ),

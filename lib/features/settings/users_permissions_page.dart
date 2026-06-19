@@ -93,35 +93,44 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
     final tr = AppLocalizations.of(context);
     final nameController = TextEditingController(text: role?.name ?? '');
     final permissions = Set<String>.from(role?.permissions ?? const <String>{});
+    final dialogWidth = VentioResponsive.modalMaxWidth(context, 820);
 
     final result = await showDialog<UserRole>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
+          insetPadding: EdgeInsets.symmetric(
+            horizontal: VentioResponsive.pagePadding(context),
+            vertical: 24,
+          ),
+          constraints: BoxConstraints(maxWidth: dialogWidth),
           title: Text(role == null ? tr.text('add_role') : tr.text('edit_role')),
-          content: ResponsiveDialogBox(
-            maxWidth: VentioResponsive.modalMaxWidth(context, 520),
-            child: SingleChildScrollView(
-              child: Column(
-                children: [
-                  TextField(controller: nameController, decoration: InputDecoration(labelText: tr.text('role_name'))),
-                  const SizedBox(height: 16),
-                  for (final permission in AppPermission.all)
-                    CheckboxListTile(
-                      value: permissions.contains(permission),
-                      title: Text(AppPermission.labels[permission] ?? permission),
-                      subtitle: Text(permission),
-                      onChanged: (value) {
-                        setDialogState(() {
-                          if (value == true) {
-                            permissions.add(permission);
-                          } else {
-                            permissions.remove(permission);
-                          }
-                        });
-                      },
-                    ),
-                ],
+          content: SizedBox(
+            width: dialogWidth,
+            child: ResponsiveDialogBox(
+              maxWidth: dialogWidth,
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    TextField(controller: nameController, decoration: InputDecoration(labelText: tr.text('role_name'))),
+                    const SizedBox(height: 16),
+                    for (final permission in AppPermission.all)
+                      CheckboxListTile(
+                        value: permissions.contains(permission),
+                        title: Text(AppPermission.labels[permission] ?? permission),
+                        subtitle: Text(permission),
+                        onChanged: (value) {
+                          setDialogState(() {
+                            if (value == true) {
+                              permissions.add(permission);
+                            } else {
+                              permissions.remove(permission);
+                            }
+                          });
+                        },
+                      ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -190,64 +199,73 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
     bool isActive = user?.isActive ?? true;
     final extra = Set<String>.from(user?.extraPermissions ?? const <String>{});
     final denied = Set<String>.from(user?.deniedPermissions ?? const <String>{});
+    final dialogWidth = VentioResponsive.modalMaxWidth(context, 900);
 
     final result = await showDialog<_UserEditResult>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
+          insetPadding: EdgeInsets.symmetric(
+            horizontal: VentioResponsive.pagePadding(context),
+            vertical: 24,
+          ),
+          constraints: BoxConstraints(maxWidth: dialogWidth),
           title: Text(user == null ? tr.text('add_user') : tr.text('edit_user')),
-          content: ResponsiveDialogBox(
-            maxWidth: VentioResponsive.modalMaxWidth(context, 560),
-            child: SingleChildScrollView(
-              child: Column(
-                children: [
-                  TextField(controller: nameController, decoration: InputDecoration(labelText: tr.text('full_name'))),
-                  const SizedBox(height: 12),
-                  TextField(controller: usernameController, decoration: InputDecoration(labelText: tr.text('username'))),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: passwordController,
-                    obscureText: true,
-                    decoration: InputDecoration(labelText: user == null ? tr.text('password') : tr.text('new_password_keep_current')),
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    initialValue: roleId,
-                    decoration: InputDecoration(labelText: tr.text('role')),
-                    items: [
-                      for (final role in widget.store.roles) DropdownMenuItem(value: role.id, child: Text(role.name)),
-                    ],
-                    onChanged: (value) => setDialogState(() => roleId = value ?? roleId),
-                  ),
-                  SwitchListTile(
-                    value: isActive,
-                    title: Text(tr.text('active')),
-                    onChanged: user?.isSystem == true ? null : (value) => setDialogState(() => isActive = value),
-                  ),
-                  const Divider(),
-                  Align(alignment: AlignmentDirectional.centerStart, child: Text(tr.text('user_specific_overrides'), style: const TextStyle(fontWeight: FontWeight.bold))),
-                  for (final permission in AppPermission.all)
-                    ListTile(
-                      title: Text(AppPermission.labels[permission] ?? permission),
-                      subtitle: Text(permission),
-                      trailing: DropdownButton<String>(
-                        value: denied.contains(permission) ? 'deny' : extra.contains(permission) ? 'allow' : 'inherit',
-                        items: [
-                          DropdownMenuItem(value: 'inherit', child: Text(tr.text('inherit'))),
-                          DropdownMenuItem(value: 'allow', child: Text(tr.text('allow'))),
-                          DropdownMenuItem(value: 'deny', child: Text(tr.text('deny'))),
-                        ],
-                        onChanged: (value) {
-                          setDialogState(() {
-                            extra.remove(permission);
-                            denied.remove(permission);
-                            if (value == 'allow') extra.add(permission);
-                            if (value == 'deny') denied.add(permission);
-                          });
-                        },
-                      ),
+          content: SizedBox(
+            width: dialogWidth,
+            child: ResponsiveDialogBox(
+              maxWidth: dialogWidth,
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    TextField(controller: nameController, decoration: InputDecoration(labelText: tr.text('full_name'))),
+                    const SizedBox(height: 12),
+                    TextField(controller: usernameController, decoration: InputDecoration(labelText: tr.text('username'))),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: passwordController,
+                      obscureText: true,
+                      decoration: InputDecoration(labelText: user == null ? tr.text('password') : tr.text('new_password_keep_current')),
                     ),
-                ],
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      initialValue: roleId,
+                      decoration: InputDecoration(labelText: tr.text('role')),
+                      items: [
+                        for (final role in widget.store.roles) DropdownMenuItem(value: role.id, child: Text(role.name)),
+                      ],
+                      onChanged: (value) => setDialogState(() => roleId = value ?? roleId),
+                    ),
+                    SwitchListTile(
+                      value: isActive,
+                      title: Text(tr.text('active')),
+                      onChanged: user?.isSystem == true ? null : (value) => setDialogState(() => isActive = value),
+                    ),
+                    const Divider(),
+                    Align(alignment: AlignmentDirectional.centerStart, child: Text(tr.text('user_specific_overrides'), style: const TextStyle(fontWeight: FontWeight.bold))),
+                    for (final permission in AppPermission.all)
+                      ListTile(
+                        title: Text(AppPermission.labels[permission] ?? permission),
+                        subtitle: Text(permission),
+                        trailing: DropdownButton<String>(
+                          value: denied.contains(permission) ? 'deny' : extra.contains(permission) ? 'allow' : 'inherit',
+                          items: [
+                            DropdownMenuItem(value: 'inherit', child: Text(tr.text('inherit'))),
+                            DropdownMenuItem(value: 'allow', child: Text(tr.text('allow'))),
+                            DropdownMenuItem(value: 'deny', child: Text(tr.text('deny'))),
+                          ],
+                          onChanged: (value) {
+                            setDialogState(() {
+                              extra.remove(permission);
+                              denied.remove(permission);
+                              if (value == 'allow') extra.add(permission);
+                              if (value == 'deny') denied.add(permission);
+                            });
+                          },
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ),
           ),

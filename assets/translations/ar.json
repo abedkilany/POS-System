@@ -1660,5 +1660,11 @@
   "store": "المتجر",
   "backup_downloaded": "تم تصدير ملف النسخة الاحتياطية بنجاح.",
   "backup_imported": "تم استيراد النسخة الاحتياطية بنجاح.",
-  "backup_import_failed": "فشل استيراد النسخة الاحتياطية"
+  "backup_import_failed": "فشل استيراد النسخة الاحتياطية",
+  "catalog_delete_last_item_error": "يجب أن يبقى عنصر واحد على الأقل.",
+  "catalog_delete_unused_confirm": "هل تريد حذف {name}؟ هذا العنصر غير مستخدم في أي منتج.",
+  "catalog_replace_delete_confirm": "{name} مستخدم في {count} منتج/منتجات. اختر بديلاً وسيتم نقل المنتجات إليه قبل الحذف.",
+  "catalog_replacement_item": "العنصر البديل",
+  "replace_and_delete": "استبدال وحذف",
+  "catalog_item_deleted": "تم حذف العنصر."
 }

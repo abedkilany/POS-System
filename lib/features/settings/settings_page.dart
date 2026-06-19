@@ -808,18 +808,30 @@ class SettingsPage extends StatelessWidget {
     try {
       final picked = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: const ['json'],
+        allowedExtensions: const ['json', 'vtb'],
         withData: true,
       );
-      final bytes = picked?.files.single.bytes;
+      final file = picked?.files.single;
+      final bytes = file?.bytes;
       if (bytes == null || bytes.isEmpty) return;
 
-      var rawJson = utf8.decode(bytes, allowMalformed: true).trim();
+      final isLocalBackupArchive =
+          (file?.extension?.toLowerCase() == 'vtb') || _looksLikeZip(bytes);
+      var rawJson = isLocalBackupArchive
+          ? store.extractBackupJsonFromLocalBackupArchiveBytes(bytes)
+          : utf8.decode(bytes, allowMalformed: true).trim();
       if (rawJson.startsWith('RESET_PROTECTION_TOKEN:')) {
         final jsonStart = rawJson.indexOf('{');
         if (jsonStart >= 0) {
           rawJson = rawJson.substring(jsonStart).trim();
         }
+      }
+
+      if (store.isEncryptedBackupJson(rawJson)) {
+        if (!context.mounted) return;
+        final password = await _requestBackupPassword(context);
+        if (password == null) return;
+        rawJson = store.decryptBackupJson(rawJson, password);
       }
 
       final plan = store.inspectBackupJson(rawJson);
@@ -828,17 +840,55 @@ class SettingsPage extends StatelessWidget {
       if (selectedSections == null || selectedSections.isEmpty) return;
 
       await store.importBackupJson(rawJson, selectedSectionIds: selectedSections);
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(tr.text('backup_imported'))),
-        );
-      }
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr.text('backup_imported'))),
+      );
     } catch (error) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('${tr.text('backup_import_failed')}: $error')),
         );
       }
+    }
+  }
+
+  bool _looksLikeZip(List<int> bytes) {
+    return bytes.length >= 4 &&
+        bytes[0] == 0x50 &&
+        bytes[1] == 0x4B &&
+        bytes[2] == 0x03 &&
+        bytes[3] == 0x04;
+  }
+
+  Future<String?> _requestBackupPassword(BuildContext context) async {
+    final tr = AppLocalizations.of(context);
+    final controller = TextEditingController();
+    try {
+      return await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(tr.text('enter_password')),
+          content: TextField(
+            controller: controller,
+            obscureText: true,
+            decoration: InputDecoration(labelText: tr.text('backup_password')),
+            autofocus: true,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: Text(tr.text('cancel')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, controller.text.trim()),
+              child: Text(tr.text('continue')),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      controller.dispose();
     }
   }
 

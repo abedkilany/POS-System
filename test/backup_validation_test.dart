@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ventio/data/app_store.dart';
 import 'package:ventio/models/store_profile.dart';
@@ -73,6 +74,21 @@ void main() {
 
       expect(result.isValid, isTrue);
       expect(result.summary?.storeName, 'My Store');
+    });
+
+    test('decodes a local backup archive into backup JSON', () {
+      final store = AppStore();
+      final archive = Archive()
+        ..addFile(ArchiveFile('backup.json', 0, utf8.encode(jsonEncode(validBackup()))))
+        ..addFile(ArchiveFile('manifest.json', 0, utf8.encode('{"type":"local-auto-backup"}')));
+      final bytes = ZipEncoder().encode(archive);
+
+      expect(bytes, isNotNull);
+      final rawJson = store.extractBackupJsonFromLocalBackupArchiveBytes(bytes);
+      final result = store.validateBackupJson(rawJson);
+
+      expect(result.isValid, isTrue);
+      expect(result.errorMessage, isNull);
     });
   });
 }

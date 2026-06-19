@@ -125,6 +125,14 @@ class BackupImportPlan {
   final List<BackupImportSection> sections;
 }
 
+const List<String> _requiredBackupSections = <String>[
+  'products',
+  'customers',
+  'sales',
+  'suppliers',
+  'expenses',
+];
+
 class DataConflict {
   const DataConflict({
     required this.entityType,
@@ -1015,7 +1023,7 @@ class AppStore extends ChangeNotifier {
         // feature and should only be enabled from the Sync settings page after
         // the user turns it on and the server allows it for this store.
         syncMode: SyncMode.localOnly,
-        activeSyncTransport: 'local',
+        activeSyncTransport: '',
         hostDeviceId: '',
         deviceId: _deviceId,
         platform: platform,
@@ -6319,6 +6327,105 @@ class AppStore extends ChangeNotifier {
     return syncedItem;
   }
 
+
+
+  String _catalogReferenceValue(CatalogItem item) =>
+      item.code.trim().isNotEmpty ? item.code.trim() : item.nameEn.trim();
+
+  bool _catalogItemMatchesValue(CatalogItem item, String value) {
+    final normalized = value.trim().toLowerCase();
+    if (normalized.isEmpty) return false;
+    return item.code.trim().toLowerCase() == normalized ||
+        item.nameEn.trim().toLowerCase() == normalized ||
+        item.nameAr.trim().toLowerCase() == normalized;
+  }
+
+  int productsUsingCatalogItem(String type, CatalogItem item) {
+    if (type != 'category' && type != 'unit') return 0;
+    return _products.where((product) {
+      if (product.isDeleted) return false;
+      final value = type == 'category' ? product.category : product.unit;
+      return _catalogItemMatchesValue(item, value);
+    }).length;
+  }
+
+  Future<void> replaceAndDeleteCatalogItem({
+    required String type,
+    required CatalogItem item,
+    CatalogItem? replacement,
+  }) async {
+    requirePermission(AppPermission.catalogManage);
+    if (type != 'category' && type != 'unit') {
+      throw ArgumentError('Unsupported catalog type.');
+    }
+    final list = type == 'category' ? _categories : _units;
+    final activeItems = list.where((entry) => !entry.isDeleted).toList();
+    if (activeItems.length <= 1) {
+      throw StateError('At least one item must remain.');
+    }
+    final index = list.indexWhere((entry) => entry.id == item.id);
+    if (index == -1 || list[index].isDeleted) return;
+
+    final usageCount = productsUsingCatalogItem(type, item);
+    if (usageCount > 0) {
+      if (replacement == null || replacement.id == item.id) {
+        throw StateError('A replacement item is required.');
+      }
+      if (!activeItems.any((entry) => entry.id == replacement.id)) {
+        throw StateError('Replacement item was not found.');
+      }
+    }
+
+    final now = DateTime.now();
+    var productsChanged = false;
+    if (usageCount > 0) {
+      final replacementValue = _catalogReferenceValue(replacement!);
+      if (replacementValue.trim().isEmpty) {
+        throw StateError('Replacement item has no usable value.');
+      }
+      for (var i = 0; i < _products.length; i++) {
+        final product = _products[i];
+        if (product.isDeleted) continue;
+        final currentValue = type == 'category' ? product.category : product.unit;
+        if (!_catalogItemMatchesValue(item, currentValue)) continue;
+        final updatedProduct = _markProductForSync(
+          type == 'category'
+              ? product.copyWith(category: replacementValue)
+              : product.copyWith(unit: replacementValue),
+          now,
+        );
+        _products[i] = updatedProduct;
+        _recordSyncChange(
+          entityType: 'product',
+          entityId: updatedProduct.id,
+          operation: 'update',
+          payload: updatedProduct.toJson(),
+        );
+        productsChanged = true;
+      }
+    }
+
+    final deletedItem = _markCatalogItemForSync(
+      list[index].copyWith(deletedAt: now),
+      now,
+    );
+    list[index] = deletedItem;
+    _recordSyncChange(
+      entityType: type,
+      entityId: deletedItem.id,
+      operation: 'delete',
+      payload: deletedItem.toJson(),
+    );
+
+    await _saveDirty(
+      products: productsChanged,
+      categories: type == 'category',
+      units: type == 'unit',
+      sync: true,
+    );
+    notifyListeners();
+  }
+
   Future<void> addOrUpdateExpense(Expense expense) async {
     requirePermission(AppPermission.expensesManage);
     if (expense.title.trim().isEmpty ||
@@ -9049,6 +9156,40 @@ class AppStore extends ChangeNotifier {
       throw ArgumentError(
         'Invalid backup password or corrupted encrypted backup.',
       );
+    }
+  }
+
+  bool isEncryptedBackupJson(String rawJson) {
+    try {
+      final decoded = jsonDecode(rawJson);
+      if (decoded is! Map) return false;
+      return decoded['format'] == 'store_manager_pro_encrypted_backup';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  String extractBackupJsonFromLocalBackupArchiveBytes(List<int> bytes) {
+    try {
+      final archive = ZipDecoder().decodeBytes(bytes);
+      if (archive.files.isEmpty) {
+        throw const FormatException('Local backup archive is empty.');
+      }
+      ArchiveFile? backupFile;
+      for (final file in archive.files) {
+        final name = file.name.toLowerCase();
+        if (name == 'backup.json' || name.endsWith('/backup.json')) {
+          backupFile = file;
+          break;
+        }
+      }
+      if (backupFile == null) {
+        throw const FormatException('Local backup archive does not contain backup.json.');
+      }
+      final data = backupFile.content as List<int>;
+      return utf8.decode(data, allowMalformed: true).trim();
+    } catch (error) {
+      throw FormatException('Invalid local backup archive.', error);
     }
   }
 
@@ -12215,6 +12356,19 @@ class AppStore extends ChangeNotifier {
     try {
       final plan = inspectBackupJson(rawJson);
       final hasAnyAvailableSection = plan.sections.any((section) => section.available);
+      final hasRequiredSections =
+          _requiredBackupSections.every((sectionId) {
+        final match = plan.sections.where((section) => section.id == sectionId);
+        return match.isNotEmpty && match.first.available;
+      });
+      if (!hasRequiredSections) {
+        return const BackupValidationResult(
+          isValid: false,
+          summary: null,
+          errorMessage:
+              'Missing required backup sections: products, customers, sales, suppliers, and expenses.',
+        );
+      }
       if (!hasAnyAvailableSection) {
         return const BackupValidationResult(
           isValid: false,

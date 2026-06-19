@@ -231,44 +231,53 @@ class _PaymentDialogState extends State<_PaymentDialog> {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final isCustomer = widget.accountType == 'customer';
+    final dialogWidth = VentioResponsive.modalMaxWidth(context, 600);
     return AlertDialog(
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: VentioResponsive.pagePadding(context),
+        vertical: 24,
+      ),
+      constraints: BoxConstraints(maxWidth: dialogWidth),
       title: Text(isCustomer ? tr.text('receive_payment') : tr.text('pay_supplier')),
-      content: ResponsiveDialogBox(
-        maxWidth: VentioResponsive.modalMaxWidth(context, 420),
-        child: Form(
-          key: formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Align(alignment: AlignmentDirectional.centerStart, child: Text(widget.accountName, style: Theme.of(context).textTheme.titleMedium)),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: amountController,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: InputDecoration(labelText: tr.text('amount')),
-                validator: (value) {
-                  final amount = double.tryParse((value ?? '').trim());
-                  if (amount == null || amount <= 0) return tr.text('enter_valid_amount');
-                  return null;
-                },
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                initialValue: paymentMethod,
-                decoration: InputDecoration(labelText: tr.text('payment_method')),
-                items: [
-                  DropdownMenuItem(value: 'Cash', child: Text(tr.text('payment_cash'))),
-                  DropdownMenuItem(value: 'Card', child: Text(tr.text('payment_card'))),
-                  DropdownMenuItem(value: 'Wish', child: Text(tr.text('payment_wish'))),
-                  DropdownMenuItem(value: 'Check', child: Text(tr.text('payment_check'))),
-                ],
-                onChanged: (value) => setState(() => paymentMethod = value ?? 'Cash'),
-              ),
-              const SizedBox(height: 12),
-              TextFormField(controller: referenceController, decoration: InputDecoration(labelText: tr.text('reference_no_optional'))),
-              const SizedBox(height: 12),
-              TextFormField(controller: noteController, decoration: InputDecoration(labelText: tr.text('notes')), maxLines: 3),
-            ],
+      content: SizedBox(
+        width: dialogWidth,
+        child: ResponsiveDialogBox(
+          maxWidth: dialogWidth,
+          child: Form(
+            key: formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Align(alignment: AlignmentDirectional.centerStart, child: Text(widget.accountName, style: Theme.of(context).textTheme.titleMedium)),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: amountController,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(labelText: tr.text('amount')),
+                  validator: (value) {
+                    final amount = double.tryParse((value ?? '').trim());
+                    if (amount == null || amount <= 0) return tr.text('enter_valid_amount');
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue: paymentMethod,
+                  decoration: InputDecoration(labelText: tr.text('payment_method')),
+                  items: [
+                    DropdownMenuItem(value: 'Cash', child: Text(tr.text('payment_cash'))),
+                    DropdownMenuItem(value: 'Card', child: Text(tr.text('payment_card'))),
+                    DropdownMenuItem(value: 'Wish', child: Text(tr.text('payment_wish'))),
+                    DropdownMenuItem(value: 'Check', child: Text(tr.text('payment_check'))),
+                  ],
+                  onChanged: (value) => setState(() => paymentMethod = value ?? 'Cash'),
+                ),
+                const SizedBox(height: 12),
+                TextFormField(controller: referenceController, decoration: InputDecoration(labelText: tr.text('reference_no_optional'))),
+                const SizedBox(height: 12),
+                TextFormField(controller: noteController, decoration: InputDecoration(labelText: tr.text('notes')), maxLines: 3),
+              ],
+            ),
           ),
         ),
       ),

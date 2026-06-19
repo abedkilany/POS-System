@@ -262,31 +262,40 @@ class _CustomerDialogState extends State<_CustomerDialog> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
+    final dialogWidth = VentioResponsive.modalMaxWidth(context, 600);
     return AlertDialog(
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: VentioResponsive.pagePadding(context),
+        vertical: 24,
+      ),
+      constraints: BoxConstraints(maxWidth: dialogWidth),
       title: Text(widget.customer == null
           ? tr.text('add_customer')
           : tr.text('edit_customer')),
-      content: ResponsiveDialogBox(
-        maxWidth: VentioResponsive.modalMaxWidth(context, 400),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextFormField(
-                  controller: nameController,
-                  decoration:
-                      InputDecoration(labelText: tr.text('customer_name')),
-                  validator: _required),
-              const SizedBox(height: 12),
-              TextFormField(
-                  controller: phoneController,
-                  decoration: InputDecoration(labelText: tr.text('phone'))),
-              const SizedBox(height: 12),
-              TextFormField(
-                  controller: addressController,
-                  decoration: InputDecoration(labelText: tr.text('address'))),
-            ],
+      content: SizedBox(
+        width: dialogWidth,
+        child: ResponsiveDialogBox(
+          maxWidth: dialogWidth,
+          child: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextFormField(
+                    controller: nameController,
+                    decoration:
+                        InputDecoration(labelText: tr.text('customer_name')),
+                    validator: _required),
+                const SizedBox(height: 12),
+                TextFormField(
+                    controller: phoneController,
+                    decoration: InputDecoration(labelText: tr.text('phone'))),
+                const SizedBox(height: 12),
+                TextFormField(
+                    controller: addressController,
+                    decoration: InputDecoration(labelText: tr.text('address'))),
+              ],
+            ),
           ),
         ),
       ),

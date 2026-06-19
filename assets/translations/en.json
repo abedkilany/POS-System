@@ -1660,5 +1660,11 @@
   "store": "Store",
   "backup_downloaded": "Backup file exported successfully.",
   "backup_imported": "Backup imported successfully.",
-  "backup_import_failed": "Backup import failed"
+  "backup_import_failed": "Backup import failed",
+  "catalog_delete_last_item_error": "At least one item must remain.",
+  "catalog_delete_unused_confirm": "Delete {name}? This item is not used by any product.",
+  "catalog_replace_delete_confirm": "{name} is used by {count} product(s). Choose a replacement, then the products will be moved before deletion.",
+  "catalog_replacement_item": "Replacement item",
+  "replace_and_delete": "Replace & Delete",
+  "catalog_item_deleted": "Item deleted."
 }
