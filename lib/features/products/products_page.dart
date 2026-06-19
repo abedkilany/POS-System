@@ -2146,12 +2146,7 @@ class _CatalogManagerDialogState extends State<_CatalogManagerDialog> {
               ? tr.text('manage_units')
               : tr.text('manage_lookup_items')),
       content: ResponsiveDialogBox(
-        maxWidth: VentioResponsive.dialogWidth(
-          context,
-          mobile: 520,
-          tablet: 680,
-          desktop: 720,
-        ),
+        maxWidth: VentioResponsive.modalMaxWidth(context, 520),
         child: ListView.separated(
           shrinkWrap: true,
           itemCount: _items.length,

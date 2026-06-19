@@ -553,12 +553,7 @@ class SettingsPage extends StatelessWidget {
           builder: (context, setState) => AlertDialog(
             title: Text(tr.text('financial_settings')),
             content: ResponsiveDialogBox(
-              maxWidth: VentioResponsive.dialogWidth(
-                context,
-                mobile: 560,
-                tablet: 760,
-                desktop: 820,
-              ),
+              maxWidth: VentioResponsive.modalMaxWidth(context, 560),
               child: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -703,12 +698,7 @@ class SettingsPage extends StatelessWidget {
             return AlertDialog(
               title: Text(tr.text('edit_store_profile')),
               content: ResponsiveDialogBox(
-                maxWidth: VentioResponsive.dialogWidth(
-                  context,
-                  mobile: 520,
-                  tablet: 680,
-                  desktop: 720,
-                ),
+                maxWidth: VentioResponsive.modalMaxWidth(context, 520),
                 child: SingleChildScrollView(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -837,8 +827,7 @@ class SettingsPage extends StatelessWidget {
       final selectedSections = await _confirmBackupImport(context, plan);
       if (selectedSections == null || selectedSections.isEmpty) return;
 
-      await store.importBackupJson(rawJson,
-          selectedSectionIds: selectedSections);
+      await store.importBackupJson(rawJson, selectedSectionIds: selectedSections);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(tr.text('backup_imported'))),
@@ -941,16 +930,13 @@ class SettingsPage extends StatelessWidget {
 
     if (cache == null || cache.accountToken.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text(
-                'Online account session is required. Please sign in again.')),
+        const SnackBar(content: Text('Online account session is required. Please sign in again.')),
       );
       return;
     }
     if (!storeId.startsWith('ST-')) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('A valid Store ID was not found for this account.')),
+        const SnackBar(content: Text('A valid Store ID was not found for this account.')),
       );
       return;
     }
@@ -995,8 +981,7 @@ class SettingsPage extends StatelessWidget {
         clearLastPullCursor: true,
       );
       await recoverySettings.save();
-      final result =
-          await CloudSyncService(store).recoverExistingStoreFromCloud(
+      final result = await CloudSyncService(store).recoverExistingStoreFromCloud(
         recoverySettings,
         storeId: storeId,
         branchId: branchId,
@@ -1005,6 +990,7 @@ class SettingsPage extends StatelessWidget {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(localizeRuntimeMessage(result.message, tr))),
         );
+        
       }
     } catch (error) {
       if (context.mounted) {
@@ -1434,16 +1420,14 @@ class SettingsPage extends StatelessWidget {
               .where((section) => section.group == 'System data')
               .toList();
           final selectedAvailableCount = plan.sections
-              .where((section) =>
-                  section.available && selected.contains(section.id))
+              .where((section) => section.available && selected.contains(section.id))
               .length;
 
           Widget sectionTile(BackupImportSection section) {
             final checked = selected.contains(section.id);
             final subtitleParts = <String>[];
             if (section.count != null) {
-              subtitleParts
-                  .add('${section.count} item${section.count == 1 ? '' : 's'}');
+              subtitleParts.add('${section.count} item${section.count == 1 ? '' : 's'}');
             }
             if (!section.available) {
               subtitleParts.add('Not available in this backup');
@@ -1465,9 +1449,7 @@ class SettingsPage extends StatelessWidget {
                     }
                   : null,
               title: Text(section.label),
-              subtitle: subtitleParts.isEmpty
-                  ? null
-                  : Text(subtitleParts.join(' • ')),
+              subtitle: subtitleParts.isEmpty ? null : Text(subtitleParts.join(' • ')),
               controlAffinity: ListTileControlAffinity.leading,
             );
           }
@@ -1484,27 +1466,47 @@ class SettingsPage extends StatelessWidget {
             );
           }
 
+          final dialogWidth = VentioResponsive.dialogLargeWidth(context);
+          final wideLayout = VentioResponsive.isWideDialogLayout(context);
+          final sectionsLayout = wideLayout
+              ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: group('Business data', businessSections)),
+                    const SizedBox(width: 24),
+                    Expanded(child: group('System data', systemSections)),
+                  ],
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    group('Business data', businessSections),
+                    group('System data', systemSections),
+                  ],
+                );
+
           return AlertDialog(
+            insetPadding: EdgeInsets.symmetric(
+              horizontal: VentioResponsive.pagePadding(context),
+              vertical: 24,
+            ),
+            constraints: BoxConstraints(maxWidth: dialogWidth),
             title: Text(tr.text('confirm_backup_import')),
-            content: ResponsiveDialogBox(
-              maxWidth: VentioResponsive.modalMaxWidth(context, 560),
-              child: SizedBox(
-                width: 560,
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _BackupSummaryDetails(summary: plan.summary),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Review backup sections. Business data is selected by default. System data is available but left unchecked by default.',
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      ),
-                      group('Business data', businessSections),
-                      group('System data', systemSections),
-                    ],
-                  ),
+            content: SizedBox(
+              width: dialogWidth,
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _BackupSummaryDetails(summary: plan.summary),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Review backup sections. Business data is selected by default. System data is available but left unchecked by default.',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    sectionsLayout,
+                  ],
                 ),
               ),
             ),
@@ -1516,8 +1518,7 @@ class SettingsPage extends StatelessWidget {
               FilledButton(
                 onPressed: selectedAvailableCount == 0
                     ? null
-                    : () => Navigator.pop(
-                        dialogContext, Set<String>.from(selected)),
+                    : () => Navigator.pop(dialogContext, Set<String>.from(selected)),
                 child: Text(tr.text('restore')),
               ),
             ],

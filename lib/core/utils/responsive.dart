@@ -19,26 +19,17 @@ class VentioResponsive {
     return VentioScreenSize.desktop;
   }
 
-  static bool isCompact(BuildContext context) =>
-      MediaQuery.sizeOf(context).width < compactBreakpoint;
-  static bool isMobile(BuildContext context) =>
-      MediaQuery.sizeOf(context).width < mobileBreakpoint;
+  static bool isCompact(BuildContext context) => MediaQuery.sizeOf(context).width < compactBreakpoint;
+  static bool isMobile(BuildContext context) => MediaQuery.sizeOf(context).width < mobileBreakpoint;
   static bool isTablet(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
     return width >= mobileBreakpoint && width < tabletBreakpoint;
   }
+  static bool isDesktop(BuildContext context) => MediaQuery.sizeOf(context).width >= tabletBreakpoint;
 
-  static bool isDesktop(BuildContext context) =>
-      MediaQuery.sizeOf(context).width >= tabletBreakpoint;
+  static VentioScreenSize sizeOf(BuildContext context) => sizeForWidth(MediaQuery.sizeOf(context).width);
 
-  static VentioScreenSize sizeOf(BuildContext context) =>
-      sizeForWidth(MediaQuery.sizeOf(context).width);
-
-  static T adaptive<T>(BuildContext context,
-      {required T compact,
-      required T mobile,
-      required T tablet,
-      required T desktop}) {
+  static T adaptive<T>(BuildContext context, {required T compact, required T mobile, required T tablet, required T desktop}) {
     switch (sizeOf(context)) {
       case VentioScreenSize.compact:
         return compact;
@@ -51,20 +42,11 @@ class VentioResponsive {
     }
   }
 
-  static double adaptiveWidth(BuildContext context,
-      {required double mobile,
-      required double tablet,
-      required double desktop,
-      double? compact}) {
-    return adaptive<double>(context,
-        compact: compact ?? mobile,
-        mobile: mobile,
-        tablet: tablet,
-        desktop: desktop);
+  static double adaptiveWidth(BuildContext context, {required double mobile, required double tablet, required double desktop, double? compact}) {
+    return adaptive<double>(context, compact: compact ?? mobile, mobile: mobile, tablet: tablet, desktop: desktop);
   }
 
-  static double clampToScreen(BuildContext context, double preferred,
-      {double min = 120, double horizontalPadding = 32}) {
+  static double clampToScreen(BuildContext context, double preferred, {double min = 120, double horizontalPadding = 32}) {
     final available = MediaQuery.sizeOf(context).width - horizontalPadding;
     return preferred.clamp(min, available < min ? min : available).toDouble();
   }
@@ -79,20 +61,16 @@ class VentioResponsive {
   }
 
   static double cardPadding(BuildContext context) {
-    return adaptiveWidth(context,
-        compact: 10, mobile: 12, tablet: 16, desktop: 18);
+    return adaptiveWidth(context, compact: 10, mobile: 12, tablet: 16, desktop: 18);
   }
 
   static double gap(BuildContext context) {
-    return adaptiveWidth(context,
-        compact: 8, mobile: 10, tablet: 12, desktop: 16);
+    return adaptiveWidth(context, compact: 8, mobile: 10, tablet: 12, desktop: 16);
   }
 
-  static EdgeInsets pageInsets(BuildContext context) =>
-      EdgeInsets.all(pagePadding(context));
+  static EdgeInsets pageInsets(BuildContext context) => EdgeInsets.all(pagePadding(context));
 
-  static EdgeInsets cardInsets(BuildContext context) =>
-      EdgeInsets.all(cardPadding(context));
+  static EdgeInsets cardInsets(BuildContext context) => EdgeInsets.all(cardPadding(context));
 
   static double modalMaxWidth(BuildContext context, [double preferred = 560]) {
     final screenWidth = MediaQuery.sizeOf(context).width;
@@ -100,27 +78,33 @@ class VentioResponsive {
     return math.max(260, math.min(preferred, screenWidth - margin));
   }
 
-  static double dialogWidth(
-    BuildContext context, {
-    required double mobile,
-    required double tablet,
-    required double desktop,
-    double? compact,
-  }) {
-    return modalMaxWidth(
+  static double dialogSmallWidth(BuildContext context) {
+    return clampToScreen(
       context,
-      adaptiveWidth(
-        context,
-        compact: compact ?? mobile,
-        mobile: mobile,
-        tablet: tablet,
-        desktop: desktop,
-      ),
+      adaptiveWidth(context, mobile: 460, tablet: 520, desktop: 520),
     );
   }
 
-  static int columnsForWidth(double width,
-      {int mobile = 1, int tablet = 2, int desktop = 3}) {
+  static double dialogMediumWidth(BuildContext context) {
+    return clampToScreen(
+      context,
+      adaptiveWidth(context, mobile: 560, tablet: 720, desktop: 820),
+    );
+  }
+
+  static double dialogLargeWidth(BuildContext context) {
+    return clampToScreen(
+      context,
+      adaptiveWidth(context, mobile: 560, tablet: 860, desktop: 1040),
+      horizontalPadding: pagePadding(context) * 2,
+    );
+  }
+
+  static bool isWideDialogLayout(BuildContext context) {
+    return MediaQuery.sizeOf(context).width >= 900;
+  }
+
+  static int columnsForWidth(double width, {int mobile = 1, int tablet = 2, int desktop = 3}) {
     if (width < mobileBreakpoint) return mobile;
     if (width < tabletBreakpoint) return tablet;
     return desktop;
@@ -128,11 +112,7 @@ class VentioResponsive {
 }
 
 class ResponsivePage extends StatelessWidget {
-  const ResponsivePage(
-      {super.key,
-      required this.child,
-      this.padding,
-      this.maxWidth = VentioResponsive.maxContentWidth});
+  const ResponsivePage({super.key, required this.child, this.padding, this.maxWidth = VentioResponsive.maxContentWidth});
 
   final Widget child;
   final EdgeInsetsGeometry? padding;
@@ -154,8 +134,7 @@ class ResponsivePage extends StatelessWidget {
 }
 
 class ResponsiveDialogBox extends StatelessWidget {
-  const ResponsiveDialogBox(
-      {super.key, required this.child, this.maxWidth = 560, this.padding});
+  const ResponsiveDialogBox({super.key, required this.child, this.maxWidth = 560, this.padding});
 
   final Widget child;
   final double maxWidth;
@@ -165,22 +144,14 @@ class ResponsiveDialogBox extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final safeWidth = constraints.maxWidth.isFinite
-            ? constraints.maxWidth
-            : MediaQuery.sizeOf(context).width;
+        final safeWidth = constraints.maxWidth.isFinite ? constraints.maxWidth : MediaQuery.sizeOf(context).width;
         final inset = VentioResponsive.pagePadding(context);
-        final targetWidth = math
-            .max(260.0, math.min(maxWidth, safeWidth - (inset * 2)))
-            .toDouble();
+        final targetWidth = math.max(260.0, math.min(maxWidth, safeWidth - (inset * 2))).toDouble();
         return ConstrainedBox(
           constraints: BoxConstraints(maxWidth: targetWidth),
-          child: SizedBox(
-            width: VentioResponsive.isMobile(context) ? null : targetWidth,
-            child: SingleChildScrollView(
-              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-              child: Padding(
-                  padding: padding ?? EdgeInsets.all(inset), child: child),
-            ),
+          child: SingleChildScrollView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            child: Padding(padding: padding ?? EdgeInsets.all(inset), child: child),
           ),
         );
       },
@@ -208,22 +179,12 @@ class ResponsiveActionRow extends StatelessWidget {
         ],
       );
     }
-    return Wrap(
-        spacing: gap,
-        runSpacing: gap,
-        alignment: WrapAlignment.end,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: children);
+    return Wrap(spacing: gap, runSpacing: gap, alignment: WrapAlignment.end, crossAxisAlignment: WrapCrossAlignment.center, children: children);
   }
 }
 
 class ResponsiveTwoPane extends StatelessWidget {
-  const ResponsiveTwoPane(
-      {super.key,
-      required this.first,
-      required this.second,
-      this.breakpoint = 900,
-      this.gap});
+  const ResponsiveTwoPane({super.key, required this.first, required this.second, this.breakpoint = 900, this.gap});
 
   final Widget first;
   final Widget second;
@@ -236,15 +197,9 @@ class ResponsiveTwoPane extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         if (constraints.maxWidth < breakpoint) {
-          return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [first, SizedBox(height: spacing), second]);
+          return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [first, SizedBox(height: spacing), second]);
         }
-        return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Expanded(child: first),
-          SizedBox(width: spacing),
-          Expanded(child: second)
-        ]);
+        return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [Expanded(child: first), SizedBox(width: spacing), Expanded(child: second)]);
       },
     );
   }

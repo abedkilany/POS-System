@@ -267,12 +267,7 @@ class _CustomerDialogState extends State<_CustomerDialog> {
           ? tr.text('add_customer')
           : tr.text('edit_customer')),
       content: ResponsiveDialogBox(
-        maxWidth: VentioResponsive.dialogWidth(
-          context,
-          mobile: 400,
-          tablet: 640,
-          desktop: 700,
-        ),
+        maxWidth: VentioResponsive.modalMaxWidth(context, 400),
         child: Form(
           key: _formKey,
           child: Column(
