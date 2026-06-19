@@ -386,7 +386,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
                 constraints: BoxConstraints(
                   maxWidth: VentioResponsive.clampToScreen(
                     context,
-                    860,
+                    1100,
                     min: 280,
                     horizontalPadding: outerPadding * 2,
                   ),
@@ -436,7 +436,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
                 color: Colors.black.withValues(alpha: 0.24),
                 child: Center(
                   child: ConstrainedBox(
-                    constraints: BoxConstraints(maxWidth: VentioResponsive.modalMaxWidth(context, 520)),
+                    constraints: BoxConstraints(maxWidth: VentioResponsive.dialogLargeWidth(context)),
                     child: Card(
                       margin: EdgeInsets.all(outerPadding),
                       child: Padding(
