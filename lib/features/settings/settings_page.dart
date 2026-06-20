@@ -6349,8 +6349,20 @@ class _WindowsUpdateStatusCard extends StatefulWidget {
       _WindowsUpdateStatusCardState();
 }
 
+class _UpdateProgressState {
+  const _UpdateProgressState({
+    this.phase = '',
+    this.progress,
+  });
+
+  final String phase;
+  final double? progress;
+}
+
 class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
   late final AppUpdateService _service = getAppUpdateService();
+  final ValueNotifier<_UpdateProgressState> _progress =
+      ValueNotifier<_UpdateProgressState>(const _UpdateProgressState());
   AppUpdateInfo? _latest;
   DateTime? _lastCheckedAt;
   bool _checking = false;
@@ -6358,6 +6370,7 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
   bool _installing = false;
   double? _downloadProgress;
   String? _downloadedInstallerPath;
+  bool _progressDialogOpen = false;
   String _statusKey = 'you_are_up_to_date';
   String _statusValue = '';
 
@@ -6367,6 +6380,12 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
   bool get _readyToInstall => _downloadedInstallerPath != null;
 
   bool get _isBusy => _downloading || _installing;
+
+  @override
+  void dispose() {
+    _progress.dispose();
+    super.dispose();
+  }
 
   String _lastCheckedText(AppLocalizations tr) {
     final value = _lastCheckedAt;
@@ -6424,18 +6443,22 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
     if (update == null || !_hasUpdate) return;
     if (_isBusy) return;
     final tr = AppLocalizations.of(context);
+    _openProgressDialog();
     setState(() {
       _downloading = true;
       _downloadProgress = 0;
       _statusKey = 'downloading';
       _statusValue = update.displayVersion;
     });
+    _progress.value = const _UpdateProgressState(phase: 'downloading', progress: 0);
     try {
       final installerPath = await _service.downloadUpdate(
         update,
         onProgress: (value) {
           if (!mounted) return;
           setState(() => _downloadProgress = value);
+          _progress.value =
+              _UpdateProgressState(phase: 'downloading', progress: value);
         },
       );
       if (!mounted) return;
@@ -6446,6 +6469,11 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
         _statusKey = 'update_downloaded';
         _statusValue = update.displayVersion;
       });
+      _progress.value = const _UpdateProgressState(
+        phase: 'downloaded',
+        progress: 1,
+      );
+      _dismissProgressDialog();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(tr.text('update_downloaded'))),
       );
@@ -6455,6 +6483,8 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
         _downloading = false;
         _downloadProgress = null;
       });
+      _progress.value = const _UpdateProgressState();
+      _dismissProgressDialog();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
             content:
@@ -6497,12 +6527,14 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
       return;
     }
     final tr = AppLocalizations.of(context);
+    _openProgressDialog();
     setState(() {
       _installing = true;
       _downloadProgress = null;
       _statusKey = 'installing_update';
       _statusValue = '';
     });
+    _progress.value = const _UpdateProgressState(phase: 'installing');
     try {
       await _service.launchInstaller(installerPath);
       if (!mounted) return;
@@ -6513,11 +6545,82 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
     } catch (error) {
       if (!mounted) return;
       setState(() => _installing = false);
+      _progress.value = const _UpdateProgressState();
+      _dismissProgressDialog();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
             content:
                 Text(tr.format('update_failed', {'error': error.toString()}))),
       );
+    }
+  }
+
+  void _openProgressDialog() {
+    if (_progressDialogOpen) return;
+    final dialogContext = context;
+    _progressDialogOpen = true;
+    unawaited(showDialog<void>(
+      context: dialogContext,
+      barrierDismissible: false,
+      builder: (context) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          contentPadding: const EdgeInsets.all(20),
+          content: SizedBox(
+            width: 420,
+            child: ValueListenableBuilder<_UpdateProgressState>(
+              valueListenable: _progress,
+              builder: (context, state, _) {
+                final tr = AppLocalizations.of(context);
+                final isInstalling = state.phase == 'installing';
+                final label = isInstalling
+                    ? tr.text('installing_update')
+                    : state.phase == 'downloaded'
+                        ? tr.text('update_downloaded')
+                        : tr.text('downloading');
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w800,
+                          ),
+                    ),
+                    const SizedBox(height: 14),
+                    LinearProgressIndicator(
+                      value: isInstalling ? null : state.progress,
+                      minHeight: 4,
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      isInstalling
+                          ? tr.format('update_installing_desc', {
+                              'version': _latest?.displayVersion ?? '',
+                            })
+                          : state.progress == null
+                              ? tr.text('update_downloading_desc')
+                              : '${tr.text('downloading')} ${(state.progress! * 100).clamp(0, 100).toStringAsFixed(0)}%',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    ).whenComplete(() {
+      _progressDialogOpen = false;
+    }));
+  }
+
+  void _dismissProgressDialog() {
+    if (!_progressDialogOpen || !mounted) return;
+    final navigator = Navigator.of(context, rootNavigator: true);
+    if (navigator.canPop()) {
+      navigator.pop();
     }
   }
 

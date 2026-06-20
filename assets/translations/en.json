@@ -80,6 +80,8 @@
   "installing_update": "Installing update...",
   "update_install_confirm_title": "Install update now?",
   "update_install_confirm_desc": "Ventio {version} will close while the installer finishes. Save your work before continuing.",
+  "update_downloading_desc": "Downloading the update package. Please keep Ventio open.",
+  "update_installing_desc": "Ventio {version} will close while the installer finishes.",
   "later": "Later",
   "you_are_up_to_date": "You're up to date",
   "last_checked_not_checked": "Last checked: Not checked yet",

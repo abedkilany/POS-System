@@ -80,6 +80,8 @@
   "installing_update": "جارٍ تثبيت التحديث...",
   "update_install_confirm_title": "تثبيت التحديث الآن؟",
   "update_install_confirm_desc": "سيتم إغلاق Ventio {version} أثناء انتهاء المثبت. احفظ عملك قبل المتابعة.",
+  "update_downloading_desc": "جارٍ تنزيل ملف التحديث. الرجاء إبقاء Ventio مفتوحًا.",
+  "update_installing_desc": "سيتم إغلاق Ventio {version} أثناء انتهاء المثبت.",
   "later": "لاحقاً",
   "you_are_up_to_date": "أنت تستخدم آخر إصدار",
   "last_checked_not_checked": "آخر فحص: لم يتم الفحص بعد",
