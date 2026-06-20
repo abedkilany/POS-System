@@ -6363,6 +6363,7 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
   late final AppUpdateService _service = getAppUpdateService();
   final ValueNotifier<_UpdateProgressState> _progress =
       ValueNotifier<_UpdateProgressState>(const _UpdateProgressState());
+  VoidCallback? _cancelDownload;
   AppUpdateInfo? _latest;
   DateTime? _lastCheckedAt;
   bool _checking = false;
@@ -6370,6 +6371,7 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
   bool _installing = false;
   double? _downloadProgress;
   String? _downloadedInstallerPath;
+  bool _downloadCancelled = false;
   bool _progressDialogOpen = false;
   String _statusKey = 'you_are_up_to_date';
   String _statusValue = '';
@@ -6443,6 +6445,8 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
     if (update == null || !_hasUpdate) return;
     if (_isBusy) return;
     final tr = AppLocalizations.of(context);
+    _downloadCancelled = false;
+    _cancelDownload = null;
     _openProgressDialog();
     setState(() {
       _downloading = true;
@@ -6460,6 +6464,7 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
           _progress.value =
               _UpdateProgressState(phase: 'downloading', progress: value);
         },
+        registerCancel: (cancel) => _cancelDownload = cancel,
       );
       if (!mounted) return;
       setState(() {
@@ -6483,6 +6488,11 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
         _downloading = false;
         _downloadProgress = null;
       });
+      if (_downloadCancelled) {
+        _progress.value = const _UpdateProgressState();
+        _dismissProgressDialog();
+        return;
+      }
       _progress.value = const _UpdateProgressState();
       _dismissProgressDialog();
       ScaffoldMessenger.of(context).showSnackBar(
@@ -6555,6 +6565,21 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
     }
   }
 
+  void _cancelDownloadUpdate() {
+    if (!_downloading) return;
+    _downloadCancelled = true;
+    final cancel = _cancelDownload;
+    _cancelDownload = null;
+    cancel?.call();
+    setState(() {
+      _downloading = false;
+      _downloadProgress = null;
+      _statusKey = _hasUpdate ? 'update_available' : 'you_are_up_to_date';
+    });
+    _progress.value = const _UpdateProgressState();
+    _dismissProgressDialog();
+  }
+
   void _openProgressDialog() {
     if (_progressDialogOpen) return;
     final dialogContext = context;
@@ -6578,31 +6603,64 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
                     : state.phase == 'downloaded'
                         ? tr.text('update_downloaded')
                         : tr.text('downloading');
-                return Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                final canCancel = _downloading && !isInstalling;
+                return Stack(
                   children: [
-                    Text(
-                      label,
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.w800,
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  label,
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .titleLarge
+                                      ?.copyWith(
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                ),
+                              ),
+                              if (canCancel)
+                                IconButton(
+                                  tooltip: tr.text('cancel'),
+                                  onPressed: _cancelDownloadUpdate,
+                                  icon: const Icon(Icons.close),
+                                ),
+                            ],
                           ),
-                    ),
-                    const SizedBox(height: 14),
-                    LinearProgressIndicator(
-                      value: isInstalling ? null : state.progress,
-                      minHeight: 4,
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      isInstalling
-                          ? tr.format('update_installing_desc', {
-                              'version': _latest?.displayVersion ?? '',
-                            })
-                          : state.progress == null
-                              ? tr.text('update_downloading_desc')
-                              : '${tr.text('downloading')} ${(state.progress! * 100).clamp(0, 100).toStringAsFixed(0)}%',
-                      style: Theme.of(context).textTheme.bodyMedium,
+                          const SizedBox(height: 14),
+                          LinearProgressIndicator(
+                            value: isInstalling ? null : state.progress,
+                            minHeight: 4,
+                          ),
+                          const SizedBox(height: 10),
+                          Text(
+                            isInstalling
+                                ? tr.format('update_installing_desc', {
+                                    'version': _latest?.displayVersion ?? '',
+                                  })
+                                : state.progress == null
+                                    ? tr.text('update_downloading_desc')
+                                    : '${tr.text('downloading')} ${(state.progress! * 100).clamp(0, 100).toStringAsFixed(0)}%',
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                          if (canCancel) ...[
+                            const SizedBox(height: 18),
+                            Align(
+                              alignment: AlignmentDirectional.centerEnd,
+                              child: TextButton(
+                                onPressed: _cancelDownloadUpdate,
+                                child: Text(tr.text('cancel')),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
                     ),
                   ],
                 );

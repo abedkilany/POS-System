@@ -41,6 +41,7 @@ class AppUpdateService {
   Future<String> downloadUpdate(
     AppUpdateInfo update, {
     void Function(double progress)? onProgress,
+    void Function(void Function())? registerCancel,
   }) async {
     throw UnsupportedError('Ventio updates are only supported on Windows.');
   }

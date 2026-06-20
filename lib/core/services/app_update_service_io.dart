@@ -103,16 +103,18 @@ class AppUpdateService {
   Future<String> downloadUpdate(
     AppUpdateInfo update, {
     void Function(double progress)? onProgress,
+    void Function(void Function())? registerCancel,
   }) async {
     if (!isSupported) {
       throw UnsupportedError('Ventio updates are only supported on Windows.');
     }
     final uri = Uri.parse(update.windowsUrl.trim());
-    final request = http.Request('GET', uri);
-    final response = await _client.send(request);
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw StateError('Update download failed: HTTP ${response.statusCode}.');
-    }
+    final client = HttpClient();
+    var cancelled = false;
+    registerCancel?.call(() {
+      cancelled = true;
+      client.close(force: true);
+    });
 
     final filename = uri.pathSegments.isNotEmpty
         ? uri.pathSegments.last
@@ -122,21 +124,41 @@ class AppUpdateService {
     final sink = file.openWrite();
     final bytes = <int>[];
     var received = 0;
-    final responseLength = response.contentLength ?? 0;
-    final total = responseLength > 0
-        ? responseLength
-        : update.sizeBytes > 0
-            ? update.sizeBytes
-            : 0;
     try {
-      await for (final chunk in response.stream) {
+      final request = await client.getUrl(uri);
+      final response = await request.close();
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw StateError(
+            'Update download failed: HTTP ${response.statusCode}.');
+      }
+      final responseLength = response.contentLength;
+      final total = responseLength > 0
+          ? responseLength
+          : update.sizeBytes > 0
+              ? update.sizeBytes
+              : 0;
+      await for (final chunk in response) {
+        if (cancelled) {
+          throw StateError('Update download cancelled.');
+        }
         bytes.addAll(chunk);
         sink.add(chunk);
         received += chunk.length;
         if (total > 0) onProgress?.call(received / total);
       }
+    } on HttpException {
+      if (cancelled) {
+        throw StateError('Update download cancelled.');
+      }
+      rethrow;
+    } catch (error) {
+      if (cancelled) {
+        throw StateError('Update download cancelled.');
+      }
+      rethrow;
     } finally {
       await sink.close();
+      client.close(force: true);
     }
 
     final expectedHash = update.sha256.trim().toLowerCase();

@@ -749,18 +749,29 @@ class _MainShellState extends State<MainShell> {
         ),
       );
     }
-    return IconButton(
-      tooltip: tr.format('update_available_tooltip', {
-        'version': update.displayVersion,
-      }),
-      onPressed: _handleUpdateAction,
-      icon: Badge(
-        label: const Text('1'),
-        child: Icon(
-          update.required
-              ? Icons.priority_high_outlined
-              : Icons.system_update_alt_outlined,
-          color: colorScheme.primary,
+    final background =
+        update.required ? colorScheme.errorContainer : colorScheme.primaryContainer;
+    final foreground =
+        update.required ? colorScheme.onErrorContainer : colorScheme.onPrimaryContainer;
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: Material(
+        color: background,
+        shape: const CircleBorder(),
+        child: IconButton(
+          tooltip: tr.format('update_available_tooltip', {
+            'version': update.displayVersion,
+          }),
+          onPressed: _handleUpdateAction,
+          icon: Badge(
+            label: const Text('1'),
+            child: Icon(
+              update.required
+                  ? Icons.priority_high_outlined
+                  : Icons.system_update_alt_outlined,
+              color: foreground,
+            ),
+          ),
         ),
       ),
     );
