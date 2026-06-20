@@ -180,7 +180,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
       );
       return;
     }
-    if (widget.store.hasLocalStoreData) {
+    if (widget.store.hasLocalAdminUser) {
       SyncDiagnosticsLog.add(
         '[RECOVER_IDENTITY] blocked reason=local_store_data_exists',
       );
@@ -681,7 +681,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
         cache: authCache,
         hasStoreIdentity:
             widget.store.appIdentity.hostDeviceId.trim().isNotEmpty,
-        hasLocalStoreData: widget.store.hasLocalStoreData,
+        hasLocalStoreData: widget.store.hasLocalAdminUser,
         canRecoverStoreData: authCache.cloudSyncEnabled,
         onRecoverStoreIdentity: () => _recoverStoreIdentity(context),
         onRecoverStoreData: () => _recoverStoreData(context),
@@ -694,7 +694,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
     }
     if (widget.store.activeUser != null) return widget.child;
 
-    if (_showRegister && !kIsWeb && !widget.store.hasLocalStoreData) {
+    if (_showRegister && !kIsWeb && !widget.store.hasLocalAdminUser) {
       return _InitialAdminSetupCard(
         storeNameController: _storeNameController,
         usernameController: _usernameController,
@@ -872,7 +872,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
                         ),
                       ),
                       const SizedBox(height: 8),
-                      if (!widget.store.hasLocalStoreData)
+                      if (!widget.store.hasLocalAdminUser)
                         Builder(
                           builder: (context) {
                             final canRegisterHere = !kIsWeb;
