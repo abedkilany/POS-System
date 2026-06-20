@@ -161,6 +161,25 @@ class SettingsBackupActions {
     BuildContext context,
     AppStore store,
   ) async {
+    if (!store.appIdentity.hostDeviceId.trim().isEmpty) {
+      if (!store.hasPermission(AppPermission.syncManage)) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('You do not have permission: sync.manage'),
+          ));
+        }
+        return;
+      }
+      await recoverStoreData(context, store);
+      return;
+    }
+    await recoverStoreIdentity(context, store);
+  }
+
+  static Future<void> recoverStoreIdentity(
+    BuildContext context,
+    AppStore store,
+  ) async {
     final tr = AppLocalizations.of(context);
     final cache = AccountAuthCache.load();
     final cloud = CloudSyncSettings.load();
@@ -197,14 +216,14 @@ class SettingsBackupActions {
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) => AlertDialog(
-        title: Text(tr.text('recover_existing_store')),
+        title: Text(tr.text('recover_store_identity')),
         content: ResponsiveDialogBox(
           maxWidth: VentioResponsive.modalMaxWidth(context, 460),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(tr.text('recover_existing_store_desc')),
+              Text(tr.text('recover_store_identity_desc')),
               const SizedBox(height: 12),
               Text('Store ID: $storeId'),
               if (branchId.isNotEmpty) Text('Branch ID: $branchId'),
@@ -233,8 +252,116 @@ class SettingsBackupActions {
         clearLastPullCursor: true,
       );
       await recoverySettings.save();
-      final result =
-          await CloudSyncService(store).recoverExistingStoreFromCloud(
+      final result = await CloudSyncService(store)
+          .recoverExistingStoreIdentityFromCloud(
+        recoverySettings,
+        storeId: storeId,
+        branchId: branchId,
+      );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(localizeRuntimeMessage(result.message, tr))),
+        );
+      }
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    }
+  }
+
+  static Future<void> recoverStoreData(
+    BuildContext context,
+    AppStore store,
+  ) async {
+    final tr = AppLocalizations.of(context);
+    final cache = AccountAuthCache.load();
+    final cloud = CloudSyncSettings.load();
+    final storeId = (cache?.storeId.trim().isNotEmpty == true
+            ? cache!.storeId
+            : store.appIdentity.storeId)
+        .trim()
+        .toUpperCase();
+    final branchId = (cache?.branchId.trim().isNotEmpty == true
+            ? cache!.branchId
+            : store.appIdentity.branchId)
+        .trim()
+        .toUpperCase();
+
+    if (cache == null || cache.accountToken.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content:
+              Text('Online account session is required. Please sign in again.'),
+        ),
+      );
+      return;
+    }
+    if (!storeId.startsWith('ST-')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('A valid Store ID was not found for this account.'),
+        ),
+      );
+      return;
+    }
+    if (store.appIdentity.hostDeviceId.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr.text('recover_store_identity_first'))),
+      );
+      return;
+    }
+    if (!store.hasPermission(AppPermission.syncManage)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('You do not have permission: sync.manage'),
+        ),
+      );
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(tr.text('recover_store_data')),
+        content: ResponsiveDialogBox(
+          maxWidth: VentioResponsive.modalMaxWidth(context, 460),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(tr.text('recover_store_data_desc')),
+              const SizedBox(height: 12),
+              Text('Store ID: $storeId'),
+              if (branchId.isNotEmpty) Text('Branch ID: $branchId'),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(tr.text('cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(tr.text('recover')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      final recoverySettings = cloud.copyWith(
+        enabled: true,
+        apiBaseUrl: cloud.apiBaseUrl.trim().isNotEmpty
+            ? cloud.apiBaseUrl.trim()
+            : CloudSyncSettings.bundledApiBaseUrl,
+        clearLastPullCursor: true,
+      );
+      await recoverySettings.save();
+      final result = await CloudSyncService(store).recoverExistingStoreFromCloud(
         recoverySettings,
         storeId: storeId,
         branchId: branchId,

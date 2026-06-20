@@ -3,18 +3,28 @@ import 'package:flutter/material.dart';
 import '../../core/localization/app_localizations.dart';
 import '../../core/services/account_auth_service.dart';
 import '../../core/utils/responsive.dart';
+import '../../data/app_store.dart';
+import '../shared/sync_monitoring_section.dart';
 
 class StoreAccountDashboardPage extends StatefulWidget {
   const StoreAccountDashboardPage({
     super.key,
+    required this.store,
     required this.cache,
-    required this.onRecoverExistingStore,
+    required this.hasStoreIdentity,
+    required this.canRecoverStoreData,
+    required this.onRecoverStoreIdentity,
+    required this.onRecoverStoreData,
     required this.onLogout,
     required this.onLocaleChanged,
   });
 
+  final AppStore store;
   final AccountAuthCache cache;
-  final VoidCallback onRecoverExistingStore;
+  final bool hasStoreIdentity;
+  final bool canRecoverStoreData;
+  final VoidCallback onRecoverStoreIdentity;
+  final VoidCallback onRecoverStoreData;
   final Future<void> Function() onLogout;
   final ValueChanged<Locale> onLocaleChanged;
 
@@ -29,7 +39,8 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
   AccountAuthCache get cache => widget.cache;
 
   String _formatDate(BuildContext context, DateTime? value) {
-    if (value == null) return AppLocalizations.of(context).text('account_not_set');
+    if (value == null)
+      return AppLocalizations.of(context).text('account_not_set');
     final local = value.toLocal();
     String two(int n) => n.toString().padLeft(2, '0');
     return '${local.year}-${two(local.month)}-${two(local.day)} ${two(local.hour)}:${two(local.minute)}';
@@ -69,11 +80,17 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
               if (result.ok) {
                 Navigator.of(dialogContext).pop();
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(result.message.isEmpty ? tr.text('account_password_changed_success') : result.message)),
+                  SnackBar(
+                      content: Text(result.message.isEmpty
+                          ? tr.text('account_password_changed_success')
+                          : result.message)),
                 );
               } else {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(result.message.isEmpty ? tr.text('account_password_change_failed') : result.message)),
+                  SnackBar(
+                      content: Text(result.message.isEmpty
+                          ? tr.text('account_password_change_failed')
+                          : result.message)),
                 );
               }
             }
@@ -94,7 +111,9 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
                           labelText: tr.text('account_current_password'),
                           prefixIcon: Icon(Icons.lock_outline),
                         ),
-                        validator: (value) => (value ?? '').isEmpty ? tr.text('account_enter_current_password') : null,
+                        validator: (value) => (value ?? '').isEmpty
+                            ? tr.text('account_enter_current_password')
+                            : null,
                       ),
                       const SizedBox(height: 12),
                       TextFormField(
@@ -106,8 +125,11 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
                         ),
                         validator: (value) {
                           final text = value ?? '';
-                          if (text.length < 6) return tr.text('account_password_min_6');
-                          if (text == currentController.text) return tr.text('account_password_must_be_different');
+                          if (text.length < 6)
+                            return tr.text('account_password_min_6');
+                          if (text == currentController.text)
+                            return tr
+                                .text('account_password_must_be_different');
                           return null;
                         },
                       ),
@@ -119,7 +141,9 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
                           labelText: tr.text('account_confirm_new_password'),
                           prefixIcon: Icon(Icons.check_circle_outline),
                         ),
-                        validator: (value) => value != newController.text ? tr.text('account_passwords_do_not_match') : null,
+                        validator: (value) => value != newController.text
+                            ? tr.text('account_passwords_do_not_match')
+                            : null,
                         onFieldSubmitted: (_) => saving ? null : submit(),
                       ),
                     ],
@@ -128,7 +152,8 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
               ),
               actions: [
                 TextButton(
-                  onPressed: saving ? null : () => Navigator.of(dialogContext).pop(),
+                  onPressed:
+                      saving ? null : () => Navigator.of(dialogContext).pop(),
                   child: Text(tr.text('cancel')),
                 ),
                 FilledButton.icon(
@@ -140,7 +165,9 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.save_outlined),
-                  label: Text(saving ? tr.text('saving') : tr.text('account_save_password')),
+                  label: Text(saving
+                      ? tr.text('saving')
+                      : tr.text('account_save_password')),
                 ),
               ],
             );
@@ -165,7 +192,8 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
           children: [
             Text(
               tr.text('account_settings'),
-              style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+              style: theme.textTheme.titleLarge
+                  ?.copyWith(fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 8),
             Text(
@@ -173,10 +201,17 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
               style: theme.textTheme.bodyMedium,
             ),
             const SizedBox(height: 20),
-            _InfoRow(label: tr.text('account_login_name'), value: cache.loginName),
+            _InfoRow(
+                label: tr.text('account_login_name'), value: cache.loginName),
             _InfoRow(label: tr.text('username'), value: cache.username),
-            _InfoRow(label: tr.text('store'), value: cache.storeName.trim().isEmpty ? cache.storeSlug : cache.storeName),
-            _InfoRow(label: tr.text('subscription'), value: cache.subscriptionStatus),
+            _InfoRow(
+                label: tr.text('store'),
+                value: cache.storeName.trim().isEmpty
+                    ? cache.storeSlug
+                    : cache.storeName),
+            _InfoRow(
+                label: tr.text('subscription'),
+                value: cache.subscriptionStatus),
             const Divider(height: 32),
             ListTile(
               contentPadding: EdgeInsets.zero,
@@ -220,7 +255,9 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
                     CircleAvatar(
                       radius: 30,
                       child: Text(
-                        storeName.isEmpty ? 'V' : storeName.substring(0, 1).toUpperCase(),
+                        storeName.isEmpty
+                            ? 'V'
+                            : storeName.substring(0, 1).toUpperCase(),
                         style: theme.textTheme.headlineSmall,
                       ),
                     ),
@@ -230,11 +267,14 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
                       children: [
                         Text(
                           storeName.isEmpty ? tr.text('your_store') : storeName,
-                          style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+                          style: theme.textTheme.headlineSmall
+                              ?.copyWith(fontWeight: FontWeight.w800),
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          cache.loginName.isEmpty ? '${cache.username}@${cache.storeSlug}' : cache.loginName,
+                          cache.loginName.isEmpty
+                              ? '${cache.username}@${cache.storeSlug}'
+                              : cache.loginName,
                           style: theme.textTheme.bodyMedium,
                         ),
                       ],
@@ -263,8 +303,11 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
               _MetricCard(
                 icon: Icons.event_available_outlined,
                 title: tr.text('trial_remaining'),
-                value: daysLeft == null ? '—' : tr.format('days_count', {'count': daysLeft}),
-                subtitle: tr.format('ends_date', {'date': _formatDate(context, cache.trialEndsAt)}),
+                value: daysLeft == null
+                    ? '—'
+                    : tr.format('days_count', {'count': daysLeft}),
+                subtitle: tr.format('ends_date',
+                    {'date': _formatDate(context, cache.trialEndsAt)}),
               ),
               _MetricCard(
                 icon: Icons.devices_outlined,
@@ -304,7 +347,8 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
               children: [
                 Text(
                   tr.text('account_management'),
-                  style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+                  style: theme.textTheme.titleLarge
+                      ?.copyWith(fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 8),
                 Text(
@@ -315,17 +359,30 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
                 _InfoRow(label: tr.text('account_id'), value: cache.accountId),
                 _InfoRow(label: tr.text('store_id'), value: cache.storeId),
                 _InfoRow(label: tr.text('store_slug'), value: cache.storeSlug),
-                _InfoRow(label: tr.text('last_verified'), value: _formatDate(context, cache.lastVerifiedAt)),
+                _InfoRow(
+                    label: tr.text('last_verified'),
+                    value: _formatDate(context, cache.lastVerifiedAt)),
                 const SizedBox(height: 20),
                 Wrap(
                   spacing: 12,
                   runSpacing: 12,
                   children: [
-                    OutlinedButton.icon(
-                      onPressed: widget.onRecoverExistingStore,
-                      icon: const Icon(Icons.key_outlined),
-                      label: Text(tr.text('recover_existing_store')),
-                    ),
+                    if (!widget.hasStoreIdentity)
+                      FilledButton.icon(
+                        onPressed: widget.onRecoverStoreIdentity,
+                        icon: const Icon(Icons.key_outlined),
+                        label: Text(tr.text('recover_store_identity')),
+                      )
+                    else
+                      FilledButton.icon(
+                        onPressed: widget.canRecoverStoreData
+                            ? widget.onRecoverStoreData
+                            : null,
+                        icon: Icon(widget.canRecoverStoreData
+                            ? Icons.download_outlined
+                            : Icons.lock_outline),
+                        label: Text(tr.text('recover_store_data')),
+                      ),
                     OutlinedButton.icon(
                       onPressed: () => setState(() => _selectedIndex = 1),
                       icon: const Icon(Icons.manage_accounts_outlined),
@@ -349,6 +406,8 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
             ),
           ),
         ),
+        const SizedBox(height: 16),
+        SyncMonitoringSection(store: widget.store),
       ],
     );
   }
@@ -419,10 +478,15 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
           const SizedBox(width: 8),
         ],
       ),
-      drawer: wide ? null : Drawer(child: _AccountNavigation(selectedIndex: _selectedIndex, onSelected: (index) {
-        Navigator.of(context).pop();
-        setState(() => _selectedIndex = index);
-      })),
+      drawer: wide
+          ? null
+          : Drawer(
+              child: _AccountNavigation(
+                  selectedIndex: _selectedIndex,
+                  onSelected: (index) {
+                    Navigator.of(context).pop();
+                    setState(() => _selectedIndex = index);
+                  })),
       body: Row(
         children: [
           if (wide)
@@ -438,7 +502,8 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
 }
 
 class _AccountNavigation extends StatelessWidget {
-  const _AccountNavigation({required this.selectedIndex, required this.onSelected});
+  const _AccountNavigation(
+      {required this.selectedIndex, required this.onSelected});
 
   final int selectedIndex;
   final ValueChanged<int> onSelected;
@@ -497,7 +562,8 @@ class _MetricCard extends StatelessWidget {
             const SizedBox(height: 6),
             Text(
               value,
-              style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+              style: theme.textTheme.headlineSmall
+                  ?.copyWith(fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 6),
             Text(subtitle, style: theme.textTheme.bodySmall),
@@ -526,7 +592,8 @@ class _InfoRow extends StatelessWidget {
             width: 130,
             child: Text(
               label,
-              style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700),
+              style: theme.textTheme.bodyMedium
+                  ?.copyWith(fontWeight: FontWeight.w700),
             ),
           ),
           Expanded(child: SelectableText(value.trim().isEmpty ? '—' : value)),
@@ -547,7 +614,8 @@ class _ComingSoonButton extends StatelessWidget {
     return OutlinedButton.icon(
       onPressed: null,
       icon: Icon(icon),
-      label: Text(AppLocalizations.of(context).format('coming_soon_label', {'label': label})),
+      label: Text(AppLocalizations.of(context)
+          .format('coming_soon_label', {'label': label})),
     );
   }
 }

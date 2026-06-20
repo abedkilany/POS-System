@@ -72,6 +72,8 @@ String localizeRuntimeMessage(String message, AppLocalizations tr) {
         'initial_store_data_downloading',
     'Initial Store data downloaded.': 'initial_store_data_downloaded',
     'Store recovered.': 'store_recovered',
+    'Store identity recovered.': 'store_identity_recovered',
+    'Recover Store Identity first.': 'recover_store_identity_first',
     'Requesting a fresh Host snapshot...': 'requesting_fresh_host_snapshot',
     'Verifying rebuilt local data...': 'verifying_rebuilt_local_data',
     'Cleaning up local records...': 'cleaning_up_local_records',

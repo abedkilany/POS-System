@@ -30,6 +30,8 @@ import '../../core/utils/responsive.dart';
 import '../../data/app_store.dart';
 import '../../models/store_profile.dart';
 import '../../models/app_identity.dart';
+import '../../models/user_role.dart';
+import '../shared/sync_monitoring_section.dart';
 import '../barcode/barcode_scanner_page.dart';
 import 'users_permissions_page.dart';
 
@@ -346,7 +348,7 @@ class SettingsPage extends StatelessWidget {
   List<Widget> _syncCards(BuildContext context) => [
         _UnifiedSyncSettingsCard(
             store: store, onSyncSettingsChanged: onSyncSettingsChanged),
-        _AdvancedSyncDebugCard(store: store),
+        SyncMonitoringSection(store: store),
       ];
 
   List<Widget> _backupCards(BuildContext context) {
@@ -387,6 +389,18 @@ class SettingsPage extends StatelessWidget {
                   final itemWidth = constraints.maxWidth < 560
                       ? constraints.maxWidth
                       : (constraints.maxWidth - 12) / 2;
+                  final hasStoreIdentity =
+                      store.appIdentity.hostDeviceId.trim().isNotEmpty;
+                  final canRecoverStoreData =
+                      store.hasPermission(AppPermission.syncManage);
+                  final recoverLabelKey = hasStoreIdentity
+                      ? 'recover_store_data'
+                      : 'recover_store_identity';
+                  final recoverIcon = hasStoreIdentity
+                      ? (canRecoverStoreData
+                          ? Icons.download_outlined
+                          : Icons.lock_outline)
+                      : Icons.key_outlined;
                   return Wrap(
                     spacing: 12,
                     runSpacing: 10,
@@ -395,9 +409,11 @@ class SettingsPage extends StatelessWidget {
                         SizedBox(
                           width: itemWidth,
                           child: OutlinedButton.icon(
-                            onPressed: () => _recoverExistingStore(context),
-                            icon: const Icon(Icons.key_outlined),
-                            label: Text(tr.text('recover_existing_store')),
+                            onPressed: hasStoreIdentity && !canRecoverStoreData
+                                ? null
+                                : () => _recoverExistingStore(context),
+                            icon: Icon(recoverIcon),
+                            label: Text(tr.text(recoverLabelKey)),
                           ),
                         ),
                         SizedBox(
@@ -6617,8 +6633,8 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
                     child: CircularProgressIndicator(
                       value: _installing ? null : _downloadProgress,
                       strokeWidth: 4,
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                          colorScheme.primary),
+                      valueColor:
+                          AlwaysStoppedAnimation<Color>(colorScheme.primary),
                     ),
                   ),
                 Icon(Icons.sync_outlined, size: 40, color: iconColor),
@@ -6630,8 +6646,9 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
                       width: 26,
                       height: 26,
                       decoration: BoxDecoration(
-                        color:
-                            _readyToInstall ? Colors.green : colorScheme.primary,
+                        color: _readyToInstall
+                            ? Colors.green
+                            : colorScheme.primary,
                         shape: BoxShape.circle,
                         border:
                             Border.all(color: colorScheme.surface, width: 2),
@@ -6651,7 +6668,7 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
             children: [
               Text(
                 (_statusKey == 'update_available' ||
-                        _statusKey == 'update_downloaded') &&
+                            _statusKey == 'update_downloaded') &&
                         _statusValue.isNotEmpty
                     ? '${tr.text(_statusKey)}: $_statusValue'
                     : tr.text(_statusKey),
@@ -6689,20 +6706,20 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
                       label: Text(tr.text('cancel')),
                     )
                   : _readyToInstall
-                  ? FilledButton.icon(
-                      onPressed: _installing ? null : _installReadyUpdate,
-                      icon: const Icon(Icons.check_circle_outline),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: Colors.green.shade600,
-                        foregroundColor: Colors.white,
-                      ),
-                      label: Text(tr.text('update_now')),
-                    )
-                  : FilledButton.icon(
-                      onPressed: _installing ? null : _downloadUpdate,
-                      icon: const Icon(Icons.download_outlined),
-                      label: Text(tr.text('install_update')),
-                    ))
+                      ? FilledButton.icon(
+                          onPressed: _installing ? null : _installReadyUpdate,
+                          icon: const Icon(Icons.check_circle_outline),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: Colors.green.shade600,
+                            foregroundColor: Colors.white,
+                          ),
+                          label: Text(tr.text('update_now')),
+                        )
+                      : FilledButton.icon(
+                          onPressed: _installing ? null : _downloadUpdate,
+                          icon: const Icon(Icons.download_outlined),
+                          label: Text(tr.text('install_update')),
+                        ))
               : FilledButton(
                   onPressed: _checking ? null : _check,
                   child: _checking
@@ -7592,4 +7609,3 @@ class _SystemIdentityCardState extends State<_SystemIdentityCard> {
     );
   }
 }
-

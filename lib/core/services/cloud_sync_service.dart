@@ -1497,6 +1497,112 @@ class CloudSyncService {
     }
   }
 
+  Future<CloudStoreRecoveryResult> recoverExistingStoreIdentityFromCloud(
+    CloudSyncSettings settings, {
+    required String storeId,
+    String recoveryKey = '',
+    String? branchId,
+    CloudSyncProgressCallback? onProgress,
+  }) async {
+    final cleanStoreId = storeId.trim().toUpperCase();
+    final cleanBranchId = (branchId == null || branchId.trim().isEmpty)
+        ? ''
+        : branchId.trim().toUpperCase();
+    final cleanRecoveryKey = recoveryKey.trim().toUpperCase();
+    if (settings.apiBaseUrl.trim().isEmpty) {
+      return const CloudStoreRecoveryResult(
+          ok: false, message: 'Cloud API URL is required.');
+    }
+    if (!cleanStoreId.startsWith('ST-')) {
+      return const CloudStoreRecoveryResult(
+          ok: false, message: 'A valid Store ID is required.');
+    }
+    if (settings.accountToken.trim().isEmpty) {
+      return const CloudStoreRecoveryResult(
+          ok: false,
+          message: 'Online account session is required. Please sign in again.');
+    }
+
+    try {
+      onProgress?.call(0.10, 'Verifying online account and Store access...');
+      final claimResponse = await _client
+          .post(
+            settings.endpoint('/api/sync/recovery/claim'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+              'Authorization': 'Bearer ${settings.accountToken.trim()}',
+            },
+            body: jsonEncode({
+              'mode': 'identity',
+              'storeId': cleanStoreId,
+              'branchId': cleanBranchId,
+              if (cleanRecoveryKey.isNotEmpty) 'recoveryKey': cleanRecoveryKey,
+              'deviceId': store.deviceId,
+              'deviceName': store.appIdentity.deviceName,
+              'platform': store.appIdentity.platform.name,
+              'appVersion': AppBrand.cloudAppVersion,
+            }),
+          )
+          .timeout(const Duration(seconds: 15));
+
+      if (claimResponse.statusCode < 200 || claimResponse.statusCode >= 300) {
+        return CloudStoreRecoveryResult(
+            ok: false,
+            message:
+                'Store identity recovery failed: ${claimResponse.statusCode} ${claimResponse.body}');
+      }
+      final claim = jsonDecode(claimResponse.body) as Map<String, dynamic>;
+      if (claim['ok'] != true) {
+        return CloudStoreRecoveryResult(
+            ok: false,
+            message:
+                claim['error']?.toString() ?? 'Store identity recovery failed.');
+      }
+
+      final recoveredBranchId =
+          (claim['branchId'] ?? claim['branch_id'] ?? cleanBranchId)
+                  .toString()
+                  .trim()
+                  .isEmpty
+              ? 'BR-MAIN1'
+              : (claim['branchId'] ?? claim['branch_id'] ?? cleanBranchId)
+                  .toString()
+                  .trim()
+                  .toUpperCase();
+      final deviceToken =
+          (claim['deviceToken'] ?? claim['device_token'] ?? '').toString();
+      final hostDeviceId =
+          (claim['hostDeviceId'] ?? claim['host_device_id'] ?? store.deviceId)
+              .toString();
+      final cloudTenantId =
+          (claim['cloudTenantId'] ?? claim['cloud_tenant_id'] ?? '').toString();
+
+      onProgress?.call(0.25, 'Recovering permanent Store identity...');
+      await store.recoverExistingStoreIdentity(
+        storeId: cleanStoreId,
+        branchId: recoveredBranchId,
+        recoveryKey: cleanRecoveryKey,
+        hostDeviceId: hostDeviceId.isEmpty ? store.deviceId : hostDeviceId,
+        deviceToken: deviceToken,
+        cloudTenantId: cloudTenantId,
+        deviceRole: DeviceRole.host,
+        syncMode: SyncMode.cloudConnected,
+      );
+      await settings.copyWith(enabled: true, clearLastPullCursor: true).save();
+      await CloudSyncSettings.clearSavedPullCursor();
+      onProgress?.call(1.0, 'Store identity recovered.');
+      return CloudStoreRecoveryResult(
+        ok: true,
+        message: 'Store identity recovered.',
+        identity: store.appIdentity,
+      );
+    } catch (error) {
+      return CloudStoreRecoveryResult(
+          ok: false, message: 'Store identity recovery failed: $error');
+    }
+  }
+
   Future<bool> _shouldRequestFreshSnapshotForGeneration(
     String transport,
     String generation, {
