@@ -46,6 +46,11 @@ class AppUpdateService {
     throw UnsupportedError('Ventio updates are only supported on Windows.');
   }
 
+  Future<String?> getDownloadedInstallerPath(AppUpdateInfo update) async =>
+      null;
+
+  Future<void> clearDownloadedUpdate() async {}
+
   Future<void> launchInstaller(String installerPath) async {
     throw UnsupportedError('Ventio updates are only supported on Windows.');
   }

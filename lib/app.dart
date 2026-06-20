@@ -567,6 +567,21 @@ class _MainShellState extends State<MainShell> {
           _installingUpdate = false;
         }
       });
+      if (update != null) {
+        final restoredPath =
+            await _updateService.getDownloadedInstallerPath(update);
+        if (!mounted) return;
+        setState(() {
+          _downloadedInstallerPath = restoredPath;
+          if (restoredPath == null) {
+            _downloadProgress = null;
+            _downloadingUpdate = false;
+            _installingUpdate = false;
+          }
+        });
+      } else {
+        await _updateService.clearDownloadedUpdate();
+      }
     } catch (_) {
       // Update checks must never interrupt store operations.
     } finally {
@@ -602,14 +617,17 @@ class _MainShellState extends State<MainShell> {
       );
     } catch (error) {
       if (!mounted) return;
+      final tr = AppLocalizations.of(context);
+      final messenger = ScaffoldMessenger.of(context);
       setState(() {
         _downloadingUpdate = false;
         _downloadProgress = null;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
+      await _updateService.clearDownloadedUpdate();
+      if (!mounted) return;
+      messenger.showSnackBar(
         SnackBar(
-            content:
-                Text(AppLocalizations.of(context).format('update_failed', {
+            content: Text(tr.format('update_failed', {
           'error': error.toString(),
         }))),
       );

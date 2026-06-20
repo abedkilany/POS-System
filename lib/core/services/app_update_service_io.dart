@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../app_brand.dart';
+import 'local_database_service.dart';
 
 class AppUpdateInfo {
   const AppUpdateInfo({
@@ -64,8 +65,57 @@ class AppUpdateInfo {
   }
 }
 
+class AppUpdateDownloadRecord {
+  const AppUpdateDownloadRecord({
+    required this.version,
+    required this.build,
+    required this.installerPath,
+    required this.sha256,
+    required this.downloadedAt,
+  });
+
+  final String version;
+  final int build;
+  final String installerPath;
+  final String sha256;
+  final DateTime downloadedAt;
+
+  bool matches(AppUpdateInfo update) =>
+      version == update.version &&
+      build == update.build &&
+      sha256 == update.sha256.trim().toLowerCase();
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'version': version,
+        'build': build,
+        'installerPath': installerPath,
+        'sha256': sha256,
+        'downloadedAt': downloadedAt.toIso8601String(),
+      };
+
+  static AppUpdateDownloadRecord? fromJson(Map<String, dynamic> json) {
+    final version = (json['version'] ?? '').toString().trim();
+    final build = int.tryParse((json['build'] ?? '').toString()) ?? 0;
+    final path = (json['installerPath'] ?? '').toString().trim();
+    final sha256 = (json['sha256'] ?? '').toString().trim().toLowerCase();
+    final downloadedAt =
+        DateTime.tryParse((json['downloadedAt'] ?? '').toString()) ??
+            DateTime.fromMillisecondsSinceEpoch(0);
+    if (version.isEmpty || build <= 0 || path.isEmpty) return null;
+    return AppUpdateDownloadRecord(
+      version: version,
+      build: build,
+      installerPath: path,
+      sha256: sha256,
+      downloadedAt: downloadedAt,
+    );
+  }
+}
+
 class AppUpdateService {
   AppUpdateService({http.Client? client}) : _client = client ?? http.Client();
+
+  static const _downloadRecordKey = 'ventio_update_download_record_v1';
 
   static const _manifestUrl = String.fromEnvironment(
     'VENTIO_UPDATE_URL',
@@ -170,7 +220,56 @@ class AppUpdateService {
       }
     }
 
+    await _saveDownloadedUpdate(update, file.path);
     return file.path;
+  }
+
+  Future<String?> getDownloadedInstallerPath(AppUpdateInfo update) async {
+    final raw = LocalDatabaseService.getString(_downloadRecordKey);
+    if (raw == null || raw.trim().isEmpty) return null;
+    Map<String, dynamic>? decoded;
+    try {
+      final parsed = jsonDecode(raw);
+      if (parsed is Map) {
+        decoded = Map<String, dynamic>.from(parsed);
+      }
+    } catch (_) {
+      decoded = null;
+    }
+    if (decoded == null) {
+      await clearDownloadedUpdate();
+      return null;
+    }
+    final record = AppUpdateDownloadRecord.fromJson(decoded);
+    if (record == null || !record.matches(update)) {
+      await clearDownloadedUpdate();
+      return null;
+    }
+    final file = File(record.installerPath);
+    if (!await file.exists()) {
+      await clearDownloadedUpdate();
+      return null;
+    }
+    return file.path;
+  }
+
+  Future<void> clearDownloadedUpdate() async {
+    await LocalDatabaseService.deleteString(_downloadRecordKey);
+  }
+
+  Future<void> _saveDownloadedUpdate(
+    AppUpdateInfo update,
+    String installerPath,
+  ) async {
+    final record = AppUpdateDownloadRecord(
+      version: update.version,
+      build: update.build,
+      installerPath: installerPath,
+      sha256: update.sha256.trim().toLowerCase(),
+      downloadedAt: DateTime.now(),
+    );
+    await LocalDatabaseService.setString(
+        _downloadRecordKey, jsonEncode(record.toJson()));
   }
 
   Future<void> launchInstaller(String installerPath) async {
