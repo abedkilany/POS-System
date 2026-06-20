@@ -6488,32 +6488,8 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
     }
   }
 
-  Future<void> _confirmAndInstall() async {
-    if (!_readyToInstall || _installing) return;
-    final tr = AppLocalizations.of(context);
-    final confirmed = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(tr.text('update_install_confirm_title')),
-        content: Text(tr.format('update_install_confirm_desc', {
-          'version': _latest?.displayVersion ?? '',
-        })),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: Text(tr.text('cancel')),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: Text(tr.text('update_now')),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true) {
-      await _installUpdate();
-    }
+  Future<void> _installReadyUpdate() async {
+    await _installUpdate();
   }
 
   Future<void> _installUpdate() async {
@@ -6531,8 +6507,7 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
     try {
       await _service.launchInstaller(installerPath);
       if (!mounted) return;
-      setState(() => _installing = false);
-      await Future<void>.delayed(const Duration(milliseconds: 250));
+      await Future<void>.delayed(const Duration(milliseconds: 500));
       if (!mounted) return;
       SystemNavigator.pop();
     } catch (error) {
@@ -6669,7 +6644,7 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
                     )
                   : _readyToInstall
                   ? FilledButton.icon(
-                      onPressed: _installing ? null : _confirmAndInstall,
+                      onPressed: _installing ? null : _installReadyUpdate,
                       icon: const Icon(Icons.check_circle_outline),
                       style: FilledButton.styleFrom(
                         backgroundColor: Colors.green.shade600,

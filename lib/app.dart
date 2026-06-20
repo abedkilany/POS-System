@@ -634,32 +634,8 @@ class _MainShellState extends State<MainShell> {
     }
   }
 
-  Future<void> _confirmAndInstallUpdate(AppUpdateInfo update) async {
-    if (_installingUpdate) return;
-    final tr = AppLocalizations.of(context);
-    final confirmed = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(tr.text('update_install_confirm_title')),
-        content: Text(tr.format('update_install_confirm_desc', {
-          'version': update.displayVersion,
-        })),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: Text(tr.text('cancel')),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: Text(tr.text('update_now')),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true) {
-      await _installDownloadedUpdate();
-    }
+  Future<void> _installReadyUpdate() async {
+    await _installDownloadedUpdate();
   }
 
   Future<void> _installDownloadedUpdate() async {
@@ -673,8 +649,7 @@ class _MainShellState extends State<MainShell> {
     try {
       await _updateService.launchInstaller(installerPath);
       if (!mounted) return;
-      setState(() => _installingUpdate = false);
-      await Future<void>.delayed(const Duration(milliseconds: 250));
+      await Future<void>.delayed(const Duration(milliseconds: 500));
       if (!mounted) return;
       SystemNavigator.pop();
     } catch (error) {
@@ -694,7 +669,7 @@ class _MainShellState extends State<MainShell> {
     final update = _availableUpdate;
     if (update == null) return;
     if (_hasReadyUpdate) {
-      await _confirmAndInstallUpdate(update);
+      await _installReadyUpdate();
     } else {
       await _startDownload(update);
     }

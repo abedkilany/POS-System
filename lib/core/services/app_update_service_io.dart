@@ -280,8 +280,19 @@ class AppUpdateService {
     if (!await file.exists()) {
       throw StateError('Downloaded update installer was not found.');
     }
-    final process = await Process.start(file.path, const <String>[]);
-    await process.exitCode;
+    await Process.start(
+      file.path,
+      const <String>[
+        '/VERYSILENT',
+        '/SUPPRESSMSGBOXES',
+        '/NOCANCEL',
+        '/SP-',
+        '/CLOSEAPPLICATIONS',
+        '/RESTARTAPPLICATIONS',
+        '/NORESTART',
+      ],
+      mode: ProcessStartMode.detached,
+    );
   }
 
   Future<String> downloadAndInstall(
