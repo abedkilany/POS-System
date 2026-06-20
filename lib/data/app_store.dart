@@ -725,6 +725,8 @@ class AppStore extends ChangeNotifier {
       hasPermission(AppPermission.rolesManage);
   bool get needsInitialAdminSetup =>
       _users.isEmpty || _hasOnlyLegacyDefaultAdminUser;
+  bool get hasLocalAdminUser =>
+      _users.any((item) => item.roleId == 'admin' && item.isActive);
   bool get hasLocalStoreData {
     final hasRealUser = _users.isNotEmpty && !_hasOnlyLegacyDefaultAdminUser;
     return hasRealUser ||
