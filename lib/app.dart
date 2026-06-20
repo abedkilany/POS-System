@@ -533,6 +533,7 @@ class _MainShellState extends State<MainShell> {
   int selectedIndex = 0;
   bool _drawerNavigationLocked = false;
   late final AppUpdateService _updateService = getAppUpdateService();
+  late final VoidCallback _updateStatusListener;
   AppUpdateInfo? _availableUpdate;
   bool _checkingForUpdate = false;
   bool _downloadingUpdate = false;
@@ -543,7 +544,27 @@ class _MainShellState extends State<MainShell> {
   @override
   void initState() {
     super.initState();
+    _updateStatusListener = () {
+      if (!mounted) return;
+      final state = AppUpdateService.status.value;
+      setState(() {
+        _availableUpdate = state.latest;
+        _checkingForUpdate = state.checking;
+        _downloadingUpdate = state.downloading;
+        _installingUpdate = state.installing;
+        _downloadProgress = state.downloadProgress;
+        _downloadedInstallerPath = state.downloadedInstallerPath;
+      });
+    };
+    AppUpdateService.status.addListener(_updateStatusListener);
+    _updateStatusListener();
     unawaited(_checkForUpdates());
+  }
+
+  @override
+  void dispose() {
+    AppUpdateService.status.removeListener(_updateStatusListener);
+    super.dispose();
   }
 
   Future<void> _checkForUpdates() async {

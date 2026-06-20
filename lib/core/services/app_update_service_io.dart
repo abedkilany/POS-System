@@ -112,9 +112,72 @@ class AppUpdateDownloadRecord {
   }
 }
 
+class AppUpdateUiState {
+  const AppUpdateUiState({
+    this.latest,
+    this.lastCheckedAt,
+    this.checking = false,
+    this.downloading = false,
+    this.installing = false,
+    this.downloadProgress,
+    this.downloadedInstallerPath,
+    this.lastError = '',
+  });
+
+  final AppUpdateInfo? latest;
+  final DateTime? lastCheckedAt;
+  final bool checking;
+  final bool downloading;
+  final bool installing;
+  final double? downloadProgress;
+  final String? downloadedInstallerPath;
+  final String lastError;
+
+  bool get hasUpdate =>
+      latest?.isNewerThan(AppBrand.versionName, AppBrand.buildNumber) ?? false;
+
+  bool get readyToInstall =>
+      hasUpdate &&
+      downloadedInstallerPath != null &&
+      downloadedInstallerPath!.trim().isNotEmpty;
+
+  AppUpdateUiState copyWith({
+    AppUpdateInfo? latest,
+    bool clearLatest = false,
+    DateTime? lastCheckedAt,
+    bool clearLastCheckedAt = false,
+    bool? checking,
+    bool? downloading,
+    bool? installing,
+    double? downloadProgress,
+    bool clearDownloadProgress = false,
+    String? downloadedInstallerPath,
+    bool clearDownloadedInstallerPath = false,
+    String? lastError,
+    bool clearLastError = false,
+  }) {
+    return AppUpdateUiState(
+      latest: clearLatest ? null : latest ?? this.latest,
+      lastCheckedAt:
+          clearLastCheckedAt ? null : lastCheckedAt ?? this.lastCheckedAt,
+      checking: checking ?? this.checking,
+      downloading: downloading ?? this.downloading,
+      installing: installing ?? this.installing,
+      downloadProgress:
+          clearDownloadProgress ? null : downloadProgress ?? this.downloadProgress,
+      downloadedInstallerPath: clearDownloadedInstallerPath
+          ? null
+          : downloadedInstallerPath ?? this.downloadedInstallerPath,
+      lastError: clearLastError ? '' : lastError ?? this.lastError,
+    );
+  }
+}
+
 class AppUpdateService {
   AppUpdateService({http.Client? client}) : _client = client ?? http.Client();
 
+  static final ValueNotifier<AppUpdateUiState> status =
+      ValueNotifier<AppUpdateUiState>(const AppUpdateUiState());
   static const _downloadRecordKey = 'ventio_update_download_record_v1';
 
   static const _manifestUrl = String.fromEnvironment(
@@ -143,11 +206,51 @@ class AppUpdateService {
   }
 
   Future<AppUpdateInfo?> checkForUpdate() async {
-    final update = await fetchLatest();
-    if (update == null) return null;
-    return update.isNewerThan(AppBrand.versionName, AppBrand.buildNumber)
-        ? update
-        : null;
+    status.value = status.value.copyWith(
+      checking: true,
+      clearLastError: true,
+    );
+    try {
+      final update = await fetchLatest();
+      if (update == null) {
+        await clearDownloadedUpdate();
+        status.value = status.value.copyWith(
+          clearLatest: true,
+          clearLastCheckedAt: true,
+          checking: false,
+          downloading: false,
+          installing: false,
+          clearDownloadProgress: true,
+          clearDownloadedInstallerPath: true,
+        );
+        return null;
+      }
+
+      final latest = update.isNewerThan(AppBrand.versionName, AppBrand.buildNumber)
+          ? update
+          : null;
+      final restoredPath = latest == null
+          ? null
+          : await getDownloadedInstallerPath(update);
+      status.value = status.value.copyWith(
+        latest: latest,
+        lastCheckedAt: DateTime.now(),
+        checking: false,
+        downloading: false,
+        installing: false,
+        downloadProgress: latest == null || restoredPath == null ? null : status.value.downloadProgress,
+        downloadedInstallerPath: restoredPath,
+        clearDownloadedInstallerPath: restoredPath == null,
+      );
+      return latest;
+    } catch (error) {
+      status.value = status.value.copyWith(
+        checking: false,
+        lastCheckedAt: DateTime.now(),
+        lastError: error.toString(),
+      );
+      rethrow;
+    }
   }
 
   Future<String> downloadUpdate(
@@ -174,6 +277,13 @@ class AppUpdateService {
     final sink = file.openWrite();
     final bytes = <int>[];
     var received = 0;
+    status.value = status.value.copyWith(
+      latest: update,
+      downloading: true,
+      installing: false,
+      downloadProgress: 0,
+      clearLastError: true,
+    );
     try {
       final request = await client.getUrl(uri);
       final response = await request.close();
@@ -194,7 +304,11 @@ class AppUpdateService {
         bytes.addAll(chunk);
         sink.add(chunk);
         received += chunk.length;
-        if (total > 0) onProgress?.call(received / total);
+        if (total > 0) {
+          final progress = received / total;
+          status.value = status.value.copyWith(downloadProgress: progress);
+          onProgress?.call(progress);
+        }
       }
     } on HttpException {
       if (cancelled) {
@@ -216,11 +330,25 @@ class AppUpdateService {
       final actualHash = sha256.convert(bytes).toString().toLowerCase();
       if (actualHash != expectedHash) {
         await file.delete().catchError((_) => file);
+        status.value = status.value.copyWith(
+          downloading: false,
+          installing: false,
+          clearDownloadProgress: true,
+          clearDownloadedInstallerPath: true,
+          lastError: 'Downloaded update failed integrity verification.',
+        );
         throw StateError('Downloaded update failed integrity verification.');
       }
     }
 
     await _saveDownloadedUpdate(update, file.path);
+    status.value = status.value.copyWith(
+      downloading: false,
+      installing: false,
+      downloadProgress: 1,
+      downloadedInstallerPath: file.path,
+      clearLastError: true,
+    );
     return file.path;
   }
 
@@ -255,6 +383,7 @@ class AppUpdateService {
 
   Future<void> clearDownloadedUpdate() async {
     await LocalDatabaseService.deleteString(_downloadRecordKey);
+    status.value = status.value.copyWith(clearDownloadedInstallerPath: true);
   }
 
   Future<void> _saveDownloadedUpdate(
@@ -280,6 +409,12 @@ class AppUpdateService {
     if (!await file.exists()) {
       throw StateError('Downloaded update installer was not found.');
     }
+    status.value = status.value.copyWith(
+      installing: true,
+      downloading: false,
+      clearDownloadProgress: true,
+      clearLastError: true,
+    );
     await Process.start(
       file.path,
       const <String>[
@@ -308,7 +443,9 @@ class AppUpdateService {
   }
 }
 
-AppUpdateService getAppUpdateService() => AppUpdateService();
+final AppUpdateService _appUpdateServiceSingleton = AppUpdateService();
+
+AppUpdateService getAppUpdateService() => _appUpdateServiceSingleton;
 
 int _compareSemanticVersion(String a, String b) {
   final left = _semanticParts(a);

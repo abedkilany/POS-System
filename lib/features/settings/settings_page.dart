@@ -6351,6 +6351,7 @@ class _WindowsUpdateStatusCard extends StatefulWidget {
 
 class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
   late final AppUpdateService _service = getAppUpdateService();
+  late final VoidCallback _updateStatusListener;
   VoidCallback? _cancelDownload;
   AppUpdateInfo? _latest;
   DateTime? _lastCheckedAt;
@@ -6361,6 +6362,51 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
   String? _downloadedInstallerPath;
   String _statusKey = 'you_are_up_to_date';
   String _statusValue = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _updateStatusListener = () {
+      if (!mounted) return;
+      final state = AppUpdateService.status.value;
+      setState(() {
+        _latest = state.latest;
+        _lastCheckedAt = state.lastCheckedAt;
+        _checking = state.checking;
+        _downloading = state.downloading;
+        _installing = state.installing;
+        _downloadProgress = state.downloadProgress;
+        _downloadedInstallerPath = state.downloadedInstallerPath;
+        if (state.lastError.isNotEmpty && !_downloading && !_installing) {
+          _statusKey = 'could_not_check_updates';
+          _statusValue = '';
+        } else if (_installing) {
+          _statusKey = 'installing_update';
+          _statusValue = '';
+        } else if (_downloading) {
+          _statusKey = 'downloading';
+          _statusValue = _latest?.displayVersion ?? '';
+        } else if (_readyToInstall) {
+          _statusKey = 'update_downloaded';
+          _statusValue = _latest?.displayVersion ?? '';
+        } else if (_hasUpdate) {
+          _statusKey = 'update_available';
+          _statusValue = _latest?.displayVersion ?? '';
+        } else {
+          _statusKey = 'you_are_up_to_date';
+          _statusValue = '';
+        }
+      });
+    };
+    AppUpdateService.status.addListener(_updateStatusListener);
+    _updateStatusListener();
+  }
+
+  @override
+  void dispose() {
+    AppUpdateService.status.removeListener(_updateStatusListener);
+    super.dispose();
+  }
 
   bool get _hasUpdate =>
       _latest?.isNewerThan(AppBrand.versionName, AppBrand.buildNumber) ?? false;
