@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter/services.dart';
 
 import 'core/app_brand.dart';
 import 'core/localization/app_localizations.dart';
@@ -534,6 +535,10 @@ class _MainShellState extends State<MainShell> {
   late final AppUpdateService _updateService = getAppUpdateService();
   AppUpdateInfo? _availableUpdate;
   bool _checkingForUpdate = false;
+  bool _downloadingUpdate = false;
+  bool _installingUpdate = false;
+  double? _downloadProgress;
+  String? _downloadedInstallerPath;
 
   @override
   void initState() {
@@ -545,11 +550,23 @@ class _MainShellState extends State<MainShell> {
     if (!kReleaseMode || !_updateService.isSupported || _checkingForUpdate) {
       return;
     }
+    final previousUpdate = _availableUpdate;
     setState(() => _checkingForUpdate = true);
     try {
       final update = await _updateService.checkForUpdate();
       if (!mounted) return;
-      setState(() => _availableUpdate = update);
+      setState(() {
+        _availableUpdate = update;
+        final updateChanged =
+            previousUpdate?.displayVersion != update?.displayVersion;
+        if (update == null || updateChanged || _downloadedInstallerPath == null ||
+            _downloadedInstallerPath!.isEmpty) {
+          _downloadedInstallerPath = null;
+          _downloadProgress = null;
+          _downloadingUpdate = false;
+          _installingUpdate = false;
+        }
+      });
     } catch (_) {
       // Update checks must never interrupt store operations.
     } finally {
@@ -557,6 +574,199 @@ class _MainShellState extends State<MainShell> {
     }
   }
 
+  bool get _hasReadyUpdate =>
+      _availableUpdate != null && _downloadedInstallerPath != null;
+
+  Future<void> _startDownload(AppUpdateInfo update) async {
+    if (_downloadingUpdate || _installingUpdate) return;
+    setState(() {
+      _downloadingUpdate = true;
+      _downloadProgress = 0;
+    });
+    try {
+      final installerPath = await _updateService.downloadUpdate(
+        update,
+        onProgress: (value) {
+          if (!mounted) return;
+          setState(() => _downloadProgress = value);
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        _downloadedInstallerPath = installerPath;
+        _downloadingUpdate = false;
+        _downloadProgress = 1;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(AppLocalizations.of(context).text('update_downloaded'))),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _downloadingUpdate = false;
+        _downloadProgress = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content:
+                Text(AppLocalizations.of(context).format('update_failed', {
+          'error': error.toString(),
+        }))),
+      );
+    }
+  }
+
+  Future<void> _confirmAndInstallUpdate(AppUpdateInfo update) async {
+    if (_installingUpdate) return;
+    final tr = AppLocalizations.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(tr.text('update_install_confirm_title')),
+        content: Text(tr.format('update_install_confirm_desc', {
+          'version': update.displayVersion,
+        })),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(tr.text('cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(tr.text('update_now')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await _installDownloadedUpdate();
+    }
+  }
+
+  Future<void> _installDownloadedUpdate() async {
+    final installerPath = _downloadedInstallerPath;
+    if (installerPath == null || installerPath.trim().isEmpty) return;
+    if (_installingUpdate) return;
+    setState(() {
+      _installingUpdate = true;
+      _downloadProgress = null;
+    });
+    try {
+      await _updateService.launchInstaller(installerPath);
+      if (!mounted) return;
+      setState(() => _installingUpdate = false);
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      if (!mounted) return;
+      SystemNavigator.pop();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _installingUpdate = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content:
+                Text(AppLocalizations.of(context).format('update_failed', {
+          'error': error.toString(),
+        }))),
+      );
+    }
+  }
+
+  Future<void> _handleUpdateAction() async {
+    final update = _availableUpdate;
+    if (update == null) return;
+    if (_hasReadyUpdate) {
+      await _confirmAndInstallUpdate(update);
+    } else {
+      await _startDownload(update);
+    }
+  }
+
+  PreferredSizeWidget? _buildUpdateProgressBar(AppLocalizations tr) {
+    if (!_downloadingUpdate && !_installingUpdate) return null;
+    final message = _installingUpdate
+        ? tr.text('installing_update')
+        : _downloadProgress == null
+            ? tr.text('downloading')
+            : '${tr.text('downloading')} ${(_downloadProgress! * 100).clamp(0, 100).toStringAsFixed(0)}%';
+    return PreferredSize(
+      preferredSize: const Size.fromHeight(34),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            LinearProgressIndicator(
+              value: _installingUpdate ? null : _downloadProgress,
+              minHeight: 4,
+            ),
+            const SizedBox(height: 6),
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: Text(
+                message,
+                style: Theme.of(context).textTheme.labelMedium,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildUpdateAction(BuildContext context, AppLocalizations tr) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final update = _availableUpdate!;
+    final ready = _hasReadyUpdate;
+    if (_downloadingUpdate || _installingUpdate) {
+      return Padding(
+        padding: const EdgeInsets.only(right: 8),
+        child: TextButton.icon(
+          onPressed: null,
+          icon: const SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          label: Text(_installingUpdate
+              ? tr.text('installing_update')
+              : tr.text('downloading')),
+        ),
+      );
+    }
+    if (ready) {
+      return Padding(
+        padding: const EdgeInsets.only(right: 8),
+        child: FilledButton.icon(
+          style: FilledButton.styleFrom(
+            backgroundColor: Colors.green.shade600,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          ),
+          onPressed: _handleUpdateAction,
+          icon: const Icon(Icons.check_circle_outline),
+          label: Text(tr.text('update_now')),
+        ),
+      );
+    }
+    return IconButton(
+      tooltip: tr.format('update_available_tooltip', {
+        'version': update.displayVersion,
+      }),
+      onPressed: _handleUpdateAction,
+      icon: Badge(
+        label: const Text('1'),
+        child: Icon(
+          update.required
+              ? Icons.priority_high_outlined
+              : Icons.system_update_alt_outlined,
+          color: colorScheme.primary,
+        ),
+      ),
+    );
+  }
+
+  // ignore: unused_element
   Future<void> _showUpdateDialog(AppUpdateInfo update) async {
     final tr = AppLocalizations.of(context);
     var installing = false;
@@ -810,20 +1020,9 @@ class _MainShellState extends State<MainShell> {
             ),
             title: Text('$shellTitle • ${resolvedItems[selectedIndex].label}',
                 overflow: TextOverflow.ellipsis),
+            bottom: _buildUpdateProgressBar(tr),
             actions: [
-              if (_availableUpdate != null)
-                IconButton(
-                  tooltip: tr.format('update_available_tooltip', {
-                    'version': _availableUpdate!.displayVersion,
-                  }),
-                  onPressed: () => _showUpdateDialog(_availableUpdate!),
-                  icon: Badge(
-                    label: const Text('1'),
-                    child: Icon(_availableUpdate!.required
-                        ? Icons.priority_high_outlined
-                        : Icons.system_update_alt_outlined),
-                  ),
-                ),
+              if (_availableUpdate != null) _buildUpdateAction(context, tr),
               LocalAutoBackupIndicator(),
               HostConnectionIndicator(store: widget.store),
               PopupMenuButton<String>(

@@ -6354,11 +6354,19 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
   AppUpdateInfo? _latest;
   DateTime? _lastCheckedAt;
   bool _checking = false;
+  bool _downloading = false;
+  bool _installing = false;
+  double? _downloadProgress;
+  String? _downloadedInstallerPath;
   String _statusKey = 'you_are_up_to_date';
   String _statusValue = '';
 
   bool get _hasUpdate =>
       _latest?.isNewerThan(AppBrand.versionName, AppBrand.buildNumber) ?? false;
+
+  bool get _readyToInstall => _downloadedInstallerPath != null;
+
+  bool get _isBusy => _downloading || _installing;
 
   String _lastCheckedText(AppLocalizations tr) {
     final value = _lastCheckedAt;
@@ -6371,6 +6379,7 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
   Future<void> _check() async {
     if (_checking) return;
     final tr = AppLocalizations.of(context);
+    final previousUpdate = _latest;
     setState(() {
       _checking = true;
       _statusKey = 'checking_for_updates';
@@ -6382,6 +6391,14 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
       setState(() {
         _latest = latest;
         _lastCheckedAt = DateTime.now();
+        final updateChanged =
+            previousUpdate?.displayVersion != latest?.displayVersion;
+        if (latest == null || updateChanged) {
+          _downloadedInstallerPath = null;
+          _downloadProgress = null;
+          _downloading = false;
+          _installing = false;
+        }
         _statusKey = _hasUpdate ? 'update_available' : 'you_are_up_to_date';
         _statusValue = latest?.displayVersion ?? '';
       });
@@ -6405,17 +6422,97 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
   Future<void> _downloadUpdate() async {
     final update = _latest;
     if (update == null || !_hasUpdate) return;
+    if (_isBusy) return;
+    final tr = AppLocalizations.of(context);
+    setState(() {
+      _downloading = true;
+      _downloadProgress = 0;
+      _statusKey = 'downloading';
+      _statusValue = update.displayVersion;
+    });
     try {
-      await _service.downloadAndInstall(update);
+      final installerPath = await _service.downloadUpdate(
+        update,
+        onProgress: (value) {
+          if (!mounted) return;
+          setState(() => _downloadProgress = value);
+        },
+      );
       if (!mounted) return;
+      setState(() {
+        _downloadedInstallerPath = installerPath;
+        _downloading = false;
+        _downloadProgress = 1;
+        _statusKey = 'update_downloaded';
+        _statusValue = update.displayVersion;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text(
-                AppLocalizations.of(context).text('update_installer_started'))),
+        SnackBar(content: Text(tr.text('update_downloaded'))),
       );
     } catch (error) {
       if (!mounted) return;
-      final tr = AppLocalizations.of(context);
+      setState(() {
+        _downloading = false;
+        _downloadProgress = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content:
+                Text(tr.format('update_failed', {'error': error.toString()}))),
+      );
+    }
+  }
+
+  Future<void> _confirmAndInstall() async {
+    if (!_readyToInstall || _installing) return;
+    final tr = AppLocalizations.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(tr.text('update_install_confirm_title')),
+        content: Text(tr.format('update_install_confirm_desc', {
+          'version': _latest?.displayVersion ?? '',
+        })),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(tr.text('cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(tr.text('update_now')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await _installUpdate();
+    }
+  }
+
+  Future<void> _installUpdate() async {
+    final installerPath = _downloadedInstallerPath;
+    if (installerPath == null || installerPath.trim().isEmpty || _installing) {
+      return;
+    }
+    final tr = AppLocalizations.of(context);
+    setState(() {
+      _installing = true;
+      _downloadProgress = null;
+      _statusKey = 'installing_update';
+      _statusValue = '';
+    });
+    try {
+      await _service.launchInstaller(installerPath);
+      if (!mounted) return;
+      setState(() => _installing = false);
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      if (!mounted) return;
+      SystemNavigator.pop();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _installing = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
             content:
@@ -6429,7 +6526,11 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
     if (!_service.isSupported) return const SizedBox.shrink();
     final tr = AppLocalizations.of(context);
     final colorScheme = Theme.of(context).colorScheme;
-    final iconColor = _hasUpdate ? colorScheme.primary : Colors.blue.shade700;
+    final iconColor = _readyToInstall
+        ? Colors.green.shade700
+        : _hasUpdate
+            ? colorScheme.primary
+            : Colors.blue.shade700;
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(top: 18),
@@ -6453,12 +6554,12 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
                   width: 26,
                   height: 26,
                   decoration: BoxDecoration(
-                    color: _hasUpdate ? colorScheme.primary : Colors.green,
+                    color: _readyToInstall ? Colors.green : colorScheme.primary,
                     shape: BoxShape.circle,
                     border: Border.all(color: colorScheme.surface, width: 2),
                   ),
                   child: Icon(
-                    _hasUpdate ? Icons.arrow_downward : Icons.check,
+                    _readyToInstall ? Icons.check : Icons.arrow_downward,
                     color: Colors.white,
                     size: 16,
                   ),
@@ -6470,7 +6571,9 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                _statusKey == 'update_available' && _statusValue.isNotEmpty
+                (_statusKey == 'update_available' ||
+                        _statusKey == 'update_downloaded') &&
+                        _statusValue.isNotEmpty
                     ? '${tr.text(_statusKey)}: $_statusValue'
                     : tr.text(_statusKey),
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(
@@ -6484,14 +6587,44 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
                       color: colorScheme.onSurfaceVariant,
                     ),
               ),
+              if (_isBusy) ...[
+                const SizedBox(height: 10),
+                LinearProgressIndicator(
+                  value: _installing ? null : _downloadProgress,
+                  minHeight: 4,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  _installing ? tr.text('installing_update') : tr.text('downloading'),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                ),
+              ],
             ],
           );
           final action = _hasUpdate
-              ? FilledButton.icon(
-                  onPressed: _checking ? null : _downloadUpdate,
-                  icon: const Icon(Icons.download_outlined),
-                  label: Text(tr.text('install_update')),
-                )
+              ? (_readyToInstall
+                  ? FilledButton.icon(
+                      onPressed: _isBusy ? null : _confirmAndInstall,
+                      icon: const Icon(Icons.check_circle_outline),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.green.shade600,
+                        foregroundColor: Colors.white,
+                      ),
+                      label: Text(tr.text('update_now')),
+                    )
+                  : FilledButton.icon(
+                      onPressed: _isBusy ? null : _downloadUpdate,
+                      icon: _downloading
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.download_outlined),
+                      label: Text(tr.text('install_update')),
+                    ))
               : FilledButton(
                   onPressed: _checking ? null : _check,
                   child: _checking

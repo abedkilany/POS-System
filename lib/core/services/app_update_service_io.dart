@@ -100,7 +100,7 @@ class AppUpdateService {
         : null;
   }
 
-  Future<String> downloadAndInstall(
+  Future<String> downloadUpdate(
     AppUpdateInfo update, {
     void Function(double progress)? onProgress,
   }) async {
@@ -148,9 +148,31 @@ class AppUpdateService {
       }
     }
 
-    await Process.start(file.path, const <String>[],
-        mode: ProcessStartMode.detached);
     return file.path;
+  }
+
+  Future<void> launchInstaller(String installerPath) async {
+    if (!isSupported) {
+      throw UnsupportedError('Ventio updates are only supported on Windows.');
+    }
+    final file = File(installerPath);
+    if (!await file.exists()) {
+      throw StateError('Downloaded update installer was not found.');
+    }
+    final process = await Process.start(file.path, const <String>[]);
+    await process.exitCode;
+  }
+
+  Future<String> downloadAndInstall(
+    AppUpdateInfo update, {
+    void Function(double progress)? onProgress,
+  }) async {
+    final installerPath = await downloadUpdate(
+      update,
+      onProgress: onProgress,
+    );
+    await launchInstaller(installerPath);
+    return installerPath;
   }
 }
 
