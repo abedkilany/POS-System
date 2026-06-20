@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../../core/localization/app_localizations.dart';
 import '../../core/services/account_auth_service.dart';
 import '../../core/services/cloud_sync_service.dart';
+import '../../core/services/sync_diagnostics_log.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/sync_unified/sync_unified.dart';
 import '../../data/app_store.dart';
@@ -159,8 +160,19 @@ class _LoginGatePageState extends State<LoginGatePage> {
             : widget.store.appIdentity.branchId)
         .trim()
         .toUpperCase();
+    SyncDiagnosticsLog.add(
+      '[RECOVER_IDENTITY] press '
+      'hasLocalStoreData=${widget.store.hasLocalStoreData} '
+      'hasStoreIdentity=${widget.store.appIdentity.hostDeviceId.trim().isNotEmpty} '
+      'hasCache=${cache != null} '
+      'accountToken=${cache?.accountToken.trim().isNotEmpty == true} '
+      'storeId=$storeId branchId=$branchId',
+    );
 
     if (cache == null || cache.accountToken.trim().isEmpty) {
+      SyncDiagnosticsLog.add(
+        '[RECOVER_IDENTITY] blocked reason=missing_online_session',
+      );
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
             content: Text(
@@ -169,6 +181,9 @@ class _LoginGatePageState extends State<LoginGatePage> {
       return;
     }
     if (widget.store.hasLocalStoreData) {
+      SyncDiagnosticsLog.add(
+        '[RECOVER_IDENTITY] blocked reason=local_store_data_exists',
+      );
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
             content: Text(
@@ -177,6 +192,9 @@ class _LoginGatePageState extends State<LoginGatePage> {
       return;
     }
     if (_onlineSessionPassword.trim().length < 6) {
+      SyncDiagnosticsLog.add(
+        '[RECOVER_IDENTITY] blocked reason=missing_online_password',
+      );
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
             content: Text(
@@ -185,6 +203,9 @@ class _LoginGatePageState extends State<LoginGatePage> {
       return;
     }
     if (!storeId.startsWith('ST-')) {
+      SyncDiagnosticsLog.add(
+        '[RECOVER_IDENTITY] blocked reason=invalid_store_id storeId=$storeId',
+      );
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
             content: Text('A valid Store ID was not found for this account.')),
@@ -224,6 +245,9 @@ class _LoginGatePageState extends State<LoginGatePage> {
     );
     if (confirmed != true) return;
     try {
+      SyncDiagnosticsLog.add(
+        '[RECOVER_IDENTITY] start storeId=$storeId branchId=$branchId',
+      );
       final recoverySettings = cloud.copyWith(
         enabled: true,
         apiBaseUrl: cloud.apiBaseUrl.trim().isNotEmpty
@@ -237,6 +261,15 @@ class _LoginGatePageState extends State<LoginGatePage> {
         recoverySettings,
         storeId: storeId,
         branchId: branchId,
+      );
+      SyncDiagnosticsLog.add(
+        '[RECOVER_IDENTITY] result ok=${result.ok} '
+        'storeId=${result.identity?.storeId ?? storeId} '
+        'branchId=${result.identity?.branchId ?? branchId} '
+        'loginName=${result.loginName} '
+        'storeSlug=${result.storeSlug} '
+        'cloudSyncEnabled=${result.cloudSyncEnabled} '
+        'deviceLimit=${result.deviceLimit?.allowed ?? -1}',
       );
       if (result.ok) {
         final recoveryCache = AccountAuthCache.load();
@@ -298,6 +331,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
         setState(() {});
       }
     } catch (error) {
+      SyncDiagnosticsLog.add('[RECOVER_IDENTITY] error=$error');
       if (context.mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(error.toString())));
@@ -309,8 +343,18 @@ class _LoginGatePageState extends State<LoginGatePage> {
     final tr = AppLocalizations.of(context);
     final cache = AccountAuthCache.load();
     final cloud = CloudSyncSettings.load();
+    SyncDiagnosticsLog.add(
+      '[RECOVER_DATA] press '
+      'hasLocalStoreData=${widget.store.hasLocalStoreData} '
+      'hasStoreIdentity=${widget.store.appIdentity.hostDeviceId.trim().isNotEmpty} '
+      'hasCache=${cache != null} '
+      'accountToken=${cache?.accountToken.trim().isNotEmpty == true}',
+    );
 
     if (cache == null || cache.accountToken.trim().isEmpty) {
+      SyncDiagnosticsLog.add(
+        '[RECOVER_DATA] blocked reason=missing_online_session',
+      );
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
             content: Text(
@@ -319,11 +363,17 @@ class _LoginGatePageState extends State<LoginGatePage> {
       return;
     }
     if (widget.store.appIdentity.hostDeviceId.trim().isEmpty) {
+      SyncDiagnosticsLog.add(
+        '[RECOVER_DATA] blocked reason=missing_store_identity',
+      );
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(tr.text('recover_store_identity_first'))),
       );
       return;
     }
+    SyncDiagnosticsLog.add(
+      '[RECOVER_DATA] refresh_session start storeId=${cache.storeId} branchId=${cache.branchId}',
+    );
     var latestCache = cache;
     final sessionResult = await AccountAuthService()
         .refreshSession(accountToken: cache.accountToken.trim());
@@ -332,6 +382,11 @@ class _LoginGatePageState extends State<LoginGatePage> {
           mode: cache.mode.isEmpty ? 'login' : cache.mode);
       latestCache = AccountAuthCache.load() ?? cache;
     }
+    SyncDiagnosticsLog.add(
+      '[RECOVER_DATA] refresh_session result ok=${sessionResult.ok} '
+      'storeId=${sessionResult.storeId} branchId=${sessionResult.branchId} '
+      'cloudSyncEnabled=${sessionResult.cloudSyncEnabled}',
+    );
     if (!context.mounted) return;
     final storeId = (sessionResult.storeId.trim().isNotEmpty
             ? sessionResult.storeId
@@ -357,6 +412,9 @@ class _LoginGatePageState extends State<LoginGatePage> {
     final cloudAllowed =
         latestCache.cloudSyncEnabled || sessionResult.cloudSyncEnabled;
     if (!cloudAllowed) {
+      SyncDiagnosticsLog.add(
+        '[RECOVER_DATA] blocked reason=cloud_sync_not_enabled storeId=$storeId branchId=$branchId',
+      );
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
             content: Text('This subscription is not enrolled in Cloud Sync.')),
@@ -396,6 +454,9 @@ class _LoginGatePageState extends State<LoginGatePage> {
     );
     if (confirmed != true) return;
     try {
+      SyncDiagnosticsLog.add(
+        '[RECOVER_DATA] start storeId=$storeId branchId=$branchId',
+      );
       final recoverySettings = cloud.copyWith(
         enabled: true,
         apiBaseUrl: cloud.apiBaseUrl.trim().isNotEmpty
@@ -410,6 +471,17 @@ class _LoginGatePageState extends State<LoginGatePage> {
         storeId: storeId,
         branchId: branchId,
       );
+      SyncDiagnosticsLog.add(
+        '[RECOVER_DATA] result ok=${result.ok} '
+        'storeId=${result.identity?.storeId ?? storeId} '
+        'branchId=${result.identity?.branchId ?? branchId} '
+        'storeName=${result.storeName} '
+        'pulled=${result.pulled} '
+        'loginName=${result.loginName} '
+        'storeSlug=${result.storeSlug} '
+        'cloudSyncEnabled=${result.cloudSyncEnabled} '
+        'deviceLimit=${result.deviceLimit?.allowed ?? -1}',
+      );
       if (result.ok) {
         await _persistRecoveredStoreAuthCache(
           storeId: result.identity?.storeId ?? storeId,
@@ -423,6 +495,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
         setState(() {});
       }
     } catch (error) {
+      SyncDiagnosticsLog.add('[RECOVER_DATA] error=$error');
       if (context.mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(error.toString())));
