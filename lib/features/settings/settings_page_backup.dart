@@ -70,6 +70,7 @@ class SettingsBackupActions {
 
       await store.importBackupJson(rawJson,
           selectedSectionIds: selectedSections);
+      await _publishImportedSnapshotToCloudIfNeeded(store);
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(tr.text('backup_imported'))),
@@ -80,6 +81,33 @@ class SettingsBackupActions {
           SnackBar(content: Text('${tr.text('backup_import_failed')}: $error')),
         );
       }
+    }
+  }
+
+  static Future<void> _publishImportedSnapshotToCloudIfNeeded(
+    AppStore store,
+  ) async {
+    final identity = store.appIdentity;
+    final cloud = CloudSyncSettings.load();
+    if (!identity.isHost || !identity.isCloudEnabled || !cloud.isConfigured) {
+      return;
+    }
+
+    final settings = cloud.copyWith(enabled: true, clearLastPullCursor: true);
+    try {
+      SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] backupImport:publishHostSnapshot store=${identity.storeId} branch=${identity.branchId}',
+      );
+      final service = CloudSyncService(store);
+      await service.publishBootstrapSnapshotToCloud(settings, force: true);
+      await service.pushPendingForUnifiedEngine(settings);
+      SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] backupImport:publishHostSnapshotDone store=${identity.storeId} branch=${identity.branchId}',
+      );
+    } catch (error) {
+      SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] backupImport:publishHostSnapshotFailed error=$error',
+      );
     }
   }
 
