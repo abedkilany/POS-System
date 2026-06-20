@@ -617,7 +617,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
     }
     if (widget.store.activeUser != null) return widget.child;
 
-    if (_showRegister && !kIsWeb && widget.store.needsInitialAdminSetup) {
+    if (_showRegister && !kIsWeb && !widget.store.hasLocalStoreData) {
       return _InitialAdminSetupCard(
         storeNameController: _storeNameController,
         usernameController: _usernameController,
@@ -795,7 +795,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
                         ),
                       ),
                       const SizedBox(height: 8),
-                      if (widget.store.needsInitialAdminSetup)
+                      if (!widget.store.hasLocalStoreData)
                         Builder(
                           builder: (context) {
                             final canRegisterHere = !kIsWeb;
