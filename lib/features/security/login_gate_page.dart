@@ -90,6 +90,16 @@ class _LoginGatePageState extends State<LoginGatePage> {
     );
   }
 
+  String _recoveryUsernameFromCache(AccountAuthCache cache) {
+    final cachedUsername = cache.username.trim().toLowerCase();
+    if (cachedUsername.isNotEmpty) return cachedUsername;
+    final loginName = cache.loginName.trim().toLowerCase();
+    if (loginName.contains('@')) {
+      return loginName.split('@').first.trim();
+    }
+    return 'admin';
+  }
+
   Future<void> _checkSuspensionStatus() async {
     if (!widget.store.appIdentity.isClient) return;
     final tr = AppLocalizations.of(context);
@@ -199,6 +209,25 @@ class _LoginGatePageState extends State<LoginGatePage> {
         branchId: branchId,
       );
       if (result.ok) {
+        final recoveryCache = AccountAuthCache.load();
+        final recoveryUsername = recoveryCache == null
+            ? ''
+            : _recoveryUsernameFromCache(recoveryCache);
+        if (recoveryCache != null && recoveryUsername.isNotEmpty) {
+          await widget.store.recoverOnlineStoreOwnerIdentity(
+            storeId: result.identity?.storeId ?? storeId,
+            branchId: result.identity?.branchId ?? branchId,
+            storeName: recoveryCache.storeName.trim().isNotEmpty
+                ? recoveryCache.storeName
+                : widget.store.storeProfile.name,
+            username: recoveryUsername,
+            password: recoveryCache.accountToken.trim().isNotEmpty
+                ? recoveryCache.accountToken
+                : recoveryCache.adminToken.trim().isNotEmpty
+                    ? recoveryCache.adminToken
+                    : '${storeId.trim().toLowerCase()}_${recoveryUsername}_recovery',
+          );
+        }
         await _persistRecoveredStoreAuthCache(
           storeId: result.identity?.storeId ?? storeId,
           branchId: result.identity?.branchId ?? branchId,
