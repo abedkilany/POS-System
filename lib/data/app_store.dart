@@ -725,6 +725,24 @@ class AppStore extends ChangeNotifier {
       hasPermission(AppPermission.rolesManage);
   bool get needsInitialAdminSetup =>
       _users.isEmpty || _hasOnlyLegacyDefaultAdminUser;
+  bool get hasLocalStoreData {
+    final hasRealUser = _users.isNotEmpty && !_hasOnlyLegacyDefaultAdminUser;
+    return hasRealUser ||
+        _products.any((item) => !item.isDeleted) ||
+        _customers.any((item) => !item.isDeleted) ||
+        _sales.any((item) => !item.isDeleted) ||
+        _saleQuotations.any((item) => !item.isDeleted) ||
+        _deliveryNotes.any((item) => !item.isDeleted) ||
+        _billsOfMaterials.any((item) => !item.isDeleted) ||
+        _manufacturingOrders.any((item) => !item.isDeleted) ||
+        _suppliers.any((item) => !item.isDeleted) ||
+        _expenses.any((item) => !item.isDeleted) ||
+        _purchases.any((item) => !item.isDeleted) ||
+        _stockMovements.isNotEmpty ||
+        _inventoryCounts.isNotEmpty ||
+        _accountTransactions.any((item) => !item.isDeleted);
+  }
+
   bool get isSuspendedByHost =>
       appIdentity.isClient && ClientSuspensionStateStore.isSuspended;
   String get suspendedByHostReason => ClientSuspensionStateStore.reason;
@@ -917,6 +935,11 @@ class AppStore extends ChangeNotifier {
     required String storeName,
     required String username,
     required String password,
+    String? hostDeviceId,
+    String? deviceToken,
+    String? cloudTenantId,
+    DeviceRole? deviceRole,
+    SyncMode? syncMode,
   }) async {
     final cleanStoreId = storeId.trim().toUpperCase();
     final cleanBranchId = branchId.trim().toUpperCase();
@@ -942,18 +965,26 @@ class AppStore extends ChangeNotifier {
     }
 
     final now = DateTime.now();
+    final role = deviceRole ?? DeviceRole.host;
     final recoveredIdentity = _normalizedLocalIdentity(
       appIdentity.copyWith(
         storeId: cleanStoreId,
         branchId: cleanBranchId,
-        deviceRole: DeviceRole.host,
+        deviceRole: role,
         // Online registration/recovery of the store owner identity must not
         // automatically enable Cloud Sync. Cloud Sync is a paid/explicit
         // feature and should only be enabled from the Sync settings page after
         // the user turns it on and the server allows it for this store.
-        syncMode: SyncMode.localOnly,
-        activeSyncTransport: '',
-        hostDeviceId: '',
+        syncMode: syncMode ?? SyncMode.localOnly,
+        activeSyncTransport: syncMode == SyncMode.cloudConnected ? 'cloud' : '',
+        hostDeviceId: hostDeviceId ??
+            (role == DeviceRole.host ? _deviceId : appIdentity.hostDeviceId),
+        deviceToken: (deviceToken == null || deviceToken.trim().isEmpty)
+            ? appIdentity.deviceToken
+            : deviceToken.trim(),
+        cloudTenantId: (cloudTenantId == null || cloudTenantId.trim().isEmpty)
+            ? appIdentity.cloudTenantId
+            : cloudTenantId.trim(),
         deviceId: _deviceId,
         platform: platform,
         updatedAt: now,

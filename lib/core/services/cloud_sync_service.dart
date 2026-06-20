@@ -519,12 +519,24 @@ class CloudStoreRecoveryResult {
       required this.message,
       this.identity,
       this.restoredSnapshot = false,
-      this.pulled = 0});
+      this.pulled = 0,
+      this.username = '',
+      this.loginName = '',
+      this.storeName = '',
+      this.storeSlug = '',
+      this.cloudSyncEnabled = false,
+      this.deviceLimit});
   final bool ok;
   final String message;
   final AppIdentity? identity;
   final bool restoredSnapshot;
   final int pulled;
+  final String username;
+  final String loginName;
+  final String storeName;
+  final String storeSlug;
+  final bool cloudSyncEnabled;
+  final CloudDeviceLimitStatus? deviceLimit;
 }
 
 class CloudSyncService {
@@ -1332,7 +1344,8 @@ class CloudSyncService {
     }
     if (settings.accountToken.trim().isEmpty) {
       return const CloudStoreRecoveryResult(
-          ok: false, message: 'Online account session is required. Please sign in again.');
+          ok: false,
+          message: 'Online account session is required. Please sign in again.');
     }
 
     try {
@@ -1479,6 +1492,12 @@ class CloudSyncService {
         }
       }
 
+      final deviceLimit = claim['deviceLimit'] is Map
+          ? CloudDeviceLimitStatus.fromJson(
+              Map<String, dynamic>.from(claim['deviceLimit'] as Map),
+            )
+          : null;
+
       onProgress?.call(0.90, 'Publishing recovered Host snapshot...');
       await publishBootstrapSnapshotToCloud(settings,
           force: true, onProgress: onProgress);
@@ -1486,11 +1505,19 @@ class CloudSyncService {
       await sendHostHeartbeat(settings);
       onProgress?.call(1.0, 'Store recovered.');
       return CloudStoreRecoveryResult(
-          ok: true,
-          message: 'Current Store recovered successfully.',
-          identity: store.appIdentity,
-          restoredSnapshot: restoredSnapshot,
-          pulled: pulled);
+        ok: true,
+        message: 'Current Store recovered successfully.',
+        identity: store.appIdentity,
+        restoredSnapshot: restoredSnapshot,
+        pulled: pulled,
+        username: (claim['username'] ?? '').toString(),
+        loginName: (claim['loginName'] ?? claim['login_name'] ?? '').toString(),
+        storeName: (claim['storeName'] ?? claim['store_name'] ?? '').toString(),
+        storeSlug: (claim['storeSlug'] ?? claim['store_slug'] ?? '').toString(),
+        cloudSyncEnabled: claim['cloudSyncEnabled'] == true ||
+            claim['cloud_sync_enabled'] == true,
+        deviceLimit: deviceLimit,
+      );
     } catch (error) {
       return CloudStoreRecoveryResult(
           ok: false, message: 'Store recovery failed: $error');
@@ -1556,8 +1583,8 @@ class CloudSyncService {
       if (claim['ok'] != true) {
         return CloudStoreRecoveryResult(
             ok: false,
-            message:
-                claim['error']?.toString() ?? 'Store identity recovery failed.');
+            message: claim['error']?.toString() ??
+                'Store identity recovery failed.');
       }
 
       final recoveredBranchId =
@@ -1577,6 +1604,11 @@ class CloudSyncService {
               .toString();
       final cloudTenantId =
           (claim['cloudTenantId'] ?? claim['cloud_tenant_id'] ?? '').toString();
+      final deviceLimit = claim['deviceLimit'] is Map
+          ? CloudDeviceLimitStatus.fromJson(
+              Map<String, dynamic>.from(claim['deviceLimit'] as Map),
+            )
+          : null;
 
       onProgress?.call(0.25, 'Recovering permanent Store identity...');
       await store.recoverExistingStoreIdentity(
@@ -1596,6 +1628,13 @@ class CloudSyncService {
         ok: true,
         message: 'Store identity recovered.',
         identity: store.appIdentity,
+        username: (claim['username'] ?? '').toString(),
+        loginName: (claim['loginName'] ?? claim['login_name'] ?? '').toString(),
+        storeName: (claim['storeName'] ?? claim['store_name'] ?? '').toString(),
+        storeSlug: (claim['storeSlug'] ?? claim['store_slug'] ?? '').toString(),
+        cloudSyncEnabled: claim['cloudSyncEnabled'] == true ||
+            claim['cloud_sync_enabled'] == true,
+        deviceLimit: deviceLimit,
       );
     } catch (error) {
       return CloudStoreRecoveryResult(

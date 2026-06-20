@@ -12,6 +12,7 @@ class StoreAccountDashboardPage extends StatefulWidget {
     required this.store,
     required this.cache,
     required this.hasStoreIdentity,
+    required this.hasLocalStoreData,
     required this.canRecoverStoreData,
     required this.onRecoverStoreIdentity,
     required this.onRecoverStoreData,
@@ -22,6 +23,7 @@ class StoreAccountDashboardPage extends StatefulWidget {
   final AppStore store;
   final AccountAuthCache cache;
   final bool hasStoreIdentity;
+  final bool hasLocalStoreData;
   final bool canRecoverStoreData;
   final VoidCallback onRecoverStoreIdentity;
   final VoidCallback onRecoverStoreData;
@@ -39,8 +41,9 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
   AccountAuthCache get cache => widget.cache;
 
   String _formatDate(BuildContext context, DateTime? value) {
-    if (value == null)
+    if (value == null) {
       return AppLocalizations.of(context).text('account_not_set');
+    }
     final local = value.toLocal();
     String two(int n) => n.toString().padLeft(2, '0');
     return '${local.year}-${two(local.month)}-${two(local.day)} ${two(local.hour)}:${two(local.minute)}';
@@ -125,11 +128,13 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
                         ),
                         validator: (value) {
                           final text = value ?? '';
-                          if (text.length < 6)
+                          if (text.length < 6) {
                             return tr.text('account_password_min_6');
-                          if (text == currentController.text)
+                          }
+                          if (text == currentController.text) {
                             return tr
                                 .text('account_password_must_be_different');
+                          }
                           return null;
                         },
                       ),
@@ -369,15 +374,17 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
                   children: [
                     if (!widget.hasStoreIdentity)
                       FilledButton.icon(
-                        onPressed: widget.onRecoverStoreIdentity,
-                        icon: const Icon(Icons.key_outlined),
+                        onPressed: widget.hasLocalStoreData
+                            ? null
+                            : widget.onRecoverStoreIdentity,
+                        icon: Icon(widget.hasLocalStoreData
+                            ? Icons.lock_outline
+                            : Icons.key_outlined),
                         label: Text(tr.text('recover_store_identity')),
                       )
                     else
                       FilledButton.icon(
-                        onPressed: widget.canRecoverStoreData
-                            ? widget.onRecoverStoreData
-                            : null,
+                        onPressed: widget.onRecoverStoreData,
                         icon: Icon(widget.canRecoverStoreData
                             ? Icons.download_outlined
                             : Icons.lock_outline),

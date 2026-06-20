@@ -161,7 +161,7 @@ class SettingsBackupActions {
     BuildContext context,
     AppStore store,
   ) async {
-    if (!store.appIdentity.hostDeviceId.trim().isEmpty) {
+    if (store.appIdentity.hostDeviceId.trim().isNotEmpty) {
       if (!store.hasPermission(AppPermission.syncManage)) {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -252,8 +252,8 @@ class SettingsBackupActions {
         clearLastPullCursor: true,
       );
       await recoverySettings.save();
-      final result = await CloudSyncService(store)
-          .recoverExistingStoreIdentityFromCloud(
+      final result =
+          await CloudSyncService(store).recoverExistingStoreIdentityFromCloud(
         recoverySettings,
         storeId: storeId,
         branchId: branchId,
@@ -361,7 +361,8 @@ class SettingsBackupActions {
         clearLastPullCursor: true,
       );
       await recoverySettings.save();
-      final result = await CloudSyncService(store).recoverExistingStoreFromCloud(
+      final result =
+          await CloudSyncService(store).recoverExistingStoreFromCloud(
         recoverySettings,
         storeId: storeId,
         branchId: branchId,

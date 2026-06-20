@@ -7,7 +7,6 @@ import '../../core/services/cloud_sync_service.dart';
 import '../../core/services/lan_sync_service.dart';
 import '../../core/sync_unified/sync_device_state.dart';
 import '../../data/app_store.dart';
-import '../../models/app_identity.dart';
 
 class SyncMonitoringSection extends StatefulWidget {
   const SyncMonitoringSection({

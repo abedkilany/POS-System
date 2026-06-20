@@ -7,7 +7,7 @@ import '../../core/services/cloud_sync_service.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/sync_unified/sync_unified.dart';
 import '../../data/app_store.dart';
-import '../../models/user_role.dart';
+import '../../models/app_identity.dart';
 import '../settings/sync_setup_page.dart';
 import '../account/store_account_dashboard_page.dart';
 import '../admin/admin_subscribers_page.dart';
@@ -42,6 +42,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
   bool _showRegister = false;
   bool _showPassword = false;
   bool _checkingSuspension = false;
+  String _onlineSessionPassword = '';
 
   @override
   void initState() {
@@ -100,6 +101,19 @@ class _LoginGatePageState extends State<LoginGatePage> {
     return 'admin';
   }
 
+  String _recoveryUsernameFromResult(
+    CloudStoreRecoveryResult result,
+    AccountAuthCache cache,
+  ) {
+    final resultUsername = result.username.trim().toLowerCase();
+    if (resultUsername.isNotEmpty) return resultUsername;
+    final resultLoginName = result.loginName.trim().toLowerCase();
+    if (resultLoginName.contains('@')) {
+      return resultLoginName.split('@').first.trim();
+    }
+    return _recoveryUsernameFromCache(cache);
+  }
+
   Future<void> _checkSuspensionStatus() async {
     if (!widget.store.appIdentity.isClient) return;
     final tr = AppLocalizations.of(context);
@@ -151,6 +165,22 @@ class _LoginGatePageState extends State<LoginGatePage> {
         const SnackBar(
             content: Text(
                 'Online account session is required. Please sign in again.')),
+      );
+      return;
+    }
+    if (widget.store.hasLocalStoreData) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text(
+                'This device already has local Store data. Store identity recovery is locked.')),
+      );
+      return;
+    }
+    if (_onlineSessionPassword.trim().length < 6) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text(
+                'Please sign in online again before recovering the Store identity.')),
       );
       return;
     }
@@ -212,26 +242,54 @@ class _LoginGatePageState extends State<LoginGatePage> {
         final recoveryCache = AccountAuthCache.load();
         final recoveryUsername = recoveryCache == null
             ? ''
-            : _recoveryUsernameFromCache(recoveryCache);
+            : _recoveryUsernameFromResult(result, recoveryCache);
         if (recoveryCache != null && recoveryUsername.isNotEmpty) {
           await widget.store.recoverOnlineStoreOwnerIdentity(
             storeId: result.identity?.storeId ?? storeId,
             branchId: result.identity?.branchId ?? branchId,
-            storeName: recoveryCache.storeName.trim().isNotEmpty
-                ? recoveryCache.storeName
-                : widget.store.storeProfile.name,
+            storeName: result.storeName.trim().isNotEmpty
+                ? result.storeName
+                : recoveryCache.storeName.trim().isNotEmpty
+                    ? recoveryCache.storeName
+                    : widget.store.storeProfile.name,
             username: recoveryUsername,
-            password: recoveryCache.accountToken.trim().isNotEmpty
-                ? recoveryCache.accountToken
-                : recoveryCache.adminToken.trim().isNotEmpty
-                    ? recoveryCache.adminToken
-                    : '${storeId.trim().toLowerCase()}_${recoveryUsername}_recovery',
+            password: _onlineSessionPassword,
+            hostDeviceId:
+                result.identity?.hostDeviceId.trim().isNotEmpty == true
+                    ? result.identity!.hostDeviceId
+                    : widget.store.deviceId,
+            deviceToken: result.identity?.deviceToken ?? '',
+            cloudTenantId: result.identity?.cloudTenantId ?? '',
+            deviceRole: DeviceRole.host,
+            syncMode: SyncMode.cloudConnected,
+          );
+          await AccountAuthCache.save(
+            recoveryCache.copyWith(
+              mode: 'login',
+              storeId: result.identity?.storeId ?? storeId,
+              branchId: result.identity?.branchId ?? branchId,
+              username: recoveryUsername,
+              storeSlug: result.storeSlug.trim().isNotEmpty
+                  ? result.storeSlug
+                  : recoveryCache.storeSlug,
+              storeName: result.storeName.trim().isNotEmpty
+                  ? result.storeName
+                  : recoveryCache.storeName,
+              loginName: result.loginName.trim().isNotEmpty
+                  ? result.loginName
+                  : recoveryCache.loginName,
+              cloudSyncEnabled: result.cloudSyncEnabled,
+              devicesLimit:
+                  result.deviceLimit?.allowed ?? recoveryCache.devicesLimit,
+              lastVerifiedAt: DateTime.now(),
+            ),
+          );
+        } else {
+          await _persistRecoveredStoreAuthCache(
+            storeId: result.identity?.storeId ?? storeId,
+            branchId: result.identity?.branchId ?? branchId,
           );
         }
-        await _persistRecoveredStoreAuthCache(
-          storeId: result.identity?.storeId ?? storeId,
-          branchId: result.identity?.branchId ?? branchId,
-        );
       }
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -283,10 +341,21 @@ class _LoginGatePageState extends State<LoginGatePage> {
       );
       return;
     }
-    if (!widget.store.hasPermission(AppPermission.syncManage)) {
+    var latestCache = cache;
+    final sessionResult = await AccountAuthService()
+        .refreshSession(accountToken: cache.accountToken.trim());
+    if (sessionResult.ok) {
+      await AccountAuthService.cacheOnlineResult(sessionResult,
+          mode: cache.mode.isEmpty ? 'login' : cache.mode);
+      latestCache = AccountAuthCache.load() ?? cache;
+    }
+    if (!context.mounted) return;
+    final cloudAllowed =
+        latestCache.cloudSyncEnabled || sessionResult.cloudSyncEnabled;
+    if (!cloudAllowed) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text('You do not have permission: sync.manage')),
+            content: Text('This subscription is not enrolled in Cloud Sync.')),
       );
       return;
     }
@@ -392,6 +461,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
           ));
           return;
         }
+        _onlineSessionPassword = _passwordController.text;
         await AccountAuthService.cacheOnlineResult(onlineResult, mode: 'login');
         await widget.store.logout();
         setState(() => _loggingIn = false);
@@ -534,8 +604,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
         cache: authCache,
         hasStoreIdentity:
             widget.store.appIdentity.hostDeviceId.trim().isNotEmpty,
-        canRecoverStoreData:
-            widget.store.hasPermission(AppPermission.syncManage),
+        hasLocalStoreData: widget.store.hasLocalStoreData,
+        canRecoverStoreData: authCache.cloudSyncEnabled,
         onRecoverStoreIdentity: () => _recoverStoreIdentity(context),
         onRecoverStoreData: () => _recoverStoreData(context),
         onLogout: () async {

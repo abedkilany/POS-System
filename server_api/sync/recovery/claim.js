@@ -1,5 +1,5 @@
 import { randomBytes } from 'crypto';
-import { sql, assertStoreAllowed, accountTokenFromRequest, sendError } from '../../_db.js';
+import { sql, assertStoreAllowed, accountTokenFromRequest, sendError, getClientDeviceLimitStatus } from '../../_db.js';
 import { notifySyncChanged } from '../realtime.js';
 
 function asIso(value) {
@@ -49,6 +49,7 @@ async function ensureRecoveryTables() {
   await sql`alter table store_devices add column if not exists suspended boolean not null default false`;
   await sql`alter table store_devices add column if not exists wipe_pending boolean not null default false`;
   await sql`alter table store_devices add column if not exists online boolean not null default false`;
+  await sql`alter table app_stores add column if not exists cloud_sync_enabled boolean not null default false`;
   await sql`
     create table if not exists store_recovery_keys (
       store_id text not null,
@@ -106,9 +107,13 @@ async function allocateServerSequence(storeId, branchId) {
 async function storeForAccount({ accountId, storeId, branchId }) {
   const rows = await sql`
     select s.id as store_id, s.branch_id, s.owner_account_id, s.slug, s.name,
+           s.cloud_sync_enabled,
+           a.username as account_username,
+           a.namespace_slug as account_namespace_slug,
            coalesce(r.cloud_tenant_id, '') as cloud_tenant_id,
            coalesce(r.latest_host_device_id, '') as latest_host_device_id
     from app_stores s
+    join app_accounts a on a.id = s.owner_account_id
     left join store_recovery_keys r on r.store_id = s.id and r.branch_id = s.branch_id
     where s.id = ${storeId}
       and s.owner_account_id = ${accountId}
@@ -162,6 +167,15 @@ export default async function handler(req, res) {
       limit 1
     `;
     const oldHostDeviceId = oldHostRows[0]?.device_id || store.latest_host_device_id || '';
+    const deviceLimit = await getClientDeviceLimitStatus(storeId);
+    if (oldHostDeviceId && oldHostDeviceId !== deviceId && deviceLimit.limitReached) {
+      return res.status(409).json({
+        ok: false,
+        code: 'DEVICE_LIMIT_REACHED',
+        error: 'You have reached the connected devices limit. Delete one linked device before converting the current Host to a Client.',
+        deviceLimit,
+      });
+    }
     const deviceToken = makeDeviceToken();
     const cloudTenantId = store.cloud_tenant_id || '';
 
@@ -249,6 +263,12 @@ export default async function handler(req, res) {
       deviceToken,
       cloudTenantId,
       hostChangedEventId: eventId,
+      username: store.account_username || account.username || '',
+      storeSlug: store.slug || store.account_namespace_slug || account.namespace || '',
+      storeName: store.name || '',
+      loginName: `${store.account_username || account.username || ''}@${store.slug || store.account_namespace_slug || account.namespace || ''}`,
+      cloudSyncEnabled: store.cloud_sync_enabled === true,
+      deviceLimit: await getClientDeviceLimitStatus(storeId),
       recoveredAt: asIso(new Date()),
     });
   } catch (error) {
