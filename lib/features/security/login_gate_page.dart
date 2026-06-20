@@ -309,29 +309,12 @@ class _LoginGatePageState extends State<LoginGatePage> {
     final tr = AppLocalizations.of(context);
     final cache = AccountAuthCache.load();
     final cloud = CloudSyncSettings.load();
-    final storeId = (cache?.storeId.trim().isNotEmpty == true
-            ? cache!.storeId
-            : widget.store.appIdentity.storeId)
-        .trim()
-        .toUpperCase();
-    final branchId = (cache?.branchId.trim().isNotEmpty == true
-            ? cache!.branchId
-            : widget.store.appIdentity.branchId)
-        .trim()
-        .toUpperCase();
 
     if (cache == null || cache.accountToken.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
             content: Text(
                 'Online account session is required. Please sign in again.')),
-      );
-      return;
-    }
-    if (!storeId.startsWith('ST-')) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('A valid Store ID was not found for this account.')),
       );
       return;
     }
@@ -350,6 +333,27 @@ class _LoginGatePageState extends State<LoginGatePage> {
       latestCache = AccountAuthCache.load() ?? cache;
     }
     if (!context.mounted) return;
+    final storeId = (sessionResult.storeId.trim().isNotEmpty
+            ? sessionResult.storeId
+            : latestCache.storeId.trim().isNotEmpty
+                ? latestCache.storeId
+                : widget.store.appIdentity.storeId)
+        .trim()
+        .toUpperCase();
+    final branchId = (sessionResult.branchId.trim().isNotEmpty
+            ? sessionResult.branchId
+            : latestCache.branchId.trim().isNotEmpty
+                ? latestCache.branchId
+                : widget.store.appIdentity.branchId)
+        .trim()
+        .toUpperCase();
+    if (!storeId.startsWith('ST-')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('A valid Store ID was not found for this account.')),
+      );
+      return;
+    }
     final cloudAllowed =
         latestCache.cloudSyncEnabled || sessionResult.cloudSyncEnabled;
     if (!cloudAllowed) {
