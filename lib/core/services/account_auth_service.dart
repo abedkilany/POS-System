@@ -112,6 +112,49 @@ class AccountAuthCache {
   final bool cloudSyncEnabled;
   final DateTime? lastVerifiedAt;
 
+  AccountAuthCache copyWith({
+    String? mode,
+    String? accountId,
+    String? storeId,
+    String? branchId,
+    String? subscriptionStatus,
+    String? username,
+    String? storeSlug,
+    String? storeName,
+    String? loginName,
+    String? accountType,
+    DateTime? trialEndsAt,
+    bool clearTrialEndsAt = false,
+    int? devicesLimit,
+    bool clearDevicesLimit = false,
+    String? adminToken,
+    String? accountToken,
+    bool? cloudSyncEnabled,
+    DateTime? lastVerifiedAt,
+    bool clearLastVerifiedAt = false,
+  }) {
+    return AccountAuthCache(
+      mode: mode ?? this.mode,
+      accountId: accountId ?? this.accountId,
+      storeId: storeId ?? this.storeId,
+      branchId: branchId ?? this.branchId,
+      subscriptionStatus: subscriptionStatus ?? this.subscriptionStatus,
+      username: username ?? this.username,
+      storeSlug: storeSlug ?? this.storeSlug,
+      storeName: storeName ?? this.storeName,
+      loginName: loginName ?? this.loginName,
+      accountType: accountType ?? this.accountType,
+      trialEndsAt: clearTrialEndsAt ? null : trialEndsAt ?? this.trialEndsAt,
+      devicesLimit:
+          clearDevicesLimit ? null : devicesLimit ?? this.devicesLimit,
+      adminToken: adminToken ?? this.adminToken,
+      accountToken: accountToken ?? this.accountToken,
+      cloudSyncEnabled: cloudSyncEnabled ?? this.cloudSyncEnabled,
+      lastVerifiedAt:
+          clearLastVerifiedAt ? null : lastVerifiedAt ?? this.lastVerifiedAt,
+    );
+  }
+
   Map<String, dynamic> toJson() => {
         'mode': mode,
         'accountId': accountId,
@@ -330,7 +373,6 @@ class AccountAuthService {
     );
     return _decode(response);
   }
-
 
   Future<AccountAuthResult> changePassword({
     required String accountToken,

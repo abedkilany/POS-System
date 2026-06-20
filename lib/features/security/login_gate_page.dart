@@ -74,6 +74,22 @@ class _LoginGatePageState extends State<LoginGatePage> {
         .showSnackBar(SnackBar(content: Text(message)));
   }
 
+  Future<void> _persistRecoveredStoreAuthCache({
+    required String storeId,
+    required String branchId,
+  }) async {
+    final cache = AccountAuthCache.load();
+    if (cache == null) return;
+    await AccountAuthCache.save(
+      cache.copyWith(
+        mode: 'login',
+        storeId: storeId.trim().toUpperCase(),
+        branchId: branchId.trim().toUpperCase(),
+        lastVerifiedAt: DateTime.now(),
+      ),
+    );
+  }
+
   Future<void> _checkSuspensionStatus() async {
     if (!widget.store.appIdentity.isClient) return;
     final tr = AppLocalizations.of(context);
@@ -182,6 +198,12 @@ class _LoginGatePageState extends State<LoginGatePage> {
         storeId: storeId,
         branchId: branchId,
       );
+      if (result.ok) {
+        await _persistRecoveredStoreAuthCache(
+          storeId: result.identity?.storeId ?? storeId,
+          branchId: result.identity?.branchId ?? branchId,
+        );
+      }
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(localizeRuntimeMessage(result.message, tr))),
@@ -286,6 +308,12 @@ class _LoginGatePageState extends State<LoginGatePage> {
         storeId: storeId,
         branchId: branchId,
       );
+      if (result.ok) {
+        await _persistRecoveredStoreAuthCache(
+          storeId: result.identity?.storeId ?? storeId,
+          branchId: result.identity?.branchId ?? branchId,
+        );
+      }
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(localizeRuntimeMessage(result.message, tr))),
