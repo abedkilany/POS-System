@@ -534,6 +534,7 @@ class _MainShellState extends State<MainShell> {
   bool _drawerNavigationLocked = false;
   late final AppUpdateService _updateService = getAppUpdateService();
   late final VoidCallback _updateStatusListener;
+  VoidCallback? _cancelDownloadUpdate;
   AppUpdateInfo? _availableUpdate;
   bool _checkingForUpdate = false;
   bool _downloadingUpdate = false;
@@ -615,6 +616,7 @@ class _MainShellState extends State<MainShell> {
 
   Future<void> _startDownload(AppUpdateInfo update) async {
     if (_downloadingUpdate || _installingUpdate) return;
+    _cancelDownloadUpdate = null;
     setState(() {
       _downloadingUpdate = true;
       _downloadProgress = 0;
@@ -626,12 +628,24 @@ class _MainShellState extends State<MainShell> {
           if (!mounted) return;
           setState(() => _downloadProgress = value);
         },
+        registerCancel: (cancel) {
+          _cancelDownloadUpdate = () {
+            cancel();
+            if (!mounted) return;
+            setState(() {
+              _downloadingUpdate = false;
+              _downloadProgress = null;
+              _cancelDownloadUpdate = null;
+            });
+          };
+        },
       );
       if (!mounted) return;
       setState(() {
         _downloadedInstallerPath = installerPath;
         _downloadingUpdate = false;
         _downloadProgress = 1;
+        _cancelDownloadUpdate = null;
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(AppLocalizations.of(context).text('update_downloaded'))),
@@ -643,6 +657,7 @@ class _MainShellState extends State<MainShell> {
       setState(() {
         _downloadingUpdate = false;
         _downloadProgress = null;
+        _cancelDownloadUpdate = null;
       });
       await _updateService.clearDownloadedUpdate();
       if (!mounted) return;
@@ -704,25 +719,54 @@ class _MainShellState extends State<MainShell> {
             ? tr.text('downloading')
             : '${tr.text('downloading')} ${(_downloadProgress! * 100).clamp(0, 100).toStringAsFixed(0)}%';
     return PreferredSize(
-      preferredSize: const Size.fromHeight(34),
+      preferredSize: const Size.fromHeight(66),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            LinearProgressIndicator(
-              value: _installingUpdate ? null : _downloadProgress,
-              minHeight: 4,
+        child: Container(
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: Theme.of(context).colorScheme.outlineVariant,
             ),
-            const SizedBox(height: 6),
-            Align(
-              alignment: AlignmentDirectional.centerStart,
-              child: Text(
-                message,
-                style: Theme.of(context).textTheme.labelMedium,
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 34,
+                height: 34,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    CircularProgressIndicator(
+                      value: _installingUpdate ? null : _downloadProgress,
+                      strokeWidth: 3,
+                    ),
+                    Icon(
+                      Icons.sync_outlined,
+                      size: 18,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  message,
+                  style: Theme.of(context).textTheme.labelLarge,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 12),
+              TextButton.icon(
+                onPressed: _downloadingUpdate ? _cancelDownloadUpdate : null,
+                icon: const Icon(Icons.close),
+                label: Text(tr.text('cancel')),
+              ),
+            ],
+          ),
         ),
       ),
     );
