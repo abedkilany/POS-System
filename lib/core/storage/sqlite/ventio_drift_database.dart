@@ -12,7 +12,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
   VentioDriftDatabase([QueryExecutor? executor]) : super(executor ?? openVentioSqliteConnection());
 
   @override
-  int get schemaVersion => 5;
+  int get schemaVersion => 6;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -453,6 +453,54 @@ class VentioDriftDatabase extends GeneratedDatabase {
     ''');
     await customStatement("CREATE UNIQUE INDEX IF NOT EXISTS idx_accounting_branches_code_active ON accounting_branches(code) WHERE deleted_at = '';");
 
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS fixed_assets (
+        id TEXT PRIMARY KEY NOT NULL,
+        code TEXT NOT NULL,
+        name TEXT NOT NULL,
+        category TEXT NOT NULL DEFAULT '',
+        acquisition_date TEXT NOT NULL,
+        purchase_value REAL NOT NULL DEFAULT 0,
+        useful_life_months INTEGER NOT NULL DEFAULT 0,
+        asset_account_id TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'active',
+        notes TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT NOT NULL DEFAULT '',
+        store_id TEXT NOT NULL DEFAULT '',
+        branch_id TEXT NOT NULL DEFAULT '',
+        CHECK (purchase_value >= 0),
+        CHECK (useful_life_months >= 0),
+        CHECK (status IN ('active', 'disposed', 'inactive'))
+      );
+    ''');
+    await customStatement("CREATE UNIQUE INDEX IF NOT EXISTS idx_fixed_assets_code_active ON fixed_assets(code) WHERE deleted_at = '';");
+    await customStatement('CREATE INDEX IF NOT EXISTS idx_fixed_assets_status ON fixed_assets(status, acquisition_date);');
+    await customStatement('CREATE INDEX IF NOT EXISTS idx_fixed_assets_store_branch ON fixed_assets(store_id, branch_id);');
+
+
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS fixed_asset_depreciation (
+        id TEXT PRIMARY KEY NOT NULL,
+        asset_id TEXT NOT NULL,
+        period_key TEXT NOT NULL,
+        depreciation_date TEXT NOT NULL,
+        amount REAL NOT NULL DEFAULT 0,
+        accumulated_after REAL NOT NULL DEFAULT 0,
+        book_value_after REAL NOT NULL DEFAULT 0,
+        journal_entry_id TEXT NOT NULL DEFAULT '',
+        notes TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        store_id TEXT NOT NULL DEFAULT '',
+        branch_id TEXT NOT NULL DEFAULT '',
+        deleted_at TEXT NOT NULL DEFAULT '',
+        CHECK (amount >= 0)
+      );
+    ''');
+    await customStatement("CREATE UNIQUE INDEX IF NOT EXISTS idx_fixed_asset_depreciation_asset_period_active ON fixed_asset_depreciation(asset_id, period_key) WHERE deleted_at = '';");
+    await customStatement('CREATE INDEX IF NOT EXISTS idx_fixed_asset_depreciation_asset_date ON fixed_asset_depreciation(asset_id, depreciation_date);');
+
     await _seedDefaultChartOfAccounts();
     await _seedAdvancedAccountingDefaults();
   }
@@ -473,8 +521,12 @@ class VentioDriftDatabase extends GeneratedDatabase {
       ['acc_bank', '1200', 'Bank', 'asset', 'bank', 'acc_assets', 'debit'],
       ['acc_customers', '1300', 'Customers / Accounts Receivable', 'asset', 'receivable', 'acc_assets', 'debit'],
       ['acc_inventory', '1400', 'Inventory', 'asset', 'inventory', 'acc_assets', 'debit'],
+      ['acc_fixed_assets', '1600', 'Fixed Assets', 'asset', 'fixed_assets', 'acc_assets', 'debit'],
+      ['acc_accum_depreciation', '1690', 'Accumulated Depreciation', 'asset', 'accumulated_depreciation', 'acc_assets', 'credit'],
+      ['acc_vat_input', '1500', 'VAT Input / Recoverable Tax', 'asset', 'tax_input', 'acc_assets', 'debit'],
       ['acc_liabilities', '2000', 'Liabilities', 'liability', 'group', '', 'credit'],
       ['acc_suppliers', '2100', 'Suppliers / Accounts Payable', 'liability', 'payable', 'acc_liabilities', 'credit'],
+      ['acc_vat_output', '2200', 'VAT Output / Tax Payable', 'liability', 'tax_payable', 'acc_liabilities', 'credit'],
       ['acc_equity', '3000', 'Equity', 'equity', 'group', '', 'credit'],
       ['acc_owner_capital', '3100', 'Owner Capital', 'equity', 'capital', 'acc_equity', 'credit'],
       ['acc_revenue', '4000', 'Revenue', 'revenue', 'group', '', 'credit'],
@@ -483,6 +535,8 @@ class VentioDriftDatabase extends GeneratedDatabase {
       ['acc_cogs', '5100', 'Cost of Goods Sold', 'cost_of_sales', 'cogs', 'acc_cost_of_sales', 'debit'],
       ['acc_expenses', '6000', 'Expenses', 'expense', 'group', '', 'debit'],
       ['acc_general_expenses', '6100', 'General Expenses', 'expense', 'general', 'acc_expenses', 'debit'],
+      ['acc_cash_over_short', '6200', 'Cash Over / Short', 'expense', 'cash_reconciliation', 'acc_expenses', 'debit'],
+      ['acc_depreciation_expense', '6300', 'Depreciation Expense', 'expense', 'depreciation', 'acc_expenses', 'debit'],
     ];
 
     for (final account in accounts) {
@@ -514,9 +568,17 @@ class VentioDriftDatabase extends GeneratedDatabase {
       ['default_customers_account_id', 'acc_customers', 'Default accounts receivable control account'],
       ['default_suppliers_account_id', 'acc_suppliers', 'Default accounts payable control account'],
       ['default_inventory_account_id', 'acc_inventory', 'Default inventory asset account'],
+      ['default_fixed_assets_account_id', 'acc_fixed_assets', 'Default fixed assets account'],
+      ['default_accumulated_depreciation_account_id', 'acc_accum_depreciation', 'Default accumulated depreciation contra-asset account'],
+      ['default_depreciation_expense_account_id', 'acc_depreciation_expense', 'Default depreciation expense account'],
       ['default_sales_account_id', 'acc_sales', 'Default sales revenue account'],
       ['default_cogs_account_id', 'acc_cogs', 'Default cost of goods sold account'],
       ['default_expense_account_id', 'acc_general_expenses', 'Default operating expense account'],
+      ['default_cash_over_short_account_id', 'acc_cash_over_short', 'Default cash reconciliation over/short account'],
+      ['default_sales_tax_account_id', 'acc_vat_output', 'Default VAT/tax account for sales invoices'],
+      ['default_purchase_tax_account_id', 'acc_vat_input', 'Default VAT/tax account for purchase invoices'],
+      ['default_tax_payable_account_id', 'acc_vat_output', 'Default net tax payable account'],
+      ['default_vat_rate_percent', '', 'Default VAT rate percent used by accounting auto-posting'],
       ['accounting_engine_version', '', 'Accounting engine schema/seed version'],
     ];
 
@@ -530,7 +592,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
         variables: <Variable<Object>>[
           Variable<String>(setting[0]),
           Variable<String>(setting[1]),
-          Variable<String>(setting[0] == 'accounting_engine_version' ? '1' : ''),
+          Variable<String>(setting[0] == 'accounting_engine_version' ? '6' : setting[0] == 'default_vat_rate_percent' ? '0' : ''),
           Variable<String>(setting[2]),
           Variable<String>(now),
         ],
@@ -585,8 +647,8 @@ class VentioDriftDatabase extends GeneratedDatabase {
     await customInsert(
       r'''
       INSERT INTO accounting_settings (key, account_id, value, description, updated_at)
-      VALUES ('accounting_engine_version', '', '2', 'Accounting engine schema/seed version', ?)
-      ON CONFLICT(key) DO UPDATE SET value = '2', updated_at = excluded.updated_at
+      VALUES ('accounting_engine_version', '', '3', 'Accounting engine schema/seed version', ?)
+      ON CONFLICT(key) DO UPDATE SET value = '3', updated_at = excluded.updated_at
       ''',
       variables: <Variable<Object>>[Variable<String>(now)],
     );

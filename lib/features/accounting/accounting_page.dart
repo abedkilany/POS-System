@@ -4,10 +4,12 @@ import '../../core/localization/app_localizations.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/services/accounting_service.dart';
+import '../../core/services/accounting_aging_service.dart';
 import '../../data/app_store.dart';
 import '../../models/account_transaction.dart';
 import '../../models/accounting_account.dart';
 import '../../models/journal_entry.dart';
+import '../../models/aging_report.dart';
 import '../../models/user_role.dart';
 import '../accounts/account_ledger_widgets.dart';
 
@@ -28,7 +30,7 @@ class _AccountingPageState extends State<AccountingPage> with SingleTickerProvid
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 11, vsync: this);
+    _tabController = TabController(length: 14, vsync: this);
     _searchController.addListener(() => setState(() => _query = _searchController.text.trim().toLowerCase()));
   }
 
@@ -66,6 +68,7 @@ class _AccountingPageState extends State<AccountingPage> with SingleTickerProvid
               children: [
                 _AccountsTab(store: widget.store, query: _query, accountType: 'customer'),
                 _AccountsTab(store: widget.store, query: _query, accountType: 'supplier'),
+                _AgingReportsTab(store: widget.store, query: _query),
                 _TransactionsTab(store: widget.store, query: _query, cashOnly: true),
                 _TransactionsTab(store: widget.store, query: _query, cashOnly: false),
                 _GeneralLedgerTab(store: widget.store, query: _query),
@@ -73,6 +76,8 @@ class _AccountingPageState extends State<AccountingPage> with SingleTickerProvid
                 _IncomeStatementTab(store: widget.store),
                 _BalanceSheetTab(store: widget.store),
                 _CashBankReportTab(store: widget.store),
+                _CashFlowStatementTab(store: widget.store),
+                _TaxReportTab(store: widget.store),
                 _AdvancedAccountingTab(store: widget.store),
                 _AccountingSettingsTab(store: widget.store),
               ],
@@ -234,6 +239,7 @@ class _AccountingTabs extends StatelessWidget {
           tabs: [
             Tab(icon: const Icon(Icons.person_outline), text: tr.text('customers')),
             Tab(icon: const Icon(Icons.local_shipping_outlined), text: tr.text('suppliers')),
+            Tab(icon: const Icon(Icons.schedule_outlined), text: tr.text('aging_reports')),
             Tab(icon: const Icon(Icons.payments_outlined), text: tr.text('cash_movement')),
             Tab(icon: const Icon(Icons.history_outlined), text: tr.text('recent_transactions')),
             Tab(icon: const Icon(Icons.menu_book_outlined), text: tr.text('general_ledger')),
@@ -241,6 +247,8 @@ class _AccountingTabs extends StatelessWidget {
             Tab(icon: const Icon(Icons.trending_up_outlined), text: tr.text('income_statement')),
             Tab(icon: const Icon(Icons.account_balance_outlined), text: tr.text('balance_sheet')),
             Tab(icon: const Icon(Icons.account_balance_wallet_outlined), text: tr.text('cash_bank')),
+            Tab(icon: const Icon(Icons.waterfall_chart_outlined), text: tr.text('cash_flow_statement')),
+            Tab(icon: const Icon(Icons.receipt_long_outlined), text: tr.text('tax_report')),
             Tab(icon: const Icon(Icons.auto_awesome_motion_outlined), text: tr.text('advanced')),
             Tab(icon: const Icon(Icons.settings_outlined), text: tr.text('settings')),
           ],
@@ -443,6 +451,204 @@ class _AccountListRow extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+
+class _AgingReportsTab extends StatelessWidget {
+  const _AgingReportsTab({required this.store, required this.query});
+
+  final AppStore store;
+  final String query;
+
+  @override
+  Widget build(BuildContext context) {
+    final customerReport = AccountingAgingService.customerAgingFromStore(
+      sales: store.sales,
+      accountTransactions: store.accountTransactions,
+    );
+    final supplierReport = AccountingAgingService.supplierAgingFromStore(
+      purchases: store.purchases,
+      accountTransactions: store.accountTransactions,
+    );
+
+    return ListView(
+      children: [
+        _AgingReportSection(
+          store: store,
+          title: AppLocalizations.of(context).text('customer_aging'),
+          subtitle: AppLocalizations.of(context).text('customer_aging_subtitle'),
+          icon: Icons.people_outline,
+          report: customerReport,
+          query: query,
+        ),
+        const SizedBox(height: 12),
+        _AgingReportSection(
+          store: store,
+          title: AppLocalizations.of(context).text('supplier_aging'),
+          subtitle: AppLocalizations.of(context).text('supplier_aging_subtitle'),
+          icon: Icons.local_shipping_outlined,
+          report: supplierReport,
+          query: query,
+        ),
+      ],
+    );
+  }
+}
+
+class _AgingReportSection extends StatelessWidget {
+  const _AgingReportSection({
+    required this.store,
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.report,
+    required this.query,
+  });
+
+  final AppStore store;
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final AgingReportResult report;
+  final String query;
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    final rows = report.rows.where((row) => _matches(query, [row.partyName])).toList();
+    final documents = report.openDocuments.where((doc) => _matches(query, [doc.partyName, doc.number])).take(80).toList();
+
+    return Card(
+      elevation: 0,
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, color: Theme.of(context).colorScheme.primary),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+                      Text(subtitle, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                    ],
+                  ),
+                ),
+                Text(_money(store, report.total), style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900)),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _AgingBucketChip(store: store, label: tr.text('current'), amount: report.current),
+                _AgingBucketChip(store: store, label: '0-30', amount: report.days1To30),
+                _AgingBucketChip(store: store, label: '31-60', amount: report.days31To60),
+                _AgingBucketChip(store: store, label: '61-90', amount: report.days61To90),
+                _AgingBucketChip(store: store, label: '90+', amount: report.over90),
+              ],
+            ),
+            const SizedBox(height: 10),
+            if (rows.isEmpty)
+              _EmptyAccountingState(message: tr.text('no_aging_balances'))
+            else
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: DataTable(
+                  columns: [
+                    DataColumn(label: Text(tr.text('account'))),
+                    DataColumn(label: Text(tr.text('current')), numeric: true),
+                    const DataColumn(label: Text('0-30'), numeric: true),
+                    const DataColumn(label: Text('31-60'), numeric: true),
+                    const DataColumn(label: Text('61-90'), numeric: true),
+                    const DataColumn(label: Text('90+'), numeric: true),
+                    DataColumn(label: Text(tr.text('total')), numeric: true),
+                  ],
+                  rows: [
+                    for (final row in rows)
+                      DataRow(cells: [
+                        DataCell(Text(row.partyName, overflow: TextOverflow.ellipsis)),
+                        DataCell(Text(_money(store, row.current))),
+                        DataCell(Text(_money(store, row.days1To30))),
+                        DataCell(Text(_money(store, row.days31To60))),
+                        DataCell(Text(_money(store, row.days61To90))),
+                        DataCell(Text(_money(store, row.over90))),
+                        DataCell(Text(_money(store, row.total))),
+                      ]),
+                  ],
+                ),
+              ),
+            if (documents.isNotEmpty) ...[
+              const Divider(height: 24),
+              Text(tr.text('open_documents'), style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800)),
+              const SizedBox(height: 6),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: DataTable(
+                  columns: [
+                    DataColumn(label: Text(tr.text('date'))),
+                    DataColumn(label: Text(tr.text('reference'))),
+                    DataColumn(label: Text(tr.text('account'))),
+                    DataColumn(label: Text(tr.text('age_days')), numeric: true),
+                    DataColumn(label: Text(tr.text('bucket'))),
+                    DataColumn(label: Text(tr.text('balance')), numeric: true),
+                  ],
+                  rows: [
+                    for (final doc in documents)
+                      DataRow(cells: [
+                        DataCell(Text(_dateText(doc.date))),
+                        DataCell(Text(doc.number.isEmpty ? doc.id : doc.number)),
+                        DataCell(Text(doc.partyName)),
+                        DataCell(Text(doc.ageDays.toString())),
+                        DataCell(Text(_agingBucketText(context, doc.bucketLabel))),
+                        DataCell(Text(_money(store, doc.openAmount))),
+                      ]),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AgingBucketChip extends StatelessWidget {
+  const _AgingBucketChip({required this.store, required this.label, required this.amount});
+
+  final AppStore store;
+  final String label;
+  final double amount;
+
+  @override
+  Widget build(BuildContext context) {
+    return Chip(
+      label: Text('$label: ${_money(store, amount)}'),
+      side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+    );
+  }
+}
+
+String _agingBucketText(BuildContext context, String bucket) {
+  switch (bucket) {
+    case 'current':
+      return AppLocalizations.of(context).text('current');
+    case '0_30':
+      return '0-30';
+    case '31_60':
+      return '31-60';
+    case '61_90':
+      return '61-90';
+    default:
+      return '90+';
   }
 }
 
@@ -903,6 +1109,203 @@ class _CashBankReportTab extends StatelessWidget {
 
 
 
+class _CashFlowStatementTab extends StatelessWidget {
+  const _CashFlowStatementTab({required this.store});
+
+  final AppStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    return FutureBuilder<CashFlowStatementReport>(
+      future: AccountingService.cashFlowStatementReport(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (snapshot.hasError) {
+          return _ReportError(message: snapshot.error.toString());
+        }
+        final report = snapshot.data ?? const CashFlowStatementReport(
+          operatingInflows: 0,
+          operatingOutflows: 0,
+          investingInflows: 0,
+          investingOutflows: 0,
+          financingInflows: 0,
+          financingOutflows: 0,
+          openingCash: 0,
+          closingCash: 0,
+        );
+        return Card(
+          elevation: 0,
+          clipBehavior: Clip.antiAlias,
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              Text(tr.text('cash_flow_statement'), style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
+              const SizedBox(height: 12),
+              _CashFlowSection(
+                store: store,
+                title: tr.text('operating_activities'),
+                inflows: report.operatingInflows,
+                outflows: report.operatingOutflows,
+                net: report.operatingNet,
+              ),
+              _CashFlowSection(
+                store: store,
+                title: tr.text('investing_activities'),
+                inflows: report.investingInflows,
+                outflows: report.investingOutflows,
+                net: report.investingNet,
+              ),
+              _CashFlowSection(
+                store: store,
+                title: tr.text('financing_activities'),
+                inflows: report.financingInflows,
+                outflows: report.financingOutflows,
+                net: report.financingNet,
+              ),
+              const Divider(height: 28),
+              _StatementLine(label: tr.text('opening_cash_balance'), value: _money(store, report.openingCash), highlight: true),
+              _StatementLine(label: tr.text('net_change_in_cash'), value: _money(store, report.netChangeInCash), highlight: true),
+              _StatementLine(label: tr.text('closing_cash_balance'), value: _money(store, report.closingCash), highlight: true),
+              const SizedBox(height: 20),
+              Text(tr.text('cash_flow_details'), style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+              const SizedBox(height: 8),
+              if (report.lines.isEmpty)
+                _EmptyAccountingState(message: tr.text('no_cash_flow_movements_found'))
+              else
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: DataTable(
+                    columns: [
+                      DataColumn(label: Text(tr.text('date'))),
+                      DataColumn(label: Text(tr.text('reference'))),
+                      DataColumn(label: Text(tr.text('category'))),
+                      DataColumn(label: Text(tr.text('description'))),
+                      DataColumn(label: Text(tr.text('in')), numeric: true),
+                      DataColumn(label: Text(tr.text('out')), numeric: true),
+                      DataColumn(label: Text(tr.text('net')), numeric: true),
+                    ],
+                    rows: [
+                      for (final line in report.lines)
+                        DataRow(cells: [
+                          DataCell(Text(_dateText(line.entryDate))),
+                          DataCell(Text([line.referenceType, line.referenceNo].where((part) => part.trim().isNotEmpty).join(' • '))),
+                          DataCell(Text(_cashFlowCategoryLabel(tr, line.category))),
+                          DataCell(SizedBox(width: 280, child: Text(line.description, overflow: TextOverflow.ellipsis))),
+                          DataCell(Text(_money(store, line.inflow))),
+                          DataCell(Text(_money(store, line.outflow))),
+                          DataCell(Text(_money(store, line.netCashFlow))),
+                        ]),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _CashFlowSection extends StatelessWidget {
+  const _CashFlowSection({required this.store, required this.title, required this.inflows, required this.outflows, required this.net});
+
+  final AppStore store;
+  final String title;
+  final double inflows;
+  final double outflows;
+  final double net;
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+          const SizedBox(height: 6),
+          _StatementLine(label: tr.text('cash_inflows'), value: _money(store, inflows)),
+          _StatementLine(label: tr.text('cash_outflows'), value: _money(store, outflows)),
+          _StatementLine(label: tr.text('net_cash_flow'), value: _money(store, net), highlight: true),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatementLine extends StatelessWidget {
+  const _StatementLine({required this.label, required this.value, this.highlight = false});
+
+  final String label;
+  final String value;
+  final bool highlight;
+
+  @override
+  Widget build(BuildContext context) {
+    final style = highlight
+        ? Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800)
+        : Theme.of(context).textTheme.bodyMedium;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        children: [
+          Expanded(child: Text(label, style: style)),
+          Text(value, style: style),
+        ],
+      ),
+    );
+  }
+}
+
+String _cashFlowCategoryLabel(AppLocalizations tr, CashFlowCategory category) {
+  switch (category) {
+    case CashFlowCategory.investing:
+      return tr.text('investing_activities');
+    case CashFlowCategory.financing:
+      return tr.text('financing_activities');
+    case CashFlowCategory.operating:
+      return tr.text('operating_activities');
+  }
+}
+
+
+class _TaxReportTab extends StatelessWidget {
+  const _TaxReportTab({required this.store});
+
+  final AppStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    return FutureBuilder<TaxReport>(
+      future: AccountingService.taxReport(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (snapshot.hasError) {
+          return _ReportError(message: snapshot.error.toString());
+        }
+        final report = snapshot.data ?? const TaxReport(outputTax: 0, inputTax: 0, netTaxPayable: 0, payableAccountMovement: 0);
+        return _StatementCard(
+          store: store,
+          title: tr.text('tax_report'),
+          rows: [
+            _StatementRow(tr.text('output_sales_tax'), report.outputTax),
+            _StatementRow(tr.text('input_purchase_tax'), -report.inputTax),
+            _StatementRow(tr.text('net_tax_payable'), report.netTaxPayable, highlight: true),
+            _StatementRow(tr.text('tax_payable_account_movement'), report.payableAccountMovement),
+          ],
+        );
+      },
+    );
+  }
+}
+
 class _AdvancedAccountingTab extends StatefulWidget {
   const _AdvancedAccountingTab({required this.store});
 
@@ -929,6 +1332,7 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
       AccountingService.listAccountingPeriods(),
       AccountingService.listCostCenters(),
       AccountingService.listAccountingBranches(),
+      AccountingService.listFixedAssets(),
     ]);
     return _AdvancedAccountingData(
       paymentAccounts: results[0] as List<AdvancedAccountingItem>,
@@ -937,6 +1341,7 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
       periods: results[3] as List<AdvancedAccountingItem>,
       costCenters: results[4] as List<AdvancedAccountingItem>,
       branches: results[5] as List<AdvancedAccountingItem>,
+      fixedAssets: results[6] as List<AdvancedAccountingItem>,
     );
   }
 
@@ -1068,6 +1473,122 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
     }
   }
 
+  Future<void> _runDepreciationForAllDialog() async {
+    final tr = AppLocalizations.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(tr.text('run_depreciation')),
+        content: Text(tr.text('run_depreciation_all_desc')),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('cancel'))),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(tr.text('run'))),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      final posted = await AccountingService.runDepreciationForAllAssets();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.format('depreciation_entries_posted', {'count': posted}))));
+      _refresh();
+    }
+  }
+
+  Future<void> _runDepreciationForAssetDialog(AdvancedAccountingItem item) async {
+    final tr = AppLocalizations.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(tr.format('run_depreciation_for', {'name': item.name})),
+        content: Text(tr.text('run_depreciation_asset_desc')),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('cancel'))),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(tr.text('run'))),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      final posted = await AccountingService.runDepreciationForAsset(assetId: item.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.format('depreciation_entries_posted', {'count': posted}))));
+      _refresh();
+    }
+  }
+
+  Future<void> _createFixedAssetDialog() async {
+    final tr = AppLocalizations.of(context);
+    final code = TextEditingController();
+    final name = TextEditingController();
+    final category = TextEditingController(text: tr.text('equipment'));
+    final purchaseValue = TextEditingController(text: '0');
+    final usefulLifeMonths = TextEditingController(text: '0');
+    final notes = TextEditingController();
+    final accounts = await AccountingService.listAccounts();
+    final assetAccounts = accounts.where((a) => a.type == 'asset').toList();
+    if (assetAccounts.isEmpty) return;
+    AccountingAccount? assetAccount = assetAccounts.firstWhere(
+      (a) => a.subtype == 'fixed_assets',
+      orElse: () => assetAccounts.first,
+    );
+    AccountingAccount? paymentAccount = assetAccounts.firstWhere(
+      (a) => a.subtype == 'cash',
+      orElse: () => assetAccounts.first,
+    );
+    if (!mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(tr.text('create_fixed_asset')),
+          content: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              TextField(controller: code, decoration: InputDecoration(labelText: tr.text('code'))),
+              TextField(controller: name, decoration: InputDecoration(labelText: tr.text('name'))),
+              TextField(controller: category, decoration: InputDecoration(labelText: tr.text('category'))),
+              TextField(controller: purchaseValue, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: tr.text('purchase_value'))),
+              TextField(controller: usefulLifeMonths, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: tr.text('useful_life_months'))),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<AccountingAccount>(
+                initialValue: assetAccount,
+                isExpanded: true,
+                decoration: InputDecoration(labelText: tr.text('fixed_assets_account')),
+                items: [for (final a in assetAccounts) DropdownMenuItem(value: a, child: Text('${a.code} - ${a.name}'))],
+                onChanged: (value) => setDialogState(() => assetAccount = value),
+              ),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<AccountingAccount>(
+                initialValue: paymentAccount,
+                isExpanded: true,
+                decoration: InputDecoration(labelText: tr.text('payment_account')),
+                items: [for (final a in assetAccounts) DropdownMenuItem(value: a, child: Text('${a.code} - ${a.name}'))],
+                onChanged: (value) => setDialogState(() => paymentAccount = value),
+              ),
+              TextField(controller: notes, decoration: InputDecoration(labelText: tr.text('notes'))),
+            ]),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('cancel'))),
+            FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(tr.text('create'))),
+          ],
+        ),
+      ),
+    );
+    if (confirmed == true && assetAccount != null && paymentAccount != null) {
+      await AccountingService.createFixedAsset(
+        code: code.text,
+        name: name.text,
+        category: category.text,
+        acquisitionDate: DateTime.now(),
+        purchaseValue: double.tryParse(purchaseValue.text) ?? 0,
+        usefulLifeMonths: int.tryParse(usefulLifeMonths.text) ?? 0,
+        assetAccountId: assetAccount!.id,
+        paymentAccountId: paymentAccount!.id,
+        notes: notes.text,
+      );
+      if (mounted) _refresh();
+    }
+  }
+
   Future<void> _createPaymentAccountDialog() async {
     final tr = AppLocalizations.of(context);
     final name = TextEditingController();
@@ -1190,7 +1711,9 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
 
   Future<void> _closeDrawerDialog(AdvancedAccountingItem item) async {
     final tr = AppLocalizations.of(context);
-    final counted = TextEditingController(text: item.credit.toStringAsFixed(2));
+    final expected = await AccountingService.calculateCashDrawerExpectedCash(item.id);
+    if (!mounted) return;
+    final counted = TextEditingController(text: expected.toStringAsFixed(2));
     final notes = TextEditingController();
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1198,7 +1721,9 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
         title: Text(tr.format('close_item', {'name': item.name})),
         content: SingleChildScrollView(
           child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text(tr.format('expected_cash', {'amount': formatCurrency(item.credit)})),
+            Text(tr.format('expected_cash', {'amount': formatCurrency(expected)})),
+            const SizedBox(height: 4),
+            Text(tr.text('cash_reconciliation_difference_hint'), style: Theme.of(context).textTheme.bodySmall),
             const SizedBox(height: 8),
             TextField(controller: counted, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: tr.text('counted_cash'))),
             TextField(controller: notes, decoration: InputDecoration(labelText: tr.text('notes'))),
@@ -1322,6 +1847,8 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                         FilledButton.tonalIcon(onPressed: canManageAccounting ? _createPaymentAccountDialog : null, icon: const Icon(Icons.account_balance_wallet_outlined), label: Text(tr.text('payment_account'))),
                         FilledButton.tonalIcon(onPressed: canManageAccounting ? _createChequeDialog : null, icon: const Icon(Icons.payments_outlined), label: Text(tr.text('cheque'))),
                         FilledButton.tonalIcon(onPressed: canManageAccounting ? _createPeriodDialog : null, icon: const Icon(Icons.event_available_outlined), label: Text(tr.text('create_period'))),
+                        FilledButton.tonalIcon(onPressed: canManageAccounting ? _createFixedAssetDialog : null, icon: const Icon(Icons.business_center_outlined), label: Text(tr.text('fixed_asset'))),
+                        FilledButton.tonalIcon(onPressed: canManageAccounting ? _runDepreciationForAllDialog : null, icon: const Icon(Icons.calculate_outlined), label: Text(tr.text('run_depreciation'))),
                         FilledButton.tonalIcon(onPressed: canManageAccounting ? () => _createMasterDataDialog('cost_centers', tr.text('create_cost_center')) : null, icon: const Icon(Icons.hub_outlined), label: Text(tr.text('cost_center'))),
                         FilledButton.tonalIcon(onPressed: canManageAccounting ? () => _createMasterDataDialog('accounting_branches', tr.text('create_branch')) : null, icon: const Icon(Icons.store_mall_directory_outlined), label: Text(tr.text('branch'))),
                       ],
@@ -1369,6 +1896,16 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                       : const <Widget>[]
                   : null,
             ),
+            _AdvancedSection(
+              title: tr.text('fixed_assets'),
+              icon: Icons.business_center_outlined,
+              items: data.fixedAssets,
+              actionBuilder: canManageAccounting
+                  ? (item) => item.status == 'active'
+                      ? [TextButton.icon(onPressed: () => _runDepreciationForAssetDialog(item), icon: const Icon(Icons.calculate_outlined), label: Text(tr.text('depreciate')))]
+                      : const <Widget>[]
+                  : null,
+            ),
             _AdvancedSection(title: tr.text('cost_centers'), icon: Icons.hub_outlined, items: data.costCenters),
             _AdvancedSection(title: tr.text('branches'), icon: Icons.store_mall_directory_outlined, items: data.branches),
           ],
@@ -1386,6 +1923,7 @@ class _AdvancedAccountingData {
     this.periods = const <AdvancedAccountingItem>[],
     this.costCenters = const <AdvancedAccountingItem>[],
     this.branches = const <AdvancedAccountingItem>[],
+    this.fixedAssets = const <AdvancedAccountingItem>[],
   });
 
   final List<AdvancedAccountingItem> paymentAccounts;
@@ -1394,6 +1932,7 @@ class _AdvancedAccountingData {
   final List<AdvancedAccountingItem> periods;
   final List<AdvancedAccountingItem> costCenters;
   final List<AdvancedAccountingItem> branches;
+  final List<AdvancedAccountingItem> fixedAssets;
 }
 
 class _AdvancedSection extends StatelessWidget {
@@ -1479,6 +2018,24 @@ class _AccountingSettingsTabState extends State<_AccountingSettingsTab> {
       icon: Icons.inventory_2_outlined,
     ),
     _AccountingSettingDefinition(
+      key: 'default_fixed_assets_account_id',
+      titleKey: 'fixed_assets_account',
+      subtitleKey: 'fixed_assets_account_desc',
+      icon: Icons.business_center_outlined,
+    ),
+    _AccountingSettingDefinition(
+      key: 'default_accumulated_depreciation_account_id',
+      titleKey: 'accumulated_depreciation_account',
+      subtitleKey: 'accumulated_depreciation_account_desc',
+      icon: Icons.account_tree_outlined,
+    ),
+    _AccountingSettingDefinition(
+      key: 'default_depreciation_expense_account_id',
+      titleKey: 'depreciation_expense_account',
+      subtitleKey: 'depreciation_expense_account_desc',
+      icon: Icons.calculate_outlined,
+    ),
+    _AccountingSettingDefinition(
       key: 'default_sales_account_id',
       titleKey: 'sales_revenue_account',
       subtitleKey: 'sales_revenue_account_desc',
@@ -1496,6 +2053,24 @@ class _AccountingSettingsTabState extends State<_AccountingSettingsTab> {
       subtitleKey: 'default_expense_account_desc',
       icon: Icons.receipt_long_outlined,
     ),
+    _AccountingSettingDefinition(
+      key: 'default_sales_tax_account_id',
+      titleKey: 'sales_tax_account',
+      subtitleKey: 'sales_tax_account_desc',
+      icon: Icons.call_made_outlined,
+    ),
+    _AccountingSettingDefinition(
+      key: 'default_purchase_tax_account_id',
+      titleKey: 'purchase_tax_account',
+      subtitleKey: 'purchase_tax_account_desc',
+      icon: Icons.call_received_outlined,
+    ),
+    _AccountingSettingDefinition(
+      key: 'default_tax_payable_account_id',
+      titleKey: 'tax_payable_account',
+      subtitleKey: 'tax_payable_account_desc',
+      icon: Icons.account_balance_outlined,
+    ),
   ];
 
   @override
@@ -1508,17 +2083,28 @@ class _AccountingSettingsTabState extends State<_AccountingSettingsTab> {
     final results = await Future.wait<Object>([
       AccountingService.listAccounts(activeOnly: true),
       AccountingService.readDefaultAccountMap(),
+      AccountingService.readDefaultVatRatePercent(),
     ]);
     return _AccountingSettingsData(
       accounts: (results[0] as List<AccountingAccount>)
           .where((account) => account.subtype != 'group' && account.isActive)
           .toList(),
       settings: results[1] as Map<String, String>,
+      vatRatePercent: results[2] as double,
     );
   }
 
   Future<void> _updateSetting(String key, String accountId) async {
     await AccountingService.updateDefaultAccount(key: key, accountId: accountId);
+    if (!mounted) return;
+    setState(() => _future = _load());
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(AppLocalizations.of(context).text('accounting_setting_updated'))),
+    );
+  }
+
+  Future<void> _updateVatRate(double ratePercent) async {
+    await AccountingService.updateDefaultVatRatePercent(ratePercent);
     if (!mounted) return;
     setState(() => _future = _load());
     ScaffoldMessenger.of(context).showSnackBar(
@@ -1537,7 +2123,7 @@ class _AccountingSettingsTabState extends State<_AccountingSettingsTab> {
         if (snapshot.hasError) {
           return _ReportError(message: snapshot.error.toString());
         }
-        final data = snapshot.data ?? const _AccountingSettingsData(accounts: <AccountingAccount>[], settings: <String, String>{});
+        final data = snapshot.data ?? const _AccountingSettingsData(accounts: <AccountingAccount>[], settings: <String, String>{}, vatRatePercent: 0);
         final canManageAccounting = widget.store.hasPermission(AppPermission.accountingManage);
         if (data.accounts.isEmpty) {
           return _EmptyAccountingState(message: AppLocalizations.of(context).text('no_active_posting_accounts_found'));
@@ -1547,7 +2133,7 @@ class _AccountingSettingsTabState extends State<_AccountingSettingsTab> {
           clipBehavior: Clip.antiAlias,
           child: ListView.separated(
             padding: const EdgeInsets.all(12),
-            itemCount: _definitions.length + 1,
+            itemCount: _definitions.length + 2,
             separatorBuilder: (_, __) => const Divider(height: 1),
             itemBuilder: (context, index) {
               if (index == 0) {
@@ -1573,7 +2159,14 @@ class _AccountingSettingsTabState extends State<_AccountingSettingsTab> {
                   ),
                 );
               }
-              final definition = _definitions[index - 1];
+              if (index == 1) {
+                return _VatRateSettingRow(
+                  ratePercent: data.vatRatePercent,
+                  enabled: canManageAccounting,
+                  onChanged: _updateVatRate,
+                );
+              }
+              final definition = _definitions[index - 2];
               return _AccountingSettingRow(
                 definition: definition,
                 accounts: data.accounts,
@@ -1589,10 +2182,11 @@ class _AccountingSettingsTabState extends State<_AccountingSettingsTab> {
 }
 
 class _AccountingSettingsData {
-  const _AccountingSettingsData({required this.accounts, required this.settings});
+  const _AccountingSettingsData({required this.accounts, required this.settings, required this.vatRatePercent});
 
   final List<AccountingAccount> accounts;
   final Map<String, String> settings;
+  final double vatRatePercent;
 }
 
 class _AccountingSettingDefinition {
@@ -1602,6 +2196,83 @@ class _AccountingSettingDefinition {
   final String titleKey;
   final String subtitleKey;
   final IconData icon;
+}
+
+
+class _VatRateSettingRow extends StatefulWidget {
+  const _VatRateSettingRow({required this.ratePercent, required this.enabled, required this.onChanged});
+
+  final double ratePercent;
+  final bool enabled;
+  final ValueChanged<double> onChanged;
+
+  @override
+  State<_VatRateSettingRow> createState() => _VatRateSettingRowState();
+}
+
+class _VatRateSettingRowState extends State<_VatRateSettingRow> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.ratePercent.toStringAsFixed(widget.ratePercent == widget.ratePercent.roundToDouble() ? 0 : 2));
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final info = Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const CircleAvatar(radius: 18, child: Icon(Icons.percent_outlined, size: 20)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(tr.text('default_vat_rate'), style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 3),
+                    Text(tr.text('default_vat_rate_desc'), style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                  ],
+                ),
+              ),
+            ],
+          );
+          final field = TextField(
+            controller: _controller,
+            enabled: widget.enabled,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: InputDecoration(
+              labelText: tr.text('vat_rate_percent'),
+              suffixText: '%',
+              border: const OutlineInputBorder(),
+            ),
+            onSubmitted: (value) => widget.onChanged(double.tryParse(value.trim()) ?? 0),
+          );
+          final save = FilledButton.icon(
+            onPressed: widget.enabled ? () => widget.onChanged(double.tryParse(_controller.text.trim()) ?? 0) : null,
+            icon: const Icon(Icons.save_outlined),
+            label: Text(tr.text('save')),
+          );
+          if (constraints.maxWidth < 760) {
+            return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [info, const SizedBox(height: 10), field, const SizedBox(height: 8), save]);
+          }
+          return Row(children: [Expanded(child: info), const SizedBox(width: 20), SizedBox(width: 260, child: field), const SizedBox(width: 8), save]);
+        },
+      ),
+    );
+  }
 }
 
 class _AccountingSettingRow extends StatelessWidget {

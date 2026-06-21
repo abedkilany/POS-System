@@ -39,6 +39,32 @@ class AccountingService {
     return rows.map((row) => AccountingAccount.fromRow(row.data)).toList();
   }
 
+  static Future<double> readDefaultVatRatePercent() => _defaultVatRatePercent();
+
+  static Future<void> updateDefaultVatRatePercent(double ratePercent) async {
+    final normalized = ratePercent.isFinite ? ratePercent.clamp(0, 100).toDouble() : 0.0;
+    final now = DateTime.now().toUtc().toIso8601String();
+    await _db.customInsert(
+      r'''
+      INSERT INTO accounting_settings (key, account_id, value, description, updated_at)
+      VALUES ('default_vat_rate_percent', '', ?, 'Default VAT rate percent used by accounting auto-posting', ?)
+      ON CONFLICT(key) DO UPDATE SET
+        value = excluded.value,
+        updated_at = excluded.updated_at
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(_roundMoney(normalized).toString()),
+        Variable<String>(now),
+      ],
+    );
+    await _writeAuditLog(
+      action: 'update_setting',
+      entityType: 'accounting_setting',
+      entityId: 'default_vat_rate_percent',
+      details: 'Default VAT rate set to ${_roundMoney(normalized)}%',
+    );
+  }
+
   static Future<Map<String, String>> readDefaultAccountMap() async {
     final rows = await _db.customSelect(
       '''
@@ -96,6 +122,7 @@ class AccountingService {
     final accounts = await readDefaultAccountMap();
     final invoiceTotal = _cleanAmount(sale.invoiceTotal);
     final saleTotal = _cleanAmount(sale.total);
+    final tax = await _taxBreakdown(saleTotal);
     final paidInInvoiceCurrency = _cleanAmount(sale.paidAmount.clamp(0, invoiceTotal).toDouble());
     final paid = invoiceTotal <= 0
         ? 0.0
@@ -129,9 +156,19 @@ class AccountingService {
     lines.add(JournalLineDraft(
       accountId: _requiredAccount(accounts, 'default_sales_account_id'),
       debit: 0,
-      credit: saleTotal,
-      memo: 'Sales revenue ${sale.invoiceNo}',
+      credit: tax.netAmount,
+      memo: tax.taxAmount > 0
+          ? 'Sales revenue before VAT ${sale.invoiceNo}'
+          : 'Sales revenue ${sale.invoiceNo}',
     ));
+    if (tax.taxAmount > 0) {
+      lines.add(JournalLineDraft(
+        accountId: _requiredAccount(accounts, 'default_sales_tax_account_id'),
+        debit: 0,
+        credit: tax.taxAmount,
+        memo: 'Output VAT / sales tax ${sale.invoiceNo}',
+      ));
+    }
     if (cogs > 0) {
       lines
         ..add(JournalLineDraft(
@@ -164,19 +201,33 @@ class AccountingService {
     if (purchase.isDeleted || purchase.isCancelled || purchase.subtotal <= 0) return;
     final accounts = await readDefaultAccountMap();
     final total = _cleanAmount(purchase.subtotal);
+    final tax = await _taxBreakdown(total);
     final paid = _cleanAmount(purchase.paidAmount.clamp(0, total).toDouble());
     final balance = _cleanAmount(total - paid);
     final lines = <JournalLineDraft>[
       JournalLineDraft(
         accountId: _requiredAccount(accounts, 'default_inventory_account_id'),
-        debit: total,
+        debit: tax.netAmount,
         credit: 0,
-        memo: 'Inventory received from purchase ${purchase.purchaseNo}',
+        memo: tax.taxAmount > 0
+            ? 'Inventory received before VAT ${purchase.purchaseNo}'
+            : 'Inventory received from purchase ${purchase.purchaseNo}',
         partyType: 'supplier',
         partyId: purchase.supplierId,
         partyName: purchase.supplierName,
       ),
     ];
+    if (tax.taxAmount > 0) {
+      lines.add(JournalLineDraft(
+        accountId: _requiredAccount(accounts, 'default_purchase_tax_account_id'),
+        debit: tax.taxAmount,
+        credit: 0,
+        memo: 'Input VAT / purchase tax ${purchase.purchaseNo}',
+        partyType: 'supplier',
+        partyId: purchase.supplierId,
+        partyName: purchase.supplierName,
+      ));
+    }
     if (paid > 0) {
       lines.add(JournalLineDraft(
         accountId: await _paymentAccountId(accounts, purchase.paymentMethod),
@@ -309,12 +360,12 @@ class AccountingService {
     ));
   }
 
-  static Future<void> createPostedEntry(JournalEntryDraft draft) async {
+  static Future<String> createPostedEntry(JournalEntryDraft draft) async {
     _validateBalancedDraft(draft);
     await _assertDateNotInClosedPeriod(draft.entryDate, draft.branchId);
     final db = _db;
     if (await _hasActiveEntryForReference(db, draft.referenceType, draft.referenceId)) {
-      return;
+      return '';
     }
     final now = DateTime.now().toUtc().toIso8601String();
     final entryId = _newId('je');
@@ -393,6 +444,7 @@ class AccountingService {
         createdAt: now,
       );
     });
+    return entryId;
   }
 
   static Future<void> reverseEntryForReference({
@@ -730,6 +782,228 @@ class AccountingService {
   }
 
 
+  static Future<CashFlowStatementReport> cashFlowStatementReport({DateTime? from, DateTime? to}) async {
+    final defaults = await readDefaultAccountMap();
+    final cashAccountIds = <String>{
+      defaults['default_cash_account_id'] ?? '',
+      defaults['default_bank_account_id'] ?? '',
+    }..removeWhere((value) => value.trim().isEmpty);
+    if (cashAccountIds.isEmpty) {
+      return const CashFlowStatementReport(
+        operatingInflows: 0,
+        operatingOutflows: 0,
+        investingInflows: 0,
+        investingOutflows: 0,
+        financingInflows: 0,
+        financingOutflows: 0,
+        openingCash: 0,
+        closingCash: 0,
+      );
+    }
+
+    final placeholders = List.filled(cashAccountIds.length, '?').join(',');
+    final dateConditions = <String>["je.deleted_at = ''", "je.status = 'posted'"];
+    final dateVariables = <Variable<Object>>[];
+    if (from != null) {
+      dateConditions.add('datetime(je.entry_date) >= datetime(?)');
+      dateVariables.add(Variable<String>(from.toUtc().toIso8601String()));
+    }
+    if (to != null) {
+      dateConditions.add('datetime(je.entry_date) <= datetime(?)');
+      dateVariables.add(Variable<String>(to.toUtc().toIso8601String()));
+    }
+
+    Future<double> cashBalanceBefore(DateTime? date) async {
+      final conditions = <String>["je.deleted_at = ''", "je.status = 'posted'", 'jl.account_id IN ($placeholders)'];
+      final variables = <Variable<Object>>[
+        for (final id in cashAccountIds) Variable<String>(id),
+      ];
+      if (date != null) {
+        conditions.add('datetime(je.entry_date) < datetime(?)');
+        variables.add(Variable<String>(date.toUtc().toIso8601String()));
+      }
+      final row = await _db.customSelect(
+        """
+        SELECT COALESCE(SUM(jl.debit - jl.credit), 0) AS balance
+        FROM journal_lines jl
+        INNER JOIN journal_entries je ON je.id = jl.entry_id
+        WHERE ${conditions.join(' AND ')}
+        """,
+        variables: variables,
+      ).getSingleOrNull();
+      return _roundMoney(_num(row?.data['balance']));
+    }
+
+    final entryRows = await _db.customSelect(
+      """
+      SELECT DISTINCT je.id, je.entry_no, je.entry_date, je.reference_type, je.reference_no, je.description
+      FROM journal_entries je
+      INNER JOIN journal_lines jl ON jl.entry_id = je.id
+      WHERE jl.account_id IN ($placeholders)
+        AND ${dateConditions.join(' AND ')}
+      ORDER BY je.entry_date, je.entry_no
+      """,
+      variables: <Variable<Object>>[
+        for (final id in cashAccountIds) Variable<String>(id),
+        ...dateVariables,
+      ],
+    ).get();
+
+    final rows = <CashFlowStatementLineReport>[];
+    var operatingInflows = 0.0;
+    var operatingOutflows = 0.0;
+    var investingInflows = 0.0;
+    var investingOutflows = 0.0;
+    var financingInflows = 0.0;
+    var financingOutflows = 0.0;
+
+    for (final entryRow in entryRows) {
+      final entryId = entryRow.data['id']?.toString() ?? '';
+      final lineRows = await _db.customSelect(
+        """
+        SELECT jl.account_id, jl.account_code, jl.account_name, jl.debit, jl.credit,
+               a.type AS account_type
+        FROM journal_lines jl
+        LEFT JOIN accounts a ON a.id = jl.account_id
+        WHERE jl.entry_id = ?
+        ORDER BY jl.line_no
+        """,
+        variables: <Variable<Object>>[Variable<String>(entryId)],
+      ).get();
+      final cashMovement = lineRows
+          .where((row) => cashAccountIds.contains(row.data['account_id']?.toString() ?? ''))
+          .fold<double>(0, (sum, row) => sum + _num(row.data['debit']) - _num(row.data['credit']));
+      if (cashMovement.abs() < 0.005) continue;
+
+      final nonCashTypes = lineRows
+          .where((row) => !cashAccountIds.contains(row.data['account_id']?.toString() ?? ''))
+          .map((row) => row.data['account_type']?.toString() ?? '')
+          .where((type) => type.isNotEmpty)
+          .toSet();
+      final category = _cashFlowCategory(
+        entryRow.data['reference_type']?.toString() ?? '',
+        nonCashTypes,
+      );
+      final amount = _roundMoney(cashMovement.abs());
+      if (category == CashFlowCategory.investing) {
+        if (cashMovement >= 0) {
+          investingInflows += amount;
+        } else {
+          investingOutflows += amount;
+        }
+      } else if (category == CashFlowCategory.financing) {
+        if (cashMovement >= 0) {
+          financingInflows += amount;
+        } else {
+          financingOutflows += amount;
+        }
+      } else {
+        if (cashMovement >= 0) {
+          operatingInflows += amount;
+        } else {
+          operatingOutflows += amount;
+        }
+      }
+      rows.add(CashFlowStatementLineReport(
+        entryNo: entryRow.data['entry_no']?.toString() ?? '',
+        entryDate: _parseDate(entryRow.data['entry_date']),
+        referenceType: entryRow.data['reference_type']?.toString() ?? '',
+        referenceNo: entryRow.data['reference_no']?.toString() ?? '',
+        description: entryRow.data['description']?.toString() ?? '',
+        category: category,
+        inflow: cashMovement >= 0 ? amount : 0,
+        outflow: cashMovement < 0 ? amount : 0,
+        netCashFlow: _roundMoney(cashMovement),
+      ));
+    }
+
+    final openingCash = from == null ? 0.0 : await cashBalanceBefore(from);
+    final netChange = operatingInflows - operatingOutflows + investingInflows - investingOutflows + financingInflows - financingOutflows;
+    return CashFlowStatementReport(
+      operatingInflows: _roundMoney(operatingInflows),
+      operatingOutflows: _roundMoney(operatingOutflows),
+      investingInflows: _roundMoney(investingInflows),
+      investingOutflows: _roundMoney(investingOutflows),
+      financingInflows: _roundMoney(financingInflows),
+      financingOutflows: _roundMoney(financingOutflows),
+      openingCash: _roundMoney(openingCash),
+      closingCash: _roundMoney(openingCash + netChange),
+      from: from,
+      to: to,
+      lines: rows,
+    );
+  }
+
+  static CashFlowCategory _cashFlowCategory(String referenceType, Set<String> accountTypes) {
+    final ref = referenceType.toLowerCase();
+    if (ref.contains('asset') || ref.contains('fixed_asset') || ref.contains('investment')) {
+      return CashFlowCategory.investing;
+    }
+    if (ref.contains('capital') || ref.contains('loan') || ref.contains('owner') || ref.contains('equity')) {
+      return CashFlowCategory.financing;
+    }
+    if (accountTypes.any((type) => type == 'equity')) {
+      return CashFlowCategory.financing;
+    }
+    if (accountTypes.any((type) => type == 'liability') &&
+        !accountTypes.any((type) => type == 'revenue' || type == 'expense' || type == 'cost_of_sales')) {
+      return CashFlowCategory.financing;
+    }
+    if (accountTypes.any((type) => type == 'asset') &&
+        !accountTypes.any((type) => type == 'revenue' || type == 'expense' || type == 'cost_of_sales' || type == 'liability')) {
+      return CashFlowCategory.investing;
+    }
+    return CashFlowCategory.operating;
+  }
+
+
+  static Future<TaxReport> taxReport({DateTime? from, DateTime? to}) async {
+    final accounts = await readDefaultAccountMap();
+    final salesTaxAccountId = accounts['default_sales_tax_account_id']?.trim() ?? '';
+    final purchaseTaxAccountId = accounts['default_purchase_tax_account_id']?.trim() ?? '';
+    final payableAccountId = accounts['default_tax_payable_account_id']?.trim() ?? salesTaxAccountId;
+    final conditions = <String>["je.deleted_at = ''", "je.status = 'posted'"];
+    final variables = <Variable<Object>>[];
+    if (from != null) {
+      conditions.add('datetime(je.entry_date) >= datetime(?)');
+      variables.add(Variable<String>(from.toUtc().toIso8601String()));
+    }
+    if (to != null) {
+      conditions.add('datetime(je.entry_date) <= datetime(?)');
+      variables.add(Variable<String>(to.toUtc().toIso8601String()));
+    }
+    Future<double> sumAccount(String accountId, String expression) async {
+      if (accountId.trim().isEmpty) return 0;
+      final row = await _db.customSelect(
+        '''
+        SELECT COALESCE(SUM($expression), 0) AS amount
+        FROM journal_lines jl
+        INNER JOIN journal_entries je ON je.id = jl.entry_id
+        WHERE jl.account_id = ? AND ${conditions.join(' AND ')}
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(accountId),
+          ...variables,
+        ],
+      ).getSingleOrNull();
+      return _roundMoney(_num(row?.data['amount']));
+    }
+
+    final outputTax = await sumAccount(salesTaxAccountId, 'jl.credit - jl.debit');
+    final inputTax = await sumAccount(purchaseTaxAccountId, 'jl.debit - jl.credit');
+    final payableMovement = payableAccountId.trim().isEmpty
+        ? outputTax - inputTax
+        : await sumAccount(payableAccountId, 'jl.credit - jl.debit');
+    return TaxReport(
+      outputTax: _roundMoney(outputTax),
+      inputTax: _roundMoney(inputTax),
+      netTaxPayable: _roundMoney(outputTax - inputTax),
+      payableAccountMovement: _roundMoney(payableMovement),
+      from: from,
+      to: to,
+    );
+  }
+
   static Future<List<AdvancedAccountingItem>> listPaymentAccounts() async {
     final rows = await _db.customSelect(
       '''
@@ -756,6 +1030,24 @@ class AccountingService {
       ''',
     ).get();
     return rows.map((row) => AdvancedAccountingItem.fromRow(row.data)).toList();
+  }
+
+  static Future<double> calculateCashDrawerExpectedCash(String sessionId) async {
+    final row = await _db.customSelect(
+      """
+      SELECT opened_at, expected_cash, branch_id
+      FROM cash_drawer_sessions
+      WHERE id = ? AND status = 'open'
+      LIMIT 1
+      """,
+      variables: <Variable<Object>>[Variable<String>(sessionId)],
+    ).getSingleOrNull();
+    if (row == null) return 0;
+    return _expectedCashForDrawer(
+      openedAt: row.data['opened_at']?.toString() ?? '',
+      fallbackExpected: _num(row.data['expected_cash']),
+      branchId: row.data['branch_id']?.toString() ?? '',
+    );
   }
 
   static Future<List<AdvancedAccountingItem>> listCheques() async {
@@ -806,6 +1098,271 @@ class AccountingService {
       ''',
     ).get();
     return rows.map((row) => AdvancedAccountingItem.fromRow(row.data)).toList();
+  }
+
+  static Future<List<AdvancedAccountingItem>> listFixedAssets() async {
+    final rows = await _db.customSelect(
+      '''
+      SELECT fa.id, fa.name, fa.category AS type, fa.status,
+             fa.code AS account_code, a.name AS account_name,
+             ROUND(fa.purchase_value - COALESCE(dep.accumulated, 0), 2) AS balance,
+             ('Cost: ' || ROUND(fa.purchase_value, 2) ||
+              ' • Accumulated depreciation: ' || ROUND(COALESCE(dep.accumulated, 0), 2) ||
+              ' • Book value: ' || ROUND(fa.purchase_value - COALESCE(dep.accumulated, 0), 2) ||
+              ' • Acquired: ' || fa.acquisition_date ||
+              CASE WHEN fa.useful_life_months > 0 THEN ' • Useful life: ' || fa.useful_life_months || ' months' ELSE '' END ||
+              CASE WHEN fa.useful_life_months > 0 THEN ' • Monthly depreciation: ' || ROUND(fa.purchase_value / fa.useful_life_months, 2) ELSE '' END ||
+              CASE WHEN fa.notes <> '' THEN ' • ' || fa.notes ELSE '' END) AS notes
+      FROM fixed_assets fa
+      LEFT JOIN accounts a ON a.id = fa.asset_account_id
+      LEFT JOIN (
+        SELECT asset_id, SUM(amount) AS accumulated
+        FROM fixed_asset_depreciation
+        WHERE deleted_at = ''
+        GROUP BY asset_id
+      ) dep ON dep.asset_id = fa.id
+      WHERE fa.deleted_at = ''
+      ORDER BY fa.acquisition_date DESC, fa.code
+      LIMIT 200
+      ''',
+    ).get();
+    return rows.map((row) => AdvancedAccountingItem.fromRow(row.data)).toList();
+  }
+
+  static Future<void> createFixedAsset({
+    required String code,
+    required String name,
+    required String category,
+    required DateTime acquisitionDate,
+    required double purchaseValue,
+    int usefulLifeMonths = 0,
+    String assetAccountId = '',
+    String paymentAccountId = '',
+    String notes = '',
+    String createdBy = '',
+    String storeId = '',
+    String branchId = '',
+  }) async {
+    final amount = _cleanAmount(purchaseValue);
+    if (amount <= 0) throw ArgumentError('Fixed asset purchase value is required.');
+    final accounts = await readDefaultAccountMap();
+    final fixedAssetAccountId = assetAccountId.trim().isNotEmpty
+        ? assetAccountId.trim()
+        : _requiredAccount(accounts, 'default_fixed_assets_account_id');
+    final paymentAccount = paymentAccountId.trim().isNotEmpty
+        ? paymentAccountId.trim()
+        : _requiredAccount(accounts, 'default_cash_account_id');
+    await _accountSnapshot(_db, fixedAssetAccountId);
+    await _accountSnapshot(_db, paymentAccount);
+
+    final now = DateTime.now().toUtc().toIso8601String();
+    final assetId = _newId('asset');
+    final normalizedCode = code.trim().isEmpty ? 'FA-${DateTime.now().millisecondsSinceEpoch}' : code.trim().toUpperCase();
+    final normalizedName = name.trim().isEmpty ? 'Fixed Asset' : name.trim();
+
+    await _db.transaction(() async {
+      await _db.customInsert(
+        '''
+        INSERT INTO fixed_assets
+          (id, code, name, category, acquisition_date, purchase_value, useful_life_months,
+           asset_account_id, status, notes, created_at, updated_at, store_id, branch_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(assetId),
+          Variable<String>(normalizedCode),
+          Variable<String>(normalizedName),
+          Variable<String>(category.trim()),
+          Variable<String>(acquisitionDate.toUtc().toIso8601String()),
+          Variable<double>(_roundMoney(amount)),
+          Variable<int>(usefulLifeMonths < 0 ? 0 : usefulLifeMonths),
+          Variable<String>(fixedAssetAccountId),
+          Variable<String>(notes.trim()),
+          Variable<String>(now),
+          Variable<String>(now),
+          Variable<String>(storeId),
+          Variable<String>(branchId),
+        ],
+      );
+    });
+
+    await createPostedEntry(JournalEntryDraft(
+      entryDate: acquisitionDate,
+      referenceType: 'fixed_asset',
+      referenceId: assetId,
+      referenceNo: normalizedCode,
+      description: 'Fixed asset acquisition: $normalizedName',
+      createdBy: createdBy,
+      storeId: storeId,
+      branchId: branchId,
+      lines: <JournalLineDraft>[
+        JournalLineDraft(
+          accountId: fixedAssetAccountId,
+          debit: amount,
+          credit: 0,
+          memo: 'Fixed asset acquisition $normalizedCode',
+        ),
+        JournalLineDraft(
+          accountId: paymentAccount,
+          debit: 0,
+          credit: amount,
+          memo: 'Payment for fixed asset $normalizedCode',
+        ),
+      ],
+    ));
+
+    await _writeAuditLog(
+      action: 'create_fixed_asset',
+      entityType: 'fixed_asset',
+      entityId: assetId,
+      referenceType: 'fixed_asset',
+      referenceId: assetId,
+      details: '$normalizedCode - $normalizedName',
+      createdBy: createdBy,
+      storeId: storeId,
+      branchId: branchId,
+    );
+  }
+
+  static Future<int> runDepreciationForAsset({
+    required String assetId,
+    DateTime? throughDate,
+    String createdBy = '',
+  }) async {
+    final row = await _db.customSelect(
+      '''
+      SELECT *
+      FROM fixed_assets
+      WHERE id = ? AND deleted_at = '' AND status = 'active'
+      LIMIT 1
+      ''',
+      variables: <Variable<Object>>[Variable<String>(assetId)],
+    ).getSingleOrNull();
+    if (row == null) throw ArgumentError('Fixed asset not found: $assetId');
+    return _runDepreciationForAssetRow(row.data, throughDate: throughDate, createdBy: createdBy);
+  }
+
+  static Future<int> runDepreciationForAllAssets({
+    DateTime? throughDate,
+    String createdBy = '',
+  }) async {
+    final rows = await _db.customSelect(
+      '''
+      SELECT *
+      FROM fixed_assets
+      WHERE deleted_at = '' AND status = 'active' AND useful_life_months > 0 AND purchase_value > 0
+      ORDER BY acquisition_date, code
+      ''',
+    ).get();
+    var posted = 0;
+    for (final row in rows) {
+      posted += await _runDepreciationForAssetRow(row.data, throughDate: throughDate, createdBy: createdBy);
+    }
+    return posted;
+  }
+
+  static Future<int> _runDepreciationForAssetRow(
+    Map<String, Object?> asset, {
+    DateTime? throughDate,
+    String createdBy = '',
+  }) async {
+    final id = asset['id']?.toString() ?? '';
+    final code = asset['code']?.toString() ?? '';
+    final name = asset['name']?.toString() ?? '';
+    final purchaseValue = _roundMoney(_num(asset['purchase_value']));
+    final usefulLifeMonths = (asset['useful_life_months'] as int?) ?? int.tryParse(asset['useful_life_months']?.toString() ?? '') ?? 0;
+    final acquisitionDate = DateTime.tryParse(asset['acquisition_date']?.toString() ?? '')?.toLocal();
+    if (id.isEmpty || acquisitionDate == null || purchaseValue <= 0 || usefulLifeMonths <= 0) return 0;
+
+    final end = throughDate ?? DateTime.now();
+    final endMonth = DateTime(end.year, end.month, 1);
+    final firstMonth = DateTime(acquisitionDate.year, acquisitionDate.month, 1);
+    var elapsedMonths = ((endMonth.year - firstMonth.year) * 12) + (endMonth.month - firstMonth.month) + 1;
+    if (elapsedMonths < 1) return 0;
+    if (elapsedMonths > usefulLifeMonths) elapsedMonths = usefulLifeMonths;
+
+    final existingRows = await _db.customSelect(
+      '''
+      SELECT period_key, COALESCE(SUM(amount), 0) AS amount
+      FROM fixed_asset_depreciation
+      WHERE asset_id = ? AND deleted_at = ''
+      GROUP BY period_key
+      ''',
+      variables: <Variable<Object>>[Variable<String>(id)],
+    ).get();
+    final existing = <String, double>{
+      for (final row in existingRows) row.data['period_key'].toString(): _num(row.data['amount']),
+    };
+    final accumulatedBefore = existing.values.fold<double>(0, (sum, amount) => sum + amount);
+    var accumulated = _roundMoney(accumulatedBefore);
+    var posted = 0;
+    final monthly = _roundMoney(purchaseValue / usefulLifeMonths);
+    final accounts = await readDefaultAccountMap();
+    final expenseAccount = _requiredAccount(accounts, 'default_depreciation_expense_account_id');
+    final accumulatedAccount = _requiredAccount(accounts, 'default_accumulated_depreciation_account_id');
+    await _accountSnapshot(_db, expenseAccount);
+    await _accountSnapshot(_db, accumulatedAccount);
+
+    for (var i = 0; i < elapsedMonths; i++) {
+      final period = DateTime(firstMonth.year, firstMonth.month + i, 1);
+      final periodKey = '${period.year.toString().padLeft(4, '0')}-${period.month.toString().padLeft(2, '0')}';
+      if (existing.containsKey(periodKey)) continue;
+      final remaining = _roundMoney(purchaseValue - accumulated);
+      if (remaining <= 0) break;
+      final amount = _roundMoney(remaining < monthly || i == usefulLifeMonths - 1 ? remaining : monthly);
+      if (amount <= 0) continue;
+      final depreciationId = _newId('dep');
+      final depreciationDate = DateTime(period.year, period.month + 1, 0, 23, 59, 59);
+      final entryId = await createPostedEntry(JournalEntryDraft(
+        entryDate: depreciationDate,
+        referenceType: 'fixed_asset_depreciation',
+        referenceId: depreciationId,
+        referenceNo: '$code-$periodKey',
+        description: 'Depreciation for fixed asset $code - $name ($periodKey)',
+        createdBy: createdBy,
+        storeId: asset['store_id']?.toString() ?? '',
+        branchId: asset['branch_id']?.toString() ?? '',
+        lines: <JournalLineDraft>[
+          JournalLineDraft(
+            accountId: expenseAccount,
+            debit: amount,
+            credit: 0,
+            memo: 'Depreciation expense for $code ($periodKey)',
+          ),
+          JournalLineDraft(
+            accountId: accumulatedAccount,
+            debit: 0,
+            credit: amount,
+            memo: 'Accumulated depreciation for $code ($periodKey)',
+          ),
+        ],
+      ));
+      accumulated = _roundMoney(accumulated + amount);
+      await _db.customInsert(
+        '''
+        INSERT OR IGNORE INTO fixed_asset_depreciation
+          (id, asset_id, period_key, depreciation_date, amount, accumulated_after, book_value_after,
+           journal_entry_id, notes, created_at, store_id, branch_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(depreciationId),
+          Variable<String>(id),
+          Variable<String>(periodKey),
+          Variable<String>(depreciationDate.toUtc().toIso8601String()),
+          Variable<double>(amount),
+          Variable<double>(accumulated),
+          Variable<double>(_roundMoney(purchaseValue - accumulated)),
+          Variable<String>(entryId),
+          Variable<String>('Straight-line depreciation'),
+          Variable<String>(DateTime.now().toUtc().toIso8601String()),
+          Variable<String>(asset['store_id']?.toString() ?? ''),
+          Variable<String>(asset['branch_id']?.toString() ?? ''),
+        ],
+      );
+      posted++;
+    }
+    return posted;
   }
 
   static Future<void> createManualJournalEntry({
@@ -866,29 +1423,141 @@ class AccountingService {
     String notes = '',
   }) async {
     final row = await _db.customSelect(
-      "SELECT expected_cash, store_id, branch_id FROM cash_drawer_sessions WHERE id = ? AND status = 'open' LIMIT 1",
+      """
+      SELECT id, drawer_no, opened_at, expected_cash, store_id, branch_id
+      FROM cash_drawer_sessions
+      WHERE id = ? AND status = 'open'
+      LIMIT 1
+      """,
       variables: <Variable<Object>>[Variable<String>(sessionId)],
     ).getSingleOrNull();
     if (row == null) return;
-    final expected = _num(row.data['expected_cash']);
+
+    final data = row.data;
+    final storeId = data['store_id']?.toString() ?? '';
+    final branchId = data['branch_id']?.toString() ?? '';
+    final openedAt = data['opened_at']?.toString() ?? '';
+    final storedExpected = _num(data['expected_cash']);
+    final expected = _roundMoney(await _expectedCashForDrawer(
+      openedAt: openedAt,
+      fallbackExpected: storedExpected,
+      branchId: branchId,
+    ));
+    final counted = _roundMoney(countedCash);
+    final difference = _roundMoney(counted - expected);
     final now = DateTime.now().toUtc().toIso8601String();
+
     await _db.customUpdate(
       '''
       UPDATE cash_drawer_sessions
-      SET status = 'closed', closed_at = ?, counted_cash = ?, difference = ?,
+      SET status = 'closed', closed_at = ?, expected_cash = ?, counted_cash = ?, difference = ?,
           closed_by = ?, notes = ?
       WHERE id = ?
       ''',
       variables: <Variable<Object>>[
         Variable<String>(now),
-        Variable<double>(_roundMoney(countedCash)),
-        Variable<double>(_roundMoney(countedCash - expected)),
+        Variable<double>(expected),
+        Variable<double>(counted),
+        Variable<double>(difference),
         Variable<String>(closedBy),
         Variable<String>(notes),
         Variable<String>(sessionId),
       ],
     );
-    await _writeAuditLog(action: 'close_cash_drawer', entityType: 'cash_drawer', entityId: sessionId, details: 'Difference: ${_roundMoney(countedCash - expected)}', createdBy: closedBy, storeId: row.data['store_id']?.toString() ?? '', branchId: row.data['branch_id']?.toString() ?? '');
+
+    if (difference.abs() >= 0.01) {
+      await _postCashReconciliationDifference(
+        sessionId: sessionId,
+        drawerNo: data['drawer_no']?.toString() ?? '',
+        difference: difference,
+        countedCash: counted,
+        expectedCash: expected,
+        closedBy: closedBy,
+        storeId: storeId,
+        branchId: branchId,
+      );
+    }
+
+    final type = difference < 0 ? 'shortage' : difference > 0 ? 'overage' : 'balanced';
+    await _writeAuditLog(
+      action: 'close_cash_drawer',
+      entityType: 'cash_drawer',
+      entityId: sessionId,
+      details: 'Cash reconciliation $type. Expected: $expected, Counted: $counted, Difference: $difference',
+      createdBy: closedBy,
+      storeId: storeId,
+      branchId: branchId,
+    );
+  }
+
+  static Future<double> _expectedCashForDrawer({
+    required String openedAt,
+    required double fallbackExpected,
+    required String branchId,
+  }) async {
+    final accounts = await readDefaultAccountMap();
+    final cashAccountId = _requiredAccount(accounts, 'default_cash_account_id');
+    final branchFilter = branchId.trim().isEmpty ? '' : 'AND je.branch_id = ?';
+    final variables = <Variable<Object>>[
+      Variable<String>(cashAccountId),
+      Variable<String>(openedAt),
+      if (branchId.trim().isNotEmpty) Variable<String>(branchId),
+    ];
+    final row = await _db.customSelect(
+      '''
+      SELECT COALESCE(SUM(jl.debit - jl.credit), 0) AS movement
+      FROM journal_lines jl
+      INNER JOIN journal_entries je ON je.id = jl.entry_id
+      WHERE jl.account_id = ?
+        AND je.deleted_at = ''
+        AND je.status = 'posted'
+        AND je.entry_date >= ?
+        $branchFilter
+      ''',
+      variables: variables,
+    ).getSingleOrNull();
+    return _roundMoney(fallbackExpected + _num(row?.data['movement']));
+  }
+
+  static Future<void> _postCashReconciliationDifference({
+    required String sessionId,
+    required String drawerNo,
+    required double difference,
+    required double countedCash,
+    required double expectedCash,
+    required String closedBy,
+    required String storeId,
+    required String branchId,
+  }) async {
+    final accounts = await readDefaultAccountMap();
+    final cashAccountId = _requiredAccount(accounts, 'default_cash_account_id');
+    final adjustmentAccountId = accounts['default_cash_over_short_account_id']?.trim().isNotEmpty == true
+        ? accounts['default_cash_over_short_account_id']!.trim()
+        : _requiredAccount(accounts, 'default_expense_account_id');
+    final amount = _roundMoney(difference.abs());
+    if (amount <= 0) return;
+
+    final isOverage = difference > 0;
+    await createPostedEntry(JournalEntryDraft(
+      entryDate: DateTime.now(),
+      referenceType: 'cash_reconciliation',
+      referenceId: sessionId,
+      referenceNo: drawerNo.trim().isEmpty ? 'Cash drawer close' : drawerNo.trim(),
+      description: 'Cash reconciliation ${isOverage ? 'overage' : 'shortage'}: expected $expectedCash, counted $countedCash',
+      source: 'system',
+      createdBy: closedBy,
+      storeId: storeId,
+      branchId: branchId,
+      lines: isOverage
+          ? <JournalLineDraft>[
+              JournalLineDraft(accountId: cashAccountId, debit: amount, credit: 0, memo: 'Cash drawer overage'),
+              JournalLineDraft(accountId: adjustmentAccountId, debit: 0, credit: amount, memo: 'Cash drawer overage offset'),
+            ]
+          : <JournalLineDraft>[
+              JournalLineDraft(accountId: adjustmentAccountId, debit: amount, credit: 0, memo: 'Cash drawer shortage'),
+              JournalLineDraft(accountId: cashAccountId, debit: 0, credit: amount, memo: 'Cash drawer shortage offset'),
+            ],
+    ));
   }
 
   static Future<void> createAccountingPeriod({
@@ -1085,6 +1754,25 @@ class AccountingService {
       ],
     );
     await _writeAuditLog(action: 'create_master_data', entityType: table, details: '$code - $name');
+  }
+
+
+  static Future<double> _defaultVatRatePercent() async {
+    final row = await _db.customSelect(
+      "SELECT value FROM accounting_settings WHERE key = 'default_vat_rate_percent' LIMIT 1",
+    ).getSingleOrNull();
+    final value = _num(row?.data['value']);
+    if (!value.isFinite || value < 0) return 0;
+    return value.clamp(0, 100).toDouble();
+  }
+
+  static Future<_TaxBreakdown> _taxBreakdown(double grossAmount) async {
+    final gross = _roundMoney(_cleanAmount(grossAmount));
+    final rate = await _defaultVatRatePercent();
+    if (gross <= 0 || rate <= 0) return _TaxBreakdown(netAmount: gross, taxAmount: 0, grossAmount: gross, ratePercent: rate);
+    final net = _roundMoney(gross / (1 + (rate / 100)));
+    final tax = _roundMoney(gross - net);
+    return _TaxBreakdown(netAmount: net, taxAmount: tax, grossAmount: gross, ratePercent: rate);
   }
 
   static Future<void> _writeAuditLog({
@@ -1449,6 +2137,93 @@ class BalanceSheetReport {
   final double retainedEarnings;
   final double liabilitiesAndEquity;
   final double difference;
+}
+
+
+enum CashFlowCategory { operating, investing, financing }
+
+class CashFlowStatementReport {
+  const CashFlowStatementReport({
+    required this.operatingInflows,
+    required this.operatingOutflows,
+    required this.investingInflows,
+    required this.investingOutflows,
+    required this.financingInflows,
+    required this.financingOutflows,
+    required this.openingCash,
+    required this.closingCash,
+    this.from,
+    this.to,
+    this.lines = const <CashFlowStatementLineReport>[],
+  });
+
+  final double operatingInflows;
+  final double operatingOutflows;
+  final double investingInflows;
+  final double investingOutflows;
+  final double financingInflows;
+  final double financingOutflows;
+  final double openingCash;
+  final double closingCash;
+  final DateTime? from;
+  final DateTime? to;
+  final List<CashFlowStatementLineReport> lines;
+
+  double get operatingNet => operatingInflows - operatingOutflows;
+  double get investingNet => investingInflows - investingOutflows;
+  double get financingNet => financingInflows - financingOutflows;
+  double get netChangeInCash => operatingNet + investingNet + financingNet;
+}
+
+class CashFlowStatementLineReport {
+  const CashFlowStatementLineReport({
+    required this.entryNo,
+    required this.entryDate,
+    required this.referenceType,
+    required this.referenceNo,
+    required this.description,
+    required this.category,
+    required this.inflow,
+    required this.outflow,
+    required this.netCashFlow,
+  });
+
+  final String entryNo;
+  final DateTime entryDate;
+  final String referenceType;
+  final String referenceNo;
+  final String description;
+  final CashFlowCategory category;
+  final double inflow;
+  final double outflow;
+  final double netCashFlow;
+}
+
+class TaxReport {
+  const TaxReport({
+    required this.outputTax,
+    required this.inputTax,
+    required this.netTaxPayable,
+    required this.payableAccountMovement,
+    this.from,
+    this.to,
+  });
+
+  final double outputTax;
+  final double inputTax;
+  final double netTaxPayable;
+  final double payableAccountMovement;
+  final DateTime? from;
+  final DateTime? to;
+}
+
+class _TaxBreakdown {
+  const _TaxBreakdown({required this.netAmount, required this.taxAmount, required this.grossAmount, required this.ratePercent});
+
+  final double netAmount;
+  final double taxAmount;
+  final double grossAmount;
+  final double ratePercent;
 }
 
 class CashBankMovementReport {
