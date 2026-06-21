@@ -174,9 +174,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
         '[RECOVER_IDENTITY] blocked reason=missing_online_session',
       );
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text(
-                'Online account session is required. Please sign in again.')),
+        SnackBar(
+            content: Text(tr.text('online_account_session_required'))),
       );
       return;
     }
@@ -185,9 +184,9 @@ class _LoginGatePageState extends State<LoginGatePage> {
         '[RECOVER_IDENTITY] blocked reason=local_store_data_exists',
       );
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text(
-                'This device already has local Store data. Store identity recovery is locked.')),
+        SnackBar(
+            content:
+                Text(tr.text('local_store_identity_recovery_locked'))),
       );
       return;
     }
@@ -196,9 +195,9 @@ class _LoginGatePageState extends State<LoginGatePage> {
         '[RECOVER_IDENTITY] blocked reason=missing_online_password',
       );
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
             content: Text(
-                'Please sign in online again before recovering the Store identity.')),
+                tr.text('sign_in_online_before_recovering_store_identity'))),
       );
       return;
     }
@@ -207,8 +206,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
         '[RECOVER_IDENTITY] blocked reason=invalid_store_id storeId=$storeId',
       );
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('A valid Store ID was not found for this account.')),
+        SnackBar(
+            content: Text(tr.text('store_id_not_found_for_account'))),
       );
       return;
     }
@@ -226,8 +225,9 @@ class _LoginGatePageState extends State<LoginGatePage> {
             children: [
               Text(tr.text('recover_store_identity_desc')),
               const SizedBox(height: 12),
-              Text('Store ID: $storeId'),
-              if (branchId.isNotEmpty) Text('Branch ID: $branchId'),
+              Text('${tr.text('store_id_label')}: $storeId'),
+              if (branchId.isNotEmpty)
+                Text('${tr.text('branch_id_label')}: $branchId'),
             ],
           ),
         ),
@@ -356,9 +356,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
         '[RECOVER_DATA] blocked reason=missing_online_session',
       );
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text(
-                'Online account session is required. Please sign in again.')),
+        SnackBar(
+            content: Text(tr.text('online_account_session_required'))),
       );
       return;
     }
@@ -404,8 +403,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
         .toUpperCase();
     if (!storeId.startsWith('ST-')) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('A valid Store ID was not found for this account.')),
+        SnackBar(
+            content: Text(tr.text('store_id_not_found_for_account'))),
       );
       return;
     }
@@ -416,8 +415,9 @@ class _LoginGatePageState extends State<LoginGatePage> {
         '[RECOVER_DATA] blocked reason=cloud_sync_not_enabled storeId=$storeId branchId=$branchId',
       );
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('This subscription is not enrolled in Cloud Sync.')),
+        SnackBar(
+            content:
+                Text(tr.text('subscription_not_enrolled_cloud_sync'))),
       );
       return;
     }
@@ -435,8 +435,9 @@ class _LoginGatePageState extends State<LoginGatePage> {
             children: [
               Text(tr.text('recover_store_data_desc')),
               const SizedBox(height: 12),
-              Text('Store ID: $storeId'),
-              if (branchId.isNotEmpty) Text('Branch ID: $branchId'),
+              Text('${tr.text('store_id_label')}: $storeId'),
+              if (branchId.isNotEmpty)
+                Text('${tr.text('branch_id_label')}: $branchId'),
             ],
           ),
         ),

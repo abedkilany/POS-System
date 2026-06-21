@@ -11,9 +11,8 @@ import '../../core/utils/responsive.dart';
 class BarcodeScannerPage extends StatefulWidget {
   const BarcodeScannerPage({
     super.key,
-    this.title = 'Scan barcode',
-    this.helpText =
-        'Point the camera at the product barcode. The code will be filled automatically.',
+    this.title = '',
+    this.helpText = '',
     this.formats,
   });
 
@@ -102,7 +101,7 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
     if (!BarcodeScannerPage.isSupportedPlatform || controller == null) {
       return Scaffold(
         appBar: AppBar(
-          title: Text(widget.title == 'Scan barcode'
+          title: Text(widget.title.isEmpty
               ? tr.text('scan_barcode_title')
               : widget.title),
         ),
@@ -133,7 +132,7 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
     }
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.title == 'Scan barcode'
+        title: Text(widget.title.isEmpty
             ? AppLocalizations.of(context).text('scan_barcode_title')
             : widget.title),
         actions: [
@@ -200,8 +199,7 @@ class _BarcodeScannerPageState extends State<BarcodeScannerPage> {
               child: Padding(
                 padding: VentioResponsive.cardInsets(context),
                 child: Text(
-                  widget.helpText ==
-                          'Point the camera at the product barcode. The code will be filled automatically.'
+                  widget.helpText.isEmpty
                       ? AppLocalizations.of(context).text('scan_barcode_help')
                       : widget.helpText,
                   textAlign: TextAlign.center,

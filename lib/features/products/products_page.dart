@@ -285,7 +285,7 @@ class _ProductsPageState extends State<ProductsPage> {
     if (pages.isEmpty) {
       pages = [
         {
-          'name': tr.text('page') == 'page' ? 'Page 1' : '${tr.text('page')} 1',
+          'name': '${tr.text('page')} 1',
           'slots':
               List.generate(12, (_) => {'productId': null, 'shortName': null}),
         }

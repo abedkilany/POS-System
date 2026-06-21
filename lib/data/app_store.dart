@@ -225,8 +225,9 @@ class AppStore extends ChangeNotifier {
   bool _isReady = false;
 
   bool get isReady => _isReady;
-  List<Product> get products =>
-      List.unmodifiable(_products.where((item) => !item.isDeleted));
+  List<Product> get products => List.unmodifiable(_sortedProducts(_products
+      .where((item) => !item.isDeleted)
+      .toList(growable: false)));
   List<Product> get allProductsForDiagnostics => List.unmodifiable(_products);
   List<Customer> get customers =>
       List.unmodifiable(_customers.where((item) => !item.isDeleted));
@@ -1560,8 +1561,8 @@ class AppStore extends ChangeNotifier {
   int get lowStockCount => products
       .where((product) => product.trackStock && product.isLowStock)
       .length;
-  List<Product> get stockTrackedProducts =>
-      products.where((product) => product.trackStock).toList(growable: false);
+  List<Product> get stockTrackedProducts => List.unmodifiable(_sortedProducts(
+      products.where((product) => product.trackStock).toList(growable: false)));
   double get totalUnitsInStock =>
       stockTrackedProducts.fold<double>(0, (sum, item) => sum + item.stock);
   double get inventoryRetailValue => stockTrackedProducts.fold<double>(
@@ -1572,6 +1573,19 @@ class AppStore extends ChangeNotifier {
         0,
         (sum, item) => sum + (_safeUsdCost(item) * item.stock),
       );
+
+  List<Product> _sortedProducts(List<Product> items) {
+    final sorted = List<Product>.from(items);
+    sorted.sort((a, b) {
+      final nameCompare =
+          a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      if (nameCompare != 0) return nameCompare;
+      final codeCompare = a.code.toLowerCase().compareTo(b.code.toLowerCase());
+      if (codeCompare != 0) return codeCompare;
+      return a.id.compareTo(b.id);
+    });
+    return sorted;
+  }
 
   Future<void> initialize() async {
     await _migrateLegacySharedPreferencesIfNeeded();

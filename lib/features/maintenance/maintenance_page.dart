@@ -403,6 +403,7 @@ class _SyncDiagnosticsLogCard extends StatelessWidget {
   final AppStore store;
 
   Future<void> _copy(BuildContext context, List<String> lines) async {
+    final tr = AppLocalizations.of(context);
     final identity = store.appIdentity;
     final header = [
       'SYNC DIAGNOSTICS',
@@ -420,7 +421,7 @@ class _SyncDiagnosticsLogCard extends StatelessWidget {
     await Clipboard.setData(ClipboardData(text: '$header${lines.join('\n')}'));
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Copied ${lines.length} sync log line(s).')),
+      SnackBar(content: Text(tr.format('copied_sync_log_lines', {'count': lines.length}))),
     );
   }
 
@@ -440,6 +441,7 @@ class _SyncDiagnosticsLogCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = Theme.of(context).colorScheme;
+    final tr = AppLocalizations.of(context);
     return ValueListenableBuilder<List<String>>(
       valueListenable: SyncDiagnosticsLog.lines,
       builder: (context, lines, _) {
@@ -459,14 +461,14 @@ class _SyncDiagnosticsLogCard extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Temporary Sync Diagnostics',
+                            tr.text('temporary_sync_diagnostics'),
                             style: Theme.of(context)
                                 .textTheme
                                 .titleMedium
                                 ?.copyWith(fontWeight: FontWeight.w800),
                           ),
                           Text(
-                            'Live Host/Client sync trace for this device.',
+                            tr.text('live_host_client_sync_trace'),
                             style: Theme.of(context)
                                 .textTheme
                                 .bodySmall
@@ -487,18 +489,18 @@ class _SyncDiagnosticsLogCard extends StatelessWidget {
                       onPressed:
                           lines.isEmpty ? null : () => _copy(context, lines),
                       icon: const Icon(Icons.copy_outlined),
-                      label: const Text('Copy log'),
+                      label: Text(tr.text('copy_log')),
                     ),
                     OutlinedButton.icon(
                       onPressed: _snapshot,
                       icon: const Icon(Icons.add_chart_outlined),
-                      label: const Text('Add snapshot'),
+                      label: Text(tr.text('add_snapshot')),
                     ),
                     OutlinedButton.icon(
                       onPressed:
                           lines.isEmpty ? null : SyncDiagnosticsLog.clear,
                       icon: const Icon(Icons.clear_all_outlined),
-                      label: const Text('Clear'),
+                      label: Text(tr.text('clear_log')),
                     ),
                   ],
                 ),
@@ -515,7 +517,7 @@ class _SyncDiagnosticsLogCard extends StatelessWidget {
                   ),
                   child: latest.isEmpty
                       ? Text(
-                          'No sync diagnostics yet. Add a change on Host or Client, then watch this panel.',
+                          tr.text('no_sync_diagnostics_yet'),
                           style: Theme.of(context)
                               .textTheme
                               .bodyMedium

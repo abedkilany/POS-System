@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/localization/app_localizations.dart';
 import '../../core/services/account_auth_service.dart';
 
 class AdminSubscribersPage extends StatefulWidget {
@@ -86,13 +87,16 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
     return '${local.year}-${two(local.month)}-${two(local.day)} ${two(local.hour)}:${two(local.minute)}';
   }
 
-  String _formatTrialDays(DateTime? value) {
-    if (value == null) return 'No trial date';
+  String _formatTrialDays(BuildContext context, DateTime? value) {
+    final tr = AppLocalizations.of(context);
+    if (value == null) return tr.text('no_trial_date');
     final now = DateTime.now();
     final diff = value.toLocal().difference(now);
-    if (diff.inMinutes < 0) return 'Expired';
-    if (diff.inHours < 24) return '${diff.inHours.clamp(0, 23)}h left';
-    return '${diff.inDays + 1} days left';
+    if (diff.inMinutes < 0) return tr.text('expired');
+    if (diff.inHours < 24) {
+      return tr.format('hours_left', {'count': diff.inHours.clamp(0, 23)});
+    }
+    return tr.format('days_left', {'count': diff.inDays + 1});
   }
 
   int _summaryInt(String key) {
@@ -119,6 +123,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
   }
 
   Future<void> _editSubscriber(AdminSubscriber subscriber) async {
+    final tr = AppLocalizations.of(context);
     final usernameController = TextEditingController(text: subscriber.username);
     final fullNameController = TextEditingController(text: subscriber.fullName);
     final storeNameController =
@@ -153,7 +158,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: const Text('Edit subscriber'),
+              title: Text(tr.text('edit_subscriber')),
               content: SizedBox(
                 width: 560,
                 child: SingleChildScrollView(
@@ -179,42 +184,42 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                           Expanded(
                               child: TextField(
                                   controller: usernameController,
-                                  decoration: const InputDecoration(
-                                      labelText: 'Username'))),
+                                  decoration: InputDecoration(
+                                      labelText: tr.text('username')))),
                           const SizedBox(width: 12),
                           Expanded(
                               child: TextField(
                                   controller: storeSlugController,
-                                  decoration: const InputDecoration(
-                                      labelText: 'Store slug'))),
+                                  decoration: InputDecoration(
+                                      labelText: tr.text('store_slug')))),
                         ],
                       ),
                       const SizedBox(height: 12),
                       TextField(
                           controller: storeNameController,
                           decoration:
-                              const InputDecoration(labelText: 'Store name')),
+                              InputDecoration(labelText: tr.text('store_name'))),
                       const SizedBox(height: 12),
                       TextField(
                           controller: fullNameController,
-                          decoration: const InputDecoration(
-                              labelText: 'Full name / note')),
+                          decoration: InputDecoration(
+                              labelText: tr.text('full_name_note'))),
                       const SizedBox(height: 12),
                       Row(
                         children: [
                           Expanded(
                             child: DropdownButtonFormField<String>(
                               initialValue: accountStatus,
-                              decoration: const InputDecoration(
-                                  labelText: 'Account status'),
-                              items: const [
+                              decoration: InputDecoration(
+                                  labelText: tr.text('account_status')),
+                              items: [
                                 DropdownMenuItem(
-                                    value: 'active', child: Text('Active')),
+                                    value: 'active', child: Text(tr.text('active'))),
                                 DropdownMenuItem(
-                                    value: 'blocked', child: Text('Blocked')),
+                                    value: 'blocked', child: Text(tr.text('blocked'))),
                                 DropdownMenuItem(
                                     value: 'suspended',
-                                    child: Text('Suspended')),
+                                    child: Text(tr.text('suspended'))),
                               ],
                               onChanged: (value) => setDialogState(
                                   () => accountStatus = value ?? 'active'),
@@ -225,14 +230,14 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                             child: DropdownButtonFormField<String>(
                               initialValue: plan,
                               decoration:
-                                  const InputDecoration(labelText: 'Plan'),
-                              items: const [
+                                  InputDecoration(labelText: tr.text('plan')),
+                              items: [
                                 DropdownMenuItem(
-                                    value: 'trial', child: Text('Trial')),
+                                    value: 'trial', child: Text(tr.text('trial'))),
                                 DropdownMenuItem(
-                                    value: 'basic', child: Text('Basic')),
+                                    value: 'basic', child: Text(tr.text('basic'))),
                                 DropdownMenuItem(
-                                    value: 'pro', child: Text('Pro')),
+                                    value: 'pro', child: Text(tr.text('pro'))),
                               ],
                               onChanged: (value) =>
                                   setDialogState(() => plan = value ?? 'trial'),
@@ -246,22 +251,22 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                           Expanded(
                             child: DropdownButtonFormField<String>(
                               initialValue: subscriptionStatus,
-                              decoration: const InputDecoration(
-                                  labelText: 'Subscription status'),
-                              items: const [
+                              decoration: InputDecoration(
+                                  labelText: tr.text('subscription_status')),
+                              items: [
                                 DropdownMenuItem(
-                                    value: 'trial', child: Text('Trial')),
+                                    value: 'trial', child: Text(tr.text('trial'))),
                                 DropdownMenuItem(
-                                    value: 'active', child: Text('Active')),
+                                    value: 'active', child: Text(tr.text('active'))),
                                 DropdownMenuItem(
-                                    value: 'expired', child: Text('Expired')),
+                                    value: 'expired', child: Text(tr.text('expired'))),
                                 DropdownMenuItem(
-                                    value: 'past_due', child: Text('Past due')),
+                                    value: 'past_due', child: Text(tr.text('past_due'))),
                                 DropdownMenuItem(
                                     value: 'cancelled',
-                                    child: Text('Cancelled')),
+                                    child: Text(tr.text('cancelled'))),
                                 DropdownMenuItem(
-                                    value: 'blocked', child: Text('Blocked')),
+                                    value: 'blocked', child: Text(tr.text('blocked'))),
                               ],
                               onChanged: (value) => setDialogState(
                                   () => subscriptionStatus = value ?? 'trial'),
@@ -272,8 +277,8 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                             child: TextField(
                               controller: devicesLimitController,
                               keyboardType: TextInputType.number,
-                              decoration: const InputDecoration(
-                                  labelText: 'Device limit'),
+                              decoration: InputDecoration(
+                                  labelText: tr.text('device_limit')),
                             ),
                           ),
                         ],
@@ -281,18 +286,16 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                       const SizedBox(height: 12),
                       TextField(
                         controller: trialEndsController,
-                        decoration: const InputDecoration(
-                          labelText: 'Trial ends at',
-                          helperText:
-                              'Example: 2026-06-28T19:08:06 or leave empty',
+                        decoration: InputDecoration(
+                          labelText: tr.text('trial_ends_at'),
+                          helperText: tr.text('example_trial_datetime'),
                         ),
                       ),
                       const SizedBox(height: 12),
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
-                        title: const Text('Cloud Sync'),
-                        subtitle:
-                            const Text('Allow this store to use Cloud Sync.'),
+                        title: Text(tr.text('cloud_sync')),
+                        subtitle: Text(tr.text('cloud_sync_allowed')),
                         value: cloudSyncEnabled,
                         onChanged: (value) =>
                             setDialogState(() => cloudSyncEnabled = value),
@@ -304,10 +307,10 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
               actions: [
                 TextButton(
                     onPressed: () => Navigator.of(dialogContext).pop(false),
-                    child: const Text('Cancel')),
+                    child: Text(tr.text('cancel'))),
                 FilledButton.icon(
                   icon: const Icon(Icons.save_outlined),
-                  label: const Text('Save'),
+                  label: Text(tr.text('save')),
                   onPressed: () async {
                     final username =
                         usernameController.text.trim().toLowerCase();
@@ -321,27 +324,27 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                         trialText.isEmpty ? null : DateTime.tryParse(trialText);
                     if (username.isEmpty || username.contains(' ')) {
                       setDialogState(() => localError =
-                          'Username is required and must not contain spaces.');
+                          tr.text('username_required_no_spaces'));
                       return;
                     }
                     if (storeName.isEmpty) {
-                      setDialogState(
-                          () => localError = 'Store name is required.');
+                      setDialogState(() =>
+                          localError = tr.text('store_name_required'));
                       return;
                     }
                     if (storeSlug.isEmpty || storeSlug.contains(' ')) {
                       setDialogState(() => localError =
-                          'Store slug is required and must not contain spaces.');
+                          tr.text('store_slug_required_no_spaces'));
                       return;
                     }
                     if (limit < 0) {
                       setDialogState(() =>
-                          localError = 'Device limit cannot be negative.');
+                          localError = tr.text('device_limit_cannot_be_negative'));
                       return;
                     }
                     if (trialText.isNotEmpty && trialEndsAt == null) {
-                      setDialogState(
-                          () => localError = 'Trial date format is invalid.');
+                      setDialogState(() =>
+                          localError = tr.text('trial_date_format_invalid'));
                       return;
                     }
                     final cache = AccountAuthCache.load();
@@ -381,28 +384,31 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
     trialEndsController.dispose();
     if (saved == true) {
       if (!mounted) return;
+      final tr = AppLocalizations.of(context);
       ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Subscriber updated.')));
+          .showSnackBar(SnackBar(content: Text(tr.text('subscriber_updated'))));
       await _load();
     }
   }
 
   Future<void> _deleteSubscriber(AdminSubscriber subscriber) async {
+    final tr = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Delete subscriber?'),
-        content: Text(
-            'This will delete ${subscriber.loginName}, the linked store, subscription, and cloud sync records for that store. This action cannot be undone.'),
+        title: Text('${tr.text('delete_subscriber')}?'),
+        content: Text(tr.format('delete_subscriber_desc', {
+          'loginName': subscriber.loginName,
+        })),
         actions: [
           TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('Cancel')),
+              child: Text(tr.text('cancel'))),
           FilledButton.icon(
             style: FilledButton.styleFrom(
                 backgroundColor: Theme.of(dialogContext).colorScheme.error),
             icon: const Icon(Icons.delete_outline),
-            label: const Text('Delete'),
+            label: Text(tr.text('delete')),
             onPressed: () => Navigator.of(dialogContext).pop(true),
           ),
         ],
@@ -421,13 +427,14 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
       return;
     }
     ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('Subscriber deleted.')));
+        .showSnackBar(SnackBar(content: Text(tr.text('subscriber_deleted'))));
     await _load();
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final tr = AppLocalizations.of(context);
     final visibleSubscribers = _visibleSubscribers;
     return Scaffold(
       backgroundColor: theme.colorScheme.surface,
@@ -486,17 +493,17 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                           headingRowHeight: 52,
                           dataRowMinHeight: 64,
                           dataRowMaxHeight: 74,
-                          columns: const [
-                            DataColumn(label: Text('Subscriber')),
-                            DataColumn(label: Text('Store')),
-                            DataColumn(label: Text('Plan')),
-                            DataColumn(label: Text('Status')),
-                            DataColumn(label: Text('Trial')),
-                            DataColumn(label: Text('Devices')),
-                            DataColumn(label: Text('Cloud Sync')),
-                            DataColumn(label: Text('Created')),
-                            DataColumn(label: Text('Last seen')),
-                            DataColumn(label: Text('Actions')),
+                          columns: [
+                            DataColumn(label: Text(tr.text('subscriber'))),
+                            DataColumn(label: Text(tr.text('store'))),
+                            DataColumn(label: Text(tr.text('plan'))),
+                            DataColumn(label: Text(tr.text('subscription_status'))),
+                            DataColumn(label: Text(tr.text('trial'))),
+                            DataColumn(label: Text(tr.text('devices'))),
+                            DataColumn(label: Text(tr.text('cloud_sync'))),
+                            DataColumn(label: Text(tr.text('created'))),
+                            DataColumn(label: Text(tr.text('last_seen'))),
+                            DataColumn(label: Text(tr.text('actions'))),
                           ],
                           rows: visibleSubscribers.map((subscriber) {
                             return DataRow(
@@ -505,9 +512,9 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                                     subscriber: subscriber)),
                                 DataCell(_StoreCell(subscriber: subscriber)),
                                 DataCell(_PlanBadge(plan: subscriber.plan)),
-                                DataCell(_StatusBadge(
+                DataCell(_StatusBadge(
                                   label: subscriber.subscriptionStatus.isEmpty
-                                      ? 'unknown'
+                                      ? tr.text('unknown')
                                       : subscriber.subscriptionStatus,
                                   color: _statusColor(
                                       context, subscriber.subscriptionStatus),
@@ -516,8 +523,8 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                                 )),
                                 DataCell(_TrialCell(
                                   date: _formatDate(subscriber.trialEndsAt),
-                                  remaining:
-                                      _formatTrialDays(subscriber.trialEndsAt),
+                                  remaining: _formatTrialDays(
+                                      context, subscriber.trialEndsAt),
                                   isExpired: subscriber.trialEndsAt != null &&
                                       subscriber.trialEndsAt!
                                           .toLocal()
@@ -527,8 +534,8 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                                     '${subscriber.deviceCount}/${subscriber.devicesLimit}')),
                                 DataCell(_StatusBadge(
                                   label: subscriber.cloudSyncEnabled
-                                      ? 'enabled'
-                                      : 'off',
+                                      ? tr.text('enabled')
+                                      : tr.text('off'),
                                   color: subscriber.cloudSyncEnabled
                                       ? Colors.green.shade700
                                       : Theme.of(context)
@@ -572,6 +579,7 @@ class _AdminHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final tr = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.all(22),
       decoration: BoxDecoration(
@@ -601,12 +609,12 @@ class _AdminHeader extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Ventio Admin Console',
+                Text(tr.text('ventio_admin_console'),
                     style: theme.textTheme.headlineSmall
                         ?.copyWith(fontWeight: FontWeight.w800)),
                 const SizedBox(height: 6),
                 Text(
-                  'Manage platform subscribers, stores, trial status, and device limits from one place.',
+                  tr.text('admin_console_desc'),
                   style: theme.textTheme.bodyMedium
                       ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
                 ),
@@ -616,7 +624,7 @@ class _AdminHeader extends StatelessWidget {
           FilledButton.icon(
             onPressed: onRefresh,
             icon: const Icon(Icons.refresh),
-            label: const Text('Refresh'),
+            label: Text(tr.text('refresh')),
           ),
         ],
       ),
@@ -641,22 +649,23 @@ class _OverviewGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     return Wrap(
       spacing: 12,
       runSpacing: 12,
       children: [
         _SummaryCard(
-            label: 'Accounts',
+            label: tr.text('accounts'),
             value: accounts,
             icon: Icons.people_alt_outlined),
         _SummaryCard(
-            label: 'Stores', value: stores, icon: Icons.storefront_outlined),
+            label: tr.text('stores'), value: stores, icon: Icons.storefront_outlined),
         _SummaryCard(
-            label: 'Trials', value: trials, icon: Icons.hourglass_top_outlined),
+            label: tr.text('trial_status'), value: trials, icon: Icons.hourglass_top_outlined),
         _SummaryCard(
-            label: 'Active', value: active, icon: Icons.verified_outlined),
+            label: tr.text('active'), value: active, icon: Icons.verified_outlined),
         _SummaryCard(
-            label: 'Expired trials',
+            label: tr.text('expired_trials'),
             value: expiredTrials,
             icon: Icons.warning_amber_outlined),
       ],
@@ -682,6 +691,7 @@ class _SubscribersToolbar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final tr = AppLocalizations.of(context);
     return Wrap(
       spacing: 12,
       runSpacing: 12,
@@ -693,7 +703,7 @@ class _SubscribersToolbar extends StatelessWidget {
             controller: controller,
             decoration: InputDecoration(
               prefixIcon: const Icon(Icons.search),
-              hintText: 'Search username, store, plan...',
+              hintText: tr.text('search_admin_subscribers'),
               border:
                   OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
               isDense: true,
@@ -705,25 +715,25 @@ class _SubscribersToolbar extends StatelessWidget {
           child: DropdownButtonFormField<String>(
             initialValue: statusFilter,
             decoration: InputDecoration(
-              labelText: 'Status',
+              labelText: tr.text('subscription_status'),
               border:
                   OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
               isDense: true,
             ),
-            items: const [
-              DropdownMenuItem(value: 'all', child: Text('All statuses')),
-              DropdownMenuItem(value: 'trial', child: Text('Trial')),
-              DropdownMenuItem(value: 'active', child: Text('Active')),
-              DropdownMenuItem(value: 'expired', child: Text('Expired')),
-              DropdownMenuItem(value: 'blocked', child: Text('Blocked')),
-              DropdownMenuItem(value: 'cancelled', child: Text('Cancelled')),
+            items: [
+              DropdownMenuItem(value: 'all', child: Text(tr.text('all_statuses'))),
+              DropdownMenuItem(value: 'trial', child: Text(tr.text('trial'))),
+              DropdownMenuItem(value: 'active', child: Text(tr.text('active'))),
+              DropdownMenuItem(value: 'expired', child: Text(tr.text('expired'))),
+              DropdownMenuItem(value: 'blocked', child: Text(tr.text('blocked'))),
+              DropdownMenuItem(value: 'cancelled', child: Text(tr.text('cancelled'))),
             ],
             onChanged: onStatusChanged,
           ),
         ),
         Chip(
           avatar: const Icon(Icons.filter_list, size: 18),
-          label: Text('$count of $total shown'),
+          label: Text(tr.format('shown_of_total', {'count': count, 'total': total})),
           backgroundColor: theme.colorScheme.surfaceContainerHighest,
         ),
       ],
@@ -882,18 +892,19 @@ class _ActionsCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Tooltip(
-          message: 'Edit subscriber',
+          message: tr.text('edit_subscriber'),
           child: IconButton(
             icon: const Icon(Icons.edit_outlined),
             onPressed: onEdit,
           ),
         ),
         Tooltip(
-          message: 'Delete subscriber',
+          message: tr.text('delete_subscriber'),
           child: IconButton(
             icon: Icon(Icons.delete_outline,
                 color: Theme.of(context).colorScheme.error),
@@ -913,6 +924,7 @@ class _ErrorCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     final theme = Theme.of(context);
     return Card(
       color: theme.colorScheme.errorContainer,
@@ -926,7 +938,7 @@ class _ErrorCard extends StatelessWidget {
             TextButton.icon(
                 onPressed: onRetry,
                 icon: const Icon(Icons.refresh),
-                label: const Text('Retry')),
+                label: Text(tr.text('retry'))),
           ],
         ),
       ),

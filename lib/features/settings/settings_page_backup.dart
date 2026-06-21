@@ -189,11 +189,12 @@ class SettingsBackupActions {
     BuildContext context,
     AppStore store,
   ) async {
+    final tr = AppLocalizations.of(context);
     if (store.appIdentity.hostDeviceId.trim().isNotEmpty) {
       if (!store.hasPermission(AppPermission.syncManage)) {
         if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('You do not have permission: sync.manage'),
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(tr.text('permission_sync_manage_required')),
           ));
         }
         return;
@@ -224,17 +225,16 @@ class SettingsBackupActions {
 
     if (cache == null || cache.accountToken.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content:
-              Text('Online account session is required. Please sign in again.'),
+        SnackBar(
+          content: Text(tr.text('online_account_session_required')),
         ),
       );
       return;
     }
     if (!storeId.startsWith('ST-')) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('A valid Store ID was not found for this account.'),
+        SnackBar(
+          content: Text(tr.text('store_id_not_found_for_account')),
         ),
       );
       return;
@@ -253,8 +253,9 @@ class SettingsBackupActions {
             children: [
               Text(tr.text('recover_store_identity_desc')),
               const SizedBox(height: 12),
-              Text('Store ID: $storeId'),
-              if (branchId.isNotEmpty) Text('Branch ID: $branchId'),
+              Text('${tr.text('store_id_label')}: $storeId'),
+              if (branchId.isNotEmpty)
+                Text('${tr.text('branch_id_label')}: $branchId'),
             ],
           ),
         ),
@@ -319,17 +320,16 @@ class SettingsBackupActions {
 
     if (cache == null || cache.accountToken.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content:
-              Text('Online account session is required. Please sign in again.'),
+        SnackBar(
+          content: Text(tr.text('online_account_session_required')),
         ),
       );
       return;
     }
     if (!storeId.startsWith('ST-')) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('A valid Store ID was not found for this account.'),
+        SnackBar(
+          content: Text(tr.text('store_id_not_found_for_account')),
         ),
       );
       return;
@@ -342,8 +342,8 @@ class SettingsBackupActions {
     }
     if (!store.hasPermission(AppPermission.syncManage)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('You do not have permission: sync.manage'),
+        SnackBar(
+          content: Text(tr.text('permission_sync_manage_required')),
         ),
       );
       return;
@@ -362,8 +362,9 @@ class SettingsBackupActions {
             children: [
               Text(tr.text('recover_store_data_desc')),
               const SizedBox(height: 12),
-              Text('Store ID: $storeId'),
-              if (branchId.isNotEmpty) Text('Branch ID: $branchId'),
+              Text('${tr.text('store_id_label')}: $storeId'),
+              if (branchId.isNotEmpty)
+                Text('${tr.text('branch_id_label')}: $branchId'),
             ],
           ),
         ),

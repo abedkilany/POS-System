@@ -515,7 +515,7 @@ Widget _buildLockedView() {
                       PopupMenuItem(value: 'refresh', child: Text(_t('refresh'))),
                       if (_selectedMode != 'structure') PopupMenuItem(value: 'columns', child: Text(_t('columns'))),
                       if (_selectedMode != 'data') PopupMenuItem(value: 'data', child: Text(_t('data_view'))),
-                      if (_selectedMode != 'sql') const PopupMenuItem(value: 'sql', child: Text('SQL Editor')),
+                      if (_selectedMode != 'sql') PopupMenuItem(value: 'sql', child: Text(_t('sql_editor'))),
                       PopupMenuItem(enabled: decoded is List, value: 'add', child: Text(_t('add_record'))),
                       if (_selectedRowIndexes.isNotEmpty) PopupMenuItem(value: 'deleteSelected', child: Text(_tf('delete_selected_records_count', {'count': _selectedRowIndexes.length}))),
                       const PopupMenuDivider(),
@@ -574,12 +574,12 @@ Widget _buildLockedView() {
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          'SQL Editor',
+                          _t('sql_editor'),
                           style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
                         ),
                       ),
                       FilterChip(
-                        label: const Text('Execute writes'),
+                        label: Text(_t('write_mode')),
                         selected: _sqlAllowWrites,
                         onSelected: _sqlRunning ? null : (value) => setState(() => _sqlAllowWrites = value),
                       ),
@@ -588,8 +588,8 @@ Widget _buildLockedView() {
                   const SizedBox(height: 8),
                   Text(
                     _sqlAllowWrites
-                        ? 'Write mode allows INSERT, UPDATE, DELETE, and REPLACE after confirmation. Dangerous schema commands are blocked.'
-                        : 'Query mode is read-only. SELECT/WITH/EXPLAIN statements are allowed and results are limited automatically.',
+                        ? _t('sql_write_mode_desc')
+                        : _t('query_mode_desc'),
                     style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
                   ),
                   const SizedBox(height: 12),
@@ -614,12 +614,12 @@ Widget _buildLockedView() {
                         icon: _sqlRunning
                             ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
                             : const Icon(Icons.play_arrow),
-                        label: Text(_sqlAllowWrites ? 'Execute SQL' : 'Run Query'),
+                        label: Text(_sqlAllowWrites ? _t('execute_sql') : _t('run_query')),
                       ),
                       OutlinedButton.icon(
                         onPressed: _sqlRunning || _selectedKey.isEmpty ? null : _fillSqlForSelectedTable,
                         icon: const Icon(Icons.table_view_outlined),
-                        label: const Text('SELECT current table'),
+                        label: Text(_t('select_current_table')),
                       ),
                       OutlinedButton.icon(
                         onPressed: _sqlRunning ? null : () => setState(() {
@@ -627,7 +627,7 @@ Widget _buildLockedView() {
                           _sqlError = null;
                         }),
                         icon: const Icon(Icons.list_alt_outlined),
-                        label: const Text('List tables'),
+                        label: Text(_t('list_tables')),
                       ),
                       TextButton.icon(
                         onPressed: _sqlRunning ? null : () => setState(() {
@@ -669,7 +669,7 @@ Widget _buildLockedView() {
 
   Widget _buildSqlResults() {
     if (_sqlResults.isEmpty) {
-      return Center(child: Text('No SQL results yet.'));
+      return Center(child: Text(_t('no_sql_results_yet')));
     }
     return ListView.separated(
       padding: const EdgeInsets.only(bottom: 112),
@@ -699,7 +699,7 @@ Widget _buildLockedView() {
   }
 
   Widget _buildSqlResultTable(List<Map<String, Object?>> rows) {
-    if (rows.isEmpty) return const Text('No rows returned.');
+    if (rows.isEmpty) return Text(_t('no_rows_returned'));
     final columns = <String>{};
     for (final row in rows) {
       columns.addAll(row.keys);
@@ -776,7 +776,7 @@ Widget _buildLockedView() {
         ],
         FloatingActionButton.small(
           heroTag: 'sql-export-$resultIndex',
-          tooltip: expanded ? 'Close export options' : 'Export SQL result',
+          tooltip: expanded ? _t('close_export_options') : _t('export_sql_result'),
           onPressed: () => setState(() => _expandedSqlExportIndex = expanded ? null : resultIndex),
           child: Icon(expanded ? Icons.close : Icons.file_download_outlined),
         ),
@@ -809,7 +809,7 @@ Widget _buildLockedView() {
         baseFileName: 'sql_result_${_timestampForFileName()}',
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('SQL result exported as ${format.toUpperCase()}')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_tf('sql_result_exported_as', {'format': format.toUpperCase()}))));
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
@@ -868,7 +868,7 @@ Widget _buildLockedView() {
     final hasWrites = statements.any((statement) => !DatabaseSqlEditorService.isQueryStatement(statement));
     if (hasWrites) {
       if (!_sqlAllowWrites) {
-        setState(() => _sqlError = 'This script contains write statements. Enable Execute writes first.');
+        setState(() => _sqlError = '${_t('sql_script_contains_writes')} ${_t('enable_execute_writes_first')}');
         return;
       }
       final confirmed = await _confirmSqlExecution(statements.length);
@@ -888,7 +888,7 @@ Widget _buildLockedView() {
         _sqlResults = results;
         _expandedSqlExportIndex = null;
       });
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('SQL executed locally. Sync was not triggered.')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_t('execute_sql_local_only'))));
     } catch (error) {
       if (!mounted) return;
       setState(() => _sqlError = error.toString());
@@ -901,8 +901,8 @@ Widget _buildLockedView() {
     return showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Execute SQL changes?'),
-        content: Text('This will execute $statementCount SQL statement(s) locally only. It will refresh the app state but will not create sync changes.'),
+        title: Text(_t('execute_sql_changes')),
+        content: Text(_tf('execute_sql_changes_desc', {'count': statementCount})),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: Text(_t('cancel'))),
           FilledButton(
@@ -911,7 +911,7 @@ Widget _buildLockedView() {
               foregroundColor: Theme.of(context).colorScheme.onError,
             ),
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Execute'),
+            child: Text(_t('execute')),
           ),
         ],
       ),

@@ -236,13 +236,13 @@ class _AccountingTabs extends StatelessWidget {
             Tab(icon: const Icon(Icons.local_shipping_outlined), text: tr.text('suppliers')),
             Tab(icon: const Icon(Icons.payments_outlined), text: tr.text('cash_movement')),
             Tab(icon: const Icon(Icons.history_outlined), text: tr.text('recent_transactions')),
-            const Tab(icon: Icon(Icons.menu_book_outlined), text: 'General Ledger'),
-            const Tab(icon: Icon(Icons.balance_outlined), text: 'Trial Balance'),
-            const Tab(icon: Icon(Icons.trending_up_outlined), text: 'Income Statement'),
-            const Tab(icon: Icon(Icons.account_balance_outlined), text: 'Balance Sheet'),
-            const Tab(icon: Icon(Icons.account_balance_wallet_outlined), text: 'Cash / Bank'),
-            const Tab(icon: Icon(Icons.auto_awesome_motion_outlined), text: 'Advanced'),
-            const Tab(icon: Icon(Icons.settings_outlined), text: 'Settings'),
+            Tab(icon: const Icon(Icons.menu_book_outlined), text: tr.text('general_ledger')),
+            Tab(icon: const Icon(Icons.balance_outlined), text: tr.text('trial_balance')),
+            Tab(icon: const Icon(Icons.trending_up_outlined), text: tr.text('income_statement')),
+            Tab(icon: const Icon(Icons.account_balance_outlined), text: tr.text('balance_sheet')),
+            Tab(icon: const Icon(Icons.account_balance_wallet_outlined), text: tr.text('cash_bank')),
+            Tab(icon: const Icon(Icons.auto_awesome_motion_outlined), text: tr.text('advanced')),
+            Tab(icon: const Icon(Icons.settings_outlined), text: tr.text('settings')),
           ],
         ),
       ),
@@ -645,6 +645,7 @@ class _GeneralLedgerTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     return FutureBuilder<List<GeneralLedgerAccountReport>>(
       future: AccountingService.generalLedgerReport(),
       builder: (context, snapshot) {
@@ -658,7 +659,7 @@ class _GeneralLedgerTab extends StatelessWidget {
             .where((account) => account.lines.isNotEmpty && _matches(query, [account.accountCode, account.accountName, account.accountType]))
             .toList();
         if (rows.isEmpty) {
-          return const _EmptyAccountingState(message: 'No journal entries found.');
+        return _EmptyAccountingState(message: tr.text('no_journal_entries_found'));
         }
         return ListView.separated(
           itemCount: rows.length,
@@ -671,7 +672,7 @@ class _GeneralLedgerTab extends StatelessWidget {
               child: ExpansionTile(
                 leading: const Icon(Icons.menu_book_outlined),
                 title: Text('${account.accountCode} • ${account.accountName}', maxLines: 1, overflow: TextOverflow.ellipsis),
-                subtitle: Text('Debit ${_money(store, account.totalDebit)} • Credit ${_money(store, account.totalCredit)}'),
+                subtitle: Text('${tr.text('debit')} ${_money(store, account.totalDebit)} • ${tr.text('credit')} ${_money(store, account.totalCredit)}'),
                 trailing: Text(_money(store, account.closingBalance), style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800)),
                 children: [
                   _LedgerLinesTable(store: store, lines: account.lines),
@@ -693,17 +694,18 @@ class _LedgerLinesTable extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: DataTable(
-        columns: const [
-          DataColumn(label: Text('Date')),
-          DataColumn(label: Text('Entry')),
-          DataColumn(label: Text('Reference')),
-          DataColumn(label: Text('Description')),
-          DataColumn(label: Text('Debit'), numeric: true),
-          DataColumn(label: Text('Credit'), numeric: true),
-          DataColumn(label: Text('Balance'), numeric: true),
+        columns: [
+          DataColumn(label: Text(tr.text('date'))),
+          DataColumn(label: Text(tr.text('entry'))),
+          DataColumn(label: Text(tr.text('reference'))),
+          DataColumn(label: Text(tr.text('description'))),
+          DataColumn(label: Text(tr.text('debit')), numeric: true),
+          DataColumn(label: Text(tr.text('credit')), numeric: true),
+          DataColumn(label: Text(tr.text('balance')), numeric: true),
         ],
         rows: [
           for (final line in lines.take(200))
@@ -794,6 +796,7 @@ class _IncomeStatementTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     return FutureBuilder<IncomeStatementReport>(
       future: AccountingService.incomeStatementReport(),
       builder: (context, snapshot) {
@@ -806,13 +809,13 @@ class _IncomeStatementTab extends StatelessWidget {
         final report = snapshot.data ?? const IncomeStatementReport(revenue: 0, costOfGoodsSold: 0, grossProfit: 0, expenses: 0, netProfit: 0);
         return _StatementCard(
           store: store,
-          title: 'Income Statement',
+          title: tr.text('income_statement'),
           rows: [
-            _StatementRow('Sales Revenue', report.revenue),
-            _StatementRow('Cost of Goods Sold', -report.costOfGoodsSold),
-            _StatementRow('Gross Profit', report.grossProfit, highlight: true),
-            _StatementRow('Expenses', -report.expenses),
-            _StatementRow('Net Profit', report.netProfit, highlight: true),
+            _StatementRow(tr.text('sales_revenue'), report.revenue),
+            _StatementRow(tr.text('cost_of_goods_sold'), -report.costOfGoodsSold),
+            _StatementRow(tr.text('gross_profit'), report.grossProfit, highlight: true),
+            _StatementRow(tr.text('expenses'), -report.expenses),
+            _StatementRow(tr.text('net_profit'), report.netProfit, highlight: true),
           ],
         );
       },
@@ -827,6 +830,7 @@ class _BalanceSheetTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     return FutureBuilder<BalanceSheetReport>(
       future: AccountingService.balanceSheetReport(),
       builder: (context, snapshot) {
@@ -839,14 +843,14 @@ class _BalanceSheetTab extends StatelessWidget {
         final report = snapshot.data ?? const BalanceSheetReport(assets: 0, liabilities: 0, equity: 0, retainedEarnings: 0, liabilitiesAndEquity: 0, difference: 0);
         return _StatementCard(
           store: store,
-          title: 'Balance Sheet',
+          title: tr.text('balance_sheet'),
           rows: [
-            _StatementRow('Assets', report.assets, highlight: true),
-            _StatementRow('Liabilities', report.liabilities),
-            _StatementRow('Equity', report.equity),
-            _StatementRow('Current Profit / Loss', report.retainedEarnings),
-            _StatementRow('Liabilities + Equity', report.liabilitiesAndEquity, highlight: true),
-            _StatementRow('Difference', report.difference, highlight: report.difference.abs() > 0.009),
+            _StatementRow(tr.text('assets'), report.assets, highlight: true),
+            _StatementRow(tr.text('liabilities'), report.liabilities),
+            _StatementRow(tr.text('equity'), report.equity),
+            _StatementRow(tr.text('current_profit_loss'), report.retainedEarnings),
+            _StatementRow(tr.text('liabilities_equity'), report.liabilitiesAndEquity, highlight: true),
+            _StatementRow(tr.text('difference'), report.difference, highlight: report.difference.abs() > 0.009),
           ],
         );
       },
@@ -861,6 +865,7 @@ class _CashBankReportTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     return FutureBuilder<List<CashBankMovementReport>>(
       future: AccountingService.cashBankMovementReport(),
       builder: (context, snapshot) {
@@ -872,7 +877,7 @@ class _CashBankReportTab extends StatelessWidget {
         }
         final rows = snapshot.data ?? <CashBankMovementReport>[];
         if (rows.isEmpty) {
-          return const _EmptyAccountingState(message: 'No cash or bank movements found.');
+          return _EmptyAccountingState(message: tr.text('no_cash_or_bank_movements_found'));
         }
         return Card(
           elevation: 0,
@@ -885,7 +890,7 @@ class _CashBankReportTab extends StatelessWidget {
               return ListTile(
                 leading: const Icon(Icons.account_balance_wallet_outlined),
                 title: Text('${row.accountCode} • ${row.accountName}'),
-                subtitle: Text('In ${_money(store, row.moneyIn)} • Out ${_money(store, row.moneyOut)}'),
+                subtitle: Text('${tr.text('in')} ${_money(store, row.moneyIn)} • ${tr.text('out')} ${_money(store, row.moneyOut)}'),
                 trailing: Text(_money(store, row.closingBalance), style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800)),
               );
             },
@@ -939,18 +944,19 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
 
   Future<void> _openDrawerDialog() async {
     final controller = TextEditingController(text: '0');
+    final tr = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Open Cash Drawer'),
+        title: Text(tr.text('open_cash_drawer')),
         content: TextField(
           controller: controller,
           keyboardType: TextInputType.number,
-          decoration: const InputDecoration(labelText: 'Opening balance'),
+          decoration: InputDecoration(labelText: tr.text('opening_balance')),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Open')),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('cancel'))),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(tr.text('open'))),
         ],
       ),
     );
@@ -962,6 +968,7 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
 
 
   Future<void> _manualJournalDialog() async {
+    final tr = AppLocalizations.of(context);
     final description = TextEditingController(text: 'Manual journal entry');
     final debitAmount = TextEditingController(text: '0');
     final creditAmount = TextEditingController(text: '0');
@@ -979,19 +986,19 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Create Manual Journal'),
+          title: Text(tr.text('create_manual_journal')),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                TextField(controller: description, decoration: const InputDecoration(labelText: 'Description')),
+                TextField(controller: description, decoration: InputDecoration(labelText: tr.text('description'))),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<AdvancedAccountingItem?>(
                   initialValue: branch,
                   isExpanded: true,
-                  decoration: const InputDecoration(labelText: 'Branch'),
+                  decoration: InputDecoration(labelText: tr.text('branch')),
                   items: [
-                    const DropdownMenuItem<AdvancedAccountingItem?>(value: null, child: Text('No branch')),
+                    DropdownMenuItem<AdvancedAccountingItem?>(value: null, child: Text(tr.text('no_branch'))),
                     for (final item in branches) DropdownMenuItem<AdvancedAccountingItem?>(value: item, child: Text('${item.accountCode} - ${item.name}')),
                   ],
                   onChanged: (value) => setDialogState(() => branch = value),
@@ -1000,17 +1007,17 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                 DropdownButtonFormField<AccountingAccount>(
                   initialValue: debitAccount,
                   isExpanded: true,
-                  decoration: const InputDecoration(labelText: 'Debit account'),
+                  decoration: InputDecoration(labelText: tr.text('debit_account')),
                   items: [for (final a in accounts) DropdownMenuItem(value: a, child: Text('${a.code} - ${a.name}'))],
                   onChanged: (value) => setDialogState(() => debitAccount = value),
                 ),
-                TextField(controller: debitAmount, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Debit amount')),
+                TextField(controller: debitAmount, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: tr.text('debit_amount'))),
                 DropdownButtonFormField<AdvancedAccountingItem?>(
                   initialValue: debitCostCenter,
                   isExpanded: true,
-                  decoration: const InputDecoration(labelText: 'Debit cost center'),
+                  decoration: InputDecoration(labelText: tr.text('debit_cost_center')),
                   items: [
-                    const DropdownMenuItem<AdvancedAccountingItem?>(value: null, child: Text('No cost center')),
+                    DropdownMenuItem<AdvancedAccountingItem?>(value: null, child: Text(tr.text('no_cost_center'))),
                     for (final item in costCenters) DropdownMenuItem<AdvancedAccountingItem?>(value: item, child: Text('${item.accountCode} - ${item.name}')),
                   ],
                   onChanged: (value) => setDialogState(() => debitCostCenter = value),
@@ -1019,17 +1026,17 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                 DropdownButtonFormField<AccountingAccount>(
                   initialValue: creditAccount,
                   isExpanded: true,
-                  decoration: const InputDecoration(labelText: 'Credit account'),
+                  decoration: InputDecoration(labelText: tr.text('credit_account')),
                   items: [for (final a in accounts) DropdownMenuItem(value: a, child: Text('${a.code} - ${a.name}'))],
                   onChanged: (value) => setDialogState(() => creditAccount = value),
                 ),
-                TextField(controller: creditAmount, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Credit amount')),
+                TextField(controller: creditAmount, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: tr.text('credit_amount'))),
                 DropdownButtonFormField<AdvancedAccountingItem?>(
                   initialValue: creditCostCenter,
                   isExpanded: true,
-                  decoration: const InputDecoration(labelText: 'Credit cost center'),
+                  decoration: InputDecoration(labelText: tr.text('credit_cost_center')),
                   items: [
-                    const DropdownMenuItem<AdvancedAccountingItem?>(value: null, child: Text('No cost center')),
+                    DropdownMenuItem<AdvancedAccountingItem?>(value: null, child: Text(tr.text('no_cost_center'))),
                     for (final item in costCenters) DropdownMenuItem<AdvancedAccountingItem?>(value: item, child: Text('${item.accountCode} - ${item.name}')),
                   ],
                   onChanged: (value) => setDialogState(() => creditCostCenter = value),
@@ -1038,8 +1045,8 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Post')),
+            TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('cancel'))),
+            FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(tr.text('post'))),
           ],
         ),
       ),
@@ -1062,6 +1069,7 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
   }
 
   Future<void> _createPaymentAccountDialog() async {
+    final tr = AppLocalizations.of(context);
     final name = TextEditingController();
     var type = 'bank';
     var isDefault = false;
@@ -1073,26 +1081,33 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Create Payment Account'),
+          title: Text(tr.text('create_payment_account')),
           content: SingleChildScrollView(
             child: Column(mainAxisSize: MainAxisSize.min, children: [
-              TextField(controller: name, decoration: const InputDecoration(labelText: 'Name')),
+              TextField(controller: name, decoration: InputDecoration(labelText: tr.text('name'))),
               DropdownButtonFormField<String>(
                 initialValue: type,
-                decoration: const InputDecoration(labelText: 'Type'),
-                items: const ['cash','bank','card','wallet','cheque','other'].map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
+                decoration: InputDecoration(labelText: tr.text('type')),
+                items: [
+                  DropdownMenuItem(value: 'cash', child: Text(tr.text('cash'))),
+                  DropdownMenuItem(value: 'bank', child: Text(tr.text('bank'))),
+                  DropdownMenuItem(value: 'card', child: Text(tr.text('card'))),
+                  DropdownMenuItem(value: 'wallet', child: Text(tr.text('wallet'))),
+                  DropdownMenuItem(value: 'cheque', child: Text(tr.text('cheque'))),
+                  DropdownMenuItem(value: 'other', child: Text(tr.text('other'))),
+                ],
                 onChanged: (v) => setDialogState(() => type = v ?? type),
               ),
               DropdownButtonFormField<AccountingAccount>(
                 initialValue: selected,
-                decoration: const InputDecoration(labelText: 'Mapped account'),
+                decoration: InputDecoration(labelText: tr.text('mapped_account')),
                 items: [for (final a in accounts) DropdownMenuItem(value: a, child: Text('${a.code} - ${a.name}'))],
                 onChanged: (v) => setDialogState(() => selected = v),
               ),
-              CheckboxListTile(value: isDefault, onChanged: (v) => setDialogState(() => isDefault = v ?? false), title: const Text('Default for this type')),
+              CheckboxListTile(value: isDefault, onChanged: (v) => setDialogState(() => isDefault = v ?? false), title: Text(tr.text('default_for_this_type'))),
             ]),
           ),
-          actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')), FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Create'))],
+          actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('cancel'))), FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(tr.text('create')))],
         ),
       ),
     );
@@ -1103,6 +1118,7 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
   }
 
   Future<void> _createChequeDialog() async {
+    final tr = AppLocalizations.of(context);
     final chequeNo = TextEditingController();
     final partyName = TextEditingController();
     final bankName = TextEditingController();
@@ -1113,22 +1129,25 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Create Cheque'),
+          title: Text(tr.text('create_cheque')),
           content: SingleChildScrollView(
             child: Column(mainAxisSize: MainAxisSize.min, children: [
-              TextField(controller: chequeNo, decoration: const InputDecoration(labelText: 'Cheque no')),
+              TextField(controller: chequeNo, decoration: InputDecoration(labelText: tr.text('cheque_no'))),
               DropdownButtonFormField<String>(
                 initialValue: direction,
-                decoration: const InputDecoration(labelText: 'Direction'),
-                items: const [DropdownMenuItem(value: 'received', child: Text('Received')), DropdownMenuItem(value: 'issued', child: Text('Issued'))],
+                decoration: InputDecoration(labelText: tr.text('direction')),
+                items: [
+                  DropdownMenuItem(value: 'received', child: Text(tr.text('received'))),
+                  DropdownMenuItem(value: 'issued', child: Text(tr.text('issued'))),
+                ],
                 onChanged: (v) => setDialogState(() => direction = v ?? direction),
               ),
-              TextField(controller: partyName, decoration: const InputDecoration(labelText: 'Party name')),
-              TextField(controller: bankName, decoration: const InputDecoration(labelText: 'Bank')),
-              TextField(controller: amount, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Amount')),
+              TextField(controller: partyName, decoration: InputDecoration(labelText: tr.text('party_name'))),
+              TextField(controller: bankName, decoration: InputDecoration(labelText: tr.text('bank'))),
+              TextField(controller: amount, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: tr.text('amount'))),
             ]),
           ),
-          actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')), FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Create'))],
+          actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('cancel'))), FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(tr.text('create')))],
         ),
       ),
     );
@@ -1148,6 +1167,7 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
   }
 
   Future<void> _createMasterDataDialog(String table, String title) async {
+    final tr = AppLocalizations.of(context);
     final code = TextEditingController();
     final name = TextEditingController();
     final confirmed = await showDialog<bool>(
@@ -1155,10 +1175,10 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
       builder: (context) => AlertDialog(
         title: Text(title),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
-          TextField(controller: code, decoration: const InputDecoration(labelText: 'Code')),
-          TextField(controller: name, decoration: const InputDecoration(labelText: 'Name')),
+          TextField(controller: code, decoration: InputDecoration(labelText: tr.text('code'))),
+          TextField(controller: name, decoration: InputDecoration(labelText: tr.text('name'))),
         ]),
-        actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')), FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Create'))],
+        actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('cancel'))), FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(tr.text('create')))],
       ),
     );
     if (confirmed == true) {
@@ -1169,21 +1189,22 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
 
 
   Future<void> _closeDrawerDialog(AdvancedAccountingItem item) async {
+    final tr = AppLocalizations.of(context);
     final counted = TextEditingController(text: item.credit.toStringAsFixed(2));
     final notes = TextEditingController();
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Close ${item.name}'),
+        title: Text(tr.format('close_item', {'name': item.name})),
         content: SingleChildScrollView(
           child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text('Expected cash: ${formatCurrency(item.credit)}'),
+            Text(tr.format('expected_cash', {'amount': formatCurrency(item.credit)})),
             const SizedBox(height: 8),
-            TextField(controller: counted, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Counted cash')),
-            TextField(controller: notes, decoration: const InputDecoration(labelText: 'Notes')),
+            TextField(controller: counted, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: tr.text('counted_cash'))),
+            TextField(controller: notes, decoration: InputDecoration(labelText: tr.text('notes'))),
           ]),
         ),
-        actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')), FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Close'))],
+        actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('cancel'))), FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(tr.text('close')))],
       ),
     );
     if (confirmed == true) {
@@ -1193,12 +1214,13 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
   }
 
   Future<void> _settleCheque(AdvancedAccountingItem item) async {
+    final tr = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Clear cheque ${item.name}'),
-        content: Text('Mark this ${formatCurrency(item.balance)} cheque as cleared?'),
-        actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')), FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Clear'))],
+        title: Text(tr.format('clear_cheque', {'name': item.name})),
+        content: Text(tr.format('mark_cheque_cleared', {'amount': formatCurrency(item.balance)})),
+        actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('cancel'))), FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(tr.text('clear')))],
       ),
     );
     if (confirmed == true) {
@@ -1208,13 +1230,14 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
   }
 
   Future<void> _bounceChequeDialog(AdvancedAccountingItem item) async {
+    final tr = AppLocalizations.of(context);
     final reason = TextEditingController();
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Bounce cheque ${item.name}'),
-        content: TextField(controller: reason, decoration: const InputDecoration(labelText: 'Reason')),
-        actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')), FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Bounce'))],
+        title: Text(tr.format('bounce_cheque', {'name': item.name})),
+        content: TextField(controller: reason, decoration: InputDecoration(labelText: tr.text('reason'))),
+        actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('cancel'))), FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(tr.text('bounce')))],
       ),
     );
     if (confirmed == true) {
@@ -1224,12 +1247,13 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
   }
 
   Future<void> _closePeriod(AdvancedAccountingItem item) async {
+    final tr = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Close period ${item.name}'),
-        content: const Text('Closing a period prevents posting new accounting entries inside its date range.'),
-        actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')), FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Close period'))],
+        title: Text(tr.format('close_period', {'name': item.name})),
+        content: Text(tr.text('close_period_desc')),
+        actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('cancel'))), FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(tr.text('close_period')))],
       ),
     );
     if (confirmed == true) {
@@ -1239,16 +1263,17 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
   }
 
   Future<void> _createPeriodDialog() async {
-    final name = TextEditingController(text: 'Current Period');
+    final tr = AppLocalizations.of(context);
+    final name = TextEditingController(text: tr.text('current_period'));
     final now = DateTime.now();
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Create Accounting Period'),
-        content: TextField(controller: name, decoration: const InputDecoration(labelText: 'Period name')),
+        title: Text(tr.text('create_accounting_period')),
+        content: TextField(controller: name, decoration: InputDecoration(labelText: tr.text('period_name'))),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Create')),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('cancel'))),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(tr.text('create'))),
         ],
       ),
     );
@@ -1265,6 +1290,7 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
   @override
   Widget build(BuildContext context) {
     final canManageAccounting = widget.store.hasPermission(AppPermission.accountingManage);
+    final tr = AppLocalizations.of(context);
     return FutureBuilder<_AdvancedAccountingData>(
       future: _future,
       builder: (context, snapshot) {
@@ -1283,68 +1309,68 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Advanced Accounting Controls', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
+                    Text(tr.text('advanced_accounting_controls'), style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
                     const SizedBox(height: 6),
-                    Text('Phase 6 foundation: manual journals service, cash drawer sessions, cheques, payment accounts, periods, cost centers, and branches.', style: Theme.of(context).textTheme.bodyMedium),
+                    Text(tr.text('advanced_accounting_controls_desc'), style: Theme.of(context).textTheme.bodyMedium),
                     const SizedBox(height: 12),
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
                       children: [
-                        FilledButton.icon(onPressed: canManageAccounting ? _manualJournalDialog : null, icon: const Icon(Icons.edit_note_outlined), label: const Text('Manual journal')),
-                        FilledButton.tonalIcon(onPressed: canManageAccounting ? _openDrawerDialog : null, icon: const Icon(Icons.point_of_sale_outlined), label: const Text('Open drawer')),
-                        FilledButton.tonalIcon(onPressed: canManageAccounting ? _createPaymentAccountDialog : null, icon: const Icon(Icons.account_balance_wallet_outlined), label: const Text('Payment account')),
-                        FilledButton.tonalIcon(onPressed: canManageAccounting ? _createChequeDialog : null, icon: const Icon(Icons.payments_outlined), label: const Text('Cheque')),
-                        FilledButton.tonalIcon(onPressed: canManageAccounting ? _createPeriodDialog : null, icon: const Icon(Icons.event_available_outlined), label: const Text('Create period')),
-                        FilledButton.tonalIcon(onPressed: canManageAccounting ? () => _createMasterDataDialog('cost_centers', 'Create Cost Center') : null, icon: const Icon(Icons.hub_outlined), label: const Text('Cost center')),
-                        FilledButton.tonalIcon(onPressed: canManageAccounting ? () => _createMasterDataDialog('accounting_branches', 'Create Branch') : null, icon: const Icon(Icons.store_mall_directory_outlined), label: const Text('Branch')),
+                        FilledButton.icon(onPressed: canManageAccounting ? _manualJournalDialog : null, icon: const Icon(Icons.edit_note_outlined), label: Text(tr.text('manual_journal'))),
+                        FilledButton.tonalIcon(onPressed: canManageAccounting ? _openDrawerDialog : null, icon: const Icon(Icons.point_of_sale_outlined), label: Text(tr.text('open_drawer'))),
+                        FilledButton.tonalIcon(onPressed: canManageAccounting ? _createPaymentAccountDialog : null, icon: const Icon(Icons.account_balance_wallet_outlined), label: Text(tr.text('payment_account'))),
+                        FilledButton.tonalIcon(onPressed: canManageAccounting ? _createChequeDialog : null, icon: const Icon(Icons.payments_outlined), label: Text(tr.text('cheque'))),
+                        FilledButton.tonalIcon(onPressed: canManageAccounting ? _createPeriodDialog : null, icon: const Icon(Icons.event_available_outlined), label: Text(tr.text('create_period'))),
+                        FilledButton.tonalIcon(onPressed: canManageAccounting ? () => _createMasterDataDialog('cost_centers', tr.text('create_cost_center')) : null, icon: const Icon(Icons.hub_outlined), label: Text(tr.text('cost_center'))),
+                        FilledButton.tonalIcon(onPressed: canManageAccounting ? () => _createMasterDataDialog('accounting_branches', tr.text('create_branch')) : null, icon: const Icon(Icons.store_mall_directory_outlined), label: Text(tr.text('branch'))),
                       ],
                     ),
                     if (!canManageAccounting) ...[
                       const SizedBox(height: 8),
-                      Text('Read-only: your role needs Manage accounting permission.', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.error)),
+                      Text(tr.text('accounting_read_only_permission'), style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.error)),
                     ],
                   ],
                 ),
               ),
             ),
             const SizedBox(height: 12),
-            _AdvancedSection(title: 'Payment Accounts', icon: Icons.account_balance_wallet_outlined, items: data.paymentAccounts),
+            _AdvancedSection(title: tr.text('payment_accounts'), icon: Icons.account_balance_wallet_outlined, items: data.paymentAccounts),
             _AdvancedSection(
-              title: 'Cash Drawer Sessions',
+              title: tr.text('cash_drawer_sessions'),
               icon: Icons.point_of_sale_outlined,
               items: data.cashDrawers,
               actionBuilder: canManageAccounting
                   ? (item) => item.status == 'open'
-                      ? [TextButton.icon(onPressed: () => _closeDrawerDialog(item), icon: const Icon(Icons.lock_outline), label: const Text('Close'))]
+                      ? [TextButton.icon(onPressed: () => _closeDrawerDialog(item), icon: const Icon(Icons.lock_outline), label: Text(tr.text('close')))]
                       : const <Widget>[]
                   : null,
             ),
             _AdvancedSection(
-              title: 'Cheques',
+              title: tr.text('cheques'),
               icon: Icons.payments_outlined,
               items: data.cheques,
               actionBuilder: canManageAccounting
                   ? (item) => item.status == 'pending'
                       ? [
-                          TextButton.icon(onPressed: () => _settleCheque(item), icon: const Icon(Icons.check_circle_outline), label: const Text('Clear')),
-                          TextButton.icon(onPressed: () => _bounceChequeDialog(item), icon: const Icon(Icons.cancel_outlined), label: const Text('Bounce')),
+                          TextButton.icon(onPressed: () => _settleCheque(item), icon: const Icon(Icons.check_circle_outline), label: Text(tr.text('clear'))),
+                          TextButton.icon(onPressed: () => _bounceChequeDialog(item), icon: const Icon(Icons.cancel_outlined), label: Text(tr.text('bounce'))),
                         ]
                       : const <Widget>[]
                   : null,
             ),
             _AdvancedSection(
-              title: 'Accounting Periods',
+              title: tr.text('accounting_periods'),
               icon: Icons.date_range_outlined,
               items: data.periods,
               actionBuilder: canManageAccounting
                   ? (item) => item.type == 'open'
-                      ? [TextButton.icon(onPressed: () => _closePeriod(item), icon: const Icon(Icons.event_busy_outlined), label: const Text('Close'))]
+                      ? [TextButton.icon(onPressed: () => _closePeriod(item), icon: const Icon(Icons.event_busy_outlined), label: Text(tr.text('close')))]
                       : const <Widget>[]
                   : null,
             ),
-            _AdvancedSection(title: 'Cost Centers', icon: Icons.hub_outlined, items: data.costCenters),
-            _AdvancedSection(title: 'Branches', icon: Icons.store_mall_directory_outlined, items: data.branches),
+            _AdvancedSection(title: tr.text('cost_centers'), icon: Icons.hub_outlined, items: data.costCenters),
+            _AdvancedSection(title: tr.text('branches'), icon: Icons.store_mall_directory_outlined, items: data.branches),
           ],
         );
       },
@@ -1380,14 +1406,15 @@ class _AdvancedSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     return Card(
       elevation: 0,
       child: ExpansionTile(
         leading: Icon(icon),
         title: Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
-        subtitle: Text('${items.length} records'),
+        subtitle: Text(tr.format('records_count', {'count': items.length})),
         children: items.isEmpty
-            ? const [ListTile(title: Text('No records yet.'))]
+            ? [ListTile(title: Text(tr.text('no_records_yet')))]
             : [
                 for (final item in items)
                   ListTile(
@@ -1423,50 +1450,50 @@ class _AccountingSettingsTabState extends State<_AccountingSettingsTab> {
   static const List<_AccountingSettingDefinition> _definitions = [
     _AccountingSettingDefinition(
       key: 'default_cash_account_id',
-      title: 'Default Cash Account',
-      subtitle: 'Used for cash sales, customer cash payments, supplier cash payments, and cash expenses.',
+      titleKey: 'default_cash_account',
+      subtitleKey: 'default_cash_account_desc',
       icon: Icons.payments_outlined,
     ),
     _AccountingSettingDefinition(
       key: 'default_bank_account_id',
-      title: 'Default Bank / Card Account',
-      subtitle: 'Used for card, bank, Wish, check, and non-cash payment methods.',
+      titleKey: 'default_bank_card_account',
+      subtitleKey: 'default_bank_card_account_desc',
       icon: Icons.account_balance_outlined,
     ),
     _AccountingSettingDefinition(
       key: 'default_customers_account_id',
-      title: 'Customers Receivable Account',
-      subtitle: 'Used when a sale leaves an amount due from the customer.',
+      titleKey: 'customers_receivable_account',
+      subtitleKey: 'customers_receivable_account_desc',
       icon: Icons.people_outline,
     ),
     _AccountingSettingDefinition(
       key: 'default_suppliers_account_id',
-      title: 'Suppliers Payable Account',
-      subtitle: 'Used when a purchase leaves an amount due to the supplier.',
+      titleKey: 'suppliers_payable_account',
+      subtitleKey: 'suppliers_payable_account_desc',
       icon: Icons.local_shipping_outlined,
     ),
     _AccountingSettingDefinition(
       key: 'default_inventory_account_id',
-      title: 'Inventory Account',
-      subtitle: 'Used for inventory received from purchases and inventory issued by sales.',
+      titleKey: 'inventory_account',
+      subtitleKey: 'inventory_account_desc',
       icon: Icons.inventory_2_outlined,
     ),
     _AccountingSettingDefinition(
       key: 'default_sales_account_id',
-      title: 'Sales Revenue Account',
-      subtitle: 'Used as the credit side of posted sale invoices.',
+      titleKey: 'sales_revenue_account',
+      subtitleKey: 'sales_revenue_account_desc',
       icon: Icons.point_of_sale_outlined,
     ),
     _AccountingSettingDefinition(
       key: 'default_cogs_account_id',
-      title: 'Cost of Goods Sold Account',
-      subtitle: 'Used when sales generate product cost from inventory.',
+      titleKey: 'cost_of_goods_sold_account',
+      subtitleKey: 'cost_of_goods_sold_account_desc',
       icon: Icons.trending_down_outlined,
     ),
     _AccountingSettingDefinition(
       key: 'default_expense_account_id',
-      title: 'Default Expense Account',
-      subtitle: 'Used for posted expenses until detailed expense categories are mapped later.',
+      titleKey: 'default_expense_account',
+      subtitleKey: 'default_expense_account_desc',
       icon: Icons.receipt_long_outlined,
     ),
   ];
@@ -1495,7 +1522,7 @@ class _AccountingSettingsTabState extends State<_AccountingSettingsTab> {
     if (!mounted) return;
     setState(() => _future = _load());
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Accounting setting updated.')),
+      SnackBar(content: Text(AppLocalizations.of(context).text('accounting_setting_updated'))),
     );
   }
 
@@ -1513,7 +1540,7 @@ class _AccountingSettingsTabState extends State<_AccountingSettingsTab> {
         final data = snapshot.data ?? const _AccountingSettingsData(accounts: <AccountingAccount>[], settings: <String, String>{});
         final canManageAccounting = widget.store.hasPermission(AppPermission.accountingManage);
         if (data.accounts.isEmpty) {
-          return const _EmptyAccountingState(message: 'No active posting accounts found.');
+          return _EmptyAccountingState(message: AppLocalizations.of(context).text('no_active_posting_accounts_found'));
         }
         return Card(
           elevation: 0,
@@ -1529,16 +1556,16 @@ class _AccountingSettingsTabState extends State<_AccountingSettingsTab> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Accounting Account Mapping', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
+                      Text(AppLocalizations.of(context).text('accounting_account_mapping'), style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
                       const SizedBox(height: 4),
                       Text(
-                        'These settings control which chart-of-accounts account is used when Ventio automatically posts sales, purchases, expenses, and payments.',
+                        AppLocalizations.of(context).text('accounting_account_mapping_desc'),
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
                       ),
                       if (!canManageAccounting) ...[
                         const SizedBox(height: 8),
                         Text(
-                          'Read-only: your role needs Manage accounting permission to change mappings.',
+                          AppLocalizations.of(context).text('accounting_read_only_permission'),
                           style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.error),
                         ),
                       ],
@@ -1569,11 +1596,11 @@ class _AccountingSettingsData {
 }
 
 class _AccountingSettingDefinition {
-  const _AccountingSettingDefinition({required this.key, required this.title, required this.subtitle, required this.icon});
+  const _AccountingSettingDefinition({required this.key, required this.titleKey, required this.subtitleKey, required this.icon});
 
   final String key;
-  final String title;
-  final String subtitle;
+  final String titleKey;
+  final String subtitleKey;
   final IconData icon;
 }
 
@@ -1587,6 +1614,7 @@ class _AccountingSettingRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     final selectedExists = accounts.any((account) => account.id == selectedAccountId);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
@@ -1606,9 +1634,9 @@ class _AccountingSettingRow extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(definition.title, style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800)),
+                    Text(tr.text(definition.titleKey), style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800)),
                     const SizedBox(height: 3),
-                    Text(definition.subtitle, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                    Text(tr.text(definition.subtitleKey), style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
                   ],
                 ),
               ),
@@ -1643,13 +1671,14 @@ class _AccountSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     return DropdownButtonFormField<String>(
       initialValue: value,
       isExpanded: true,
-      decoration: const InputDecoration(
+      decoration: InputDecoration(
         isDense: true,
         border: OutlineInputBorder(),
-        labelText: 'Mapped account',
+        labelText: tr.text('mapped_account'),
       ),
       items: [
         for (final account in accounts)
