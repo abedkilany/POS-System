@@ -13,6 +13,7 @@
 /ssh/
 migrate_working_dir/
 /ventio_brand_pack/
+/set new Version/
 /*.zip
 Client secret.json
 client_secret*.json
