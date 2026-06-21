@@ -9,6 +9,7 @@ import 'package:pointycastle/export.dart' as pc;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/services/local_database_service.dart';
+import '../core/services/accounting_service.dart';
 import '../core/services/sync_diagnostics_log.dart';
 import '../core/sync_unified/sync_device_state.dart';
 import '../core/snapshot/unified_snapshot.dart';
@@ -5456,7 +5457,7 @@ class AppStore extends ChangeNotifier {
   Future<void> addOrUpdateAccountTransaction(
     AccountTransaction transaction,
   ) async {
-    requirePermission(AppPermission.reportsView);
+    requirePermission(AppPermission.accountingManage);
     final now = DateTime.now();
     final normalized = transaction.copyWith(
       accountType: transaction.accountType.trim().toLowerCase(),
@@ -5501,11 +5502,12 @@ class AppStore extends ChangeNotifier {
       payload: synced.toJson(),
     );
     await _saveDirty(accountTransactions: true, sync: true);
+    await AccountingService.recordAccountPayment(synced);
     notifyListeners();
   }
 
   Future<void> deleteAccountTransaction(String id) async {
-    requirePermission(AppPermission.reportsView);
+    requirePermission(AppPermission.accountingManage);
     final index = _accountTransactions.indexWhere((item) => item.id == id);
     if (index == -1) return;
     final now = DateTime.now();
@@ -5523,6 +5525,12 @@ class AppStore extends ChangeNotifier {
       payload: deleted.toJson(),
     );
     await _saveDirty(accountTransactions: true, sync: true);
+    await AccountingService.reverseEntryForReference(
+      referenceType: deleted.isCustomer ? 'customer_payment' : 'supplier_payment',
+      referenceId: deleted.id,
+      reason: 'Account payment deleted',
+      createdBy: _deviceId,
+    );
     notifyListeners();
   }
 
@@ -6458,6 +6466,7 @@ class AppStore extends ChangeNotifier {
       payload: posted.toJson(),
     );
     await _saveDirty(expenses: true, sync: true);
+    await AccountingService.recordExpense(posted);
     notifyListeners();
   }
 
@@ -6776,6 +6785,9 @@ class AppStore extends ChangeNotifier {
       purchaseCounter: true,
       sync: true,
     );
+    if (receiveNow) {
+      await AccountingService.recordPurchase(purchase);
+    }
     notifyListeners();
     return purchase;
   }
@@ -6807,6 +6819,7 @@ class AppStore extends ChangeNotifier {
       accountTransactions: true,
       sync: true,
     );
+    await AccountingService.recordPurchase(received);
     notifyListeners();
   }
 
@@ -7031,6 +7044,12 @@ class AppStore extends ChangeNotifier {
       payload: cancelled.toJson(),
     );
     _recordPurchaseCancelLedger(purchase, now, reason: reason);
+    await AccountingService.reverseEntryForReference(
+      referenceType: 'purchase',
+      referenceId: purchase.id,
+      reason: reason.trim().isEmpty ? 'Purchase cancelled' : reason.trim(),
+      createdBy: _deviceId,
+    );
     await _saveDirty(
       purchases: true,
       products: reverseStock && !purchase.reversalApplied,
@@ -8054,6 +8073,7 @@ class AppStore extends ChangeNotifier {
       invoiceCounter: true,
       sync: true,
     );
+    await AccountingService.recordSale(sale);
     notifyListeners();
     return sale;
   }
@@ -8198,6 +8218,12 @@ class AppStore extends ChangeNotifier {
       payload: _sales[index].toJson(),
     );
     _recordSaleCancelLedger(sale, now);
+    await AccountingService.reverseEntryForReference(
+      referenceType: 'sale',
+      referenceId: sale.id,
+      reason: 'Sale cancelled',
+      createdBy: _deviceId,
+    );
     await _saveDirty(
       products: restoreStock,
       sales: true,

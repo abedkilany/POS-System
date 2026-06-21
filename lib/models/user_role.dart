@@ -11,6 +11,7 @@ class AppPermission {
   static const String suppliersManage = 'suppliers.manage';
   static const String expensesManage = 'expenses.manage';
   static const String reportsView = 'reports.view';
+  static const String accountingManage = 'accounting.manage';
   static const String backupExport = 'backup.export';
   static const String backupRestore = 'backup.restore';
   static const String settingsManage = 'settings.manage';
@@ -30,6 +31,7 @@ class AppPermission {
     suppliersManage,
     expensesManage,
     reportsView,
+    accountingManage,
     backupExport,
     backupRestore,
     settingsManage,
@@ -50,6 +52,7 @@ class AppPermission {
     suppliersManage: 'Manage suppliers',
     expensesManage: 'Manage expenses',
     reportsView: 'View reports',
+    accountingManage: 'Manage accounting',
     backupExport: 'Export backups',
     backupRestore: 'Restore backups',
     settingsManage: 'Manage store settings',
