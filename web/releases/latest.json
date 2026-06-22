@@ -4,8 +4,8 @@
     "channel":  "stable",
     "windows":  {
                     "url":  "https://ventioapp.com/releases/windows/VentioSetup-1.0.4-build13.exe",
-                    "sha256":  "614a8cff4a73a6003e68acfb6c3c12a87930705a0a00561346eba847148b4c2a",
-                    "size":  17368173
+                    "sha256":  "e8bf5f3b6d9621b87087894fdae110ee57eb9e59a244915cff8d79b74353a80d",
+                    "size":  17366975
                 },
     "android":  {
                     "source":  "play_store"
