@@ -12,7 +12,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
   VentioDriftDatabase([QueryExecutor? executor]) : super(executor ?? openVentioSqliteConnection());
 
   @override
-  int get schemaVersion => 6;
+  int get schemaVersion => 7;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -503,6 +503,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
 
     await _seedDefaultChartOfAccounts();
     await _seedAdvancedAccountingDefaults();
+    await _migrateDefaultAccountingArabicLabels();
   }
 
   Future<void> _addColumnIfMissing(String table, String column, String definition) async {
@@ -516,27 +517,27 @@ class VentioDriftDatabase extends GeneratedDatabase {
   Future<void> _seedDefaultChartOfAccounts() async {
     final now = DateTime.now().toUtc().toIso8601String();
     final accounts = <List<String>>[
-      ['acc_assets', '1000', 'Assets', 'asset', 'group', '', 'debit'],
-      ['acc_cash', '1100', 'Cash', 'asset', 'cash', 'acc_assets', 'debit'],
-      ['acc_bank', '1200', 'Bank', 'asset', 'bank', 'acc_assets', 'debit'],
-      ['acc_customers', '1300', 'Customers / Accounts Receivable', 'asset', 'receivable', 'acc_assets', 'debit'],
-      ['acc_inventory', '1400', 'Inventory', 'asset', 'inventory', 'acc_assets', 'debit'],
-      ['acc_fixed_assets', '1600', 'Fixed Assets', 'asset', 'fixed_assets', 'acc_assets', 'debit'],
-      ['acc_accum_depreciation', '1690', 'Accumulated Depreciation', 'asset', 'accumulated_depreciation', 'acc_assets', 'credit'],
-      ['acc_vat_input', '1500', 'VAT Input / Recoverable Tax', 'asset', 'tax_input', 'acc_assets', 'debit'],
-      ['acc_liabilities', '2000', 'Liabilities', 'liability', 'group', '', 'credit'],
-      ['acc_suppliers', '2100', 'Suppliers / Accounts Payable', 'liability', 'payable', 'acc_liabilities', 'credit'],
-      ['acc_vat_output', '2200', 'VAT Output / Tax Payable', 'liability', 'tax_payable', 'acc_liabilities', 'credit'],
-      ['acc_equity', '3000', 'Equity', 'equity', 'group', '', 'credit'],
-      ['acc_owner_capital', '3100', 'Owner Capital', 'equity', 'capital', 'acc_equity', 'credit'],
-      ['acc_revenue', '4000', 'Revenue', 'revenue', 'group', '', 'credit'],
-      ['acc_sales', '4100', 'Sales Revenue', 'revenue', 'sales', 'acc_revenue', 'credit'],
-      ['acc_cost_of_sales', '5000', 'Cost of Sales', 'cost_of_sales', 'group', '', 'debit'],
-      ['acc_cogs', '5100', 'Cost of Goods Sold', 'cost_of_sales', 'cogs', 'acc_cost_of_sales', 'debit'],
-      ['acc_expenses', '6000', 'Expenses', 'expense', 'group', '', 'debit'],
-      ['acc_general_expenses', '6100', 'General Expenses', 'expense', 'general', 'acc_expenses', 'debit'],
-      ['acc_cash_over_short', '6200', 'Cash Over / Short', 'expense', 'cash_reconciliation', 'acc_expenses', 'debit'],
-      ['acc_depreciation_expense', '6300', 'Depreciation Expense', 'expense', 'depreciation', 'acc_expenses', 'debit'],
+      ['acc_assets', '1000', 'الأصول', 'asset', 'group', '', 'debit'],
+      ['acc_cash', '1100', 'النقدية', 'asset', 'cash', 'acc_assets', 'debit'],
+      ['acc_bank', '1200', 'البنك', 'asset', 'bank', 'acc_assets', 'debit'],
+      ['acc_customers', '1300', 'العملاء / الذمم المدينة', 'asset', 'receivable', 'acc_assets', 'debit'],
+      ['acc_inventory', '1400', 'المخزون', 'asset', 'inventory', 'acc_assets', 'debit'],
+      ['acc_fixed_assets', '1600', 'الأصول الثابتة', 'asset', 'fixed_assets', 'acc_assets', 'debit'],
+      ['acc_accum_depreciation', '1690', 'مجمع الإهلاك', 'asset', 'accumulated_depreciation', 'acc_assets', 'credit'],
+      ['acc_vat_input', '1500', 'ضريبة المدخلات / ضريبة قابلة للاسترداد', 'asset', 'tax_input', 'acc_assets', 'debit'],
+      ['acc_liabilities', '2000', 'الالتزامات', 'liability', 'group', '', 'credit'],
+      ['acc_suppliers', '2100', 'الموردون / الذمم الدائنة', 'liability', 'payable', 'acc_liabilities', 'credit'],
+      ['acc_vat_output', '2200', 'ضريبة المخرجات / ضريبة مستحقة', 'liability', 'tax_payable', 'acc_liabilities', 'credit'],
+      ['acc_equity', '3000', 'حقوق الملكية', 'equity', 'group', '', 'credit'],
+      ['acc_owner_capital', '3100', 'رأس مال المالك', 'equity', 'capital', 'acc_equity', 'credit'],
+      ['acc_revenue', '4000', 'الإيرادات', 'revenue', 'group', '', 'credit'],
+      ['acc_sales', '4100', 'إيرادات المبيعات', 'revenue', 'sales', 'acc_revenue', 'credit'],
+      ['acc_cost_of_sales', '5000', 'تكلفة المبيعات', 'cost_of_sales', 'group', '', 'debit'],
+      ['acc_cogs', '5100', 'تكلفة البضاعة المباعة', 'cost_of_sales', 'cogs', 'acc_cost_of_sales', 'debit'],
+      ['acc_expenses', '6000', 'المصروفات', 'expense', 'group', '', 'debit'],
+      ['acc_general_expenses', '6100', 'مصروفات عامة', 'expense', 'general', 'acc_expenses', 'debit'],
+      ['acc_cash_over_short', '6200', 'زيادة / عجز النقدية', 'expense', 'cash_reconciliation', 'acc_expenses', 'debit'],
+      ['acc_depreciation_expense', '6300', 'مصروف الإهلاك', 'expense', 'depreciation', 'acc_expenses', 'debit'],
     ];
 
     for (final account in accounts) {
@@ -555,7 +556,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
           Variable<String>(account[5]),
           Variable<String>(account[6]),
           const Variable<String>('USD'),
-          const Variable<String>('Default accounting foundation account'),
+          const Variable<String>('حساب افتراضي أساسي للمحاسبة'),
           Variable<String>(now),
           Variable<String>(now),
         ],
@@ -563,23 +564,23 @@ class VentioDriftDatabase extends GeneratedDatabase {
     }
 
     final settings = <List<String>>[
-      ['default_cash_account_id', 'acc_cash', 'Default account for cash receipts and payments'],
-      ['default_bank_account_id', 'acc_bank', 'Default account for bank/card receipts and payments'],
-      ['default_customers_account_id', 'acc_customers', 'Default accounts receivable control account'],
-      ['default_suppliers_account_id', 'acc_suppliers', 'Default accounts payable control account'],
-      ['default_inventory_account_id', 'acc_inventory', 'Default inventory asset account'],
-      ['default_fixed_assets_account_id', 'acc_fixed_assets', 'Default fixed assets account'],
-      ['default_accumulated_depreciation_account_id', 'acc_accum_depreciation', 'Default accumulated depreciation contra-asset account'],
-      ['default_depreciation_expense_account_id', 'acc_depreciation_expense', 'Default depreciation expense account'],
-      ['default_sales_account_id', 'acc_sales', 'Default sales revenue account'],
-      ['default_cogs_account_id', 'acc_cogs', 'Default cost of goods sold account'],
-      ['default_expense_account_id', 'acc_general_expenses', 'Default operating expense account'],
-      ['default_cash_over_short_account_id', 'acc_cash_over_short', 'Default cash reconciliation over/short account'],
-      ['default_sales_tax_account_id', 'acc_vat_output', 'Default VAT/tax account for sales invoices'],
-      ['default_purchase_tax_account_id', 'acc_vat_input', 'Default VAT/tax account for purchase invoices'],
-      ['default_tax_payable_account_id', 'acc_vat_output', 'Default net tax payable account'],
-      ['default_vat_rate_percent', '', 'Default VAT rate percent used by accounting auto-posting'],
-      ['accounting_engine_version', '', 'Accounting engine schema/seed version'],
+      ['default_cash_account_id', 'acc_cash', 'الحساب الافتراضي للمقبوضات والمدفوعات النقدية'],
+      ['default_bank_account_id', 'acc_bank', 'الحساب الافتراضي لمقبوضات ومدفوعات البنك/البطاقة'],
+      ['default_customers_account_id', 'acc_customers', 'حساب الرقابة الافتراضي للذمم المدينة'],
+      ['default_suppliers_account_id', 'acc_suppliers', 'حساب الرقابة الافتراضي للذمم الدائنة'],
+      ['default_inventory_account_id', 'acc_inventory', 'حساب أصل المخزون الافتراضي'],
+      ['default_fixed_assets_account_id', 'acc_fixed_assets', 'حساب الأصول الثابتة الافتراضي'],
+      ['default_accumulated_depreciation_account_id', 'acc_accum_depreciation', 'حساب مجمع الإهلاك الافتراضي'],
+      ['default_depreciation_expense_account_id', 'acc_depreciation_expense', 'حساب مصروف الإهلاك الافتراضي'],
+      ['default_sales_account_id', 'acc_sales', 'حساب إيرادات المبيعات الافتراضي'],
+      ['default_cogs_account_id', 'acc_cogs', 'حساب تكلفة البضاعة المباعة الافتراضي'],
+      ['default_expense_account_id', 'acc_general_expenses', 'حساب المصروفات التشغيلية الافتراضي'],
+      ['default_cash_over_short_account_id', 'acc_cash_over_short', 'حساب زيادة/عجز النقدية الافتراضي'],
+      ['default_sales_tax_account_id', 'acc_vat_output', 'حساب ضريبة القيمة المضافة لفواتير المبيعات'],
+      ['default_purchase_tax_account_id', 'acc_vat_input', 'حساب ضريبة القيمة المضافة لفواتير المشتريات'],
+      ['default_tax_payable_account_id', 'acc_vat_output', 'حساب صافي الضريبة المستحقة الافتراضي'],
+      ['default_vat_rate_percent', '', 'نسبة ضريبة القيمة المضافة الافتراضية للترحيل المحاسبي التلقائي'],
+      ['accounting_engine_version', '', 'إصدار بنية وبذور محرك المحاسبة'],
     ];
 
     for (final setting in settings) {
@@ -605,8 +606,8 @@ class VentioDriftDatabase extends GeneratedDatabase {
   Future<void> _seedAdvancedAccountingDefaults() async {
     final now = DateTime.now().toUtc().toIso8601String();
     final paymentAccounts = <List<String>>[
-      ['pa_cash', 'Cash Drawer', 'cash', 'acc_cash', '1'],
-      ['pa_bank', 'Bank / Card', 'bank', 'acc_bank', '1'],
+      ['pa_cash', 'درج النقد', 'cash', 'acc_cash', '1'],
+      ['pa_bank', 'البنك / البطاقة', 'bank', 'acc_bank', '1'],
     ];
     for (final account in paymentAccounts) {
       await customInsert(
@@ -621,7 +622,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
           Variable<String>(account[2]),
           Variable<String>(account[3]),
           Variable<int>(int.tryParse(account[4]) ?? 0),
-          const Variable<String>('Default payment account for advanced accounting'),
+          const Variable<String>('حساب دفع افتراضي للمحاسبة المتقدمة'),
           Variable<String>(now),
           Variable<String>(now),
         ],
@@ -632,7 +633,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
       r'''
       INSERT OR IGNORE INTO cost_centers
         (id, code, name, is_active, notes, created_at, updated_at)
-      VALUES ('cc_main', 'MAIN', 'Main Cost Center', 1, 'Default cost center', ?, ?)
+      VALUES ('cc_main', 'MAIN', 'مركز التكلفة الرئيسي', 1, 'مركز التكلفة الافتراضي', ?, ?)
       ''',
       variables: <Variable<Object>>[Variable<String>(now), Variable<String>(now)],
     );
@@ -640,16 +641,82 @@ class VentioDriftDatabase extends GeneratedDatabase {
       r'''
       INSERT OR IGNORE INTO accounting_branches
         (id, code, name, is_active, notes, created_at, updated_at)
-      VALUES ('br_main', 'MAIN', 'Main Branch', 1, 'Default accounting branch', ?, ?)
+      VALUES ('br_main', 'MAIN', 'الفرع الرئيسي', 1, 'الفرع المحاسبي الافتراضي', ?, ?)
       ''',
       variables: <Variable<Object>>[Variable<String>(now), Variable<String>(now)],
     );
     await customInsert(
       r'''
       INSERT INTO accounting_settings (key, account_id, value, description, updated_at)
-      VALUES ('accounting_engine_version', '', '3', 'Accounting engine schema/seed version', ?)
-      ON CONFLICT(key) DO UPDATE SET value = '3', updated_at = excluded.updated_at
+      VALUES ('accounting_engine_version', '', '7', 'إصدار بنية وبذور محرك المحاسبة', ?)
+      ON CONFLICT(key) DO UPDATE SET value = '7', updated_at = excluded.updated_at
       ''',
+      variables: <Variable<Object>>[Variable<String>(now)],
+    );
+  }
+
+
+  Future<void> _migrateDefaultAccountingArabicLabels() async {
+    final now = DateTime.now().toUtc().toIso8601String();
+    final accountNames = <List<String>>[
+      ['acc_assets', 'الأصول'],
+      ['acc_cash', 'النقدية'],
+      ['acc_bank', 'البنك'],
+      ['acc_customers', 'العملاء / الذمم المدينة'],
+      ['acc_inventory', 'المخزون'],
+      ['acc_fixed_assets', 'الأصول الثابتة'],
+      ['acc_accum_depreciation', 'مجمع الإهلاك'],
+      ['acc_vat_input', 'ضريبة المدخلات / ضريبة قابلة للاسترداد'],
+      ['acc_liabilities', 'الالتزامات'],
+      ['acc_suppliers', 'الموردون / الذمم الدائنة'],
+      ['acc_vat_output', 'ضريبة المخرجات / ضريبة مستحقة'],
+      ['acc_equity', 'حقوق الملكية'],
+      ['acc_owner_capital', 'رأس مال المالك'],
+      ['acc_revenue', 'الإيرادات'],
+      ['acc_sales', 'إيرادات المبيعات'],
+      ['acc_cost_of_sales', 'تكلفة المبيعات'],
+      ['acc_cogs', 'تكلفة البضاعة المباعة'],
+      ['acc_expenses', 'المصروفات'],
+      ['acc_general_expenses', 'مصروفات عامة'],
+      ['acc_cash_over_short', 'زيادة / عجز النقدية'],
+      ['acc_depreciation_expense', 'مصروف الإهلاك'],
+    ];
+    for (final account in accountNames) {
+      await customUpdate(
+        'UPDATE accounts SET name = ?, description = ?, updated_at = ? WHERE id = ? AND is_system = 1',
+        variables: <Variable<Object>>[
+          Variable<String>(account[1]),
+          const Variable<String>('حساب افتراضي أساسي للمحاسبة'),
+          Variable<String>(now),
+          Variable<String>(account[0]),
+        ],
+      );
+    }
+    final paymentAccounts = <List<String>>[
+      ['pa_cash', 'درج النقد', 'حساب دفع افتراضي للمحاسبة المتقدمة'],
+      ['pa_bank', 'البنك / البطاقة', 'حساب دفع افتراضي للمحاسبة المتقدمة'],
+    ];
+    for (final account in paymentAccounts) {
+      await customUpdate(
+        'UPDATE payment_accounts SET name = ?, notes = ?, updated_at = ? WHERE id = ?',
+        variables: <Variable<Object>>[
+          Variable<String>(account[1]),
+          Variable<String>(account[2]),
+          Variable<String>(now),
+          Variable<String>(account[0]),
+        ],
+      );
+    }
+    await customUpdate(
+      "UPDATE cost_centers SET name = 'مركز التكلفة الرئيسي', notes = 'مركز التكلفة الافتراضي', updated_at = ? WHERE id = 'cc_main'",
+      variables: <Variable<Object>>[Variable<String>(now)],
+    );
+    await customUpdate(
+      "UPDATE accounting_branches SET name = 'الفرع الرئيسي', notes = 'الفرع المحاسبي الافتراضي', updated_at = ? WHERE id = 'br_main'",
+      variables: <Variable<Object>>[Variable<String>(now)],
+    );
+    await customUpdate(
+      "UPDATE accounting_settings SET value = '7', description = 'إصدار بنية وبذور محرك المحاسبة', updated_at = ? WHERE key = 'accounting_engine_version'",
       variables: <Variable<Object>>[Variable<String>(now)],
     );
   }

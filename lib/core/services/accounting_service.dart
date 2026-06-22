@@ -19,7 +19,7 @@ class AccountingService {
   static VentioDriftDatabase get _db {
     final database = SqliteMigrationManager.database;
     if (database == null) {
-      throw StateError('SQLite database is not initialized.');
+      throw StateError('قاعدة بيانات SQLite غير مهيأة.');
     }
     return database;
   }
@@ -47,7 +47,7 @@ class AccountingService {
     await _db.customInsert(
       r'''
       INSERT INTO accounting_settings (key, account_id, value, description, updated_at)
-      VALUES ('default_vat_rate_percent', '', ?, 'Default VAT rate percent used by accounting auto-posting', ?)
+      VALUES ('default_vat_rate_percent', '', ?, 'نسبة ضريبة القيمة المضافة الافتراضية للترحيل المحاسبي التلقائي', ?)
       ON CONFLICT(key) DO UPDATE SET
         value = excluded.value,
         updated_at = excluded.updated_at
@@ -61,7 +61,7 @@ class AccountingService {
       action: 'update_setting',
       entityType: 'accounting_setting',
       entityId: 'default_vat_rate_percent',
-      details: 'Default VAT rate set to ${_roundMoney(normalized)}%',
+      details: 'تم ضبط نسبة ضريبة القيمة المضافة الافتراضية إلى ${_roundMoney(normalized)}%',
     );
   }
 
@@ -88,10 +88,10 @@ class AccountingService {
     final normalizedKey = key.trim();
     final normalizedAccountId = accountId.trim();
     if (normalizedKey.isEmpty || !normalizedKey.startsWith('default_') || !normalizedKey.endsWith('_account_id')) {
-      throw ArgumentError('Invalid accounting setting key: $key');
+      throw ArgumentError('مفتاح إعداد محاسبي غير صالح: $key');
     }
     if (normalizedAccountId.isEmpty) {
-      throw ArgumentError('Account is required.');
+      throw ArgumentError('الحساب مطلوب.');
     }
     await _accountSnapshot(_db, normalizedAccountId);
     final now = DateTime.now().toUtc().toIso8601String();
@@ -113,7 +113,7 @@ class AccountingService {
       action: 'update_setting',
       entityType: 'accounting_setting',
       entityId: normalizedKey,
-      details: 'Mapped $normalizedKey to $normalizedAccountId',
+      details: 'تم ربط $normalizedKey بالحساب $normalizedAccountId',
     );
   }
 
@@ -136,7 +136,7 @@ class AccountingService {
         accountId: await _paymentAccountId(accounts, sale.paymentMethod),
         debit: paid,
         credit: 0,
-        memo: 'Payment received for sale ${sale.invoiceNo}',
+        memo: 'دفعة مستلمة للمبيعة ${sale.invoiceNo}',
         partyType: 'customer',
         partyId: sale.customerId,
         partyName: sale.customerName,
@@ -147,7 +147,7 @@ class AccountingService {
         accountId: _requiredAccount(accounts, 'default_customers_account_id'),
         debit: balance,
         credit: 0,
-        memo: 'Amount due from customer for sale ${sale.invoiceNo}',
+        memo: 'مبلغ مستحق على العميل للمبيعة ${sale.invoiceNo}',
         partyType: 'customer',
         partyId: sale.customerId,
         partyName: sale.customerName,
@@ -158,15 +158,15 @@ class AccountingService {
       debit: 0,
       credit: tax.netAmount,
       memo: tax.taxAmount > 0
-          ? 'Sales revenue before VAT ${sale.invoiceNo}'
-          : 'Sales revenue ${sale.invoiceNo}',
+          ? 'إيرادات المبيعات قبل الضريبة ${sale.invoiceNo}'
+          : 'إيرادات المبيعات ${sale.invoiceNo}',
     ));
     if (tax.taxAmount > 0) {
       lines.add(JournalLineDraft(
         accountId: _requiredAccount(accounts, 'default_sales_tax_account_id'),
         debit: 0,
         credit: tax.taxAmount,
-        memo: 'Output VAT / sales tax ${sale.invoiceNo}',
+        memo: 'ضريبة المخرجات / ضريبة المبيعات ${sale.invoiceNo}',
       ));
     }
     if (cogs > 0) {
@@ -175,13 +175,13 @@ class AccountingService {
           accountId: _requiredAccount(accounts, 'default_cogs_account_id'),
           debit: cogs,
           credit: 0,
-          memo: 'Cost of goods sold ${sale.invoiceNo}',
+          memo: 'تكلفة البضاعة المباعة ${sale.invoiceNo}',
         ))
         ..add(JournalLineDraft(
           accountId: _requiredAccount(accounts, 'default_inventory_account_id'),
           debit: 0,
           credit: cogs,
-          memo: 'Inventory issued for sale ${sale.invoiceNo}',
+          memo: 'مخزون صادر للمبيعة ${sale.invoiceNo}',
         ));
     }
     await createPostedEntry(JournalEntryDraft(
@@ -189,7 +189,7 @@ class AccountingService {
       referenceType: 'sale',
       referenceId: sale.id,
       referenceNo: sale.invoiceNo,
-      description: 'Sale invoice ${sale.invoiceNo}',
+      description: 'فاتورة مبيعات ${sale.invoiceNo}',
       createdBy: sale.lastModifiedByDeviceId,
       storeId: sale.storeId,
       branchId: sale.branchId,
@@ -210,8 +210,8 @@ class AccountingService {
         debit: tax.netAmount,
         credit: 0,
         memo: tax.taxAmount > 0
-            ? 'Inventory received before VAT ${purchase.purchaseNo}'
-            : 'Inventory received from purchase ${purchase.purchaseNo}',
+            ? 'مخزون مستلم قبل الضريبة ${purchase.purchaseNo}'
+            : 'مخزون مستلم من المشتريات ${purchase.purchaseNo}',
         partyType: 'supplier',
         partyId: purchase.supplierId,
         partyName: purchase.supplierName,
@@ -222,7 +222,7 @@ class AccountingService {
         accountId: _requiredAccount(accounts, 'default_purchase_tax_account_id'),
         debit: tax.taxAmount,
         credit: 0,
-        memo: 'Input VAT / purchase tax ${purchase.purchaseNo}',
+        memo: 'ضريبة المدخلات / ضريبة المشتريات ${purchase.purchaseNo}',
         partyType: 'supplier',
         partyId: purchase.supplierId,
         partyName: purchase.supplierName,
@@ -233,7 +233,7 @@ class AccountingService {
         accountId: await _paymentAccountId(accounts, purchase.paymentMethod),
         debit: 0,
         credit: paid,
-        memo: 'Payment paid for purchase ${purchase.purchaseNo}',
+        memo: 'دفعة مدفوعة للمشتريات ${purchase.purchaseNo}',
         partyType: 'supplier',
         partyId: purchase.supplierId,
         partyName: purchase.supplierName,
@@ -244,7 +244,7 @@ class AccountingService {
         accountId: _requiredAccount(accounts, 'default_suppliers_account_id'),
         debit: 0,
         credit: balance,
-        memo: 'Amount due to supplier for purchase ${purchase.purchaseNo}',
+        memo: 'مبلغ مستحق للمورد عن المشتريات ${purchase.purchaseNo}',
         partyType: 'supplier',
         partyId: purchase.supplierId,
         partyName: purchase.supplierName,
@@ -255,7 +255,7 @@ class AccountingService {
       referenceType: 'purchase',
       referenceId: purchase.id,
       referenceNo: purchase.purchaseNo,
-      description: 'Purchase invoice ${purchase.purchaseNo}',
+      description: 'فاتورة مشتريات ${purchase.purchaseNo}',
       createdBy: purchase.lastModifiedByDeviceId,
       storeId: purchase.storeId,
       branchId: purchase.branchId,
@@ -271,7 +271,7 @@ class AccountingService {
       referenceType: 'expense',
       referenceId: expense.id,
       referenceNo: expense.title,
-      description: 'Expense: ${expense.title}',
+      description: 'مصروف: ${expense.title}',
       createdBy: expense.lastModifiedByDeviceId,
       storeId: expense.storeId,
       branchId: expense.branchId,
@@ -286,7 +286,7 @@ class AccountingService {
           accountId: await _paymentAccountId(accounts, 'cash'),
           debit: 0,
           credit: expense.amount,
-          memo: 'Expense payment',
+          memo: 'دفعة مصروف',
         ),
       ],
     ));
@@ -311,8 +311,8 @@ class AccountingService {
       referenceId: transaction.id,
       referenceNo: transaction.referenceNo,
       description: isCustomerPayment
-          ? 'Customer payment ${transaction.referenceNo}'
-          : 'Supplier payment ${transaction.referenceNo}',
+          ? 'دفعة عميل ${transaction.referenceNo}'
+          : 'دفعة مورد ${transaction.referenceNo}',
       createdBy: transaction.lastModifiedByDeviceId,
       storeId: transaction.storeId,
       branchId: transaction.branchId,
@@ -322,7 +322,7 @@ class AccountingService {
                 accountId: paymentAccount,
                 debit: amount,
                 credit: 0,
-                memo: 'Customer payment received',
+                memo: 'دفعة عميل مستلمة',
                 partyType: 'customer',
                 partyId: transaction.accountId,
                 partyName: transaction.accountName,
@@ -331,7 +331,7 @@ class AccountingService {
                 accountId: controlAccount,
                 debit: 0,
                 credit: amount,
-                memo: 'Reduce customer receivable',
+                memo: 'تخفيض ذمة العميل المدينة',
                 partyType: 'customer',
                 partyId: transaction.accountId,
                 partyName: transaction.accountName,
@@ -342,7 +342,7 @@ class AccountingService {
                 accountId: controlAccount,
                 debit: amount,
                 credit: 0,
-                memo: 'Reduce supplier payable',
+                memo: 'تخفيض ذمة المورد الدائنة',
                 partyType: 'supplier',
                 partyId: transaction.accountId,
                 partyName: transaction.accountName,
@@ -351,7 +351,7 @@ class AccountingService {
                 accountId: paymentAccount,
                 debit: 0,
                 credit: amount,
-                memo: 'Supplier payment paid',
+                memo: 'دفعة مورد مدفوعة',
                 partyType: 'supplier',
                 partyId: transaction.accountId,
                 partyName: transaction.accountName,
@@ -437,7 +437,7 @@ class AccountingService {
         entityId: entryId,
         referenceType: draft.referenceType,
         referenceId: draft.referenceId,
-        details: 'Posted balanced journal entry $entryNo',
+        details: 'تم ترحيل قيد يومية متوازن $entryNo',
         createdBy: draft.createdBy,
         storeId: draft.storeId,
         branchId: draft.branchId,
@@ -500,7 +500,7 @@ class AccountingService {
         accountId: data['account_id']?.toString() ?? '',
         debit: _cleanAmount(_num(data['credit'])),
         credit: _cleanAmount(_num(data['debit'])),
-        memo: 'Reversal: ${data['memo']?.toString() ?? ''}',
+        memo: 'عكس: ${data['memo']?.toString() ?? ''}',
         partyType: data['party_type']?.toString() ?? '',
         partyId: data['party_id']?.toString() ?? '',
         partyName: data['party_name']?.toString() ?? '',
@@ -509,7 +509,7 @@ class AccountingService {
     }).toList();
     _validateBalancedDraft(JournalEntryDraft(
       entryDate: DateTime.now(),
-      description: 'Reversal validation',
+      description: 'تحقق العكس',
       lines: reversalLines,
     ));
 
@@ -521,8 +521,8 @@ class AccountingService {
     final actor = createdBy.trim().isNotEmpty ? createdBy.trim() : (original['created_by']?.toString() ?? '');
     final originalEntryNo = original['entry_no']?.toString() ?? '';
     final description = reason.trim().isEmpty
-        ? 'Reversal of journal entry $originalEntryNo'
-        : 'Reversal of journal entry $originalEntryNo: ${reason.trim()}';
+        ? 'عكس قيد اليومية $originalEntryNo'
+        : 'عكس قيد اليومية $originalEntryNo: ${reason.trim()}';
 
     await db.transaction(() async {
       await db.customInsert(
@@ -1106,12 +1106,12 @@ class AccountingService {
       SELECT fa.id, fa.name, fa.category AS type, fa.status,
              fa.code AS account_code, a.name AS account_name,
              ROUND(fa.purchase_value - COALESCE(dep.accumulated, 0), 2) AS balance,
-             ('Cost: ' || ROUND(fa.purchase_value, 2) ||
-              ' • Accumulated depreciation: ' || ROUND(COALESCE(dep.accumulated, 0), 2) ||
-              ' • Book value: ' || ROUND(fa.purchase_value - COALESCE(dep.accumulated, 0), 2) ||
-              ' • Acquired: ' || fa.acquisition_date ||
-              CASE WHEN fa.useful_life_months > 0 THEN ' • Useful life: ' || fa.useful_life_months || ' months' ELSE '' END ||
-              CASE WHEN fa.useful_life_months > 0 THEN ' • Monthly depreciation: ' || ROUND(fa.purchase_value / fa.useful_life_months, 2) ELSE '' END ||
+             ('التكلفة: ' || ROUND(fa.purchase_value, 2) ||
+              ' • مجمع الإهلاك: ' || ROUND(COALESCE(dep.accumulated, 0), 2) ||
+              ' • القيمة الدفترية: ' || ROUND(fa.purchase_value - COALESCE(dep.accumulated, 0), 2) ||
+              ' • تاريخ الاقتناء: ' || fa.acquisition_date ||
+              CASE WHEN fa.useful_life_months > 0 THEN ' • العمر الإنتاجي: ' || fa.useful_life_months || ' شهر' ELSE '' END ||
+              CASE WHEN fa.useful_life_months > 0 THEN ' • الإهلاك الشهري: ' || ROUND(fa.purchase_value / fa.useful_life_months, 2) ELSE '' END ||
               CASE WHEN fa.notes <> '' THEN ' • ' || fa.notes ELSE '' END) AS notes
       FROM fixed_assets fa
       LEFT JOIN accounts a ON a.id = fa.asset_account_id
@@ -1144,7 +1144,7 @@ class AccountingService {
     String branchId = '',
   }) async {
     final amount = _cleanAmount(purchaseValue);
-    if (amount <= 0) throw ArgumentError('Fixed asset purchase value is required.');
+    if (amount <= 0) throw ArgumentError('قيمة شراء الأصل الثابت مطلوبة.');
     final accounts = await readDefaultAccountMap();
     final fixedAssetAccountId = assetAccountId.trim().isNotEmpty
         ? assetAccountId.trim()
@@ -1158,7 +1158,7 @@ class AccountingService {
     final now = DateTime.now().toUtc().toIso8601String();
     final assetId = _newId('asset');
     final normalizedCode = code.trim().isEmpty ? 'FA-${DateTime.now().millisecondsSinceEpoch}' : code.trim().toUpperCase();
-    final normalizedName = name.trim().isEmpty ? 'Fixed Asset' : name.trim();
+    final normalizedName = name.trim().isEmpty ? 'أصل ثابت' : name.trim();
 
     await _db.transaction(() async {
       await _db.customInsert(
@@ -1191,7 +1191,7 @@ class AccountingService {
       referenceType: 'fixed_asset',
       referenceId: assetId,
       referenceNo: normalizedCode,
-      description: 'Fixed asset acquisition: $normalizedName',
+      description: 'اقتناء أصل ثابت: $normalizedName',
       createdBy: createdBy,
       storeId: storeId,
       branchId: branchId,
@@ -1200,13 +1200,13 @@ class AccountingService {
           accountId: fixedAssetAccountId,
           debit: amount,
           credit: 0,
-          memo: 'Fixed asset acquisition $normalizedCode',
+          memo: 'اقتناء أصل ثابت $normalizedCode',
         ),
         JournalLineDraft(
           accountId: paymentAccount,
           debit: 0,
           credit: amount,
-          memo: 'Payment for fixed asset $normalizedCode',
+          memo: 'دفعة أصل ثابت $normalizedCode',
         ),
       ],
     ));
@@ -1238,7 +1238,7 @@ class AccountingService {
       ''',
       variables: <Variable<Object>>[Variable<String>(assetId)],
     ).getSingleOrNull();
-    if (row == null) throw ArgumentError('Fixed asset not found: $assetId');
+    if (row == null) throw ArgumentError('الأصل الثابت غير موجود: $assetId');
     return _runDepreciationForAssetRow(row.data, throughDate: throughDate, createdBy: createdBy);
   }
 
@@ -1318,7 +1318,7 @@ class AccountingService {
         referenceType: 'fixed_asset_depreciation',
         referenceId: depreciationId,
         referenceNo: '$code-$periodKey',
-        description: 'Depreciation for fixed asset $code - $name ($periodKey)',
+        description: 'إهلاك الأصل الثابت $code - $name ($periodKey)',
         createdBy: createdBy,
         storeId: asset['store_id']?.toString() ?? '',
         branchId: asset['branch_id']?.toString() ?? '',
@@ -1327,13 +1327,13 @@ class AccountingService {
             accountId: expenseAccount,
             debit: amount,
             credit: 0,
-            memo: 'Depreciation expense for $code ($periodKey)',
+            memo: 'مصروف إهلاك $code ($periodKey)',
           ),
           JournalLineDraft(
             accountId: accumulatedAccount,
             debit: 0,
             credit: amount,
-            memo: 'Accumulated depreciation for $code ($periodKey)',
+            memo: 'مجمع إهلاك $code ($periodKey)',
           ),
         ],
       ));
@@ -1354,7 +1354,7 @@ class AccountingService {
           Variable<double>(accumulated),
           Variable<double>(_roundMoney(purchaseValue - accumulated)),
           Variable<String>(entryId),
-          Variable<String>('Straight-line depreciation'),
+          Variable<String>('إهلاك القسط الثابت'),
           Variable<String>(DateTime.now().toUtc().toIso8601String()),
           Variable<String>(asset['store_id']?.toString() ?? ''),
           Variable<String>(asset['branch_id']?.toString() ?? ''),
@@ -1377,8 +1377,8 @@ class AccountingService {
       entryDate: entryDate,
       referenceType: 'manual_journal',
       referenceId: _newId('manual'),
-      referenceNo: 'Manual',
-      description: description.trim().isEmpty ? 'Manual journal entry' : description.trim(),
+      referenceNo: 'يدوي',
+      description: description.trim().isEmpty ? 'قيد يومية يدوي' : description.trim(),
       source: 'manual',
       createdBy: createdBy,
       storeId: storeId,
@@ -1404,7 +1404,7 @@ class AccountingService {
       ''',
       variables: <Variable<Object>>[
         Variable<String>(_newId('drawer')),
-        Variable<String>(drawerNo.trim().isEmpty ? 'Drawer' : drawerNo.trim()),
+        Variable<String>(drawerNo.trim().isEmpty ? 'درج النقد' : drawerNo.trim()),
         Variable<String>(now),
         Variable<double>(_roundMoney(openingBalance)),
         Variable<double>(_roundMoney(openingBalance)),
@@ -1483,7 +1483,7 @@ class AccountingService {
       action: 'close_cash_drawer',
       entityType: 'cash_drawer',
       entityId: sessionId,
-      details: 'Cash reconciliation $type. Expected: $expected, Counted: $counted, Difference: $difference',
+      details: 'تسوية نقدية $type. المتوقع: $expected، المعدود: $counted، الفرق: $difference',
       createdBy: closedBy,
       storeId: storeId,
       branchId: branchId,
@@ -1542,20 +1542,20 @@ class AccountingService {
       entryDate: DateTime.now(),
       referenceType: 'cash_reconciliation',
       referenceId: sessionId,
-      referenceNo: drawerNo.trim().isEmpty ? 'Cash drawer close' : drawerNo.trim(),
-      description: 'Cash reconciliation ${isOverage ? 'overage' : 'shortage'}: expected $expectedCash, counted $countedCash',
+      referenceNo: drawerNo.trim().isEmpty ? 'إغلاق درج النقد' : drawerNo.trim(),
+      description: 'تسوية نقدية ${isOverage ? 'زيادة' : 'عجز'}: المتوقع $expectedCash، المعدود $countedCash',
       source: 'system',
       createdBy: closedBy,
       storeId: storeId,
       branchId: branchId,
       lines: isOverage
           ? <JournalLineDraft>[
-              JournalLineDraft(accountId: cashAccountId, debit: amount, credit: 0, memo: 'Cash drawer overage'),
-              JournalLineDraft(accountId: adjustmentAccountId, debit: 0, credit: amount, memo: 'Cash drawer overage offset'),
+              JournalLineDraft(accountId: cashAccountId, debit: amount, credit: 0, memo: 'زيادة درج النقد'),
+              JournalLineDraft(accountId: adjustmentAccountId, debit: 0, credit: amount, memo: 'مقابل زيادة درج النقد'),
             ]
           : <JournalLineDraft>[
-              JournalLineDraft(accountId: adjustmentAccountId, debit: amount, credit: 0, memo: 'Cash drawer shortage'),
-              JournalLineDraft(accountId: cashAccountId, debit: 0, credit: amount, memo: 'Cash drawer shortage offset'),
+              JournalLineDraft(accountId: adjustmentAccountId, debit: amount, credit: 0, memo: 'عجز درج النقد'),
+              JournalLineDraft(accountId: cashAccountId, debit: 0, credit: amount, memo: 'مقابل عجز درج النقد'),
             ],
     ));
   }
@@ -1577,7 +1577,7 @@ class AccountingService {
       ''',
       variables: <Variable<Object>>[
         Variable<String>(_newId('period')),
-        Variable<String>(name.trim().isEmpty ? 'Accounting Period' : name.trim()),
+        Variable<String>(name.trim().isEmpty ? 'فترة محاسبية' : name.trim()),
         Variable<String>(startDate.toUtc().toIso8601String()),
         Variable<String>(endDate.toUtc().toIso8601String()),
         Variable<String>(now),
@@ -1599,7 +1599,7 @@ class AccountingService {
     final totalDebit = trialBalance.fold<double>(0, (sum, row) => sum + row.debit);
     final totalCredit = trialBalance.fold<double>(0, (sum, row) => sum + row.credit);
     if ((totalDebit - totalCredit).abs() > 0.0001) {
-      throw StateError('Cannot close period while trial balance is not balanced.');
+      throw StateError('لا يمكن إغلاق الفترة لأن ميزان المراجعة غير متوازن.');
     }
     final now = DateTime.now().toUtc().toIso8601String();
     await _db.customUpdate(
@@ -1615,7 +1615,7 @@ class AccountingService {
         Variable<String>(periodId),
       ],
     );
-    await _writeAuditLog(action: 'close_period', entityType: 'accounting_period', entityId: periodId, details: 'Closed balanced accounting period', createdBy: closedBy, storeId: row.data['store_id']?.toString() ?? '', branchId: row.data['branch_id']?.toString() ?? '');
+    await _writeAuditLog(action: 'close_period', entityType: 'accounting_period', entityId: periodId, details: 'تم إغلاق فترة محاسبية متوازنة', createdBy: closedBy, storeId: row.data['store_id']?.toString() ?? '', branchId: row.data['branch_id']?.toString() ?? '');
   }
 
 
@@ -1673,7 +1673,7 @@ class AccountingService {
     String storeId = '',
     String branchId = '',
   }) async {
-    if (_cleanAmount(amount) <= 0) throw ArgumentError('Cheque amount is required.');
+    if (_cleanAmount(amount) <= 0) throw ArgumentError('قيمة الشيك مطلوبة.');
     final now = DateTime.now().toUtc().toIso8601String();
     await _db.customInsert(
       '''
@@ -1737,7 +1737,7 @@ class AccountingService {
     required String name,
   }) async {
     if (table != 'cost_centers' && table != 'accounting_branches') {
-      throw ArgumentError('Unsupported accounting master data table: $table');
+      throw ArgumentError('جدول بيانات محاسبية أساسية غير مدعوم: $table');
     }
     final now = DateTime.now().toUtc().toIso8601String();
     await _db.customInsert(
@@ -1861,7 +1861,7 @@ class AccountingService {
   static String _requiredAccount(Map<String, String> accounts, String key) {
     final accountId = accounts[key]?.trim() ?? '';
     if (accountId.isEmpty) {
-      throw StateError('Missing accounting setting: $key');
+      throw StateError('إعداد محاسبي مفقود: $key');
     }
     return accountId;
   }
@@ -1908,24 +1908,24 @@ class AccountingService {
       ],
     ).getSingleOrNull();
     if (row != null) {
-      throw StateError('Cannot post accounting entry inside closed period: ${row.data['name']}.');
+      throw StateError('لا يمكن ترحيل قيد محاسبي داخل فترة مغلقة: ${row.data['name']}.');
     }
   }
 
   static void _validateBalancedDraft(JournalEntryDraft draft) {
     if (draft.lines.length < 2) {
-      throw ArgumentError('A journal entry must have at least two lines.');
+      throw ArgumentError('يجب أن يحتوي قيد اليومية على سطرين على الأقل.');
     }
     final debit = draft.lines.fold<double>(0, (sum, line) => sum + _cleanAmount(line.debit));
     final credit = draft.lines.fold<double>(0, (sum, line) => sum + _cleanAmount(line.credit));
     if ((debit - credit).abs() > 0.0001 || debit <= 0) {
-      throw ArgumentError('Journal entry is not balanced.');
+      throw ArgumentError('قيد اليومية غير متوازن.');
     }
     for (final line in draft.lines) {
       final hasDebit = _cleanAmount(line.debit) > 0;
       final hasCredit = _cleanAmount(line.credit) > 0;
       if (line.accountId.trim().isEmpty || hasDebit == hasCredit) {
-        throw ArgumentError('Each journal line must have one account and either debit or credit.');
+        throw ArgumentError('يجب أن يحتوي كل سطر في القيد على حساب واحد ومبلغ مدين أو دائن.');
       }
     }
   }
@@ -1945,7 +1945,7 @@ class AccountingService {
       variables: <Variable<Object>>[Variable<String>(accountId)],
     ).getSingleOrNull();
     if (row == null) {
-      throw ArgumentError('Accounting account not found: $accountId');
+      throw ArgumentError('الحساب المحاسبي غير موجود: $accountId');
     }
     return AccountingAccount.fromRow(row.data);
   }
