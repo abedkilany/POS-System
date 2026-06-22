@@ -12,7 +12,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
   VentioDriftDatabase([QueryExecutor? executor]) : super(executor ?? openVentioSqliteConnection());
 
   @override
-  int get schemaVersion => 7;
+  int get schemaVersion => 8;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -200,6 +200,14 @@ class VentioDriftDatabase extends GeneratedDatabase {
   }
 
 
+  Future<void> _ensureColumn(String tableName, String columnName, String definition) async {
+    final rows = await customSelect('PRAGMA table_info($tableName);').get();
+    final exists = rows.any((row) => row.data['name']?.toString() == columnName);
+    if (!exists) {
+      await customStatement('ALTER TABLE $tableName ADD COLUMN $columnName $definition;');
+    }
+  }
+
   Future<void> _createAccountingFoundation() async {
     await customStatement(r'''
       CREATE TABLE IF NOT EXISTS accounts (
@@ -355,9 +363,70 @@ class VentioDriftDatabase extends GeneratedDatabase {
     await customStatement('CREATE INDEX IF NOT EXISTS idx_payment_accounts_type ON payment_accounts(type, is_active);');
 
     await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS cash_locations (
+        id TEXT PRIMARY KEY NOT NULL,
+        code TEXT NOT NULL,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        parent_id TEXT NOT NULL DEFAULT '',
+        payment_account_id TEXT NOT NULL DEFAULT '',
+        is_default INTEGER NOT NULL DEFAULT 0,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        allow_negative INTEGER NOT NULL DEFAULT 0,
+        current_balance REAL NOT NULL DEFAULT 0,
+        notes TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT NOT NULL DEFAULT '',
+        store_id TEXT NOT NULL DEFAULT '',
+        branch_id TEXT NOT NULL DEFAULT '',
+        device_id TEXT NOT NULL DEFAULT '',
+        CHECK (type IN ('main_vault', 'branch_vault', 'cash_drawer', 'bank', 'wallet', 'other')),
+        CHECK (is_default IN (0, 1)),
+        CHECK (is_active IN (0, 1)),
+        CHECK (allow_negative IN (0, 1))
+      );
+    ''');
+    await customStatement("CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_locations_code_active ON cash_locations(code) WHERE deleted_at = '';");
+    await customStatement('CREATE INDEX IF NOT EXISTS idx_cash_locations_type ON cash_locations(type, is_active);');
+    await customStatement('CREATE INDEX IF NOT EXISTS idx_cash_locations_account ON cash_locations(account_id);');
+    await customStatement('CREATE INDEX IF NOT EXISTS idx_cash_locations_parent ON cash_locations(parent_id);');
+    await customStatement('CREATE INDEX IF NOT EXISTS idx_cash_locations_store_branch ON cash_locations(store_id, branch_id);');
+
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS cash_transfers (
+        id TEXT PRIMARY KEY NOT NULL,
+        transfer_no TEXT NOT NULL,
+        transfer_date TEXT NOT NULL,
+        from_location_id TEXT NOT NULL,
+        to_location_id TEXT NOT NULL,
+        amount REAL NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'posted',
+        journal_entry_id TEXT NOT NULL DEFAULT '',
+        reference_type TEXT NOT NULL DEFAULT 'cash_transfer',
+        reference_id TEXT NOT NULL DEFAULT '',
+        notes TEXT NOT NULL DEFAULT '',
+        created_by TEXT NOT NULL DEFAULT '',
+        approved_by TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT NOT NULL DEFAULT '',
+        store_id TEXT NOT NULL DEFAULT '',
+        branch_id TEXT NOT NULL DEFAULT '',
+        CHECK (status IN ('draft', 'posted', 'void'))
+      );
+    ''');
+    await customStatement("CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_transfers_no_active ON cash_transfers(transfer_no) WHERE deleted_at = '';");
+    await customStatement('CREATE INDEX IF NOT EXISTS idx_cash_transfers_date ON cash_transfers(transfer_date);');
+    await customStatement('CREATE INDEX IF NOT EXISTS idx_cash_transfers_locations ON cash_transfers(from_location_id, to_location_id);');
+    await customStatement('CREATE INDEX IF NOT EXISTS idx_cash_transfers_status ON cash_transfers(status, transfer_date);');
+
+    await customStatement(r'''
       CREATE TABLE IF NOT EXISTS cash_drawer_sessions (
         id TEXT PRIMARY KEY NOT NULL,
         drawer_no TEXT NOT NULL,
+        cash_location_id TEXT NOT NULL DEFAULT '',
         opened_at TEXT NOT NULL,
         closed_at TEXT NOT NULL DEFAULT '',
         status TEXT NOT NULL DEFAULT 'open',
@@ -374,6 +443,8 @@ class VentioDriftDatabase extends GeneratedDatabase {
       );
     ''');
     await customStatement('CREATE INDEX IF NOT EXISTS idx_cash_drawer_sessions_status ON cash_drawer_sessions(status, opened_at);');
+    await _ensureColumn('cash_drawer_sessions', 'cash_location_id', "TEXT NOT NULL DEFAULT ''");
+    await customStatement('CREATE INDEX IF NOT EXISTS idx_cash_drawer_sessions_location ON cash_drawer_sessions(cash_location_id, status);');
 
     await customStatement(r'''
       CREATE TABLE IF NOT EXISTS cheques (
@@ -519,7 +590,10 @@ class VentioDriftDatabase extends GeneratedDatabase {
     final accounts = <List<String>>[
       ['acc_assets', '1000', 'الأصول', 'asset', 'group', '', 'debit'],
       ['acc_cash', '1100', 'النقدية', 'asset', 'cash', 'acc_assets', 'debit'],
+      ['acc_main_vault', '1110', 'الخزنة الرئيسية', 'asset', 'cash_location', 'acc_cash', 'debit'],
+      ['acc_main_drawer', '1120', 'درج النقد الرئيسي', 'asset', 'cash_location', 'acc_cash', 'debit'],
       ['acc_bank', '1200', 'البنك', 'asset', 'bank', 'acc_assets', 'debit'],
+      ['acc_main_bank', '1210', 'البنك الرئيسي', 'asset', 'bank_location', 'acc_bank', 'debit'],
       ['acc_customers', '1300', 'العملاء / الذمم المدينة', 'asset', 'receivable', 'acc_assets', 'debit'],
       ['acc_inventory', '1400', 'المخزون', 'asset', 'inventory', 'acc_assets', 'debit'],
       ['acc_fixed_assets', '1600', 'الأصول الثابتة', 'asset', 'fixed_assets', 'acc_assets', 'debit'],
@@ -628,6 +702,48 @@ class VentioDriftDatabase extends GeneratedDatabase {
         ],
       );
     }
+
+    final cashLocations = <List<String>>[
+      ['cl_main_vault', 'MAIN-VAULT', 'الخزنة الرئيسية', 'main_vault', 'acc_main_vault', '', 'pa_cash', '1'],
+      ['cl_main_drawer', 'MAIN-DRAWER', 'درج النقد الرئيسي', 'cash_drawer', 'acc_main_drawer', 'cl_main_vault', 'pa_cash', '1'],
+      ['cl_main_bank', 'MAIN-BANK', 'البنك الرئيسي', 'bank', 'acc_main_bank', '', 'pa_bank', '1'],
+    ];
+    for (final location in cashLocations) {
+      await customInsert(
+        r'''
+        INSERT OR IGNORE INTO cash_locations
+          (id, code, name, type, account_id, parent_id, payment_account_id, is_default, is_active,
+           allow_negative, current_balance, notes, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, ?, ?, ?)
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(location[0]),
+          Variable<String>(location[1]),
+          Variable<String>(location[2]),
+          Variable<String>(location[3]),
+          Variable<String>(location[4]),
+          Variable<String>(location[5]),
+          Variable<String>(location[6]),
+          Variable<int>(int.tryParse(location[7]) ?? 0),
+          const Variable<String>('موقع نقدي افتراضي لإدارة النقدية'),
+          Variable<String>(now),
+          Variable<String>(now),
+        ],
+      );
+    }
+
+    await customUpdate(
+      "UPDATE cash_locations SET account_id = 'acc_main_vault' WHERE id = 'cl_main_vault' AND account_id = 'acc_cash'",
+    );
+    await customUpdate(
+      "UPDATE cash_locations SET account_id = 'acc_main_drawer' WHERE id = 'cl_main_drawer' AND account_id = 'acc_cash'",
+    );
+    await customUpdate(
+      "UPDATE cash_locations SET account_id = 'acc_main_bank' WHERE id = 'cl_main_bank' AND account_id = 'acc_bank'",
+    );
+    await customUpdate(
+      "UPDATE cash_drawer_sessions SET cash_location_id = 'cl_main_drawer' WHERE cash_location_id = ''",
+    );
 
     await customInsert(
       r'''

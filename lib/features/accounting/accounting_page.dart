@@ -1328,21 +1328,33 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
   Future<_AdvancedAccountingData> _load() async {
     final results = await Future.wait<Object>([
       AccountingService.listPaymentAccounts(),
+      AccountingService.listCashLocations(),
+      AccountingService.listCashTransfers(),
       AccountingService.listCashDrawers(),
       AccountingService.listCheques(),
       AccountingService.listAccountingPeriods(),
       AccountingService.listCostCenters(),
       AccountingService.listAccountingBranches(),
       AccountingService.listFixedAssets(),
+      AccountingService.listCashBalancesReport(),
+      AccountingService.listOpenCashDrawersReport(),
+      AccountingService.listCashDrawerVarianceReport(),
+      AccountingService.listCashTransferAuditReport(),
     ]);
     return _AdvancedAccountingData(
       paymentAccounts: results[0] as List<AdvancedAccountingItem>,
-      cashDrawers: results[1] as List<AdvancedAccountingItem>,
-      cheques: results[2] as List<AdvancedAccountingItem>,
-      periods: results[3] as List<AdvancedAccountingItem>,
-      costCenters: results[4] as List<AdvancedAccountingItem>,
-      branches: results[5] as List<AdvancedAccountingItem>,
-      fixedAssets: results[6] as List<AdvancedAccountingItem>,
+      cashLocations: results[1] as List<AdvancedAccountingItem>,
+      cashTransfers: results[2] as List<AdvancedAccountingItem>,
+      cashDrawers: results[3] as List<AdvancedAccountingItem>,
+      cheques: results[4] as List<AdvancedAccountingItem>,
+      periods: results[5] as List<AdvancedAccountingItem>,
+      costCenters: results[6] as List<AdvancedAccountingItem>,
+      branches: results[7] as List<AdvancedAccountingItem>,
+      fixedAssets: results[8] as List<AdvancedAccountingItem>,
+      cashBalancesReport: results[9] as List<AdvancedAccountingItem>,
+      openCashDrawersReport: results[10] as List<AdvancedAccountingItem>,
+      cashDrawerVarianceReport: results[11] as List<AdvancedAccountingItem>,
+      cashTransferAuditReport: results[12] as List<AdvancedAccountingItem>,
     );
   }
 
@@ -1351,27 +1363,111 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
   Future<void> _openDrawerDialog() async {
     final controller = TextEditingController(text: '0');
     final tr = AppLocalizations.of(context);
+    final locations = await AccountingService.listActiveCashLocations();
+    if (!mounted) return;
+    final drawers = locations.where((item) => item.type == 'cash_drawer').toList();
+    final sources = locations.where((item) => item.type != 'cash_drawer').toList();
+    String selectedDrawerId = drawers.isNotEmpty ? drawers.first.id : '';
+    String selectedFundingId = sources.isNotEmpty ? sources.first.id : '';
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(tr.text('open_cash_drawer')),
-        content: TextField(
-          controller: controller,
-          keyboardType: TextInputType.number,
-          decoration: InputDecoration(labelText: tr.text('opening_balance')),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(tr.text('open_cash_drawer')),
+          content: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              DropdownButtonFormField<String>(
+                initialValue: selectedDrawerId.isEmpty ? null : selectedDrawerId,
+                decoration: InputDecoration(labelText: tr.text('cash_drawer')),
+                items: drawers.map((item) => DropdownMenuItem(value: item.id, child: Text(_localizedAccountingName(item.name, tr)))).toList(),
+                onChanged: (value) => setDialogState(() => selectedDrawerId = value ?? ''),
+              ),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                initialValue: selectedFundingId.isEmpty ? null : selectedFundingId,
+                decoration: InputDecoration(labelText: tr.text('opening_funding_source')),
+                items: sources.map((item) => DropdownMenuItem(value: item.id, child: Text('${_localizedAccountingName(item.name, tr)} • ${formatCurrency(item.balance)}'))).toList(),
+                onChanged: (value) => setDialogState(() => selectedFundingId = value ?? ''),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: controller,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(labelText: tr.text('opening_balance')),
+              ),
+              const SizedBox(height: 4),
+              Text(tr.text('opening_cash_transfer_hint'), style: Theme.of(context).textTheme.bodySmall),
+            ]),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('cancel'))),
+            FilledButton(onPressed: selectedDrawerId.isEmpty ? null : () => Navigator.pop(context, true), child: Text(tr.text('open'))),
+          ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('cancel'))),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(tr.text('open'))),
-        ],
       ),
     );
     if (confirmed == true) {
-      await AccountingService.openCashDrawer(drawerNo: 'درج النقد الرئيسي', openingBalance: double.tryParse(controller.text) ?? 0);
+      await AccountingService.openCashDrawer(
+        drawerNo: drawers.firstWhere((item) => item.id == selectedDrawerId, orElse: () => AdvancedAccountingItem(id: selectedDrawerId, name: 'درج النقد')).name,
+        cashLocationId: selectedDrawerId,
+        fundingLocationId: selectedFundingId,
+        openingBalance: double.tryParse(controller.text) ?? 0,
+      );
       if (mounted) _refresh();
     }
   }
 
+
+  Future<void> _createCashTransferDialog() async {
+    final tr = AppLocalizations.of(context);
+    final amount = TextEditingController(text: '0');
+    final notes = TextEditingController();
+    final locations = await AccountingService.listActiveCashLocations();
+    if (!mounted) return;
+    String fromId = locations.isNotEmpty ? locations.first.id : '';
+    String toId = locations.length > 1 ? locations[1].id : '';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(tr.text('cash_transfer')),
+          content: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              DropdownButtonFormField<String>(
+                initialValue: fromId.isEmpty ? null : fromId,
+                decoration: InputDecoration(labelText: tr.text('from_cash_location')),
+                items: locations.map((item) => DropdownMenuItem(value: item.id, child: Text('${_localizedAccountingName(item.name, tr)} • ${formatCurrency(item.balance)}'))).toList(),
+                onChanged: (value) => setDialogState(() => fromId = value ?? ''),
+              ),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                initialValue: toId.isEmpty ? null : toId,
+                decoration: InputDecoration(labelText: tr.text('to_cash_location')),
+                items: locations.map((item) => DropdownMenuItem(value: item.id, child: Text('${_localizedAccountingName(item.name, tr)} • ${formatCurrency(item.balance)}'))).toList(),
+                onChanged: (value) => setDialogState(() => toId = value ?? ''),
+              ),
+              const SizedBox(height: 8),
+              TextField(controller: amount, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: tr.text('amount'))),
+              TextField(controller: notes, decoration: InputDecoration(labelText: tr.text('notes'))),
+            ]),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('cancel'))),
+            FilledButton(onPressed: fromId.isEmpty || toId.isEmpty || fromId == toId ? null : () => Navigator.pop(context, true), child: Text(tr.text('post'))),
+          ],
+        ),
+      ),
+    );
+    if (confirmed == true) {
+      await AccountingService.createCashTransfer(
+        fromLocationId: fromId,
+        toLocationId: toId,
+        amount: double.tryParse(amount.text) ?? 0,
+        notes: notes.text,
+      );
+      if (mounted) _refresh();
+    }
+  }
 
   Future<void> _manualJournalDialog() async {
     final tr = AppLocalizations.of(context);
@@ -1713,28 +1809,53 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
   Future<void> _closeDrawerDialog(AdvancedAccountingItem item) async {
     final tr = AppLocalizations.of(context);
     final expected = await AccountingService.calculateCashDrawerExpectedCash(item.id);
+    final locations = await AccountingService.listActiveCashLocations();
     if (!mounted) return;
     final counted = TextEditingController(text: expected.toStringAsFixed(2));
     final notes = TextEditingController();
+    final depositTargets = locations.where((location) => location.type != 'cash_drawer').toList();
+    String depositToId = depositTargets.isNotEmpty ? depositTargets.first.id : '';
+    bool depositOnClose = depositToId.isNotEmpty;
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(tr.format('close_item', {'name': _localizedAccountingName(item.name, tr)})),
-        content: SingleChildScrollView(
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text(tr.format('expected_cash', {'amount': formatCurrency(expected)})),
-            const SizedBox(height: 4),
-            Text(tr.text('cash_reconciliation_difference_hint'), style: Theme.of(context).textTheme.bodySmall),
-            const SizedBox(height: 8),
-            TextField(controller: counted, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: tr.text('counted_cash'))),
-            TextField(controller: notes, decoration: InputDecoration(labelText: tr.text('notes'))),
-          ]),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(tr.format('close_item', {'name': _localizedAccountingName(item.name, tr)})),
+          content: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Text(tr.format('expected_cash', {'amount': formatCurrency(expected)})),
+              const SizedBox(height: 4),
+              Text(tr.text('cash_reconciliation_difference_hint'), style: Theme.of(context).textTheme.bodySmall),
+              const SizedBox(height: 8),
+              TextField(controller: counted, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: tr.text('counted_cash'))),
+              const SizedBox(height: 8),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: depositOnClose,
+                title: Text(tr.text('deposit_on_close')),
+                onChanged: depositTargets.isEmpty ? null : (value) => setDialogState(() => depositOnClose = value),
+              ),
+              if (depositOnClose)
+                DropdownButtonFormField<String>(
+                  initialValue: depositToId.isEmpty ? null : depositToId,
+                  decoration: InputDecoration(labelText: tr.text('deposit_to_cash_location')),
+                  items: depositTargets.map((location) => DropdownMenuItem(value: location.id, child: Text('${_localizedAccountingName(location.name, tr)} • ${formatCurrency(location.balance)}'))).toList(),
+                  onChanged: (value) => setDialogState(() => depositToId = value ?? ''),
+                ),
+              TextField(controller: notes, decoration: InputDecoration(labelText: tr.text('notes'))),
+            ]),
+          ),
+          actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('cancel'))), FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(tr.text('close')))],
         ),
-        actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('cancel'))), FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(tr.text('close')))],
       ),
     );
     if (confirmed == true) {
-      await AccountingService.closeCashDrawer(sessionId: item.id, countedCash: double.tryParse(counted.text) ?? 0, notes: notes.text);
+      await AccountingService.closeCashDrawer(
+        sessionId: item.id,
+        countedCash: double.tryParse(counted.text) ?? 0,
+        notes: notes.text,
+        depositToLocationId: depositOnClose ? depositToId : '',
+      );
       if (mounted) _refresh();
     }
   }
@@ -1845,6 +1966,7 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                       children: [
                         FilledButton.icon(onPressed: canManageAccounting ? _manualJournalDialog : null, icon: const Icon(Icons.edit_note_outlined), label: Text(tr.text('manual_journal'))),
                         FilledButton.tonalIcon(onPressed: canManageAccounting ? _openDrawerDialog : null, icon: const Icon(Icons.point_of_sale_outlined), label: Text(tr.text('open_drawer'))),
+                        FilledButton.tonalIcon(onPressed: canManageAccounting ? _createCashTransferDialog : null, icon: const Icon(Icons.compare_arrows_outlined), label: Text(tr.text('cash_transfer'))),
                         FilledButton.tonalIcon(onPressed: canManageAccounting ? _createPaymentAccountDialog : null, icon: const Icon(Icons.account_balance_wallet_outlined), label: Text(tr.text('payment_account'))),
                         FilledButton.tonalIcon(onPressed: canManageAccounting ? _createChequeDialog : null, icon: const Icon(Icons.payments_outlined), label: Text(tr.text('cheque'))),
                         FilledButton.tonalIcon(onPressed: canManageAccounting ? _createPeriodDialog : null, icon: const Icon(Icons.event_available_outlined), label: Text(tr.text('create_period'))),
@@ -1864,6 +1986,12 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
             ),
             const SizedBox(height: 12),
             _AdvancedSection(title: tr.text('payment_accounts'), icon: Icons.account_balance_wallet_outlined, items: data.paymentAccounts),
+            _AdvancedSection(title: tr.text('cash_monitoring'), icon: Icons.monitor_heart_outlined, items: data.cashBalancesReport),
+            _AdvancedSection(title: tr.text('open_cash_drawers_report'), icon: Icons.point_of_sale_outlined, items: data.openCashDrawersReport),
+            _AdvancedSection(title: tr.text('cash_drawer_variance_report'), icon: Icons.balance_outlined, items: data.cashDrawerVarianceReport),
+            _AdvancedSection(title: tr.text('cash_transfer_audit_report'), icon: Icons.receipt_long_outlined, items: data.cashTransferAuditReport),
+            _AdvancedSection(title: tr.text('cash_locations'), icon: Icons.account_balance_wallet_outlined, items: data.cashLocations),
+            _AdvancedSection(title: tr.text('cash_transfers'), icon: Icons.compare_arrows_outlined, items: data.cashTransfers),
             _AdvancedSection(
               title: tr.text('cash_drawer_sessions'),
               icon: Icons.point_of_sale_outlined,
@@ -1919,21 +2047,33 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
 class _AdvancedAccountingData {
   const _AdvancedAccountingData({
     this.paymentAccounts = const <AdvancedAccountingItem>[],
+    this.cashLocations = const <AdvancedAccountingItem>[],
+    this.cashTransfers = const <AdvancedAccountingItem>[],
     this.cashDrawers = const <AdvancedAccountingItem>[],
     this.cheques = const <AdvancedAccountingItem>[],
     this.periods = const <AdvancedAccountingItem>[],
     this.costCenters = const <AdvancedAccountingItem>[],
     this.branches = const <AdvancedAccountingItem>[],
     this.fixedAssets = const <AdvancedAccountingItem>[],
+    this.cashBalancesReport = const <AdvancedAccountingItem>[],
+    this.openCashDrawersReport = const <AdvancedAccountingItem>[],
+    this.cashDrawerVarianceReport = const <AdvancedAccountingItem>[],
+    this.cashTransferAuditReport = const <AdvancedAccountingItem>[],
   });
 
   final List<AdvancedAccountingItem> paymentAccounts;
+  final List<AdvancedAccountingItem> cashLocations;
+  final List<AdvancedAccountingItem> cashTransfers;
   final List<AdvancedAccountingItem> cashDrawers;
   final List<AdvancedAccountingItem> cheques;
   final List<AdvancedAccountingItem> periods;
   final List<AdvancedAccountingItem> costCenters;
   final List<AdvancedAccountingItem> branches;
   final List<AdvancedAccountingItem> fixedAssets;
+  final List<AdvancedAccountingItem> cashBalancesReport;
+  final List<AdvancedAccountingItem> openCashDrawersReport;
+  final List<AdvancedAccountingItem> cashDrawerVarianceReport;
+  final List<AdvancedAccountingItem> cashTransferAuditReport;
 }
 
 class _AdvancedSection extends StatelessWidget {
@@ -2534,6 +2674,13 @@ String _localizedAccountingType(String value, AppLocalizations tr) {
     'cheque': 'payment_type_cheque',
     'check': 'payment_type_cheque',
     'cash_drawer': 'cash_drawer',
+    'main_vault': 'main_vault',
+    'branch_vault': 'branch_vault',
+    'wallet': 'wallet',
+    'other': 'other',
+    'overage': 'overage',
+    'shortage': 'shortage',
+    'balanced': 'balanced',
     'accounting_period': 'accounting_period',
     'fixed_asset': 'fixed_asset',
     'cost_center': 'cost_center',

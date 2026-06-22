@@ -15,6 +15,7 @@ class AccountingService {
   AccountingService._();
 
   static final Random _random = Random.secure();
+  static bool get isAvailable => SqliteMigrationManager.database != null;
 
   static VentioDriftDatabase get _db {
     final database = SqliteMigrationManager.database;
@@ -27,6 +28,7 @@ class AccountingService {
   static Future<List<AccountingAccount>> listAccounts({
     bool activeOnly = true,
   }) async {
+    if (!isAvailable) return const <AccountingAccount>[];
     final rows = await _db.customSelect(
       '''
       SELECT id, code, name, type, subtype, parent_id, normal_balance,
@@ -39,10 +41,14 @@ class AccountingService {
     return rows.map((row) => AccountingAccount.fromRow(row.data)).toList();
   }
 
-  static Future<double> readDefaultVatRatePercent() => _defaultVatRatePercent();
+  static Future<double> readDefaultVatRatePercent() async {
+    if (!isAvailable) return 0.0;
+    return _defaultVatRatePercent();
+  }
 
   static Future<void> updateDefaultVatRatePercent(double ratePercent) async {
     final normalized = ratePercent.isFinite ? ratePercent.clamp(0, 100).toDouble() : 0.0;
+    if (!isAvailable) return;
     final now = DateTime.now().toUtc().toIso8601String();
     await _db.customInsert(
       r'''
@@ -66,6 +72,7 @@ class AccountingService {
   }
 
   static Future<Map<String, String>> readDefaultAccountMap() async {
+    if (!isAvailable) return const <String, String>{};
     final rows = await _db.customSelect(
       '''
       SELECT key, account_id
@@ -93,6 +100,7 @@ class AccountingService {
     if (normalizedAccountId.isEmpty) {
       throw ArgumentError('الحساب مطلوب.');
     }
+    if (!isAvailable) return;
     await _accountSnapshot(_db, normalizedAccountId);
     final now = DateTime.now().toUtc().toIso8601String();
     await _db.customInsert(
@@ -119,6 +127,7 @@ class AccountingService {
 
   static Future<void> recordSale(Sale sale) async {
     if (sale.isDeleted || sale.isCancelled || sale.total <= 0) return;
+    if (!isAvailable) return;
     final accounts = await readDefaultAccountMap();
     final invoiceTotal = _cleanAmount(sale.invoiceTotal);
     final saleTotal = _cleanAmount(sale.total);
@@ -131,9 +140,12 @@ class AccountingService {
     final cogs = _cleanAmount(sale.items.fold<double>(0, (sum, item) => sum + item.lineCost));
     final lines = <JournalLineDraft>[];
 
+    final cashSaleLocation = paid > 0 && _isCashPaymentMethod(sale.paymentMethod)
+        ? await _openCashDrawerLocationForBranch(sale.branchId)
+        : null;
     if (paid > 0) {
       lines.add(JournalLineDraft(
-        accountId: await _paymentAccountId(accounts, sale.paymentMethod),
+        accountId: cashSaleLocation?.accountId ?? await _paymentAccountId(accounts, sale.paymentMethod),
         debit: paid,
         credit: 0,
         memo: 'دفعة مستلمة للمبيعة ${sale.invoiceNo}',
@@ -184,7 +196,7 @@ class AccountingService {
           memo: 'مخزون صادر للمبيعة ${sale.invoiceNo}',
         ));
     }
-    await createPostedEntry(JournalEntryDraft(
+    final entryId = await createPostedEntry(JournalEntryDraft(
       entryDate: sale.date,
       referenceType: 'sale',
       referenceId: sale.id,
@@ -195,10 +207,14 @@ class AccountingService {
       branchId: sale.branchId,
       lines: lines,
     ));
+    if (entryId.isNotEmpty && cashSaleLocation != null && paid > 0) {
+      await _moveCashLocationBalance(cashSaleLocation.id, paid, sale.date);
+    }
   }
 
   static Future<void> recordPurchase(Purchase purchase) async {
     if (purchase.isDeleted || purchase.isCancelled || purchase.subtotal <= 0) return;
+    if (!isAvailable) return;
     final accounts = await readDefaultAccountMap();
     final total = _cleanAmount(purchase.subtotal);
     final tax = await _taxBreakdown(total);
@@ -228,9 +244,12 @@ class AccountingService {
         partyName: purchase.supplierName,
       ));
     }
+    final cashPurchaseLocation = paid > 0 && _isCashPaymentMethod(purchase.paymentMethod)
+        ? await _openCashDrawerLocationForBranch(purchase.branchId)
+        : null;
     if (paid > 0) {
       lines.add(JournalLineDraft(
-        accountId: await _paymentAccountId(accounts, purchase.paymentMethod),
+        accountId: cashPurchaseLocation?.accountId ?? await _paymentAccountId(accounts, purchase.paymentMethod),
         debit: 0,
         credit: paid,
         memo: 'دفعة مدفوعة للمشتريات ${purchase.purchaseNo}',
@@ -250,7 +269,7 @@ class AccountingService {
         partyName: purchase.supplierName,
       ));
     }
-    await createPostedEntry(JournalEntryDraft(
+    final entryId = await createPostedEntry(JournalEntryDraft(
       entryDate: purchase.date,
       referenceType: 'purchase',
       referenceId: purchase.id,
@@ -261,12 +280,17 @@ class AccountingService {
       branchId: purchase.branchId,
       lines: lines,
     ));
+    if (entryId.isNotEmpty && cashPurchaseLocation != null && paid > 0) {
+      await _moveCashLocationBalance(cashPurchaseLocation.id, -paid, purchase.date);
+    }
   }
 
   static Future<void> recordExpense(Expense expense) async {
     if (expense.isDeleted || !expense.isPosted || expense.amount <= 0) return;
+    if (!isAvailable) return;
     final accounts = await readDefaultAccountMap();
-    await createPostedEntry(JournalEntryDraft(
+    final cashExpenseLocation = await _openCashDrawerLocationForBranch(expense.branchId);
+    final entryId = await createPostedEntry(JournalEntryDraft(
       entryDate: expense.date,
       referenceType: 'expense',
       referenceId: expense.id,
@@ -283,29 +307,36 @@ class AccountingService {
           memo: expense.category,
         ),
         JournalLineDraft(
-          accountId: await _paymentAccountId(accounts, 'cash'),
+          accountId: cashExpenseLocation?.accountId ?? await _paymentAccountId(accounts, 'cash'),
           debit: 0,
           credit: expense.amount,
           memo: 'دفعة مصروف',
         ),
       ],
     ));
+    if (entryId.isNotEmpty && cashExpenseLocation != null) {
+      await _moveCashLocationBalance(cashExpenseLocation.id, -expense.amount, expense.date);
+    }
   }
 
   static Future<void> recordAccountPayment(AccountTransaction transaction) async {
     if (transaction.isDeleted) return;
+    if (!isAvailable) return;
     final accounts = await readDefaultAccountMap();
     final isCustomerPayment = transaction.isCustomer && transaction.credit > 0;
     final isSupplierPayment = transaction.isSupplier && transaction.debit > 0;
     if (!isCustomerPayment && !isSupplierPayment) return;
     final amount = _cleanAmount(isCustomerPayment ? transaction.credit : transaction.debit);
     if (amount <= 0) return;
-    final paymentAccount = await _paymentAccountId(accounts, transaction.paymentMethod);
+    final cashPaymentLocation = _isCashPaymentMethod(transaction.paymentMethod)
+        ? await _openCashDrawerLocationForBranch(transaction.branchId)
+        : null;
+    final paymentAccount = cashPaymentLocation?.accountId ?? await _paymentAccountId(accounts, transaction.paymentMethod);
     final controlAccount = _requiredAccount(
       accounts,
       isCustomerPayment ? 'default_customers_account_id' : 'default_suppliers_account_id',
     );
-    await createPostedEntry(JournalEntryDraft(
+    final entryId = await createPostedEntry(JournalEntryDraft(
       entryDate: transaction.date,
       referenceType: isCustomerPayment ? 'customer_payment' : 'supplier_payment',
       referenceId: transaction.id,
@@ -358,9 +389,17 @@ class AccountingService {
               ),
             ],
     ));
+    if (entryId.isNotEmpty && cashPaymentLocation != null) {
+      await _moveCashLocationBalance(
+        cashPaymentLocation.id,
+        isCustomerPayment ? amount : -amount,
+        transaction.date,
+      );
+    }
   }
 
   static Future<String> createPostedEntry(JournalEntryDraft draft) async {
+    if (!isAvailable) return '';
     _validateBalancedDraft(draft);
     await _assertDateNotInClosedPeriod(draft.entryDate, draft.branchId);
     final db = _db;
@@ -453,6 +492,7 @@ class AccountingService {
     String reason = '',
     String createdBy = '',
   }) async {
+    if (!isAvailable) return;
     final db = _db;
     if (referenceType.trim().isEmpty || referenceId.trim().isEmpty) return;
     final entryRow = await db.customSelect(
@@ -613,6 +653,7 @@ class AccountingService {
 
 
   static Future<List<GeneralLedgerAccountReport>> generalLedgerReport() async {
+    if (!isAvailable) return const <GeneralLedgerAccountReport>[];
     final accountRows = await _db.customSelect(
       '''
       SELECT id, code, name, type, normal_balance
@@ -676,6 +717,7 @@ class AccountingService {
   }
 
   static Future<List<TrialBalanceRowReport>> trialBalanceReport() async {
+    if (!isAvailable) return const <TrialBalanceRowReport>[];
     final rows = await _db.customSelect(
       '''
       SELECT a.id, a.code, a.name, a.type, a.normal_balance,
@@ -707,6 +749,15 @@ class AccountingService {
   }
 
   static Future<IncomeStatementReport> incomeStatementReport() async {
+    if (!isAvailable) {
+      return const IncomeStatementReport(
+        revenue: 0,
+        costOfGoodsSold: 0,
+        expenses: 0,
+        grossProfit: 0,
+        netProfit: 0,
+      );
+    }
     final rows = await trialBalanceReport();
     double sumByType(String type) => rows
         .where((row) => row.accountType == type)
@@ -724,6 +775,16 @@ class AccountingService {
   }
 
   static Future<BalanceSheetReport> balanceSheetReport() async {
+    if (!isAvailable) {
+      return const BalanceSheetReport(
+        assets: 0,
+        liabilities: 0,
+        equity: 0,
+        retainedEarnings: 0,
+        liabilitiesAndEquity: 0,
+        difference: 0,
+      );
+    }
     final rows = await trialBalanceReport();
     double sumByType(String type) => rows
         .where((row) => row.accountType == type)
@@ -743,6 +804,7 @@ class AccountingService {
   }
 
   static Future<List<CashBankMovementReport>> cashBankMovementReport() async {
+    if (!isAvailable) return const <CashBankMovementReport>[];
     final defaults = await readDefaultAccountMap();
     final accountIds = <String>{
       defaults['default_cash_account_id'] ?? '',
@@ -783,6 +845,21 @@ class AccountingService {
 
 
   static Future<CashFlowStatementReport> cashFlowStatementReport({DateTime? from, DateTime? to}) async {
+    if (!isAvailable) {
+      final start = from ?? DateTime.now();
+      return CashFlowStatementReport(
+        operatingInflows: 0,
+        operatingOutflows: 0,
+        investingInflows: 0,
+        investingOutflows: 0,
+        financingInflows: 0,
+        financingOutflows: 0,
+        openingCash: 0,
+        closingCash: 0,
+        from: start,
+        to: to ?? start,
+      );
+    }
     final defaults = await readDefaultAccountMap();
     final cashAccountIds = <String>{
       defaults['default_cash_account_id'] ?? '',
@@ -958,6 +1035,14 @@ class AccountingService {
 
 
   static Future<TaxReport> taxReport({DateTime? from, DateTime? to}) async {
+    if (!isAvailable) {
+      return const TaxReport(
+        outputTax: 0,
+        inputTax: 0,
+        netTaxPayable: 0,
+        payableAccountMovement: 0,
+      );
+    }
     final accounts = await readDefaultAccountMap();
     final salesTaxAccountId = accounts['default_sales_tax_account_id']?.trim() ?? '';
     final purchaseTaxAccountId = accounts['default_purchase_tax_account_id']?.trim() ?? '';
@@ -1005,6 +1090,7 @@ class AccountingService {
   }
 
   static Future<List<AdvancedAccountingItem>> listPaymentAccounts() async {
+    if (!isAvailable) return const <AdvancedAccountingItem>[];
     final rows = await _db.customSelect(
       '''
       SELECT pa.id, pa.name, pa.type, pa.account_id, a.code AS account_code,
@@ -1018,13 +1104,111 @@ class AccountingService {
     return rows.map((row) => AdvancedAccountingItem.fromRow(row.data)).toList();
   }
 
-  static Future<List<AdvancedAccountingItem>> listCashDrawers() async {
+  static Future<List<AdvancedAccountingItem>> listActiveCashLocations({
+    bool includeBank = true,
+  }) async {
+    if (!isAvailable) return const <AdvancedAccountingItem>[];
+    final typeFilter = includeBank ? '' : "AND cl.type <> 'bank'";
     final rows = await _db.customSelect(
       '''
-      SELECT id, drawer_no AS name, status AS type, status, opened_at AS account_name,
-             opening_balance AS debit, expected_cash AS credit,
-             difference AS balance, notes
+      SELECT cl.id, cl.name, cl.type, cl.is_default, cl.is_active, cl.current_balance AS balance,
+             cl.notes, a.code AS account_code, a.name AS account_name,
+             parent.name AS status
+      FROM cash_locations cl
+      LEFT JOIN accounts a ON a.id = cl.account_id
+      LEFT JOIN cash_locations parent ON parent.id = cl.parent_id
+      WHERE cl.deleted_at = '' AND cl.is_active = 1 $typeFilter
+      ORDER BY cl.type, cl.code, cl.name
+      ''',
+    ).get();
+    return rows.map((row) => AdvancedAccountingItem.fromRow(row.data)).toList();
+  }
+
+  static Future<bool> hasOpenCashDrawer({String branchId = '', String cashLocationId = ''}) async {
+    if (!isAvailable) return false;
+    final locationFilter = cashLocationId.trim().isEmpty ? '' : 'AND cash_location_id = ?';
+    final branchFilter = branchId.trim().isEmpty ? '' : 'AND branch_id = ?';
+    final row = await _db.customSelect(
+      '''
+      SELECT id
       FROM cash_drawer_sessions
+      WHERE status = 'open' $locationFilter $branchFilter
+      ORDER BY opened_at DESC
+      LIMIT 1
+      ''',
+      variables: <Variable<Object>>[
+        if (cashLocationId.trim().isNotEmpty) Variable<String>(cashLocationId.trim()),
+        if (branchId.trim().isNotEmpty) Variable<String>(branchId.trim()),
+      ],
+    ).getSingleOrNull();
+    return row != null;
+  }
+
+  static Future<String> currentOpenCashDrawerSessionId({String branchId = '', String cashLocationId = ''}) async {
+    if (!isAvailable) return '';
+    final locationFilter = cashLocationId.trim().isEmpty ? '' : 'AND cash_location_id = ?';
+    final branchFilter = branchId.trim().isEmpty ? '' : 'AND branch_id = ?';
+    final row = await _db.customSelect(
+      '''
+      SELECT id
+      FROM cash_drawer_sessions
+      WHERE status = 'open' $locationFilter $branchFilter
+      ORDER BY opened_at DESC
+      LIMIT 1
+      ''',
+      variables: <Variable<Object>>[
+        if (cashLocationId.trim().isNotEmpty) Variable<String>(cashLocationId.trim()),
+        if (branchId.trim().isNotEmpty) Variable<String>(branchId.trim()),
+      ],
+    ).getSingleOrNull();
+    return row?.data['id']?.toString() ?? '';
+  }
+
+  static Future<List<AdvancedAccountingItem>> listCashLocations() async {
+    if (!isAvailable) return const <AdvancedAccountingItem>[];
+    final rows = await _db.customSelect(
+      '''
+      SELECT cl.id, cl.name, cl.type, cl.is_default, cl.is_active, cl.current_balance AS balance,
+             cl.notes, a.code AS account_code, a.name AS account_name,
+             parent.name AS status
+      FROM cash_locations cl
+      LEFT JOIN accounts a ON a.id = cl.account_id
+      LEFT JOIN cash_locations parent ON parent.id = cl.parent_id
+      WHERE cl.deleted_at = ''
+      ORDER BY cl.type, cl.code, cl.name
+      ''',
+    ).get();
+    return rows.map((row) => AdvancedAccountingItem.fromRow(row.data)).toList();
+  }
+
+  static Future<List<AdvancedAccountingItem>> listCashTransfers() async {
+    if (!isAvailable) return const <AdvancedAccountingItem>[];
+    final rows = await _db.customSelect(
+      '''
+      SELECT ct.id, ct.transfer_no AS name, ct.status AS type, ct.status,
+             from_loc.name AS account_code, to_loc.name AS account_name,
+             ct.amount AS balance, ct.notes
+      FROM cash_transfers ct
+      LEFT JOIN cash_locations from_loc ON from_loc.id = ct.from_location_id
+      LEFT JOIN cash_locations to_loc ON to_loc.id = ct.to_location_id
+      WHERE ct.deleted_at = ''
+      ORDER BY ct.transfer_date DESC
+      LIMIT 50
+      ''',
+    ).get();
+    return rows.map((row) => AdvancedAccountingItem.fromRow(row.data)).toList();
+  }
+
+  static Future<List<AdvancedAccountingItem>> listCashDrawers() async {
+    if (!isAvailable) return const <AdvancedAccountingItem>[];
+    final rows = await _db.customSelect(
+      '''
+      SELECT cds.id, cds.drawer_no AS name, cds.status AS type, cds.status,
+             COALESCE(cl.name, cds.opened_at) AS account_name,
+             opening_balance AS debit, expected_cash AS credit,
+             difference AS balance, cds.notes
+      FROM cash_drawer_sessions cds
+      LEFT JOIN cash_locations cl ON cl.id = cds.cash_location_id
       ORDER BY opened_at DESC
       LIMIT 50
       ''',
@@ -1032,10 +1216,118 @@ class AccountingService {
     return rows.map((row) => AdvancedAccountingItem.fromRow(row.data)).toList();
   }
 
+  static Future<List<AdvancedAccountingItem>> listCashBalancesReport() async {
+    if (!isAvailable) return const <AdvancedAccountingItem>[];
+    final rows = await _db.customSelect(
+      '''
+      SELECT cl.id, cl.name, cl.type, cl.is_default, cl.is_active,
+             cl.current_balance AS balance,
+             a.code AS account_code, a.name AS account_name,
+             parent.name AS status,
+             ('الكود: ' || cl.code ||
+              CASE WHEN cl.branch_id <> '' THEN ' • الفرع: ' || cl.branch_id ELSE '' END ||
+              CASE WHEN parent.name IS NOT NULL THEN ' • تابع لـ: ' || parent.name ELSE '' END ||
+              CASE WHEN cl.allow_negative = 1 THEN ' • يسمح بالسالب' ELSE '' END ||
+              CASE WHEN cl.notes <> '' THEN ' • ' || cl.notes ELSE '' END) AS notes
+      FROM cash_locations cl
+      LEFT JOIN accounts a ON a.id = cl.account_id
+      LEFT JOIN cash_locations parent ON parent.id = cl.parent_id
+      WHERE cl.deleted_at = ''
+      ORDER BY cl.type, cl.code, cl.name
+      ''',
+    ).get();
+    return rows.map((row) => AdvancedAccountingItem.fromRow(row.data)).toList();
+  }
+
+  static Future<List<AdvancedAccountingItem>> listOpenCashDrawersReport() async {
+    if (!isAvailable) return const <AdvancedAccountingItem>[];
+    final rows = await _db.customSelect(
+      '''
+      SELECT cds.id,
+             cds.drawer_no AS name,
+             'open' AS type,
+             cds.status,
+             cl.name AS account_name,
+             cds.opening_balance AS debit,
+             cds.expected_cash AS credit,
+             COALESCE(cl.current_balance, cds.expected_cash) AS balance,
+             ('افتتحت: ' || cds.opened_at ||
+              CASE WHEN cds.opened_by <> '' THEN ' • بواسطة: ' || cds.opened_by ELSE '' END ||
+              CASE WHEN cds.branch_id <> '' THEN ' • الفرع: ' || cds.branch_id ELSE '' END ||
+              CASE WHEN cds.notes <> '' THEN ' • ' || cds.notes ELSE '' END) AS notes
+      FROM cash_drawer_sessions cds
+      LEFT JOIN cash_locations cl ON cl.id = cds.cash_location_id
+      WHERE cds.status = 'open'
+      ORDER BY cds.opened_at DESC
+      ''',
+    ).get();
+    return rows.map((row) => AdvancedAccountingItem.fromRow(row.data)).toList();
+  }
+
+  static Future<List<AdvancedAccountingItem>> listCashDrawerVarianceReport({int limit = 100}) async {
+    if (!isAvailable) return const <AdvancedAccountingItem>[];
+    final rows = await _db.customSelect(
+      '''
+      SELECT cds.id,
+             cds.drawer_no AS name,
+             CASE
+               WHEN ROUND(cds.difference, 2) > 0 THEN 'overage'
+               WHEN ROUND(cds.difference, 2) < 0 THEN 'shortage'
+               ELSE 'balanced'
+             END AS type,
+             cds.status,
+             cl.name AS account_name,
+             cds.expected_cash AS debit,
+             cds.counted_cash AS credit,
+             cds.difference AS balance,
+             ('افتتحت: ' || cds.opened_at ||
+              CASE WHEN cds.closed_at <> '' THEN ' • أغلقت: ' || cds.closed_at ELSE '' END ||
+              CASE WHEN cds.closed_by <> '' THEN ' • أغلقها: ' || cds.closed_by ELSE '' END ||
+              CASE WHEN cds.notes <> '' THEN ' • ' || cds.notes ELSE '' END) AS notes
+      FROM cash_drawer_sessions cds
+      LEFT JOIN cash_locations cl ON cl.id = cds.cash_location_id
+      WHERE cds.status = 'closed'
+      ORDER BY ABS(cds.difference) DESC, cds.closed_at DESC
+      LIMIT ?
+      ''',
+      variables: <Variable<Object>>[Variable<int>(limit)],
+    ).get();
+    return rows.map((row) => AdvancedAccountingItem.fromRow(row.data)).toList();
+  }
+
+  static Future<List<AdvancedAccountingItem>> listCashTransferAuditReport({int limit = 100}) async {
+    if (!isAvailable) return const <AdvancedAccountingItem>[];
+    final rows = await _db.customSelect(
+      '''
+      SELECT ct.id,
+             ct.transfer_no AS name,
+             ct.status AS type,
+             ct.status,
+             from_loc.name AS account_code,
+             to_loc.name AS account_name,
+             ct.amount AS balance,
+             ('التاريخ: ' || ct.transfer_date ||
+              CASE WHEN ct.created_by <> '' THEN ' • أنشأها: ' || ct.created_by ELSE '' END ||
+              CASE WHEN ct.approved_by <> '' THEN ' • اعتمدها: ' || ct.approved_by ELSE '' END ||
+              CASE WHEN ct.journal_entry_id <> '' THEN ' • قيد: ' || ct.journal_entry_id ELSE '' END ||
+              CASE WHEN ct.notes <> '' THEN ' • ' || ct.notes ELSE '' END) AS notes
+      FROM cash_transfers ct
+      LEFT JOIN cash_locations from_loc ON from_loc.id = ct.from_location_id
+      LEFT JOIN cash_locations to_loc ON to_loc.id = ct.to_location_id
+      WHERE ct.deleted_at = ''
+      ORDER BY ct.transfer_date DESC
+      LIMIT ?
+      ''',
+      variables: <Variable<Object>>[Variable<int>(limit)],
+    ).get();
+    return rows.map((row) => AdvancedAccountingItem.fromRow(row.data)).toList();
+  }
+
   static Future<double> calculateCashDrawerExpectedCash(String sessionId) async {
+    if (!isAvailable) return 0.0;
     final row = await _db.customSelect(
       """
-      SELECT opened_at, expected_cash, branch_id
+      SELECT opened_at, expected_cash, branch_id, cash_location_id
       FROM cash_drawer_sessions
       WHERE id = ? AND status = 'open'
       LIMIT 1
@@ -1047,10 +1339,12 @@ class AccountingService {
       openedAt: row.data['opened_at']?.toString() ?? '',
       fallbackExpected: _num(row.data['expected_cash']),
       branchId: row.data['branch_id']?.toString() ?? '',
+      cashLocationId: row.data['cash_location_id']?.toString() ?? '',
     );
   }
 
   static Future<List<AdvancedAccountingItem>> listCheques() async {
+    if (!isAvailable) return const <AdvancedAccountingItem>[];
     final rows = await _db.customSelect(
       '''
       SELECT id, cheque_no AS name, direction AS type, party_name AS account_name,
@@ -1064,6 +1358,7 @@ class AccountingService {
   }
 
   static Future<List<AdvancedAccountingItem>> listAccountingPeriods() async {
+    if (!isAvailable) return const <AdvancedAccountingItem>[];
     final rows = await _db.customSelect(
       '''
       SELECT id, name, status AS type, start_date AS account_code,
@@ -1077,6 +1372,7 @@ class AccountingService {
   }
 
   static Future<List<AdvancedAccountingItem>> listCostCenters() async {
+    if (!isAvailable) return const <AdvancedAccountingItem>[];
     final rows = await _db.customSelect(
       '''
       SELECT id, name, code AS account_code, is_active, notes
@@ -1089,6 +1385,7 @@ class AccountingService {
   }
 
   static Future<List<AdvancedAccountingItem>> listAccountingBranches() async {
+    if (!isAvailable) return const <AdvancedAccountingItem>[];
     final rows = await _db.customSelect(
       '''
       SELECT id, name, code AS account_code, is_active, notes
@@ -1101,6 +1398,7 @@ class AccountingService {
   }
 
   static Future<List<AdvancedAccountingItem>> listFixedAssets() async {
+    if (!isAvailable) return const <AdvancedAccountingItem>[];
     final rows = await _db.customSelect(
       '''
       SELECT fa.id, fa.name, fa.category AS type, fa.status,
@@ -1143,6 +1441,7 @@ class AccountingService {
     String storeId = '',
     String branchId = '',
   }) async {
+    if (!isAvailable) return;
     final amount = _cleanAmount(purchaseValue);
     if (amount <= 0) throw ArgumentError('قيمة شراء الأصل الثابت مطلوبة.');
     final accounts = await readDefaultAccountMap();
@@ -1229,6 +1528,7 @@ class AccountingService {
     DateTime? throughDate,
     String createdBy = '',
   }) async {
+    if (!isAvailable) return 0;
     final row = await _db.customSelect(
       '''
       SELECT *
@@ -1246,6 +1546,7 @@ class AccountingService {
     DateTime? throughDate,
     String createdBy = '',
   }) async {
+    if (!isAvailable) return 0;
     final rows = await _db.customSelect(
       '''
       SELECT *
@@ -1373,6 +1674,7 @@ class AccountingService {
     String storeId = '',
     String branchId = '',
   }) async {
+    if (!isAvailable) return;
     await createPostedEntry(JournalEntryDraft(
       entryDate: entryDate,
       referenceType: 'manual_journal',
@@ -1390,30 +1692,61 @@ class AccountingService {
   static Future<void> openCashDrawer({
     required String drawerNo,
     required double openingBalance,
+    String cashLocationId = '',
+    String fundingLocationId = '',
     String openedBy = '',
     String storeId = '',
     String branchId = '',
   }) async {
+    if (!isAvailable) return;
     final now = DateTime.now().toUtc().toIso8601String();
+    final resolvedLocationId = cashLocationId.trim().isEmpty
+        ? await _defaultCashLocationId(type: 'cash_drawer', branchId: branchId)
+        : cashLocationId.trim();
+    if (resolvedLocationId.trim().isEmpty) {
+      throw StateError('لا يوجد درج نقد معرف لفتح وردية.');
+    }
+    if (await hasOpenCashDrawer(branchId: branchId, cashLocationId: resolvedLocationId)) {
+      throw StateError('يوجد وردية مفتوحة بالفعل لهذا الدرج.');
+    }
+    final sessionId = _newId('drawer');
+    final cleanOpening = _roundMoney(openingBalance);
     await _db.customInsert(
       '''
       INSERT INTO cash_drawer_sessions
-        (id, drawer_no, opened_at, status, opening_balance, expected_cash,
+        (id, drawer_no, cash_location_id, opened_at, status, opening_balance, expected_cash,
          notes, opened_by, store_id, branch_id)
-      VALUES (?, ?, ?, 'open', ?, ?, '', ?, ?, ?)
+      VALUES (?, ?, ?, ?, 'open', ?, ?, '', ?, ?, ?)
       ''',
       variables: <Variable<Object>>[
-        Variable<String>(_newId('drawer')),
+        Variable<String>(sessionId),
         Variable<String>(drawerNo.trim().isEmpty ? 'درج النقد' : drawerNo.trim()),
+        Variable<String>(resolvedLocationId),
         Variable<String>(now),
-        Variable<double>(_roundMoney(openingBalance)),
-        Variable<double>(_roundMoney(openingBalance)),
+        Variable<double>(cleanOpening),
+        Variable<double>(cleanOpening),
         Variable<String>(openedBy),
         Variable<String>(storeId),
         Variable<String>(branchId),
       ],
     );
-    await _writeAuditLog(action: 'open_cash_drawer', entityType: 'cash_drawer', details: drawerNo, createdBy: openedBy, storeId: storeId, branchId: branchId);
+    if (cleanOpening > 0) {
+      if (fundingLocationId.trim().isNotEmpty && fundingLocationId.trim() != resolvedLocationId) {
+        await createCashTransfer(
+          fromLocationId: fundingLocationId,
+          toLocationId: resolvedLocationId,
+          amount: cleanOpening,
+          transferDate: DateTime.parse(now).subtract(const Duration(microseconds: 1)),
+          notes: 'عهدة افتتاح وردية ${drawerNo.trim().isEmpty ? 'درج النقد' : drawerNo.trim()}',
+          createdBy: openedBy,
+          storeId: storeId,
+          branchId: branchId,
+        );
+      } else {
+        await _setCashLocationBalance(resolvedLocationId, cleanOpening, now);
+      }
+    }
+    await _writeAuditLog(action: 'open_cash_drawer', entityType: 'cash_drawer', entityId: sessionId, details: drawerNo, createdBy: openedBy, storeId: storeId, branchId: branchId);
   }
 
   static Future<void> closeCashDrawer({
@@ -1421,10 +1754,12 @@ class AccountingService {
     required double countedCash,
     String closedBy = '',
     String notes = '',
+    String depositToLocationId = '',
   }) async {
+    if (!isAvailable) return;
     final row = await _db.customSelect(
       """
-      SELECT id, drawer_no, opened_at, expected_cash, store_id, branch_id
+      SELECT id, drawer_no, cash_location_id, opened_at, expected_cash, store_id, branch_id
       FROM cash_drawer_sessions
       WHERE id = ? AND status = 'open'
       LIMIT 1
@@ -1442,6 +1777,7 @@ class AccountingService {
       openedAt: openedAt,
       fallbackExpected: storedExpected,
       branchId: branchId,
+      cashLocationId: data['cash_location_id']?.toString() ?? '',
     ));
     final counted = _roundMoney(countedCash);
     final difference = _roundMoney(counted - expected);
@@ -1475,6 +1811,20 @@ class AccountingService {
         closedBy: closedBy,
         storeId: storeId,
         branchId: branchId,
+        cashLocationId: data['cash_location_id']?.toString() ?? '',
+      );
+    }
+
+    final closedLocationId = data['cash_location_id']?.toString() ?? '';
+    if (depositToLocationId.trim().isNotEmpty && closedLocationId.trim().isNotEmpty && counted > 0 && depositToLocationId.trim() != closedLocationId.trim()) {
+      await createCashTransfer(
+        fromLocationId: closedLocationId,
+        toLocationId: depositToLocationId,
+        amount: counted,
+        notes: notes.trim().isEmpty ? 'تسليم نقدية عند إغلاق الوردية' : notes.trim(),
+        createdBy: closedBy,
+        storeId: storeId,
+        branchId: branchId,
       );
     }
 
@@ -1494,9 +1844,9 @@ class AccountingService {
     required String openedAt,
     required double fallbackExpected,
     required String branchId,
+    String cashLocationId = '',
   }) async {
-    final accounts = await readDefaultAccountMap();
-    final cashAccountId = _requiredAccount(accounts, 'default_cash_account_id');
+    final cashAccountId = await _cashLocationAccountId(cashLocationId);
     final branchFilter = branchId.trim().isEmpty ? '' : 'AND je.branch_id = ?';
     final variables = <Variable<Object>>[
       Variable<String>(cashAccountId),
@@ -1528,9 +1878,10 @@ class AccountingService {
     required String closedBy,
     required String storeId,
     required String branchId,
+    String cashLocationId = '',
   }) async {
     final accounts = await readDefaultAccountMap();
-    final cashAccountId = _requiredAccount(accounts, 'default_cash_account_id');
+    final cashAccountId = await _cashLocationAccountId(cashLocationId);
     final adjustmentAccountId = accounts['default_cash_over_short_account_id']?.trim().isNotEmpty == true
         ? accounts['default_cash_over_short_account_id']!.trim()
         : _requiredAccount(accounts, 'default_expense_account_id');
@@ -1558,6 +1909,7 @@ class AccountingService {
               JournalLineDraft(accountId: cashAccountId, debit: 0, credit: amount, memo: 'مقابل عجز درج النقد'),
             ],
     ));
+    await _moveCashLocationBalance(cashLocationId, difference, DateTime.now());
   }
 
   static Future<void> createAccountingPeriod({
@@ -1568,6 +1920,7 @@ class AccountingService {
     String storeId = '',
     String branchId = '',
   }) async {
+    if (!isAvailable) return;
     final now = DateTime.now().toUtc().toIso8601String();
     await _db.customInsert(
       '''
@@ -1590,6 +1943,7 @@ class AccountingService {
   }
 
   static Future<void> closeAccountingPeriod({required String periodId, String closedBy = ''}) async {
+    if (!isAvailable) return;
     final row = await _db.customSelect(
       'SELECT start_date, end_date, status, store_id, branch_id FROM accounting_periods WHERE id = ? LIMIT 1',
       variables: <Variable<Object>>[Variable<String>(periodId)],
@@ -1619,6 +1973,164 @@ class AccountingService {
   }
 
 
+  static Future<void> createCashLocation({
+    required String name,
+    required String type,
+    String code = '',
+    String accountId = '',
+    String parentId = '',
+    String paymentAccountId = '',
+    bool isDefault = false,
+    bool allowNegative = false,
+    String notes = '',
+    String storeId = '',
+    String branchId = '',
+    String createdBy = '',
+  }) async {
+    if (!isAvailable) return;
+    final normalizedName = name.trim();
+    if (normalizedName.isEmpty) throw ArgumentError('اسم موقع النقدية مطلوب.');
+    final normalizedType = _normalizeCashLocationType(type);
+    final now = DateTime.now().toUtc().toIso8601String();
+    final locationId = _newId('cashloc');
+    final normalizedCode = code.trim().isEmpty
+        ? 'CASH-${DateTime.now().millisecondsSinceEpoch}'
+        : code.trim().toUpperCase();
+    final resolvedAccountId = accountId.trim().isEmpty
+        ? await _createCashLocationAccount(
+            locationId: locationId,
+            name: normalizedName,
+            type: normalizedType,
+            code: normalizedCode,
+            storeId: storeId,
+            branchId: branchId,
+          )
+        : accountId.trim();
+    await _accountSnapshot(_db, resolvedAccountId);
+    await _db.transaction(() async {
+      if (isDefault) {
+        await _db.customUpdate(
+          "UPDATE cash_locations SET is_default = 0, updated_at = ? WHERE type = ? AND deleted_at = ''",
+          variables: <Variable<Object>>[Variable<String>(now), Variable<String>(normalizedType)],
+        );
+      }
+      await _db.customInsert(
+        '''
+        INSERT INTO cash_locations
+          (id, code, name, type, account_id, parent_id, payment_account_id, is_default, is_active,
+           allow_negative, current_balance, notes, created_at, updated_at, store_id, branch_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0, ?, ?, ?, ?, ?)
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(locationId),
+          Variable<String>(normalizedCode),
+          Variable<String>(normalizedName),
+          Variable<String>(normalizedType),
+          Variable<String>(resolvedAccountId),
+          Variable<String>(parentId.trim()),
+          Variable<String>(paymentAccountId.trim()),
+          Variable<int>(isDefault ? 1 : 0),
+          Variable<int>(allowNegative ? 1 : 0),
+          Variable<String>(notes.trim()),
+          Variable<String>(now),
+          Variable<String>(now),
+          Variable<String>(storeId),
+          Variable<String>(branchId),
+        ],
+      );
+    });
+    await _writeAuditLog(
+      action: 'create_cash_location',
+      entityType: 'cash_location',
+      entityId: locationId,
+      details: normalizedName,
+      createdBy: createdBy,
+      storeId: storeId,
+      branchId: branchId,
+    );
+  }
+
+  static Future<void> createCashTransfer({
+    required String fromLocationId,
+    required String toLocationId,
+    required double amount,
+    DateTime? transferDate,
+    String notes = '',
+    String createdBy = '',
+    String storeId = '',
+    String branchId = '',
+  }) async {
+    if (!isAvailable) return;
+    final cleanAmount = _roundMoney(amount);
+    if (cleanAmount <= 0) throw ArgumentError('مبلغ التحويل يجب أن يكون أكبر من صفر.');
+    final fromLocation = await _cashLocationSnapshot(fromLocationId);
+    final toLocation = await _cashLocationSnapshot(toLocationId);
+    if (fromLocation.id == toLocation.id) throw ArgumentError('لا يمكن التحويل إلى نفس موقع النقدية.');
+    final id = _newId('cashtx');
+    final date = transferDate ?? DateTime.now();
+    final now = DateTime.now().toUtc().toIso8601String();
+    final transferNo = await _nextCashTransferNo(date);
+    final entryId = await createPostedEntry(JournalEntryDraft(
+      entryDate: date,
+      referenceType: 'cash_transfer',
+      referenceId: id,
+      referenceNo: transferNo,
+      description: 'تحويل نقدية من ${fromLocation.name} إلى ${toLocation.name}',
+      source: 'system',
+      createdBy: createdBy,
+      storeId: storeId,
+      branchId: branchId,
+      lines: <JournalLineDraft>[
+        JournalLineDraft(accountId: toLocation.accountId, debit: cleanAmount, credit: 0, memo: 'استلام تحويل نقدية'),
+        JournalLineDraft(accountId: fromLocation.accountId, debit: 0, credit: cleanAmount, memo: 'إرسال تحويل نقدية'),
+      ],
+    ));
+    await _db.transaction(() async {
+      await _db.customInsert(
+        '''
+        INSERT INTO cash_transfers
+          (id, transfer_no, transfer_date, from_location_id, to_location_id, amount, status, journal_entry_id,
+           reference_type, reference_id, notes, created_by, approved_by, created_at, updated_at, store_id, branch_id)
+        VALUES (?, ?, ?, ?, ?, ?, 'posted', ?, 'cash_transfer', ?, ?, ?, ?, ?, ?, ?, ?)
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(id),
+          Variable<String>(transferNo),
+          Variable<String>(date.toUtc().toIso8601String()),
+          Variable<String>(fromLocation.id),
+          Variable<String>(toLocation.id),
+          Variable<double>(cleanAmount),
+          Variable<String>(entryId),
+          Variable<String>(id),
+          Variable<String>(notes.trim()),
+          Variable<String>(createdBy),
+          Variable<String>(createdBy),
+          Variable<String>(now),
+          Variable<String>(now),
+          Variable<String>(storeId),
+          Variable<String>(branchId),
+        ],
+      );
+      await _db.customUpdate(
+        'UPDATE cash_locations SET current_balance = current_balance - ?, updated_at = ? WHERE id = ?',
+        variables: <Variable<Object>>[Variable<double>(cleanAmount), Variable<String>(now), Variable<String>(fromLocation.id)],
+      );
+      await _db.customUpdate(
+        'UPDATE cash_locations SET current_balance = current_balance + ?, updated_at = ? WHERE id = ?',
+        variables: <Variable<Object>>[Variable<double>(cleanAmount), Variable<String>(now), Variable<String>(toLocation.id)],
+      );
+    });
+    await _writeAuditLog(
+      action: 'create_cash_transfer',
+      entityType: 'cash_transfer',
+      entityId: id,
+      details: '$transferNo: ${fromLocation.name} -> ${toLocation.name}: $cleanAmount',
+      createdBy: createdBy,
+      storeId: storeId,
+      branchId: branchId,
+    );
+  }
+
   static Future<void> createPaymentAccount({
     required String name,
     required String type,
@@ -1628,6 +2140,7 @@ class AccountingService {
     String storeId = '',
     String branchId = '',
   }) async {
+    if (!isAvailable) return;
     await _accountSnapshot(_db, accountId);
     final now = DateTime.now().toUtc().toIso8601String();
     await _db.transaction(() async {
@@ -1673,6 +2186,7 @@ class AccountingService {
     String storeId = '',
     String branchId = '',
   }) async {
+    if (!isAvailable) return;
     if (_cleanAmount(amount) <= 0) throw ArgumentError('قيمة الشيك مطلوبة.');
     final now = DateTime.now().toUtc().toIso8601String();
     await _db.customInsert(
@@ -1703,6 +2217,7 @@ class AccountingService {
   }
 
   static Future<void> settleCheque({required String chequeId, String settledBy = ''}) async {
+    if (!isAvailable) return;
     final row = await _db.customSelect(
       "SELECT * FROM cheques WHERE id = ? AND status = 'pending' LIMIT 1",
       variables: <Variable<Object>>[Variable<String>(chequeId)],
@@ -1718,6 +2233,7 @@ class AccountingService {
   }
 
   static Future<void> bounceCheque({required String chequeId, String reason = '', String actor = ''}) async {
+    if (!isAvailable) return;
     final row = await _db.customSelect(
       "SELECT cheque_no, store_id, branch_id FROM cheques WHERE id = ? AND status = 'pending' LIMIT 1",
       variables: <Variable<Object>>[Variable<String>(chequeId)],
@@ -1736,6 +2252,7 @@ class AccountingService {
     required String code,
     required String name,
   }) async {
+    if (!isAvailable) return;
     if (table != 'cost_centers' && table != 'accounting_branches') {
       throw ArgumentError('جدول بيانات محاسبية أساسية غير مدعوم: $table');
     }
@@ -1866,6 +2383,189 @@ class AccountingService {
     return accountId;
   }
 
+  static bool _isCashPaymentMethod(String paymentMethod) {
+    final method = paymentMethod.trim().toLowerCase();
+    return method.isEmpty || method == 'cash';
+  }
+
+  static Future<_CashLocationSnapshot?> _openCashDrawerLocationForBranch(String branchId) async {
+    final branchFilter = branchId.trim().isEmpty ? '' : 'AND cds.branch_id = ?';
+    final row = await _db.customSelect(
+      '''
+      SELECT cl.id, cl.name, cl.type, cl.account_id, cl.allow_negative
+      FROM cash_drawer_sessions cds
+      INNER JOIN cash_locations cl ON cl.id = cds.cash_location_id
+      WHERE cds.status = 'open'
+        AND cl.deleted_at = ''
+        AND cl.is_active = 1
+        $branchFilter
+      ORDER BY cds.opened_at DESC
+      LIMIT 1
+      ''',
+      variables: <Variable<Object>>[
+        if (branchId.trim().isNotEmpty) Variable<String>(branchId.trim()),
+      ],
+    ).getSingleOrNull();
+    if (row == null) return null;
+    final data = row.data;
+    return _CashLocationSnapshot(
+      id: data['id']?.toString() ?? '',
+      name: data['name']?.toString() ?? '',
+      type: data['type']?.toString() ?? '',
+      accountId: data['account_id']?.toString() ?? '',
+      allowNegative: _num(data['allow_negative']) != 0,
+    );
+  }
+
+  static Future<void> _moveCashLocationBalance(String cashLocationId, double delta, DateTime movementDate) async {
+    final id = cashLocationId.trim();
+    if (id.isEmpty || delta.abs() < 0.01) return;
+    await _db.customUpdate(
+      'UPDATE cash_locations SET current_balance = current_balance + ?, updated_at = ? WHERE id = ?',
+      variables: <Variable<Object>>[
+        Variable<double>(_roundMoney(delta)),
+        Variable<String>(movementDate.toUtc().toIso8601String()),
+        Variable<String>(id),
+      ],
+    );
+  }
+
+  static Future<void> _setCashLocationBalance(String cashLocationId, double balance, String updatedAt) async {
+    final id = cashLocationId.trim();
+    if (id.isEmpty) return;
+    await _db.customUpdate(
+      'UPDATE cash_locations SET current_balance = ?, updated_at = ? WHERE id = ?',
+      variables: <Variable<Object>>[
+        Variable<double>(_roundMoney(balance)),
+        Variable<String>(updatedAt),
+        Variable<String>(id),
+      ],
+    );
+  }
+
+  static Future<String> _cashLocationAccountId(String cashLocationId) async {
+    final id = cashLocationId.trim();
+    if (id.isEmpty) {
+      final accounts = await readDefaultAccountMap();
+      return _requiredAccount(accounts, 'default_cash_account_id');
+    }
+    final location = await _cashLocationSnapshot(id);
+    return location.accountId;
+  }
+
+  static Future<_CashLocationSnapshot> _cashLocationSnapshot(String cashLocationId) async {
+    final row = await _db.customSelect(
+      '''
+      SELECT id, name, type, account_id, allow_negative
+      FROM cash_locations
+      WHERE id = ? AND deleted_at = '' AND is_active = 1
+      LIMIT 1
+      ''',
+      variables: <Variable<Object>>[Variable<String>(cashLocationId.trim())],
+    ).getSingleOrNull();
+    if (row == null) throw ArgumentError('موقع النقدية غير موجود: $cashLocationId');
+    final data = row.data;
+    return _CashLocationSnapshot(
+      id: data['id']?.toString() ?? '',
+      name: data['name']?.toString() ?? '',
+      type: data['type']?.toString() ?? '',
+      accountId: data['account_id']?.toString() ?? '',
+      allowNegative: _num(data['allow_negative']) != 0,
+    );
+  }
+
+  static Future<String> _defaultCashLocationId({required String type, String branchId = ''}) async {
+    final branchFilter = branchId.trim().isEmpty ? '' : 'AND branch_id = ?';
+    final rows = await _db.customSelect(
+      '''
+      SELECT id
+      FROM cash_locations
+      WHERE deleted_at = '' AND is_active = 1 AND type = ? $branchFilter
+      ORDER BY is_default DESC, code ASC
+      LIMIT 1
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(_normalizeCashLocationType(type)),
+        if (branchId.trim().isNotEmpty) Variable<String>(branchId.trim()),
+      ],
+    ).getSingleOrNull();
+    if (rows != null) return rows.data['id']?.toString() ?? '';
+    final fallback = await _db.customSelect(
+      '''
+      SELECT id
+      FROM cash_locations
+      WHERE deleted_at = '' AND is_active = 1 AND type = ?
+      ORDER BY is_default DESC, code ASC
+      LIMIT 1
+      ''',
+      variables: <Variable<Object>>[Variable<String>(_normalizeCashLocationType(type))],
+    ).getSingleOrNull();
+    return fallback?.data['id']?.toString() ?? '';
+  }
+
+  static Future<String> _createCashLocationAccount({
+    required String locationId,
+    required String name,
+    required String type,
+    required String code,
+    String storeId = '',
+    String branchId = '',
+  }) async {
+    final now = DateTime.now().toUtc().toIso8601String();
+    final isBank = type == 'bank';
+    final parentAccountId = await _accountForCashLocationType(type);
+    final accountId = 'acc_$locationId';
+    final accountCodePrefix = isBank ? '12' : '11';
+    final codeDigits = DateTime.now().toUtc().millisecondsSinceEpoch.toString();
+    final accountCode = '$accountCodePrefix${codeDigits.substring(codeDigits.length - 6)}';
+    await _db.customInsert(
+      '''
+      INSERT OR IGNORE INTO accounts
+        (id, code, name, type, subtype, parent_id, normal_balance, currency, is_system, is_active,
+         description, created_at, updated_at, store_id, branch_id)
+      VALUES (?, ?, ?, 'asset', ?, ?, 'debit', 'USD', 0, 1, ?, ?, ?, ?, ?)
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(accountId),
+        Variable<String>(accountCode),
+        Variable<String>(name),
+        Variable<String>(isBank ? 'bank_location' : 'cash_location'),
+        Variable<String>(parentAccountId),
+        Variable<String>('حساب تلقائي لموقع نقدية: $code'),
+        Variable<String>(now),
+        Variable<String>(now),
+        Variable<String>(storeId),
+        Variable<String>(branchId),
+      ],
+    );
+    return accountId;
+  }
+
+  static Future<String> _accountForCashLocationType(String type) async {
+    final accounts = await readDefaultAccountMap();
+    if (type == 'bank') return _requiredAccount(accounts, 'default_bank_account_id');
+    return _requiredAccount(accounts, 'default_cash_account_id');
+  }
+
+  static String _normalizeCashLocationType(String type) {
+    final normalized = type.trim().toLowerCase();
+    const allowed = <String>{'main_vault', 'branch_vault', 'cash_drawer', 'bank', 'wallet', 'other'};
+    if (allowed.contains(normalized)) return normalized;
+    if (normalized == 'cash' || normalized == 'drawer') return 'cash_drawer';
+    if (normalized == 'vault') return 'main_vault';
+    return 'other';
+  }
+
+  static Future<String> _nextCashTransferNo(DateTime date) async {
+    final prefix = 'CT-${date.toUtc().year}-';
+    final row = await _db.customSelect(
+      'SELECT COUNT(*) AS count FROM cash_transfers WHERE transfer_no LIKE ?',
+      variables: <Variable<Object>>[Variable<String>('$prefix%')],
+    ).getSingle();
+    final count = (row.data['count'] as int? ?? 0) + 1;
+    return '$prefix${count.toString().padLeft(6, '0')}';
+  }
+
   static Future<String> _paymentAccountId(Map<String, String> accounts, String paymentMethod) async {
     final method = paymentMethod.trim().toLowerCase();
     final normalizedType = switch (method) {
@@ -1980,6 +2680,22 @@ class AccountingService {
 }
 
 
+
+class _CashLocationSnapshot {
+  const _CashLocationSnapshot({
+    required this.id,
+    required this.name,
+    required this.type,
+    required this.accountId,
+    required this.allowNegative,
+  });
+
+  final String id;
+  final String name;
+  final String type;
+  final String accountId;
+  final bool allowNegative;
+}
 
 class AdvancedAccountingItem {
   const AdvancedAccountingItem({
