@@ -160,7 +160,35 @@ class _SalesPageState extends State<SalesPage> {
     );
   }
 
-  double get _invoiceTotal => _currencyFromBase(_total, _invoiceCurrency);
+  double get _rawInvoiceTotal => _currencyFromBase(_total, _invoiceCurrency);
+
+  /// Final invoice amount after cash rounding.
+  /// Cash rounding is applied only to cash sales and only on the actual
+  /// payment currency, then converted back to the invoice currency so the
+  /// sale screen, validation, and persisted sale use the same payable amount.
+  double get _invoiceTotal {
+    final rawTotal = _rawInvoiceTotal;
+    if (!_isCashPayment) return rawTotal;
+    final amountInPaymentCurrency = _convertCurrencyAmount(
+      rawTotal,
+      _invoiceCurrency,
+      _paymentCurrency,
+    );
+    final roundedPaymentAmount = normalizeCashAmount(
+      amountInPaymentCurrency,
+      _paymentCurrency,
+      widget.store.storeProfile,
+    );
+    return _convertCurrencyAmount(
+      roundedPaymentAmount,
+      _paymentCurrency,
+      _invoiceCurrency,
+    );
+  }
+
+  double get _cashRoundingDifferenceInInvoiceCurrency =>
+      (_invoiceTotal - _rawInvoiceTotal);
+
   double get _cashReceivedInPaymentCurrency =>
       (double.tryParse(_paidAmountController.text.trim()) ?? 0)
           .clamp(0, double.infinity)
@@ -3135,6 +3163,8 @@ class _SalesPageState extends State<SalesPage> {
       ..writeln('payment_currency: $_paymentCurrency')
       ..writeln('subtotal: $_subtotal')
       ..writeln('discount: $_discount')
+      ..writeln('raw_total: $_rawInvoiceTotal')
+      ..writeln('cash_rounding_difference: $_cashRoundingDifferenceInInvoiceCurrency')
       ..writeln('total: $_invoiceTotal')
       ..writeln('cash_received: ${_showsCashReceived ? _cashReceivedAmount : (_isCashPayment ? _invoiceTotal : 0.0)}')
       ..writeln('paid_amount: $_derivedPaidAmount')
@@ -3605,7 +3635,10 @@ class _SalesPageState extends State<SalesPage> {
             ? _cashReceivedInPaymentCurrency
             : _convertCurrencyAmount(
                 paidAmount, _invoiceCurrency, _paymentCurrency),
-        cashReceivedAmountInPaymentCurrency: _cashReceivedInPaymentCurrency,
+        cashReceivedAmountInPaymentCurrency: _isCashPayment
+            ? _convertCurrencyAmount(
+                cashReceivedAmount, _invoiceCurrency, _paymentCurrency)
+            : _cashReceivedInPaymentCurrency,
         items: _cart
             .map(
               (item) => SaleItem(

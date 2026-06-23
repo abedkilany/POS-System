@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:math';
 import 'package:crypto/crypto.dart';
@@ -214,6 +215,27 @@ class AppStore extends ChangeNotifier {
   bool _rememberLogin = false;
   AppIdentity? _appIdentity;
   int _syncSequence = 0;
+  bool _derivedListCachesDirty = true;
+  UnmodifiableListView<Product>? _cachedProducts;
+  UnmodifiableListView<Product>? _cachedStockTrackedProducts;
+  UnmodifiableListView<Customer>? _cachedCustomers;
+  UnmodifiableListView<Sale>? _cachedSales;
+  UnmodifiableListView<SaleQuotation>? _cachedSaleQuotations;
+  UnmodifiableListView<DeliveryNote>? _cachedDeliveryNotes;
+  UnmodifiableListView<BillOfMaterials>? _cachedBillsOfMaterials;
+  UnmodifiableListView<ManufacturingOrder>? _cachedManufacturingOrders;
+  UnmodifiableListView<Supplier>? _cachedSuppliers;
+  UnmodifiableListView<SupplierProductPrice>? _cachedSupplierProductPrices;
+  UnmodifiableListView<CatalogItem>? _cachedCategories;
+  UnmodifiableListView<CatalogItem>? _cachedBrands;
+  UnmodifiableListView<CatalogItem>? _cachedUnits;
+  UnmodifiableListView<Expense>? _cachedExpenses;
+  UnmodifiableListView<Purchase>? _cachedPurchases;
+  UnmodifiableListView<StockMovement>? _cachedStockMovements;
+  UnmodifiableListView<InventoryCountSession>? _cachedInventoryCountSessions;
+  UnmodifiableListView<Warehouse>? _cachedWarehouses;
+  UnmodifiableListView<AccountTransaction>? _cachedAccountTransactions;
+  UnmodifiableListView<DataConflict>? _cachedDataConflicts;
 
   Customer get walkInCustomer => Customer(
         id: walkInCustomerId,
@@ -225,56 +247,76 @@ class AppStore extends ChangeNotifier {
   bool _isReady = false;
 
   bool get isReady => _isReady;
-  List<Product> get products => List.unmodifiable(_sortedProducts(_products
-      .where((item) => !item.isDeleted)
-      .toList(growable: false)));
+  List<Product> get products {
+    _ensureDerivedListCaches();
+    return _cachedProducts!;
+  }
   List<Product> get allProductsForDiagnostics => List.unmodifiable(_products);
-  List<Customer> get customers =>
-      List.unmodifiable(_customers.where((item) => !item.isDeleted));
-  List<Sale> get sales => List.unmodifiable(
-        _sales.where((item) => !item.isDeleted).toList().reversed,
-      );
-  List<SaleQuotation> get saleQuotations => List.unmodifiable(
-        _saleQuotations.where((item) => !item.isDeleted).toList().reversed,
-      );
-  List<DeliveryNote> get deliveryNotes => List.unmodifiable(
-        _deliveryNotes.where((item) => !item.isDeleted).toList().reversed,
-      );
-  List<BillOfMaterials> get billsOfMaterials => List.unmodifiable(
-        _billsOfMaterials
-            .where((item) => !item.isDeleted && item.isActive)
-            .toList()
-            .reversed,
-      );
-  List<ManufacturingOrder> get manufacturingOrders => List.unmodifiable(
-        _manufacturingOrders.where((item) => !item.isDeleted).toList().reversed,
-      );
-  List<Supplier> get suppliers =>
-      List.unmodifiable(_suppliers.where((item) => !item.isDeleted));
-  List<SupplierProductPrice> get supplierProductPrices => List.unmodifiable(
-        _supplierProductPrices.where((item) => !item.isDeleted),
-      );
+  List<Customer> get customers {
+    _ensureDerivedListCaches();
+    return _cachedCustomers!;
+  }
+  List<Sale> get sales {
+    _ensureDerivedListCaches();
+    return _cachedSales!;
+  }
+  List<SaleQuotation> get saleQuotations {
+    _ensureDerivedListCaches();
+    return _cachedSaleQuotations!;
+  }
+  List<DeliveryNote> get deliveryNotes {
+    _ensureDerivedListCaches();
+    return _cachedDeliveryNotes!;
+  }
+  List<BillOfMaterials> get billsOfMaterials {
+    _ensureDerivedListCaches();
+    return _cachedBillsOfMaterials!;
+  }
+  List<ManufacturingOrder> get manufacturingOrders {
+    _ensureDerivedListCaches();
+    return _cachedManufacturingOrders!;
+  }
+  List<Supplier> get suppliers {
+    _ensureDerivedListCaches();
+    return _cachedSuppliers!;
+  }
+  List<SupplierProductPrice> get supplierProductPrices {
+    _ensureDerivedListCaches();
+    return _cachedSupplierProductPrices!;
+  }
   List<SupplierProductPrice> get allSupplierProductPricesForDiagnostics =>
       List.unmodifiable(_supplierProductPrices);
-  List<CatalogItem> get categories =>
-      List.unmodifiable(_categories.where((item) => !item.isDeleted));
-  List<CatalogItem> get brands =>
-      List.unmodifiable(_brands.where((item) => !item.isDeleted));
-  List<CatalogItem> get units =>
-      List.unmodifiable(_units.where((item) => !item.isDeleted));
-  List<DataConflict> get dataConflicts =>
-      List.unmodifiable(_detectDataConflicts());
+  List<CatalogItem> get categories {
+    _ensureDerivedListCaches();
+    return _cachedCategories!;
+  }
+  List<CatalogItem> get brands {
+    _ensureDerivedListCaches();
+    return _cachedBrands!;
+  }
+  List<CatalogItem> get units {
+    _ensureDerivedListCaches();
+    return _cachedUnits!;
+  }
+  List<DataConflict> get dataConflicts {
+    _ensureDerivedListCaches();
+    return _cachedDataConflicts!;
+  }
   int get dataConflictCount => dataConflicts.length;
   int get blockingDataConflictCount =>
       dataConflicts.where((item) => item.blocking).length;
-  List<Expense> get expenses => List.unmodifiable(
-        _expenses.where((item) => !item.isDeleted).toList().reversed,
-      );
-  List<Purchase> get purchases => List.unmodifiable(
-        _purchases.where((item) => !item.isDeleted).toList().reversed,
-      );
-  List<StockMovement> get stockMovements =>
-      List.unmodifiable(_stockMovements.toList().reversed);
+  List<Expense> get expenses {
+    _ensureDerivedListCaches();
+    return _cachedExpenses!;
+  }
+  List<Purchase> get purchases {
+    _ensureDerivedListCaches();
+    return _cachedPurchases!;
+  }
+  List<StockMovement> get stockMovements {
+    _ensureDerivedListCaches();
+    return _cachedStockMovements!;
+  }
   List<StockMovement> get autoCorrectionMovements => List.unmodifiable(
         _stockMovements
             .where((movement) => movement.type == 'auto_correction')
@@ -291,8 +333,10 @@ class AppStore extends ChangeNotifier {
             .reversed,
       );
   int get pendingAutoCorrectionCount => pendingAutoCorrectionMovements.length;
-  List<InventoryCountSession> get inventoryCountSessions =>
-      List.unmodifiable(_inventoryCounts.toList().reversed);
+  List<InventoryCountSession> get inventoryCountSessions {
+    _ensureDerivedListCaches();
+    return _cachedInventoryCountSessions!;
+  }
   InventoryCountSession? get activeInventoryCountSession {
     for (final session in _inventoryCounts.reversed) {
       if (session.isOpen) return session;
@@ -300,9 +344,10 @@ class AppStore extends ChangeNotifier {
     return null;
   }
 
-  List<Warehouse> get warehouses => List.unmodifiable(
-        _warehouses.where((item) => !item.isDeleted && item.isActive),
-      );
+  List<Warehouse> get warehouses {
+    _ensureDerivedListCaches();
+    return _cachedWarehouses!;
+  }
 
   Warehouse get defaultWarehouse {
     _ensureDefaultWarehouse();
@@ -341,6 +386,7 @@ class AppStore extends ChangeNotifier {
   }
 
   void _invalidateDerivedDataCaches() {
+    _derivedListCachesDirty = true;
     _warehouseStockCacheDirty = true;
     _purchaseInsightsCacheDirty = true;
   }
@@ -348,14 +394,94 @@ class AppStore extends ChangeNotifier {
   @override
   void notifyListeners() {
     _invalidateDerivedDataCaches();
-    final line =
-        'notifyListeners device=$_deviceId role=${appIdentity.deviceRole.name} '
-        'customers=${_customers.length} visibleCustomers=${customers.length} '
-        'seq=$_syncSequence pendingQueue=${pendingSyncQueue.length} '
-        'pendingChanges=${pendingSyncChanges.length} '
-        'customerNames=${customers.map((item) => item.name).join(',')}';
-    SyncDiagnosticsLog.add('[SYNC_TRACE] $line');
+    SyncDiagnosticsLog.add(
+      '[SYNC_TRACE] notifyListeners device=$_deviceId '
+      'role=${appIdentity.deviceRole.name} customers=${_customers.length} '
+      'sales=${_sales.length} accounts=${_accountTransactions.length} '
+      'seq=$_syncSequence pendingQueue=${_syncQueue.length} '
+      'pendingChanges=${_syncChanges.length}',
+    );
     super.notifyListeners();
+  }
+
+  void _ensureDerivedListCaches() {
+    if (!_derivedListCachesDirty) return;
+
+    _cachedProducts = UnmodifiableListView(
+      _sortedProducts(
+        _products.where((item) => !item.isDeleted).toList(growable: false),
+      ),
+    );
+    _cachedStockTrackedProducts = UnmodifiableListView(
+      _sortedProducts(
+        _products
+            .where((item) => !item.isDeleted && item.trackStock)
+            .toList(growable: false),
+      ),
+    );
+    _cachedCustomers = UnmodifiableListView(
+      _customers.where((item) => !item.isDeleted).toList(growable: false),
+    );
+    _cachedSales = UnmodifiableListView(
+      _sales.where((item) => !item.isDeleted).toList(growable: false).reversed.toList(growable: false),
+    );
+    _cachedSaleQuotations = UnmodifiableListView(
+      _saleQuotations.where((item) => !item.isDeleted).toList(growable: false).reversed.toList(growable: false),
+    );
+    _cachedDeliveryNotes = UnmodifiableListView(
+      _deliveryNotes.where((item) => !item.isDeleted).toList(growable: false).reversed.toList(growable: false),
+    );
+    _cachedBillsOfMaterials = UnmodifiableListView(
+      _billsOfMaterials
+          .where((item) => !item.isDeleted && item.isActive)
+          .toList(growable: false)
+          .reversed
+          .toList(growable: false),
+    );
+    _cachedManufacturingOrders = UnmodifiableListView(
+      _manufacturingOrders
+          .where((item) => !item.isDeleted)
+          .toList(growable: false)
+          .reversed
+          .toList(growable: false),
+    );
+    _cachedSuppliers = UnmodifiableListView(
+      _suppliers.where((item) => !item.isDeleted).toList(growable: false),
+    );
+    _cachedSupplierProductPrices = UnmodifiableListView(
+      _supplierProductPrices.where((item) => !item.isDeleted).toList(growable: false),
+    );
+    _cachedCategories = UnmodifiableListView(
+      _categories.where((item) => !item.isDeleted).toList(growable: false),
+    );
+    _cachedBrands = UnmodifiableListView(
+      _brands.where((item) => !item.isDeleted).toList(growable: false),
+    );
+    _cachedUnits = UnmodifiableListView(
+      _units.where((item) => !item.isDeleted).toList(growable: false),
+    );
+    _cachedExpenses = UnmodifiableListView(
+      _expenses.where((item) => !item.isDeleted).toList(growable: false).reversed.toList(growable: false),
+    );
+    _cachedPurchases = UnmodifiableListView(
+      _purchases.where((item) => !item.isDeleted).toList(growable: false).reversed.toList(growable: false),
+    );
+    _cachedStockMovements = UnmodifiableListView(
+      _stockMovements.toList(growable: false).reversed.toList(growable: false),
+    );
+    _cachedInventoryCountSessions = UnmodifiableListView(
+      _inventoryCounts.toList(growable: false).reversed.toList(growable: false),
+    );
+    _cachedWarehouses = UnmodifiableListView(
+      _warehouses.where((item) => !item.isDeleted && item.isActive).toList(growable: false),
+    );
+    _cachedAccountTransactions = UnmodifiableListView(
+      _accountTransactions.where((item) => !item.isDeleted).toList(growable: false).reversed.toList(growable: false),
+    );
+    _cachedDataConflicts = UnmodifiableListView(
+      _detectDataConflicts(),
+    );
+    _derivedListCachesDirty = false;
   }
 
   void _ensureWarehouseStockCache() {
@@ -417,9 +543,10 @@ class AppStore extends ChangeNotifier {
     );
   }
 
-  List<AccountTransaction> get accountTransactions => List.unmodifiable(
-        _accountTransactions.where((item) => !item.isDeleted).toList().reversed,
-      );
+  List<AccountTransaction> get accountTransactions {
+    _ensureDerivedListCaches();
+    return _cachedAccountTransactions!;
+  }
 
   String _accountLedgerKey(String accountType, String accountId) =>
       '${accountType.trim().toLowerCase()}::${accountId.trim()}';
@@ -1562,8 +1689,10 @@ class AppStore extends ChangeNotifier {
   int get lowStockCount => products
       .where((product) => product.trackStock && product.isLowStock)
       .length;
-  List<Product> get stockTrackedProducts => List.unmodifiable(_sortedProducts(
-      products.where((product) => product.trackStock).toList(growable: false)));
+  List<Product> get stockTrackedProducts {
+    _ensureDerivedListCaches();
+    return _cachedStockTrackedProducts!;
+  }
   double get totalUnitsInStock =>
       stockTrackedProducts.fold<double>(0, (sum, item) => sum + item.stock);
   double get inventoryRetailValue => stockTrackedProducts.fold<double>(
@@ -7962,9 +8091,33 @@ class AppStore extends ChangeNotifier {
         : exchangeRate(normalizedPaymentCurrency, normalizedInvoiceCurrency,
             storeProfile,
             effectiveAt: now);
-    final saleTotalInInvoiceCurrency = convertCurrency(
+    final rawSaleTotalInInvoiceCurrency = convertCurrency(
       saleTotal,
       baseCurrency,
+      normalizedInvoiceCurrency,
+      storeProfile,
+      effectiveAt: now,
+    );
+    final paymentMethodForRounding =
+        paymentMethod.trim().isEmpty ? 'Cash' : paymentMethod.trim();
+    final rawSaleTotalInPaymentCurrency = convertCurrency(
+      rawSaleTotalInInvoiceCurrency,
+      normalizedInvoiceCurrency,
+      normalizedPaymentCurrency,
+      storeProfile,
+      effectiveAt: now,
+    );
+    final roundedSaleTotalInPaymentCurrency =
+        paymentMethodForRounding.toLowerCase() == 'cash'
+            ? normalizeCashAmount(
+                rawSaleTotalInPaymentCurrency,
+                normalizedPaymentCurrency,
+                storeProfile,
+              )
+            : rawSaleTotalInPaymentCurrency;
+    final saleTotalInInvoiceCurrency = convertCurrency(
+      roundedSaleTotalInPaymentCurrency,
+      normalizedPaymentCurrency,
       normalizedInvoiceCurrency,
       storeProfile,
       effectiveAt: now,
@@ -7979,8 +8132,7 @@ class AppStore extends ChangeNotifier {
         customerId.trim().isEmpty ? walkInCustomerId : customerId.trim();
     final normalizedCustomerName =
         customerName.trim().isEmpty ? walkInCustomerName : customerName.trim();
-    final normalizedPaymentMethod =
-        paymentMethod.trim().isEmpty ? 'Cash' : paymentMethod.trim();
+    final normalizedPaymentMethod = paymentMethodForRounding;
     final isWalkInSale = normalizedCustomerId == walkInCustomerId ||
         normalizedCustomerName.toLowerCase() ==
             walkInCustomerName.toLowerCase();
@@ -8039,10 +8191,14 @@ class AppStore extends ChangeNotifier {
       ),
       paidAmount: normalizedPaidAmount,
       cashReceivedAmount: normalizedCashReceived,
-      paidAmountInPaymentCurrency:
-          paidAmountInPaymentCurrency ?? normalizedPaidAmount,
-      cashReceivedAmountInPaymentCurrency:
-          cashReceivedAmountInPaymentCurrency ?? normalizedCashReceived,
+      paidAmountInPaymentCurrency: paidAmountInPaymentCurrency ??
+          (normalizedPaymentMethod.toLowerCase() == 'cash'
+              ? roundedSaleTotalInPaymentCurrency
+              : normalizedPaidAmount),
+      cashReceivedAmountInPaymentCurrency: cashReceivedAmountInPaymentCurrency ??
+          (normalizedPaymentMethod.toLowerCase() == 'cash'
+              ? roundedSaleTotalInPaymentCurrency
+              : normalizedCashReceived),
       items: saleItems,
       discount: cleanedDiscount,
       originalDiscount: originalDiscount ?? cleanedDiscount,

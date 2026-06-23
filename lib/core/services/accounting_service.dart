@@ -699,70 +699,85 @@ class AccountingService {
 
   static Future<List<GeneralLedgerAccountReport>> generalLedgerReport() async {
     if (!isAvailable) return const <GeneralLedgerAccountReport>[];
-    final accountRows = await _db.customSelect(
+    final rows = await _db.customSelect(
       '''
-      SELECT id, code, name, type, normal_balance
-      FROM accounts
-      WHERE deleted_at = '' AND is_active = 1
-      ORDER BY code
+      SELECT a.id AS account_id, a.code AS account_code, a.name AS account_name,
+             a.type AS account_type, a.normal_balance,
+             jl.entry_id, jl.line_no, jl.debit, jl.credit, jl.memo,
+             je.entry_no, je.entry_date, je.reference_type, je.reference_no,
+             je.description
+      FROM accounts a
+      LEFT JOIN journal_lines jl ON jl.account_id = a.id
+      LEFT JOIN journal_entries je
+        ON je.id = jl.entry_id AND je.deleted_at = '' AND je.status = 'posted'
+      WHERE a.deleted_at = '' AND a.is_active = 1
+      ORDER BY a.code, je.entry_date, je.entry_no, jl.line_no
       ''',
     ).get();
 
     final accounts = <GeneralLedgerAccountReport>[];
-    for (final accountRow in accountRows) {
-      final accountId = accountRow.data['id']?.toString() ?? '';
-      final lineRows = await _db.customSelect(
-        '''
-        SELECT jl.entry_id, jl.line_no, jl.debit, jl.credit, jl.memo,
-               je.entry_no, je.entry_date, je.reference_type, je.reference_no,
-               je.description
-        FROM journal_lines jl
-        INNER JOIN journal_entries je ON je.id = jl.entry_id
-        WHERE jl.account_id = ?
-          AND je.deleted_at = ''
-          AND je.status = 'posted'
-        ORDER BY je.entry_date, je.entry_no, jl.line_no
-        ''',
-        variables: <Variable<Object>>[Variable<String>(accountId)],
-      ).get();
+    var hasCurrent = false;
+    String accountId = '';
+    String accountCode = '';
+    String accountName = '';
+    String accountType = '';
+    String normalBalance = 'debit';
+    var runningBalance = 0.0;
+    final lines = <GeneralLedgerLineReport>[];
 
-      var runningBalance = 0.0;
-      final normalBalance = accountRow.data['normal_balance']?.toString() ?? 'debit';
-      final lines = <GeneralLedgerLineReport>[];
-      for (final row in lineRows) {
-        final debit = _num(row.data['debit']);
-        final credit = _num(row.data['credit']);
-        runningBalance += normalBalance == 'credit' ? credit - debit : debit - credit;
-        lines.add(GeneralLedgerLineReport(
-          entryNo: row.data['entry_no']?.toString() ?? '',
-          entryDate: _parseDate(row.data['entry_date']),
-          referenceType: row.data['reference_type']?.toString() ?? '',
-          referenceNo: row.data['reference_no']?.toString() ?? '',
-          description: row.data['description']?.toString() ?? '',
-          memo: row.data['memo']?.toString() ?? '',
-          debit: debit,
-          credit: credit,
-          runningBalance: _roundMoney(runningBalance),
-        ));
-      }
-
+    void flushCurrentAccount() {
+      if (!hasCurrent) return;
       accounts.add(GeneralLedgerAccountReport(
         accountId: accountId,
-        accountCode: accountRow.data['code']?.toString() ?? '',
-        accountName: accountRow.data['name']?.toString() ?? '',
-        accountType: accountRow.data['type']?.toString() ?? '',
+        accountCode: accountCode,
+        accountName: accountName,
+        accountType: accountType,
         normalBalance: normalBalance,
         totalDebit: _roundMoney(lines.fold<double>(0, (sum, line) => sum + line.debit)),
         totalCredit: _roundMoney(lines.fold<double>(0, (sum, line) => sum + line.credit)),
         closingBalance: _roundMoney(runningBalance),
-        lines: lines,
+        lines: List<GeneralLedgerLineReport>.unmodifiable(lines),
       ));
     }
+
+    for (final row in rows) {
+      final nextAccountId = row.data['account_id']?.toString() ?? '';
+      if (nextAccountId != accountId) {
+        flushCurrentAccount();
+        hasCurrent = true;
+        accountId = nextAccountId;
+        accountCode = row.data['account_code']?.toString() ?? '';
+        accountName = row.data['account_name']?.toString() ?? '';
+        accountType = row.data['account_type']?.toString() ?? '';
+        normalBalance = row.data['normal_balance']?.toString() ?? 'debit';
+        runningBalance = 0.0;
+        lines.clear();
+      }
+
+      final entryId = row.data['entry_id']?.toString() ?? '';
+      if (entryId.isEmpty) continue;
+
+      final debit = _num(row.data['debit']);
+      final credit = _num(row.data['credit']);
+      runningBalance += normalBalance == 'credit' ? credit - debit : debit - credit;
+      lines.add(GeneralLedgerLineReport(
+        entryNo: row.data['entry_no']?.toString() ?? '',
+        entryDate: _parseDate(row.data['entry_date']),
+        referenceType: row.data['reference_type']?.toString() ?? '',
+        referenceNo: row.data['reference_no']?.toString() ?? '',
+        description: row.data['description']?.toString() ?? '',
+        memo: row.data['memo']?.toString() ?? '',
+        debit: debit,
+        credit: credit,
+        runningBalance: _roundMoney(runningBalance),
+      ));
+    }
+
+    flushCurrentAccount();
     return accounts;
   }
 
-  static Future<List<TrialBalanceRowReport>> trialBalanceReport() async {
-    if (!isAvailable) return const <TrialBalanceRowReport>[];
+  static Future<List<TrialBalanceRowReport>> _trialBalanceRows() async {
     final rows = await _db.customSelect(
       '''
       SELECT a.id, a.code, a.name, a.type, a.normal_balance,
@@ -777,20 +792,25 @@ class AccountingService {
       ''',
     ).get();
     return rows.map((row) {
-      final debit = _num(row.data['debit']);
-      final credit = _num(row.data['credit']);
-      final normal = row.data['normal_balance']?.toString() ?? 'debit';
-      final balance = normal == 'credit' ? credit - debit : debit - credit;
-      return TrialBalanceRowReport(
-        accountId: row.data['id']?.toString() ?? '',
-        accountCode: row.data['code']?.toString() ?? '',
-        accountName: row.data['name']?.toString() ?? '',
-        accountType: row.data['type']?.toString() ?? '',
-        debit: _roundMoney(debit),
-        credit: _roundMoney(credit),
-        balance: _roundMoney(balance),
-      );
-    }).toList();
+        final debit = _num(row.data['debit']);
+        final credit = _num(row.data['credit']);
+        final normal = row.data['normal_balance']?.toString() ?? 'debit';
+        final balance = normal == 'credit' ? credit - debit : debit - credit;
+        return TrialBalanceRowReport(
+          accountId: row.data['id']?.toString() ?? '',
+          accountCode: row.data['code']?.toString() ?? '',
+          accountName: row.data['name']?.toString() ?? '',
+          accountType: row.data['type']?.toString() ?? '',
+          debit: _roundMoney(debit),
+          credit: _roundMoney(credit),
+          balance: _roundMoney(balance),
+        );
+      }).toList(growable: false);
+  }
+
+  static Future<List<TrialBalanceRowReport>> trialBalanceReport() async {
+    if (!isAvailable) return const <TrialBalanceRowReport>[];
+    return _trialBalanceRows();
   }
 
   static Future<IncomeStatementReport> incomeStatementReport() async {
@@ -803,7 +823,7 @@ class AccountingService {
         netProfit: 0,
       );
     }
-    final rows = await trialBalanceReport();
+    final rows = await _trialBalanceRows();
     double sumByType(String type) => rows
         .where((row) => row.accountType == type)
         .fold<double>(0, (sum, row) => sum + row.balance.abs());
@@ -830,21 +850,24 @@ class AccountingService {
         difference: 0,
       );
     }
-    final rows = await trialBalanceReport();
+    final rows = await _trialBalanceRows();
     double sumByType(String type) => rows
         .where((row) => row.accountType == type)
         .fold<double>(0, (sum, row) => sum + row.balance.abs());
     final assets = sumByType('asset');
     final liabilities = sumByType('liability');
     final equity = sumByType('equity');
-    final income = await incomeStatementReport();
+    final revenue = sumByType('revenue');
+    final cogs = sumByType('cost_of_sales');
+    final expenses = sumByType('expense');
+    final netProfit = revenue - cogs - expenses;
     return BalanceSheetReport(
       assets: _roundMoney(assets),
       liabilities: _roundMoney(liabilities),
       equity: _roundMoney(equity),
-      retainedEarnings: _roundMoney(income.netProfit),
-      liabilitiesAndEquity: _roundMoney(liabilities + equity + income.netProfit),
-      difference: _roundMoney(assets - liabilities - equity - income.netProfit),
+      retainedEarnings: _roundMoney(netProfit),
+      liabilitiesAndEquity: _roundMoney(liabilities + equity + netProfit),
+      difference: _roundMoney(assets - liabilities - equity - netProfit),
     );
   }
 
@@ -958,12 +981,15 @@ class AccountingService {
 
     final entryRows = await _db.customSelect(
       """
-      SELECT DISTINCT je.id, je.entry_no, je.entry_date, je.reference_type, je.reference_no, je.description
+      SELECT je.id AS entry_id, je.entry_no, je.entry_date, je.reference_type, je.reference_no, je.description,
+             jl.account_id, jl.account_code, jl.account_name, jl.debit, jl.credit,
+             a.type AS account_type, jl.line_no
       FROM journal_entries je
       INNER JOIN journal_lines jl ON jl.entry_id = je.id
+      LEFT JOIN accounts a ON a.id = jl.account_id
       WHERE jl.account_id IN ($placeholders)
         AND ${dateConditions.join(' AND ')}
-      ORDER BY je.entry_date, je.entry_no
+      ORDER BY je.entry_date, je.entry_no, jl.line_no
       """,
       variables: <Variable<Object>>[
         for (final id in cashAccountIds) Variable<String>(id),
@@ -978,34 +1004,19 @@ class AccountingService {
     var investingOutflows = 0.0;
     var financingInflows = 0.0;
     var financingOutflows = 0.0;
+    var hasCurrentEntry = false;
+    String currentEntryId = '';
+    String currentEntryNo = '';
+    DateTime currentEntryDate = DateTime.fromMillisecondsSinceEpoch(0);
+    String currentReferenceType = '';
+    String currentReferenceNo = '';
+    String currentDescription = '';
+    double cashMovement = 0.0;
+    final nonCashTypes = <String>{};
 
-    for (final entryRow in entryRows) {
-      final entryId = entryRow.data['id']?.toString() ?? '';
-      final lineRows = await _db.customSelect(
-        """
-        SELECT jl.account_id, jl.account_code, jl.account_name, jl.debit, jl.credit,
-               a.type AS account_type
-        FROM journal_lines jl
-        LEFT JOIN accounts a ON a.id = jl.account_id
-        WHERE jl.entry_id = ?
-        ORDER BY jl.line_no
-        """,
-        variables: <Variable<Object>>[Variable<String>(entryId)],
-      ).get();
-      final cashMovement = lineRows
-          .where((row) => cashAccountIds.contains(row.data['account_id']?.toString() ?? ''))
-          .fold<double>(0, (sum, row) => sum + _num(row.data['debit']) - _num(row.data['credit']));
-      if (cashMovement.abs() < 0.005) continue;
-
-      final nonCashTypes = lineRows
-          .where((row) => !cashAccountIds.contains(row.data['account_id']?.toString() ?? ''))
-          .map((row) => row.data['account_type']?.toString() ?? '')
-          .where((type) => type.isNotEmpty)
-          .toSet();
-      final category = _cashFlowCategory(
-        entryRow.data['reference_type']?.toString() ?? '',
-        nonCashTypes,
-      );
+    void flushCurrentEntry() {
+      if (!hasCurrentEntry || cashMovement.abs() < 0.005) return;
+      final category = _cashFlowCategory(currentReferenceType, nonCashTypes);
       final amount = _roundMoney(cashMovement.abs());
       if (category == CashFlowCategory.investing) {
         if (cashMovement >= 0) {
@@ -1027,17 +1038,44 @@ class AccountingService {
         }
       }
       rows.add(CashFlowStatementLineReport(
-        entryNo: entryRow.data['entry_no']?.toString() ?? '',
-        entryDate: _parseDate(entryRow.data['entry_date']),
-        referenceType: entryRow.data['reference_type']?.toString() ?? '',
-        referenceNo: entryRow.data['reference_no']?.toString() ?? '',
-        description: entryRow.data['description']?.toString() ?? '',
+        entryNo: currentEntryNo,
+        entryDate: currentEntryDate,
+        referenceType: currentReferenceType,
+        referenceNo: currentReferenceNo,
+        description: currentDescription,
         category: category,
         inflow: cashMovement >= 0 ? amount : 0,
         outflow: cashMovement < 0 ? amount : 0,
         netCashFlow: _roundMoney(cashMovement),
       ));
     }
+
+    for (final entryRow in entryRows) {
+      final nextEntryId = entryRow.data['entry_id']?.toString() ?? '';
+      if (nextEntryId != currentEntryId) {
+        flushCurrentEntry();
+        hasCurrentEntry = true;
+        currentEntryId = nextEntryId;
+        currentEntryNo = entryRow.data['entry_no']?.toString() ?? '';
+        currentEntryDate = _parseDate(entryRow.data['entry_date']);
+        currentReferenceType = entryRow.data['reference_type']?.toString() ?? '';
+        currentReferenceNo = entryRow.data['reference_no']?.toString() ?? '';
+        currentDescription = entryRow.data['description']?.toString() ?? '';
+        cashMovement = 0;
+        nonCashTypes.clear();
+      }
+      final accountId = entryRow.data['account_id']?.toString() ?? '';
+      final debit = _num(entryRow.data['debit']);
+      final credit = _num(entryRow.data['credit']);
+      if (cashAccountIds.contains(accountId)) {
+        cashMovement += debit - credit;
+      } else {
+        final type = entryRow.data['account_type']?.toString() ?? '';
+        if (type.isNotEmpty) nonCashTypes.add(type);
+      }
+    }
+
+    flushCurrentEntry();
 
     final openingCash = from == null ? 0.0 : await cashBalanceBefore(from);
     final netChange = operatingInflows - operatingOutflows + investingInflows - investingOutflows + financingInflows - financingOutflows;

@@ -123,6 +123,65 @@ class _AccountingHeader extends StatelessWidget {
   }
 }
 
+class _CachedFuturePanel<T> extends StatefulWidget {
+  const _CachedFuturePanel({
+    required this.store,
+    required this.cacheKey,
+    required this.loadFuture,
+    required this.builder,
+  });
+
+  final AppStore store;
+  final Object cacheKey;
+  final Future<T> Function() loadFuture;
+  final Widget Function(BuildContext context, AsyncSnapshot<T> snapshot) builder;
+
+  @override
+  State<_CachedFuturePanel<T>> createState() => _CachedFuturePanelState<T>();
+}
+
+class _CachedFuturePanelState<T> extends State<_CachedFuturePanel<T>> {
+  late Future<T> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = widget.loadFuture();
+    widget.store.addListener(_refresh);
+  }
+
+  @override
+  void didUpdateWidget(covariant _CachedFuturePanel<T> oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != widget.store) {
+      oldWidget.store.removeListener(_refresh);
+      widget.store.addListener(_refresh);
+    }
+    if (oldWidget.cacheKey != widget.cacheKey) {
+      _refresh();
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.store.removeListener(_refresh);
+    super.dispose();
+  }
+
+  void _refresh() {
+    if (!mounted) return;
+    setState(() => _future = widget.loadFuture());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<T>(
+      future: _future,
+      builder: widget.builder,
+    );
+  }
+}
+
 class _CompactSummaryStrip extends StatelessWidget {
   const _CompactSummaryStrip({required this.store, required this.metrics});
 
@@ -854,8 +913,10 @@ class _GeneralLedgerTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    return FutureBuilder<List<GeneralLedgerAccountReport>>(
-      future: AccountingService.generalLedgerReport(),
+    return _CachedFuturePanel<List<GeneralLedgerAccountReport>>(
+      store: store,
+      cacheKey: 'general_ledger_report',
+      loadFuture: AccountingService.generalLedgerReport,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const Center(child: CircularProgressIndicator());
@@ -941,8 +1002,10 @@ class _TrialBalanceTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    return FutureBuilder<List<TrialBalanceRowReport>>(
-      future: AccountingService.trialBalanceReport(),
+    return _CachedFuturePanel<List<TrialBalanceRowReport>>(
+      store: store,
+      cacheKey: 'trial_balance_report',
+      loadFuture: AccountingService.trialBalanceReport,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const Center(child: CircularProgressIndicator());
@@ -1006,8 +1069,10 @@ class _IncomeStatementTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    return FutureBuilder<IncomeStatementReport>(
-      future: AccountingService.incomeStatementReport(),
+    return _CachedFuturePanel<IncomeStatementReport>(
+      store: store,
+      cacheKey: 'income_statement_report',
+      loadFuture: AccountingService.incomeStatementReport,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const Center(child: CircularProgressIndicator());
@@ -1040,8 +1105,10 @@ class _BalanceSheetTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    return FutureBuilder<BalanceSheetReport>(
-      future: AccountingService.balanceSheetReport(),
+    return _CachedFuturePanel<BalanceSheetReport>(
+      store: store,
+      cacheKey: 'balance_sheet_report',
+      loadFuture: AccountingService.balanceSheetReport,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const Center(child: CircularProgressIndicator());
@@ -1075,8 +1142,10 @@ class _CashBankReportTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    return FutureBuilder<List<CashBankMovementReport>>(
-      future: AccountingService.cashBankMovementReport(),
+    return _CachedFuturePanel<List<CashBankMovementReport>>(
+      store: store,
+      cacheKey: 'cash_bank_report',
+      loadFuture: AccountingService.cashBankMovementReport,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const Center(child: CircularProgressIndicator());
@@ -1120,8 +1189,10 @@ class _CashFlowStatementTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    return FutureBuilder<CashFlowStatementReport>(
-      future: AccountingService.cashFlowStatementReport(),
+    return _CachedFuturePanel<CashFlowStatementReport>(
+      store: store,
+      cacheKey: 'cash_flow_report',
+      loadFuture: AccountingService.cashFlowStatementReport,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const Center(child: CircularProgressIndicator());
@@ -1284,8 +1355,10 @@ class _TaxReportTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    return FutureBuilder<TaxReport>(
-      future: AccountingService.taxReport(),
+    return _CachedFuturePanel<TaxReport>(
+      store: store,
+      cacheKey: 'tax_report',
+      loadFuture: AccountingService.taxReport,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const Center(child: CircularProgressIndicator());
@@ -1326,6 +1399,7 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
   void initState() {
     super.initState();
     _future = _load();
+    widget.store.addListener(_refresh);
   }
 
   Future<_AdvancedAccountingData> _load() async {
@@ -1362,6 +1436,12 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
   }
 
   void _refresh() => setState(() => _future = _load());
+
+  @override
+  void dispose() {
+    widget.store.removeListener(_refresh);
+    super.dispose();
+  }
 
 
   Future<void> _createCashLocationDialog({String initialType = 'cash_drawer'}) async {
