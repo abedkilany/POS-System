@@ -14,6 +14,7 @@ import '../../core/services/backup_download_service.dart';
 import '../../core/services/barcode_feedback_service.dart';
 import '../../core/services/cloud_sync_service.dart';
 import '../../core/services/account_auth_service.dart';
+import '../../core/services/accounting_service.dart';
 import '../../core/services/google_drive_backup_service.dart';
 import '../../core/services/lan_sync_service.dart';
 import '../../core/services/local_database_service.dart';
@@ -297,6 +298,12 @@ class SettingsPage extends StatelessWidget {
   List<Widget> _financialCards(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final profile = store.storeProfile;
+    final activeCurrencies =
+        profile.currencies.where((item) => item.isActive).toList();
+    final base = profile.currencyByCode(profile.baseCurrency);
+    final usdLbpRate = profile.latestExchangeRate('USD', 'LBP')?.rate ??
+        profile.usdToLbpRate;
+
     return [
       _SectionCard(
         icon: Icons.payments_outlined,
@@ -310,13 +317,21 @@ class SettingsPage extends StatelessWidget {
         child: _InfoGrid(
           items: [
             _InfoGridItem(
+                Icons.account_balance_outlined,
+                tr.text('base_currency'),
+                '${base.code} · ${base.name}'),
+            _InfoGridItem(
                 Icons.currency_exchange_outlined,
                 tr.text('usd_lbp_exchange_rate'),
-                '1 USD = ${profile.usdToLbpRate.toStringAsFixed(0)} LBP'),
+                '1 USD = ${usdLbpRate.toStringAsFixed(0)} LBP'),
+            _InfoGridItem(
+                Icons.price_change_outlined,
+                tr.text('price_storage_decimals'),
+                profile.priceStorageDecimals.toString()),
             _InfoGridItem(
                 Icons.visibility_outlined,
                 tr.text('price_display_mode'),
-                tr.text('price_display_${profile.priceDisplayMode}')),
+                _priceDisplayModeLabel(tr, profile)),
             _InfoGridItem(
                 Icons.attach_money_outlined,
                 tr.text('default_product_currency'),
@@ -331,10 +346,81 @@ class SettingsPage extends StatelessWidget {
                 profile.defaultSalePaymentCurrency),
             _InfoGridItem(
                 Icons.tune_outlined,
-                tr.text('lbp_rounding'),
-                profile.lbpRounding <= 0
-                    ? tr.text('no_rounding')
-                    : '${profile.lbpRounding} LBP'),
+                tr.text('active_currencies'),
+                activeCurrencies.map((item) => item.code).join(', ')),
+          ],
+        ),
+      ),
+      _SectionCard(
+        icon: Icons.monetization_on_outlined,
+        title: tr.text('currencies'),
+        subtitle: tr.text('currencies_desc'),
+        trailing: FilledButton.icon(
+          onPressed: () => _editCurrency(context, profile),
+          icon: const Icon(Icons.add_outlined),
+          label: Text(tr.text('add_currency')),
+        ),
+        child: Column(
+          children: [
+            for (final currency in profile.currencies)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: CircleAvatar(child: Text(currency.code.substring(0, currency.code.length >= 2 ? 2 : currency.code.length))),
+                title: Text('${currency.code} · ${currency.name}'),
+                subtitle: Text(
+                    '${tr.text('symbol')}: ${currency.symbol} · ${tr.text('accounting_decimals')}: ${currency.decimalPlaces} · ${tr.text('cash_decimals')}: ${currency.cashDecimalPlaces}${currency.roundingStep > 0 ? ' · ${tr.text('cash_rounding')}: ${currency.roundingStep.toStringAsFixed(0)} (${tr.text('cash_rounding_${currency.roundingMethod}')})' : ''}'),
+                trailing: Wrap(
+                  spacing: 8,
+                  children: [
+                    if (currency.isBase)
+                      Chip(label: Text(tr.text('base_currency'))),
+                    IconButton(
+                      tooltip: tr.text('edit'),
+                      icon: const Icon(Icons.edit_outlined),
+                      onPressed: () =>
+                          _editCurrency(context, profile, currency: currency),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+      _SectionCard(
+        icon: Icons.trending_up_outlined,
+        title: tr.text('exchange_rates'),
+        subtitle: tr.text('exchange_rates_desc'),
+        trailing: FilledButton.icon(
+          onPressed: () => _editExchangeRate(context, profile),
+          icon: const Icon(Icons.add_outlined),
+          label: Text(tr.text('add_exchange_rate')),
+        ),
+        child: Column(
+          children: [
+            if (profile.exchangeRates.isEmpty)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.info_outline),
+                title: Text(tr.text('no_exchange_rates')),
+              ),
+            for (final rate in (profile.exchangeRates.toList()
+              ..sort((a, b) => b.effectiveAt.compareTo(a.effectiveAt))).take(12))
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(rate.isActive
+                    ? Icons.check_circle_outline
+                    : Icons.pause_circle_outline),
+                title: Text(
+                    '1 ${rate.fromCurrency} = ${rate.rate.toStringAsFixed(rate.rate >= 100 ? 0 : 6)} ${rate.toCurrency}'),
+                subtitle: Text(
+                    '${DateFormat.yMd().add_Hm().format(rate.effectiveAt)} · ${rate.source}${rate.note.isNotEmpty ? ' · ${rate.note}' : ''}'),
+                trailing: IconButton(
+                  tooltip: tr.text('edit'),
+                  icon: const Icon(Icons.edit_outlined),
+                  onPressed: () =>
+                      _editExchangeRate(context, profile, rate: rate),
+                ),
+              ),
           ],
         ),
       ),
@@ -349,6 +435,7 @@ class SettingsPage extends StatelessWidget {
         _UnifiedSyncSettingsCard(
             store: store, onSyncSettingsChanged: onSyncSettingsChanged),
         SyncMonitoringSection(store: store),
+        _CurrentDeviceCashDrawerSettingsCard(store: store),
       ];
 
   List<Widget> _backupCards(BuildContext context) {
@@ -547,23 +634,58 @@ class SettingsPage extends StatelessWidget {
     ];
   }
 
+  String _priceDisplayModeLabel(AppLocalizations tr, StoreProfile profile) {
+    switch (profile.priceDisplayMode) {
+      case 'multiple':
+        final codes = profile.priceDisplayCurrencies.isEmpty
+            ? profile.currencies
+                .where((item) => item.isActive)
+                .map((item) => item.code)
+                .join(', ')
+            : profile.priceDisplayCurrencies.join(', ');
+        return '${tr.text('price_display_multiple')} · $codes';
+      case 'selectable':
+        return tr.text('price_display_selectable');
+      case 'default':
+      default:
+        return tr.text('price_display_default');
+    }
+  }
+
   Future<void> _editFinancialSettings(
       BuildContext context, StoreProfile profile) async {
     final tr = AppLocalizations.of(context);
-    final rateController =
-        TextEditingController(text: profile.usdToLbpRate.toStringAsFixed(0));
-    String displayMode = profile.priceDisplayMode;
-    String defaultCurrency =
-        profile.defaultProductCurrency.toUpperCase() == 'LBP' ? 'LBP' : 'USD';
+    final activeCodes = profile.currencies
+        .where((item) => item.isActive)
+        .map((item) => item.code)
+        .toList();
+    String baseCurrency = activeCodes.contains(profile.baseCurrency)
+        ? profile.baseCurrency
+        : activeCodes.first;
+    String displayMode = {'default', 'selectable', 'multiple'}.contains(profile.priceDisplayMode)
+        ? profile.priceDisplayMode
+        : 'default';
+    final displayCurrencies = profile.priceDisplayCurrencies
+        .where((code) => activeCodes.contains(code))
+        .toSet()
+        .toList();
+    if (displayCurrencies.isEmpty) {
+      displayCurrencies.add(activeCodes.contains(profile.defaultSaleInvoiceCurrency)
+          ? profile.defaultSaleInvoiceCurrency
+          : baseCurrency);
+    }
+    String defaultCurrency = activeCodes.contains(profile.defaultProductCurrency)
+        ? profile.defaultProductCurrency
+        : baseCurrency;
     String defaultSaleInvoiceCurrency =
-        profile.defaultSaleInvoiceCurrency.toUpperCase() == 'LBP'
-            ? 'LBP'
-            : 'USD';
+        activeCodes.contains(profile.defaultSaleInvoiceCurrency)
+            ? profile.defaultSaleInvoiceCurrency
+            : defaultCurrency;
     String defaultSalePaymentCurrency =
-        profile.defaultSalePaymentCurrency.toUpperCase() == 'LBP'
-            ? 'LBP'
-            : 'USD';
-    int rounding = profile.lbpRounding;
+        activeCodes.contains(profile.defaultSalePaymentCurrency)
+            ? profile.defaultSalePaymentCurrency
+            : defaultCurrency;
+    int priceStorageDecimals = profile.priceStorageDecimals;
 
     final result = await showDialog<StoreProfile>(
       context: context,
@@ -577,15 +699,31 @@ class SettingsPage extends StatelessWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    TextFormField(
-                      controller: rateController,
-                      decoration: InputDecoration(
-                          labelText: tr.text('usd_lbp_exchange_rate'),
-                          helperText: '1 USD = LBP'),
-                      keyboardType: TextInputType.number,
-                      inputFormatters: [
-                        FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))
+                    DropdownButtonFormField<String>(
+                      initialValue: baseCurrency,
+                      decoration:
+                          InputDecoration(labelText: tr.text('base_currency')),
+                      items: [
+                        for (final code in activeCodes)
+                          DropdownMenuItem(value: code, child: Text(code)),
                       ],
+                      onChanged: (value) =>
+                          setState(() => baseCurrency = value ?? baseCurrency),
+                    ),
+                    const SizedBox(height: 16),
+                    DropdownButtonFormField<int>(
+                      initialValue: priceStorageDecimals,
+                      decoration: InputDecoration(
+                          labelText: tr.text('price_storage_decimals')),
+                      items: const [
+                        DropdownMenuItem(value: 2, child: Text('2')),
+                        DropdownMenuItem(value: 3, child: Text('3')),
+                        DropdownMenuItem(value: 4, child: Text('4')),
+                        DropdownMenuItem(value: 5, child: Text('5')),
+                        DropdownMenuItem(value: 6, child: Text('6')),
+                      ],
+                      onChanged: (value) => setState(
+                          () => priceStorageDecimals = value ?? 4),
                     ),
                     const SizedBox(height: 16),
                     DropdownButtonFormField<String>(
@@ -594,71 +732,93 @@ class SettingsPage extends StatelessWidget {
                           labelText: tr.text('price_display_mode')),
                       items: [
                         DropdownMenuItem(
-                            value: 'usd',
-                            child: Text(tr.text('price_display_usd'))),
+                            value: 'default',
+                            child: Text(tr.text('price_display_default'))),
                         DropdownMenuItem(
-                            value: 'lbp',
-                            child: Text(tr.text('price_display_lbp'))),
+                            value: 'selectable',
+                            child: Text(tr.text('price_display_selectable'))),
                         DropdownMenuItem(
-                            value: 'both',
-                            child: Text(tr.text('price_display_both'))),
+                            value: 'multiple',
+                            child: Text(tr.text('price_display_multiple'))),
                       ],
                       onChanged: (value) =>
-                          setState(() => displayMode = value ?? 'usd'),
+                          setState(() => displayMode = value ?? 'default'),
                     ),
+                    if (displayMode == 'multiple') ...[
+                      const SizedBox(height: 12),
+                      Align(
+                        alignment: AlignmentDirectional.centerStart,
+                        child: Text(tr.text('displayed_currencies')),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          for (final code in activeCodes)
+                            FilterChip(
+                              label: Text(code),
+                              selected: displayCurrencies.contains(code),
+                              onSelected: (selected) {
+                                setState(() {
+                                  if (selected) {
+                                    if (!displayCurrencies.contains(code)) {
+                                      displayCurrencies.add(code);
+                                    }
+                                  } else if (displayCurrencies.length > 1) {
+                                    displayCurrencies.remove(code);
+                                  }
+                                });
+                              },
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: AlignmentDirectional.centerStart,
+                        child: Text(
+                          tr.text('displayed_currencies_hint'),
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 16),
                     DropdownButtonFormField<String>(
                       initialValue: defaultCurrency,
                       decoration: InputDecoration(
                           labelText: tr.text('default_product_currency')),
-                      items: const [
-                        DropdownMenuItem(value: 'USD', child: Text('USD')),
-                        DropdownMenuItem(value: 'LBP', child: Text('LBP')),
+                      items: [
+                        for (final code in activeCodes)
+                          DropdownMenuItem(value: code, child: Text(code)),
                       ],
                       onChanged: (value) =>
-                          setState(() => defaultCurrency = value ?? 'USD'),
+                          setState(() => defaultCurrency = value ?? baseCurrency),
                     ),
                     const SizedBox(height: 16),
                     DropdownButtonFormField<String>(
                       initialValue: defaultSaleInvoiceCurrency,
                       decoration: InputDecoration(
                           labelText: tr.text('default_sale_invoice_currency')),
-                      items: const [
-                        DropdownMenuItem(value: 'USD', child: Text('USD')),
-                        DropdownMenuItem(value: 'LBP', child: Text('LBP')),
+                      items: [
+                        for (final code in activeCodes)
+                          DropdownMenuItem(value: code, child: Text(code)),
                       ],
-                      onChanged: (value) => setState(
-                          () => defaultSaleInvoiceCurrency = value ?? 'USD'),
+                      onChanged: (value) => setState(() =>
+                          defaultSaleInvoiceCurrency =
+                              value ?? defaultCurrency),
                     ),
                     const SizedBox(height: 16),
                     DropdownButtonFormField<String>(
                       initialValue: defaultSalePaymentCurrency,
                       decoration: InputDecoration(
                           labelText: tr.text('default_sale_payment_currency')),
-                      items: const [
-                        DropdownMenuItem(value: 'USD', child: Text('USD')),
-                        DropdownMenuItem(value: 'LBP', child: Text('LBP')),
-                      ],
-                      onChanged: (value) => setState(
-                          () => defaultSalePaymentCurrency = value ?? 'USD'),
-                    ),
-                    const SizedBox(height: 16),
-                    DropdownButtonFormField<int>(
-                      initialValue: rounding,
-                      decoration:
-                          InputDecoration(labelText: tr.text('lbp_rounding')),
                       items: [
-                        DropdownMenuItem(
-                            value: 0, child: Text(tr.text('no_rounding'))),
-                        const DropdownMenuItem(
-                            value: 1000, child: Text('1,000 LBP')),
-                        const DropdownMenuItem(
-                            value: 5000, child: Text('5,000 LBP')),
-                        const DropdownMenuItem(
-                            value: 10000, child: Text('10,000 LBP')),
+                        for (final code in activeCodes)
+                          DropdownMenuItem(value: code, child: Text(code)),
                       ],
-                      onChanged: (value) =>
-                          setState(() => rounding = value ?? 0),
+                      onChanged: (value) => setState(() =>
+                          defaultSalePaymentCurrency =
+                              value ?? defaultCurrency),
                     ),
                   ],
                 ),
@@ -670,19 +830,32 @@ class SettingsPage extends StatelessWidget {
                   child: Text(tr.text('cancel'))),
               FilledButton(
                 onPressed: () {
-                  final rate = double.tryParse(rateController.text.trim()) ??
-                      profile.usdToLbpRate;
+                  final nextCurrencies = profile.currencies
+                      .map((item) =>
+                          item.copyWith(isBase: item.code == baseCurrency))
+                      .toList(growable: false);
+                  final nextDisplayCurrencies = displayMode == 'multiple'
+                      ? displayCurrencies
+                          .where((code) => activeCodes.contains(code))
+                          .toSet()
+                          .toList(growable: false)
+                      : <String>[defaultSaleInvoiceCurrency];
                   Navigator.pop(
-                      dialogContext,
-                      profile.copyWith(
-                        currency: displayMode == 'lbp' ? 'LBP' : 'USD',
-                        usdToLbpRate: rate <= 0 ? profile.usdToLbpRate : rate,
-                        priceDisplayMode: displayMode,
-                        defaultProductCurrency: defaultCurrency,
-                        defaultSaleInvoiceCurrency: defaultSaleInvoiceCurrency,
-                        defaultSalePaymentCurrency: defaultSalePaymentCurrency,
-                        lbpRounding: rounding,
-                      ));
+                    dialogContext,
+                    profile.copyWith(
+                      currency: baseCurrency,
+                      baseCurrency: baseCurrency,
+                      priceStorageDecimals: priceStorageDecimals,
+                      currencies: nextCurrencies,
+                      priceDisplayMode: displayMode,
+                      priceDisplayCurrencies: nextDisplayCurrencies.isEmpty
+                          ? <String>[defaultSaleInvoiceCurrency]
+                          : nextDisplayCurrencies,
+                      defaultProductCurrency: defaultCurrency,
+                      defaultSaleInvoiceCurrency: defaultSaleInvoiceCurrency,
+                      defaultSalePaymentCurrency: defaultSalePaymentCurrency,
+                    ),
+                  );
                 },
                 child: Text(tr.text('save')),
               ),
@@ -699,6 +872,334 @@ class SettingsPage extends StatelessWidget {
             SnackBar(content: Text(tr.text('financial_settings_updated'))));
       }
     }
+  }
+
+  Future<void> _editCurrency(
+    BuildContext context,
+    StoreProfile profile, {
+    FinancialCurrency? currency,
+  }) async {
+    final tr = AppLocalizations.of(context);
+    final isEditing = currency != null;
+    final codeController =
+        TextEditingController(text: currency?.code ?? '');
+    final nameController =
+        TextEditingController(text: currency?.name ?? '');
+    final symbolController =
+        TextEditingController(text: currency?.symbol ?? '');
+    final decimalsController = TextEditingController(
+        text: (currency?.decimalPlaces ?? 2).toString());
+    final cashDecimalsController = TextEditingController(
+        text: (currency?.cashDecimalPlaces ?? currency?.decimalPlaces ?? 2)
+            .toString());
+    final roundingController = TextEditingController(
+        text: (currency?.roundingStep ?? 0) <= 0
+            ? ''
+            : (currency?.roundingStep ?? 0).toStringAsFixed(0));
+    bool cashRoundingEnabled = (currency?.roundingStep ?? 0) > 0;
+    String roundingMethod = currency?.roundingMethod ?? 'nearest';
+    bool isBase = currency?.isBase ?? false;
+    bool isActive = currency?.isActive ?? true;
+
+    final result = await showDialog<FinancialCurrency>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: Text(isEditing ? tr.text('edit_currency') : tr.text('add_currency')),
+          content: ResponsiveDialogBox(
+            maxWidth: VentioResponsive.modalMaxWidth(context, 520),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextFormField(
+                    controller: codeController,
+                    enabled: !isEditing,
+                    decoration:
+                        InputDecoration(labelText: tr.text('currency_code')),
+                    textCapitalization: TextCapitalization.characters,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z]')),
+                      LengthLimitingTextInputFormatter(3),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: nameController,
+                    decoration:
+                        InputDecoration(labelText: tr.text('currency_name')),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: symbolController,
+                    decoration:
+                        InputDecoration(labelText: tr.text('symbol')),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: decimalsController,
+                    decoration: InputDecoration(
+                        labelText: tr.text('accounting_decimals')),
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: cashDecimalsController,
+                    decoration:
+                        InputDecoration(labelText: tr.text('cash_decimals')),
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  ),
+                  const SizedBox(height: 12),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(tr.text('enable_cash_rounding')),
+                    subtitle: Text(tr.text('enable_cash_rounding_hint')),
+                    value: cashRoundingEnabled,
+                    onChanged: (value) =>
+                        setState(() => cashRoundingEnabled = value),
+                  ),
+                  if (cashRoundingEnabled) ...[
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: roundingController,
+                      decoration: InputDecoration(
+                        labelText: tr.text('cash_rounding_increment'),
+                        helperText: tr.text('cash_rounding_increment_hint'),
+                      ),
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [
+                        FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      initialValue: roundingMethod,
+                      decoration: InputDecoration(
+                        labelText: tr.text('cash_rounding_method'),
+                      ),
+                      items: [
+                        DropdownMenuItem(
+                          value: 'nearest',
+                          child: Text(tr.text('cash_rounding_nearest')),
+                        ),
+                        DropdownMenuItem(
+                          value: 'up',
+                          child: Text(tr.text('cash_rounding_up')),
+                        ),
+                        DropdownMenuItem(
+                          value: 'down',
+                          child: Text(tr.text('cash_rounding_down')),
+                        ),
+                      ],
+                      onChanged: (value) => setState(
+                          () => roundingMethod = value ?? 'nearest'),
+                    ),
+                  ],
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(tr.text('base_currency')),
+                    value: isBase,
+                    onChanged: (value) => setState(() => isBase = value),
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(tr.text('active')),
+                    value: isActive,
+                    onChanged: (value) => setState(() => isActive = value),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: Text(tr.text('cancel'))),
+            FilledButton(
+              onPressed: () {
+                final code = codeController.text.trim().toUpperCase();
+                if (code.length != 3) return;
+                final decimals =
+                    int.tryParse(decimalsController.text.trim()) ?? 2;
+                final cashDecimals =
+                    int.tryParse(cashDecimalsController.text.trim()) ??
+                        decimals;
+                final rounding = cashRoundingEnabled
+                    ? (double.tryParse(roundingController.text.trim()) ?? 0.0)
+                    : 0.0;
+                Navigator.pop(
+                  dialogContext,
+                  FinancialCurrency(
+                    code: code,
+                    name: nameController.text.trim().isEmpty
+                        ? code
+                        : nameController.text.trim(),
+                    symbol: symbolController.text.trim().isEmpty
+                        ? code
+                        : symbolController.text.trim(),
+                    decimalPlaces: decimals.clamp(0, 6).toInt(),
+                    cashDecimalPlaces: cashDecimals.clamp(0, 6).toInt(),
+                    roundingStep: rounding < 0 ? 0.0 : rounding,
+                    roundingMethod: roundingMethod,
+                    isBase: isBase,
+                    isActive: isActive,
+                  ),
+                );
+              },
+              child: Text(tr.text('save')),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (result == null) return;
+    final code = result.code;
+    final existing = profile.currencies.where((item) => item.code != code);
+    final nextCurrencies = [
+      ...existing,
+      result,
+    ];
+    final nextBase = result.isBase ? result.code : profile.baseCurrency;
+    final normalizedCurrencies = nextCurrencies
+        .map((item) => item.copyWith(isBase: item.code == nextBase))
+        .toList(growable: false);
+    await store.updateStoreProfile(profile.copyWith(
+      baseCurrency: nextBase,
+      currency: nextBase,
+      currencies: normalizedCurrencies,
+      defaultProductCurrency:
+          profile.defaultProductCurrency == code || result.isActive
+              ? profile.defaultProductCurrency
+              : nextBase,
+    ));
+  }
+
+  Future<void> _editExchangeRate(
+    BuildContext context,
+    StoreProfile profile, {
+    CurrencyExchangeRate? rate,
+  }) async {
+    final tr = AppLocalizations.of(context);
+    final codes = profile.currencies
+        .where((item) => item.isActive)
+        .map((item) => item.code)
+        .toList();
+    String fromCurrency = rate?.fromCurrency ??
+        (codes.contains('USD') ? 'USD' : codes.first);
+    String toCurrency = rate?.toCurrency ??
+        (codes.contains('LBP') ? 'LBP' : codes.last);
+    final rateController =
+        TextEditingController(text: rate?.rate.toString() ?? '');
+    final noteController = TextEditingController(text: rate?.note ?? '');
+    bool isActive = rate?.isActive ?? true;
+
+    final result = await showDialog<CurrencyExchangeRate>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: Text(rate == null
+              ? tr.text('add_exchange_rate')
+              : tr.text('edit_exchange_rate')),
+          content: ResponsiveDialogBox(
+            maxWidth: VentioResponsive.modalMaxWidth(context, 500),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButtonFormField<String>(
+                    initialValue: fromCurrency,
+                    decoration:
+                        InputDecoration(labelText: tr.text('from_currency')),
+                    items: [
+                      for (final code in codes)
+                        DropdownMenuItem(value: code, child: Text(code)),
+                    ],
+                    onChanged: (value) =>
+                        setState(() => fromCurrency = value ?? fromCurrency),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: toCurrency,
+                    decoration:
+                        InputDecoration(labelText: tr.text('to_currency')),
+                    items: [
+                      for (final code in codes)
+                        DropdownMenuItem(value: code, child: Text(code)),
+                    ],
+                    onChanged: (value) =>
+                        setState(() => toCurrency = value ?? toCurrency),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: rateController,
+                    decoration:
+                        InputDecoration(labelText: tr.text('exchange_rate')),
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: noteController,
+                    decoration: InputDecoration(labelText: tr.text('note')),
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(tr.text('active')),
+                    value: isActive,
+                    onChanged: (value) => setState(() => isActive = value),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: Text(tr.text('cancel'))),
+            FilledButton(
+              onPressed: () {
+                final parsedRate =
+                    double.tryParse(rateController.text.trim()) ?? 0;
+                if (parsedRate <= 0 || fromCurrency == toCurrency) return;
+                Navigator.pop(
+                  dialogContext,
+                  CurrencyExchangeRate(
+                    id: rate?.id ??
+                        'fx_${DateTime.now().microsecondsSinceEpoch}',
+                    fromCurrency: fromCurrency,
+                    toCurrency: toCurrency,
+                    rate: parsedRate,
+                    effectiveAt: rate?.effectiveAt ?? DateTime.now(),
+                    source: 'manual',
+                    isActive: isActive,
+                    note: noteController.text.trim(),
+                  ),
+                );
+              },
+              child: Text(tr.text('save')),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (result == null) return;
+    final nextRates = [
+      ...profile.exchangeRates.where((item) => item.id != result.id),
+      result,
+    ];
+    final legacyUsdLbp = result.fromCurrency == 'USD' && result.toCurrency == 'LBP'
+        ? result.rate
+        : profile.usdToLbpRate;
+    await store.updateStoreProfile(profile.copyWith(
+      exchangeRates: nextRates,
+      usdToLbpRate: legacyUsdLbp,
+    ));
   }
 
   Future<void> _editStoreProfile(
@@ -770,12 +1271,21 @@ class SettingsPage extends StatelessWidget {
                             : footerController.text.trim(),
                         usdToLbpRate: profile.usdToLbpRate,
                         priceDisplayMode: profile.priceDisplayMode,
+                        priceDisplayCurrencies: profile.priceDisplayCurrencies,
                         defaultProductCurrency: profile.defaultProductCurrency,
                         defaultSaleInvoiceCurrency:
                             profile.defaultSaleInvoiceCurrency,
                         defaultSalePaymentCurrency:
                             profile.defaultSalePaymentCurrency,
                         lbpRounding: profile.lbpRounding,
+                        baseCurrency: profile.baseCurrency,
+                        priceStorageDecimals: profile.priceStorageDecimals,
+                        currencies: profile.currencies,
+                        exchangeRates: profile.exchangeRates,
+                        roundingDifferenceAccountId:
+                            profile.roundingDifferenceAccountId,
+                        exchangeGainAccountId: profile.exchangeGainAccountId,
+                        exchangeLossAccountId: profile.exchangeLossAccountId,
                       ),
                     );
                   },
@@ -2105,6 +2615,187 @@ class _BackupSummaryDetails extends StatelessWidget {
           ],
         ),
       ],
+    );
+  }
+}
+
+
+class _CurrentDeviceCashDrawerSettingsCard extends StatefulWidget {
+  const _CurrentDeviceCashDrawerSettingsCard({required this.store});
+
+  final AppStore store;
+
+  @override
+  State<_CurrentDeviceCashDrawerSettingsCard> createState() =>
+      _CurrentDeviceCashDrawerSettingsCardState();
+}
+
+class _CurrentDeviceCashDrawerSettingsCardState
+    extends State<_CurrentDeviceCashDrawerSettingsCard> {
+  late Future<List<AdvancedAccountingItem>> _future;
+  String _selectedDrawerId = '';
+  bool _saving = false;
+
+  String get _deviceId => widget.store.deviceId.trim();
+  String get _branchId => widget.store.appIdentity.branchId.trim();
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _loadDrawers();
+  }
+
+  Future<List<AdvancedAccountingItem>> _loadDrawers() async {
+    final items = await AccountingService.listActiveCashLocations(includeBank: false);
+    final drawers = items.where((item) => item.type == 'cash_drawer').toList();
+    final current = drawers.where((item) => item.referenceId == _deviceId);
+    _selectedDrawerId = current.isEmpty ? '' : current.first.id;
+    return drawers;
+  }
+
+  void _refresh() {
+    setState(() {
+      _future = _loadDrawers();
+    });
+  }
+
+  Future<void> _save() async {
+    final tr = AppLocalizations.of(context);
+    setState(() => _saving = true);
+    try {
+      if (_selectedDrawerId.isEmpty) {
+        await AccountingService.unlinkCashDrawerFromDevice(deviceId: _deviceId);
+      } else {
+        await AccountingService.linkCashDrawerToDevice(
+          cashLocationId: _selectedDrawerId,
+          deviceId: _deviceId,
+          branchId: _branchId,
+        );
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr.text('saved'))),
+      );
+      _refresh();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString())),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    return _SectionCard(
+      icon: Icons.point_of_sale_outlined,
+      title: tr.text('current_device_cash_drawer'),
+      subtitle: tr.text('current_device_cash_drawer_desc'),
+      trailing: IconButton(
+        tooltip: tr.text('refresh'),
+        onPressed: _saving ? null : _refresh,
+        icon: const Icon(Icons.refresh_outlined),
+      ),
+      child: FutureBuilder<List<AdvancedAccountingItem>>(
+        future: _future,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Padding(
+              padding: EdgeInsets.symmetric(vertical: 16),
+              child: LinearProgressIndicator(),
+            );
+          }
+          final drawers = snapshot.data ?? const <AdvancedAccountingItem>[];
+          final currentDevice = _deviceId.isEmpty ? tr.text('unknown') : _deviceId;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _InfoGrid(
+                items: [
+                  _InfoGridItem(Icons.devices_outlined, 'Device ID', currentDevice),
+                  _InfoGridItem(
+                    Icons.storefront_outlined,
+                    tr.text('branch'),
+                    _branchId.isEmpty ? tr.text('not_set') : _branchId,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                initialValue: _selectedDrawerId.isEmpty ? '' : _selectedDrawerId,
+                decoration: InputDecoration(
+                  labelText: tr.text('linked_cash_drawer'),
+                  border: const OutlineInputBorder(),
+                ),
+                items: [
+                  DropdownMenuItem<String>(
+                    value: '',
+                    child: Text(tr.text('no_cash_drawer_linked')),
+                  ),
+                  for (final drawer in drawers)
+                    DropdownMenuItem<String>(
+                      value: drawer.id,
+                      child: Text(
+                        drawer.referenceId.isEmpty
+                            ? drawer.name
+                            : '${drawer.name} • ${drawer.referenceId}',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+                onChanged: _saving
+                    ? null
+                    : (value) => setState(() => _selectedDrawerId = value ?? ''),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                tr.text('current_device_cash_drawer_hint'),
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+              ),
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  FilledButton.icon(
+                    onPressed: _saving || _deviceId.isEmpty ? null : _save,
+                    icon: _saving
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.save_outlined),
+                    label: Text(tr.text('save')),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: _saving
+                        ? null
+                        : () {
+                            setState(() => _selectedDrawerId = '');
+                            _save();
+                          },
+                    icon: const Icon(Icons.link_off_outlined),
+                    label: Text(tr.text('unlink_cash_drawer')),
+                  ),
+                ],
+              ),
+              if (drawers.isEmpty) ...[
+                const SizedBox(height: 12),
+                Text(
+                  tr.text('create_cash_drawer_from_accounting_hint'),
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+              ],
+            ],
+          );
+        },
+      ),
     );
   }
 }

@@ -150,12 +150,17 @@ class _SalesPageState extends State<SalesPage> {
   bool get _isCreditPayment => _paymentMethod == 'Credit';
   bool get _showsCashReceived => !_isCashPayment;
   double get _saleExchangeRate {
-    final value = double.tryParse(_paymentExchangeRateController.text.trim()) ??
-        widget.store.storeProfile.usdToLbpRate;
-    return value <= 0 ? widget.store.storeProfile.usdToLbpRate : value;
+    final manual = double.tryParse(_paymentExchangeRateController.text.trim());
+    if (manual != null && manual > 0) return manual;
+    return exchangeRate(
+      _paymentCurrency,
+      _invoiceCurrency,
+      widget.store.storeProfile,
+      effectiveAt: DateTime.now(),
+    );
   }
 
-  double get _invoiceTotal => _currencyFromUsd(_total, _invoiceCurrency);
+  double get _invoiceTotal => _currencyFromBase(_total, _invoiceCurrency);
   double get _cashReceivedInPaymentCurrency =>
       (double.tryParse(_paidAmountController.text.trim()) ?? 0)
           .clamp(0, double.infinity)
@@ -172,18 +177,23 @@ class _SalesPageState extends State<SalesPage> {
   double get _derivedPaidAmount =>
       _isCreditPayment ? _cashReceivedAmount : _invoiceTotal;
 
-  double _currencyFromUsd(double usdAmount, String currency) =>
-      currency.toUpperCase() == 'LBP'
-          ? usdAmount * _saleExchangeRate
-          : usdAmount;
+  double _currencyFromBase(double amount, String currency) => convertCurrency(
+        amount,
+        widget.store.storeProfile.baseCurrency,
+        currency,
+        widget.store.storeProfile,
+        effectiveAt: DateTime.now(),
+      );
+
   double _convertCurrencyAmount(
       double amount, String fromCurrency, String toCurrency) {
-    final from = fromCurrency.toUpperCase();
-    final to = toCurrency.toUpperCase();
-    if (from == to) return amount;
-    if (from == 'LBP' && to == 'USD') return amount / _saleExchangeRate;
-    if (from == 'USD' && to == 'LBP') return amount * _saleExchangeRate;
-    return amount;
+    return convertCurrency(
+      amount,
+      fromCurrency,
+      toCurrency,
+      widget.store.storeProfile,
+      effectiveAt: DateTime.now(),
+    );
   }
 
   String _formatSaleCurrency(double amount, String currency) =>
@@ -565,32 +575,30 @@ class _SalesPageState extends State<SalesPage> {
         LayoutBuilder(
           builder: (context, constraints) {
             final fullWidth = constraints.maxWidth < 420;
+            final currencies = widget.store.storeProfile.currencies
+                .where((item) => item.isActive)
+                .toList(growable: false);
             final children = [
-              ChoiceChip(
-                label: const Text('USD'),
-                selected: _paymentCurrency == 'USD',
-                onSelected: (_) {
-                  setState(() => _paymentCurrency = 'USD');
-                  modalSetState?.call(() {});
-                },
-              ),
-              ChoiceChip(
-                label: const Text('LBP'),
-                selected: _paymentCurrency == 'LBP',
-                onSelected: (_) {
-                  setState(() => _paymentCurrency = 'LBP');
-                  modalSetState?.call(() {});
-                },
-              ),
+              for (final currency in currencies)
+                ChoiceChip(
+                  label: Text(currency.code),
+                  selected: _paymentCurrency == currency.code,
+                  onSelected: (_) {
+                    setState(() => _paymentCurrency = currency.code);
+                    modalSetState?.call(() {});
+                  },
+                ),
             ];
             if (!fullWidth) {
               return Wrap(spacing: 8, runSpacing: 8, children: children);
             }
-            return Row(
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Expanded(child: children[0]),
-                const SizedBox(width: 8),
-                Expanded(child: children[1]),
+                for (var i = 0; i < children.length; i++) ...[
+                  children[i],
+                  if (i != children.length - 1) const SizedBox(height: 8),
+                ],
               ],
             );
           },
@@ -2344,12 +2352,12 @@ class _SalesPageState extends State<SalesPage> {
               _totalLine(
                   tr.text('subtotal'),
                   _formatSaleCurrency(
-                      _currencyFromUsd(_subtotal, _invoiceCurrency),
+                      _currencyFromBase(_subtotal, _invoiceCurrency),
                       _invoiceCurrency)),
               _totalLine(
                   tr.text('discount'),
                   _formatSaleCurrency(
-                      _currencyFromUsd(_discount, _invoiceCurrency),
+                      _currencyFromBase(_discount, _invoiceCurrency),
                       _invoiceCurrency)),
               if (_discount > _subtotal)
                 Padding(
@@ -3065,6 +3073,159 @@ class _SalesPageState extends State<SalesPage> {
     ).whenComplete(controller.dispose);
   }
 
+
+  String _saleSaveFailureMessage(BuildContext context, Object error) {
+    final tr = AppLocalizations.of(context);
+
+    if (error is StateError) {
+      final raw = error.message.trim();
+      if (raw.isNotEmpty) {
+        return localizeRuntimeMessage(raw, tr);
+      }
+    }
+
+    if (error is ArgumentError) {
+      final raw = (error.message ?? '').toString().trim();
+      if (raw.isNotEmpty &&
+          (raw.contains('وردية') ||
+              raw.contains('درج') ||
+              raw.toLowerCase().contains('cash drawer') ||
+              raw.toLowerCase().contains('device'))) {
+        return localizeRuntimeMessage(raw, tr);
+      }
+      return tr.text('sale_validation_failed');
+    }
+
+    final raw = error.toString().trim();
+    final normalized = raw
+        .replaceFirst(RegExp(r'^Bad state:\s*'), '')
+        .replaceFirst(RegExp(r'^Invalid argument\(s\):\s*'), '')
+        .trim();
+    if (normalized.isNotEmpty &&
+        (normalized.contains('وردية') ||
+            normalized.contains('درج') ||
+            normalized.toLowerCase().contains('cash drawer') ||
+            normalized.toLowerCase().contains('device'))) {
+      return localizeRuntimeMessage(normalized, tr);
+    }
+
+    return tr.text('sale_validation_failed');
+  }
+
+  Future<void> _showTemporarySaleDebugDialog({
+    required BuildContext context,
+    required Object error,
+    required StackTrace stackTrace,
+    required String userMessage,
+  }) async {
+    final tr = AppLocalizations.of(context);
+    final now = DateTime.now().toIso8601String();
+    final buffer = StringBuffer()
+      ..writeln('VENTIO TEMP SALE DEBUG')
+      ..writeln('time: $now')
+      ..writeln('screen: sales_page')
+      ..writeln('action: confirm_payment -> createSale')
+      ..writeln('user_message: $userMessage')
+      ..writeln('error_type: ${error.runtimeType}')
+      ..writeln('error: $error')
+      ..writeln('device_id: ${widget.store.deviceId}')
+      ..writeln('payment_method: $_paymentMethod')
+      ..writeln('payment_status: $_derivedPaymentStatus')
+      ..writeln('invoice_currency: $_invoiceCurrency')
+      ..writeln('payment_currency: $_paymentCurrency')
+      ..writeln('subtotal: $_subtotal')
+      ..writeln('discount: $_discount')
+      ..writeln('total: $_invoiceTotal')
+      ..writeln('cash_received: ${_showsCashReceived ? _cashReceivedAmount : (_isCashPayment ? _invoiceTotal : 0.0)}')
+      ..writeln('paid_amount: $_derivedPaidAmount')
+      ..writeln('selected_customer_id: $_selectedCustomerId')
+      ..writeln('cart_items: ${_cart.length}');
+
+    for (var i = 0; i < _cart.length; i += 1) {
+      final item = _cart[i];
+      buffer
+        ..writeln('item[$i].product_id: ${item.product.id}')
+        ..writeln('item[$i].name: ${item.product.name}')
+        ..writeln('item[$i].code: ${item.product.code}')
+        ..writeln('item[$i].quantity: ${item.quantity}')
+        ..writeln('item[$i].unit_name: ${item.unitName}')
+        ..writeln('item[$i].base_quantity: ${item.baseQuantity}')
+        ..writeln('item[$i].conversion_to_base: ${item.conversionToBase}')
+        ..writeln('item[$i].stock: ${item.product.stock}')
+        ..writeln('item[$i].needs_auto_correction: ${item.needsAutoCorrection}')
+        ..writeln('item[$i].unit_price: ${item.unitPrice}')
+        ..writeln('item[$i].unit_cost: ${item.product.usdCost}');
+    }
+
+    buffer
+      ..writeln('stack_trace:')
+      ..writeln(stackTrace.toString());
+
+    final debugText = buffer.toString();
+    if (!context.mounted) return;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('تفاصيل خطأ حفظ الفاتورة'),
+        content: SizedBox(
+          width: 680,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  userMessage,
+                  style: Theme.of(dialogContext).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'هذه رسالة تتبع مؤقتة. انسخها وأرسلها للمراجعة لمعرفة أين يفشل الحفظ بالضبط.',
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  constraints: const BoxConstraints(maxHeight: 360),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Theme.of(dialogContext)
+                        .colorScheme
+                        .surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: SingleChildScrollView(
+                    child: SelectableText(
+                      debugText,
+                      textDirection: TextDirection.ltr,
+                      style: Theme.of(dialogContext).textTheme.bodySmall,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text(tr.text('close')),
+          ),
+          FilledButton.icon(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: debugText));
+              if (!dialogContext.mounted) return;
+              ScaffoldMessenger.of(dialogContext).showSnackBar(
+                const SnackBar(content: Text('تم نسخ تفاصيل الخطأ')),
+              );
+            },
+            icon: const Icon(Icons.copy),
+            label: const Text('نسخ'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _createDeliveryNote(BuildContext context, Sale sale) async {
     final tr = AppLocalizations.of(context);
     try {
@@ -3427,7 +3588,12 @@ class _SalesPageState extends State<SalesPage> {
         discount: _discount,
         originalDiscount: double.tryParse(_discountController.text.trim()) ?? 0,
         discountCurrency: _discountCurrency,
-        discountExchangeRateAtEntry: widget.store.storeProfile.usdToLbpRate,
+        discountExchangeRateAtEntry: exchangeRate(
+            widget.store.storeProfile.baseCurrency,
+            _discountCurrency,
+            widget.store.storeProfile,
+            effectiveAt: DateTime.now(),
+          ),
         paymentMethod: _paymentMethod,
         paymentStatus: paymentStatus,
         invoiceCurrency: _invoiceCurrency,
@@ -3455,11 +3621,18 @@ class _SalesPageState extends State<SalesPage> {
             )
             .toList(),
       );
-    } catch (_) {
+    } catch (error, stackTrace) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(
-              AppLocalizations.of(context).text('sale_validation_failed'))));
+      final message = _saleSaveFailureMessage(context, error);
+      await _showTemporarySaleDebugDialog(
+        context: context,
+        error: error,
+        stackTrace: stackTrace,
+        userMessage: message,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
       return;
     }
 

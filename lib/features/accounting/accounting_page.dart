@@ -30,7 +30,7 @@ class _AccountingPageState extends State<AccountingPage> with SingleTickerProvid
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 14, vsync: this);
+    _tabController = TabController(length: 15, vsync: this);
     _searchController.addListener(() => setState(() => _query = _searchController.text.trim().toLowerCase()));
   }
 
@@ -78,6 +78,7 @@ class _AccountingPageState extends State<AccountingPage> with SingleTickerProvid
                 _CashBankReportTab(store: widget.store),
                 _CashFlowStatementTab(store: widget.store),
                 _TaxReportTab(store: widget.store),
+                _AdvancedAccountingTab(store: widget.store, cashOnly: true),
                 _AdvancedAccountingTab(store: widget.store),
                 _AccountingSettingsTab(store: widget.store),
               ],
@@ -249,6 +250,7 @@ class _AccountingTabs extends StatelessWidget {
             Tab(icon: const Icon(Icons.account_balance_wallet_outlined), text: tr.text('cash_bank')),
             Tab(icon: const Icon(Icons.waterfall_chart_outlined), text: tr.text('cash_flow_statement')),
             Tab(icon: const Icon(Icons.receipt_long_outlined), text: tr.text('tax_report')),
+            Tab(icon: const Icon(Icons.point_of_sale_outlined), text: tr.text('cash_management')),
             Tab(icon: const Icon(Icons.auto_awesome_motion_outlined), text: tr.text('advanced')),
             Tab(icon: const Icon(Icons.settings_outlined), text: tr.text('settings')),
           ],
@@ -1308,9 +1310,10 @@ class _TaxReportTab extends StatelessWidget {
 }
 
 class _AdvancedAccountingTab extends StatefulWidget {
-  const _AdvancedAccountingTab({required this.store});
+  const _AdvancedAccountingTab({required this.store, this.cashOnly = false});
 
   final AppStore store;
+  final bool cashOnly;
 
   @override
   State<_AdvancedAccountingTab> createState() => _AdvancedAccountingTabState();
@@ -1360,12 +1363,132 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
 
   void _refresh() => setState(() => _future = _load());
 
+
+  Future<void> _createCashLocationDialog({String initialType = 'cash_drawer'}) async {
+    final tr = AppLocalizations.of(context);
+    final name = TextEditingController();
+    final code = TextEditingController();
+    final notes = TextEditingController();
+    final locations = await AccountingService.listActiveCashLocations();
+    if (!mounted) return;
+    final types = <String>['main_vault', 'branch_vault', 'cash_drawer', 'bank', 'wallet', 'other'];
+    String selectedType = initialType;
+    String parentId = '';
+    bool allowNegative = false;
+    bool isDefault = false;
+    bool bindToCurrentDevice = initialType == 'cash_drawer';
+    final currentDeviceId = widget.store.appIdentity.deviceId.trim();
+    final currentBranchId = widget.store.appIdentity.branchId.trim();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(tr.text('create_cash_location')),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(controller: name, decoration: InputDecoration(labelText: tr.text('name'))),
+                const SizedBox(height: 8),
+                TextField(controller: code, decoration: InputDecoration(labelText: tr.text('code'))),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  initialValue: selectedType,
+                  isExpanded: true,
+                  decoration: InputDecoration(labelText: tr.text('cash_location_type')),
+                  items: [for (final type in types) DropdownMenuItem(value: type, child: Text(_localizedAccountingType(type, tr)))],
+                  onChanged: (value) => setDialogState(() => selectedType = value ?? selectedType),
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  initialValue: parentId.isEmpty ? null : parentId,
+                  isExpanded: true,
+                  decoration: InputDecoration(labelText: tr.text('parent_cash_location')),
+                  items: [
+                    DropdownMenuItem<String>(value: '', child: Text(tr.text('no_parent'))),
+                    for (final item in locations) DropdownMenuItem(value: item.id, child: Text(_localizedAccountingName(item.name, tr))),
+                  ],
+                  onChanged: (value) => setDialogState(() => parentId = value ?? ''),
+                ),
+                const SizedBox(height: 8),
+                if (selectedType == 'cash_drawer') ...[
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: bindToCurrentDevice,
+                    title: const Text('ربط الدرج بالجهاز الحالي'),
+                    subtitle: Text(currentDeviceId.isEmpty ? 'لا يوجد Device ID متاح حالياً' : currentDeviceId),
+                    onChanged: (value) => setDialogState(() => bindToCurrentDevice = value),
+                  ),
+                ],
+                const SizedBox(height: 8),
+                TextField(controller: notes, decoration: InputDecoration(labelText: tr.text('notes'))),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: isDefault,
+                  title: Text(tr.text('default_cash_location')),
+                  onChanged: (value) => setDialogState(() => isDefault = value),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: allowNegative,
+                  title: Text(tr.text('allow_negative_cash')),
+                  onChanged: (value) => setDialogState(() => allowNegative = value),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('cancel'))),
+            FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(tr.text('create'))),
+          ],
+        ),
+      ),
+    );
+    if (confirmed == true) {
+      await AccountingService.createCashLocation(
+        name: name.text,
+        code: code.text,
+        type: selectedType,
+        parentId: parentId,
+        isDefault: isDefault,
+        allowNegative: allowNegative,
+        notes: notes.text,
+        storeId: widget.store.appIdentity.storeId,
+        branchId: currentBranchId,
+        deviceId: selectedType == 'cash_drawer' && bindToCurrentDevice ? currentDeviceId : '',
+      );
+      if (mounted) _refresh();
+    }
+  }
+
+  Future<void> _showCashTransferJournalHint(AdvancedAccountingItem item) async {
+    final tr = AppLocalizations.of(context);
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(tr.text('journal_entry')),
+        content: Text(
+          item.notes.trim().isEmpty
+              ? tr.text('journal_entry_reference_missing')
+              : item.notes,
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: Text(tr.text('close'))),
+        ],
+      ),
+    );
+  }
+
   Future<void> _openDrawerDialog() async {
     final controller = TextEditingController(text: '0');
     final tr = AppLocalizations.of(context);
     final locations = await AccountingService.listActiveCashLocations();
     if (!mounted) return;
-    final drawers = locations.where((item) => item.type == 'cash_drawer').toList();
+    final currentDeviceId = widget.store.appIdentity.deviceId.trim();
+    final currentBranchId = widget.store.appIdentity.branchId.trim();
+    final deviceDrawers = locations.where((item) => item.type == 'cash_drawer' && currentDeviceId.isNotEmpty && item.referenceId == currentDeviceId).toList();
+    final drawers = deviceDrawers.isNotEmpty ? deviceDrawers : locations.where((item) => item.type == 'cash_drawer').toList();
     final sources = locations.where((item) => item.type != 'cash_drawer').toList();
     String selectedDrawerId = drawers.isNotEmpty ? drawers.first.id : '';
     String selectedFundingId = sources.isNotEmpty ? sources.first.id : '';
@@ -1381,6 +1504,16 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                 decoration: InputDecoration(labelText: tr.text('cash_drawer')),
                 items: drawers.map((item) => DropdownMenuItem(value: item.id, child: Text(_localizedAccountingName(item.name, tr)))).toList(),
                 onChanged: (value) => setDialogState(() => selectedDrawerId = value ?? ''),
+              ),
+              const SizedBox(height: 4),
+              Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: Text(
+                  currentDeviceId.isEmpty
+                      ? 'تحذير: لا يوجد Device ID للجهاز الحالي.'
+                      : (deviceDrawers.isEmpty ? 'لم يتم العثور على درج مربوط بهذا الجهاز، تم عرض كل الأدراج.' : 'يتم استخدام درج الجهاز الحالي.'),
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
               ),
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
@@ -1412,6 +1545,9 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
         cashLocationId: selectedDrawerId,
         fundingLocationId: selectedFundingId,
         openingBalance: double.tryParse(controller.text) ?? 0,
+        storeId: widget.store.appIdentity.storeId,
+        branchId: currentBranchId,
+        deviceId: currentDeviceId,
       );
       if (mounted) _refresh();
     }
@@ -1946,6 +2082,64 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
         }
         if (snapshot.hasError) return _ReportError(message: snapshot.error.toString());
         final data = snapshot.data ?? const _AdvancedAccountingData();
+        if (widget.cashOnly) {
+          return ListView(
+            padding: const EdgeInsets.all(12),
+            children: [
+              Card(
+                elevation: 0,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(tr.text('cash_management'), style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
+                      const SizedBox(height: 6),
+                      Text(tr.text('cash_management_desc'), style: Theme.of(context).textTheme.bodyMedium),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          FilledButton.icon(onPressed: canManageAccounting ? () => _createCashLocationDialog(initialType: 'main_vault') : null, icon: const Icon(Icons.account_balance_wallet_outlined), label: Text(tr.text('create_vault'))),
+                          FilledButton.tonalIcon(onPressed: canManageAccounting ? () => _createCashLocationDialog(initialType: 'cash_drawer') : null, icon: const Icon(Icons.point_of_sale_outlined), label: Text(tr.text('create_cash_drawer'))),
+                          FilledButton.tonalIcon(onPressed: canManageAccounting ? _openDrawerDialog : null, icon: const Icon(Icons.play_circle_outline), label: Text(tr.text('open_drawer'))),
+                          FilledButton.tonalIcon(onPressed: canManageAccounting ? _createCashTransferDialog : null, icon: const Icon(Icons.compare_arrows_outlined), label: Text(tr.text('cash_transfer'))),
+                        ],
+                      ),
+                      if (!canManageAccounting) ...[
+                        const SizedBox(height: 8),
+                        Text(tr.text('accounting_read_only_permission'), style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.error)),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              _AdvancedSection(title: tr.text('cash_locations'), icon: Icons.account_balance_wallet_outlined, items: data.cashLocations),
+              _AdvancedSection(
+                title: tr.text('cash_drawer_sessions'),
+                icon: Icons.point_of_sale_outlined,
+                items: data.cashDrawers,
+                actionBuilder: canManageAccounting
+                    ? (item) => item.status == 'open'
+                        ? [TextButton.icon(onPressed: () => _closeDrawerDialog(item), icon: const Icon(Icons.lock_outline), label: Text(tr.text('close')))]
+                        : const <Widget>[]
+                    : null,
+              ),
+              _AdvancedSection(title: tr.text('cash_monitoring'), icon: Icons.monitor_heart_outlined, items: data.cashBalancesReport),
+              _AdvancedSection(title: tr.text('open_cash_drawers_report'), icon: Icons.point_of_sale_outlined, items: data.openCashDrawersReport),
+              _AdvancedSection(title: tr.text('cash_drawer_variance_report'), icon: Icons.balance_outlined, items: data.cashDrawerVarianceReport),
+              _AdvancedSection(
+                title: tr.text('cash_transfer_audit_report'),
+                icon: Icons.receipt_long_outlined,
+                items: data.cashTransferAuditReport,
+                actionBuilder: (item) => [TextButton.icon(onPressed: () => _showCashTransferJournalHint(item), icon: const Icon(Icons.menu_book_outlined), label: Text(tr.text('view_journal'))) ],
+              ),
+              _AdvancedSection(title: tr.text('cash_transfers'), icon: Icons.compare_arrows_outlined, items: data.cashTransfers),
+            ],
+          );
+        }
         return ListView(
           padding: const EdgeInsets.all(12),
           children: [
@@ -1965,7 +2159,9 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                       runSpacing: 8,
                       children: [
                         FilledButton.icon(onPressed: canManageAccounting ? _manualJournalDialog : null, icon: const Icon(Icons.edit_note_outlined), label: Text(tr.text('manual_journal'))),
-                        FilledButton.tonalIcon(onPressed: canManageAccounting ? _openDrawerDialog : null, icon: const Icon(Icons.point_of_sale_outlined), label: Text(tr.text('open_drawer'))),
+                        FilledButton.tonalIcon(onPressed: canManageAccounting ? () => _createCashLocationDialog(initialType: 'main_vault') : null, icon: const Icon(Icons.account_balance_wallet_outlined), label: Text(tr.text('create_vault'))),
+                        FilledButton.tonalIcon(onPressed: canManageAccounting ? () => _createCashLocationDialog(initialType: 'cash_drawer') : null, icon: const Icon(Icons.point_of_sale_outlined), label: Text(tr.text('create_cash_drawer'))),
+                        FilledButton.tonalIcon(onPressed: canManageAccounting ? _openDrawerDialog : null, icon: const Icon(Icons.play_circle_outline), label: Text(tr.text('open_drawer'))),
                         FilledButton.tonalIcon(onPressed: canManageAccounting ? _createCashTransferDialog : null, icon: const Icon(Icons.compare_arrows_outlined), label: Text(tr.text('cash_transfer'))),
                         FilledButton.tonalIcon(onPressed: canManageAccounting ? _createPaymentAccountDialog : null, icon: const Icon(Icons.account_balance_wallet_outlined), label: Text(tr.text('payment_account'))),
                         FilledButton.tonalIcon(onPressed: canManageAccounting ? _createChequeDialog : null, icon: const Icon(Icons.payments_outlined), label: Text(tr.text('cheque'))),
@@ -1989,7 +2185,12 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
             _AdvancedSection(title: tr.text('cash_monitoring'), icon: Icons.monitor_heart_outlined, items: data.cashBalancesReport),
             _AdvancedSection(title: tr.text('open_cash_drawers_report'), icon: Icons.point_of_sale_outlined, items: data.openCashDrawersReport),
             _AdvancedSection(title: tr.text('cash_drawer_variance_report'), icon: Icons.balance_outlined, items: data.cashDrawerVarianceReport),
-            _AdvancedSection(title: tr.text('cash_transfer_audit_report'), icon: Icons.receipt_long_outlined, items: data.cashTransferAuditReport),
+            _AdvancedSection(
+              title: tr.text('cash_transfer_audit_report'),
+              icon: Icons.receipt_long_outlined,
+              items: data.cashTransferAuditReport,
+              actionBuilder: (item) => [TextButton.icon(onPressed: () => _showCashTransferJournalHint(item), icon: const Icon(Icons.menu_book_outlined), label: Text(tr.text('view_journal'))) ],
+            ),
             _AdvancedSection(title: tr.text('cash_locations'), icon: Icons.account_balance_wallet_outlined, items: data.cashLocations),
             _AdvancedSection(title: tr.text('cash_transfers'), icon: Icons.compare_arrows_outlined, items: data.cashTransfers),
             _AdvancedSection(

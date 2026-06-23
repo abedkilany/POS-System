@@ -1005,6 +1005,7 @@ class AppStore extends ChangeNotifier {
     final cleanStoreName = storeName.trim();
     if (cleanStoreName.isNotEmpty) {
       _storeProfile = _storeProfile.copyWith(name: cleanStoreName);
+      AccountingService.configureMoneyPolicy(_storeProfile);
     }
 
     final passwordHash = await _hashPasswordAsync(cleanPassword);
@@ -1612,6 +1613,7 @@ class AppStore extends ChangeNotifier {
         ..clear()
         ..addAll(_loadCatalogItems(_unitsKey));
       _storeProfile = _loadStoreProfile();
+      AccountingService.configureMoneyPolicy(_storeProfile);
       _invoiceCounter = _loadInvoiceCounter();
       _purchaseCounter = _loadPurchaseCounter();
       _currentRole = LocalDatabaseService.getString(_currentRoleKey) ?? 'admin';
@@ -1701,6 +1703,7 @@ class AppStore extends ChangeNotifier {
       ..clear()
       ..addAll(_loadSyncQueue());
     _storeProfile = _loadStoreProfile();
+      AccountingService.configureMoneyPolicy(_storeProfile);
     _invoiceCounter = _loadInvoiceCounter();
     _purchaseCounter = _loadPurchaseCounter();
     _currentRole = LocalDatabaseService.getString(_currentRoleKey) ?? 'admin';
@@ -1870,6 +1873,7 @@ class AppStore extends ChangeNotifier {
 
         case _storeProfileKey:
           _storeProfile = _loadStoreProfile();
+      AccountingService.configureMoneyPolicy(_storeProfile);
           break;
 
         case _productsKey:
@@ -2049,6 +2053,7 @@ class AppStore extends ChangeNotifier {
   Future<void> reloadAllAfterDatabaseChange() async {
     _appIdentity = _loadOrCreateAppIdentity();
     _storeProfile = _loadStoreProfile();
+      AccountingService.configureMoneyPolicy(_storeProfile);
     _products
       ..clear()
       ..addAll(_loadProducts());
@@ -4586,6 +4591,7 @@ class AppStore extends ChangeNotifier {
     _purchaseCounter = 0;
     if (!keepStoreProfile) {
       _storeProfile = StoreProfile.defaults;
+      AccountingService.configureMoneyPolicy(_storeProfile);
     }
   }
 
@@ -4701,6 +4707,7 @@ class AppStore extends ChangeNotifier {
     _invoiceCounter = 0;
     _purchaseCounter = 0;
     _storeProfile = StoreProfile.defaults;
+      AccountingService.configureMoneyPolicy(_storeProfile);
     _activeUser = null;
     _rememberLogin = false;
     if (!preserveAdminUsers) {
@@ -4931,6 +4938,7 @@ class AppStore extends ChangeNotifier {
     requirePermission(AppPermission.settingsManage);
     if (wants('storeProfile')) {
       _storeProfile = profile;
+      AccountingService.configureMoneyPolicy(_storeProfile);
     }
     _recordSyncChange(
       entityType: 'store_profile',
@@ -7908,7 +7916,6 @@ class AppStore extends ChangeNotifier {
       }
     }
 
-    _invoiceCounter += 1;
     final saleItems = items.map((item) {
       final product = _products.firstWhere((p) => p.id == item.productId);
       return SaleItem(
@@ -7929,14 +7936,45 @@ class AppStore extends ChangeNotifier {
                 cleanedDiscount)
             .clamp(0, double.infinity)
             .toDouble();
+    String normalizeConfiguredCurrency(String value, [String? fallback]) {
+      final normalized = value.trim().toUpperCase();
+      final fallbackCurrency = (fallback ?? storeProfile.baseCurrency).toUpperCase();
+      if (normalized.isEmpty) return fallbackCurrency;
+      return storeProfile.currencies.any((item) =>
+              item.isActive && item.code.toUpperCase() == normalized)
+          ? normalized
+          : fallbackCurrency;
+    }
+
+    final baseCurrency = normalizeConfiguredCurrency(storeProfile.baseCurrency, 'USD');
     final normalizedInvoiceCurrency =
-        invoiceCurrency.toUpperCase() == 'LBP' ? 'LBP' : 'USD';
+        normalizeConfiguredCurrency(invoiceCurrency, baseCurrency);
     final normalizedPaymentCurrency =
-        paymentCurrency.toUpperCase() == 'LBP' ? 'LBP' : 'USD';
-    final rate = (exchangeRateAtPayment ?? storeProfile.usdToLbpRate);
-    final safeRate = rate <= 0 ? StoreProfile.defaults.usdToLbpRate : rate;
-    final saleTotalInInvoiceCurrency =
-        normalizedInvoiceCurrency == 'LBP' ? saleTotal * safeRate : saleTotal;
+        normalizeConfiguredCurrency(paymentCurrency, normalizedInvoiceCurrency);
+    final invoiceRate = normalizedInvoiceCurrency == baseCurrency
+        ? 1.0
+        : exchangeRate(baseCurrency, normalizedInvoiceCurrency, storeProfile,
+            effectiveAt: now);
+    final exchangeRateAtPaymentValue = exchangeRateAtPayment;
+    final safePaymentRate = exchangeRateAtPaymentValue != null &&
+            exchangeRateAtPaymentValue > 0
+        ? exchangeRateAtPaymentValue
+        : exchangeRate(normalizedPaymentCurrency, normalizedInvoiceCurrency,
+            storeProfile,
+            effectiveAt: now);
+    final saleTotalInInvoiceCurrency = convertCurrency(
+      saleTotal,
+      baseCurrency,
+      normalizedInvoiceCurrency,
+      storeProfile,
+      effectiveAt: now,
+    );
+    final saleTotalInBaseCurrency = toBaseCurrencyAmount(
+      saleTotalInInvoiceCurrency,
+      normalizedInvoiceCurrency,
+      storeProfile,
+      effectiveAt: now,
+    );
     final normalizedCustomerId =
         customerId.trim().isEmpty ? walkInCustomerId : customerId.trim();
     final normalizedCustomerName =
@@ -7966,6 +8004,16 @@ class AppStore extends ChangeNotifier {
     final normalizedPaidAmount = normalizedPaymentMethod == 'Credit'
         ? normalizedCashReceived
         : saleTotalInInvoiceCurrency;
+    if (normalizedPaymentMethod.toLowerCase() == 'cash' && normalizedPaidAmount > 0) {
+      final hasOpenDrawer = await AccountingService.hasOpenCashDrawerForDevice(
+        deviceId: _deviceId,
+        branchId: appIdentity.branchId,
+      );
+      if (!hasOpenDrawer) {
+        throw StateError('لا توجد وردية نقدية مفتوحة لهذا الجهاز. افتح وردية قبل قبول الدفع النقدي.');
+      }
+    }
+    _invoiceCounter += 1;
     final sale = Sale(
       id: now.microsecondsSinceEpoch.toString(),
       invoiceNo:
@@ -7978,7 +8026,17 @@ class AppStore extends ChangeNotifier {
       paymentStatus: normalizedPaymentStatus,
       invoiceCurrency: normalizedInvoiceCurrency,
       paymentCurrency: normalizedPaymentCurrency,
-      exchangeRateAtPayment: safeRate,
+      exchangeRateAtPayment: safePaymentRate,
+      baseCurrency: baseCurrency,
+      exchangeRateAtInvoice: invoiceRate,
+      transactionAmount: saleTotalInInvoiceCurrency,
+      baseAmount: saleTotalInBaseCurrency,
+      paidBaseAmount: toBaseCurrencyAmount(
+        normalizedPaidAmount,
+        normalizedInvoiceCurrency,
+        storeProfile,
+        effectiveAt: now,
+      ),
       paidAmount: normalizedPaidAmount,
       cashReceivedAmount: normalizedCashReceived,
       paidAmountInPaymentCurrency:
@@ -7988,7 +8046,7 @@ class AppStore extends ChangeNotifier {
       items: saleItems,
       discount: cleanedDiscount,
       originalDiscount: originalDiscount ?? cleanedDiscount,
-      discountCurrency: discountCurrency.toUpperCase() == 'LBP' ? 'LBP' : 'USD',
+      discountCurrency: normalizeConfiguredCurrency(discountCurrency, baseCurrency),
       discountExchangeRateAtEntry: discountExchangeRateAtEntry,
       createdAt: now,
       updatedAt: now,
@@ -9461,6 +9519,7 @@ class AppStore extends ChangeNotifier {
     }
     if (wants('storeProfile')) {
       _storeProfile = profile;
+      AccountingService.configureMoneyPolicy(_storeProfile);
     }
     // Business Backup may contain an old Store/Branch identity. When this
     // device is already a paired Host, keep the current sync identity so
@@ -9923,6 +9982,7 @@ class AppStore extends ChangeNotifier {
       _storeProfile = StoreProfile.fromJson(
         Map<String, dynamic>.from(decoded['storeProfile'] as Map),
       );
+      AccountingService.configureMoneyPolicy(_storeProfile);
     }
     // Never overwrite the local device identity during LAN pull/merge.
     // The remote snapshot belongs to the Host, while this device must keep
@@ -10247,6 +10307,7 @@ class AppStore extends ChangeNotifier {
     if (!preserveLocalIdentityForLanClient) _syncQueue.addAll(syncQueue);
     if (wants('storeProfile')) {
       _storeProfile = profile;
+      AccountingService.configureMoneyPolicy(_storeProfile);
     }
     if (preserveLocalIdentityForLanClient) {
       _appIdentity = _identityForLanSnapshotImport(decoded);
@@ -11420,6 +11481,7 @@ class AppStore extends ChangeNotifier {
         break;
       case 'store_profile':
         _storeProfile = StoreProfile.fromJson(p);
+        AccountingService.configureMoneyPolicy(_storeProfile);
         break;
       case 'app_identity':
         if (change.entityId == _deviceId) {

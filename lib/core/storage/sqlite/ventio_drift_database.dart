@@ -393,6 +393,8 @@ class VentioDriftDatabase extends GeneratedDatabase {
     await customStatement('CREATE INDEX IF NOT EXISTS idx_cash_locations_account ON cash_locations(account_id);');
     await customStatement('CREATE INDEX IF NOT EXISTS idx_cash_locations_parent ON cash_locations(parent_id);');
     await customStatement('CREATE INDEX IF NOT EXISTS idx_cash_locations_store_branch ON cash_locations(store_id, branch_id);');
+    await _ensureColumn('cash_locations', 'device_id', "TEXT NOT NULL DEFAULT ''");
+    await customStatement('CREATE INDEX IF NOT EXISTS idx_cash_locations_device ON cash_locations(device_id, branch_id, type);');
 
     await customStatement(r'''
       CREATE TABLE IF NOT EXISTS cash_transfers (

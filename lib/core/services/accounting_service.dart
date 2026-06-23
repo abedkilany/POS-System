@@ -8,6 +8,8 @@ import '../../models/expense.dart';
 import '../../models/journal_entry.dart';
 import '../../models/purchase.dart';
 import '../../models/sale.dart';
+import '../../models/store_profile.dart';
+import '../utils/currency_utils.dart';
 import '../storage/sqlite/sqlite_migration_manager.dart';
 import '../storage/sqlite/ventio_drift_database.dart';
 
@@ -16,6 +18,12 @@ class AccountingService {
 
   static final Random _random = Random.secure();
   static bool get isAvailable => SqliteMigrationManager.database != null;
+  static StoreProfile _moneyProfile = StoreProfile.defaults;
+
+  static void configureMoneyPolicy(StoreProfile profile) {
+    _moneyProfile = profile;
+  }
+
 
   static VentioDriftDatabase get _db {
     final database = SqliteMigrationManager.database;
@@ -129,20 +137,37 @@ class AccountingService {
     if (sale.isDeleted || sale.isCancelled || sale.total <= 0) return;
     if (!isAvailable) return;
     final accounts = await readDefaultAccountMap();
-    final invoiceTotal = _cleanAmount(sale.invoiceTotal);
-    final saleTotal = _cleanAmount(sale.total);
+    final accountingCurrency = sale.invoiceCurrency.trim().isEmpty
+        ? _moneyProfile.baseCurrency
+        : sale.invoiceCurrency.trim().toUpperCase();
+    final rawInvoiceTotal = _cleanAmount(sale.invoiceTotal);
+    final rawSaleTotal = _cleanAmount(sale.total);
+    final saleTotal = _roundMoney(rawSaleTotal, currency: accountingCurrency);
     final tax = await _taxBreakdown(saleTotal);
-    final paidInInvoiceCurrency = _cleanAmount(sale.paidAmount.clamp(0, invoiceTotal).toDouble());
-    final paid = invoiceTotal <= 0
+    final paidInInvoiceCurrency =
+        _cleanAmount(sale.paidAmount.clamp(0, rawInvoiceTotal).toDouble());
+    final rawPaid = rawInvoiceTotal <= 0
         ? 0.0
-        : _cleanAmount(saleTotal * (paidInInvoiceCurrency / invoiceTotal));
-    final balance = _cleanAmount(saleTotal - paid);
-    final cogs = _cleanAmount(sale.items.fold<double>(0, (sum, item) => sum + item.lineCost));
+        : rawSaleTotal * (paidInInvoiceCurrency / rawInvoiceTotal);
+    final paid = min(
+      saleTotal,
+      _roundMoney(_cleanAmount(rawPaid), currency: accountingCurrency),
+    );
+    final balance =
+        _roundMoney(_cleanAmount(saleTotal - paid), currency: accountingCurrency);
+    final cogs = _roundMoney(
+      _cleanAmount(sale.items.fold<double>(0, (sum, item) => sum + item.lineCost)),
+      currency: accountingCurrency,
+    );
     final lines = <JournalLineDraft>[];
 
-    final cashSaleLocation = paid > 0 && _isCashPaymentMethod(sale.paymentMethod)
-        ? await _openCashDrawerLocationForBranch(sale.branchId)
+    final isCashSalePayment = paid > 0 && _isCashPaymentMethod(sale.paymentMethod);
+    final cashSaleLocation = isCashSalePayment
+        ? await _openCashDrawerLocationForDevice(deviceId: sale.deviceId, branchId: sale.branchId)
         : null;
+    if (isCashSalePayment && cashSaleLocation == null) {
+      throw StateError('لا توجد وردية نقدية مفتوحة لدرج هذا الجهاز. افتح وردية قبل قبول الدفع النقدي.');
+    }
     if (paid > 0) {
       lines.add(JournalLineDraft(
         accountId: cashSaleLocation?.accountId ?? await _paymentAccountId(accounts, sale.paymentMethod),
@@ -216,10 +241,19 @@ class AccountingService {
     if (purchase.isDeleted || purchase.isCancelled || purchase.subtotal <= 0) return;
     if (!isAvailable) return;
     final accounts = await readDefaultAccountMap();
-    final total = _cleanAmount(purchase.subtotal);
+    final accountingCurrency = _moneyProfile.baseCurrency;
+    final rawTotal = _cleanAmount(purchase.subtotal);
+    final total = _roundMoney(rawTotal, currency: accountingCurrency);
     final tax = await _taxBreakdown(total);
-    final paid = _cleanAmount(purchase.paidAmount.clamp(0, total).toDouble());
-    final balance = _cleanAmount(total - paid);
+    final paid = min(
+      total,
+      _roundMoney(
+        _cleanAmount(purchase.paidAmount.clamp(0, rawTotal).toDouble()),
+        currency: accountingCurrency,
+      ),
+    );
+    final balance =
+        _roundMoney(_cleanAmount(total - paid), currency: accountingCurrency);
     final lines = <JournalLineDraft>[
       JournalLineDraft(
         accountId: _requiredAccount(accounts, 'default_inventory_account_id'),
@@ -244,9 +278,13 @@ class AccountingService {
         partyName: purchase.supplierName,
       ));
     }
-    final cashPurchaseLocation = paid > 0 && _isCashPaymentMethod(purchase.paymentMethod)
-        ? await _openCashDrawerLocationForBranch(purchase.branchId)
+    final isCashPurchasePayment = paid > 0 && _isCashPaymentMethod(purchase.paymentMethod);
+    final cashPurchaseLocation = isCashPurchasePayment
+        ? await _openCashDrawerLocationForDevice(deviceId: purchase.deviceId, branchId: purchase.branchId)
         : null;
+    if (isCashPurchasePayment && cashPurchaseLocation == null) {
+      throw StateError('لا توجد وردية نقدية مفتوحة لدرج هذا الجهاز. افتح وردية قبل تسجيل دفع نقدي.');
+    }
     if (paid > 0) {
       lines.add(JournalLineDraft(
         accountId: cashPurchaseLocation?.accountId ?? await _paymentAccountId(accounts, purchase.paymentMethod),
@@ -289,7 +327,10 @@ class AccountingService {
     if (expense.isDeleted || !expense.isPosted || expense.amount <= 0) return;
     if (!isAvailable) return;
     final accounts = await readDefaultAccountMap();
-    final cashExpenseLocation = await _openCashDrawerLocationForBranch(expense.branchId);
+    final cashExpenseLocation = await _openCashDrawerLocationForDevice(deviceId: expense.deviceId, branchId: expense.branchId);
+    if (cashExpenseLocation == null) {
+      throw StateError('لا توجد وردية نقدية مفتوحة لدرج هذا الجهاز. افتح وردية قبل تسجيل مصروف نقدي.');
+    }
     final entryId = await createPostedEntry(JournalEntryDraft(
       entryDate: expense.date,
       referenceType: 'expense',
@@ -307,14 +348,14 @@ class AccountingService {
           memo: expense.category,
         ),
         JournalLineDraft(
-          accountId: cashExpenseLocation?.accountId ?? await _paymentAccountId(accounts, 'cash'),
+          accountId: cashExpenseLocation.accountId,
           debit: 0,
           credit: expense.amount,
           memo: 'دفعة مصروف',
         ),
       ],
     ));
-    if (entryId.isNotEmpty && cashExpenseLocation != null) {
+    if (entryId.isNotEmpty) {
       await _moveCashLocationBalance(cashExpenseLocation.id, -expense.amount, expense.date);
     }
   }
@@ -328,9 +369,13 @@ class AccountingService {
     if (!isCustomerPayment && !isSupplierPayment) return;
     final amount = _cleanAmount(isCustomerPayment ? transaction.credit : transaction.debit);
     if (amount <= 0) return;
-    final cashPaymentLocation = _isCashPaymentMethod(transaction.paymentMethod)
-        ? await _openCashDrawerLocationForBranch(transaction.branchId)
+    final isCashAccountPayment = _isCashPaymentMethod(transaction.paymentMethod);
+    final cashPaymentLocation = isCashAccountPayment
+        ? await _openCashDrawerLocationForDevice(deviceId: transaction.deviceId, branchId: transaction.branchId)
         : null;
+    if (isCashAccountPayment && cashPaymentLocation == null) {
+      throw StateError('لا توجد وردية نقدية مفتوحة لدرج هذا الجهاز. افتح وردية قبل تسجيل حركة نقدية.');
+    }
     final paymentAccount = cashPaymentLocation?.accountId ?? await _paymentAccountId(accounts, transaction.paymentMethod);
     final controlAccount = _requiredAccount(
       accounts,
@@ -1113,7 +1158,7 @@ class AccountingService {
       '''
       SELECT cl.id, cl.name, cl.type, cl.is_default, cl.is_active, cl.current_balance AS balance,
              cl.notes, a.code AS account_code, a.name AS account_name,
-             parent.name AS status
+             parent.name AS status, cl.device_id AS reference_id
       FROM cash_locations cl
       LEFT JOIN accounts a ON a.id = cl.account_id
       LEFT JOIN cash_locations parent ON parent.id = cl.parent_id
@@ -1122,6 +1167,13 @@ class AccountingService {
       ''',
     ).get();
     return rows.map((row) => AdvancedAccountingItem.fromRow(row.data)).toList();
+  }
+
+
+  static Future<bool> hasOpenCashDrawerForDevice({required String deviceId, String branchId = ''}) async {
+    if (!isAvailable) return true;
+    final drawer = await _openCashDrawerLocationForDevice(deviceId: deviceId, branchId: branchId);
+    return drawer != null;
   }
 
   static Future<bool> hasOpenCashDrawer({String branchId = '', String cashLocationId = ''}) async {
@@ -1170,7 +1222,7 @@ class AccountingService {
       '''
       SELECT cl.id, cl.name, cl.type, cl.is_default, cl.is_active, cl.current_balance AS balance,
              cl.notes, a.code AS account_code, a.name AS account_name,
-             parent.name AS status
+             parent.name AS status, cl.device_id AS reference_id
       FROM cash_locations cl
       LEFT JOIN accounts a ON a.id = cl.account_id
       LEFT JOIN cash_locations parent ON parent.id = cl.parent_id
@@ -1697,15 +1749,22 @@ class AccountingService {
     String openedBy = '',
     String storeId = '',
     String branchId = '',
+    String deviceId = '',
   }) async {
     if (!isAvailable) return;
     final now = DateTime.now().toUtc().toIso8601String();
     final resolvedLocationId = cashLocationId.trim().isEmpty
-        ? await _defaultCashLocationId(type: 'cash_drawer', branchId: branchId)
+        ? await _defaultCashLocationId(type: 'cash_drawer', branchId: branchId, deviceId: deviceId)
         : cashLocationId.trim();
     if (resolvedLocationId.trim().isEmpty) {
       throw StateError('لا يوجد درج نقد معرف لفتح وردية.');
     }
+    await _ensureCashDrawerDeviceBinding(
+      cashLocationId: resolvedLocationId,
+      deviceId: deviceId,
+      branchId: branchId,
+      updatedAt: now,
+    );
     if (await hasOpenCashDrawer(branchId: branchId, cashLocationId: resolvedLocationId)) {
       throw StateError('يوجد وردية مفتوحة بالفعل لهذا الدرج.');
     }
@@ -1985,6 +2044,7 @@ class AccountingService {
     String notes = '',
     String storeId = '',
     String branchId = '',
+    String deviceId = '',
     String createdBy = '',
   }) async {
     if (!isAvailable) return;
@@ -2018,8 +2078,8 @@ class AccountingService {
         '''
         INSERT INTO cash_locations
           (id, code, name, type, account_id, parent_id, payment_account_id, is_default, is_active,
-           allow_negative, current_balance, notes, created_at, updated_at, store_id, branch_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0, ?, ?, ?, ?, ?)
+           allow_negative, current_balance, notes, created_at, updated_at, store_id, branch_id, device_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0, ?, ?, ?, ?, ?, ?)
         ''',
         variables: <Variable<Object>>[
           Variable<String>(locationId),
@@ -2036,6 +2096,7 @@ class AccountingService {
           Variable<String>(now),
           Variable<String>(storeId),
           Variable<String>(branchId),
+          Variable<String>(deviceId.trim()),
         ],
       );
     });
@@ -2047,6 +2108,81 @@ class AccountingService {
       createdBy: createdBy,
       storeId: storeId,
       branchId: branchId,
+    );
+  }
+
+
+  static Future<void> linkCashDrawerToDevice({
+    required String cashLocationId,
+    required String deviceId,
+    String branchId = '',
+  }) async {
+    if (!isAvailable) return;
+    final cleanLocationId = cashLocationId.trim();
+    final cleanDeviceId = deviceId.trim();
+    final cleanBranchId = branchId.trim();
+    if (cleanLocationId.isEmpty) {
+      throw ArgumentError('درج النقدية مطلوب.');
+    }
+    if (cleanDeviceId.isEmpty) {
+      throw ArgumentError('معرّف الجهاز مطلوب.');
+    }
+    final now = DateTime.now().toUtc().toIso8601String();
+    final row = await _db.customSelect(
+      """
+      SELECT id, type, name
+      FROM cash_locations
+      WHERE id = ? AND deleted_at = '' AND is_active = 1
+      LIMIT 1
+      """,
+      variables: <Variable<Object>>[Variable<String>(cleanLocationId)],
+    ).getSingleOrNull();
+    if (row == null) throw StateError('درج النقدية غير موجود.');
+    if ((row.data['type']?.toString() ?? '') != 'cash_drawer') {
+      throw StateError('يمكن ربط أدراج النقد فقط بالأجهزة.');
+    }
+    await _db.transaction(() async {
+      await _db.customUpdate(
+        """
+        UPDATE cash_locations
+        SET device_id = '', updated_at = ?
+        WHERE device_id = ? AND id <> ? AND type = 'cash_drawer' AND deleted_at = ''
+        """,
+        variables: <Variable<Object>>[
+          Variable<String>(now),
+          Variable<String>(cleanDeviceId),
+          Variable<String>(cleanLocationId),
+        ],
+      );
+      await _db.customUpdate(
+        """
+        UPDATE cash_locations
+        SET device_id = ?,
+            branch_id = CASE WHEN ? <> '' THEN ? ELSE branch_id END,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        variables: <Variable<Object>>[
+          Variable<String>(cleanDeviceId),
+          Variable<String>(cleanBranchId),
+          Variable<String>(cleanBranchId),
+          Variable<String>(now),
+          Variable<String>(cleanLocationId),
+        ],
+      );
+    });
+  }
+
+  static Future<void> unlinkCashDrawerFromDevice({required String deviceId}) async {
+    if (!isAvailable) return;
+    final cleanDeviceId = deviceId.trim();
+    if (cleanDeviceId.isEmpty) return;
+    await _db.customUpdate(
+      "UPDATE cash_locations SET device_id = '', updated_at = ? WHERE device_id = ? AND type = 'cash_drawer' AND deleted_at = ''",
+      variables: <Variable<Object>>[
+        Variable<String>(DateTime.now().toUtc().toIso8601String()),
+        Variable<String>(cleanDeviceId),
+      ],
     );
   }
 
@@ -2388,7 +2524,84 @@ class AccountingService {
     return method.isEmpty || method == 'cash';
   }
 
-  static Future<_CashLocationSnapshot?> _openCashDrawerLocationForBranch(String branchId) async {
+
+  static Future<void> _ensureCashDrawerDeviceBinding({
+    required String cashLocationId,
+    required String deviceId,
+    required String branchId,
+    required String updatedAt,
+  }) async {
+    final cleanDeviceId = deviceId.trim();
+    if (cleanDeviceId.isEmpty) return;
+    final row = await _db.customSelect(
+      '''
+      SELECT id, type, device_id
+      FROM cash_locations
+      WHERE id = ? AND deleted_at = '' AND is_active = 1
+      LIMIT 1
+      ''',
+      variables: <Variable<Object>>[Variable<String>(cashLocationId.trim())],
+    ).getSingleOrNull();
+    if (row == null) throw StateError('درج النقد غير موجود.');
+    final type = row.data['type']?.toString() ?? '';
+    if (type != 'cash_drawer') return;
+    final existingDeviceId = row.data['device_id']?.toString().trim() ?? '';
+    if (existingDeviceId.isNotEmpty && existingDeviceId != cleanDeviceId) {
+      throw StateError('هذا الدرج مربوط بجهاز آخر ولا يمكن فتحه من الجهاز الحالي.');
+    }
+    if (existingDeviceId.isEmpty) {
+      await _db.customUpdate(
+        "UPDATE cash_locations SET device_id = ?, branch_id = CASE WHEN branch_id = '' THEN ? ELSE branch_id END, updated_at = ? WHERE id = ?",
+        variables: <Variable<Object>>[
+          Variable<String>(cleanDeviceId),
+          Variable<String>(branchId.trim()),
+          Variable<String>(updatedAt),
+          Variable<String>(cashLocationId.trim()),
+        ],
+      );
+    }
+  }
+
+  static Future<_CashLocationSnapshot?> _openCashDrawerLocationForDevice({
+    required String deviceId,
+    String branchId = '',
+  }) async {
+    final cleanDeviceId = deviceId.trim();
+    if (cleanDeviceId.isEmpty) {
+      return _openCashDrawerLocationFallback(branchId);
+    }
+    final branchFilter = branchId.trim().isEmpty ? '' : 'AND cds.branch_id = ?';
+    final row = await _db.customSelect(
+      '''
+      SELECT cl.id, cl.name, cl.type, cl.account_id, cl.allow_negative
+      FROM cash_drawer_sessions cds
+      INNER JOIN cash_locations cl ON cl.id = cds.cash_location_id
+      WHERE cds.status = 'open'
+        AND cl.deleted_at = ''
+        AND cl.is_active = 1
+        AND cl.type = 'cash_drawer'
+        AND cl.device_id = ?
+        $branchFilter
+      ORDER BY cds.opened_at DESC
+      LIMIT 1
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(cleanDeviceId),
+        if (branchId.trim().isNotEmpty) Variable<String>(branchId.trim()),
+      ],
+    ).getSingleOrNull();
+    if (row == null) return null;
+    final data = row.data;
+    return _CashLocationSnapshot(
+      id: data['id']?.toString() ?? '',
+      name: data['name']?.toString() ?? '',
+      type: data['type']?.toString() ?? '',
+      accountId: data['account_id']?.toString() ?? '',
+      allowNegative: _num(data['allow_negative']) != 0,
+    );
+  }
+
+  static Future<_CashLocationSnapshot?> _openCashDrawerLocationFallback(String branchId) async {
     final branchFilter = branchId.trim().isEmpty ? '' : 'AND cds.branch_id = ?';
     final row = await _db.customSelect(
       '''
@@ -2474,9 +2687,31 @@ class AccountingService {
     );
   }
 
-  static Future<String> _defaultCashLocationId({required String type, String branchId = ''}) async {
-    final branchFilter = branchId.trim().isEmpty ? '' : 'AND branch_id = ?';
-    final rows = await _db.customSelect(
+  static Future<String> _defaultCashLocationId({required String type, String branchId = '', String deviceId = ''}) async {
+    final normalizedType = _normalizeCashLocationType(type);
+    final cleanBranchId = branchId.trim();
+    final cleanDeviceId = deviceId.trim();
+    if (cleanDeviceId.isNotEmpty) {
+      final branchFilter = cleanBranchId.isEmpty ? '' : 'AND branch_id = ?';
+      final deviceRow = await _db.customSelect(
+        '''
+        SELECT id
+        FROM cash_locations
+        WHERE deleted_at = '' AND is_active = 1 AND type = ? AND device_id = ? $branchFilter
+        ORDER BY is_default DESC, code ASC
+        LIMIT 1
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(normalizedType),
+          Variable<String>(cleanDeviceId),
+          if (cleanBranchId.isNotEmpty) Variable<String>(cleanBranchId),
+        ],
+      ).getSingleOrNull();
+      final deviceIdResult = deviceRow?.data['id']?.toString() ?? '';
+      if (deviceIdResult.isNotEmpty) return deviceIdResult;
+    }
+    final branchFilter = cleanBranchId.isEmpty ? '' : 'AND branch_id = ?';
+    final row = await _db.customSelect(
       '''
       SELECT id
       FROM cash_locations
@@ -2485,11 +2720,12 @@ class AccountingService {
       LIMIT 1
       ''',
       variables: <Variable<Object>>[
-        Variable<String>(_normalizeCashLocationType(type)),
-        if (branchId.trim().isNotEmpty) Variable<String>(branchId.trim()),
+        Variable<String>(normalizedType),
+        if (cleanBranchId.isNotEmpty) Variable<String>(cleanBranchId),
       ],
     ).getSingleOrNull();
-    if (rows != null) return rows.data['id']?.toString() ?? '';
+    final branchResult = row?.data['id']?.toString() ?? '';
+    if (branchResult.isNotEmpty) return branchResult;
     final fallback = await _db.customSelect(
       '''
       SELECT id
@@ -2498,7 +2734,7 @@ class AccountingService {
       ORDER BY is_default DESC, code ASC
       LIMIT 1
       ''',
-      variables: <Variable<Object>>[Variable<String>(_normalizeCashLocationType(type))],
+      variables: <Variable<Object>>[Variable<String>(normalizedType)],
     ).getSingleOrNull();
     return fallback?.data['id']?.toString() ?? '';
   }
@@ -2671,7 +2907,12 @@ class AccountingService {
     return double.tryParse(value?.toString() ?? '') ?? 0;
   }
 
-  static double _roundMoney(double value) => (value * 100).roundToDouble() / 100;
+  static double _roundMoney(double value, {String? currency}) =>
+      normalizeAccountingAmount(
+        value,
+        currency ?? _moneyProfile.baseCurrency,
+        _moneyProfile,
+      );
 
   static String _newId(String prefix) =>
       '${prefix}_${DateTime.now().toUtc().microsecondsSinceEpoch}_${_random.nextInt(1 << 32)}';
@@ -2705,6 +2946,7 @@ class AdvancedAccountingItem {
     this.accountCode = '',
     this.accountName = '',
     this.status = '',
+    this.referenceId = '',
     this.notes = '',
     this.debit = 0,
     this.credit = 0,
@@ -2719,6 +2961,7 @@ class AdvancedAccountingItem {
   final String accountCode;
   final String accountName;
   final String status;
+  final String referenceId;
   final String notes;
   final double debit;
   final double credit;
@@ -2743,6 +2986,7 @@ class AdvancedAccountingItem {
       accountCode: row['account_code']?.toString() ?? '',
       accountName: row['account_name']?.toString() ?? '',
       status: row['status']?.toString() ?? '',
+      referenceId: row['reference_id']?.toString() ?? '',
       notes: row['notes']?.toString() ?? '',
       debit: toDouble(row['debit']),
       credit: toDouble(row['credit']),
