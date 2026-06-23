@@ -5,6 +5,7 @@ import '../../core/localization/app_localizations.dart';
 import '../../core/services/account_auth_service.dart';
 import '../../core/services/cloud_sync_service.dart';
 import '../../core/services/sync_diagnostics_log.dart';
+import '../../core/services/windows_release_catalog.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/sync_unified/sync_unified.dart';
 import '../../data/app_store.dart';
@@ -659,6 +660,108 @@ class _LoginGatePageState extends State<LoginGatePage> {
     }
   }
 
+
+  String _formatBytes(int bytes) {
+    if (bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    var size = bytes.toDouble();
+    var unitIndex = 0;
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024;
+      unitIndex += 1;
+    }
+    return '${size.toStringAsFixed(size >= 10 || unitIndex == 0 ? 0 : 1)} ${units[unitIndex]}';
+  }
+
+  String _formatDateTime(DateTime value) {
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${two(value.day)}/${two(value.month)}/${value.year} ${two(value.hour)}:${two(value.minute)}';
+  }
+
+  String _releaseSubtitle(AppLocalizations tr, WindowsReleaseItem item) {
+    final parts = <String>[];
+    if (item.version != null && item.version!.isNotEmpty) {
+      final build = item.build == null ? '' : ' build ${item.build}';
+      parts.add('${tr.text('version')}: ${item.version}$build');
+    }
+    final sizeBytes = item.sizeBytes;
+    if (sizeBytes != null && sizeBytes > 0) parts.add(_formatBytes(sizeBytes));
+    if (item.publishedAt != null) parts.add(_formatDateTime(item.publishedAt!));
+    return parts.isEmpty ? item.name : parts.join(' • ');
+  }
+
+  Future<void> _showWindowsInstallerReleases() async {
+    final tr = AppLocalizations.of(context);
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Text(tr.text('windows_installer_versions')),
+        content: const SizedBox(
+          width: 360,
+          child: Center(
+            heightFactor: 1.5,
+            child: CircularProgressIndicator(),
+          ),
+        ),
+      ),
+    );
+
+    List<WindowsReleaseItem> releases;
+    Object? error;
+    try {
+      releases = await WindowsReleaseCatalogService().fetchReleases();
+    } catch (e) {
+      releases = const <WindowsReleaseItem>[];
+      error = e;
+    }
+    if (!mounted) return;
+    Navigator.of(context, rootNavigator: true).pop();
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(tr.text('windows_installer_versions')),
+        content: SizedBox(
+          width: 520,
+          child: releases.isEmpty
+              ? Text(error == null
+                  ? tr.text('no_windows_installers_found')
+                  : tr.text('could_not_load_windows_installers'))
+              : ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 420),
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: releases.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final item = releases[index];
+                      return ListTile(
+                        leading: const Icon(Icons.download_for_offline_outlined),
+                        title: Text(item.name),
+                        subtitle: Text(_releaseSubtitle(tr, item)),
+                        trailing: FilledButton.icon(
+                          onPressed: () {
+                            WindowsReleaseCatalogService().download(item);
+                          },
+                          icon: const Icon(Icons.download_outlined),
+                          label: Text(tr.text('download')),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(tr.text('close')),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final authCache = AccountAuthCache.load();
@@ -768,6 +871,21 @@ class _LoginGatePageState extends State<LoginGatePage> {
     }
 
     return Scaffold(
+      bottomNavigationBar: kIsWeb
+          ? SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                child: Center(
+                  heightFactor: 1,
+                  child: TextButton.icon(
+                    onPressed: _showWindowsInstallerReleases,
+                    icon: const Icon(Icons.download_for_offline_outlined),
+                    label: Text(tr.text('windows_installer_versions')),
+                  ),
+                ),
+              ),
+            )
+          : null,
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(

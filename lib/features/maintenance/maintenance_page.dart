@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/services/backup_download_service.dart';
@@ -440,12 +439,11 @@ class _MaintenancePageState extends State<MaintenancePage> {
               icon: const Icon(Icons.storage_outlined),
               label: Text(tr.text('database_explorer')),
             ),
-            if (kIsWeb)
-              OutlinedButton.icon(
-                onPressed: _showWindowsInstallerReleases,
-                icon: const Icon(Icons.download_for_offline_outlined),
-                label: Text(tr.text('windows_installer_versions')),
-              ),
+            OutlinedButton.icon(
+              onPressed: _showWindowsInstallerReleases,
+              icon: const Icon(Icons.download_for_offline_outlined),
+              label: Text(tr.text('windows_installer_versions')),
+            ),
             if (availableRepairActions
                 .contains(MaintenanceRepairAction.repairMissingCloudQueue))
               OutlinedButton.icon(
