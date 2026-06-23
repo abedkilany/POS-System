@@ -524,7 +524,6 @@
   "convert_to_sale": "تحويل إلى بيع",
   "converted": "محول",
   "copied_log_lines": "تم نسخ {count} سطر من السجل",
-  "copied_sync_log_lines": "تم نسخ {count} سطر/أسطر من سجل المزامنة.",
   "copied_to_clipboard": "تم النسخ إلى الحافظة.",
   "copy_backup_json": "نسخ JSON الاحتياطي",
   "copy_barcode": "نسخ الباركود",
@@ -1048,7 +1047,6 @@
   "liability": "التزامات",
   "linked_cash_drawer": "درج النقدية المرتبط",
   "list_tables": "عرض الجداول",
-  "live_host_client_sync_trace": "تتبع مزامنة الهوست/العميل المباشر لهذا الجهاز.",
   "local": "محلي",
   "local_backup": "النسخ المحلي",
   "local_db_sqlite": "قاعدة البيانات المحلية: SQLite",
@@ -1264,7 +1262,6 @@
   "no_suppliers": "لا يوجد موردون بعد",
   "no_suppliers_desc": "أضف الموردين لاستخدامهم في الشراء والمتابعة.",
   "no_suppliers_found": "لا يوجد موردون مطابقون",
-  "no_sync_diagnostics_yet": "لا توجد تشخيصات مزامنة بعد. أجرِ تغييراً على الهوست أو العميل ثم راقب هذه اللوحة.",
   "no_sync_mode_enabled": "لا يوجد نظام مزامنة مفعّل.",
   "no_sync_settings_pending_found": "لم يتم العثور على تغييرات معلّقة غير صالحة خاصة بإعدادات المزامنة.",
   "no_trial_date": "لا يوجد تاريخ تجريبي",
@@ -1886,7 +1883,6 @@
   "technical_report": "التقرير التقني",
   "technical_report_desc": "ملف JSON هذا مخصص للمطور/الدعم. الملخص المقروء أعلاه مخصص للصيانة اليومية.",
   "technical_report_saved": "تم حفظ التقرير التقني",
-  "temporary_sync_diagnostics": "تشخيص مزامنة مؤقت",
   "tenant_id_label": "معرف المستأجر",
   "test_api": "اختبار API",
   "test_cloud_connection": "اختبار الاتصال السحابي",
@@ -2026,5 +2022,10 @@
   "cash_rounding_method": "طريقة التدوير النقدي",
   "cash_rounding_nearest": "الأقرب",
   "cash_rounding_up": "للأعلى",
-  "cash_rounding_down": "للأسفل"
+  "cash_rounding_down": "للأسفل",
+  "windows_installer_versions": "نسخ مثبت ويندوز",
+  "no_windows_installers_found": "لا توجد نسخ مثبت ويندوز داخل releases/windows.",
+  "could_not_load_windows_installers": "تعذر تحميل نسخ مثبت ويندوز.",
+  "download": "تحميل",
+  "version": "الإصدار"
 }

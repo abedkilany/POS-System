@@ -488,7 +488,6 @@
   "convert_to_sale": "Convert to sale",
   "converted": "Converted",
   "copied_log_lines": "Copied {count} log lines",
-  "copied_sync_log_lines": "Copied {count} sync log line(s).",
   "copied_to_clipboard": "Copied to clipboard.",
   "copy_backup_json": "Copy Backup JSON",
   "copy_barcode": "Copy barcode",
@@ -1008,7 +1007,6 @@
   "liabilities_equity": "Liabilities + Equity",
   "linked_cash_drawer": "Linked cash drawer",
   "list_tables": "List tables",
-  "live_host_client_sync_trace": "Live Host/Client sync trace for this device.",
   "local": "Local",
   "local_backup": "Local backup",
   "local_db_sqlite": "Local DB: SQLite",
@@ -1221,7 +1219,6 @@
   "no_suppliers": "No suppliers yet",
   "no_suppliers_desc": "Add supplier records for purchasing and follow-up.",
   "no_suppliers_found": "No suppliers found",
-  "no_sync_diagnostics_yet": "No sync diagnostics yet. Add a change on Host or Client, then watch this panel.",
   "no_sync_mode_enabled": "No sync mode is enabled.",
   "no_sync_settings_pending_found": "No invalid Sync settings pending changes were found.",
   "no_trial_date": "No trial date",
@@ -1827,7 +1824,6 @@
   "technical_report": "Technical report",
   "technical_report_desc": "This JSON is for developer/support use. The readable summary above is for daily maintenance.",
   "technical_report_saved": "Technical report saved",
-  "temporary_sync_diagnostics": "Temporary Sync Diagnostics",
   "tenant_id_label": "Tenant ID",
   "test_api": "Test API",
   "test_cloud_connection": "Test Cloud Connection",
@@ -1966,5 +1962,10 @@
   "cash_rounding_method": "Cash rounding method",
   "cash_rounding_nearest": "Nearest",
   "cash_rounding_up": "Up",
-  "cash_rounding_down": "Down"
+  "cash_rounding_down": "Down",
+  "windows_installer_versions": "Windows installer versions",
+  "no_windows_installers_found": "No Windows installer versions were found in releases/windows.",
+  "could_not_load_windows_installers": "Could not load the Windows installer versions.",
+  "download": "Download",
+  "version": "Version"
 }

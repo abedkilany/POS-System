@@ -1,8 +1,8 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../core/services/backup_download_service.dart';
-import '../../core/services/sync_diagnostics_log.dart';
+import '../../core/services/windows_release_catalog.dart';
 import '../../data/app_store.dart';
 import '../../core/localization/app_localizations.dart';
 import '../database/database_page.dart';
@@ -60,6 +60,96 @@ class _MaintenancePageState extends State<MaintenancePage> {
   String _formatDateTime(DateTime value) {
     String two(int n) => n.toString().padLeft(2, '0');
     return '${two(value.day)}/${two(value.month)}/${value.year} ${two(value.hour)}:${two(value.minute)}';
+  }
+
+
+  String _formatReleaseSize(int? bytes) {
+    if (bytes == null || bytes <= 0) return '';
+    return _formatBytes(bytes);
+  }
+
+  String _releaseSubtitle(AppLocalizations tr, WindowsReleaseItem item) {
+    final parts = <String>[];
+    if (item.version != null && item.version!.isNotEmpty) {
+      final build = item.build == null ? '' : ' build ${item.build}';
+      parts.add('${tr.text('version')}: ${item.version}$build');
+    }
+    final size = _formatReleaseSize(item.sizeBytes);
+    if (size.isNotEmpty) parts.add(size);
+    if (item.publishedAt != null) parts.add(_formatDateTime(item.publishedAt!));
+    return parts.isEmpty ? item.name : parts.join(' • ');
+  }
+
+  Future<void> _showWindowsInstallerReleases() async {
+    final tr = AppLocalizations.of(context);
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Text(tr.text('windows_installer_versions')),
+        content: const SizedBox(
+          width: 360,
+          child: Center(
+            heightFactor: 1.5,
+            child: CircularProgressIndicator(),
+          ),
+        ),
+      ),
+    );
+
+    List<WindowsReleaseItem> releases;
+    Object? error;
+    try {
+      releases = await WindowsReleaseCatalogService().fetchReleases();
+    } catch (e) {
+      releases = const <WindowsReleaseItem>[];
+      error = e;
+    }
+    if (!mounted) return;
+    Navigator.of(context, rootNavigator: true).pop();
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(tr.text('windows_installer_versions')),
+        content: SizedBox(
+          width: 520,
+          child: releases.isEmpty
+              ? Text(error == null
+                  ? tr.text('no_windows_installers_found')
+                  : tr.text('could_not_load_windows_installers'))
+              : ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 420),
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: releases.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final item = releases[index];
+                      return ListTile(
+                        leading: const Icon(Icons.download_for_offline_outlined),
+                        title: Text(item.name),
+                        subtitle: Text(_releaseSubtitle(tr, item)),
+                        trailing: FilledButton.icon(
+                          onPressed: () {
+                            WindowsReleaseCatalogService().download(item);
+                          },
+                          icon: const Icon(Icons.download_outlined),
+                          label: Text(tr.text('download')),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(tr.text('close')),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _exportDiagnosticReport() async {
@@ -213,7 +303,7 @@ class _MaintenancePageState extends State<MaintenancePage> {
           const SizedBox(height: 16),
           _buildMaintenanceActionsCard(tr, summary, availableRepairActions),
           const SizedBox(height: 16),
-          _SyncDiagnosticsLogCard(store: widget.store),
+          
           const SizedBox(height: 16),
           if (_loading)
             const LinearProgressIndicator()
@@ -350,6 +440,12 @@ class _MaintenancePageState extends State<MaintenancePage> {
               icon: const Icon(Icons.storage_outlined),
               label: Text(tr.text('database_explorer')),
             ),
+            if (kIsWeb)
+              OutlinedButton.icon(
+                onPressed: _showWindowsInstallerReleases,
+                icon: const Icon(Icons.download_for_offline_outlined),
+                label: Text(tr.text('windows_installer_versions')),
+              ),
             if (availableRepairActions
                 .contains(MaintenanceRepairAction.repairMissingCloudQueue))
               OutlinedButton.icon(
@@ -393,152 +489,6 @@ class _MaintenancePageState extends State<MaintenancePage> {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _SyncDiagnosticsLogCard extends StatelessWidget {
-  const _SyncDiagnosticsLogCard({required this.store});
-
-  final AppStore store;
-
-  Future<void> _copy(BuildContext context, List<String> lines) async {
-    final tr = AppLocalizations.of(context);
-    final identity = store.appIdentity;
-    final header = [
-      'SYNC DIAGNOSTICS',
-      'device=${store.deviceId}',
-      'role=${identity.deviceRole.name}',
-      'store=${identity.storeId}',
-      'branch=${identity.branchId}',
-      'transport=${identity.activeSyncTransportNormalized}',
-      'customers=${store.customers.length}',
-      'customerNames=${store.customers.map((item) => item.name).join(',')}',
-      'pendingQueue=${store.pendingSyncQueue.length}',
-      'pendingChanges=${store.pendingSyncChanges.length}',
-      '',
-    ].join('\n');
-    await Clipboard.setData(ClipboardData(text: '$header${lines.join('\n')}'));
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(tr.format('copied_sync_log_lines', {'count': lines.length}))),
-    );
-  }
-
-  void _snapshot() {
-    final identity = store.appIdentity;
-    SyncDiagnosticsLog.add(
-      'MANUAL_SNAPSHOT role=${identity.deviceRole.name} device=${store.deviceId} '
-      'store=${identity.storeId} branch=${identity.branchId} '
-      'transport=${identity.activeSyncTransportNormalized} '
-      'customers=${store.customers.length} '
-      'customerNames=${store.customers.map((item) => item.name).join(',')} '
-      'pendingQueue=${store.pendingSyncQueue.length} '
-      'pendingChanges=${store.pendingSyncChanges.length}',
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final color = Theme.of(context).colorScheme;
-    final tr = AppLocalizations.of(context);
-    return ValueListenableBuilder<List<String>>(
-      valueListenable: SyncDiagnosticsLog.lines,
-      builder: (context, lines, _) {
-        final latest = lines.reversed.take(220).toList().reversed.toList();
-        return Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    const Icon(Icons.manage_search_outlined),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            tr.text('temporary_sync_diagnostics'),
-                            style: Theme.of(context)
-                                .textTheme
-                                .titleMedium
-                                ?.copyWith(fontWeight: FontWeight.w800),
-                          ),
-                          Text(
-                            tr.text('live_host_client_sync_trace'),
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodySmall
-                                ?.copyWith(color: color.onSurfaceVariant),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Text('${lines.length}'),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    OutlinedButton.icon(
-                      onPressed:
-                          lines.isEmpty ? null : () => _copy(context, lines),
-                      icon: const Icon(Icons.copy_outlined),
-                      label: Text(tr.text('copy_log')),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed: _snapshot,
-                      icon: const Icon(Icons.add_chart_outlined),
-                      label: Text(tr.text('add_snapshot')),
-                    ),
-                    OutlinedButton.icon(
-                      onPressed:
-                          lines.isEmpty ? null : SyncDiagnosticsLog.clear,
-                      icon: const Icon(Icons.clear_all_outlined),
-                      label: Text(tr.text('clear_log')),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Container(
-                  constraints:
-                      const BoxConstraints(minHeight: 160, maxHeight: 360),
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color:
-                        color.surfaceContainerHighest.withValues(alpha: 0.45),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: color.outlineVariant),
-                  ),
-                  child: latest.isEmpty
-                      ? Text(
-                          tr.text('no_sync_diagnostics_yet'),
-                          style: Theme.of(context)
-                              .textTheme
-                              .bodyMedium
-                              ?.copyWith(color: color.onSurfaceVariant),
-                        )
-                      : SingleChildScrollView(
-                          reverse: true,
-                          child: SelectableText(
-                            latest.join('\n'),
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodySmall
-                                ?.copyWith(fontFamily: 'monospace'),
-                          ),
-                        ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
     );
   }
 }
