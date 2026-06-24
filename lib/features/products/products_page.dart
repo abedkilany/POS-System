@@ -54,18 +54,13 @@ class _ProductsPageState extends State<ProductsPage> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final products = _filteredProducts(widget.store.products);
+    final allProducts = widget.store.products;
+    final products = _filteredProducts(allProducts);
     final categories = <String>{
       'All',
-      ...widget.store.products
-          .map((p) => p.category)
-          .where((e) => e.trim().isNotEmpty)
+      ...allProducts.map((p) => p.category).where((e) => e.trim().isNotEmpty)
     }.toList()
       ..sort();
-    final productRows = products
-        .map((product) => _ProductRowData.fromStore(
-            product, widget.store, widget.store.storeProfile, tr))
-        .toList(growable: false);
 
     return Padding(
       padding: VentioResponsive.pageInsets(context),
@@ -151,7 +146,7 @@ class _ProductsPageState extends State<ProductsPage> {
           ),
           const SizedBox(height: 16),
           Expanded(
-            child: productRows.isEmpty
+            child: products.isEmpty
                 ? EmptyStateCard(
                     icon: Icons.inventory_2_outlined,
                     title: tr.text('no_products'),
@@ -162,9 +157,15 @@ class _ProductsPageState extends State<ProductsPage> {
                           constraints.maxWidth < 620 ? 158.0 : 94.0;
                       return ListView.builder(
                         itemExtent: rowExtent,
-                        itemCount: productRows.length,
+                        itemCount: products.length,
                         itemBuilder: (context, index) {
-                          final row = productRows[index];
+                          final product = products[index];
+                          final row = _ProductRowData.fromStore(
+                            product,
+                            widget.store,
+                            widget.store.storeProfile,
+                            tr,
+                          );
                           return Padding(
                             padding: const EdgeInsets.only(bottom: 10),
                             child: _ProductTile(
@@ -191,7 +192,7 @@ class _ProductsPageState extends State<ProductsPage> {
 
   List<Product> _filteredProducts(List<Product> source) {
     final value = query.trim().toLowerCase();
-    return source.where((product) {
+    final filtered = source.where((product) {
       final matchesQuery = value.isEmpty ||
           product.name.toLowerCase().contains(value) ||
           product.nameEn.toLowerCase().contains(value) ||
@@ -208,8 +209,10 @@ class _ProductsPageState extends State<ProductsPage> {
       final matchesCategory =
           categoryFilter == 'All' || product.category == categoryFilter;
       return matchesQuery && matchesCategory;
-    }).toList()
-      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    }).toList(growable: false);
+    filtered
+        .sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    return filtered;
   }
 
   Future<void> _deleteProduct(BuildContext context, Product product) async {
@@ -568,8 +571,7 @@ class _ProductDialogState extends State<_ProductDialog> {
         ? <_CurrencyPriceOverrideDraft>[]
         : widget.store.productPriceOverrides
             .where((item) =>
-                item.productPriceId == defaultProductPrice.id &&
-                item.isActive)
+                item.productPriceId == defaultProductPrice.id && item.isActive)
             .map(_CurrencyPriceOverrideDraft.fromOverride)
             .toList();
     priceCurrency = defaultProductPrice?.baseCurrencyCode ??
@@ -788,7 +790,8 @@ class _ProductDialogState extends State<_ProductDialog> {
                     _CurrencyPriceOverridesEditor(
                       drafts: priceOverrideDrafts,
                       baseCurrencyCode: priceCurrency,
-                      availableCurrencyCodes: widget.store.storeProfile.currencies
+                      availableCurrencyCodes: widget
+                          .store.storeProfile.currencies
                           .map((item) => item.code)
                           .toList(growable: false),
                       onChanged: (items) =>
@@ -930,7 +933,8 @@ class _ProductDialogState extends State<_ProductDialog> {
       context,
       _ProductFormResult(
         addToQuickProducts: addToQuickProducts,
-        priceSave: () => _saveProductPriceDrafts(_productId, originalPrice, priceCurrency),
+        priceSave: () =>
+            _saveProductPriceDrafts(_productId, originalPrice, priceCurrency),
         supplierPriceSave: () => _saveSupplierPriceDrafts(_productId),
         product: Product(
           id: _productId,
@@ -983,7 +987,8 @@ class _ProductDialogState extends State<_ProductDialog> {
     );
   }
 
-  Future<void> _saveProductPriceDrafts(String productId, double amount, String currencyCode) async {
+  Future<void> _saveProductPriceDrafts(
+      String productId, double amount, String currencyCode) async {
     final previousBasePrice = widget.store.defaultProductPriceFor(productId);
     await widget.store.setDefaultProductBasePrice(
       productId: productId,
@@ -1011,18 +1016,22 @@ class _ProductDialogState extends State<_ProductDialog> {
         );
       }
       final existingOverridePriceIds = <String>{basePrice.id};
-      if (previousBasePrice != null) existingOverridePriceIds.add(previousBasePrice.id);
+      if (previousBasePrice != null)
+        existingOverridePriceIds.add(previousBasePrice.id);
       for (final item in widget.store.productPriceOverrides) {
         if (existingOverridePriceIds.contains(item.productPriceId) &&
             item.isActive &&
             !activeCurrencies.contains(item.currencyCode)) {
-          await widget.store.removeProductPriceOverride(item.productPriceId, item.currencyCode);
+          await widget.store.removeProductPriceOverride(
+              item.productPriceId, item.currencyCode);
         }
       }
     }
     for (final draft in saleUnitDrafts) {
       final unit = draft.toSaleUnit(widget.store.storeProfile);
-      if (unit.id.trim().isEmpty || unit.name.trim().isEmpty || unit.conversionToBase <= 0) continue;
+      if (unit.id.trim().isEmpty ||
+          unit.name.trim().isEmpty ||
+          unit.conversionToBase <= 0) continue;
       await widget.store.setDefaultProductBasePrice(
         productId: productId,
         unitId: unit.id,
@@ -1126,7 +1135,6 @@ class _ProductDialogState extends State<_ProductDialog> {
   }
 }
 
-
 class _CurrencyPriceOverrideDraft {
   const _CurrencyPriceOverrideDraft({
     required this.currencyCode,
@@ -1136,14 +1144,16 @@ class _CurrencyPriceOverrideDraft {
   final String currencyCode;
   final String amountText;
 
-  factory _CurrencyPriceOverrideDraft.fromOverride(ProductPriceOverride override) {
+  factory _CurrencyPriceOverrideDraft.fromOverride(
+      ProductPriceOverride override) {
     return _CurrencyPriceOverrideDraft(
       currencyCode: override.currencyCode,
       amountText: override.amount.toString(),
     );
   }
 
-  _CurrencyPriceOverrideDraft copyWith({String? currencyCode, String? amountText}) {
+  _CurrencyPriceOverrideDraft copyWith(
+      {String? currencyCode, String? amountText}) {
     return _CurrencyPriceOverrideDraft(
       currencyCode: currencyCode ?? this.currencyCode,
       amountText: amountText ?? this.amountText,
@@ -1168,13 +1178,15 @@ class _CurrencyPriceOverridesEditor extends StatelessWidget {
   Widget build(BuildContext context) {
     final baseCurrency = baseCurrencyCode.trim().toUpperCase();
     final currencies = <String>{
-      ...availableCurrencyCodes.map((item) => item.trim().toUpperCase()).where((item) => item.isNotEmpty),
+      ...availableCurrencyCodes
+          .map((item) => item.trim().toUpperCase())
+          .where((item) => item.isNotEmpty),
       'USD',
       'LBP',
     }.where((item) => item != baseCurrency).toList()
       ..sort();
-    final canAdd = currencies.any((currency) =>
-        !drafts.any((draft) => draft.currencyCode.trim().toUpperCase() == currency));
+    final canAdd = currencies.any((currency) => !drafts
+        .any((draft) => draft.currencyCode.trim().toUpperCase() == currency));
 
     return Container(
       width: double.infinity,
@@ -1230,13 +1242,16 @@ class _CurrencyPriceOverridesEditor extends StatelessWidget {
               final draft = entry.value;
               final selectedCurrency = currencies.contains(draft.currencyCode)
                   ? draft.currencyCode
-                  : (currencies.isNotEmpty ? currencies.first : draft.currencyCode);
+                  : (currencies.isNotEmpty
+                      ? currencies.first
+                      : draft.currencyCode);
               final rowCurrencies = <String>{
                 selectedCurrency,
                 ...currencies.where((currency) => !drafts.asMap().entries.any(
                       (other) =>
                           other.key != index &&
-                          other.value.currencyCode.trim().toUpperCase() == currency,
+                          other.value.currencyCode.trim().toUpperCase() ==
+                              currency,
                     )),
               }.toList()
                 ..sort();
@@ -1248,26 +1263,32 @@ class _CurrencyPriceOverridesEditor extends StatelessWidget {
                       width: 116,
                       child: DropdownButtonFormField<String>(
                         initialValue: selectedCurrency,
-                        decoration: const InputDecoration(labelText: 'Currency'),
+                        decoration:
+                            const InputDecoration(labelText: 'Currency'),
                         items: rowCurrencies
                             .map((currency) => DropdownMenuItem(
                                   value: currency,
                                   child: Text(currency),
                                 ))
                             .toList(),
-                        onChanged: (value) => _update(index,
-                            draft.copyWith(currencyCode: value ?? selectedCurrency)),
+                        onChanged: (value) => _update(
+                            index,
+                            draft.copyWith(
+                                currencyCode: value ?? selectedCurrency)),
                       ),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: TextFormField(
                         initialValue: draft.amountText,
-                        decoration: const InputDecoration(labelText: 'Fixed price'),
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        decoration:
+                            const InputDecoration(labelText: 'Fixed price'),
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
                         validator: (value) {
                           final amount = double.tryParse((value ?? '').trim());
-                          if (amount == null || amount < 0) return 'Invalid number';
+                          if (amount == null || amount < 0)
+                            return 'Invalid number';
                           return null;
                         },
                         onChanged: (value) =>
@@ -1290,8 +1311,12 @@ class _CurrencyPriceOverridesEditor extends StatelessWidget {
 
   void _addOverride(List<String> currencies) {
     for (final currency in currencies) {
-      if (!drafts.any((draft) => draft.currencyCode.trim().toUpperCase() == currency)) {
-        onChanged([...drafts, _CurrencyPriceOverrideDraft(currencyCode: currency, amountText: '')]);
+      if (!drafts.any(
+          (draft) => draft.currencyCode.trim().toUpperCase() == currency)) {
+        onChanged([
+          ...drafts,
+          _CurrencyPriceOverrideDraft(currencyCode: currency, amountText: '')
+        ]);
         return;
       }
     }
@@ -1299,12 +1324,14 @@ class _CurrencyPriceOverridesEditor extends StatelessWidget {
 
   void _update(int index, _CurrencyPriceOverrideDraft draft) {
     final next = List<_CurrencyPriceOverrideDraft>.from(drafts);
-    next[index] = draft.copyWith(currencyCode: draft.currencyCode.trim().toUpperCase());
+    next[index] =
+        draft.copyWith(currencyCode: draft.currencyCode.trim().toUpperCase());
     onChanged(next);
   }
 
   void _remove(int index) {
-    final next = List<_CurrencyPriceOverrideDraft>.from(drafts)..removeAt(index);
+    final next = List<_CurrencyPriceOverrideDraft>.from(drafts)
+      ..removeAt(index);
     onChanged(next);
   }
 }
@@ -2400,7 +2427,8 @@ class _CatalogManagerDialogState extends State<_CatalogManagerDialog> {
     await _saveItem(result);
   }
 
-  bool get _supportsDelete => widget.type == 'category' || widget.type == 'unit';
+  bool get _supportsDelete =>
+      widget.type == 'category' || widget.type == 'unit';
 
   Future<void> _delete(BuildContext context, CatalogItem item) async {
     if (!_supportsDelete) return;
@@ -2416,7 +2444,8 @@ class _CatalogManagerDialogState extends State<_CatalogManagerDialog> {
       return;
     }
 
-    CatalogItem? replacement = alternatives.isNotEmpty ? alternatives.first : null;
+    CatalogItem? replacement =
+        alternatives.isNotEmpty ? alternatives.first : null;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -2560,4 +2589,3 @@ class _CatalogManagerDialogState extends State<_CatalogManagerDialog> {
     );
   }
 }
-

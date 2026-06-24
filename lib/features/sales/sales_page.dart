@@ -89,7 +89,6 @@ class _SalesPageState extends State<SalesPage> {
   int? _selectedCartIndex;
   int? _pendingDeleteCartIndex;
 
-
   @override
   void initState() {
     super.initState();
@@ -234,11 +233,11 @@ class _SalesPageState extends State<SalesPage> {
       formatCurrency(amount, currency: currency);
 
   List<Product> _visibleProducts() {
+    final q = _search.trim().toLowerCase();
     return widget.store.products
         .where((product) => product.isActive && !product.isDeleted)
         .where((product) {
-      if (_search.trim().isEmpty) return true;
-      final q = _search.toLowerCase();
+      if (q.isEmpty) return true;
       return product.name.toLowerCase().contains(q) ||
           product.code.toLowerCase().contains(q) ||
           product.barcode.toLowerCase().contains(q) ||
@@ -884,7 +883,6 @@ class _SalesPageState extends State<SalesPage> {
     );
   }
 
-
   String _activeUserDisplayName([AppUser? user]) {
     final current = user ?? widget.store.activeUser;
     final fullName = current?.fullName.trim() ?? '';
@@ -1027,7 +1025,8 @@ class _SalesPageState extends State<SalesPage> {
         if (status.drawers.isEmpty) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('لا يوجد درج نقدية معرف. أضف درج نقدية أولاً من الإعدادات المالية.'),
+              content: Text(
+                  'لا يوجد درج نقدية معرف. أضف درج نقدية أولاً من الإعدادات المالية.'),
             ),
           );
           return;
@@ -1066,7 +1065,8 @@ class _SalesPageState extends State<SalesPage> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 DropdownButtonFormField<String>(
-                  initialValue: selectedDrawerId.isEmpty ? null : selectedDrawerId,
+                  initialValue:
+                      selectedDrawerId.isEmpty ? null : selectedDrawerId,
                   decoration: const InputDecoration(labelText: 'درج النقدية'),
                   items: drawers
                       .map((item) => DropdownMenuItem(
@@ -1097,15 +1097,16 @@ class _SalesPageState extends State<SalesPage> {
                     DropdownButtonFormField<String>(
                       initialValue:
                           selectedFundingId.isEmpty ? null : selectedFundingId,
-                      decoration: const InputDecoration(labelText: 'مصدر المبلغ'),
+                      decoration:
+                          const InputDecoration(labelText: 'مصدر المبلغ'),
                       items: sources
                           .map((item) => DropdownMenuItem(
                                 value: item.id,
                                 child: Text(item.name),
                               ))
                           .toList(),
-                      onChanged: (value) => setDialogState(
-                          () => selectedFundingId = value ?? ''),
+                      onChanged: (value) =>
+                          setDialogState(() => selectedFundingId = value ?? ''),
                     ),
                 ],
               ],
@@ -1128,7 +1129,8 @@ class _SalesPageState extends State<SalesPage> {
     );
     try {
       if (confirmed == true) {
-        final drawer = drawers.firstWhere((item) => item.id == selectedDrawerId);
+        final drawer =
+            drawers.firstWhere((item) => item.id == selectedDrawerId);
         final activeUser = widget.store.activeUser;
         await AccountingService.openCashDrawer(
           drawerNo: drawer.name,
@@ -1160,7 +1162,8 @@ class _SalesPageState extends State<SalesPage> {
   Future<void> _closeSaleDrawerDialog(
       AdvancedAccountingItem session, _SaleShiftStatus status) async {
     final tr = AppLocalizations.of(context);
-    final expected = await AccountingService.calculateCashDrawerExpectedCash(session.id);
+    final expected =
+        await AccountingService.calculateCashDrawerExpectedCash(session.id);
     if (!mounted) return;
     final counted = TextEditingController(text: expected.toStringAsFixed(2));
     final notes = TextEditingController();
@@ -1172,7 +1175,8 @@ class _SalesPageState extends State<SalesPage> {
         .where((user) => user.isActive && user.id != (activeUser?.id ?? ''))
         .toList(growable: false);
     String closeMode = 'keep_drawer';
-    String transferToId = transferTargets.isNotEmpty ? transferTargets.first.id : '';
+    String transferToId =
+        transferTargets.isNotEmpty ? transferTargets.first.id : '';
     String nextUserId = handoverUsers.isNotEmpty ? handoverUsers.first.id : '';
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1184,13 +1188,15 @@ class _SalesPageState extends State<SalesPage> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text('المتوقع: ${formatUsdReferenceAmount(expected, widget.store.storeProfile)}'),
+                Text(
+                    'المتوقع: ${formatUsdReferenceAmount(expected, widget.store.storeProfile)}'),
                 const SizedBox(height: 12),
                 TextField(
                   controller: counted,
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(labelText: 'المبلغ المعدود'),
+                  decoration:
+                      const InputDecoration(labelText: 'المبلغ المعدود'),
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
@@ -1217,7 +1223,8 @@ class _SalesPageState extends State<SalesPage> {
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
                     initialValue: transferToId.isEmpty ? null : transferToId,
-                    decoration: const InputDecoration(labelText: 'الدرج / الصندوق المستلم'),
+                    decoration: const InputDecoration(
+                        labelText: 'الدرج / الصندوق المستلم'),
                     items: transferTargets
                         .map((item) => DropdownMenuItem(
                               value: item.id,
@@ -1232,7 +1239,8 @@ class _SalesPageState extends State<SalesPage> {
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
                     initialValue: nextUserId.isEmpty ? null : nextUserId,
-                    decoration: const InputDecoration(labelText: 'الموظف المستلم'),
+                    decoration:
+                        const InputDecoration(labelText: 'الموظف المستلم'),
                     items: handoverUsers
                         .map((user) => DropdownMenuItem(
                               value: user.id,
@@ -1262,10 +1270,11 @@ class _SalesPageState extends State<SalesPage> {
               child: Text(tr.text('cancel')),
             ),
             FilledButton(
-              onPressed: (closeMode == 'transfer_location' && transferToId.isEmpty) ||
-                      (closeMode == 'handover_user' && nextUserId.isEmpty)
-                  ? null
-                  : () => Navigator.pop(dialogContext, true),
+              onPressed:
+                  (closeMode == 'transfer_location' && transferToId.isEmpty) ||
+                          (closeMode == 'handover_user' && nextUserId.isEmpty)
+                      ? null
+                      : () => Navigator.pop(dialogContext, true),
               child: Text(tr.text('close')),
             ),
           ],
@@ -1287,10 +1296,12 @@ class _SalesPageState extends State<SalesPage> {
         for (final location in transferTargets) {
           if (location.id == transferToId) transferTargetName = location.name;
         }
-        final nextUserName = nextUser == null ? '' : _activeUserDisplayName(nextUser);
+        final nextUserName =
+            nextUser == null ? '' : _activeUserDisplayName(nextUser);
         final effectiveNotes = [
           notes.text.trim(),
-          if (closeMode == 'transfer_location') 'تحويل النقد بعد الإغلاق إلى $transferTargetName',
+          if (closeMode == 'transfer_location')
+            'تحويل النقد بعد الإغلاق إلى $transferTargetName',
           if (closeMode == 'handover_user') 'تسليم الوردية إلى $nextUserName',
         ].where((part) => part.trim().isNotEmpty).join(' • ');
         await AccountingService.closeCashDrawer(
@@ -1299,9 +1310,12 @@ class _SalesPageState extends State<SalesPage> {
           closedBy: activeUserName,
           closedByUserId: activeUser?.id ?? '',
           notes: effectiveNotes,
-          depositToLocationId: closeMode == 'transfer_location' ? transferToId : '',
+          depositToLocationId:
+              closeMode == 'transfer_location' ? transferToId : '',
         );
-        if (closeMode == 'handover_user' && nextUser != null && session.referenceId.trim().isNotEmpty) {
+        if (closeMode == 'handover_user' &&
+            nextUser != null &&
+            session.referenceId.trim().isNotEmpty) {
           await AccountingService.openCashDrawer(
             drawerNo: session.name,
             cashLocationId: session.referenceId,
@@ -2073,7 +2087,8 @@ class _SalesPageState extends State<SalesPage> {
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis),
                                   trailing: Text(formatUsdReferenceAmount(
-                                      widget.store.defaultProductUsdPrice(product),
+                                      widget.store
+                                          .defaultProductUsdPrice(product),
                                       widget.store.storeProfile)),
                                   onTap: () {
                                     setSheetState(() {
@@ -2443,7 +2458,8 @@ class _SalesPageState extends State<SalesPage> {
           product: product,
           quantity: item.quantity,
           saleUnit: restoredUnit.copyWith(
-            price: widget.store.defaultProductUsdPrice(product, unitId: restoredUnit.id),
+            price: widget.store
+                .defaultProductUsdPrice(product, unitId: restoredUnit.id),
           )));
     }
     if (restored.isEmpty) {
@@ -2801,11 +2817,20 @@ class _SalesPageState extends State<SalesPage> {
           final isSelected = index == _selectedCartIndex;
           final isPendingDelete = index == _pendingDeleteCartIndex;
           final rowColor = isPendingDelete
-              ? Theme.of(context).colorScheme.errorContainer.withValues(alpha: 0.65)
+              ? Theme.of(context)
+                  .colorScheme
+                  .errorContainer
+                  .withValues(alpha: 0.65)
               : item.needsAutoCorrection
-                  ? Theme.of(context).colorScheme.errorContainer.withValues(alpha: 0.55)
+                  ? Theme.of(context)
+                      .colorScheme
+                      .errorContainer
+                      .withValues(alpha: 0.55)
                   : isSelected
-                      ? Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.65)
+                      ? Theme.of(context)
+                          .colorScheme
+                          .primaryContainer
+                          .withValues(alpha: 0.65)
                       : null;
           return LayoutBuilder(
             builder: (context, constraints) {
@@ -2824,7 +2849,8 @@ class _SalesPageState extends State<SalesPage> {
                           textAlign: TextAlign.center)),
                   IconButton(
                     tooltip: tr.text('increase_qty'),
-                    onPressed: () => _changeCartQuantity(index, item.quantity + 1),
+                    onPressed: () =>
+                        _changeCartQuantity(index, item.quantity + 1),
                     icon: const Icon(Icons.add_circle_outline),
                   ),
                   IconButton(
@@ -3683,7 +3709,8 @@ class _SalesPageState extends State<SalesPage> {
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis),
                                   trailing: Text(formatUsdReferenceAmount(
-                                      widget.store.defaultProductUsdPrice(product),
+                                      widget.store
+                                          .defaultProductUsdPrice(product),
                                       widget.store.storeProfile)),
                                   onTap: () {
                                     Navigator.pop(sheetContext);
@@ -3705,7 +3732,6 @@ class _SalesPageState extends State<SalesPage> {
       ),
     ).whenComplete(controller.dispose);
   }
-
 
   String _saleSaveFailureMessage(BuildContext context, Object error) {
     final tr = AppLocalizations.of(context);
@@ -3769,9 +3795,11 @@ class _SalesPageState extends State<SalesPage> {
       ..writeln('subtotal: $_subtotal')
       ..writeln('discount: $_discount')
       ..writeln('raw_total: $_rawInvoiceTotal')
-      ..writeln('cash_rounding_difference: $_cashRoundingDifferenceInInvoiceCurrency')
+      ..writeln(
+          'cash_rounding_difference: $_cashRoundingDifferenceInInvoiceCurrency')
       ..writeln('total: $_invoiceTotal')
-      ..writeln('cash_received: ${_showsCashReceived ? _cashReceivedAmount : (_isCashPayment ? _invoiceTotal : 0.0)}')
+      ..writeln(
+          'cash_received: ${_showsCashReceived ? _cashReceivedAmount : (_isCashPayment ? _invoiceTotal : 0.0)}')
       ..writeln('paid_amount: $_derivedPaidAmount')
       ..writeln('selected_customer_id: $_selectedCustomerId')
       ..writeln('cart_items: ${_cart.length}');
@@ -3921,7 +3949,8 @@ class _SalesPageState extends State<SalesPage> {
 
     final rawSelectedUnit = saleUnit ?? product.effectiveSaleUnits.first;
     final selectedUnit = rawSelectedUnit.copyWith(
-      price: widget.store.defaultProductUsdPrice(product, unitId: rawSelectedUnit.id),
+      price: widget.store
+          .defaultProductUsdPrice(product, unitId: rawSelectedUnit.id),
     );
 
     final existingIndex = _cart.indexWhere((item) =>
@@ -4229,11 +4258,11 @@ class _SalesPageState extends State<SalesPage> {
         originalDiscount: double.tryParse(_discountController.text.trim()) ?? 0,
         discountCurrency: _discountCurrency,
         discountExchangeRateAtEntry: exchangeRate(
-            widget.store.storeProfile.baseCurrency,
-            _discountCurrency,
-            widget.store.storeProfile,
-            effectiveAt: DateTime.now(),
-          ),
+          widget.store.storeProfile.baseCurrency,
+          _discountCurrency,
+          widget.store.storeProfile,
+          effectiveAt: DateTime.now(),
+        ),
         paymentMethod: _paymentMethod,
         paymentStatus: paymentStatus,
         invoiceCurrency: _invoiceCurrency,
@@ -4363,7 +4392,6 @@ class _EmbeddedScannerError extends StatelessWidget {
     );
   }
 }
-
 
 class _SaleShiftStatus {
   const _SaleShiftStatus({

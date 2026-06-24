@@ -8,6 +8,7 @@ class SyncDiagnosticsLog {
       ValueNotifier<List<String>>(<String>[]);
 
   static void add(String message) {
+    if (!kDebugMode) return;
     final timestamp = DateTime.now().toIso8601String();
     final line = '[$timestamp] $message';
     final next = <String>[...lines.value, line];

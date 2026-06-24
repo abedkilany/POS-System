@@ -197,19 +197,22 @@ class _PurchasesPageState extends State<PurchasesPage> {
       }
     });
     final now = DateTime.now();
-    final monthlyPurchases = allPurchases
-        .where((p) =>
-            !p.isCancelled &&
-            p.date.year == now.year &&
-            p.date.month == now.month)
-        .toList();
-    final monthlyTotal =
-        monthlyPurchases.fold<double>(0, (sum, p) => sum + p.subtotal);
-    final draftTotal = allPurchases
-        .where((p) => !p.isCancelled && !p.isReceived)
-        .fold<double>(0, (sum, p) => sum + p.subtotal);
+    var monthlyTotal = 0.0;
+    var monthlyCount = 0;
+    var draftTotal = 0.0;
+    for (final purchase in allPurchases) {
+      if (!purchase.isCancelled &&
+          purchase.date.year == now.year &&
+          purchase.date.month == now.month) {
+        monthlyTotal += purchase.subtotal;
+        monthlyCount += 1;
+      }
+      if (!purchase.isCancelled && !purchase.isReceived) {
+        draftTotal += purchase.subtotal;
+      }
+    }
     final averagePurchase =
-        monthlyPurchases.isEmpty ? 0.0 : monthlyTotal / monthlyPurchases.length;
+        monthlyCount == 0 ? 0.0 : monthlyTotal / monthlyCount;
     return Focus(
       focusNode: _pageShortcutFocusNode,
       autofocus: true,

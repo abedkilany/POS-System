@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
-import '../../core/services/sync_diagnostics_log.dart';
 import '../../core/utils/responsive.dart';
 import '../../data/app_store.dart';
 import '../../models/customer.dart';
@@ -24,8 +23,8 @@ class _CustomersPageState extends State<CustomersPage> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
+    final value = query.trim().toLowerCase();
     final customers = widget.store.customers.where((customer) {
-      final value = query.toLowerCase();
       final isWalkIn = customer.id == AppStore.walkInCustomerId ||
           customer.name.trim().toLowerCase() ==
               AppStore.walkInCustomerName.toLowerCase();
@@ -33,10 +32,6 @@ class _CustomersPageState extends State<CustomersPage> {
       return customer.name.toLowerCase().contains(value) ||
           customer.phone.toLowerCase().contains(value);
     }).toList();
-    SyncDiagnosticsLog.add(
-      '[SYNC_TRACE] customersPage:build query="$query" '
-      'visible=${customers.length} names=${customers.map((item) => item.name).join(',')}',
-    );
 
     return Padding(
       padding: VentioResponsive.pageInsets(context),

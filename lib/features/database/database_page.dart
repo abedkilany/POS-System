@@ -20,7 +20,8 @@ class DatabasePage extends StatefulWidget {
 
 class _DatabasePageState extends State<DatabasePage> {
   String _t(String key) => AppLocalizations.of(context).text(key);
-  String _tf(String key, Map<String, Object?> values) => AppLocalizations.of(context).format(key, values);
+  String _tf(String key, Map<String, Object?> values) =>
+      AppLocalizations.of(context).format(key, values);
   String _selectedKey = '';
   String _tableQuery = '';
   String _recordQuery = '';
@@ -36,7 +37,9 @@ class _DatabasePageState extends State<DatabasePage> {
   bool _sortAscending = true;
   final ScrollController _horizontalTableController = ScrollController();
   final ScrollController _verticalTableController = ScrollController();
-  final TextEditingController _sqlController = TextEditingController(text: 'SELECT name FROM sqlite_master WHERE type = \'table\' ORDER BY name;');
+  final TextEditingController _sqlController = TextEditingController(
+      text:
+          'SELECT name FROM sqlite_master WHERE type = \'table\' ORDER BY name;');
   bool _sqlAllowWrites = false;
   bool _sqlRunning = false;
   String? _sqlError;
@@ -55,7 +58,8 @@ class _DatabasePageState extends State<DatabasePage> {
   void initState() {
     super.initState();
     _reload();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _requireDatabasePassword());
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _requireDatabasePassword());
   }
 
   String _displayKey(String key) {
@@ -105,13 +109,15 @@ class _DatabasePageState extends State<DatabasePage> {
     final allKeys = _entries.keys.toList()..sort();
     final normalizedTableQuery = _tableQuery.trim().toLowerCase();
     final keys = allKeys
-        .where((key) => key.toLowerCase().contains(normalizedTableQuery) || _displayKey(key).toLowerCase().contains(normalizedTableQuery))
+        .where((key) =>
+            key.toLowerCase().contains(normalizedTableQuery) ||
+            _displayKey(key).toLowerCase().contains(normalizedTableQuery))
         .toList(growable: false);
     final raw = _selectedKey.isEmpty ? '' : (_entries[_selectedKey] ?? '');
     final decoded = _decode(raw);
     final rows = _rowsFor(decoded);
     final filteredRows = rows.where((row) {
-      final text = jsonEncode(row).toLowerCase();
+      final text = _rowSearchText(row);
       return text.contains(_recordQuery.trim().toLowerCase());
     }).toList(growable: false);
     final columns = _columnsFor(filteredRows.isEmpty ? rows : filteredRows);
@@ -119,10 +125,13 @@ class _DatabasePageState extends State<DatabasePage> {
     // Pagination is calculated from data records only. The header row is rendered by
     // DataTable and must not reduce the number of records displayed per page.
     final totalRecords = sortedRows.length;
-    final pageCount = totalRecords == 0 ? 1 : ((totalRecords - 1) ~/ _pageSize) + 1;
+    final pageCount =
+        totalRecords == 0 ? 1 : ((totalRecords - 1) ~/ _pageSize) + 1;
     final safePage = _page.clamp(0, pageCount - 1).toInt();
     final pageStart = totalRecords == 0 ? 0 : safePage * _pageSize;
-    final pageEnd = totalRecords == 0 ? 0 : (pageStart + _pageSize).clamp(0, totalRecords).toInt();
+    final pageEnd = totalRecords == 0
+        ? 0
+        : (pageStart + _pageSize).clamp(0, totalRecords).toInt();
     final visibleRows = sortedRows.sublist(pageStart, pageEnd);
 
     if (!_databaseUnlocked) return _buildLockedView();
@@ -133,7 +142,8 @@ class _DatabasePageState extends State<DatabasePage> {
         final content = Column(
           children: [
             if (compact) _buildMobileTableSelector(keys),
-            _buildToolbar(decoded, pageStart, pageEnd, totalRecords, safePage, pageCount),
+            _buildToolbar(
+                decoded, pageStart, pageEnd, totalRecords, safePage, pageCount),
             const Divider(height: 1),
             Expanded(
               child: _selectedMode == 'structure'
@@ -156,8 +166,6 @@ class _DatabasePageState extends State<DatabasePage> {
     );
   }
 
-
-  
   void _deleteSelectedRows() async {
     final raw = _selectedKey.isEmpty ? '' : (_entries[_selectedKey] ?? '');
     final decoded = _decode(raw);
@@ -166,9 +174,12 @@ class _DatabasePageState extends State<DatabasePage> {
           context: context,
           builder: (context) => AlertDialog(
             title: Text(_t('delete_records')),
-            content: Text(_tf('delete_selected_records_question', {'count': _selectedRowIndexes.length})),
+            content: Text(_tf('delete_selected_records_question',
+                {'count': _selectedRowIndexes.length})),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(context, false), child: Text(_t('cancel'))),
+              TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: Text(_t('cancel'))),
               FilledButton(
                 style: FilledButton.styleFrom(
                   backgroundColor: Theme.of(context).colorScheme.error,
@@ -189,7 +200,7 @@ class _DatabasePageState extends State<DatabasePage> {
     await _writeSelectedKey(jsonEncode(updated));
   }
 
-Widget _buildLockedView() {
+  Widget _buildLockedView() {
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 420),
@@ -201,11 +212,18 @@ Widget _buildLockedView() {
               children: [
                 const Icon(Icons.lock_outline, size: 42),
                 const SizedBox(height: 12),
-                Text(_t('database_locked'), style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
+                Text(_t('database_locked'),
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleLarge
+                        ?.copyWith(fontWeight: FontWeight.w800)),
                 const SizedBox(height: 8),
                 Text(_t('database_password_hint'), textAlign: TextAlign.center),
                 const SizedBox(height: 18),
-                FilledButton.icon(onPressed: _requireDatabasePassword, icon: const Icon(Icons.password), label: Text(_t('enter_password'))),
+                FilledButton.icon(
+                    onPressed: _requireDatabasePassword,
+                    icon: const Icon(Icons.password),
+                    label: Text(_t('enter_password'))),
               ],
             ),
           ),
@@ -240,7 +258,8 @@ Widget _buildLockedView() {
                   errorText: error,
                 ),
                 onSubmitted: (_) async {
-                  final ok = await widget.store.verifyAdminPassword(controller.text);
+                  final ok =
+                      await widget.store.verifyAdminPassword(controller.text);
                   if (!context.mounted) return;
                   if (ok) {
                     Navigator.pop(context, true);
@@ -252,10 +271,13 @@ Widget _buildLockedView() {
             ],
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: Text(_t('cancel'))),
+            TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: Text(_t('cancel'))),
             FilledButton(
               onPressed: () async {
-                final ok = await widget.store.verifyAdminPassword(controller.text);
+                final ok =
+                    await widget.store.verifyAdminPassword(controller.text);
                 if (!context.mounted) return;
                 if (ok) {
                   Navigator.pop(context, true);
@@ -295,13 +317,20 @@ Widget _buildLockedView() {
                     _t('database_page'),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w800),
                   ),
                 ),
-                IconButton(onPressed: _reload, icon: const Icon(Icons.refresh), tooltip: _t('refresh')),
+                IconButton(
+                    onPressed: _reload,
+                    icon: const Icon(Icons.refresh),
+                    tooltip: _t('refresh')),
                 IconButton(
                   onPressed: _selectedKey.isEmpty ? null : _confirmDeleteKey,
-                  icon: Icon(Icons.delete_forever_outlined, color: Theme.of(context).colorScheme.error),
+                  icon: Icon(Icons.delete_forever_outlined,
+                      color: Theme.of(context).colorScheme.error),
                   tooltip: _t('delete_selected_table_key'),
                 ),
               ],
@@ -312,7 +341,8 @@ Widget _buildLockedView() {
                 hintText: _t('search_tables'),
                 prefixIcon: const Icon(Icons.search),
                 isDense: true,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
               ),
               onChanged: (value) => setState(() => _tableQuery = value),
             ),
@@ -323,13 +353,15 @@ Widget _buildLockedView() {
               decoration: InputDecoration(
                 labelText: _t('selected_table'),
                 isDense: true,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
               ),
               items: [
                 for (final key in keys)
                   DropdownMenuItem<String>(
                     value: key,
-                    child: Text(_displayKey(key), maxLines: 1, overflow: TextOverflow.ellipsis),
+                    child: Text(_displayKey(key),
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
                   ),
               ],
               onChanged: (key) {
@@ -365,8 +397,16 @@ Widget _buildLockedView() {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(_t('database_page'), style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
-                    Text(_t('manage_database_records'), style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                    Text(_t('database_page'),
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleLarge
+                            ?.copyWith(fontWeight: FontWeight.w800)),
+                    Text(_t('manage_database_records'),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurfaceVariant)),
                   ],
                 ),
               ),
@@ -378,7 +418,8 @@ Widget _buildLockedView() {
               hintText: _t('search_tables'),
               suffixIcon: const Icon(Icons.search),
               isDense: true,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              border:
+                  OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
             ),
             onChanged: (value) => setState(() => _tableQuery = value),
           ),
@@ -393,17 +434,34 @@ Widget _buildLockedView() {
                 return Padding(
                   padding: const EdgeInsets.symmetric(vertical: 2),
                   child: Material(
-                    color: selected ? Theme.of(context).colorScheme.secondaryContainer.withValues(alpha: 0.45) : Colors.transparent,
+                    color: selected
+                        ? Theme.of(context)
+                            .colorScheme
+                            .secondaryContainer
+                            .withValues(alpha: 0.45)
+                        : Colors.transparent,
                     borderRadius: BorderRadius.circular(8),
                     child: ListTile(
                       dense: true,
                       contentPadding: const EdgeInsets.symmetric(horizontal: 8),
                       leading: const Icon(Icons.table_chart_outlined, size: 20),
-                      title: Text(_displayKey(key), maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontWeight: selected ? FontWeight.w700 : FontWeight.w500)),
+                      title: Text(_displayKey(key),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              fontWeight: selected
+                                  ? FontWeight.w700
+                                  : FontWeight.w500)),
                       trailing: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(color: Theme.of(context).colorScheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(999)),
-                        child: Text('$count', style: Theme.of(context).textTheme.labelSmall),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .surfaceContainerHighest,
+                            borderRadius: BorderRadius.circular(999)),
+                        child: Text('$count',
+                            style: Theme.of(context).textTheme.labelSmall),
                       ),
                       onTap: () => setState(() {
                         _selectedKey = key;
@@ -420,10 +478,14 @@ Widget _buildLockedView() {
           ),
           Row(
             children: [
-              IconButton(onPressed: _reload, icon: const Icon(Icons.refresh), tooltip: _t('refresh')),
+              IconButton(
+                  onPressed: _reload,
+                  icon: const Icon(Icons.refresh),
+                  tooltip: _t('refresh')),
               IconButton(
                 onPressed: _selectedKey.isEmpty ? null : _confirmDeleteKey,
-                icon: Icon(Icons.delete_forever_outlined, color: Theme.of(context).colorScheme.error),
+                icon: Icon(Icons.delete_forever_outlined,
+                    color: Theme.of(context).colorScheme.error),
                 tooltip: _t('delete_selected_table_key'),
               ),
             ],
@@ -433,7 +495,19 @@ Widget _buildLockedView() {
     );
   }
 
-  Widget _buildToolbar(dynamic decoded, int start, int end, int total, int safePage, int pageCount) {
+  String _rowSearchText(Map<String, dynamic> row) {
+    final buffer = StringBuffer();
+    for (final value in row.values) {
+      final text = value?.toString().trim();
+      if (text == null || text.isEmpty) continue;
+      buffer.write(text);
+      buffer.write(' ');
+    }
+    return buffer.toString().toLowerCase();
+  }
+
+  Widget _buildToolbar(dynamic decoded, int start, int end, int total,
+      int safePage, int pageCount) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final compact = constraints.maxWidth < 720;
@@ -443,9 +517,14 @@ Widget _buildLockedView() {
             decoration: InputDecoration(
               hintText: _t('search_records'),
               prefixIcon: const Icon(Icons.search),
-              suffixIcon: _recordQuery.isEmpty ? null : IconButton(onPressed: () => setState(() => _recordQuery = ''), icon: const Icon(Icons.close)),
+              suffixIcon: _recordQuery.isEmpty
+                  ? null
+                  : IconButton(
+                      onPressed: () => setState(() => _recordQuery = ''),
+                      icon: const Icon(Icons.close)),
               isDense: true,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              border:
+                  OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
             ),
             onChanged: (value) => setState(() {
               _recordQuery = value;
@@ -459,12 +538,25 @@ Widget _buildLockedView() {
           spacing: 6,
           runSpacing: 4,
           children: [
-            IconButton(onPressed: safePage > 0 ? () => setState(() => _page--) : null, icon: const Icon(Icons.chevron_left)),
-            IconButton(onPressed: safePage < pageCount - 1 ? () => setState(() => _page++) : null, icon: const Icon(Icons.chevron_right)),
-            Text(_tf('page_range', {'start': start + (total == 0 ? 0 : 1), 'end': end, 'total': total})),
+            IconButton(
+                onPressed: safePage > 0 ? () => setState(() => _page--) : null,
+                icon: const Icon(Icons.chevron_left)),
+            IconButton(
+                onPressed: safePage < pageCount - 1
+                    ? () => setState(() => _page++)
+                    : null,
+                icon: const Icon(Icons.chevron_right)),
+            Text(_tf('page_range', {
+              'start': start + (total == 0 ? 0 : 1),
+              'end': end,
+              'total': total
+            })),
             DropdownButton<int>(
               value: _pageSize,
-              items: const [25, 50, 100].map((value) => DropdownMenuItem<int>(value: value, child: Text('$value'))).toList(),
+              items: const [25, 50, 100]
+                  .map((value) => DropdownMenuItem<int>(
+                      value: value, child: Text('$value')))
+                  .toList(),
               onChanged: (value) => setState(() {
                 _pageSize = value ?? 50;
                 _page = 0;
@@ -483,25 +575,47 @@ Widget _buildLockedView() {
                 children: [
                   if (!compact)
                     IconButton(
-                      onPressed: () => setState(() => _sidebarCollapsed = !_sidebarCollapsed),
-                      icon: Icon(_sidebarCollapsed ? Icons.keyboard_double_arrow_right : Icons.keyboard_double_arrow_left),
-                      tooltip: _sidebarCollapsed ? _t('expand_sidebar') : _t('collapse_sidebar'),
+                      onPressed: () => setState(
+                          () => _sidebarCollapsed = !_sidebarCollapsed),
+                      icon: Icon(_sidebarCollapsed
+                          ? Icons.keyboard_double_arrow_right
+                          : Icons.keyboard_double_arrow_left),
+                      tooltip: _sidebarCollapsed
+                          ? _t('expand_sidebar')
+                          : _t('collapse_sidebar'),
                     ),
                   if (!compact) const SizedBox(width: 8),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(_tf('table_name', {'name': _displayKey(_selectedKey)}), maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
-                        Text(_tf('records_count', {'count': total}), style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                        Text(
+                            _tf('table_name',
+                                {'name': _displayKey(_selectedKey)}),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleMedium
+                                ?.copyWith(fontWeight: FontWeight.w800)),
+                        Text(_tf('records_count', {'count': total}),
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant)),
                       ],
                     ),
                   ),
                   PopupMenuButton<String>(
                     onSelected: (value) {
                       if (value == 'refresh') _reload();
-                      if (value == 'columns') setState(() => _selectedMode = 'structure');
-                      if (value == 'data') setState(() => _selectedMode = 'data');
+                      if (value == 'columns')
+                        setState(() => _selectedMode = 'structure');
+                      if (value == 'data')
+                        setState(() => _selectedMode = 'data');
                       if (value == 'sql') setState(() => _selectedMode = 'sql');
                       if (value == 'add') _openRowEditor();
                       if (value == 'deleteSelected') _deleteSelectedRows();
@@ -512,19 +626,42 @@ Widget _buildLockedView() {
                       if (value == '100') setState(() => _pageSize = 100);
                     },
                     itemBuilder: (context) => [
-                      PopupMenuItem(value: 'refresh', child: Text(_t('refresh'))),
-                      if (_selectedMode != 'structure') PopupMenuItem(value: 'columns', child: Text(_t('columns'))),
-                      if (_selectedMode != 'data') PopupMenuItem(value: 'data', child: Text(_t('data_view'))),
-                      if (_selectedMode != 'sql') PopupMenuItem(value: 'sql', child: Text(_t('sql_editor'))),
-                      PopupMenuItem(enabled: decoded is List, value: 'add', child: Text(_t('add_record'))),
-                      if (_selectedRowIndexes.isNotEmpty) PopupMenuItem(value: 'deleteSelected', child: Text(_tf('delete_selected_records_count', {'count': _selectedRowIndexes.length}))),
+                      PopupMenuItem(
+                          value: 'refresh', child: Text(_t('refresh'))),
+                      if (_selectedMode != 'structure')
+                        PopupMenuItem(
+                            value: 'columns', child: Text(_t('columns'))),
+                      if (_selectedMode != 'data')
+                        PopupMenuItem(
+                            value: 'data', child: Text(_t('data_view'))),
+                      if (_selectedMode != 'sql')
+                        PopupMenuItem(
+                            value: 'sql', child: Text(_t('sql_editor'))),
+                      PopupMenuItem(
+                          enabled: decoded is List,
+                          value: 'add',
+                          child: Text(_t('add_record'))),
+                      if (_selectedRowIndexes.isNotEmpty)
+                        PopupMenuItem(
+                            value: 'deleteSelected',
+                            child: Text(_tf('delete_selected_records_count',
+                                {'count': _selectedRowIndexes.length}))),
                       const PopupMenuDivider(),
-                      PopupMenuItem(value: 'raw', child: Text(_t('edit_raw_json'))),
-                      PopupMenuItem(value: 'delete', child: Text(_t('delete_selected_table_key'))),
+                      PopupMenuItem(
+                          value: 'raw', child: Text(_t('edit_raw_json'))),
+                      PopupMenuItem(
+                          value: 'delete',
+                          child: Text(_t('delete_selected_table_key'))),
                       const PopupMenuDivider(),
-                      PopupMenuItem(value: '25', child: Text(_tf('rows_per_page', {'count': 25}))),
-                      PopupMenuItem(value: '50', child: Text(_tf('rows_per_page', {'count': 50}))),
-                      PopupMenuItem(value: '100', child: Text(_tf('rows_per_page', {'count': 100}))),
+                      PopupMenuItem(
+                          value: '25',
+                          child: Text(_tf('rows_per_page', {'count': 25}))),
+                      PopupMenuItem(
+                          value: '50',
+                          child: Text(_tf('rows_per_page', {'count': 50}))),
+                      PopupMenuItem(
+                          value: '100',
+                          child: Text(_tf('rows_per_page', {'count': 100}))),
                     ],
                   ),
                 ],
@@ -533,7 +670,9 @@ Widget _buildLockedView() {
               if (compact) ...[
                 searchField,
                 const SizedBox(height: 8),
-                Align(alignment: AlignmentDirectional.centerStart, child: pageControls),
+                Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: pageControls),
               ] else
                 Row(
                   children: [
@@ -549,12 +688,11 @@ Widget _buildLockedView() {
     );
   }
 
-
-
   Widget _buildSqlEditorView() {
     final theme = Theme.of(context);
     final exportResultIndex = _latestExportableSqlResultIndex();
-    final exportRows = exportResultIndex == null ? null : _sqlResults[exportResultIndex].rows;
+    final exportRows =
+        exportResultIndex == null ? null : _sqlResults[exportResultIndex].rows;
     return Stack(
       children: [
         Padding(
@@ -563,92 +701,113 @@ Widget _buildLockedView() {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      const Icon(Icons.terminal_outlined),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          _t('sql_editor'),
-                          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+                      Row(
+                        children: [
+                          const Icon(Icons.terminal_outlined),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _t('sql_editor'),
+                              style: theme.textTheme.titleLarge
+                                  ?.copyWith(fontWeight: FontWeight.w800),
+                            ),
+                          ),
+                          FilterChip(
+                            label: Text(_t('write_mode')),
+                            selected: _sqlAllowWrites,
+                            onSelected: _sqlRunning
+                                ? null
+                                : (value) =>
+                                    setState(() => _sqlAllowWrites = value),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _sqlAllowWrites
+                            ? _t('sql_write_mode_desc')
+                            : _t('query_mode_desc'),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _sqlController,
+                        minLines: 7,
+                        maxLines: 12,
+                        style: const TextStyle(fontFamily: 'monospace'),
+                        decoration: const InputDecoration(
+                          labelText: 'SQL',
+                          alignLabelWithHint: true,
+                          border: OutlineInputBorder(),
                         ),
                       ),
-                      FilterChip(
-                        label: Text(_t('write_mode')),
-                        selected: _sqlAllowWrites,
-                        onSelected: _sqlRunning ? null : (value) => setState(() => _sqlAllowWrites = value),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          FilledButton.icon(
+                            onPressed: _sqlRunning ? null : _runSqlEditor,
+                            icon: _sqlRunning
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2))
+                                : const Icon(Icons.play_arrow),
+                            label: Text(_sqlAllowWrites
+                                ? _t('execute_sql')
+                                : _t('run_query')),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: _sqlRunning || _selectedKey.isEmpty
+                                ? null
+                                : _fillSqlForSelectedTable,
+                            icon: const Icon(Icons.table_view_outlined),
+                            label: Text(_t('select_current_table')),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: _sqlRunning
+                                ? null
+                                : () => setState(() {
+                                      _sqlController.text =
+                                          'SELECT name FROM sqlite_master WHERE type = \'table\' ORDER BY name;';
+                                      _sqlError = null;
+                                    }),
+                            icon: const Icon(Icons.list_alt_outlined),
+                            label: Text(_t('list_tables')),
+                          ),
+                          TextButton.icon(
+                            onPressed: _sqlRunning
+                                ? null
+                                : () => setState(() {
+                                      _sqlController.clear();
+                                      _sqlResults = const <SqlEditorResult>[];
+                                      _expandedSqlExportIndex = null;
+                                      _sqlError = null;
+                                    }),
+                            icon: const Icon(Icons.clear),
+                            label: Text(_t('clear')),
+                          ),
+                        ],
                       ),
+                      if (_sqlError != null) ...[
+                        const SizedBox(height: 12),
+                        Text(_sqlError!,
+                            style: TextStyle(
+                                color: theme.colorScheme.error,
+                                fontWeight: FontWeight.w700)),
+                      ],
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    _sqlAllowWrites
-                        ? _t('sql_write_mode_desc')
-                        : _t('query_mode_desc'),
-                    style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _sqlController,
-                    minLines: 7,
-                    maxLines: 12,
-                    style: const TextStyle(fontFamily: 'monospace'),
-                    decoration: const InputDecoration(
-                      labelText: 'SQL',
-                      alignLabelWithHint: true,
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      FilledButton.icon(
-                        onPressed: _sqlRunning ? null : _runSqlEditor,
-                        icon: _sqlRunning
-                            ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                            : const Icon(Icons.play_arrow),
-                        label: Text(_sqlAllowWrites ? _t('execute_sql') : _t('run_query')),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: _sqlRunning || _selectedKey.isEmpty ? null : _fillSqlForSelectedTable,
-                        icon: const Icon(Icons.table_view_outlined),
-                        label: Text(_t('select_current_table')),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: _sqlRunning ? null : () => setState(() {
-                          _sqlController.text = 'SELECT name FROM sqlite_master WHERE type = \'table\' ORDER BY name;';
-                          _sqlError = null;
-                        }),
-                        icon: const Icon(Icons.list_alt_outlined),
-                        label: Text(_t('list_tables')),
-                      ),
-                      TextButton.icon(
-                        onPressed: _sqlRunning ? null : () => setState(() {
-                          _sqlController.clear();
-                          _sqlResults = const <SqlEditorResult>[];
-                          _expandedSqlExportIndex = null;
-                          _sqlError = null;
-                        }),
-                        icon: const Icon(Icons.clear),
-                        label: Text(_t('clear')),
-                      ),
-                    ],
-                  ),
-                  if (_sqlError != null) ...[
-                    const SizedBox(height: 12),
-                    Text(_sqlError!, style: TextStyle(color: theme.colorScheme.error, fontWeight: FontWeight.w700)),
-                  ],
-                ],
+                ),
               ),
-            ),
-          ),
               const SizedBox(height: 12),
               Expanded(child: _buildSqlResults()),
             ],
@@ -683,7 +842,9 @@ Widget _buildLockedView() {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                SelectableText(result.statement, style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w700)),
+                SelectableText(result.statement,
+                    style: const TextStyle(
+                        fontFamily: 'monospace', fontWeight: FontWeight.w700)),
                 const SizedBox(height: 6),
                 Text(result.message),
                 if (result.isQuery) ...[
@@ -707,7 +868,8 @@ Widget _buildLockedView() {
     final orderedColumns = columns.toList()..sort();
     return LayoutBuilder(
       builder: (context, constraints) {
-        final tableWidth = constraints.maxWidth.isFinite ? constraints.maxWidth : 720.0;
+        final tableWidth =
+            constraints.maxWidth.isFinite ? constraints.maxWidth : 720.0;
 
         return Container(
           decoration: BoxDecoration(
@@ -727,7 +889,8 @@ Widget _buildLockedView() {
                 horizontalMargin: 16,
                 columns: [
                   const DataColumn(label: Text('#')),
-                  for (final column in orderedColumns) DataColumn(label: Text(column)),
+                  for (final column in orderedColumns)
+                    DataColumn(label: Text(column)),
                 ],
                 rows: [
                   for (var rowIndex = 0; rowIndex < rows.length; rowIndex++)
@@ -737,8 +900,11 @@ Widget _buildLockedView() {
                         for (final column in orderedColumns)
                           DataCell(
                             ConstrainedBox(
-                              constraints: const BoxConstraints(maxWidth: 360, minWidth: 120),
-                              child: SelectableText(_displayValue(rows[rowIndex][column]), maxLines: 2),
+                              constraints: const BoxConstraints(
+                                  maxWidth: 360, minWidth: 120),
+                              child: SelectableText(
+                                  _displayValue(rows[rowIndex][column]),
+                                  maxLines: 2),
                             ),
                           ),
                       ],
@@ -760,24 +926,29 @@ Widget _buildLockedView() {
     return null;
   }
 
-  Widget _buildSqlExportButton(List<Map<String, Object?>> rows, int resultIndex) {
+  Widget _buildSqlExportButton(
+      List<Map<String, Object?>> rows, int resultIndex) {
     final expanded = _expandedSqlExportIndex == resultIndex;
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
         if (expanded) ...[
-          _buildSqlExportFormatButton('JSON', () => _exportSqlRows(rows, 'json')),
+          _buildSqlExportFormatButton(
+              'JSON', () => _exportSqlRows(rows, 'json')),
           const SizedBox(height: 8),
           _buildSqlExportFormatButton('CSV', () => _exportSqlRows(rows, 'csv')),
           const SizedBox(height: 8),
-          _buildSqlExportFormatButton('XLSX', () => _exportSqlRows(rows, 'xlsx')),
+          _buildSqlExportFormatButton(
+              'XLSX', () => _exportSqlRows(rows, 'xlsx')),
           const SizedBox(height: 8),
         ],
         FloatingActionButton.small(
           heroTag: 'sql-export-$resultIndex',
-          tooltip: expanded ? _t('close_export_options') : _t('export_sql_result'),
-          onPressed: () => setState(() => _expandedSqlExportIndex = expanded ? null : resultIndex),
+          tooltip:
+              expanded ? _t('close_export_options') : _t('export_sql_result'),
+          onPressed: () => setState(
+              () => _expandedSqlExportIndex = expanded ? null : resultIndex),
           child: Icon(expanded ? Icons.close : Icons.file_download_outlined),
         ),
       ],
@@ -794,13 +965,15 @@ Widget _buildLockedView() {
         onTap: onPressed,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          child: Text(label, style: const TextStyle(fontWeight: FontWeight.w800)),
+          child:
+              Text(label, style: const TextStyle(fontWeight: FontWeight.w800)),
         ),
       ),
     );
   }
 
-  Future<void> _exportSqlRows(List<Map<String, Object?>> rows, String format) async {
+  Future<void> _exportSqlRows(
+      List<Map<String, Object?>> rows, String format) async {
     setState(() => _expandedSqlExportIndex = null);
     try {
       await SqlResultExportService.exportRows(
@@ -809,10 +982,13 @@ Widget _buildLockedView() {
         baseFileName: 'sql_result_${_timestampForFileName()}',
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_tf('sql_result_exported_as', {'format': format.toUpperCase()}))));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(_tf(
+              'sql_result_exported_as', {'format': format.toUpperCase()}))));
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.toString())));
     }
   }
 
@@ -865,10 +1041,12 @@ Widget _buildLockedView() {
     if (script.isEmpty) return;
     final statements = DatabaseSqlEditorService.splitStatements(script);
     if (statements.isEmpty) return;
-    final hasWrites = statements.any((statement) => !DatabaseSqlEditorService.isQueryStatement(statement));
+    final hasWrites = statements.any(
+        (statement) => !DatabaseSqlEditorService.isQueryStatement(statement));
     if (hasWrites) {
       if (!_sqlAllowWrites) {
-        setState(() => _sqlError = '${_t('sql_script_contains_writes')} ${_t('enable_execute_writes_first')}');
+        setState(() => _sqlError =
+            '${_t('sql_script_contains_writes')} ${_t('enable_execute_writes_first')}');
         return;
       }
       final confirmed = await _confirmSqlExecution(statements.length);
@@ -880,7 +1058,8 @@ Widget _buildLockedView() {
       _sqlError = null;
     });
     try {
-      final results = await DatabaseSqlEditorService.runScript(script, allowWrites: _sqlAllowWrites);
+      final results = await DatabaseSqlEditorService.runScript(script,
+          allowWrites: _sqlAllowWrites);
       await widget.store.refreshAfterDatabaseChange(_selectedKey);
       await _reload();
       if (!mounted) return;
@@ -888,7 +1067,8 @@ Widget _buildLockedView() {
         _sqlResults = results;
         _expandedSqlExportIndex = null;
       });
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_t('execute_sql_local_only'))));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(_t('execute_sql_local_only'))));
     } catch (error) {
       if (!mounted) return;
       setState(() => _sqlError = error.toString());
@@ -902,9 +1082,12 @@ Widget _buildLockedView() {
       context: context,
       builder: (context) => AlertDialog(
         title: Text(_t('execute_sql_changes')),
-        content: Text(_tf('execute_sql_changes_desc', {'count': statementCount})),
+        content:
+            Text(_tf('execute_sql_changes_desc', {'count': statementCount})),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(_t('cancel'))),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(_t('cancel'))),
           FilledButton(
             style: FilledButton.styleFrom(
               backgroundColor: Theme.of(context).colorScheme.error,
@@ -918,19 +1101,26 @@ Widget _buildLockedView() {
     );
   }
 
+  Widget _buildDataView(dynamic decoded, List<String> columns,
+      List<Map<String, dynamic>> visibleRows) {
+    if (_selectedKey.isEmpty)
+      return Center(child: Text(_t('no_database_keys_found')));
+    if (visibleRows.isEmpty)
+      return Center(child: Text(_t('no_records_in_table')));
 
-  Widget _buildDataView(dynamic decoded, List<String> columns, List<Map<String, dynamic>> visibleRows) {
-    if (_selectedKey.isEmpty) return Center(child: Text(_t('no_database_keys_found')));
-    if (visibleRows.isEmpty) return Center(child: Text(_t('no_records_in_table')));
-
-    final sortColumnIndex = _sortColumn == null ? null : columns.indexOf(_sortColumn!);
+    final sortColumnIndex =
+        _sortColumn == null ? null : columns.indexOf(_sortColumn!);
     final table = DataTable(
-      sortColumnIndex: sortColumnIndex != null && sortColumnIndex >= 0 ? sortColumnIndex : null,
+      sortColumnIndex: sortColumnIndex != null && sortColumnIndex >= 0
+          ? sortColumnIndex
+          : null,
       sortAscending: _sortAscending,
       showCheckboxColumn: true,
       onSelectAll: (selected) {
         setState(() {
-          final visibleIndexes = visibleRows.map((row) => row['_db_index'] as int? ?? -1).where((index) => index >= 0);
+          final visibleIndexes = visibleRows
+              .map((row) => row['_db_index'] as int? ?? -1)
+              .where((index) => index >= 0);
           if (selected == true) {
             _selectedRowIndexes.addAll(visibleIndexes);
           } else {
@@ -952,7 +1142,9 @@ Widget _buildLockedView() {
               children: [
                 Text(column, maxLines: 1, overflow: TextOverflow.ellipsis),
                 const SizedBox(width: 4),
-                Text(_columnType(column, visibleRows), style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                Text(_columnType(column, visibleRows),
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant)),
                 const SizedBox(width: 4),
                 const Icon(Icons.unfold_more, size: 14),
               ],
@@ -977,19 +1169,30 @@ Widget _buildLockedView() {
             for (final column in columns)
               DataCell(
                 ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 320, minWidth: 120),
-                  child: SelectableText(_displayValue(row[column]), maxLines: 1),
+                  constraints:
+                      const BoxConstraints(maxWidth: 320, minWidth: 120),
+                  child:
+                      SelectableText(_displayValue(row[column]), maxLines: 1),
                 ),
-                onTap: column.startsWith('_db_') ? null : () => _openCellEditor(rowIndex, row, column),
+                onTap: column.startsWith('_db_')
+                    ? null
+                    : () => _openCellEditor(rowIndex, row, column),
               ),
             DataCell(Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                IconButton(tooltip: _t('edit_record'), icon: const Icon(Icons.edit_outlined, size: 20), onPressed: () => _openRowEditor(rowIndex: rowIndex, row: row)),
+                IconButton(
+                    tooltip: _t('edit_record'),
+                    icon: const Icon(Icons.edit_outlined, size: 20),
+                    onPressed: () =>
+                        _openRowEditor(rowIndex: rowIndex, row: row)),
                 IconButton(
                   tooltip: _t('delete_record'),
-                  icon: Icon(Icons.delete_outline, size: 20, color: Theme.of(context).colorScheme.error),
-                  onPressed: decoded is List && rowIndex >= 0 ? () => _confirmDeleteRow(rowIndex) : null,
+                  icon: Icon(Icons.delete_outline,
+                      size: 20, color: Theme.of(context).colorScheme.error),
+                  onPressed: decoded is List && rowIndex >= 0
+                      ? () => _confirmDeleteRow(rowIndex)
+                      : null,
                 ),
               ],
             )),
@@ -1001,7 +1204,8 @@ Widget _buildLockedView() {
     return Scrollbar(
       controller: _horizontalTableController,
       thumbVisibility: true,
-      notificationPredicate: (notification) => notification.metrics.axis == Axis.horizontal,
+      notificationPredicate: (notification) =>
+          notification.metrics.axis == Axis.horizontal,
       child: SingleChildScrollView(
         controller: _horizontalTableController,
         scrollDirection: Axis.horizontal,
@@ -1011,7 +1215,16 @@ Widget _buildLockedView() {
           child: SingleChildScrollView(
             controller: _verticalTableController,
             child: ConstrainedBox(
-              constraints: BoxConstraints(minWidth: MediaQuery.of(context).size.width.clamp(320.0, double.infinity).toDouble() - (_sidebarCollapsed || MediaQuery.of(context).size.width < 720 ? 0 : 310)),
+              constraints: BoxConstraints(
+                  minWidth: MediaQuery.of(context)
+                          .size
+                          .width
+                          .clamp(320.0, double.infinity)
+                          .toDouble() -
+                      (_sidebarCollapsed ||
+                              MediaQuery.of(context).size.width < 720
+                          ? 0
+                          : 310)),
               child: table,
             ),
           ),
@@ -1027,9 +1240,15 @@ Widget _buildLockedView() {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Text(_tf('structure_name', {'name': _displayKey(_selectedKey)}), style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+            Text(_tf('structure_name', {'name': _displayKey(_selectedKey)}),
+                style: Theme.of(context)
+                    .textTheme
+                    .titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w700)),
             const SizedBox(height: 8),
-            Text('${_tf('records_count', {'count': rowCount})} • ${_tf('raw_characters_count', {'count': raw.length})}'),
+            Text('${_tf('records_count', {
+                  'count': rowCount
+                })} • ${_tf('raw_characters_count', {'count': raw.length})}'),
             const Divider(height: 28),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
@@ -1042,7 +1261,8 @@ Widget _buildLockedView() {
                   for (final column in columns)
                     DataRow(cells: [
                       DataCell(Text(column)),
-                      DataCell(Text(_columnType(column, _rowsFor(_decode(raw))))),
+                      DataCell(
+                          Text(_columnType(column, _rowsFor(_decode(raw))))),
                     ]),
                 ],
               ),
@@ -1072,8 +1292,13 @@ Widget _buildLockedView() {
             {'_db_index': i, 'value': decoded[i]},
       ];
     }
-    if (decoded is Map) return [{'...': 'object', ...Map<String, dynamic>.from(decoded)}];
-    return [{'value': decoded?.toString() ?? ''}];
+    if (decoded is Map)
+      return [
+        {'...': 'object', ...Map<String, dynamic>.from(decoded)}
+      ];
+    return [
+      {'value': decoded?.toString() ?? ''}
+    ];
   }
 
   List<String> _columnsFor(List<Map<String, dynamic>> rows) {
@@ -1119,8 +1344,10 @@ Widget _buildLockedView() {
     if (currentValue is num) return num.tryParse(text) ?? currentValue;
     if (currentValue is bool) {
       final normalized = text.trim().toLowerCase();
-      if (normalized == 'true' || normalized == '1' || normalized == 'yes') return true;
-      if (normalized == 'false' || normalized == '0' || normalized == 'no') return false;
+      if (normalized == 'true' || normalized == '1' || normalized == 'yes')
+        return true;
+      if (normalized == 'false' || normalized == '0' || normalized == 'no')
+        return false;
       return currentValue;
     }
     if (currentValue is Map || currentValue is List) {
@@ -1167,44 +1394,65 @@ Widget _buildLockedView() {
     });
   }
 
-  Future<void> _openCellEditor(int rowIndex, Map<String, dynamic> row, String column) async {
+  Future<void> _openCellEditor(
+      int rowIndex, Map<String, dynamic> row, String column) async {
     final controller = TextEditingController(text: _displayValue(row[column]));
     final saved = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text(column),
-        content: TextField(controller: controller, autofocus: true, minLines: 1, maxLines: 8, decoration: const InputDecoration(border: OutlineInputBorder())),
+        content: TextField(
+            controller: controller,
+            autofocus: true,
+            minLines: 1,
+            maxLines: 8,
+            decoration: const InputDecoration(border: OutlineInputBorder())),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(_t('cancel'))),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(_t('save'))),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(_t('cancel'))),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(_t('save'))),
         ],
       ),
     );
     if (saved != true) return;
-    final updated = Map<String, dynamic>.from(row)..remove('_db_index')..remove('...');
+    final updated = Map<String, dynamic>.from(row)
+      ..remove('_db_index')
+      ..remove('...');
     updated[column] = _coerceValue(controller.text, row[column]);
     await _writeRow(rowIndex, updated);
   }
 
-  Future<void> _openRowEditor({int? rowIndex, Map<String, dynamic>? row}) async {
+  Future<void> _openRowEditor(
+      {int? rowIndex, Map<String, dynamic>? row}) async {
     final decoded = _decode(_entries[_selectedKey] ?? '');
     final isNew = row == null;
     final existingRows = _rowsFor(decoded);
-    final tableColumns = _columnsFor(existingRows).where((column) => !column.startsWith('_db_') && column != '...').toList(growable: false);
+    final tableColumns = _columnsFor(existingRows)
+        .where((column) => !column.startsWith('_db_') && column != '...')
+        .toList(growable: false);
     final workingRow = <String, dynamic>{};
 
     if (isNew) {
       for (final column in tableColumns) {
-        workingRow[column] = column == 'id' ? DateTime.now().microsecondsSinceEpoch.toString() : '';
+        workingRow[column] = column == 'id'
+            ? DateTime.now().microsecondsSinceEpoch.toString()
+            : '';
       }
-      if (workingRow.isEmpty) workingRow['id'] = DateTime.now().microsecondsSinceEpoch.toString();
+      if (workingRow.isEmpty)
+        workingRow['id'] = DateTime.now().microsecondsSinceEpoch.toString();
     } else {
-      workingRow.addAll(Map<String, dynamic>.from(row)..remove('_db_index')..remove('...'));
+      workingRow.addAll(Map<String, dynamic>.from(row)
+        ..remove('_db_index')
+        ..remove('...'));
     }
 
     final columns = workingRow.keys.toList();
     final controllers = <String, TextEditingController>{
-      for (final column in columns) column: TextEditingController(text: _displayValue(workingRow[column])),
+      for (final column in columns)
+        column: TextEditingController(text: _displayValue(workingRow[column])),
     };
 
     final saved = await showDialog<bool>(
@@ -1218,7 +1466,13 @@ Widget _buildLockedView() {
               mainAxisSize: MainAxisSize.min,
               children: [
                 for (final column in columns) ...[
-                  TextField(controller: controllers[column], minLines: 1, maxLines: _isLargeField(column) ? 5 : 1, decoration: InputDecoration(labelText: column, border: const OutlineInputBorder())),
+                  TextField(
+                      controller: controllers[column],
+                      minLines: 1,
+                      maxLines: _isLargeField(column) ? 5 : 1,
+                      decoration: InputDecoration(
+                          labelText: column,
+                          border: const OutlineInputBorder())),
                   const SizedBox(height: 10),
                 ],
               ],
@@ -1226,14 +1480,19 @@ Widget _buildLockedView() {
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(_t('cancel'))),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(isNew ? _t('add_record') : _t('save'))),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(_t('cancel'))),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(isNew ? _t('add_record') : _t('save'))),
         ],
       ),
     );
     if (saved != true) return;
     for (final column in columns) {
-      workingRow[column] = _coerceValue(controllers[column]?.text ?? '', workingRow[column]);
+      workingRow[column] =
+          _coerceValue(controllers[column]?.text ?? '', workingRow[column]);
     }
     if (decoded is List) {
       await _writeRow(isNew ? decoded.length : (rowIndex ?? -1), workingRow);
@@ -1244,7 +1503,11 @@ Widget _buildLockedView() {
 
   bool _isLargeField(String column) {
     final lower = column.toLowerCase();
-    return lower.contains('items') || lower.contains('payload') || lower.contains('note') || lower.contains('permissions') || lower.contains('address');
+    return lower.contains('items') ||
+        lower.contains('payload') ||
+        lower.contains('note') ||
+        lower.contains('permissions') ||
+        lower.contains('address');
   }
 
   Future<void> _writeRow(int rowIndex, Map<String, dynamic> row) async {
@@ -1268,19 +1531,32 @@ Widget _buildLockedView() {
     await widget.store.refreshAfterDatabaseChange(changedKey);
     await _reload();
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_t('database_saved_restart'))));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(_t('database_saved_restart'))));
   }
 
   Future<void> _openRawEditor() async {
-    final controller = TextEditingController(text: _entries[_selectedKey] ?? '');
+    final controller =
+        TextEditingController(text: _entries[_selectedKey] ?? '');
     final saved = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text(_tf('raw_json_name', {'name': _selectedKey})),
-        content: SizedBox(width: 900, child: TextField(controller: controller, minLines: 18, maxLines: 24, decoration: const InputDecoration(border: OutlineInputBorder()))),
+        content: SizedBox(
+            width: 900,
+            child: TextField(
+                controller: controller,
+                minLines: 18,
+                maxLines: 24,
+                decoration:
+                    const InputDecoration(border: OutlineInputBorder()))),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(_t('cancel'))),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(_t('save_raw'))),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(_t('cancel'))),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(_t('save_raw'))),
         ],
       ),
     );
@@ -1291,7 +1567,8 @@ Widget _buildLockedView() {
         jsonDecode(rawText);
       } catch (_) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_t('invalid_json'))));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(_t('invalid_json'))));
         return;
       }
     }
@@ -1305,15 +1582,17 @@ Widget _buildLockedView() {
         title: Text(_t('delete_record')),
         content: Text(_t('delete_record_question')),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(_t('cancel'))),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(_t('cancel'))),
           FilledButton(
-                style: FilledButton.styleFrom(
-                  backgroundColor: Theme.of(context).colorScheme.error,
-                  foregroundColor: Theme.of(context).colorScheme.onError,
-                ),
-                onPressed: () => Navigator.pop(context, true),
-                child: Text(_t('delete')),
-              ),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+              foregroundColor: Theme.of(context).colorScheme.onError,
+            ),
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(_t('delete')),
+          ),
         ],
       ),
     );
@@ -1329,10 +1608,15 @@ Widget _buildLockedView() {
       context: context,
       builder: (context) => AlertDialog(
         title: Text(_t('delete_database_key')),
-        content: Text(_tf('delete_database_key_question', {'key': _selectedKey})),
+        content:
+            Text(_tf('delete_database_key_question', {'key': _selectedKey})),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(_t('cancel'))),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(_t('delete_key'))),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(_t('cancel'))),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(_t('delete_key'))),
         ],
       ),
     );
