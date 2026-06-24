@@ -170,9 +170,10 @@ class _InventoryPageState extends State<InventoryPage>
                   if (context.mounted) Navigator.pop(context);
                   if (mounted) setState(() {});
                 } catch (error) {
-                  if (context.mounted)
+                  if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(content: Text(error.toString())));
+                  }
                 }
               },
               child: Text(tr.text('save')),
@@ -448,9 +449,10 @@ class _WarehousesTabState extends State<_WarehousesTab> {
                 if (context.mounted) Navigator.pop(context);
                 if (mounted) setState(() {});
               } catch (error) {
-                if (context.mounted)
+                if (context.mounted) {
                   ScaffoldMessenger.of(context)
                       .showSnackBar(SnackBar(content: Text(error.toString())));
+                }
               }
             },
             child: Text(tr.text('save')),
@@ -543,9 +545,10 @@ class _WarehousesTabState extends State<_WarehousesTab> {
                   if (context.mounted) Navigator.pop(context);
                   if (mounted) setState(() {});
                 } catch (error) {
-                  if (context.mounted)
+                  if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(content: Text(error.toString())));
+                  }
                 }
               },
               child: Text(tr.text('save')),
@@ -812,9 +815,10 @@ class _AutoCorrectionsTabState extends State<_AutoCorrectionsTab> {
         setState(() {});
       }
     } catch (error) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
     }
   }
 }
@@ -978,9 +982,10 @@ class _StockCountTabState extends State<_StockCountTab> {
       await widget.store.createInventoryCountSession();
       if (mounted) setState(() {});
     } catch (error) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
     }
   }
 
@@ -989,9 +994,10 @@ class _StockCountTabState extends State<_StockCountTab> {
       await widget.store.approveInventoryCount(id);
       if (mounted) setState(() {});
     } catch (error) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
     }
   }
 
@@ -1000,9 +1006,10 @@ class _StockCountTabState extends State<_StockCountTab> {
       await widget.store.cancelInventoryCount(id);
       if (mounted) setState(() {});
     } catch (error) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
     }
   }
 }
@@ -1075,9 +1082,10 @@ class _StockCountProductTile extends StatelessWidget {
       await store.countInventoryLine(
           sessionId: sessionId, productId: product.id, countedQty: value);
     } catch (error) {
-      if (context.mounted)
+      if (context.mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
     }
   }
 }

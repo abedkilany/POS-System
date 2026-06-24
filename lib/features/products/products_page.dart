@@ -1016,8 +1016,9 @@ class _ProductDialogState extends State<_ProductDialog> {
         );
       }
       final existingOverridePriceIds = <String>{basePrice.id};
-      if (previousBasePrice != null)
+      if (previousBasePrice != null) {
         existingOverridePriceIds.add(previousBasePrice.id);
+      }
       for (final item in widget.store.productPriceOverrides) {
         if (existingOverridePriceIds.contains(item.productPriceId) &&
             item.isActive &&
@@ -1031,7 +1032,9 @@ class _ProductDialogState extends State<_ProductDialog> {
       final unit = draft.toSaleUnit(widget.store.storeProfile);
       if (unit.id.trim().isEmpty ||
           unit.name.trim().isEmpty ||
-          unit.conversionToBase <= 0) continue;
+          unit.conversionToBase <= 0) {
+        continue;
+      }
       await widget.store.setDefaultProductBasePrice(
         productId: productId,
         unitId: unit.id,
@@ -1287,8 +1290,9 @@ class _CurrencyPriceOverridesEditor extends StatelessWidget {
                             decimal: true),
                         validator: (value) {
                           final amount = double.tryParse((value ?? '').trim());
-                          if (amount == null || amount < 0)
+                          if (amount == null || amount < 0) {
                             return 'Invalid number';
+                          }
                           return null;
                         },
                         onChanged: (value) =>

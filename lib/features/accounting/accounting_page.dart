@@ -642,8 +642,9 @@ class _AccountsTab extends StatelessWidget {
             itemCount: rows.length + (isWide ? 1 : 0),
             separatorBuilder: (_, index) => const Divider(height: 1),
             itemBuilder: (context, index) {
-              if (isWide && index == 0)
+              if (isWide && index == 0) {
                 return _AccountTableHeader(accountType: accountType);
+              }
               final row = rows[isWide ? index - 1 : index];
               return _AccountListRow(
                   store: store,
@@ -1285,9 +1286,13 @@ class _TransactionRow extends StatelessWidget {
     if (transaction.type == 'paymentReceived') return '+';
     if (transaction.type == 'paymentPaid') return '-';
     if (transaction.type == 'paymentReversal' &&
-        transaction.accountType == 'supplier') return '+';
+        transaction.accountType == 'supplier') {
+      return '+';
+    }
     if (transaction.type == 'paymentReversal' &&
-        transaction.accountType == 'customer') return '-';
+        transaction.accountType == 'customer') {
+      return '-';
+    }
     return transaction.debit > 0 ? '+' : '-';
   }
 
@@ -3138,8 +3143,9 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
         if (snapshot.connectionState != ConnectionState.done) {
           return const Center(child: CircularProgressIndicator());
         }
-        if (snapshot.hasError)
+        if (snapshot.hasError) {
           return _ReportError(message: snapshot.error.toString());
+        }
         final data = snapshot.data ?? const _AdvancedAccountingData();
         if (widget.cashOnly) {
           return ListView(
@@ -4047,7 +4053,9 @@ class _AccountSelector extends StatelessWidget {
           : (accountId) {
               if (accountId == null ||
                   accountId.trim().isEmpty ||
-                  accountId == value) return;
+                  accountId == value) {
+                return;
+              }
               onChanged!(accountId);
             },
     );

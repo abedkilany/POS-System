@@ -612,10 +612,12 @@ class _DatabasePageState extends State<DatabasePage> {
                   PopupMenuButton<String>(
                     onSelected: (value) {
                       if (value == 'refresh') _reload();
-                      if (value == 'columns')
+                      if (value == 'columns') {
                         setState(() => _selectedMode = 'structure');
-                      if (value == 'data')
+                      }
+                      if (value == 'data') {
                         setState(() => _selectedMode = 'data');
+                      }
                       if (value == 'sql') setState(() => _selectedMode = 'sql');
                       if (value == 'add') _openRowEditor();
                       if (value == 'deleteSelected') _deleteSelectedRows();
@@ -1103,10 +1105,12 @@ class _DatabasePageState extends State<DatabasePage> {
 
   Widget _buildDataView(dynamic decoded, List<String> columns,
       List<Map<String, dynamic>> visibleRows) {
-    if (_selectedKey.isEmpty)
+    if (_selectedKey.isEmpty) {
       return Center(child: Text(_t('no_database_keys_found')));
-    if (visibleRows.isEmpty)
+    }
+    if (visibleRows.isEmpty) {
       return Center(child: Text(_t('no_records_in_table')));
+    }
 
     final sortColumnIndex =
         _sortColumn == null ? null : columns.indexOf(_sortColumn!);
@@ -1292,10 +1296,11 @@ class _DatabasePageState extends State<DatabasePage> {
             {'_db_index': i, 'value': decoded[i]},
       ];
     }
-    if (decoded is Map)
+    if (decoded is Map) {
       return [
         {'...': 'object', ...Map<String, dynamic>.from(decoded)}
       ];
+    }
     return [
       {'value': decoded?.toString() ?? ''}
     ];
@@ -1344,10 +1349,12 @@ class _DatabasePageState extends State<DatabasePage> {
     if (currentValue is num) return num.tryParse(text) ?? currentValue;
     if (currentValue is bool) {
       final normalized = text.trim().toLowerCase();
-      if (normalized == 'true' || normalized == '1' || normalized == 'yes')
+      if (normalized == 'true' || normalized == '1' || normalized == 'yes') {
         return true;
-      if (normalized == 'false' || normalized == '0' || normalized == 'no')
+      }
+      if (normalized == 'false' || normalized == '0' || normalized == 'no') {
         return false;
+      }
       return currentValue;
     }
     if (currentValue is Map || currentValue is List) {
@@ -1441,8 +1448,9 @@ class _DatabasePageState extends State<DatabasePage> {
             ? DateTime.now().microsecondsSinceEpoch.toString()
             : '';
       }
-      if (workingRow.isEmpty)
+      if (workingRow.isEmpty) {
         workingRow['id'] = DateTime.now().microsecondsSinceEpoch.toString();
+      }
     } else {
       workingRow.addAll(Map<String, dynamic>.from(row)
         ..remove('_db_index')

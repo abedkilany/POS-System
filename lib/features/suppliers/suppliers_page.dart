@@ -89,25 +89,29 @@ class _SuppliersPageState extends State<SuppliersPage> {
                               ? PopupMenuButton<String>(
                                   tooltip: tr.text('actions'),
                                   onSelected: (value) {
-                                    if (value == 'ledger')
+                                    if (value == 'ledger') {
                                       showAccountLedgerSheet(
                                           context: context,
                                           store: widget.store,
                                           accountType: 'supplier',
                                           accountId: supplier.id,
                                           accountName: supplier.name);
-                                    if (value == 'payment')
+                                    }
+                                    if (value == 'payment') {
                                       showAccountPaymentDialog(
                                           context: context,
                                           store: widget.store,
                                           accountType: 'supplier',
                                           accountId: supplier.id,
                                           accountName: supplier.name);
-                                    if (value == 'edit')
+                                    }
+                                    if (value == 'edit') {
                                       _openSupplierForm(context,
                                           supplier: supplier);
-                                    if (value == 'delete')
+                                    }
+                                    if (value == 'delete') {
                                       _deleteSupplier(context, supplier);
+                                    }
                                   },
                                   itemBuilder: (context) => [
                                     PopupMenuItem(

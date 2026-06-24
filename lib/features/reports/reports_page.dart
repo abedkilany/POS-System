@@ -99,18 +99,22 @@ class ReportsPage extends StatelessWidget {
       final method = txn.paymentMethod.trim().isEmpty
           ? tr.text('not_specified')
           : txn.paymentMethod.trim();
-      if (txn.type == 'paymentReceived')
+      if (txn.type == 'paymentReceived') {
         todayCashInByMethod[method] =
             (todayCashInByMethod[method] ?? 0) + txn.credit;
-      if (txn.type == 'paymentPaid')
+      }
+      if (txn.type == 'paymentPaid') {
         todayCashOutByMethod[method] =
             (todayCashOutByMethod[method] ?? 0) + txn.debit;
-      if (txn.type == 'paymentReversal' && txn.accountType == 'supplier')
+      }
+      if (txn.type == 'paymentReversal' && txn.accountType == 'supplier') {
         todayCashInByMethod[method] =
             (todayCashInByMethod[method] ?? 0) + txn.credit;
-      if (txn.type == 'paymentReversal' && txn.accountType == 'customer')
+      }
+      if (txn.type == 'paymentReversal' && txn.accountType == 'customer') {
         todayCashOutByMethod[method] =
             (todayCashOutByMethod[method] ?? 0) + txn.debit;
+      }
     }
     final topCustomerDebts = store.customers
         .map((customer) => MapEntry(
