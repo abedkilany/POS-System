@@ -903,6 +903,33 @@ class _SalesPageState extends State<SalesPage> {
     );
   }
 
+  Future<void> _showSaleShiftQuickAction() async {
+    final tr = AppLocalizations.of(context);
+    try {
+      final status = await _loadSaleShiftStatus();
+      if (!mounted) return;
+      final openSession = status.openSession;
+      if (openSession == null) {
+        if (status.drawers.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('لا يوجد درج نقدية معرف. أضف درج نقدية أولاً من الإعدادات المالية.'),
+            ),
+          );
+          return;
+        }
+        await _openSaleDrawerDialog(status);
+      } else {
+        await _closeSaleDrawerDialog(openSession, status);
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(localizeRuntimeMessage(error.toString(), tr))),
+      );
+    }
+  }
+
   Future<void> _openSaleDrawerDialog(_SaleShiftStatus status) async {
     final tr = AppLocalizations.of(context);
     final controller = TextEditingController(text: '0');
@@ -1198,10 +1225,21 @@ class _SalesPageState extends State<SalesPage> {
           AppSectionHeader(
             title: tr.text('pos_terminal'),
             subtitle: tr.text('pos_terminal_desc'),
-            action: OutlinedButton.icon(
-              onPressed: _showInvoicesSheet,
-              icon: const Icon(Icons.receipt_long_outlined),
-              label: Text(tr.text('recent_invoices')),
+            action: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: _showSaleShiftQuickAction,
+                  icon: const Icon(Icons.point_of_sale_outlined),
+                  label: const Text('إدارة الوردية'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _showInvoicesSheet,
+                  icon: const Icon(Icons.receipt_long_outlined),
+                  label: Text(tr.text('recent_invoices')),
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 8),
@@ -2056,6 +2094,10 @@ class _SalesPageState extends State<SalesPage> {
                     icon: Icons.grid_view_rounded,
                     label: tr.text('quick_products'),
                     onTap: () => _showQuickProductsSheet(products)),
+                _MobileSaleAction(
+                    icon: Icons.point_of_sale_outlined,
+                    label: 'الوردية',
+                    onTap: _showSaleShiftQuickAction),
                 _MobileSaleAction(
                     icon: Icons.receipt_long_outlined,
                     label: tr.text('recent_invoices'),

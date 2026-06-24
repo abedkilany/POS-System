@@ -31,7 +31,7 @@ class _AccountingPageState extends State<AccountingPage> with SingleTickerProvid
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 15, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
     _searchController.addListener(() => setState(() => _query = _searchController.text.trim().toLowerCase()));
   }
 
@@ -67,21 +67,10 @@ class _AccountingPageState extends State<AccountingPage> with SingleTickerProvid
             child: TabBarView(
               controller: _tabController,
               children: [
-                _AccountsTab(store: widget.store, query: _query, accountType: 'customer'),
-                _AccountsTab(store: widget.store, query: _query, accountType: 'supplier'),
-                _AgingReportsTab(store: widget.store, query: _query),
-                _TransactionsTab(store: widget.store, query: _query, cashOnly: true),
-                _TransactionsTab(store: widget.store, query: _query, cashOnly: false),
-                _GeneralLedgerTab(store: widget.store, query: _query),
-                _TrialBalanceTab(store: widget.store, query: _query),
-                _IncomeStatementTab(store: widget.store),
-                _BalanceSheetTab(store: widget.store),
-                _CashBankReportTab(store: widget.store),
-                _CashFlowStatementTab(store: widget.store),
-                _TaxReportTab(store: widget.store),
-                _AdvancedAccountingTab(store: widget.store, cashOnly: true),
-                _AdvancedAccountingTab(store: widget.store),
-                _AccountingSettingsTab(store: widget.store),
+                _AccountsAccountingGroup(store: widget.store, query: _query),
+                _CashAccountingGroup(store: widget.store, query: _query),
+                _ReportsAccountingGroup(store: widget.store, query: _query),
+                _SettingsAccountingGroup(store: widget.store),
               ],
             ),
           ),
@@ -298,22 +287,185 @@ class _AccountingTabs extends StatelessWidget {
           controller: controller,
           isScrollable: true,
           tabs: [
-            Tab(icon: const Icon(Icons.person_outline), text: tr.text('customers')),
-            Tab(icon: const Icon(Icons.local_shipping_outlined), text: tr.text('suppliers')),
-            Tab(icon: const Icon(Icons.schedule_outlined), text: tr.text('aging_reports')),
-            Tab(icon: const Icon(Icons.payments_outlined), text: tr.text('cash_movement')),
-            Tab(icon: const Icon(Icons.history_outlined), text: tr.text('recent_transactions')),
-            Tab(icon: const Icon(Icons.menu_book_outlined), text: tr.text('general_ledger')),
-            Tab(icon: const Icon(Icons.balance_outlined), text: tr.text('trial_balance')),
-            Tab(icon: const Icon(Icons.trending_up_outlined), text: tr.text('income_statement')),
-            Tab(icon: const Icon(Icons.account_balance_outlined), text: tr.text('balance_sheet')),
-            Tab(icon: const Icon(Icons.account_balance_wallet_outlined), text: tr.text('cash_bank')),
-            Tab(icon: const Icon(Icons.waterfall_chart_outlined), text: tr.text('cash_flow_statement')),
-            Tab(icon: const Icon(Icons.receipt_long_outlined), text: tr.text('tax_report')),
+            Tab(icon: const Icon(Icons.people_alt_outlined), text: tr.text('accounts')),
             Tab(icon: const Icon(Icons.point_of_sale_outlined), text: tr.text('cash_management')),
-            Tab(icon: const Icon(Icons.auto_awesome_motion_outlined), text: tr.text('advanced')),
+            Tab(icon: const Icon(Icons.assessment_outlined), text: tr.text('reports')),
             Tab(icon: const Icon(Icons.settings_outlined), text: tr.text('settings')),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+
+class _AccountsAccountingGroup extends StatelessWidget {
+  const _AccountsAccountingGroup({required this.store, required this.query});
+
+  final AppStore store;
+  final String query;
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    return DefaultTabController(
+      length: 5,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _AccountingGroupTabs(
+            tabs: [
+              Tab(icon: const Icon(Icons.person_outline), text: tr.text('customers')),
+              Tab(icon: const Icon(Icons.local_shipping_outlined), text: tr.text('suppliers')),
+              Tab(icon: const Icon(Icons.schedule_outlined), text: tr.text('aging_reports')),
+              Tab(icon: const Icon(Icons.history_outlined), text: tr.text('recent_transactions')),
+              Tab(icon: const Icon(Icons.menu_book_outlined), text: tr.text('general_ledger')),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: TabBarView(
+              children: [
+                _AccountsTab(store: store, query: query, accountType: 'customer'),
+                _AccountsTab(store: store, query: query, accountType: 'supplier'),
+                _AgingReportsTab(store: store, query: query),
+                _TransactionsTab(store: store, query: query, cashOnly: false),
+                _GeneralLedgerTab(store: store, query: query),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CashAccountingGroup extends StatelessWidget {
+  const _CashAccountingGroup({required this.store, required this.query});
+
+  final AppStore store;
+  final String query;
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    return DefaultTabController(
+      length: 3,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _AccountingGroupTabs(
+            tabs: [
+              Tab(icon: const Icon(Icons.payments_outlined), text: tr.text('cash_movement')),
+              Tab(icon: const Icon(Icons.point_of_sale_outlined), text: tr.text('cash_management')),
+              Tab(icon: const Icon(Icons.account_balance_wallet_outlined), text: tr.text('cash_bank')),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: TabBarView(
+              children: [
+                _TransactionsTab(store: store, query: query, cashOnly: true),
+                _AdvancedAccountingTab(store: store, cashOnly: true),
+                _CashBankReportTab(store: store),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ReportsAccountingGroup extends StatelessWidget {
+  const _ReportsAccountingGroup({required this.store, required this.query});
+
+  final AppStore store;
+  final String query;
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    return DefaultTabController(
+      length: 5,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _AccountingGroupTabs(
+            tabs: [
+              Tab(icon: const Icon(Icons.balance_outlined), text: tr.text('trial_balance')),
+              Tab(icon: const Icon(Icons.trending_up_outlined), text: tr.text('income_statement')),
+              Tab(icon: const Icon(Icons.account_balance_outlined), text: tr.text('balance_sheet')),
+              Tab(icon: const Icon(Icons.waterfall_chart_outlined), text: tr.text('cash_flow_statement')),
+              Tab(icon: const Icon(Icons.receipt_long_outlined), text: tr.text('tax_report')),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: TabBarView(
+              children: [
+                _TrialBalanceTab(store: store, query: query),
+                _IncomeStatementTab(store: store),
+                _BalanceSheetTab(store: store),
+                _CashFlowStatementTab(store: store),
+                _TaxReportTab(store: store),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SettingsAccountingGroup extends StatelessWidget {
+  const _SettingsAccountingGroup({required this.store});
+
+  final AppStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    return DefaultTabController(
+      length: 2,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _AccountingGroupTabs(
+            tabs: [
+              Tab(icon: const Icon(Icons.auto_awesome_motion_outlined), text: tr.text('advanced')),
+              Tab(icon: const Icon(Icons.settings_outlined), text: tr.text('settings')),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: TabBarView(
+              children: [
+                _AdvancedAccountingTab(store: store),
+                _AccountingSettingsTab(store: store),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AccountingGroupTabs extends StatelessWidget {
+  const _AccountingGroupTabs({required this.tabs});
+
+  final List<Widget> tabs;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      elevation: 0,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: TabBar(
+          isScrollable: true,
+          tabs: tabs,
         ),
       ),
     );
