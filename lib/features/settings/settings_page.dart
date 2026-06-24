@@ -678,15 +678,6 @@ class SettingsPage extends StatelessWidget {
     ];
   }
 
-  String _formatPercent(double value) {
-    final rounded = value.roundToDouble();
-    final text = (value - rounded).abs() < 0.0001
-        ? rounded.toStringAsFixed(0)
-        : value.toStringAsFixed(2);
-    return '$text%';
-  }
-
-
   List<Widget> _financialCards(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final profile = store.storeProfile;
@@ -821,14 +812,6 @@ class SettingsPage extends StatelessWidget {
     ];
   }
 
-
-  String _formatPercent(double value) {
-    final rounded = value.roundToDouble();
-    final text = (value - rounded).abs() < 0.0001
-        ? rounded.toStringAsFixed(0)
-        : value.toStringAsFixed(2);
-    return '$text%';
-  }
 
   List<Widget> _shortcutCards(BuildContext context) => [
         const _KeyboardShortcutsSettingsCard(),
@@ -1688,6 +1671,7 @@ class SettingsPage extends StatelessWidget {
     );
 
     if (result != null) {
+      if (!context.mounted) return;
       await _saveOrganizationProfile(
           context, profile.copyWith(documentNumbering: result));
     }
@@ -1778,6 +1762,7 @@ class SettingsPage extends StatelessWidget {
     );
 
     if (result == null) return;
+    if (!context.mounted) return;
     final nextBranches = [
       ...profile.branches.where((item) => item.id != result.id),
       result,
@@ -1860,7 +1845,10 @@ class SettingsPage extends StatelessWidget {
       },
     );
 
-    if (result != null) await _saveOrganizationProfile(context, result);
+    if (result != null) {
+      if (!context.mounted) return;
+      await _saveOrganizationProfile(context, result);
+    }
   }
 
   Future<void> _editOrganizationLegal(
@@ -1959,7 +1947,10 @@ class SettingsPage extends StatelessWidget {
       },
     );
 
-    if (result != null) await _saveOrganizationProfile(context, result);
+    if (result != null) {
+      if (!context.mounted) return;
+      await _saveOrganizationProfile(context, result);
+    }
   }
 
   Future<void> _editOrganizationBranding(
@@ -2018,7 +2009,10 @@ class SettingsPage extends StatelessWidget {
       },
     );
 
-    if (result != null) await _saveOrganizationProfile(context, result);
+    if (result != null) {
+      if (!context.mounted) return;
+      await _saveOrganizationProfile(context, result);
+    }
   }
 
   Future<void> _saveOrganizationProfile(
