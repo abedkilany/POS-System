@@ -24,6 +24,9 @@ import '../models/manufacturing.dart';
 import '../models/expense.dart';
 import '../models/inventory_count.dart';
 import '../models/product.dart';
+import '../models/product_pricing.dart';
+import '../models/product_costing.dart';
+import '../models/inventory_cost_layer.dart';
 import '../models/purchase.dart';
 import '../models/purchase_item.dart';
 import '../models/supplier_purchase_price.dart';
@@ -132,6 +135,13 @@ class AppStore extends ChangeNotifier {
   static const _manufacturingOrdersKey = 'manufacturing_orders_v1';
   static const _suppliersKey = 'suppliers_v4';
   static const _supplierProductPricesKey = 'supplier_product_prices_v1';
+  static const _priceListsKey = 'price_lists_v1';
+  static const _productPricesKey = 'product_prices_v1';
+  static const _productPriceOverridesKey = 'product_price_overrides_v1';
+  static const _productCostsKey = 'product_costs_v1';
+  static const _costingMethodHistoryKey = 'costing_method_history_v1';
+  static const _inventoryCostingMethodKey = 'inventory_costing_method_v1';
+  static const _inventoryCostLayersKey = 'inventory_cost_layers_v1';
   static const _expensesKey = 'expenses_v4';
   static const _purchasesKey = 'purchases_v1';
   static const _stockMovementsKey = 'stock_movements_v1';
@@ -177,6 +187,12 @@ class AppStore extends ChangeNotifier {
   final List<ManufacturingOrder> _manufacturingOrders = [];
   final List<Supplier> _suppliers = [];
   final List<SupplierProductPrice> _supplierProductPrices = [];
+  final List<PriceList> _priceLists = [];
+  final List<ProductPrice> _productPrices = [];
+  final List<ProductPriceOverride> _productPriceOverrides = [];
+  final List<ProductCost> _productCosts = [];
+  final List<CostingMethodHistory> _costingMethodHistory = [];
+  final List<InventoryCostLayer> _inventoryCostLayers = [];
   final List<CatalogItem> _categories = [];
   final List<CatalogItem> _brands = [];
   final List<CatalogItem> _units = [];
@@ -205,6 +221,7 @@ class AppStore extends ChangeNotifier {
   final Map<String, Map<String, Map<String, dynamic>>>
       _sqliteDirtyBusinessRows = <String, Map<String, Map<String, dynamic>>>{};
   StoreProfile _storeProfile = StoreProfile.defaults;
+  InventoryCostingMethod _inventoryCostingMethod = InventoryCostingMethod.weightedAverage;
   int _invoiceCounter = 0;
   int _purchaseCounter = 0;
   String _currentRole = 'admin'; // legacy compatibility
@@ -226,6 +243,12 @@ class AppStore extends ChangeNotifier {
   UnmodifiableListView<ManufacturingOrder>? _cachedManufacturingOrders;
   UnmodifiableListView<Supplier>? _cachedSuppliers;
   UnmodifiableListView<SupplierProductPrice>? _cachedSupplierProductPrices;
+  UnmodifiableListView<PriceList>? _cachedPriceLists;
+  UnmodifiableListView<ProductPrice>? _cachedProductPrices;
+  UnmodifiableListView<ProductPriceOverride>? _cachedProductPriceOverrides;
+  UnmodifiableListView<ProductCost>? _cachedProductCosts;
+  UnmodifiableListView<CostingMethodHistory>? _cachedCostingMethodHistory;
+  UnmodifiableListView<InventoryCostLayer>? _cachedInventoryCostLayers;
   UnmodifiableListView<CatalogItem>? _cachedCategories;
   UnmodifiableListView<CatalogItem>? _cachedBrands;
   UnmodifiableListView<CatalogItem>? _cachedUnits;
@@ -284,6 +307,96 @@ class AppStore extends ChangeNotifier {
     _ensureDerivedListCaches();
     return _cachedSupplierProductPrices!;
   }
+  List<PriceList> get priceLists {
+    _ensureDerivedListCaches();
+    return _cachedPriceLists!;
+  }
+
+  List<ProductPrice> get productPrices {
+    _ensureDerivedListCaches();
+    return _cachedProductPrices!;
+  }
+
+  List<ProductPriceOverride> get productPriceOverrides {
+    _ensureDerivedListCaches();
+    return _cachedProductPriceOverrides!;
+  }
+
+  List<ProductCost> get productCosts {
+    _ensureDerivedListCaches();
+    return _cachedProductCosts!;
+  }
+
+  List<CostingMethodHistory> get costingMethodHistory {
+    _ensureDerivedListCaches();
+    return _cachedCostingMethodHistory!;
+  }
+
+  InventoryCostingMethod get inventoryCostingMethod => _inventoryCostingMethod;
+
+  List<InventoryCostLayer> get inventoryCostLayers {
+    _ensureDerivedListCaches();
+    return _cachedInventoryCostLayers!;
+  }
+
+  ProductCost productCostFor(String productId) {
+    _ensureProductCostEntries();
+    return _productCosts.firstWhere((item) => item.productId == productId, orElse: () => ProductCost(productId: productId));
+  }
+
+  PriceList get defaultPriceList {
+    _ensureDefaultPriceLists();
+    return _priceLists.firstWhere((item) => item.isDefault && item.isActive, orElse: () => _priceLists.first);
+  }
+
+  ProductPrice? defaultProductPriceFor(String productId, {String unitId = 'base'}) {
+    _ensureDefaultProductPriceEntries();
+    final priceListId = defaultPriceList.id;
+    for (final item in _productPrices) {
+      if (item.productId == productId && item.priceListId == priceListId && item.unitId == unitId && item.isActive) return item;
+    }
+    return null;
+  }
+
+  ProductPriceOverride? productPriceOverrideFor(ProductPrice price, String currencyCode) {
+    final normalizedCurrency = currencyCode.trim().toUpperCase();
+    for (final item in _productPriceOverrides) {
+      if (item.productPriceId == price.id &&
+          item.currencyCode == normalizedCurrency &&
+          item.isActive) {
+        return item;
+      }
+    }
+    return null;
+  }
+
+  double productPriceAmountForCurrency(Product product, String currencyCode, {String unitId = 'base'}) {
+    final price = defaultProductPriceFor(product.id, unitId: unitId);
+    if (price == null) {
+      final fallbackUsd = unitId == 'base' ? product.usdPrice : product.price;
+      return fromUsdReferencePrice(fallbackUsd, currencyCode, storeProfile);
+    }
+    final override = productPriceOverrideFor(price, currencyCode);
+    if (override != null) return override.amount;
+    return convertCurrency(
+      price.baseAmount,
+      price.baseCurrencyCode,
+      currencyCode.trim().toUpperCase(),
+      storeProfile,
+    );
+  }
+
+  double defaultProductUsdPrice(Product product, {String unitId = 'base'}) {
+    final price = defaultProductPriceFor(product.id, unitId: unitId);
+    if (price == null) return unitId == 'base' ? product.usdPrice : product.price;
+    final saleCurrency = storeProfile.defaultSaleInvoiceCurrency;
+    final override = productPriceOverrideFor(price, saleCurrency);
+    if (override != null) {
+      return toUsdReferencePrice(override.amount, override.currencyCode, storeProfile);
+    }
+    return toUsdReferencePrice(price.baseAmount, price.baseCurrencyCode, storeProfile);
+  }
+
   List<SupplierProductPrice> get allSupplierProductPricesForDiagnostics =>
       List.unmodifiable(_supplierProductPrices);
   List<CatalogItem> get categories {
@@ -450,6 +563,26 @@ class AppStore extends ChangeNotifier {
     );
     _cachedSupplierProductPrices = UnmodifiableListView(
       _supplierProductPrices.where((item) => !item.isDeleted).toList(growable: false),
+    );
+    _cachedPriceLists = UnmodifiableListView(
+      _priceLists.where((item) => item.isActive).toList(growable: false),
+    );
+    _cachedProductPrices = UnmodifiableListView(
+      _productPrices.where((item) => item.isActive).toList(growable: false),
+    );
+    _cachedProductPriceOverrides = UnmodifiableListView(
+      _productPriceOverrides.where((item) => item.isActive).toList(growable: false),
+    );
+    _cachedProductCosts = UnmodifiableListView(
+      _productCosts.toList(growable: false),
+    );
+    _cachedCostingMethodHistory = UnmodifiableListView(
+      _costingMethodHistory.toList(growable: false)
+        ..sort((a, b) => b.effectiveFrom.compareTo(a.effectiveFrom)),
+    );
+    _cachedInventoryCostLayers = UnmodifiableListView(
+      _inventoryCostLayers.toList(growable: false)
+        ..sort((a, b) => a.createdAt.compareTo(b.createdAt)),
     );
     _cachedCategories = UnmodifiableListView(
       _categories.where((item) => !item.isDeleted).toList(growable: false),
@@ -1850,6 +1983,8 @@ class AppStore extends ChangeNotifier {
     _syncSequence = _loadSyncSequence();
     _normalizeCustomers();
     _ensureCatalogDefaults();
+    _ensureDefaultPriceLists();
+    _ensureDefaultProductPriceEntries();
     await _runDataMigrationsIfNeeded();
 
     _isReady = true;
@@ -1900,6 +2035,30 @@ class AppStore extends ChangeNotifier {
           _supplierProductPricesKey,
           SupplierProductPrice.fromJson,
         ),
+        _decodeDeferredList<PriceList>(
+          _priceListsKey,
+          PriceList.fromJson,
+        ),
+        _decodeDeferredList<ProductPrice>(
+          _productPricesKey,
+          ProductPrice.fromJson,
+        ),
+        _decodeDeferredList<ProductPriceOverride>(
+          _productPriceOverridesKey,
+          ProductPriceOverride.fromJson,
+        ),
+        _decodeDeferredList<ProductCost>(
+          _productCostsKey,
+          ProductCost.fromJson,
+        ),
+        _decodeDeferredList<CostingMethodHistory>(
+          _costingMethodHistoryKey,
+          CostingMethodHistory.fromJson,
+        ),
+        _decodeDeferredList<InventoryCostLayer>(
+          _inventoryCostLayersKey,
+          InventoryCostLayer.fromJson,
+        ),
         _decodeDeferredList<Expense>(_expensesKey, Expense.fromJson),
         _decodeDeferredList<Purchase>(_purchasesKey, Purchase.fromJson),
         _decodeDeferredList<StockMovement>(
@@ -1949,30 +2108,55 @@ class AppStore extends ChangeNotifier {
       _supplierProductPrices
         ..clear()
         ..addAll(results[8].cast<SupplierProductPrice>());
+      _priceLists
+        ..clear()
+        ..addAll(results[9].cast<PriceList>());
+      _productPrices
+        ..clear()
+        ..addAll(results[10].cast<ProductPrice>());
+      _productPriceOverrides
+        ..clear()
+        ..addAll(results[11].cast<ProductPriceOverride>());
+      _productCosts
+        ..clear()
+        ..addAll(results[12].cast<ProductCost>().where((item) => item.productId.isNotEmpty));
+      _costingMethodHistory
+        ..clear()
+        ..addAll(results[13].cast<CostingMethodHistory>().where((item) => item.id.isNotEmpty));
+      _inventoryCostLayers
+        ..clear()
+        ..addAll(results[14].cast<InventoryCostLayer>().where((item) => item.id.isNotEmpty && item.productId.isNotEmpty));
+      _inventoryCostingMethod = InventoryCostingMethodJson.fromCode(
+        LocalDatabaseService.getString(_inventoryCostingMethodKey),
+      );
       _expenses
         ..clear()
-        ..addAll(results[9].cast<Expense>());
+        ..addAll(results[15].cast<Expense>());
       _purchases
         ..clear()
-        ..addAll(results[10].cast<Purchase>());
+        ..addAll(results[16].cast<Purchase>());
       _stockMovements
         ..clear()
-        ..addAll(results[11].cast<StockMovement>());
+        ..addAll(results[17].cast<StockMovement>());
       _inventoryCounts
         ..clear()
-        ..addAll(results[12].cast<InventoryCountSession>());
+        ..addAll(results[18].cast<InventoryCountSession>());
       _warehouses
         ..clear()
-        ..addAll(results[13].cast<Warehouse>());
+        ..addAll(results[19].cast<Warehouse>());
       _accountTransactions
         ..clear()
-        ..addAll(results[14].cast<AccountTransaction>());
+        ..addAll(results[20].cast<AccountTransaction>());
       _syncChanges
         ..clear()
-        ..addAll(results[15].cast<SyncChange>());
+        ..addAll(results[21].cast<SyncChange>());
       _syncQueue
         ..clear()
-        ..addAll(results[16].cast<SyncQueueItem>());
+        ..addAll(results[22].cast<SyncQueueItem>());
+      _ensureDefaultPriceLists();
+      _ensureDefaultProductPriceEntries();
+      _ensureProductCostEntries();
+      _ensureCostingMethodHistory();
       _ensureDefaultWarehouse();
 
       _normalizeCustomers();
@@ -4203,6 +4387,31 @@ class AppStore extends ChangeNotifier {
         ),
       ),
       LocalDatabaseService.setString(
+        _priceListsKey,
+        jsonEncode(_priceLists.map((item) => item.toJson()).toList()),
+      ),
+      LocalDatabaseService.setString(
+        _productPricesKey,
+        jsonEncode(_productPrices.map((item) => item.toJson()).toList()),
+      ),
+      LocalDatabaseService.setString(
+        _productPriceOverridesKey,
+        jsonEncode(_productPriceOverrides.map((item) => item.toJson()).toList()),
+      ),
+      LocalDatabaseService.setString(
+        _productCostsKey,
+        jsonEncode(_productCosts.map((item) => item.toJson()).toList()),
+      ),
+      LocalDatabaseService.setString(
+        _costingMethodHistoryKey,
+        jsonEncode(_costingMethodHistory.map((item) => item.toJson()).toList()),
+      ),
+      LocalDatabaseService.setString(
+        _inventoryCostLayersKey,
+        jsonEncode(_inventoryCostLayers.map((item) => item.toJson()).toList()),
+      ),
+      LocalDatabaseService.setString(_inventoryCostingMethodKey, _inventoryCostingMethod.code),
+      LocalDatabaseService.setString(
         _categoriesKey,
         jsonEncode(_categories.map((item) => item.toJson()).toList()),
       ),
@@ -4327,6 +4536,28 @@ class AppStore extends ChangeNotifier {
         LocalDatabaseService.setString(
           _productsKey,
           jsonEncode(_products.map((item) => item.toJson()).toList()),
+        ),
+      );
+      writes.add(
+        LocalDatabaseService.setString(
+          _productCostsKey,
+          jsonEncode(_productCosts.map((item) => item.toJson()).toList()),
+        ),
+      );
+      writes.add(LocalDatabaseService.setString(_priceListsKey, jsonEncode(_priceLists.map((item) => item.toJson()).toList())));
+      writes.add(LocalDatabaseService.setString(_productPricesKey, jsonEncode(_productPrices.map((item) => item.toJson()).toList())));
+      writes.add(LocalDatabaseService.setString(_productPriceOverridesKey, jsonEncode(_productPriceOverrides.map((item) => item.toJson()).toList())));
+      writes.add(LocalDatabaseService.setString(_inventoryCostingMethodKey, _inventoryCostingMethod.code));
+      writes.add(
+        LocalDatabaseService.setString(
+          _costingMethodHistoryKey,
+          jsonEncode(_costingMethodHistory.map((item) => item.toJson()).toList()),
+        ),
+      );
+      writes.add(
+        LocalDatabaseService.setString(
+          _inventoryCostLayersKey,
+          jsonEncode(_inventoryCostLayers.map((item) => item.toJson()).toList()),
         ),
       );
     }
@@ -4557,7 +4788,16 @@ class AppStore extends ChangeNotifier {
       }
     }
 
-    if (products) writes.add(persistRows(_productsKey));
+    if (products) {
+      writes.add(persistRows(_productsKey));
+      writes.add(LocalDatabaseService.setString(_productCostsKey, jsonEncode(_productCosts.map((item) => item.toJson()).toList())));
+      writes.add(LocalDatabaseService.setString(_priceListsKey, jsonEncode(_priceLists.map((item) => item.toJson()).toList())));
+      writes.add(LocalDatabaseService.setString(_productPricesKey, jsonEncode(_productPrices.map((item) => item.toJson()).toList())));
+      writes.add(LocalDatabaseService.setString(_productPriceOverridesKey, jsonEncode(_productPriceOverrides.map((item) => item.toJson()).toList())));
+      writes.add(LocalDatabaseService.setString(_inventoryCostingMethodKey, _inventoryCostingMethod.code));
+      writes.add(LocalDatabaseService.setString(_costingMethodHistoryKey, jsonEncode(_costingMethodHistory.map((item) => item.toJson()).toList())));
+      writes.add(LocalDatabaseService.setString(_inventoryCostLayersKey, jsonEncode(_inventoryCostLayers.map((item) => item.toJson()).toList())));
+    }
     if (customers) writes.add(persistRows(_customersKey));
     if (sales) writes.add(persistRows(_salesKey));
     if (saleQuotations) {
@@ -6098,6 +6338,374 @@ class AppStore extends ChangeNotifier {
   }) =>
       _withSyncMeta<CatalogItem>(item, now, isCreate: isCreate);
 
+
+  void _ensureDefaultPriceLists() {
+    if (_priceLists.any((item) => item.id == 'retail')) return;
+    final now = DateTime.now();
+    _priceLists.insert(0, PriceList(id: 'retail', name: 'Retail', code: 'retail', isDefault: true, createdAt: now, updatedAt: now));
+    if (!_priceLists.any((item) => item.id == 'wholesale')) {
+      _priceLists.add(PriceList(id: 'wholesale', name: 'Wholesale', code: 'wholesale', createdAt: now, updatedAt: now));
+    }
+  }
+
+  void _ensureDefaultProductPriceEntries() {
+    _ensureDefaultPriceLists();
+    final retailId = defaultPriceList.id;
+    final existing = _productPrices.map((item) => '${item.productId}|${item.priceListId}|${item.unitId}').toSet();
+    final now = DateTime.now();
+    for (final product in _products.where((item) => !item.isDeleted)) {
+      final key = '${product.id}|$retailId|base';
+      if (!existing.contains(key)) {
+        _productPrices.add(ProductPrice(
+          id: 'pp_${product.id}_${retailId}_base',
+          productId: product.id,
+          priceListId: retailId,
+          unitId: 'base',
+          baseCurrencyCode: product.originalCurrency,
+          baseAmount: product.originalPrice,
+          createdAt: product.createdAt,
+          updatedAt: now,
+        ));
+        existing.add(key);
+      }
+      for (final unit in product.saleUnits) {
+        final unitKey = '${product.id}|$retailId|${unit.id}';
+        if (existing.contains(unitKey)) continue;
+        _productPrices.add(ProductPrice(
+          id: 'pp_${product.id}_${retailId}_${unit.id}',
+          productId: product.id,
+          priceListId: retailId,
+          unitId: unit.id,
+          baseCurrencyCode: unit.originalCurrency,
+          baseAmount: unit.originalPrice,
+          createdAt: product.createdAt,
+          updatedAt: now,
+        ));
+        existing.add(unitKey);
+      }
+    }
+  }
+
+  Future<void> setDefaultProductBasePrice({required String productId, required String unitId, required double amount, required String currencyCode}) async {
+    final productExists = _products.any((item) => item.id == productId);
+    requirePermission(productExists ? AppPermission.productsEdit : AppPermission.productsCreate);
+    _ensureDefaultPriceLists();
+    final now = DateTime.now();
+    final priceListId = defaultPriceList.id;
+    final index = _productPrices.indexWhere((item) => item.productId == productId && item.priceListId == priceListId && item.unitId == unitId);
+    final price = ProductPrice(
+      id: index == -1 ? 'pp_${productId}_${priceListId}_${unitId}_${now.microsecondsSinceEpoch}' : _productPrices[index].id,
+      productId: productId,
+      priceListId: priceListId,
+      unitId: unitId,
+      baseCurrencyCode: currencyCode.toUpperCase(),
+      baseAmount: amount,
+      createdAt: index == -1 ? now : _productPrices[index].createdAt,
+      updatedAt: now,
+    );
+    if (index == -1) {
+      _productPrices.add(price);
+    } else {
+      _productPrices[index] = price;
+    }
+    await LocalDatabaseService.setString(_priceListsKey, jsonEncode(_priceLists.map((item) => item.toJson()).toList()));
+    await LocalDatabaseService.setString(_productPricesKey, jsonEncode(_productPrices.map((item) => item.toJson()).toList()));
+    _derivedListCachesDirty = true;
+    notifyListeners();
+  }
+
+  Future<void> setProductPriceOverride({
+    required String productPriceId,
+    required String currencyCode,
+    required double amount,
+    ProductPriceOverrideMode mode = ProductPriceOverrideMode.fixed,
+    bool isActive = true,
+  }) async {
+    requirePermission(AppPermission.productsEdit);
+    final normalizedCurrency = currencyCode.trim().toUpperCase();
+    if (productPriceId.trim().isEmpty || normalizedCurrency.isEmpty) {
+      throw ArgumentError('Product price and currency are required.');
+    }
+    final now = DateTime.now();
+    final index = _productPriceOverrides.indexWhere(
+      (item) => item.productPriceId == productPriceId && item.currencyCode == normalizedCurrency,
+    );
+    final override = ProductPriceOverride(
+      id: index == -1 ? 'ppo_${productPriceId}_${normalizedCurrency}_${now.microsecondsSinceEpoch}' : _productPriceOverrides[index].id,
+      productPriceId: productPriceId,
+      currencyCode: normalizedCurrency,
+      amount: amount,
+      mode: mode,
+      isActive: isActive,
+      createdAt: index == -1 ? now : _productPriceOverrides[index].createdAt,
+      updatedAt: now,
+    );
+    if (index == -1) {
+      _productPriceOverrides.add(override);
+    } else {
+      _productPriceOverrides[index] = override;
+    }
+    await LocalDatabaseService.setString(_productPriceOverridesKey, jsonEncode(_productPriceOverrides.map((item) => item.toJson()).toList()));
+    _derivedListCachesDirty = true;
+    notifyListeners();
+  }
+
+  Future<void> removeProductPriceOverride(String productPriceId, String currencyCode) async {
+    requirePermission(AppPermission.productsEdit);
+    final normalizedCurrency = currencyCode.trim().toUpperCase();
+    final index = _productPriceOverrides.indexWhere(
+      (item) => item.productPriceId == productPriceId && item.currencyCode == normalizedCurrency,
+    );
+    if (index == -1) return;
+    _productPriceOverrides[index] = _productPriceOverrides[index].copyWith(isActive: false, updatedAt: DateTime.now());
+    await LocalDatabaseService.setString(_productPriceOverridesKey, jsonEncode(_productPriceOverrides.map((item) => item.toJson()).toList()));
+    _derivedListCachesDirty = true;
+    notifyListeners();
+  }
+
+
+
+  void _ensureProductCostEntries() {
+    final existing = _productCosts.map((item) => item.productId).toSet();
+    final now = DateTime.now();
+    for (final product in _products.where((item) => !item.isDeleted)) {
+      if (existing.contains(product.id)) continue;
+      _productCosts.add(ProductCost(
+        productId: product.id,
+        averageCost: _safeUsdCost(product),
+        lastCost: _safeUsdCost(product),
+        currencyCode: 'USD',
+        createdAt: product.createdAt,
+        updatedAt: now,
+      ));
+      existing.add(product.id);
+    }
+  }
+
+  void _ensureCostingMethodHistory() {
+    if (_costingMethodHistory.isNotEmpty) return;
+    final now = DateTime.now();
+    _costingMethodHistory.add(CostingMethodHistory(
+      id: 'costing_${now.microsecondsSinceEpoch}',
+      method: _inventoryCostingMethod,
+      effectiveFrom: now,
+      reason: 'Initial costing method',
+      createdAt: now,
+      updatedAt: now,
+    ));
+  }
+
+  Future<void> setInventoryCostingMethod(InventoryCostingMethod method, {String reason = ''}) async {
+    requirePermission(AppPermission.productsEdit);
+    if (_inventoryCostingMethod == method && _costingMethodHistory.isNotEmpty) return;
+    final now = DateTime.now();
+    if (_costingMethodHistory.isNotEmpty) {
+      final openIndex = _costingMethodHistory.indexWhere((item) => item.effectiveTo == null);
+      if (openIndex != -1) {
+        _costingMethodHistory[openIndex] = _costingMethodHistory[openIndex].copyWith(effectiveTo: now, updatedAt: now);
+      }
+    }
+    _inventoryCostingMethod = method;
+    _costingMethodHistory.add(CostingMethodHistory(
+      id: 'costing_${now.microsecondsSinceEpoch}',
+      method: method,
+      effectiveFrom: now,
+      reason: reason.trim(),
+      createdAt: now,
+      updatedAt: now,
+    ));
+    await LocalDatabaseService.setString(_inventoryCostingMethodKey, method.code);
+    await LocalDatabaseService.setString(_costingMethodHistoryKey, jsonEncode(_costingMethodHistory.map((item) => item.toJson()).toList()));
+    _derivedListCachesDirty = true;
+    notifyListeners();
+  }
+
+  ProductCost _upsertProductCostFromPurchase({
+    required Product product,
+    required double receivedQty,
+    required double baseUnitCost,
+    required DateTime now,
+  }) {
+    _ensureProductCostEntries();
+    final index = _productCosts.indexWhere((item) => item.productId == product.id);
+    final current = index == -1
+        ? ProductCost(productId: product.id, averageCost: _safeUsdCost(product), lastCost: _safeUsdCost(product), currencyCode: 'USD', createdAt: now, updatedAt: now)
+        : _productCosts[index];
+    final stockBefore = max(0, product.stock);
+    final stockAfter = stockBefore + receivedQty;
+    final averageCost = stockAfter <= 0
+        ? baseUnitCost
+        : ((stockBefore * current.averageCost) + (receivedQty * baseUnitCost)) / stockAfter;
+    final updated = current.copyWith(
+      averageCost: averageCost,
+      lastCost: baseUnitCost,
+      currencyCode: 'USD',
+      updatedAt: now,
+    );
+    if (index == -1) {
+      _productCosts.add(updated);
+    } else {
+      _productCosts[index] = updated;
+    }
+    return updated;
+  }
+
+  void _addInventoryCostLayerFromPurchase({
+    required Purchase purchase,
+    required PurchaseItem item,
+    required int lineIndex,
+    required double quantity,
+    required double unitCost,
+    required DateTime now,
+  }) {
+    if (quantity <= 0) return;
+    final id = '${purchase.id}-$lineIndex-${item.productId}-cost-layer';
+    if (_inventoryCostLayers.any((layer) => layer.id == id)) return;
+    _inventoryCostLayers.add(InventoryCostLayer(
+      id: id,
+      productId: item.productId,
+      productName: item.productName,
+      quantityReceived: quantity,
+      quantityRemaining: quantity,
+      unitCost: unitCost,
+      currencyCode: 'USD',
+      exchangeRate: 1,
+      purchaseId: purchase.id,
+      purchaseItemId: '$lineIndex',
+      sourceType: 'purchase',
+      sourceId: purchase.id,
+      createdAt: now,
+      updatedAt: now,
+    ));
+  }
+
+  void _addInventoryCostLayerFromStockIncrease({
+    required String id,
+    required Product product,
+    required double quantity,
+    required double unitCost,
+    required String sourceType,
+    required String sourceId,
+    required DateTime now,
+  }) {
+    if (quantity <= 0 || !product.trackStock) return;
+    if (_inventoryCostLayers.any((layer) => layer.id == id)) return;
+    _inventoryCostLayers.add(InventoryCostLayer(
+      id: id,
+      productId: product.id,
+      productName: product.name,
+      quantityReceived: quantity,
+      quantityRemaining: quantity,
+      unitCost: unitCost,
+      currencyCode: 'USD',
+      exchangeRate: 1,
+      purchaseId: '',
+      purchaseItemId: '',
+      sourceType: sourceType,
+      sourceId: sourceId,
+      createdAt: now,
+      updatedAt: now,
+    ));
+  }
+
+  bool _purchaseHasConsumedCostLayers(String purchaseId) {
+    return _inventoryCostLayers.any((layer) =>
+        layer.purchaseId == purchaseId &&
+        layer.quantityReceived - layer.quantityRemaining > 0.000001);
+  }
+
+  InventoryCostResult _resolveCostForSaleItem(SaleItem item, DateTime now) {
+    final product = _findProductById(item.productId);
+    final cost = productCostFor(item.productId);
+    if (_inventoryCostingMethod == InventoryCostingMethod.lastPurchaseCost) {
+      return InventoryCostResult(
+        method: _inventoryCostingMethod,
+        unitCost: cost.lastCost > 0 ? cost.lastCost : (product?.usdCost ?? 0),
+      );
+    }
+    if (_inventoryCostingMethod == InventoryCostingMethod.fifo) {
+      var qtyToConsume = item.effectiveBaseQuantity;
+      final consumptions = <InventoryCostLayerConsumption>[];
+      final indexes = <int>[];
+      for (var i = 0; i < _inventoryCostLayers.length; i += 1) {
+        final layer = _inventoryCostLayers[i];
+        if (layer.productId == item.productId && !layer.isClosed && layer.quantityRemaining > 0) {
+          indexes.add(i);
+        }
+      }
+      indexes.sort((a, b) => _inventoryCostLayers[a].createdAt.compareTo(_inventoryCostLayers[b].createdAt));
+      for (final index in indexes) {
+        if (qtyToConsume <= 0) break;
+        final layer = _inventoryCostLayers[index];
+        final consumed = min(qtyToConsume, layer.quantityRemaining);
+        if (consumed <= 0) continue;
+        consumptions.add(InventoryCostLayerConsumption(
+          layerId: layer.id,
+          quantity: consumed,
+          unitCost: layer.unitCost,
+          currencyCode: layer.currencyCode,
+        ));
+        final remaining = layer.quantityRemaining - consumed;
+        _inventoryCostLayers[index] = layer.copyWith(
+          quantityRemaining: remaining,
+          isClosed: remaining <= 0,
+          updatedAt: now,
+        );
+        qtyToConsume -= consumed;
+      }
+      if (qtyToConsume > 0) {
+        final fallbackCost = cost.averageCost > 0 ? cost.averageCost : (cost.lastCost > 0 ? cost.lastCost : (product?.usdCost ?? 0));
+        if (fallbackCost > 0) {
+          consumptions.add(InventoryCostLayerConsumption(
+            layerId: 'negative_stock_${item.productId}_${now.microsecondsSinceEpoch}',
+            quantity: qtyToConsume,
+            unitCost: fallbackCost,
+            currencyCode: 'USD',
+          ));
+        }
+      }
+      final totalQty = item.effectiveBaseQuantity <= 0 ? 0 : item.effectiveBaseQuantity;
+      final totalCost = consumptions.fold<double>(0, (sum, entry) => sum + entry.totalCost);
+      final unitCost = totalQty <= 0 ? 0.0 : totalCost / totalQty;
+      return InventoryCostResult(
+        method: _inventoryCostingMethod,
+        unitCost: unitCost,
+        consumptions: consumptions,
+      );
+    }
+    return InventoryCostResult(
+      method: _inventoryCostingMethod,
+      unitCost: cost.averageCost > 0 ? cost.averageCost : (product?.usdCost ?? 0),
+    );
+  }
+
+  void _restoreInventoryCostLayersFromSaleItem(SaleItem item, DateTime now) {
+    if (item.costLayerConsumptions.isEmpty) return;
+    for (final consumption in item.costLayerConsumptions) {
+      final index = _inventoryCostLayers.indexWhere((layer) => layer.id == consumption.layerId);
+      if (index == -1) continue;
+      final layer = _inventoryCostLayers[index];
+      final remaining = layer.quantityRemaining + consumption.quantity;
+      _inventoryCostLayers[index] = layer.copyWith(
+        quantityRemaining: remaining,
+        isClosed: false,
+        updatedAt: now,
+      );
+    }
+  }
+
+  void _closeInventoryCostLayersForPurchase(String purchaseId, DateTime now) {
+    for (var i = 0; i < _inventoryCostLayers.length; i += 1) {
+      final layer = _inventoryCostLayers[i];
+      if (layer.purchaseId != purchaseId) continue;
+      _inventoryCostLayers[i] = layer.copyWith(
+        quantityRemaining: 0,
+        isClosed: true,
+        updatedAt: now,
+      );
+    }
+  }
+
   Future<void> addOrUpdateProduct(Product product) async {
     final exists = _products.any((item) => item.id == product.id);
     requirePermission(
@@ -6126,6 +6734,9 @@ class AppStore extends ChangeNotifier {
     } else {
       _products[index] = syncedProduct;
     }
+    _ensureDefaultProductPriceEntries();
+    _ensureProductCostEntries();
+    _ensureCostingMethodHistory();
     _recordSyncChange(
       entityType: 'product',
       entityId: syncedProduct.id,
@@ -7051,6 +7662,9 @@ class AppStore extends ChangeNotifier {
     final now = DateTime.now();
     var reversalApplied = purchase.reversalApplied;
     if (reverseStock && !purchase.reversalApplied) {
+      if (_inventoryCostingMethod == InventoryCostingMethod.fifo && _purchaseHasConsumedCostLayers(purchase.id)) {
+        throw StateError('Cannot reverse this purchase after FIFO layers have been consumed by sales. Return/cancel the related sales first or create a stock revaluation.');
+      }
       for (var lineIndex = 0;
           lineIndex < purchase.items.length;
           lineIndex += 1) {
@@ -7088,6 +7702,7 @@ class AppStore extends ChangeNotifier {
           recordSync: true,
         );
       }
+      _closeInventoryCostLayersForPurchase(purchase.id, now);
       reversalApplied = true;
     }
     final returned = _withSyncMeta<Purchase>(
@@ -7137,6 +7752,9 @@ class AppStore extends ChangeNotifier {
     final now = DateTime.now();
     var reversalApplied = purchase.reversalApplied;
     if (reverseStock && purchase.isReceived && !purchase.reversalApplied) {
+      if (_inventoryCostingMethod == InventoryCostingMethod.fifo && _purchaseHasConsumedCostLayers(purchase.id)) {
+        throw StateError('Cannot reverse this purchase after FIFO layers have been consumed by sales. Return/cancel the related sales first or create a stock revaluation.');
+      }
       for (var lineIndex = 0;
           lineIndex < purchase.items.length;
           lineIndex += 1) {
@@ -7175,6 +7793,7 @@ class AppStore extends ChangeNotifier {
           recordSync: true,
         );
       }
+      _closeInventoryCostLayersForPurchase(purchase.id, now);
       reversalApplied = true;
     }
     final cancelled = _withSyncMeta<Purchase>(
@@ -7351,6 +7970,18 @@ class AppStore extends ChangeNotifier {
         product.copyWith(stock: product.stock + delta),
         now,
       );
+      if (delta > 0) {
+        final cost = productCostFor(product.id);
+        _addInventoryCostLayerFromStockIncrease(
+          id: '${session.id}-${line.productId}-count-layer',
+          product: product,
+          quantity: delta,
+          unitCost: cost.averageCost > 0 ? cost.averageCost : _safeUsdCost(product),
+          sourceType: 'inventory_count',
+          sourceId: session.id,
+          now: now,
+        );
+      }
       _addStockMovement(
         StockMovement(
           id: '${session.id}-${line.productId}-count-adjustment',
@@ -7512,17 +8143,29 @@ class AppStore extends ChangeNotifier {
       final receivedQty = item.baseQuantity;
       final newStock = product.stock + receivedQty;
       final baseUnitCost = item.unitCostPerBase;
-      final weightedCost = newStock <= 0
-          ? baseUnitCost
-          : ((product.stock * _safeUsdCost(product)) +
-                  (receivedQty * baseUnitCost)) /
-              newStock;
+      final productCost = _upsertProductCostFromPurchase(
+        product: product,
+        receivedQty: receivedQty,
+        baseUnitCost: baseUnitCost,
+        now: now,
+      );
+      _addInventoryCostLayerFromPurchase(
+        purchase: purchase,
+        item: item,
+        lineIndex: lineIndex,
+        quantity: receivedQty,
+        unitCost: baseUnitCost,
+        now: now,
+      );
+      final appliedCost = _inventoryCostingMethod == InventoryCostingMethod.lastPurchaseCost
+          ? productCost.lastCost
+          : productCost.averageCost;
       _products[index] = _withSyncMeta<Product>(
         product.copyWith(
           stock: newStock,
-          cost: weightedCost,
-          usdCost: weightedCost,
-          originalCost: weightedCost,
+          cost: appliedCost,
+          usdCost: appliedCost,
+          originalCost: appliedCost,
           costCurrency: 'USD',
           costExchangeRateAtEntry: storeProfile.usdToLbpRate,
         ),
@@ -7730,6 +8373,15 @@ class AppStore extends ChangeNotifier {
           costExchangeRateAtEntry: storeProfile.usdToLbpRate,
         ),
         now,
+      );
+      _addInventoryCostLayerFromStockIncrease(
+        id: '${order.id}-${output.id}-manufacturing-layer',
+        product: output,
+        quantity: quantity,
+        unitCost: producedCost,
+        sourceType: 'manufacturing_output',
+        sourceId: order.id,
+        now: now,
       );
       _addStockMovement(
         StockMovement(
@@ -8045,8 +8697,14 @@ class AppStore extends ChangeNotifier {
       }
     }
 
+    final now = DateTime.now();
     final saleItems = items.map((item) {
-      final product = _products.firstWhere((p) => p.id == item.productId);
+      final resolvedCost = item.unitCost > 0
+          ? InventoryCostResult(
+              method: _inventoryCostingMethod,
+              unitCost: item.unitCost,
+            )
+          : _resolveCostForSaleItem(item, now);
       return SaleItem(
         productId: item.productId,
         productName: item.productName,
@@ -8055,11 +8713,14 @@ class AppStore extends ChangeNotifier {
         unitName: item.unitName,
         baseQuantity: item.effectiveBaseQuantity,
         conversionToBase: item.conversionToBase,
-        unitCost: item.unitCost > 0 ? item.unitCost : product.usdCost,
+        unitCost: resolvedCost.unitCost,
+        costingMethodAtSale: resolvedCost.method,
+        costCurrency: resolvedCost.currencyCode,
+        costExchangeRate: 1,
+        costLayerConsumptions: resolvedCost.consumptions,
       );
     }).toList();
 
-    final now = DateTime.now();
     final saleTotal =
         (saleItems.fold<double>(0, (sum, item) => sum + item.lineTotal) -
                 cleanedDiscount)
@@ -8325,6 +8986,7 @@ class AppStore extends ChangeNotifier {
         final product = _products[productIndex];
         if (!product.trackStock) continue;
         final now = DateTime.now();
+        _restoreInventoryCostLayersFromSaleItem(item, now);
         final updatedProduct = _withSyncMeta<Product>(
           product.copyWith(stock: product.stock + item.effectiveBaseQuantity),
           now,
@@ -8811,6 +9473,15 @@ class AppStore extends ChangeNotifier {
       'suppliers': _suppliers.map((item) => item.toJson()).toList(),
       'supplierProductPrices':
           _supplierProductPrices.map((item) => item.toJson()).toList(),
+      'priceLists': _priceLists.map((item) => item.toJson()).toList(),
+      'productPrices': _productPrices.map((item) => item.toJson()).toList(),
+      'productPriceOverrides':
+          _productPriceOverrides.map((item) => item.toJson()).toList(),
+      'productCosts': _productCosts.map((item) => item.toJson()).toList(),
+      'costingMethodHistory':
+          _costingMethodHistory.map((item) => item.toJson()).toList(),
+      'inventoryCostingMethod': <dynamic>[_inventoryCostingMethod.code],
+      'inventoryCostLayers': _inventoryCostLayers.map((item) => item.toJson()).toList(),
       'stockMovements': _stockMovements.map((item) => item.toJson()).toList(),
       'inventoryCounts': _inventoryCounts.map((item) => item.toJson()).toList(),
       'sales': _sales.map((item) => item.toJson()).toList(),
@@ -9468,6 +10139,38 @@ class AppStore extends ChangeNotifier {
               ),
             )
             .toList();
+    final priceLists = (decoded['priceLists'] as List<dynamic>? ?? [])
+        .map((item) => PriceList.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+    final productPrices = (decoded['productPrices'] as List<dynamic>? ?? [])
+        .map((item) => ProductPrice.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+    final productPriceOverrides =
+        (decoded['productPriceOverrides'] as List<dynamic>? ?? [])
+            .map((item) => ProductPriceOverride.fromJson(Map<String, dynamic>.from(item as Map)))
+            .toList();
+    final productCosts = (decoded['productCosts'] as List<dynamic>? ?? [])
+        .map((item) => ProductCost.fromJson(Map<String, dynamic>.from(item as Map)))
+        .where((item) => item.productId.isNotEmpty)
+        .toList();
+    final costingMethodHistory =
+        (decoded['costingMethodHistory'] as List<dynamic>? ?? [])
+            .map((item) => CostingMethodHistory.fromJson(Map<String, dynamic>.from(item as Map)))
+            .where((item) => item.id.isNotEmpty)
+            .toList();
+    final inventoryCostingMethod =
+        InventoryCostingMethodJson.fromCode(
+          decoded['inventoryCostingMethod'] is List
+              ? ((decoded['inventoryCostingMethod'] as List).isEmpty
+                  ? null
+                  : (decoded['inventoryCostingMethod'] as List).first as String?)
+              : decoded['inventoryCostingMethod'] as String?,
+        );
+    final inventoryCostLayers =
+        (decoded['inventoryCostLayers'] as List<dynamic>? ?? [])
+            .map((item) => InventoryCostLayer.fromJson(Map<String, dynamic>.from(item as Map)))
+            .where((item) => item.id.isNotEmpty && item.productId.isNotEmpty)
+            .toList();
     final categories = (decoded['categories'] as List<dynamic>? ?? [])
         .map(
           (item) =>
@@ -9576,6 +10279,39 @@ class AppStore extends ChangeNotifier {
       _supplierProductPrices
         ..clear()
         ..addAll(supplierProductPrices);
+    }
+    if (wants('priceLists')) {
+      _priceLists
+        ..clear()
+        ..addAll(priceLists);
+    }
+    if (wants('productPrices')) {
+      _productPrices
+        ..clear()
+        ..addAll(productPrices);
+    }
+    if (wants('productPriceOverrides')) {
+      _productPriceOverrides
+        ..clear()
+        ..addAll(productPriceOverrides);
+    }
+    if (wants('productCosts')) {
+      _productCosts
+        ..clear()
+        ..addAll(productCosts);
+    }
+    if (wants('costingMethodHistory')) {
+      _costingMethodHistory
+        ..clear()
+        ..addAll(costingMethodHistory);
+    }
+    if (wants('inventoryCostingMethod')) {
+      _inventoryCostingMethod = inventoryCostingMethod;
+    }
+    if (wants('inventoryCostLayers')) {
+      _inventoryCostLayers
+        ..clear()
+        ..addAll(inventoryCostLayers);
     }
     if (wants('categories')) {
       _categories
@@ -10033,6 +10769,38 @@ class AppStore extends ChangeNotifier {
               ),
             )
             .toList();
+    final priceLists = (decoded['priceLists'] as List<dynamic>? ?? [])
+        .map((item) => PriceList.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+    final productPrices = (decoded['productPrices'] as List<dynamic>? ?? [])
+        .map((item) => ProductPrice.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+    final productPriceOverrides =
+        (decoded['productPriceOverrides'] as List<dynamic>? ?? [])
+            .map((item) => ProductPriceOverride.fromJson(Map<String, dynamic>.from(item as Map)))
+            .toList();
+    final productCosts = (decoded['productCosts'] as List<dynamic>? ?? [])
+        .map((item) => ProductCost.fromJson(Map<String, dynamic>.from(item as Map)))
+        .where((item) => item.productId.isNotEmpty)
+        .toList();
+    final costingMethodHistory =
+        (decoded['costingMethodHistory'] as List<dynamic>? ?? [])
+            .map((item) => CostingMethodHistory.fromJson(Map<String, dynamic>.from(item as Map)))
+            .where((item) => item.id.isNotEmpty)
+            .toList();
+    final inventoryCostingMethod =
+        InventoryCostingMethodJson.fromCode(
+          decoded['inventoryCostingMethod'] is List
+              ? ((decoded['inventoryCostingMethod'] as List).isEmpty
+                  ? null
+                  : (decoded['inventoryCostingMethod'] as List).first as String?)
+              : decoded['inventoryCostingMethod'] as String?,
+        );
+    final inventoryCostLayers =
+        (decoded['inventoryCostLayers'] as List<dynamic>? ?? [])
+            .map((item) => InventoryCostLayer.fromJson(Map<String, dynamic>.from(item as Map)))
+            .where((item) => item.id.isNotEmpty && item.productId.isNotEmpty)
+            .toList();
     final categories = (decoded['categories'] as List<dynamic>? ?? [])
         .map(
           (item) =>
@@ -10116,6 +10884,13 @@ class AppStore extends ChangeNotifier {
       supplierProductPrices,
       (item) => item.id,
     );
+    _mergeByUpdatedAt<PriceList>(_priceLists, priceLists, (item) => item.id);
+    _mergeByUpdatedAt<ProductPrice>(_productPrices, productPrices, (item) => item.id);
+    _mergeByUpdatedAt<ProductPriceOverride>(_productPriceOverrides, productPriceOverrides, (item) => item.id);
+    _mergeByUpdatedAt<ProductCost>(_productCosts, productCosts, (item) => item.productId);
+    _mergeByUpdatedAt<CostingMethodHistory>(_costingMethodHistory, costingMethodHistory, (item) => item.id);
+    _inventoryCostingMethod = inventoryCostingMethod;
+    _mergeByUpdatedAt<InventoryCostLayer>(_inventoryCostLayers, inventoryCostLayers, (item) => item.id);
     _mergeByUpdatedAt<CatalogItem>(_categories, categories, (item) => item.id);
     _mergeByUpdatedAt<CatalogItem>(_brands, brands, (item) => item.id);
     _mergeByUpdatedAt<CatalogItem>(_units, units, (item) => item.id);
@@ -10293,6 +11068,38 @@ class AppStore extends ChangeNotifier {
               ),
             )
             .toList();
+    final priceLists = (decoded['priceLists'] as List<dynamic>? ?? [])
+        .map((item) => PriceList.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+    final productPrices = (decoded['productPrices'] as List<dynamic>? ?? [])
+        .map((item) => ProductPrice.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+    final productPriceOverrides =
+        (decoded['productPriceOverrides'] as List<dynamic>? ?? [])
+            .map((item) => ProductPriceOverride.fromJson(Map<String, dynamic>.from(item as Map)))
+            .toList();
+    final productCosts = (decoded['productCosts'] as List<dynamic>? ?? [])
+        .map((item) => ProductCost.fromJson(Map<String, dynamic>.from(item as Map)))
+        .where((item) => item.productId.isNotEmpty)
+        .toList();
+    final costingMethodHistory =
+        (decoded['costingMethodHistory'] as List<dynamic>? ?? [])
+            .map((item) => CostingMethodHistory.fromJson(Map<String, dynamic>.from(item as Map)))
+            .where((item) => item.id.isNotEmpty)
+            .toList();
+    final inventoryCostingMethod =
+        InventoryCostingMethodJson.fromCode(
+          decoded['inventoryCostingMethod'] is List
+              ? ((decoded['inventoryCostingMethod'] as List).isEmpty
+                  ? null
+                  : (decoded['inventoryCostingMethod'] as List).first as String?)
+              : decoded['inventoryCostingMethod'] as String?,
+        );
+    final inventoryCostLayers =
+        (decoded['inventoryCostLayers'] as List<dynamic>? ?? [])
+            .map((item) => InventoryCostLayer.fromJson(Map<String, dynamic>.from(item as Map)))
+            .where((item) => item.id.isNotEmpty && item.productId.isNotEmpty)
+            .toList();
     final categories = (decoded['categories'] as List<dynamic>? ?? [])
         .map(
           (item) =>
@@ -10401,6 +11208,39 @@ class AppStore extends ChangeNotifier {
       _supplierProductPrices
         ..clear()
         ..addAll(supplierProductPrices);
+    }
+    if (wants('priceLists')) {
+      _priceLists
+        ..clear()
+        ..addAll(priceLists);
+    }
+    if (wants('productPrices')) {
+      _productPrices
+        ..clear()
+        ..addAll(productPrices);
+    }
+    if (wants('productPriceOverrides')) {
+      _productPriceOverrides
+        ..clear()
+        ..addAll(productPriceOverrides);
+    }
+    if (wants('productCosts')) {
+      _productCosts
+        ..clear()
+        ..addAll(productCosts);
+    }
+    if (wants('costingMethodHistory')) {
+      _costingMethodHistory
+        ..clear()
+        ..addAll(costingMethodHistory);
+    }
+    if (wants('inventoryCostingMethod')) {
+      _inventoryCostingMethod = inventoryCostingMethod;
+    }
+    if (wants('inventoryCostLayers')) {
+      _inventoryCostLayers
+        ..clear()
+        ..addAll(inventoryCostLayers);
     }
     if (wants('categories')) {
       _categories

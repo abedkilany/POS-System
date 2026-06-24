@@ -166,6 +166,112 @@ class CurrencyExchangeRate {
   }
 }
 
+class DocumentNumberingSettings {
+  const DocumentNumberingSettings({
+    this.invoicePrefix = 'INV-',
+    this.quotePrefix = 'QUO-',
+    this.purchasePrefix = 'PO-',
+    this.deliveryNotePrefix = 'DN-',
+    this.returnPrefix = 'RET-',
+  });
+
+  final String invoicePrefix;
+  final String quotePrefix;
+  final String purchasePrefix;
+  final String deliveryNotePrefix;
+  final String returnPrefix;
+
+  DocumentNumberingSettings copyWith({
+    String? invoicePrefix,
+    String? quotePrefix,
+    String? purchasePrefix,
+    String? deliveryNotePrefix,
+    String? returnPrefix,
+  }) {
+    return DocumentNumberingSettings(
+      invoicePrefix: invoicePrefix ?? this.invoicePrefix,
+      quotePrefix: quotePrefix ?? this.quotePrefix,
+      purchasePrefix: purchasePrefix ?? this.purchasePrefix,
+      deliveryNotePrefix: deliveryNotePrefix ?? this.deliveryNotePrefix,
+      returnPrefix: returnPrefix ?? this.returnPrefix,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'invoicePrefix': invoicePrefix,
+        'quotePrefix': quotePrefix,
+        'purchasePrefix': purchasePrefix,
+        'deliveryNotePrefix': deliveryNotePrefix,
+        'returnPrefix': returnPrefix,
+      };
+
+  factory DocumentNumberingSettings.fromJson(Map<String, dynamic> json) {
+    return DocumentNumberingSettings(
+      invoicePrefix: json['invoicePrefix'] as String? ?? 'INV-',
+      quotePrefix: json['quotePrefix'] as String? ?? 'QUO-',
+      purchasePrefix: json['purchasePrefix'] as String? ?? 'PO-',
+      deliveryNotePrefix: json['deliveryNotePrefix'] as String? ?? 'DN-',
+      returnPrefix: json['returnPrefix'] as String? ?? 'RET-',
+    );
+  }
+}
+
+class OrganizationBranch {
+  const OrganizationBranch({
+    required this.id,
+    required this.name,
+    this.code = '',
+    this.address = '',
+    this.phone = '',
+    this.isActive = true,
+  });
+
+  final String id;
+  final String name;
+  final String code;
+  final String address;
+  final String phone;
+  final bool isActive;
+
+  OrganizationBranch copyWith({
+    String? id,
+    String? name,
+    String? code,
+    String? address,
+    String? phone,
+    bool? isActive,
+  }) {
+    return OrganizationBranch(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      code: code ?? this.code,
+      address: address ?? this.address,
+      phone: phone ?? this.phone,
+      isActive: isActive ?? this.isActive,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'code': code,
+        'address': address,
+        'phone': phone,
+        'isActive': isActive,
+      };
+
+  factory OrganizationBranch.fromJson(Map<String, dynamic> json) {
+    return OrganizationBranch(
+      id: json['id'] as String? ?? 'branch_${DateTime.now().microsecondsSinceEpoch}',
+      name: json['name'] as String? ?? '',
+      code: json['code'] as String? ?? '',
+      address: json['address'] as String? ?? '',
+      phone: json['phone'] as String? ?? '',
+      isActive: json['isActive'] as bool? ?? true,
+    );
+  }
+}
+
 class StoreProfile {
   const StoreProfile({
     required this.name,
@@ -173,6 +279,17 @@ class StoreProfile {
     required this.address,
     required this.currency,
     required this.footerNote,
+    this.legalName = '',
+    this.tradeName = '',
+    this.email = '',
+    this.website = '',
+    this.logoPath = '',
+    this.vatNumber = '',
+    this.taxRegistrationNumber = '',
+    this.commercialRegisterNumber = '',
+    this.country = '',
+    this.governorate = '',
+    this.city = '',
     this.usdToLbpRate = 89500,
     this.priceDisplayMode = 'default',
     this.priceDisplayCurrencies = const <String>['USD'],
@@ -187,11 +304,24 @@ class StoreProfile {
     this.roundingDifferenceAccountId = '',
     this.exchangeGainAccountId = '',
     this.exchangeLossAccountId = '',
+    this.documentNumbering = const DocumentNumberingSettings(),
+    this.branches = const <OrganizationBranch>[],
   });
 
   final String name;
   final String phone;
   final String address;
+  final String legalName;
+  final String tradeName;
+  final String email;
+  final String website;
+  final String logoPath;
+  final String vatNumber;
+  final String taxRegistrationNumber;
+  final String commercialRegisterNumber;
+  final String country;
+  final String governorate;
+  final String city;
   /// Legacy display currency kept for backward compatibility with older backups.
   final String currency;
   final String footerNote;
@@ -220,6 +350,8 @@ class StoreProfile {
   final String exchangeGainAccountId;
   /// Account used when settlement creates a negative FX difference.
   final String exchangeLossAccountId;
+  final DocumentNumberingSettings documentNumbering;
+  final List<OrganizationBranch> branches;
 
   static const List<FinancialCurrency> defaultCurrencies = [
     FinancialCurrency(
@@ -301,6 +433,17 @@ class StoreProfile {
     String? name,
     String? phone,
     String? address,
+    String? legalName,
+    String? tradeName,
+    String? email,
+    String? website,
+    String? logoPath,
+    String? vatNumber,
+    String? taxRegistrationNumber,
+    String? commercialRegisterNumber,
+    String? country,
+    String? governorate,
+    String? city,
     String? currency,
     String? footerNote,
     double? usdToLbpRate,
@@ -317,6 +460,8 @@ class StoreProfile {
     String? roundingDifferenceAccountId,
     String? exchangeGainAccountId,
     String? exchangeLossAccountId,
+    DocumentNumberingSettings? documentNumbering,
+    List<OrganizationBranch>? branches,
   }) {
     final nextCurrencies = currencies ?? this.currencies;
     final nextBaseCurrency =
@@ -325,6 +470,19 @@ class StoreProfile {
       name: name ?? this.name,
       phone: phone ?? this.phone,
       address: address ?? this.address,
+      legalName: legalName ?? this.legalName,
+      tradeName: tradeName ?? this.tradeName,
+      email: email ?? this.email,
+      website: website ?? this.website,
+      logoPath: logoPath ?? this.logoPath,
+      vatNumber: vatNumber ?? this.vatNumber,
+      taxRegistrationNumber:
+          taxRegistrationNumber ?? this.taxRegistrationNumber,
+      commercialRegisterNumber:
+          commercialRegisterNumber ?? this.commercialRegisterNumber,
+      country: country ?? this.country,
+      governorate: governorate ?? this.governorate,
+      city: city ?? this.city,
       currency: currency ?? this.currency,
       footerNote: footerNote ?? this.footerNote,
       usdToLbpRate: usdToLbpRate ?? this.usdToLbpRate,
@@ -356,6 +514,8 @@ class StoreProfile {
           exchangeGainAccountId ?? this.exchangeGainAccountId,
       exchangeLossAccountId:
           exchangeLossAccountId ?? this.exchangeLossAccountId,
+      documentNumbering: documentNumbering ?? this.documentNumbering,
+      branches: branches ?? this.branches,
     );
   }
 
@@ -363,6 +523,17 @@ class StoreProfile {
         'name': name,
         'phone': phone,
         'address': address,
+        'legalName': legalName,
+        'tradeName': tradeName,
+        'email': email,
+        'website': website,
+        'logoPath': logoPath,
+        'vatNumber': vatNumber,
+        'taxRegistrationNumber': taxRegistrationNumber,
+        'commercialRegisterNumber': commercialRegisterNumber,
+        'country': country,
+        'governorate': governorate,
+        'city': city,
         'currency': currency,
         'footerNote': footerNote,
         'usdToLbpRate': usdToLbpRate,
@@ -379,6 +550,8 @@ class StoreProfile {
         'roundingDifferenceAccountId': roundingDifferenceAccountId,
         'exchangeGainAccountId': exchangeGainAccountId,
         'exchangeLossAccountId': exchangeLossAccountId,
+        'documentNumbering': documentNumbering.toJson(),
+        'branches': branches.map((item) => item.toJson()).toList(),
       };
 
   factory StoreProfile.fromJson(Map<String, dynamic> json) {
@@ -496,6 +669,19 @@ class StoreProfile {
       name: json['name'] as String? ?? 'Ventio',
       phone: json['phone'] as String? ?? '',
       address: json['address'] as String? ?? '',
+      legalName: json['legalName'] as String? ?? '',
+      tradeName: json['tradeName'] as String? ?? '',
+      email: json['email'] as String? ?? '',
+      website: json['website'] as String? ?? '',
+      logoPath: json['logoPath'] as String? ?? '',
+      vatNumber: json['vatNumber'] as String? ?? '',
+      taxRegistrationNumber:
+          json['taxRegistrationNumber'] as String? ?? '',
+      commercialRegisterNumber:
+          json['commercialRegisterNumber'] as String? ?? '',
+      country: json['country'] as String? ?? '',
+      governorate: json['governorate'] as String? ?? '',
+      city: json['city'] as String? ?? '',
       currency: legacyCurrency,
       footerNote: json['footerNote'] as String? ?? 'Thank you for shopping with us.',
       usdToLbpRate: legacyRate <= 0 ? 89500 : legacyRate,
@@ -514,6 +700,18 @@ class StoreProfile {
           json['roundingDifferenceAccountId'] as String? ?? '',
       exchangeGainAccountId: json['exchangeGainAccountId'] as String? ?? '',
       exchangeLossAccountId: json['exchangeLossAccountId'] as String? ?? '',
+      documentNumbering: json['documentNumbering'] is Map
+          ? DocumentNumberingSettings.fromJson(
+              Map<String, dynamic>.from(json['documentNumbering'] as Map))
+          : const DocumentNumberingSettings(),
+      branches: json['branches'] is List
+          ? (json['branches'] as List)
+              .whereType<Map>()
+              .map((item) => OrganizationBranch.fromJson(
+                  Map<String, dynamic>.from(item)))
+              .where((item) => item.name.trim().isNotEmpty)
+              .toList(growable: false)
+          : const <OrganizationBranch>[],
     );
   }
 
@@ -521,6 +719,17 @@ class StoreProfile {
     name: 'Ventio',
     phone: '',
     address: '',
+    legalName: '',
+    tradeName: '',
+    email: '',
+    website: '',
+    logoPath: '',
+    vatNumber: '',
+    taxRegistrationNumber: '',
+    commercialRegisterNumber: '',
+    country: '',
+    governorate: '',
+    city: '',
     currency: 'USD',
     footerNote: 'Thank you for shopping with us.',
     usdToLbpRate: 89500,
@@ -536,5 +745,7 @@ class StoreProfile {
     exchangeRates: defaultExchangeRates,
     exchangeGainAccountId: '',
     exchangeLossAccountId: '',
+    documentNumbering: DocumentNumberingSettings(),
+    branches: <OrganizationBranch>[],
   );
 }

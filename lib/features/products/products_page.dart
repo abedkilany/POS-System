@@ -12,6 +12,7 @@ import '../../core/utils/currency_utils.dart';
 import '../../data/app_store.dart';
 import '../../models/catalog_item.dart';
 import '../../models/product.dart';
+import '../../models/product_pricing.dart';
 import '../../models/store_profile.dart';
 import '../../models/supplier.dart';
 import '../../models/supplier_product_price.dart';
@@ -249,6 +250,9 @@ class _ProductsPageState extends State<ProductsPage> {
     if (result == null) return;
     try {
       await widget.store.addOrUpdateProduct(result.product);
+      if (result.priceSave != null) {
+        await result.priceSave!();
+      }
       if (result.supplierPriceSave != null) {
         await result.supplierPriceSave!();
       }
@@ -468,9 +472,10 @@ class _ProductRowData {
     final lastPurchase = store.lastPurchasePriceForProduct(product.id);
     final avgPurchase = store.averagePurchaseCostForProduct(product.id);
     final supplierCount = store.supplierCountForProduct(product.id);
+    final displayPrice = store.defaultProductUsdPrice(product);
     final meta = product.trackStock
-        ? '${product.stock} ${product.unit} • ${formatUsdReferenceAmount(product.price, storeProfile)}'
-        : '${tr.text('quantity_type_service')} • ${formatUsdReferenceAmount(product.price, storeProfile)}';
+        ? '${product.stock} ${product.unit} • ${formatUsdReferenceAmount(displayPrice, storeProfile)}'
+        : '${tr.text('quantity_type_service')} • ${formatUsdReferenceAmount(displayPrice, storeProfile)}';
     final purchaseMeta = [
       if (lastPurchase != null)
         '${tr.text('last_cost')}: ${formatUsdReferenceAmount(lastPurchase, storeProfile)}',
@@ -491,11 +496,13 @@ class _ProductFormResult {
   const _ProductFormResult(
       {required this.product,
       required this.addToQuickProducts,
-      this.supplierPriceSave});
+      this.supplierPriceSave,
+      this.priceSave});
 
   final Product product;
   final bool addToQuickProducts;
   final Future<void> Function()? supplierPriceSave;
+  final Future<void> Function()? priceSave;
 }
 
 class _ProductDialog extends StatefulWidget {
@@ -532,6 +539,7 @@ class _ProductDialogState extends State<_ProductDialog> {
   String imagePath = '';
   late final String _productId;
   late List<SupplierProductPrice> supplierPriceDrafts;
+  late List<_CurrencyPriceOverrideDraft> priceOverrideDrafts;
 
   @override
   void initState() {
@@ -553,12 +561,26 @@ class _ProductDialogState extends State<_ProductDialog> {
     nameArController = TextEditingController(text: product?.nameAr ?? '');
     descriptionController =
         TextEditingController(text: product?.description ?? '');
-    priceCurrency = product?.originalCurrency ??
+    final defaultProductPrice = product == null
+        ? null
+        : widget.store.defaultProductPriceFor(product.id);
+    priceOverrideDrafts = defaultProductPrice == null
+        ? <_CurrencyPriceOverrideDraft>[]
+        : widget.store.productPriceOverrides
+            .where((item) =>
+                item.productPriceId == defaultProductPrice.id &&
+                item.isActive)
+            .map(_CurrencyPriceOverrideDraft.fromOverride)
+            .toList();
+    priceCurrency = defaultProductPrice?.baseCurrencyCode ??
+        product?.originalCurrency ??
         widget.store.storeProfile.defaultProductCurrency;
     costCurrency = product?.costCurrency ??
         widget.store.storeProfile.defaultProductCurrency;
-    priceController =
-        TextEditingController(text: product?.originalPrice.toString() ?? '');
+    priceController = TextEditingController(
+        text: defaultProductPrice?.baseAmount.toString() ??
+            product?.originalPrice.toString() ??
+            '');
     costController =
         TextEditingController(text: product?.originalCost.toString() ?? '');
     stockController =
@@ -762,6 +784,16 @@ class _ProductDialogState extends State<_ProductDialog> {
                           onCurrencyChanged: (value) =>
                               setState(() => costCurrency = value)),
                     ]),
+                    const SizedBox(height: 12),
+                    _CurrencyPriceOverridesEditor(
+                      drafts: priceOverrideDrafts,
+                      baseCurrencyCode: priceCurrency,
+                      availableCurrencyCodes: widget.store.storeProfile.currencies
+                          .map((item) => item.code)
+                          .toList(growable: false),
+                      onChanged: (items) =>
+                          setState(() => priceOverrideDrafts = items),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -898,6 +930,7 @@ class _ProductDialogState extends State<_ProductDialog> {
       context,
       _ProductFormResult(
         addToQuickProducts: addToQuickProducts,
+        priceSave: () => _saveProductPriceDrafts(_productId, originalPrice, priceCurrency),
         supplierPriceSave: () => _saveSupplierPriceDrafts(_productId),
         product: Product(
           id: _productId,
@@ -948,6 +981,55 @@ class _ProductDialogState extends State<_ProductDialog> {
         ),
       ),
     );
+  }
+
+  Future<void> _saveProductPriceDrafts(String productId, double amount, String currencyCode) async {
+    final previousBasePrice = widget.store.defaultProductPriceFor(productId);
+    await widget.store.setDefaultProductBasePrice(
+      productId: productId,
+      unitId: 'base',
+      amount: amount,
+      currencyCode: currencyCode,
+    );
+    final basePrice = widget.store.defaultProductPriceFor(productId);
+    if (basePrice != null) {
+      final activeCurrencies = <String>{};
+      for (final draft in priceOverrideDrafts) {
+        final normalizedCurrency = draft.currencyCode.trim().toUpperCase();
+        final overrideAmount = double.tryParse(draft.amountText.trim());
+        if (normalizedCurrency.isEmpty ||
+            normalizedCurrency == currencyCode.trim().toUpperCase() ||
+            overrideAmount == null ||
+            overrideAmount < 0) {
+          continue;
+        }
+        activeCurrencies.add(normalizedCurrency);
+        await widget.store.setProductPriceOverride(
+          productPriceId: basePrice.id,
+          currencyCode: normalizedCurrency,
+          amount: overrideAmount,
+        );
+      }
+      final existingOverridePriceIds = <String>{basePrice.id};
+      if (previousBasePrice != null) existingOverridePriceIds.add(previousBasePrice.id);
+      for (final item in widget.store.productPriceOverrides) {
+        if (existingOverridePriceIds.contains(item.productPriceId) &&
+            item.isActive &&
+            !activeCurrencies.contains(item.currencyCode)) {
+          await widget.store.removeProductPriceOverride(item.productPriceId, item.currencyCode);
+        }
+      }
+    }
+    for (final draft in saleUnitDrafts) {
+      final unit = draft.toSaleUnit(widget.store.storeProfile);
+      if (unit.id.trim().isEmpty || unit.name.trim().isEmpty || unit.conversionToBase <= 0) continue;
+      await widget.store.setDefaultProductBasePrice(
+        productId: productId,
+        unitId: unit.id,
+        amount: unit.originalPrice,
+        currencyCode: unit.originalCurrency,
+      );
+    }
   }
 
   Future<void> _saveSupplierPriceDrafts(String productId) async {
@@ -1041,6 +1123,189 @@ class _ProductDialogState extends State<_ProductDialog> {
     return number == null || number < 0
         ? AppLocalizations.of(context).text('invalid_number')
         : null;
+  }
+}
+
+
+class _CurrencyPriceOverrideDraft {
+  const _CurrencyPriceOverrideDraft({
+    required this.currencyCode,
+    required this.amountText,
+  });
+
+  final String currencyCode;
+  final String amountText;
+
+  factory _CurrencyPriceOverrideDraft.fromOverride(ProductPriceOverride override) {
+    return _CurrencyPriceOverrideDraft(
+      currencyCode: override.currencyCode,
+      amountText: override.amount.toString(),
+    );
+  }
+
+  _CurrencyPriceOverrideDraft copyWith({String? currencyCode, String? amountText}) {
+    return _CurrencyPriceOverrideDraft(
+      currencyCode: currencyCode ?? this.currencyCode,
+      amountText: amountText ?? this.amountText,
+    );
+  }
+}
+
+class _CurrencyPriceOverridesEditor extends StatelessWidget {
+  const _CurrencyPriceOverridesEditor({
+    required this.drafts,
+    required this.baseCurrencyCode,
+    required this.availableCurrencyCodes,
+    required this.onChanged,
+  });
+
+  final List<_CurrencyPriceOverrideDraft> drafts;
+  final String baseCurrencyCode;
+  final List<String> availableCurrencyCodes;
+  final ValueChanged<List<_CurrencyPriceOverrideDraft>> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final baseCurrency = baseCurrencyCode.trim().toUpperCase();
+    final currencies = <String>{
+      ...availableCurrencyCodes.map((item) => item.trim().toUpperCase()).where((item) => item.isNotEmpty),
+      'USD',
+      'LBP',
+    }.where((item) => item != baseCurrency).toList()
+      ..sort();
+    final canAdd = currencies.any((currency) =>
+        !drafts.any((draft) => draft.currencyCode.trim().toUpperCase() == currency));
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        border: Border.all(color: Theme.of(context).dividerColor),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          LayoutBuilder(builder: (context, constraints) {
+            final title = Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Currency Price Overrides',
+                    style: TextStyle(fontWeight: FontWeight.w700)),
+                const SizedBox(height: 4),
+                Text(
+                  'Optional fixed prices for specific currencies. Empty currencies are converted automatically from the base price.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            );
+            final addButton = OutlinedButton.icon(
+              onPressed: canAdd ? () => _addOverride(currencies) : null,
+              icon: const Icon(Icons.add),
+              label: const Text('Add override'),
+            );
+            if (constraints.maxWidth < 460) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [title, const SizedBox(height: 8), addButton],
+              );
+            }
+            return Row(
+              children: [
+                Expanded(child: title),
+                const SizedBox(width: 8),
+                addButton,
+              ],
+            );
+          }),
+          const SizedBox(height: 12),
+          if (drafts.isEmpty)
+            Text(
+              'No fixed currency prices. Other currencies will use automatic conversion.',
+              style: Theme.of(context).textTheme.bodySmall,
+            )
+          else
+            ...drafts.asMap().entries.map((entry) {
+              final index = entry.key;
+              final draft = entry.value;
+              final selectedCurrency = currencies.contains(draft.currencyCode)
+                  ? draft.currencyCode
+                  : (currencies.isNotEmpty ? currencies.first : draft.currencyCode);
+              final rowCurrencies = <String>{
+                selectedCurrency,
+                ...currencies.where((currency) => !drafts.asMap().entries.any(
+                      (other) =>
+                          other.key != index &&
+                          other.value.currencyCode.trim().toUpperCase() == currency,
+                    )),
+              }.toList()
+                ..sort();
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 116,
+                      child: DropdownButtonFormField<String>(
+                        initialValue: selectedCurrency,
+                        decoration: const InputDecoration(labelText: 'Currency'),
+                        items: rowCurrencies
+                            .map((currency) => DropdownMenuItem(
+                                  value: currency,
+                                  child: Text(currency),
+                                ))
+                            .toList(),
+                        onChanged: (value) => _update(index,
+                            draft.copyWith(currencyCode: value ?? selectedCurrency)),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextFormField(
+                        initialValue: draft.amountText,
+                        decoration: const InputDecoration(labelText: 'Fixed price'),
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        validator: (value) {
+                          final amount = double.tryParse((value ?? '').trim());
+                          if (amount == null || amount < 0) return 'Invalid number';
+                          return null;
+                        },
+                        onChanged: (value) =>
+                            _update(index, draft.copyWith(amountText: value)),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Remove override',
+                      onPressed: () => _remove(index),
+                      icon: const Icon(Icons.delete_outline),
+                    ),
+                  ],
+                ),
+              );
+            }),
+        ],
+      ),
+    );
+  }
+
+  void _addOverride(List<String> currencies) {
+    for (final currency in currencies) {
+      if (!drafts.any((draft) => draft.currencyCode.trim().toUpperCase() == currency)) {
+        onChanged([...drafts, _CurrencyPriceOverrideDraft(currencyCode: currency, amountText: '')]);
+        return;
+      }
+    }
+  }
+
+  void _update(int index, _CurrencyPriceOverrideDraft draft) {
+    final next = List<_CurrencyPriceOverrideDraft>.from(drafts);
+    next[index] = draft.copyWith(currencyCode: draft.currencyCode.trim().toUpperCase());
+    onChanged(next);
+  }
+
+  void _remove(int index) {
+    final next = List<_CurrencyPriceOverrideDraft>.from(drafts)..removeAt(index);
+    onChanged(next);
   }
 }
 

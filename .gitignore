@@ -10,37 +10,19 @@
 .history
 .svn/
 .swiftpm/
-/ssh/
 migrate_working_dir/
-/ventio_brand_pack/
-/set new Version/
-/*.zip
-Client secret.json
-client_secret*.json
-google_oauth*.json
+
 # IntelliJ related
 *.iml
 *.ipr
 *.iws
 .idea/
-*.pdb
 
-# Windows source is tracked; generated Windows Flutter files are ignored.
-/windows/flutter/ephemeral/
-
-# Android source is tracked; generated and local Android files are ignored.
-/android/.gradle/
-/android/local.properties
-/android/**/build/
-/android/app/debug/
-/android/app/profile/
-/android/app/release/
 # The .vscode folder contains launch configuration and tasks you configure in
 # VS Code which you may wish to be included in version control, so this line
 # is commented out by default.
 #.vscode/
-.env
-node_modules/
+
 # Flutter/Dart/Pub related
 **/doc/api/
 **/ios/Flutter/.last_build_id
@@ -61,5 +43,3 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
-.vercel
-.env*.local

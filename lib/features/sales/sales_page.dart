@@ -86,6 +86,9 @@ class _SalesPageState extends State<SalesPage> {
   String? _lastScannedCode;
   DateTime? _lastScannedAt;
   int _cashShiftRefreshKey = 0;
+  int? _selectedCartIndex;
+  int? _pendingDeleteCartIndex;
+
 
   @override
   void initState() {
@@ -254,12 +257,122 @@ class _SalesPageState extends State<SalesPage> {
 
   bool _handleSaleShortcutKey(KeyEvent event, List<Product> visibleProducts) {
     if (event is! KeyDownEvent) return false;
+    if (_handleCartArrowKey(event)) return true;
     final keyName = SaleShortcutSettings.keyNameForLogicalKey(event.logicalKey);
     if (keyName == null) return false;
     final action = SaleShortcutSettings.load().saleActionForKey(keyName);
     if (action == null) return false;
     _executeSaleShortcut(action, visibleProducts);
     return true;
+  }
+
+  bool _handleCartArrowKey(KeyDownEvent event) {
+    if (_cart.isEmpty || !_canHandleCartArrowKeys()) return false;
+    if (event.logicalKey != LogicalKeyboardKey.arrowUp &&
+        event.logicalKey != LogicalKeyboardKey.arrowDown &&
+        event.logicalKey != LogicalKeyboardKey.arrowLeft &&
+        event.logicalKey != LogicalKeyboardKey.arrowRight) {
+      return false;
+    }
+
+    final currentIndex = _normalizedSelectedCartIndex();
+    switch (event.logicalKey) {
+      case LogicalKeyboardKey.arrowUp:
+        _selectCartIndex((currentIndex - 1).clamp(0, _cart.length - 1).toInt());
+        return true;
+      case LogicalKeyboardKey.arrowDown:
+        _selectCartIndex((currentIndex + 1).clamp(0, _cart.length - 1).toInt());
+        return true;
+      case LogicalKeyboardKey.arrowLeft:
+        if (Directionality.of(context) == TextDirection.rtl) {
+          _increaseSelectedCartItem();
+        } else {
+          _decreaseOrMarkSelectedCartItem();
+        }
+        return true;
+      case LogicalKeyboardKey.arrowRight:
+        if (Directionality.of(context) == TextDirection.rtl) {
+          _decreaseOrMarkSelectedCartItem();
+        } else {
+          _increaseSelectedCartItem();
+        }
+        return true;
+    }
+    return false;
+  }
+
+  bool _canHandleCartArrowKeys() {
+    final primaryFocus = FocusManager.instance.primaryFocus;
+    if (primaryFocus == null || primaryFocus == _barcodeFocusNode) return true;
+    final focusContext = primaryFocus.context;
+    if (focusContext == null) return true;
+    final isEditable = focusContext.widget is EditableText ||
+        focusContext.findAncestorWidgetOfExactType<EditableText>() != null;
+    return !isEditable;
+  }
+
+  int _normalizedSelectedCartIndex() {
+    if (_cart.isEmpty) return 0;
+    final index = _selectedCartIndex ?? 0;
+    return index.clamp(0, _cart.length - 1).toInt();
+  }
+
+  void _selectCartIndex(int index) {
+    if (_cart.isEmpty) return;
+    setState(() {
+      _selectedCartIndex = index.clamp(0, _cart.length - 1).toInt();
+      _pendingDeleteCartIndex = null;
+    });
+  }
+
+  void _increaseSelectedCartItem() {
+    if (_cart.isEmpty) return;
+    final index = _normalizedSelectedCartIndex();
+    final item = _cart[index];
+    _changeCartQuantity(index, item.quantity + 1);
+  }
+
+  void _decreaseOrMarkSelectedCartItem() {
+    if (_cart.isEmpty) return;
+    _decreaseOrMarkCartItem(_normalizedSelectedCartIndex());
+  }
+
+  void _decreaseOrMarkCartItem(int index) {
+    if (index < 0 || index >= _cart.length) return;
+    final item = _cart[index];
+    if (item.quantity > 1) {
+      _changeCartQuantity(index, item.quantity - 1);
+      return;
+    }
+    if (_pendingDeleteCartIndex == index) {
+      setState(() {
+        _cart.removeAt(index);
+        _pendingDeleteCartIndex = null;
+        if (_cart.isEmpty) {
+          _selectedCartIndex = null;
+        } else {
+          _selectedCartIndex = index.clamp(0, _cart.length - 1).toInt();
+        }
+      });
+      return;
+    }
+    setState(() {
+      _selectedCartIndex = index;
+      _pendingDeleteCartIndex = index;
+    });
+  }
+
+  void _removeCartItem(int index) {
+    if (index < 0 || index >= _cart.length) return;
+    setState(() {
+      _cart.removeAt(index);
+      _pendingDeleteCartIndex = null;
+      if (_cart.isEmpty) {
+        _selectedCartIndex = null;
+      } else {
+        _selectedCartIndex = index.clamp(0, _cart.length - 1).toInt();
+      }
+    });
   }
 
   Future<void> _executeSaleShortcut(
@@ -371,7 +484,11 @@ class _SalesPageState extends State<SalesPage> {
       ),
     );
     if (confirmed == true && mounted) {
-      setState(() => _cart.clear());
+      setState(() {
+        _cart.clear();
+        _selectedCartIndex = null;
+        _pendingDeleteCartIndex = null;
+      });
       _restoreScannerMode();
     }
   }
@@ -408,9 +525,6 @@ class _SalesPageState extends State<SalesPage> {
     return Focus(
       focusNode: _shortcutFocusNode,
       autofocus: true,
-      onKeyEvent: (node, event) => _handleSaleShortcutKey(event, products)
-          ? KeyEventResult.handled
-          : KeyEventResult.ignored,
       child: LayoutBuilder(
         builder: (context, constraints) {
           final isWide = constraints.maxWidth > 980;
@@ -1959,7 +2073,7 @@ class _SalesPageState extends State<SalesPage> {
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis),
                                   trailing: Text(formatUsdReferenceAmount(
-                                      product.price,
+                                      widget.store.defaultProductUsdPrice(product),
                                       widget.store.storeProfile)),
                                   onTap: () {
                                     setSheetState(() {
@@ -2284,6 +2398,8 @@ class _SalesPageState extends State<SalesPage> {
     setState(() {
       _heldCarts.insert(0, cart);
       _cart.clear();
+      _selectedCartIndex = null;
+      _pendingDeleteCartIndex = null;
     });
     await _saveHeldSaleCarts();
     if (!mounted) return;
@@ -2322,10 +2438,13 @@ class _SalesPageState extends State<SalesPage> {
           break;
         }
       }
+      final restoredUnit = saleUnit ?? item.saleUnit;
       restored.add(_DraftSaleItem(
           product: product,
           quantity: item.quantity,
-          saleUnit: saleUnit ?? item.saleUnit));
+          saleUnit: restoredUnit.copyWith(
+            price: widget.store.defaultProductUsdPrice(product, unitId: restoredUnit.id),
+          )));
     }
     if (restored.isEmpty) {
       if (!mounted) return;
@@ -2338,6 +2457,8 @@ class _SalesPageState extends State<SalesPage> {
       _cart
         ..clear()
         ..addAll(restored);
+      _selectedCartIndex = _cart.isEmpty ? null : 0;
+      _pendingDeleteCartIndex = null;
       _heldCarts.removeWhere((cart) => cart.id == heldCart.id);
     });
     await _saveHeldSaleCarts();
@@ -2677,6 +2798,15 @@ class _SalesPageState extends State<SalesPage> {
         separatorBuilder: (_, __) => const Divider(height: 1),
         itemBuilder: (context, index) {
           final item = _cart[index];
+          final isSelected = index == _selectedCartIndex;
+          final isPendingDelete = index == _pendingDeleteCartIndex;
+          final rowColor = isPendingDelete
+              ? Theme.of(context).colorScheme.errorContainer.withValues(alpha: 0.65)
+              : item.needsAutoCorrection
+                  ? Theme.of(context).colorScheme.errorContainer.withValues(alpha: 0.55)
+                  : isSelected
+                      ? Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.65)
+                      : null;
           return LayoutBuilder(
             builder: (context, constraints) {
               final actions = Row(
@@ -2685,9 +2815,7 @@ class _SalesPageState extends State<SalesPage> {
                 children: [
                   IconButton(
                     tooltip: tr.text('decrease_qty'),
-                    onPressed: item.quantity > 1
-                        ? () => _changeCartQuantity(index, item.quantity - 1)
-                        : null,
+                    onPressed: () => _decreaseOrMarkCartItem(index),
                     icon: const Icon(Icons.remove_circle_outline),
                   ),
                   SizedBox(
@@ -2696,29 +2824,26 @@ class _SalesPageState extends State<SalesPage> {
                           textAlign: TextAlign.center)),
                   IconButton(
                     tooltip: tr.text('increase_qty'),
-                    onPressed: () =>
-                        _changeCartQuantity(index, item.quantity + 1),
+                    onPressed: () => _changeCartQuantity(index, item.quantity + 1),
                     icon: const Icon(Icons.add_circle_outline),
                   ),
                   IconButton(
                     tooltip: tr.text('delete'),
-                    onPressed: () => setState(() => _cart.removeAt(index)),
+                    onPressed: () => _removeCartItem(index),
                     icon: const Icon(Icons.delete_outline),
                   ),
                 ],
               );
               if (constraints.maxWidth < 520) {
                 return InkWell(
-                  onTap: () => _showQuantitySheet(index),
+                  onTap: () {
+                    _selectCartIndex(index);
+                    _showQuantitySheet(index);
+                  },
                   borderRadius: BorderRadius.circular(12),
                   child: Container(
                     decoration: BoxDecoration(
-                      color: item.needsAutoCorrection
-                          ? Theme.of(context)
-                              .colorScheme
-                              .errorContainer
-                              .withValues(alpha: 0.55)
-                          : null,
+                      color: rowColor,
                       borderRadius: BorderRadius.circular(12),
                     ),
                     padding:
@@ -2730,6 +2855,14 @@ class _SalesPageState extends State<SalesPage> {
                           children: [
                             if (item.needsAutoCorrection) ...[
                               Icon(Icons.warning_amber_rounded,
+                                  size: 18,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onErrorContainer),
+                              const SizedBox(width: 6),
+                            ],
+                            if (isPendingDelete) ...[
+                              Icon(Icons.delete_sweep_outlined,
                                   size: 18,
                                   color: Theme.of(context)
                                       .colorScheme
@@ -2756,22 +2889,24 @@ class _SalesPageState extends State<SalesPage> {
               }
               return ListTile(
                 contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-                tileColor: item.needsAutoCorrection
-                    ? Theme.of(context)
-                        .colorScheme
-                        .errorContainer
-                        .withValues(alpha: 0.55)
-                    : null,
+                tileColor: rowColor,
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12)),
-                leading: item.needsAutoCorrection
-                    ? Icon(Icons.warning_amber_rounded,
-                        color: Theme.of(context).colorScheme.onErrorContainer)
+                leading: item.needsAutoCorrection || isPendingDelete
+                    ? Icon(
+                        isPendingDelete
+                            ? Icons.delete_sweep_outlined
+                            : Icons.warning_amber_rounded,
+                        color: Theme.of(context).colorScheme.onErrorContainer,
+                      )
                     : null,
                 title: Text(item.product.name),
                 subtitle: Text(
                     '${item.product.code} • ${formatUsdReferenceAmount(item.unitPrice, widget.store.storeProfile)} • ${_formatQuantity(item.quantity)} ${item.unitName} • ${_stockAvailabilityLabel(item.product, tr, includeUnit: true)}'),
-                onTap: () => _showQuantitySheet(index),
+                onTap: () {
+                  _selectCartIndex(index);
+                  _showQuantitySheet(index);
+                },
                 trailing: ConstrainedBox(
                   constraints: BoxConstraints(
                       maxWidth: VentioResponsive.adaptiveWidth(context,
@@ -3057,6 +3192,8 @@ class _SalesPageState extends State<SalesPage> {
         cleanQuantity * item.conversionToBase > item.product.stock;
     setState(() {
       _cart[index] = item.copyWith(quantity: cleanQuantity);
+      _selectedCartIndex = index;
+      _pendingDeleteCartIndex = null;
     });
     if (willNeedCorrection) {
       unawaited(BarcodeFeedbackService.playError(force: true));
@@ -3546,7 +3683,7 @@ class _SalesPageState extends State<SalesPage> {
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis),
                                   trailing: Text(formatUsdReferenceAmount(
-                                      product.price,
+                                      widget.store.defaultProductUsdPrice(product),
                                       widget.store.storeProfile)),
                                   onTap: () {
                                     Navigator.pop(sheetContext);
@@ -3782,7 +3919,10 @@ class _SalesPageState extends State<SalesPage> {
       return _BarcodeAddResult.notAllowed;
     }
 
-    final selectedUnit = saleUnit ?? product.effectiveSaleUnits.first;
+    final rawSelectedUnit = saleUnit ?? product.effectiveSaleUnits.first;
+    final selectedUnit = rawSelectedUnit.copyWith(
+      price: widget.store.defaultProductUsdPrice(product, unitId: rawSelectedUnit.id),
+    );
 
     final existingIndex = _cart.indexWhere((item) =>
         item.product.id == product.id &&
@@ -3801,7 +3941,9 @@ class _SalesPageState extends State<SalesPage> {
         _cart[existingIndex] = _cart[existingIndex]
             .copyWith(quantity: _cart[existingIndex].quantity + 1);
       }
-      final cartItem = _cart[existingIndex == -1 ? 0 : existingIndex];
+      _selectedCartIndex = existingIndex == -1 ? 0 : existingIndex;
+      _pendingDeleteCartIndex = null;
+      final cartItem = _cart[_selectedCartIndex!];
       if (cartItem.needsAutoCorrection) {
         result = _BarcodeAddResult.autoCorrected;
       }
@@ -4117,7 +4259,7 @@ class _SalesPageState extends State<SalesPage> {
                 unitName: item.unitName,
                 baseQuantity: item.baseQuantity,
                 conversionToBase: item.conversionToBase,
-                unitCost: item.product.usdCost,
+                unitCost: 0,
               ),
             )
             .toList(),
@@ -4141,6 +4283,8 @@ class _SalesPageState extends State<SalesPage> {
 
     setState(() {
       _cart.clear();
+      _selectedCartIndex = null;
+      _pendingDeleteCartIndex = null;
       _discountController.clear();
       _paidAmountController.clear();
       _selectedCustomerId = AppStore.walkInCustomerId;

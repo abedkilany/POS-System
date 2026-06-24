@@ -191,7 +191,7 @@ class _QuotationDialogState extends State<_QuotationDialog> {
           conversionToBase: existing.conversionToBase,
         );
       } else {
-        _items.add(SaleItem(productId: product.id, productName: product.name, unitPrice: product.usdPrice, quantity: 1, unitCost: product.usdCost, unitName: product.unit, baseQuantity: 1, conversionToBase: 1));
+        _items.add(SaleItem(productId: product.id, productName: product.name, unitPrice: widget.store.defaultProductUsdPrice(product), quantity: 1, unitCost: product.usdCost, unitName: product.unit, baseQuantity: 1, conversionToBase: 1));
       }
     });
   }

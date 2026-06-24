@@ -86,6 +86,10 @@ class UnifiedSnapshotCatalog {
       'customers',
       'suppliers',
       'supplierProductPrices',
+      'priceLists',
+      'productPrices',
+      'productPriceOverrides',
+      'productCosts',
     ],
   );
 
@@ -93,7 +97,13 @@ class UnifiedSnapshotCatalog {
     id: 'inventory_movements',
     labelKey: 'snapshot_section_inventory_movements',
     order: 40,
-    collections: <String>['stockMovements', 'inventoryCounts'],
+    collections: <String>[
+      'stockMovements',
+      'inventoryCounts',
+      'costingMethodHistory',
+      'inventoryCostingMethod',
+      'inventoryCostLayers',
+    ],
   );
 
   static const salesAndPurchases = UnifiedSnapshotSection(

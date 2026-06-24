@@ -31,6 +31,7 @@ import '../../core/utils/responsive.dart';
 import '../../data/app_store.dart';
 import '../../models/store_profile.dart';
 import '../../models/app_identity.dart';
+import '../../models/product_costing.dart';
 import '../../models/user_role.dart';
 import '../shared/sync_monitoring_section.dart';
 import '../barcode/barcode_scanner_page.dart';
@@ -63,9 +64,25 @@ class SettingsPage extends StatelessWidget {
           label: tr.text('store_information'),
           description: tr.text('store_information_desc')),
       _SettingsNavData(
-          icon: Icons.account_balance_wallet_outlined,
-          label: tr.text('financial_settings'),
+          icon: Icons.description_outlined,
+          label: tr.text('document_settings'),
+          description: tr.text('document_settings_desc')),
+      _SettingsNavData(
+          icon: Icons.account_tree_outlined,
+          label: tr.text('branches'),
+          description: tr.text('branches_desc')),
+      _SettingsNavData(
+          icon: Icons.receipt_long_outlined,
+          label: tr.text('tax_settings'),
+          description: tr.text('tax_settings_desc')),
+      _SettingsNavData(
+          icon: Icons.currency_exchange_outlined,
+          label: tr.text('currencies'),
           description: tr.text('currencies_pricing_desc')),
+      _SettingsNavData(
+          icon: Icons.account_balance_wallet_outlined,
+          label: tr.text('banks_cash_drawers'),
+          description: tr.text('banks_cash_drawers_desc')),
       _SettingsNavData(
           icon: Icons.sync_outlined,
           label: tr.text('sync'),
@@ -95,7 +112,11 @@ class SettingsPage extends StatelessWidget {
           final isWide = constraints.maxWidth >= 900;
           final pages = [
             _settingsList(context, _generalCards(context)),
+            _settingsList(context, _documentCards(context)),
+            _settingsList(context, _branchCards(context)),
+            _settingsList(context, _taxCards(context)),
             _settingsList(context, _financialCards(context)),
+            _settingsList(context, _cashBankCards(context)),
             _settingsList(context, _syncCards(context)),
             _settingsList(context, _backupCards(context)),
             _settingsList(context, _adminCards(context)),
@@ -162,30 +183,152 @@ class SettingsPage extends StatelessWidget {
   List<Widget> _generalCards(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final profile = store.storeProfile;
+    final displayName = profile.tradeName.trim().isNotEmpty
+        ? profile.tradeName
+        : profile.name;
+    final legalName = profile.legalName.trim().isNotEmpty
+        ? profile.legalName
+        : profile.name;
     return [
       _SectionCard(
-        icon: Icons.store_outlined,
-        title: tr.text('store_information'),
-        subtitle: tr.text('store_information_desc'),
+        icon: Icons.business_outlined,
+        title: tr.text('organization_center'),
+        subtitle: tr.text('organization_center_desc'),
+        child: Text(
+          tr.text('organization_center_helper'),
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+        ),
+      ),
+      _SectionCard(
+        icon: Icons.storefront_outlined,
+        title: tr.text('organization_general'),
+        subtitle: tr.text('organization_general_desc'),
         trailing: FilledButton.icon(
-          onPressed: () => _editStoreProfile(context, profile),
+          onPressed: () => _editOrganizationGeneral(context, profile),
           icon: const Icon(Icons.edit_outlined),
           label: Text(tr.text('edit')),
         ),
         child: Column(
           children: [
             _InfoTile(
-                icon: Icons.storefront_outlined,
+                icon: Icons.store_outlined,
                 title: tr.text('store_name'),
-                value: profile.name),
+                value: displayName),
+            _InfoTile(
+                icon: Icons.badge_outlined,
+                title: tr.text('trade_name'),
+                value: profile.tradeName.isEmpty ? '—' : profile.tradeName),
             _InfoTile(
                 icon: Icons.phone_outlined,
                 title: tr.text('phone'),
                 value: profile.phone.isEmpty ? '—' : profile.phone),
             _InfoTile(
+                icon: Icons.email_outlined,
+                title: tr.text('email'),
+                value: profile.email.isEmpty ? '—' : profile.email),
+            _InfoTile(
+                icon: Icons.language_outlined,
+                title: tr.text('website'),
+                value: profile.website.isEmpty ? '—' : profile.website),
+          ],
+        ),
+      ),
+      _SectionCard(
+        icon: Icons.gavel_outlined,
+        title: tr.text('organization_legal'),
+        subtitle: tr.text('organization_legal_desc'),
+        trailing: FilledButton.icon(
+          onPressed: () => _editOrganizationLegal(context, profile),
+          icon: const Icon(Icons.edit_outlined),
+          label: Text(tr.text('edit')),
+        ),
+        child: Column(
+          children: [
+            _InfoTile(
+                icon: Icons.account_balance_outlined,
+                title: tr.text('legal_name'),
+                value: legalName),
+            _InfoTile(
+                icon: Icons.percent_outlined,
+                title: tr.text('vat_number'),
+                value: profile.vatNumber.isEmpty ? '—' : profile.vatNumber),
+            _InfoTile(
+                icon: Icons.confirmation_number_outlined,
+                title: tr.text('tax_registration_number'),
+                value: profile.taxRegistrationNumber.isEmpty
+                    ? '—'
+                    : profile.taxRegistrationNumber),
+            _InfoTile(
+                icon: Icons.article_outlined,
+                title: tr.text('commercial_register_number'),
+                value: profile.commercialRegisterNumber.isEmpty
+                    ? '—'
+                    : profile.commercialRegisterNumber),
+            _InfoTile(
+                icon: Icons.public_outlined,
+                title: tr.text('country'),
+                value: profile.country.isEmpty ? '—' : profile.country),
+            _InfoTile(
+                icon: Icons.map_outlined,
+                title: tr.text('governorate'),
+                value: profile.governorate.isEmpty ? '—' : profile.governorate),
+            _InfoTile(
+                icon: Icons.location_city_outlined,
+                title: tr.text('city'),
+                value: profile.city.isEmpty ? '—' : profile.city),
+            _InfoTile(
                 icon: Icons.location_on_outlined,
                 title: tr.text('address'),
                 value: profile.address.isEmpty ? '—' : profile.address),
+          ],
+        ),
+      ),
+      _SectionCard(
+        icon: Icons.account_balance_wallet_outlined,
+        title: tr.text('organization_financial'),
+        subtitle: tr.text('organization_financial_desc'),
+        child: Column(
+          children: [
+            _InfoTile(
+                icon: Icons.currency_exchange_outlined,
+                title: tr.text('base_currency'),
+                value: profile.baseCurrency),
+            _InfoTile(
+                icon: Icons.sell_outlined,
+                title: tr.text('default_product_currency'),
+                value: profile.defaultProductCurrency),
+            _InfoTile(
+                icon: Icons.receipt_long_outlined,
+                title: tr.text('default_sale_invoice_currency'),
+                value: profile.defaultSaleInvoiceCurrency),
+            _InfoTile(
+                icon: Icons.payments_outlined,
+                title: tr.text('default_sale_payment_currency'),
+                value: profile.defaultSalePaymentCurrency),
+            _InfoTile(
+                icon: Icons.info_outline,
+                title: tr.text('managed_from'),
+                value: tr.text('currencies')),
+          ],
+        ),
+      ),
+      _SectionCard(
+        icon: Icons.palette_outlined,
+        title: tr.text('organization_branding'),
+        subtitle: tr.text('organization_branding_desc'),
+        trailing: FilledButton.icon(
+          onPressed: () => _editOrganizationBranding(context, profile),
+          icon: const Icon(Icons.edit_outlined),
+          label: Text(tr.text('edit')),
+        ),
+        child: Column(
+          children: [
+            _InfoTile(
+                icon: Icons.image_outlined,
+                title: tr.text('logo_path'),
+                value: profile.logoPath.isEmpty ? '—' : profile.logoPath),
             _InfoTile(
                 icon: Icons.receipt_long_outlined,
                 title: tr.text('invoice_footer'),
@@ -295,6 +438,255 @@ class SettingsPage extends StatelessWidget {
     ];
   }
 
+  List<Widget> _documentCards(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    final profile = store.storeProfile;
+    final docs = profile.documentNumbering;
+    return [
+      _SectionCard(
+        icon: Icons.description_outlined,
+        title: tr.text('document_settings'),
+        subtitle: tr.text('document_settings_desc'),
+        trailing: FilledButton.icon(
+          onPressed: () => _editDocumentNumbering(context, profile),
+          icon: const Icon(Icons.edit_outlined),
+          label: Text(tr.text('edit')),
+        ),
+        child: Column(
+          children: [
+            _InfoTile(
+                icon: Icons.receipt_long_outlined,
+                title: tr.text('invoice_prefix'),
+                value: docs.invoicePrefix),
+            _InfoTile(
+                icon: Icons.request_quote_outlined,
+                title: tr.text('quote_prefix'),
+                value: docs.quotePrefix),
+            _InfoTile(
+                icon: Icons.shopping_cart_outlined,
+                title: tr.text('purchase_prefix'),
+                value: docs.purchasePrefix),
+            _InfoTile(
+                icon: Icons.local_shipping_outlined,
+                title: tr.text('delivery_note_prefix'),
+                value: docs.deliveryNotePrefix),
+            _InfoTile(
+                icon: Icons.assignment_return_outlined,
+                title: tr.text('return_prefix'),
+                value: docs.returnPrefix),
+          ],
+        ),
+      ),
+      _SectionCard(
+        icon: Icons.info_outline,
+        title: tr.text('document_settings_note'),
+        subtitle: tr.text('document_settings_note_desc'),
+        child: Text(
+          tr.text('document_settings_helper'),
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+        ),
+      ),
+    ];
+  }
+
+  List<Widget> _branchCards(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    final profile = store.storeProfile;
+    final branches = profile.branches;
+    return [
+      _SectionCard(
+        icon: Icons.account_tree_outlined,
+        title: tr.text('branches'),
+        subtitle: tr.text('branches_desc'),
+        trailing: FilledButton.icon(
+          onPressed: () => _editBranch(context, profile, null),
+          icon: const Icon(Icons.add_outlined),
+          label: Text(tr.text('add_branch')),
+        ),
+        child: branches.isEmpty
+            ? Text(
+                tr.text('no_branches_yet'),
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+              )
+            : Column(
+                children: [
+                  for (final branch in branches)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(branch.isActive
+                          ? Icons.storefront_outlined
+                          : Icons.storefront_outlined),
+                      title: Text(branch.name),
+                      subtitle: Text([
+                        if (branch.code.trim().isNotEmpty) branch.code,
+                        if (branch.phone.trim().isNotEmpty) branch.phone,
+                        if (branch.address.trim().isNotEmpty) branch.address,
+                        branch.isActive
+                            ? tr.text('active')
+                            : tr.text('inactive'),
+                      ].join(' • ')),
+                      trailing: IconButton(
+                        tooltip: tr.text('edit'),
+                        icon: const Icon(Icons.edit_outlined),
+                        onPressed: () => _editBranch(context, profile, branch),
+                      ),
+                    ),
+                ],
+              ),
+      ),
+      _SectionCard(
+        icon: Icons.info_outline,
+        title: tr.text('branches_note'),
+        subtitle: tr.text('branches_note_desc'),
+        child: Text(
+          tr.text('branches_helper'),
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+        ),
+      ),
+    ];
+  }
+
+  List<Widget> _taxCards(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+
+    return [
+      _SectionCard(
+        icon: Icons.receipt_long_outlined,
+        title: tr.text('tax_settings'),
+        subtitle: tr.text('tax_settings_desc'),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              tr.text('product_level_taxes_desc'),
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              tr.text('manage_product_taxes_hint'),
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+            ),
+          ],
+        ),
+      ),
+    ];
+  }
+
+  String _costingMethodTitle(InventoryCostingMethod method) {
+    switch (method) {
+      case InventoryCostingMethod.fifo:
+        return 'FIFO';
+      case InventoryCostingMethod.lastPurchaseCost:
+        return 'Last Purchase Cost';
+      case InventoryCostingMethod.weightedAverage:
+        return 'Weighted Average Cost';
+    }
+  }
+
+  Widget _inventoryCostingCard(BuildContext context) {
+    final method = store.inventoryCostingMethod;
+    return _SectionCard(
+      icon: Icons.inventory_2_outlined,
+      title: 'Inventory costing method',
+      subtitle: 'طريقة احتساب كلفة المنتج المستخدمة في البيع والربحية.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SegmentedButton<InventoryCostingMethod>(
+            segments: [
+              ButtonSegment<InventoryCostingMethod>(
+                value: InventoryCostingMethod.weightedAverage,
+                icon: const Icon(Icons.functions_outlined),
+                label: const Text('Weighted Average'),
+              ),
+              ButtonSegment<InventoryCostingMethod>(
+                value: InventoryCostingMethod.fifo,
+                icon: const Icon(Icons.low_priority_outlined),
+                label: const Text('FIFO'),
+              ),
+              ButtonSegment<InventoryCostingMethod>(
+                value: InventoryCostingMethod.lastPurchaseCost,
+                icon: const Icon(Icons.history_outlined),
+                label: const Text('Last Cost'),
+              ),
+            ],
+            selected: {method},
+            onSelectionChanged: (selection) async {
+              final next = selection.first;
+              if (next == method) return;
+              await store.setInventoryCostingMethod(
+                next,
+                reason: 'Changed from settings',
+              );
+            },
+          ),
+          const SizedBox(height: 12),
+          Text('Current method: ${_costingMethodTitle(method)}'),
+          const SizedBox(height: 8),
+          Text(
+            'أي تغيير جديد يبدأ من لحظة التغيير ولا يعيد حساب فواتير البيع القديمة، لأن كل SaleItem يحتفظ بالكلفة والطريقة وقت البيع.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          if (store.costingMethodHistory.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text('History', style: Theme.of(context).textTheme.titleSmall),
+            for (final row in store.costingMethodHistory.reversed.take(5))
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.timeline_outlined),
+                title: Text(_costingMethodTitle(row.method)),
+                subtitle: Text('${DateFormat.yMd().add_Hm().format(row.effectiveFrom)}${row.effectiveTo == null ? ' → active' : ' → ${DateFormat.yMd().add_Hm().format(row.effectiveTo!)}'}${row.reason.isEmpty ? '' : ' · ${row.reason}'}'),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _cashBankCards(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    return [
+      _SectionCard(
+        icon: Icons.account_balance_wallet_outlined,
+        title: tr.text('banks_cash_drawers'),
+        subtitle: tr.text('banks_cash_drawers_desc'),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              tr.text('banks_cash_drawers_helper'),
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+            ),
+            const SizedBox(height: 16),
+            _CurrentDeviceCashDrawerSettingsCard(store: store),
+          ],
+        ),
+      ),
+    ];
+  }
+
+  String _formatPercent(double value) {
+    final rounded = value.roundToDouble();
+    final text = (value - rounded).abs() < 0.0001
+        ? rounded.toStringAsFixed(0)
+        : value.toStringAsFixed(2);
+    return '$text%';
+  }
+
+
   List<Widget> _financialCards(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final profile = store.storeProfile;
@@ -351,6 +743,7 @@ class SettingsPage extends StatelessWidget {
           ],
         ),
       ),
+      _inventoryCostingCard(context),
       _SectionCard(
         icon: Icons.monetization_on_outlined,
         title: tr.text('currencies'),
@@ -426,6 +819,15 @@ class SettingsPage extends StatelessWidget {
         ),
       ),
     ];
+  }
+
+
+  String _formatPercent(double value) {
+    final rounded = value.roundToDouble();
+    final text = (value - rounded).abs() < 0.0001
+        ? rounded.toStringAsFixed(0)
+        : value.toStringAsFixed(2);
+    return '$text%';
   }
 
   List<Widget> _shortcutCards(BuildContext context) => [
@@ -1202,110 +1604,433 @@ class SettingsPage extends StatelessWidget {
     ));
   }
 
-  Future<void> _editStoreProfile(
+  Future<void> _editDocumentNumbering(
+      BuildContext context, StoreProfile profile) async {
+    final docs = profile.documentNumbering;
+    final invoiceController = TextEditingController(text: docs.invoicePrefix);
+    final quoteController = TextEditingController(text: docs.quotePrefix);
+    final purchaseController = TextEditingController(text: docs.purchasePrefix);
+    final deliveryController = TextEditingController(text: docs.deliveryNotePrefix);
+    final returnController = TextEditingController(text: docs.returnPrefix);
+    final tr = AppLocalizations.of(context);
+
+    final result = await showDialog<DocumentNumberingSettings>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(tr.text('document_settings')),
+          content: ResponsiveDialogBox(
+            maxWidth: VentioResponsive.modalMaxWidth(context, 560),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: invoiceController,
+                    decoration: InputDecoration(labelText: tr.text('invoice_prefix')),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: quoteController,
+                    decoration: InputDecoration(labelText: tr.text('quote_prefix')),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: purchaseController,
+                    decoration: InputDecoration(labelText: tr.text('purchase_prefix')),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: deliveryController,
+                    decoration: InputDecoration(labelText: tr.text('delivery_note_prefix')),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: returnController,
+                    decoration: InputDecoration(labelText: tr.text('return_prefix')),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: Text(tr.text('cancel'))),
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(
+                  dialogContext,
+                  DocumentNumberingSettings(
+                    invoicePrefix: invoiceController.text.trim().isEmpty
+                        ? 'INV-'
+                        : invoiceController.text.trim(),
+                    quotePrefix: quoteController.text.trim().isEmpty
+                        ? 'QUO-'
+                        : quoteController.text.trim(),
+                    purchasePrefix: purchaseController.text.trim().isEmpty
+                        ? 'PO-'
+                        : purchaseController.text.trim(),
+                    deliveryNotePrefix: deliveryController.text.trim().isEmpty
+                        ? 'DN-'
+                        : deliveryController.text.trim(),
+                    returnPrefix: returnController.text.trim().isEmpty
+                        ? 'RET-'
+                        : returnController.text.trim(),
+                  ),
+                );
+              },
+              child: Text(tr.text('save')),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (result != null) {
+      await _saveOrganizationProfile(
+          context, profile.copyWith(documentNumbering: result));
+    }
+  }
+
+  Future<void> _editBranch(BuildContext context, StoreProfile profile,
+      OrganizationBranch? branch) async {
+    final nameController = TextEditingController(text: branch?.name ?? '');
+    final codeController = TextEditingController(text: branch?.code ?? '');
+    final addressController = TextEditingController(text: branch?.address ?? '');
+    final phoneController = TextEditingController(text: branch?.phone ?? '');
+    var isActive = branch?.isActive ?? true;
+    final tr = AppLocalizations.of(context);
+
+    final result = await showDialog<OrganizationBranch>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(builder: (context, setState) {
+          return AlertDialog(
+            title: Text(branch == null
+                ? tr.text('add_branch')
+                : tr.text('edit_branch')),
+            content: ResponsiveDialogBox(
+              maxWidth: VentioResponsive.modalMaxWidth(context, 560),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: nameController,
+                      decoration: InputDecoration(labelText: tr.text('branch_name')),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: codeController,
+                      decoration: InputDecoration(labelText: tr.text('branch_code')),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: phoneController,
+                      decoration: InputDecoration(labelText: tr.text('phone')),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: addressController,
+                      minLines: 2,
+                      maxLines: 4,
+                      decoration: InputDecoration(labelText: tr.text('address')),
+                    ),
+                    const SizedBox(height: 12),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      value: isActive,
+                      onChanged: (value) => setState(() => isActive = value),
+                      title: Text(tr.text('active')),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: Text(tr.text('cancel'))),
+              FilledButton(
+                onPressed: () {
+                  final name = nameController.text.trim();
+                  if (name.isEmpty) return;
+                  Navigator.pop(
+                    dialogContext,
+                    OrganizationBranch(
+                      id: branch?.id ??
+                          'branch_${DateTime.now().microsecondsSinceEpoch}',
+                      name: name,
+                      code: codeController.text.trim(),
+                      address: addressController.text.trim(),
+                      phone: phoneController.text.trim(),
+                      isActive: isActive,
+                    ),
+                  );
+                },
+                child: Text(tr.text('save')),
+              ),
+            ],
+          );
+        });
+      },
+    );
+
+    if (result == null) return;
+    final nextBranches = [
+      ...profile.branches.where((item) => item.id != result.id),
+      result,
+    ];
+    await _saveOrganizationProfile(
+        context, profile.copyWith(branches: nextBranches));
+  }
+
+  Future<void> _editOrganizationGeneral(
       BuildContext context, StoreProfile profile) async {
     final nameController = TextEditingController(text: profile.name);
+    final tradeNameController = TextEditingController(text: profile.tradeName);
     final phoneController = TextEditingController(text: profile.phone);
+    final emailController = TextEditingController(text: profile.email);
+    final websiteController = TextEditingController(text: profile.website);
+    final tr = AppLocalizations.of(context);
+
+    final result = await showDialog<StoreProfile>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(tr.text('organization_general')),
+          content: ResponsiveDialogBox(
+            maxWidth: VentioResponsive.modalMaxWidth(context, 560),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                      controller: nameController,
+                      decoration:
+                          InputDecoration(labelText: tr.text('store_name'))),
+                  const SizedBox(height: 12),
+                  TextField(
+                      controller: tradeNameController,
+                      decoration:
+                          InputDecoration(labelText: tr.text('trade_name'))),
+                  const SizedBox(height: 12),
+                  TextField(
+                      controller: phoneController,
+                      decoration: InputDecoration(labelText: tr.text('phone'))),
+                  const SizedBox(height: 12),
+                  TextField(
+                      controller: emailController,
+                      keyboardType: TextInputType.emailAddress,
+                      decoration: InputDecoration(labelText: tr.text('email'))),
+                  const SizedBox(height: 12),
+                  TextField(
+                      controller: websiteController,
+                      keyboardType: TextInputType.url,
+                      decoration:
+                          InputDecoration(labelText: tr.text('website'))),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: Text(tr.text('cancel'))),
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(
+                  dialogContext,
+                  profile.copyWith(
+                    name: nameController.text.trim().isEmpty
+                        ? tr.text('my_store')
+                        : nameController.text.trim(),
+                    tradeName: tradeNameController.text.trim(),
+                    phone: phoneController.text.trim(),
+                    email: emailController.text.trim(),
+                    website: websiteController.text.trim(),
+                  ),
+                );
+              },
+              child: Text(tr.text('save')),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (result != null) await _saveOrganizationProfile(context, result);
+  }
+
+  Future<void> _editOrganizationLegal(
+      BuildContext context, StoreProfile profile) async {
+    final legalNameController = TextEditingController(text: profile.legalName);
+    final vatController = TextEditingController(text: profile.vatNumber);
+    final taxController =
+        TextEditingController(text: profile.taxRegistrationNumber);
+    final registerController =
+        TextEditingController(text: profile.commercialRegisterNumber);
+    final countryController = TextEditingController(text: profile.country);
+    final governorateController =
+        TextEditingController(text: profile.governorate);
+    final cityController = TextEditingController(text: profile.city);
     final addressController = TextEditingController(text: profile.address);
+    final tr = AppLocalizations.of(context);
+
+    final result = await showDialog<StoreProfile>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(tr.text('organization_legal')),
+          content: ResponsiveDialogBox(
+            maxWidth: VentioResponsive.modalMaxWidth(context, 560),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                      controller: legalNameController,
+                      decoration:
+                          InputDecoration(labelText: tr.text('legal_name'))),
+                  const SizedBox(height: 12),
+                  TextField(
+                      controller: vatController,
+                      decoration:
+                          InputDecoration(labelText: tr.text('vat_number'))),
+                  const SizedBox(height: 12),
+                  TextField(
+                      controller: taxController,
+                      decoration: InputDecoration(
+                          labelText: tr.text('tax_registration_number'))),
+                  const SizedBox(height: 12),
+                  TextField(
+                      controller: registerController,
+                      decoration: InputDecoration(
+                          labelText: tr.text('commercial_register_number'))),
+                  const SizedBox(height: 12),
+                  TextField(
+                      controller: countryController,
+                      decoration: InputDecoration(labelText: tr.text('country'))),
+                  const SizedBox(height: 12),
+                  TextField(
+                      controller: governorateController,
+                      decoration:
+                          InputDecoration(labelText: tr.text('governorate'))),
+                  const SizedBox(height: 12),
+                  TextField(
+                      controller: cityController,
+                      decoration: InputDecoration(labelText: tr.text('city'))),
+                  const SizedBox(height: 12),
+                  TextField(
+                      controller: addressController,
+                      minLines: 2,
+                      maxLines: 4,
+                      decoration:
+                          InputDecoration(labelText: tr.text('address'))),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: Text(tr.text('cancel'))),
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(
+                  dialogContext,
+                  profile.copyWith(
+                    legalName: legalNameController.text.trim(),
+                    vatNumber: vatController.text.trim(),
+                    taxRegistrationNumber: taxController.text.trim(),
+                    commercialRegisterNumber: registerController.text.trim(),
+                    country: countryController.text.trim(),
+                    governorate: governorateController.text.trim(),
+                    city: cityController.text.trim(),
+                    address: addressController.text.trim(),
+                  ),
+                );
+              },
+              child: Text(tr.text('save')),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (result != null) await _saveOrganizationProfile(context, result);
+  }
+
+  Future<void> _editOrganizationBranding(
+      BuildContext context, StoreProfile profile) async {
+    final logoController = TextEditingController(text: profile.logoPath);
     final footerController = TextEditingController(text: profile.footerNote);
     final tr = AppLocalizations.of(context);
 
     final result = await showDialog<StoreProfile>(
       context: context,
       builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setState) {
-            return AlertDialog(
-              title: Text(tr.text('edit_store_profile')),
-              content: ResponsiveDialogBox(
-                maxWidth: VentioResponsive.modalMaxWidth(context, 520),
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      TextField(
-                          controller: nameController,
-                          decoration: InputDecoration(
-                              labelText: tr.text('store_name'))),
-                      const SizedBox(height: 12),
-                      TextField(
-                          controller: phoneController,
-                          decoration:
-                              InputDecoration(labelText: tr.text('phone'))),
-                      const SizedBox(height: 12),
-                      TextField(
-                          controller: addressController,
-                          decoration:
-                              InputDecoration(labelText: tr.text('address'))),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: footerController,
-                        minLines: 2,
-                        maxLines: 4,
-                        decoration: InputDecoration(
-                            labelText: tr.text('invoice_footer')),
-                      ),
-                    ],
+        return AlertDialog(
+          title: Text(tr.text('organization_branding')),
+          content: ResponsiveDialogBox(
+            maxWidth: VentioResponsive.modalMaxWidth(context, 560),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                      controller: logoController,
+                      decoration:
+                          InputDecoration(labelText: tr.text('logo_path'))),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: footerController,
+                    minLines: 2,
+                    maxLines: 4,
+                    decoration:
+                        InputDecoration(labelText: tr.text('invoice_footer')),
                   ),
-                ),
+                ],
               ),
-              actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(dialogContext),
-                    child: Text(tr.text('cancel'))),
-                FilledButton(
-                  onPressed: () {
-                    Navigator.pop(
-                      dialogContext,
-                      StoreProfile(
-                        name: nameController.text.trim().isEmpty
-                            ? tr.text('my_store')
-                            : nameController.text.trim(),
-                        phone: phoneController.text.trim(),
-                        address: addressController.text.trim(),
-                        // Keep the legacy currency value for backward compatibility only.
-                        // Currency selection is now managed exclusively from Financial Settings.
-                        currency: profile.currency,
-                        footerNote: footerController.text.trim().isEmpty
-                            ? tr.text('default_invoice_footer')
-                            : footerController.text.trim(),
-                        usdToLbpRate: profile.usdToLbpRate,
-                        priceDisplayMode: profile.priceDisplayMode,
-                        priceDisplayCurrencies: profile.priceDisplayCurrencies,
-                        defaultProductCurrency: profile.defaultProductCurrency,
-                        defaultSaleInvoiceCurrency:
-                            profile.defaultSaleInvoiceCurrency,
-                        defaultSalePaymentCurrency:
-                            profile.defaultSalePaymentCurrency,
-                        lbpRounding: profile.lbpRounding,
-                        baseCurrency: profile.baseCurrency,
-                        priceStorageDecimals: profile.priceStorageDecimals,
-                        currencies: profile.currencies,
-                        exchangeRates: profile.exchangeRates,
-                        roundingDifferenceAccountId:
-                            profile.roundingDifferenceAccountId,
-                        exchangeGainAccountId: profile.exchangeGainAccountId,
-                        exchangeLossAccountId: profile.exchangeLossAccountId,
-                      ),
-                    );
-                  },
-                  child: Text(tr.text('save')),
-                ),
-              ],
-            );
-          },
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: Text(tr.text('cancel'))),
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(
+                  dialogContext,
+                  profile.copyWith(
+                    logoPath: logoController.text.trim(),
+                    footerNote: footerController.text.trim().isEmpty
+                        ? tr.text('default_invoice_footer')
+                        : footerController.text.trim(),
+                  ),
+                );
+              },
+              child: Text(tr.text('save')),
+            ),
+          ],
         );
       },
     );
 
-    if (result != null) {
-      await store.updateStoreProfile(result);
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(tr.text('store_profile_updated'))));
-      }
+    if (result != null) await _saveOrganizationProfile(context, result);
+  }
+
+  Future<void> _saveOrganizationProfile(
+      BuildContext context, StoreProfile profile) async {
+    final tr = AppLocalizations.of(context);
+    await store.updateStoreProfile(profile);
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr.text('store_profile_updated'))));
     }
   }
+
 
   Future<void> _downloadBackupFile(BuildContext context) async {
     await SettingsBackupActions.downloadBackupFile(context, store);
