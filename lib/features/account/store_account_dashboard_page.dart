@@ -81,12 +81,33 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
               if (!dialogContext.mounted) return;
               setDialogState(() => saving = false);
               if (result.ok) {
+                try {
+                  await widget.store.applyCloudStoreOwnerCredentials(
+                    username: result.username.isNotEmpty
+                        ? result.username
+                        : cache.username,
+                    fullName: null,
+                    password: newController.text,
+                  );
+                  await AccountAuthService.cacheOnlineResult(
+                    result,
+                    mode: cache.mode.isEmpty ? 'owner' : cache.mode,
+                  );
+                } catch (error) {
+                  if (!dialogContext.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Cloud password changed, but local Owner password was not updated: $error')),
+                  );
+                  setDialogState(() => saving = false);
+                  return;
+                }
+                if (!dialogContext.mounted) return;
                 Navigator.of(dialogContext).pop();
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                       content: Text(result.message.isEmpty
                           ? tr.text('account_password_changed_success')
-                          : result.message)),
+                          : '${result.message} Local Owner password updated.')),
                 );
               } else {
                 ScaffoldMessenger.of(context).showSnackBar(

@@ -542,6 +542,13 @@ class _LoginGatePageState extends State<LoginGatePage> {
         }
         _onlineSessionPassword = _passwordController.text;
         await AccountAuthService.cacheOnlineResult(onlineResult, mode: 'login');
+        await widget.store.applyCloudStoreOwnerCredentials(
+          username: onlineResult.username.isNotEmpty
+              ? onlineResult.username
+              : parts.first,
+          fullName: null,
+          password: _passwordController.text,
+        );
         await widget.store.logout();
         setState(() => _loggingIn = false);
         return;

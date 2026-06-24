@@ -56,9 +56,11 @@ export default async function handler(req, res) {
     }
 
     const rows = await sql`
-      select id, password_hash, status
-      from app_accounts
-      where id = ${String(payload.accountId || '')}
+      select a.id, a.username, a.full_name, a.namespace_slug, a.password_hash, a.status, a.account_type,
+             s.id as store_id, s.slug as store_slug, s.name as store_name, s.branch_id, s.cloud_sync_enabled
+      from app_accounts a
+      left join app_stores s on s.owner_account_id = a.id
+      where a.id = ${String(payload.accountId || '')}
       limit 1
     `;
     if (!rows.length) {
@@ -78,7 +80,20 @@ export default async function handler(req, res) {
       where id = ${String(payload.accountId || '')}
     `;
 
-    return res.status(200).json({ ok: true, message: 'Password changed successfully.' });
+    const storeSlug = row.store_slug || row.namespace_slug || '';
+    return res.status(200).json({
+      ok: true,
+      message: 'Password changed successfully.',
+      accountId: row.id,
+      storeId: row.store_id || String(payload.storeId || ''),
+      branchId: row.branch_id || String(payload.branchId || ''),
+      username: row.username || '',
+      storeSlug,
+      storeName: row.store_name || '',
+      loginName: storeSlug ? `${row.username}@${storeSlug}` : row.username || '',
+      accountType: row.account_type || 'store_owner',
+      cloudSyncEnabled: row.cloud_sync_enabled === true,
+    });
   } catch (error) {
     return sendError(res, error);
   }

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
 import '../../core/utils/responsive.dart';
+import '../../core/services/account_auth_service.dart';
 import '../../data/app_store.dart';
 import '../../models/app_user.dart';
 import '../../models/user_role.dart';
@@ -73,7 +74,9 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
               child: ListTile(
                 leading: CircleAvatar(child: Text(user.fullName.isEmpty ? '?' : user.fullName.substring(0, 1).toUpperCase())),
                 title: Text('${user.fullName} (${user.username})'),
-                subtitle: Text('${store.roleById(user.roleId)?.name ?? user.roleId} • ${user.isActive ? tr.text('active') : tr.text('disabled')}'),
+                subtitle: Text(user.isSystem && user.roleId == 'admin'
+                    ? '${store.roleById(user.roleId)?.name ?? user.roleId} • Store Owner • Full Access locked'
+                    : '${store.roleById(user.roleId)?.name ?? user.roleId} • ${user.isActive ? tr.text('active') : tr.text('disabled')}'),
                 trailing: Wrap(
                   spacing: 8,
                   children: [
@@ -87,6 +90,37 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
         ],
       ),
     );
+  }
+
+
+  String _friendlyErrorMessage(Object error) {
+    final raw = error.toString().trim();
+    var message = raw;
+    const prefixes = <String>[
+      'Bad state: ',
+      'Exception: ',
+      'Invalid argument(s): ',
+    ];
+    for (final prefix in prefixes) {
+      if (message.startsWith(prefix)) {
+        message = message.substring(prefix.length).trim();
+      }
+    }
+    if (message.contains('Cloud owner re-authentication required') ||
+        message.contains('Connect to the cloud account before editing') ||
+        message.contains('Online account session is missing')) {
+      return 'يجب تأكيد الحساب السحابي قبل تعديل المدير الأساسي.';
+    }
+    if (message.contains('Cloud rejected the Store Owner update')) {
+      return 'فشل تحديث المدير الأساسي على السحابة. لم يتم حفظ أي تعديل محلي.';
+    }
+    if (message.contains('Store Owner must always keep Full Access')) {
+      return 'المدير الأساسي يجب أن يبقى بصلاحيات كاملة ولا يمكن تعطيله.';
+    }
+    if (message.contains('Store Owner permissions are locked')) {
+      return 'صلاحيات المدير الأساسي مقفلة ولا يمكن تعديلها.';
+    }
+    return message.isEmpty ? 'حدث خطأ أثناء حفظ المستخدم.' : message;
   }
 
   Future<void> _editRole({UserRole? role}) async {
@@ -160,7 +194,11 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
       await widget.store.addOrUpdateRole(result);
       if (mounted) setState(() {});
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_friendlyErrorMessage(e))),
+        );
+      }
     }
   }
 
@@ -186,12 +224,17 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
       await widget.store.deleteRole(role.id);
       if (mounted) setState(() {});
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_friendlyErrorMessage(e))),
+        );
+      }
     }
   }
 
   Future<void> _editUser({AppUser? user}) async {
     final tr = AppLocalizations.of(context);
+    final isStoreOwner = user?.isSystem == true && user?.roleId == 'admin';
     final nameController = TextEditingController(text: user?.fullName ?? '');
     final usernameController = TextEditingController(text: user?.username ?? '');
     final passwordController = TextEditingController();
@@ -228,13 +271,22 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                       decoration: InputDecoration(labelText: user == null ? tr.text('password') : tr.text('new_password_keep_current')),
                     ),
                     const SizedBox(height: 12),
+                    if (isStoreOwner)
+                      Card(
+                        child: ListTile(
+                          leading: const Icon(Icons.lock_outline),
+                          title: const Text('Store Owner protected account'),
+                          subtitle: const Text('Full Access is locked. Saving name, username, or password requires a successful cloud update first.'),
+                        ),
+                      ),
+                    if (isStoreOwner) const SizedBox(height: 12),
                     DropdownButtonFormField<String>(
                       initialValue: roleId,
                       decoration: InputDecoration(labelText: tr.text('role')),
                       items: [
                         for (final role in widget.store.roles) DropdownMenuItem(value: role.id, child: Text(role.name)),
                       ],
-                      onChanged: (value) => setDialogState(() => roleId = value ?? roleId),
+                      onChanged: isStoreOwner ? null : (value) => setDialogState(() => roleId = value ?? roleId),
                     ),
                     SwitchListTile(
                       value: isActive,
@@ -254,7 +306,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                             DropdownMenuItem(value: 'allow', child: Text(tr.text('allow'))),
                             DropdownMenuItem(value: 'deny', child: Text(tr.text('deny'))),
                           ],
-                          onChanged: (value) {
+                          onChanged: isStoreOwner ? null : (value) {
                             setDialogState(() {
                               extra.remove(permission);
                               denied.remove(permission);
@@ -281,10 +333,10 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                       fullName: nameController.text,
                       username: usernameController.text,
                       passwordHash: user?.passwordHash ?? '',
-                      roleId: roleId,
-                      extraPermissions: extra,
-                      deniedPermissions: denied,
-                      isActive: isActive,
+                      roleId: isStoreOwner ? 'admin' : roleId,
+                      extraPermissions: isStoreOwner ? const <String>{} : extra,
+                      deniedPermissions: isStoreOwner ? const <String>{} : denied,
+                      isActive: isStoreOwner ? true : isActive,
                       isSystem: user?.isSystem ?? false,
                       createdAt: user?.createdAt,
                       updatedAt: user?.updatedAt,
@@ -301,12 +353,166 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
       ),
     );
     if (result == null) return;
+    await _saveUserEditResult(result, isStoreOwner: isStoreOwner);
+  }
+
+  bool _isCloudAuthRequired(Object error) {
+    final message = error.toString();
+    return message.contains('Cloud owner re-authentication required') ||
+        message.contains('Online account session is missing') ||
+        message.contains('Connect to the cloud account before editing');
+  }
+
+  Future<void> _saveUserEditResult(
+    _UserEditResult result, {
+    required bool isStoreOwner,
+    bool alreadyAskedCloudAuth = false,
+  }) async {
     try {
       await widget.store.addOrUpdateUser(result.user, password: result.password);
-      if (mounted) setState(() {});
+      if (mounted) {
+        setState(() {});
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(isStoreOwner
+                ? 'تم تحديث المدير الأساسي على السحابة والمحلي بنجاح.'
+                : 'تم حفظ المستخدم بنجاح.'),
+          ),
+        );
+      }
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+      if (isStoreOwner && !alreadyAskedCloudAuth && _isCloudAuthRequired(e)) {
+        final authenticated = await _showCloudReauthDialog(result.user.username);
+        if (authenticated == true && mounted) {
+          await _saveUserEditResult(
+            result,
+            isStoreOwner: isStoreOwner,
+            alreadyAskedCloudAuth: true,
+          );
+          return;
+        }
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_friendlyErrorMessage(e))),
+        );
+      }
     }
+  }
+
+  String _defaultCloudLoginName(String localUsername) {
+    final cache = AccountAuthCache.load();
+    if ((cache?.loginName.trim().isNotEmpty ?? false)) {
+      return cache!.loginName.trim().toLowerCase();
+    }
+    final username = localUsername.trim().toLowerCase();
+    final storeSlug = cache?.storeSlug.trim().toLowerCase() ?? '';
+    if (storeSlug.isNotEmpty && !username.contains('@')) {
+      return '$username@$storeSlug';
+    }
+    return username;
+  }
+
+  Future<bool?> _showCloudReauthDialog(String localUsername) async {
+    final loginController = TextEditingController(text: _defaultCloudLoginName(localUsername));
+    final passwordController = TextEditingController();
+    bool isSubmitting = false;
+    String? errorMessage;
+
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('تأكيد الحساب السحابي'),
+          content: SizedBox(
+            width: VentioResponsive.modalMaxWidth(context, 420),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'جلسة السحابة غير متاحة أو منتهية. أدخل حساب المدير الأساسي السحابي للمتابعة دون مغادرة الصفحة.',
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: loginController,
+                  decoration: const InputDecoration(labelText: 'الحساب السحابي'),
+                  enabled: !isSubmitting,
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: passwordController,
+                  obscureText: true,
+                  decoration: const InputDecoration(labelText: 'كلمة المرور الحالية'),
+                  enabled: !isSubmitting,
+                ),
+                if (errorMessage != null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    errorMessage!,
+                    style: TextStyle(color: Theme.of(context).colorScheme.error),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: isSubmitting ? null : () => Navigator.pop(dialogContext, false),
+              child: const Text('إلغاء'),
+            ),
+            FilledButton(
+              onPressed: isSubmitting
+                  ? null
+                  : () async {
+                      final loginName = loginController.text.trim().toLowerCase();
+                      final password = passwordController.text;
+                      if (loginName.isEmpty || password.trim().isEmpty) {
+                        setDialogState(() => errorMessage = 'أدخل الحساب وكلمة المرور.');
+                        return;
+                      }
+                      setDialogState(() {
+                        isSubmitting = true;
+                        errorMessage = null;
+                      });
+                      try {
+                        final result = await AccountAuthService().login(
+                          username: loginName,
+                          password: password,
+                        );
+                        if (!result.ok) {
+                          setDialogState(() {
+                            isSubmitting = false;
+                            errorMessage = result.message.isEmpty
+                                ? 'فشل تسجيل الدخول إلى السحابة.'
+                                : result.message;
+                          });
+                          return;
+                        }
+                        await AccountAuthService.cacheOnlineResult(
+                          result,
+                          mode: 'online',
+                        );
+                        if (dialogContext.mounted) Navigator.pop(dialogContext, true);
+                      } catch (error) {
+                        setDialogState(() {
+                          isSubmitting = false;
+                          errorMessage = _friendlyErrorMessage(error);
+                        });
+                      }
+                    },
+              child: isSubmitting
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('تأكيد'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _deleteUser(AppUser user) async {
@@ -331,7 +537,11 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
       await widget.store.deleteUser(user.id);
       if (mounted) setState(() {});
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_friendlyErrorMessage(e))),
+        );
+      }
     }
   }
 }

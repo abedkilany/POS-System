@@ -399,6 +399,36 @@ class AccountAuthService {
     return _decode(response);
   }
 
+
+  Future<AccountAuthResult> updateOwnerProfile({
+    required String accountToken,
+    required String username,
+    required String fullName,
+    String? newPassword,
+  }) async {
+    if (accountToken.trim().isEmpty) {
+      return const AccountAuthResult(
+        ok: false,
+        message: 'Online account session is missing.',
+      );
+    }
+    final body = <String, dynamic>{
+      'username': username.trim().toLowerCase(),
+      'fullName': fullName.trim(),
+    };
+    final cleanPassword = newPassword?.trim() ?? '';
+    if (cleanPassword.isNotEmpty) body['newPassword'] = cleanPassword;
+    final response = await _client.patch(
+      _endpoint('/api/account/owner-profile'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ${accountToken.trim()}',
+      },
+      body: jsonEncode(body),
+    );
+    return _decode(response);
+  }
+
   Future<AdminSubscribersResult> fetchAdminSubscribers(
       {required String adminToken}) async {
     if (adminToken.trim().isEmpty) {
