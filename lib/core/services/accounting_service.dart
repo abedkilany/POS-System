@@ -1295,8 +1295,12 @@ class AccountingService {
       '''
       SELECT cds.id, cds.drawer_no AS name, cds.status AS type, cds.status,
              COALESCE(cl.name, cds.opened_at) AS account_name,
+             cds.cash_location_id AS reference_id,
              opening_balance AS debit, expected_cash AS credit,
-             difference AS balance, cds.notes
+             difference AS balance,
+             (CASE WHEN cds.opened_by <> '' THEN 'فتحها: ' || cds.opened_by ELSE '' END ||
+              CASE WHEN cds.closed_by <> '' THEN CASE WHEN cds.opened_by <> '' THEN ' • ' ELSE '' END || 'أغلقها: ' || cds.closed_by ELSE '' END ||
+              CASE WHEN cds.notes <> '' THEN CASE WHEN cds.opened_by <> '' OR cds.closed_by <> '' THEN ' • ' ELSE '' END || cds.notes ELSE '' END) AS notes
       FROM cash_drawer_sessions cds
       LEFT JOIN cash_locations cl ON cl.id = cds.cash_location_id
       ORDER BY opened_at DESC
@@ -1338,11 +1342,13 @@ class AccountingService {
              'open' AS type,
              cds.status,
              cl.name AS account_name,
+             cds.cash_location_id AS reference_id,
              cds.opening_balance AS debit,
              cds.expected_cash AS credit,
              COALESCE(cl.current_balance, cds.expected_cash) AS balance,
              ('افتتحت: ' || cds.opened_at ||
               CASE WHEN cds.opened_by <> '' THEN ' • بواسطة: ' || cds.opened_by ELSE '' END ||
+              CASE WHEN cds.opened_by_user_id <> '' THEN ' • معرف المستخدم: ' || cds.opened_by_user_id ELSE '' END ||
               CASE WHEN cds.branch_id <> '' THEN ' • الفرع: ' || cds.branch_id ELSE '' END ||
               CASE WHEN cds.notes <> '' THEN ' • ' || cds.notes ELSE '' END) AS notes
       FROM cash_drawer_sessions cds
@@ -1372,7 +1378,10 @@ class AccountingService {
              cds.difference AS balance,
              ('افتتحت: ' || cds.opened_at ||
               CASE WHEN cds.closed_at <> '' THEN ' • أغلقت: ' || cds.closed_at ELSE '' END ||
+              CASE WHEN cds.opened_by <> '' THEN ' • فتحها: ' || cds.opened_by ELSE '' END ||
               CASE WHEN cds.closed_by <> '' THEN ' • أغلقها: ' || cds.closed_by ELSE '' END ||
+              CASE WHEN cds.opened_by_user_id <> '' THEN ' • مستخدم الفتح: ' || cds.opened_by_user_id ELSE '' END ||
+              CASE WHEN cds.closed_by_user_id <> '' THEN ' • مستخدم الإغلاق: ' || cds.closed_by_user_id ELSE '' END ||
               CASE WHEN cds.notes <> '' THEN ' • ' || cds.notes ELSE '' END) AS notes
       FROM cash_drawer_sessions cds
       LEFT JOIN cash_locations cl ON cl.id = cds.cash_location_id
@@ -1785,6 +1794,7 @@ class AccountingService {
     String cashLocationId = '',
     String fundingLocationId = '',
     String openedBy = '',
+    String openedByUserId = '',
     String storeId = '',
     String branchId = '',
     String deviceId = '',
@@ -1812,8 +1822,8 @@ class AccountingService {
       '''
       INSERT INTO cash_drawer_sessions
         (id, drawer_no, cash_location_id, opened_at, status, opening_balance, expected_cash,
-         notes, opened_by, store_id, branch_id)
-      VALUES (?, ?, ?, ?, 'open', ?, ?, '', ?, ?, ?)
+         notes, opened_by, opened_by_user_id, store_id, branch_id)
+      VALUES (?, ?, ?, ?, 'open', ?, ?, '', ?, ?, ?, ?)
       ''',
       variables: <Variable<Object>>[
         Variable<String>(sessionId),
@@ -1823,6 +1833,7 @@ class AccountingService {
         Variable<double>(cleanOpening),
         Variable<double>(cleanOpening),
         Variable<String>(openedBy),
+        Variable<String>(openedByUserId),
         Variable<String>(storeId),
         Variable<String>(branchId),
       ],
@@ -1850,6 +1861,7 @@ class AccountingService {
     required String sessionId,
     required double countedCash,
     String closedBy = '',
+    String closedByUserId = '',
     String notes = '',
     String depositToLocationId = '',
   }) async {
@@ -1884,7 +1896,7 @@ class AccountingService {
       '''
       UPDATE cash_drawer_sessions
       SET status = 'closed', closed_at = ?, expected_cash = ?, counted_cash = ?, difference = ?,
-          closed_by = ?, notes = ?
+          closed_by = ?, closed_by_user_id = ?, notes = ?
       WHERE id = ?
       ''',
       variables: <Variable<Object>>[
@@ -1893,6 +1905,7 @@ class AccountingService {
         Variable<double>(counted),
         Variable<double>(difference),
         Variable<String>(closedBy),
+        Variable<String>(closedByUserId),
         Variable<String>(notes),
         Variable<String>(sessionId),
       ],

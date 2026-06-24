@@ -438,7 +438,9 @@ class VentioDriftDatabase extends GeneratedDatabase {
         difference REAL NOT NULL DEFAULT 0,
         notes TEXT NOT NULL DEFAULT '',
         opened_by TEXT NOT NULL DEFAULT '',
+        opened_by_user_id TEXT NOT NULL DEFAULT '',
         closed_by TEXT NOT NULL DEFAULT '',
+        closed_by_user_id TEXT NOT NULL DEFAULT '',
         store_id TEXT NOT NULL DEFAULT '',
         branch_id TEXT NOT NULL DEFAULT '',
         CHECK (status IN ('open', 'closed', 'void'))
@@ -446,7 +448,10 @@ class VentioDriftDatabase extends GeneratedDatabase {
     ''');
     await customStatement('CREATE INDEX IF NOT EXISTS idx_cash_drawer_sessions_status ON cash_drawer_sessions(status, opened_at);');
     await _ensureColumn('cash_drawer_sessions', 'cash_location_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('cash_drawer_sessions', 'opened_by_user_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('cash_drawer_sessions', 'closed_by_user_id', "TEXT NOT NULL DEFAULT ''");
     await customStatement('CREATE INDEX IF NOT EXISTS idx_cash_drawer_sessions_location ON cash_drawer_sessions(cash_location_id, status);');
+    await customStatement('CREATE INDEX IF NOT EXISTS idx_cash_drawer_sessions_users ON cash_drawer_sessions(opened_by_user_id, closed_by_user_id);');
 
     await customStatement(r'''
       CREATE TABLE IF NOT EXISTS cheques (

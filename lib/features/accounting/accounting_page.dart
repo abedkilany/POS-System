@@ -7,6 +7,7 @@ import '../../core/services/accounting_service.dart';
 import '../../core/services/accounting_aging_service.dart';
 import '../../data/app_store.dart';
 import '../../models/account_transaction.dart';
+import '../../models/app_user.dart';
 import '../../models/accounting_account.dart';
 import '../../models/journal_entry.dart';
 import '../../models/aging_report.dart';
@@ -1620,11 +1621,19 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
       ),
     );
     if (confirmed == true) {
+      final activeUser = widget.store.activeUser;
+      final actorName = activeUser?.fullName.trim().isNotEmpty == true
+          ? activeUser!.fullName.trim()
+          : (activeUser?.username.trim().isNotEmpty == true
+              ? activeUser!.username.trim()
+              : widget.store.currentRole);
       await AccountingService.openCashDrawer(
         drawerNo: drawers.firstWhere((item) => item.id == selectedDrawerId, orElse: () => AdvancedAccountingItem(id: selectedDrawerId, name: 'درج النقد')).name,
         cashLocationId: selectedDrawerId,
         fundingLocationId: selectedFundingId,
         openingBalance: double.tryParse(controller.text) ?? 0,
+        openedBy: actorName,
+        openedByUserId: activeUser?.id ?? '',
         storeId: widget.store.appIdentity.storeId,
         branchId: currentBranchId,
         deviceId: currentDeviceId,
@@ -2029,9 +2038,13 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
     if (!mounted) return;
     final counted = TextEditingController(text: expected.toStringAsFixed(2));
     final notes = TextEditingController();
-    final depositTargets = locations.where((location) => location.type != 'cash_drawer').toList();
-    String depositToId = depositTargets.isNotEmpty ? depositTargets.first.id : '';
-    bool depositOnClose = depositToId.isNotEmpty;
+    final transferTargets = locations.where((location) => location.id != item.referenceId).toList();
+    final activeUsers = widget.store.users.where((user) => user.isActive).toList();
+    final activeUser = widget.store.activeUser;
+    final handoverUsers = activeUsers.where((user) => user.id != (activeUser?.id ?? '')).toList();
+    String closeMode = 'close_only';
+    String transferToId = transferTargets.isNotEmpty ? transferTargets.first.id : '';
+    String nextUserId = handoverUsers.isNotEmpty ? handoverUsers.first.id : '';
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -2045,33 +2058,104 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
               const SizedBox(height: 8),
               TextField(controller: counted, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: tr.text('counted_cash'))),
               const SizedBox(height: 8),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                value: depositOnClose,
-                title: Text(tr.text('deposit_on_close')),
-                onChanged: depositTargets.isEmpty ? null : (value) => setDialogState(() => depositOnClose = value),
+              DropdownButtonFormField<String>(
+                initialValue: closeMode,
+                decoration: const InputDecoration(labelText: 'إجراء الإغلاق'),
+                items: const [
+                  DropdownMenuItem(value: 'close_only', child: Text('إغلاق الوردية وترك النقد في نفس الدرج')),
+                  DropdownMenuItem(value: 'transfer_location', child: Text('إغلاق وتحويل النقد إلى درج / صندوق آخر')),
+                  DropdownMenuItem(value: 'handover_user', child: Text('تسليم لموظف جديد وفتح وردية جديدة')),
+                ],
+                onChanged: (value) => setDialogState(() => closeMode = value ?? closeMode),
               ),
-              if (depositOnClose)
+              if (closeMode == 'transfer_location') ...[
+                const SizedBox(height: 8),
                 DropdownButtonFormField<String>(
-                  initialValue: depositToId.isEmpty ? null : depositToId,
-                  decoration: InputDecoration(labelText: tr.text('deposit_to_cash_location')),
-                  items: depositTargets.map((location) => DropdownMenuItem(value: location.id, child: Text('${_localizedAccountingName(location.name, tr)} • ${formatCurrency(location.balance)}'))).toList(),
-                  onChanged: (value) => setDialogState(() => depositToId = value ?? ''),
+                  initialValue: transferToId.isEmpty ? null : transferToId,
+                  decoration: const InputDecoration(labelText: 'التحويل إلى'),
+                  items: transferTargets.map((location) => DropdownMenuItem(value: location.id, child: Text('${_localizedAccountingName(location.name, tr)} • ${formatCurrency(location.balance)}'))).toList(),
+                  onChanged: (value) => setDialogState(() => transferToId = value ?? ''),
                 ),
+              ],
+              if (closeMode == 'handover_user') ...[
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  initialValue: nextUserId.isEmpty ? null : nextUserId,
+                  decoration: const InputDecoration(labelText: 'الموظف المستلم'),
+                  items: handoverUsers.map((user) {
+                    final label = user.fullName.trim().isNotEmpty ? user.fullName.trim() : user.username.trim();
+                    return DropdownMenuItem(value: user.id, child: Text(label.isEmpty ? user.id : label));
+                  }).toList(),
+                  onChanged: (value) => setDialogState(() => nextUserId = value ?? ''),
+                ),
+                const SizedBox(height: 4),
+                Text('سيتم إغلاق وردية الموظف الحالي وفتح وردية جديدة للموظف المستلم بنفس المبلغ المعدود.', style: Theme.of(context).textTheme.bodySmall),
+              ],
               TextField(controller: notes, decoration: InputDecoration(labelText: tr.text('notes'))),
             ]),
           ),
-          actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('cancel'))), FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(tr.text('close')))],
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('cancel'))),
+            FilledButton(
+              onPressed: (closeMode == 'transfer_location' && transferToId.isEmpty) || (closeMode == 'handover_user' && nextUserId.isEmpty)
+                  ? null
+                  : () => Navigator.pop(context, true),
+              child: Text(tr.text('close')),
+            ),
+          ],
         ),
       ),
     );
     if (confirmed == true) {
+      final activeUser = widget.store.activeUser;
+      final actorName = activeUser?.fullName.trim().isNotEmpty == true
+          ? activeUser!.fullName.trim()
+          : (activeUser?.username.trim().isNotEmpty == true
+              ? activeUser!.username.trim()
+              : widget.store.currentRole);
+      final countedAmount = double.tryParse(counted.text) ?? 0;
+      AppUser? selectedNextUser;
+      for (final user in handoverUsers) {
+        if (user.id == nextUserId) {
+          selectedNextUser = user;
+          break;
+        }
+      }
+      final selectedNextUserName = selectedNextUser == null
+          ? ''
+          : (selectedNextUser.fullName.trim().isNotEmpty ? selectedNextUser.fullName.trim() : selectedNextUser.username.trim());
+      String transferTargetName = transferToId;
+      for (final location in transferTargets) {
+        if (location.id == transferToId) {
+          transferTargetName = _localizedAccountingName(location.name, tr);
+          break;
+        }
+      }
+      final effectiveNotes = [
+        notes.text.trim(),
+        if (closeMode == 'transfer_location') 'تحويل النقد بعد الإغلاق إلى $transferTargetName',
+        if (closeMode == 'handover_user') 'تسليم الوردية إلى $selectedNextUserName',
+      ].where((part) => part.trim().isNotEmpty).join(' • ');
       await AccountingService.closeCashDrawer(
         sessionId: item.id,
-        countedCash: double.tryParse(counted.text) ?? 0,
-        notes: notes.text,
-        depositToLocationId: depositOnClose ? depositToId : '',
+        countedCash: countedAmount,
+        closedBy: actorName,
+        closedByUserId: activeUser?.id ?? '',
+        notes: effectiveNotes,
+        depositToLocationId: closeMode == 'transfer_location' ? transferToId : '',
       );
+      if (closeMode == 'handover_user' && item.referenceId.trim().isNotEmpty && selectedNextUser != null) {
+        await AccountingService.openCashDrawer(
+          drawerNo: item.name,
+          cashLocationId: item.referenceId,
+          openingBalance: countedAmount,
+          openedBy: selectedNextUserName,
+          openedByUserId: selectedNextUser.id,
+          storeId: widget.store.appIdentity.storeId,
+          branchId: widget.store.appIdentity.branchId,
+          deviceId: widget.store.appIdentity.deviceId,
+        );
+      }
       if (mounted) _refresh();
     }
   }

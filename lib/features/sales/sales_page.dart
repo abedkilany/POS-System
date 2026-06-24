@@ -10,10 +10,12 @@ import '../../core/localization/app_localizations.dart';
 import '../../core/shortcuts/app_shortcuts.dart';
 import '../../core/services/barcode_feedback_service.dart';
 import '../../core/services/invoice_pdf_service.dart';
+import '../../core/services/accounting_service.dart';
 import '../../core/services/local_database_service.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../core/utils/responsive.dart';
 import '../../data/app_store.dart';
+import '../../models/app_user.dart';
 import '../../models/customer.dart';
 import '../../models/product.dart';
 import '../../models/sale.dart';
@@ -83,6 +85,7 @@ class _SalesPageState extends State<SalesPage> {
   int _selectedQuickPageIndex = 0;
   String? _lastScannedCode;
   DateTime? _lastScannedAt;
+  int _cashShiftRefreshKey = 0;
 
   @override
   void initState() {
@@ -767,6 +770,425 @@ class _SalesPageState extends State<SalesPage> {
     );
   }
 
+
+  String _activeUserDisplayName([AppUser? user]) {
+    final current = user ?? widget.store.activeUser;
+    final fullName = current?.fullName.trim() ?? '';
+    if (fullName.isNotEmpty) return fullName;
+    final username = current?.username.trim() ?? '';
+    if (username.isNotEmpty) return username;
+    return widget.store.currentRole;
+  }
+
+  Future<_SaleShiftStatus> _loadSaleShiftStatus() async {
+    final locations = await AccountingService.listActiveCashLocations();
+    final openSessions = await AccountingService.listOpenCashDrawersReport();
+    final deviceId = widget.store.appIdentity.deviceId.trim();
+    final branchId = widget.store.appIdentity.branchId.trim();
+    final linkedDrawers = locations
+        .where((item) =>
+            item.type == 'cash_drawer' &&
+            deviceId.isNotEmpty &&
+            item.referenceId == deviceId)
+        .toList(growable: false);
+    final allDrawers = locations
+        .where((item) => item.type == 'cash_drawer')
+        .toList(growable: false);
+    final drawer = linkedDrawers.isNotEmpty
+        ? linkedDrawers.first
+        : (allDrawers.isNotEmpty ? allDrawers.first : null);
+    AdvancedAccountingItem? openSession;
+    if (drawer != null) {
+      for (final item in openSessions) {
+        if (item.referenceId == drawer.id) {
+          openSession = item;
+          break;
+        }
+      }
+    }
+    return _SaleShiftStatus(
+      drawer: drawer,
+      openSession: openSession,
+      drawers: allDrawers,
+      cashLocations: locations,
+      branchId: branchId,
+    );
+  }
+
+  Widget _buildSaleShiftStatusCard(BuildContext context, AppLocalizations tr) {
+    return FutureBuilder<_SaleShiftStatus>(
+      key: ValueKey('sale_shift_status_$_cashShiftRefreshKey'),
+      future: _loadSaleShiftStatus(),
+      builder: (context, snapshot) {
+        final status = snapshot.data;
+        final openSession = status?.openSession;
+        final drawer = status?.drawer;
+        final isLoading = snapshot.connectionState != ConnectionState.done;
+        final colorScheme = Theme.of(context).colorScheme;
+        final title = openSession == null
+            ? 'لا توجد وردية نقدية مفتوحة'
+            : 'الوردية النقدية مفتوحة';
+        final subtitle = openSession == null
+            ? (drawer == null
+                ? 'لا يوجد درج نقدية مربوط أو معرف لهذا الجهاز.'
+                : 'الدرج: ${drawer.name} • افتح وردية قبل البيع النقدي.')
+            : '${openSession.name} • ${openSession.accountName.isEmpty ? 'درج نقدية' : openSession.accountName} • المتوقع: ${formatUsdReferenceAmount(openSession.credit, widget.store.storeProfile)}';
+        return Card(
+          elevation: 0,
+          color: openSession == null
+              ? colorScheme.errorContainer.withValues(alpha: 0.25)
+              : colorScheme.primaryContainer.withValues(alpha: 0.35),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Row(
+              children: [
+                Icon(
+                  openSession == null
+                      ? Icons.lock_open_outlined
+                      : Icons.point_of_sale_outlined,
+                  color: openSession == null
+                      ? colorScheme.error
+                      : colorScheme.primary,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title,
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleSmall
+                              ?.copyWith(fontWeight: FontWeight.w800)),
+                      const SizedBox(height: 2),
+                      Text(subtitle,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodySmall),
+                    ],
+                  ),
+                ),
+                if (isLoading)
+                  const SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else if (openSession == null)
+                  FilledButton.icon(
+                    onPressed: status == null || status.drawers.isEmpty
+                        ? null
+                        : () => _openSaleDrawerDialog(status),
+                    icon: const Icon(Icons.lock_open_outlined),
+                    label: const Text('فتح وردية'),
+                  )
+                else
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: status == null
+                            ? null
+                            : () => _closeSaleDrawerDialog(openSession, status),
+                        icon: const Icon(Icons.lock_outline),
+                        label: const Text('إغلاق / تسليم'),
+                      ),
+                    ],
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _openSaleDrawerDialog(_SaleShiftStatus status) async {
+    final tr = AppLocalizations.of(context);
+    final controller = TextEditingController(text: '0');
+    final drawers = status.drawers;
+    final sources = status.cashLocations
+        .where((item) => item.type != 'cash_drawer')
+        .toList(growable: false);
+    String selectedDrawerId = (status.drawer?.id ?? '').isNotEmpty
+        ? status.drawer!.id
+        : (drawers.isNotEmpty ? drawers.first.id : '');
+    String selectedFundingId = sources.isNotEmpty ? sources.first.id : '';
+    bool useFundingSource = sources.isNotEmpty;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('فتح وردية نقدية'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  initialValue: selectedDrawerId.isEmpty ? null : selectedDrawerId,
+                  decoration: const InputDecoration(labelText: 'درج النقدية'),
+                  items: drawers
+                      .map((item) => DropdownMenuItem(
+                            value: item.id,
+                            child: Text(item.name),
+                          ))
+                      .toList(),
+                  onChanged: (value) =>
+                      setDialogState(() => selectedDrawerId = value ?? ''),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: controller,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(labelText: 'مبلغ الافتتاح'),
+                ),
+                if (sources.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('تحويل مبلغ الافتتاح من صندوق آخر'),
+                    value: useFundingSource,
+                    onChanged: (value) =>
+                        setDialogState(() => useFundingSource = value),
+                  ),
+                  if (useFundingSource)
+                    DropdownButtonFormField<String>(
+                      initialValue:
+                          selectedFundingId.isEmpty ? null : selectedFundingId,
+                      decoration: const InputDecoration(labelText: 'مصدر المبلغ'),
+                      items: sources
+                          .map((item) => DropdownMenuItem(
+                                value: item.id,
+                                child: Text(item.name),
+                              ))
+                          .toList(),
+                      onChanged: (value) => setDialogState(
+                          () => selectedFundingId = value ?? ''),
+                    ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: Text(tr.text('cancel')),
+            ),
+            FilledButton(
+              onPressed: selectedDrawerId.isEmpty
+                  ? null
+                  : () => Navigator.pop(dialogContext, true),
+              child: const Text('فتح'),
+            ),
+          ],
+        ),
+      ),
+    );
+    try {
+      if (confirmed == true) {
+        final drawer = drawers.firstWhere((item) => item.id == selectedDrawerId);
+        final activeUser = widget.store.activeUser;
+        await AccountingService.openCashDrawer(
+          drawerNo: drawer.name,
+          cashLocationId: drawer.id,
+          fundingLocationId: useFundingSource ? selectedFundingId : '',
+          openingBalance: double.tryParse(controller.text.trim()) ?? 0,
+          openedBy: _activeUserDisplayName(activeUser),
+          openedByUserId: activeUser?.id ?? '',
+          storeId: widget.store.appIdentity.storeId,
+          branchId: widget.store.appIdentity.branchId,
+          deviceId: widget.store.appIdentity.deviceId,
+        );
+        if (!mounted) return;
+        setState(() => _cashShiftRefreshKey++);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تم فتح الوردية النقدية')),
+        );
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(localizeRuntimeMessage(error.toString(), tr))),
+      );
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  Future<void> _closeSaleDrawerDialog(
+      AdvancedAccountingItem session, _SaleShiftStatus status) async {
+    final tr = AppLocalizations.of(context);
+    final expected = await AccountingService.calculateCashDrawerExpectedCash(session.id);
+    if (!mounted) return;
+    final counted = TextEditingController(text: expected.toStringAsFixed(2));
+    final notes = TextEditingController();
+    final transferTargets = status.cashLocations
+        .where((item) => item.id != session.referenceId)
+        .toList(growable: false);
+    final activeUser = widget.store.activeUser;
+    final handoverUsers = widget.store.users
+        .where((user) => user.isActive && user.id != (activeUser?.id ?? ''))
+        .toList(growable: false);
+    String closeMode = 'keep_drawer';
+    String transferToId = transferTargets.isNotEmpty ? transferTargets.first.id : '';
+    String nextUserId = handoverUsers.isNotEmpty ? handoverUsers.first.id : '';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('إغلاق / تسليم الوردية'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('المتوقع: ${formatUsdReferenceAmount(expected, widget.store.storeProfile)}'),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: counted,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(labelText: 'المبلغ المعدود'),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue: closeMode,
+                  decoration: const InputDecoration(labelText: 'طريقة الإغلاق'),
+                  items: const [
+                    DropdownMenuItem(
+                      value: 'keep_drawer',
+                      child: Text('إغلاق فقط وترك النقد بنفس الدرج'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'transfer_location',
+                      child: Text('إغلاق وتحويل النقد إلى درج/صندوق آخر'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'handover_user',
+                      child: Text('تسليم لموظف جديد وفتح وردية جديدة'),
+                    ),
+                  ],
+                  onChanged: (value) =>
+                      setDialogState(() => closeMode = value ?? closeMode),
+                ),
+                if (closeMode == 'transfer_location') ...[
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: transferToId.isEmpty ? null : transferToId,
+                    decoration: const InputDecoration(labelText: 'الدرج / الصندوق المستلم'),
+                    items: transferTargets
+                        .map((item) => DropdownMenuItem(
+                              value: item.id,
+                              child: Text(item.name),
+                            ))
+                        .toList(),
+                    onChanged: (value) =>
+                        setDialogState(() => transferToId = value ?? ''),
+                  ),
+                ],
+                if (closeMode == 'handover_user') ...[
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: nextUserId.isEmpty ? null : nextUserId,
+                    decoration: const InputDecoration(labelText: 'الموظف المستلم'),
+                    items: handoverUsers
+                        .map((user) => DropdownMenuItem(
+                              value: user.id,
+                              child: Text(_activeUserDisplayName(user)),
+                            ))
+                        .toList(),
+                    onChanged: (value) =>
+                        setDialogState(() => nextUserId = value ?? ''),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'سيتم إغلاق الوردية الحالية وفتح وردية جديدة للموظف المستلم بنفس المبلغ المعدود.',
+                    style: Theme.of(dialogContext).textTheme.bodySmall,
+                  ),
+                ],
+                const SizedBox(height: 12),
+                TextField(
+                  controller: notes,
+                  decoration: InputDecoration(labelText: tr.text('notes')),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: Text(tr.text('cancel')),
+            ),
+            FilledButton(
+              onPressed: (closeMode == 'transfer_location' && transferToId.isEmpty) ||
+                      (closeMode == 'handover_user' && nextUserId.isEmpty)
+                  ? null
+                  : () => Navigator.pop(dialogContext, true),
+              child: Text(tr.text('close')),
+            ),
+          ],
+        ),
+      ),
+    );
+    try {
+      if (confirmed == true) {
+        final countedAmount = double.tryParse(counted.text.trim()) ?? 0;
+        final activeUserName = _activeUserDisplayName(activeUser);
+        AppUser? nextUser;
+        for (final user in handoverUsers) {
+          if (user.id == nextUserId) {
+            nextUser = user;
+            break;
+          }
+        }
+        String transferTargetName = '';
+        for (final location in transferTargets) {
+          if (location.id == transferToId) transferTargetName = location.name;
+        }
+        final nextUserName = nextUser == null ? '' : _activeUserDisplayName(nextUser);
+        final effectiveNotes = [
+          notes.text.trim(),
+          if (closeMode == 'transfer_location') 'تحويل النقد بعد الإغلاق إلى $transferTargetName',
+          if (closeMode == 'handover_user') 'تسليم الوردية إلى $nextUserName',
+        ].where((part) => part.trim().isNotEmpty).join(' • ');
+        await AccountingService.closeCashDrawer(
+          sessionId: session.id,
+          countedCash: countedAmount,
+          closedBy: activeUserName,
+          closedByUserId: activeUser?.id ?? '',
+          notes: effectiveNotes,
+          depositToLocationId: closeMode == 'transfer_location' ? transferToId : '',
+        );
+        if (closeMode == 'handover_user' && nextUser != null && session.referenceId.trim().isNotEmpty) {
+          await AccountingService.openCashDrawer(
+            drawerNo: session.name,
+            cashLocationId: session.referenceId,
+            openingBalance: countedAmount,
+            openedBy: nextUserName,
+            openedByUserId: nextUser.id,
+            storeId: widget.store.appIdentity.storeId,
+            branchId: widget.store.appIdentity.branchId,
+            deviceId: widget.store.appIdentity.deviceId,
+          );
+        }
+        if (!mounted) return;
+        setState(() => _cashShiftRefreshKey++);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تم تحديث الوردية النقدية')),
+        );
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(localizeRuntimeMessage(error.toString(), tr))),
+      );
+    } finally {
+      counted.dispose();
+      notes.dispose();
+    }
+  }
+
   Widget _buildDesktopSalesLayout(BuildContext context, AppLocalizations tr,
       List<Product> products, List<Sale> sales, double pagePadding) {
     return Padding(
@@ -784,6 +1206,8 @@ class _SalesPageState extends State<SalesPage> {
           ),
           const SizedBox(height: 8),
           _buildShortcutGuide(context, tr),
+          const SizedBox(height: 8),
+          _buildSaleShiftStatusCard(context, tr),
           const SizedBox(height: 12),
           Expanded(
             child: Row(
@@ -1578,6 +2002,8 @@ class _SalesPageState extends State<SalesPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  _buildSaleShiftStatusCard(context, tr),
+                  const SizedBox(height: 8),
                   _buildMobileSaleControls(context, tr, products),
                   const SizedBox(height: 8),
                   _buildCart(context, tr,
@@ -3750,6 +4176,23 @@ class _EmbeddedScannerError extends StatelessWidget {
       ),
     );
   }
+}
+
+
+class _SaleShiftStatus {
+  const _SaleShiftStatus({
+    required this.drawer,
+    required this.openSession,
+    required this.drawers,
+    required this.cashLocations,
+    required this.branchId,
+  });
+
+  final AdvancedAccountingItem? drawer;
+  final AdvancedAccountingItem? openSession;
+  final List<AdvancedAccountingItem> drawers;
+  final List<AdvancedAccountingItem> cashLocations;
+  final String branchId;
 }
 
 class _MobileSaleAction extends StatelessWidget {

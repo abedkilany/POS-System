@@ -386,6 +386,7 @@ class SettingsPage extends StatelessWidget {
           ],
         ),
       ),
+      _CurrentDeviceCashDrawerSettingsCard(store: store),
       _SectionCard(
         icon: Icons.trending_up_outlined,
         title: tr.text('exchange_rates'),
@@ -435,7 +436,6 @@ class SettingsPage extends StatelessWidget {
         _UnifiedSyncSettingsCard(
             store: store, onSyncSettingsChanged: onSyncSettingsChanged),
         SyncMonitoringSection(store: store),
-        _CurrentDeviceCashDrawerSettingsCard(store: store),
       ];
 
   List<Widget> _backupCards(BuildContext context) {
