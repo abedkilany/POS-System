@@ -1,2 +1,0 @@
-cd .\Desktop\Ventio\SSH\
-ssh -i .\ssh-key-2026-06-13.key ubuntu@139.185.35.173
