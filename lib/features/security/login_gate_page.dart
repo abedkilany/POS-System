@@ -313,7 +313,10 @@ class _LoginGatePageState extends State<LoginGatePage> {
               loginName: result.loginName.trim().isNotEmpty
                   ? result.loginName
                   : recoveryCache.loginName,
-              cloudSyncEnabled: result.cloudSyncEnabled,
+              // Keep the cached entitlement unchanged here. Store recovery may
+              // rebuild the identity, but the subscription gate must still be
+              // decided by the live plan check, not by the recovery response.
+              cloudSyncEnabled: recoveryCache.cloudSyncEnabled,
               devicesLimit:
                   result.deviceLimit?.allowed ?? recoveryCache.devicesLimit,
               lastVerifiedAt: DateTime.now(),
