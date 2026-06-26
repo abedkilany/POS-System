@@ -12,16 +12,18 @@ class SyncMonitoringSection extends StatefulWidget {
   const SyncMonitoringSection({
     super.key,
     required this.store,
+    this.preferHostMonitoring = false,
   });
 
   final AppStore store;
+  final bool preferHostMonitoring;
 
   @override
   State<SyncMonitoringSection> createState() => _SyncMonitoringSectionState();
 }
 
 class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
-  Future<_CloudMonitoringSnapshot>? _cloudMonitoringFuture;
+  Future<_MonitoringSnapshot>? _cloudMonitoringFuture;
 
   AppStore get store => widget.store;
 
@@ -34,23 +36,26 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
   @override
   void didUpdateWidget(covariant SyncMonitoringSection oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.store != widget.store) {
+    if (oldWidget.store != widget.store ||
+        oldWidget.preferHostMonitoring != widget.preferHostMonitoring) {
       _refreshCloudDevices();
     }
   }
 
   void _refreshCloudDevices() {
     final cloudSettings = CloudSyncSettings.load();
-    if (store.appIdentity.isHost && cloudSettings.isConfigured) {
-      _cloudMonitoringFuture = _loadAndAdoptCloudDevices(cloudSettings)
-          .catchError((_) => const _CloudMonitoringSnapshot(
+    final useHostMonitoring =
+        widget.preferHostMonitoring || store.appIdentity.isHost;
+    if (cloudSettings.isConfigured && useHostMonitoring) {
+      _cloudMonitoringFuture = _loadHostMonitoring(cloudSettings)
+          .catchError((_) => const _MonitoringSnapshot(
                 devices: <CloudDeviceStatus>[],
               ));
     } else {
-      _cloudMonitoringFuture = Future<_CloudMonitoringSnapshot>.value(
-        _CloudMonitoringSnapshot(
+      _cloudMonitoringFuture = Future<_MonitoringSnapshot>.value(
+        _MonitoringSnapshot(
           devices: const <CloudDeviceStatus>[],
-          limit: store.appIdentity.isHost
+          limit: useHostMonitoring
               ? _localClientDeviceLimitStatus(
                   store,
                   LanSyncSettings.load(),
@@ -61,20 +66,31 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
     }
   }
 
-  Future<_CloudMonitoringSnapshot> _loadAndAdoptCloudDevices(
+  Future<_MonitoringSnapshot> _loadHostMonitoring(
       CloudSyncSettings cloudSettings) async {
     final service = CloudSyncService(store);
-    var result = await service.listDevicesWithLimit(cloudSettings);
+    final allowAccountToken = widget.preferHostMonitoring;
+    final hostStatus = await service.getHostHeartbeatStatus(
+      cloudSettings,
+      allowAccountToken: allowAccountToken,
+    );
+    var result = await service.listDevicesWithLimit(
+      cloudSettings,
+      allowAccountToken: allowAccountToken,
+    );
     var devices = result.devices;
-    final repaired =
-        await _repairLegacyCloudDeviceLinks(service, cloudSettings, devices);
-    if (repaired) {
-      result = await service.listDevicesWithLimit(cloudSettings);
-      devices = result.devices;
+    if (store.appIdentity.isHost) {
+      final repaired =
+          await _repairLegacyCloudDeviceLinks(service, cloudSettings, devices);
+      if (repaired) {
+        result = await service.listDevicesWithLimit(cloudSettings);
+        devices = result.devices;
+      }
+      await _adoptCloudRegistryDevices(devices);
     }
-    await _adoptCloudRegistryDevices(devices);
-    return _CloudMonitoringSnapshot(
+    return _MonitoringSnapshot(
       devices: devices,
+      hostStatus: hostStatus,
       limit: result.limit ??
           _localClientDeviceLimitStatus(store, LanSyncSettings.load()),
     );
@@ -113,6 +129,7 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
     final result = await service.repairLegacyCloudDeviceLinks(
       cloudSettings,
       clientDeviceIds: repairIds,
+      allowAccountToken: widget.preferHostMonitoring,
     );
     return result.ok;
   }
@@ -171,18 +188,20 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
   Future<void> _refresh() async {
     setState(_refreshCloudDevices);
     final snapshot = await (_cloudMonitoringFuture ??
-        Future<_CloudMonitoringSnapshot>.value(
-            const _CloudMonitoringSnapshot(devices: <CloudDeviceStatus>[])));
+        Future<_MonitoringSnapshot>.value(
+            const _MonitoringSnapshot(devices: <CloudDeviceStatus>[])));
     await _finalizeCloudWipeAcknowledgements(snapshot.devices);
     if (mounted) setState(() {});
   }
 
   Future<void> _toggleSuspend(String deviceId, bool suspended) async {
     final shouldResume = suspended;
-    if (shouldResume) {
-      await SyncDeviceAccessStore.resume(deviceId);
-    } else {
-      await SyncDeviceAccessStore.suspend(deviceId);
+    if (!widget.preferHostMonitoring || store.appIdentity.isHost) {
+      if (shouldResume) {
+        await SyncDeviceAccessStore.resume(deviceId);
+      } else {
+        await SyncDeviceAccessStore.suspend(deviceId);
+      }
     }
 
     final cloudSettings = CloudSyncSettings.load();
@@ -191,6 +210,7 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
         cloudSettings,
         deviceId,
         suspended: !shouldResume,
+        allowAccountToken: widget.preferHostMonitoring,
       );
     }
 
@@ -201,6 +221,7 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
       {String deviceToken = ''}) async {
     final id = deviceId.trim();
     if (id.isEmpty) return;
+    if (widget.preferHostMonitoring && !store.appIdentity.isHost) return;
     final lanSettings = LanSyncSettings.load();
     final registryDevice = lanSettings.hostRegistry[id];
     final token = (deviceToken.trim().isNotEmpty
@@ -245,19 +266,25 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
     );
     if (confirmed != true) return;
 
-    final lanSettings = LanSyncSettings.load();
-    final registryDevice = lanSettings.hostRegistry[deviceId];
-    final deletedDeviceToken = (lanSettings.pairedDevices[deviceId] ??
-            registryDevice?.deviceToken ??
-            '')
-        .trim();
+    if (!widget.preferHostMonitoring || store.appIdentity.isHost) {
+      final lanSettings = LanSyncSettings.load();
+      final registryDevice = lanSettings.hostRegistry[deviceId];
+      final deletedDeviceToken = (lanSettings.pairedDevices[deviceId] ??
+              registryDevice?.deviceToken ??
+              '')
+          .trim();
 
-    await SyncDeviceAccessStore.markWipePending(deviceId,
-        deviceToken: deletedDeviceToken);
+      await SyncDeviceAccessStore.markWipePending(deviceId,
+          deviceToken: deletedDeviceToken);
+    }
 
     final cloudSettings = CloudSyncSettings.load();
     if (cloudSettings.isConfigured) {
-      await CloudSyncService(store).revokeDevice(cloudSettings, deviceId);
+      await CloudSyncService(store).revokeDevice(
+        cloudSettings,
+        deviceId,
+        allowAccountToken: widget.preferHostMonitoring,
+      );
     }
 
     if (!mounted) return;
@@ -288,7 +315,11 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
     await _permanentlyDeleteDeviceRecord(deviceId);
     final cloudSettings = CloudSyncSettings.load();
     if (cloudSettings.isConfigured) {
-      await CloudSyncService(store).deleteDeviceRecord(cloudSettings, deviceId);
+      await CloudSyncService(store).deleteDeviceRecord(
+        cloudSettings,
+        deviceId,
+        allowAccountToken: widget.preferHostMonitoring,
+      );
     }
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -318,16 +349,18 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
         initiallyExpanded: false,
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         children: [
-          if (isHost)
-            FutureBuilder<_CloudMonitoringSnapshot>(
+          if (isHost || widget.preferHostMonitoring)
+            FutureBuilder<_MonitoringSnapshot>(
               future: _cloudMonitoringFuture,
               builder: (context, snapshot) => _HostSyncMonitoringTable(
                 store: store,
                 cloudDevices:
                     snapshot.data?.devices ?? const <CloudDeviceStatus>[],
                 deviceLimit: snapshot.data?.limit,
+                hostStatus: snapshot.data?.hostStatus,
                 peerStates: peerById,
                 lanSettings: lanSettings,
+                useCloudDeviceList: widget.preferHostMonitoring,
                 loadingCloudDevices:
                     snapshot.connectionState == ConnectionState.waiting,
                 onRefresh: _refresh,
@@ -337,7 +370,7 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
               ),
             )
           else
-            _ClientSyncMonitoringPanel(
+        _ClientSyncMonitoringPanel(
               state: selfState,
               store: store,
               lanSettings: lanSettings,
@@ -350,14 +383,16 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
   }
 }
 
-class _CloudMonitoringSnapshot {
-  const _CloudMonitoringSnapshot({
+class _MonitoringSnapshot {
+  const _MonitoringSnapshot({
     required this.devices,
     this.limit,
+    this.hostStatus,
   });
 
   final List<CloudDeviceStatus> devices;
   final CloudDeviceLimitStatus? limit;
+  final HostHeartbeatStatus? hostStatus;
 }
 
 CloudDeviceLimitStatus? _localClientDeviceLimitStatus(
@@ -703,8 +738,10 @@ class _HostSyncMonitoringTable extends StatefulWidget {
     required this.store,
     required this.cloudDevices,
     required this.deviceLimit,
+    required this.hostStatus,
     required this.peerStates,
     required this.lanSettings,
+    required this.useCloudDeviceList,
     required this.loadingCloudDevices,
     required this.onRefresh,
     required this.onToggleSuspend,
@@ -715,8 +752,10 @@ class _HostSyncMonitoringTable extends StatefulWidget {
   final AppStore store;
   final List<CloudDeviceStatus> cloudDevices;
   final CloudDeviceLimitStatus? deviceLimit;
+  final HostHeartbeatStatus? hostStatus;
   final Map<String, HostPeerSyncState> peerStates;
   final LanSyncSettings lanSettings;
+  final bool useCloudDeviceList;
   final bool loadingCloudDevices;
   final Future<void> Function() onRefresh;
   final Future<void> Function(String deviceId, bool suspended) onToggleSuspend;
@@ -744,16 +783,23 @@ class _HostSyncMonitoringTableState extends State<_HostSyncMonitoringTable> {
       for (final device in widget.cloudDevices)
         if (device.deviceId.trim().isNotEmpty) device.deviceId.trim(): device,
     };
-    final deleted = SyncDeviceAccessStore.deletedDeviceIds();
-    final suspended = SyncDeviceAccessStore.suspendedDeviceIds();
-    final wipePending = SyncDeviceAccessStore.wipePendingDeviceIds();
+    final deleted = widget.useCloudDeviceList
+        ? <String>{}
+        : SyncDeviceAccessStore.deletedDeviceIds();
+    final suspended = widget.useCloudDeviceList
+        ? <String>{}
+        : SyncDeviceAccessStore.suspendedDeviceIds();
+    final wipePending = widget.useCloudDeviceList
+        ? <String>{}
+        : SyncDeviceAccessStore.wipePendingDeviceIds();
     final registryById = <String, HostRegistryDevice>{
       for (final entry in widget.lanSettings.hostRegistry.entries)
         if (entry.key.trim().isNotEmpty && entry.value.isActive)
           entry.key.trim(): entry.value,
     };
-    final deviceIds = registryById.keys.toSet()
-      ..removeWhere((id) => deleted.contains(id));
+    final deviceIds = widget.useCloudDeviceList
+        ? cloudById.keys.toSet()
+        : (registryById.keys.toSet()..removeWhere((id) => deleted.contains(id)));
     final pairedDeviceIds = deviceIds.toList()..sort();
     final limitPanel = _deviceLimitPanel(
       context,
@@ -767,6 +813,8 @@ class _HostSyncMonitoringTableState extends State<_HostSyncMonitoringTable> {
       lanSettings: widget.lanSettings,
       cloudDevices: widget.cloudDevices,
       peerStates: widget.peerStates,
+      hostStatus: widget.hostStatus,
+      useCloudDeviceList: widget.useCloudDeviceList,
     );
 
     if (pairedDeviceIds.isEmpty) {
@@ -981,12 +1029,16 @@ class _HostStatusMonitoringCard extends StatelessWidget {
     required this.lanSettings,
     required this.cloudDevices,
     required this.peerStates,
+    required this.hostStatus,
+    required this.useCloudDeviceList,
   });
 
   final AppStore store;
   final LanSyncSettings lanSettings;
   final List<CloudDeviceStatus> cloudDevices;
   final Map<String, HostPeerSyncState> peerStates;
+  final HostHeartbeatStatus? hostStatus;
+  final bool useCloudDeviceList;
 
   @override
   Widget build(BuildContext context) {
@@ -997,10 +1049,21 @@ class _HostStatusMonitoringCard extends StatelessWidget {
     ].fold<int>(0, (latest, value) => value > latest ? value : latest);
     final identity = store.appIdentity;
     final activeTransport = identity.activeSyncTransportNormalized;
-    final lanReady = activeTransport == 'lan' &&
+    final lanReady = !useCloudDeviceList &&
+        activeTransport == 'lan' &&
         lanSettings.setupComplete &&
         lanSettings.autoSyncEnabled;
-    final cloudReady = activeTransport == 'cloud' && identity.isCloudEnabled;
+    final cloudReady = !useCloudDeviceList &&
+        activeTransport == 'cloud' &&
+        identity.isCloudEnabled;
+    final hostDeviceId = hostStatus?.hostDeviceId.trim().isNotEmpty == true
+        ? hostStatus!.hostDeviceId.trim()
+        : identity.deviceId;
+    final hostDeviceName = hostStatus?.hostDeviceName.trim().isNotEmpty == true
+        ? hostStatus!.hostDeviceName.trim()
+        : identity.deviceName;
+    final hostSeenAt = hostStatus?.lastSeenAt;
+    final hostOnline = hostStatus?.hostReachable == true;
 
     return Container(
       width: double.infinity,
@@ -1024,6 +1087,16 @@ class _HostStatusMonitoringCard extends StatelessWidget {
                   label: tr.text('host'),
                   color: Theme.of(context).colorScheme.primary,
                   icon: Icons.home_work_outlined),
+              if (hostOnline)
+                _StatusChip(
+                    label: tr.text('connection_state_active'),
+                    color: Colors.green,
+                    icon: Icons.cloud_done_outlined),
+              if (hostStatus != null && !hostOnline)
+                _StatusChip(
+                    label: tr.text('connection_state_pending'),
+                    color: Colors.orange,
+                    icon: Icons.cloud_off_outlined),
               if (lanReady)
                 _StatusChip(
                     label:
@@ -1044,7 +1117,13 @@ class _HostStatusMonitoringCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
-          _Line(title: tr.text('device_id'), value: identity.deviceId),
+          _Line(title: tr.text('device_id'), value: hostDeviceId),
+          if (hostDeviceName.isNotEmpty)
+            _Line(title: tr.text('device_name'), value: hostDeviceName),
+          if (hostSeenAt != null)
+            _Line(
+                title: tr.text('last_seen'),
+                value: _formatDateTime(context, hostSeenAt)),
           _Line(title: tr.text('last_ack_sequence'), value: '$lastAckSequence'),
         ],
       ),
