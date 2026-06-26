@@ -4,8 +4,8 @@
     "channel":  "stable",
     "windows":  {
                     "url":  "https://ventioapp.com/releases/windows/VentioSetup-1.0.2-build2.exe",
-                    "sha256":  "043e45834cca6fca27df57ba2090f30acfdf818fec00186fda84dc26a453041a",
-                    "size":  17495489
+                    "sha256":  "ceaacf5e229c96a28f18191312e11249917e8acf6b4c0053d72f3adf609575bf",
+                    "size":  17495492
                 },
     "android":  {
                     "source":  "play_store"
