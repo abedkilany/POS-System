@@ -26,7 +26,7 @@ class StoreAccountDashboardPage extends StatefulWidget {
   final bool hasLocalStoreData;
   final bool canRecoverStoreData;
   final VoidCallback onRecoverStoreIdentity;
-  final VoidCallback onRecoverStoreData;
+  final Future<void> Function() onRecoverStoreData;
   final Future<void> Function() onLogout;
   final ValueChanged<Locale> onLocaleChanged;
 
@@ -37,6 +37,7 @@ class StoreAccountDashboardPage extends StatefulWidget {
 
 class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
   var _selectedIndex = 0;
+  var _recoveringStoreData = false;
 
   AccountAuthCache get cache => widget.cache;
 
@@ -405,11 +406,34 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
                       )
                     else
                       FilledButton.icon(
-                        onPressed: widget.onRecoverStoreData,
-                        icon: Icon(widget.canRecoverStoreData
-                            ? Icons.download_outlined
-                            : Icons.lock_outline),
-                        label: Text(tr.text('recover_store_data')),
+                        onPressed:
+                            (_recoveringStoreData || !widget.canRecoverStoreData)
+                                ? null
+                                : () async {
+                                    setState(() => _recoveringStoreData = true);
+                                    try {
+                                      await widget.onRecoverStoreData();
+                                    } finally {
+                                      if (mounted) {
+                                        setState(
+                                            () => _recoveringStoreData = false);
+                                      }
+                                    }
+                                  },
+                        icon: _recoveringStoreData
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : Icon(widget.canRecoverStoreData
+                                ? Icons.download_outlined
+                                : Icons.lock_outline),
+                        label: Text(_recoveringStoreData
+                            ? tr.text('working')
+                            : tr.text('recover_store_data')),
                       ),
                     OutlinedButton.icon(
                       onPressed: () => setState(() => _selectedIndex = 1),
