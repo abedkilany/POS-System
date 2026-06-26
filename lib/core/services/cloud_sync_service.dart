@@ -2014,7 +2014,7 @@ class CloudSyncService {
 
   Future<CloudSyncResult> setDeviceSuspended(
       CloudSyncSettings settings, String deviceId,
-      {required bool suspended, bool allowAccountToken = false}) async {
+      {required bool suspended}) async {
     final identity = store.appIdentity;
     if (!identity.isHost) {
       return const CloudSyncResult(
@@ -2028,7 +2028,7 @@ class CloudSyncService {
       final response = await _client
           .post(
             settings.endpoint('/api/sync/device-suspend'),
-            headers: _headers(settings, allowAccountToken: allowAccountToken),
+            headers: _headers(settings),
             body: jsonEncode({
               'storeId': identity.storeId,
               'branchId': identity.branchId,
@@ -2052,8 +2052,7 @@ class CloudSyncService {
   }
 
   Future<CloudSyncResult> revokeDevice(
-      CloudSyncSettings settings, String deviceId,
-      {bool allowAccountToken = false}) async {
+      CloudSyncSettings settings, String deviceId) async {
     final identity = store.appIdentity;
     if (!identity.isHost) {
       return const CloudSyncResult(
@@ -2067,7 +2066,7 @@ class CloudSyncService {
       final response = await _client
           .post(
             settings.endpoint('/api/sync/device-revoke'),
-            headers: _headers(settings, allowAccountToken: allowAccountToken),
+            headers: _headers(settings),
             body: jsonEncode({
               'storeId': identity.storeId,
               'branchId': identity.branchId,
@@ -2088,8 +2087,7 @@ class CloudSyncService {
   }
 
   Future<CloudSyncResult> deleteDeviceRecord(
-      CloudSyncSettings settings, String deviceId,
-      {bool allowAccountToken = false}) async {
+      CloudSyncSettings settings, String deviceId) async {
     final identity = store.appIdentity;
     if (!identity.isHost) {
       return const CloudSyncResult(
@@ -2103,7 +2101,7 @@ class CloudSyncService {
       final response = await _client
           .delete(
             settings.endpoint('/api/sync/devices'),
-            headers: _headers(settings, allowAccountToken: allowAccountToken),
+            headers: _headers(settings),
             body: jsonEncode({
               'storeId': identity.storeId,
               'branchId': identity.branchId,
@@ -2123,17 +2121,14 @@ class CloudSyncService {
     }
   }
 
-  Map<String, String> _headers(
-    CloudSyncSettings settings, {
-    bool allowAccountToken = false,
-  }) {
+  Map<String, String> _headers(CloudSyncSettings settings) {
     final identity = store.appIdentity;
     return {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
       // Clients authenticate with their own per-device token. Host/account
       // flows authenticate with the online account session.
-      if (allowAccountToken && settings.accountToken.trim().isNotEmpty)
+      if (!identity.isClient && settings.accountToken.trim().isNotEmpty)
         'Authorization': 'Bearer ${settings.accountToken.trim()}',
       'X-Device-Id': store.deviceId,
       'X-Device-Token': identity.deviceToken,
@@ -2342,9 +2337,7 @@ class CloudSyncService {
   }
 
   Future<CloudDevicesResult> listDevicesWithLimit(
-    CloudSyncSettings settings, {
-    bool allowAccountToken = false,
-  }) async {
+      CloudSyncSettings settings) async {
     final identity = store.appIdentity;
     if (!settings.isConfigured) {
       return const CloudDevicesResult(devices: <CloudDeviceStatus>[]);
@@ -2355,7 +2348,7 @@ class CloudSyncService {
             'store_id': identity.storeId,
             'branch_id': identity.branchId,
           }),
-          headers: _headers(settings, allowAccountToken: allowAccountToken),
+          headers: _headers(settings),
         )
         .timeout(const Duration(seconds: 10));
     if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -2376,7 +2369,6 @@ class CloudSyncService {
   Future<CloudSyncResult> repairLegacyCloudDeviceLinks(
     CloudSyncSettings settings, {
     required Iterable<String> clientDeviceIds,
-    bool allowAccountToken = false,
   }) async {
     final identity = store.appIdentity;
     if (!identity.isHost) {
@@ -2400,7 +2392,7 @@ class CloudSyncService {
       final response = await _client
           .post(
             settings.endpoint('/api/sync/devices/repair-host-links'),
-            headers: _headers(settings, allowAccountToken: allowAccountToken),
+            headers: _headers(settings),
             body: jsonEncode({
               'storeId': identity.storeId,
               'branchId': identity.branchId,
@@ -2686,11 +2678,8 @@ class CloudSyncService {
     }
   }
 
-  Future<HostHeartbeatStatus> getHostHeartbeatStatus(
-    CloudSyncSettings settings, {
-    Duration staleAfter = const Duration(seconds: 90),
-    bool allowAccountToken = false,
-  }) async {
+  Future<HostHeartbeatStatus> getHostHeartbeatStatus(CloudSyncSettings settings,
+      {Duration staleAfter = const Duration(seconds: 90)}) async {
     final identity = store.appIdentity;
     if (!settings.isConfigured) {
       return const HostHeartbeatStatus(
@@ -2705,7 +2694,7 @@ class CloudSyncService {
               'store_id': identity.storeId,
               'branch_id': identity.branchId,
             }),
-            headers: _headers(settings, allowAccountToken: allowAccountToken),
+            headers: _headers(settings),
           )
           .timeout(const Duration(seconds: 10));
       if (response.statusCode < 200 || response.statusCode >= 300) {

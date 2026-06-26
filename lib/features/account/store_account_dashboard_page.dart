@@ -459,10 +459,7 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
           ),
         ),
         const SizedBox(height: 16),
-        SyncMonitoringSection(
-          store: widget.store,
-          preferHostMonitoring: true,
-        ),
+        SyncMonitoringSection(store: widget.store),
       ],
     );
   }
