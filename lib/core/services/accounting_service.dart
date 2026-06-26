@@ -531,6 +531,36 @@ class AccountingService {
     return entryId;
   }
 
+  static Future<int> countPostedJournalEntriesForReferences({
+    required String referenceType,
+    required Iterable<String> referenceIds,
+  }) async {
+    if (!isAvailable) return 0;
+    final ids = referenceIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList();
+    final normalizedReferenceType = referenceType.trim();
+    if (normalizedReferenceType.isEmpty || ids.isEmpty) return 0;
+    final db = _db;
+    final placeholders = List<String>.filled(ids.length, '?').join(', ');
+    final row = await db.customSelect(
+      '''
+      SELECT COUNT(*) AS count
+      FROM journal_entries
+      WHERE deleted_at = '' AND status = 'posted'
+        AND reference_type = ?
+        AND reference_id IN ($placeholders)
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(normalizedReferenceType),
+        ...ids.map((id) => Variable<String>(id)),
+      ],
+    ).getSingleOrNull();
+    return row?.read<int>('count') ?? 0;
+  }
+
   static Future<void> reverseEntryForReference({
     required String referenceType,
     required String referenceId,

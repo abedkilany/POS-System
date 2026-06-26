@@ -221,7 +221,9 @@ class MaintenanceService {
         .length;
     final overpaidSales = store.sales
         .where((item) =>
-            !item.isDeleted && item.paidAmount > item.invoiceTotal + 0.01)
+            !item.isDeleted &&
+            !item.isCancelled &&
+            item.paidAmount > item.invoiceTotal + 0.01)
         .length;
     final productIds = store.products.map((product) => product.id).toSet();
     final missingProductRefs = store.sales
@@ -248,8 +250,8 @@ class MaintenanceService {
             ? MaintenanceSeverity.ok
             : MaintenanceSeverity.info,
         message: overpaidSales == 0
-            ? 'No overpaid sales detected.'
-            : '$overpaidSales sales have paid amount greater than invoice total.',
+            ? 'No active overpaid sales detected.'
+            : '$overpaidSales active sales have paid amount greater than invoice total.',
       ),
       MaintenanceIssue(
         id: 'sale_items_missing_products',

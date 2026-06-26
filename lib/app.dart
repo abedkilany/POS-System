@@ -1064,12 +1064,11 @@ class _MainShellState extends State<MainShell> {
               onThemeModeChanged: widget.onThemeModeChanged,
               themeMode: widget.themeMode,
               onSyncSettingsChanged: widget.onSyncSettingsChanged)),
-      if (widget.store.isStressLabEnabled)
-        _ShellItem(
-            label: tr.text('stress_lab'),
-            icon: Icons.science_outlined,
-            selectedIcon: Icons.science,
-            page: StressLabPage(store: widget.store)),
+      _ShellItem(
+          label: tr.text('stress_lab'),
+          icon: Icons.science_outlined,
+          selectedIcon: Icons.science,
+          page: StressLabPage(store: widget.store)),
     ];
     final resolvedItems = items;
     if (selectedIndex >= resolvedItems.length) {

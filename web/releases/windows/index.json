@@ -1,6 +1,132 @@
 {
     "releases":  [
                      {
+                         "name":  "VentioSetup-1.0.29-build29.exe",
+                         "url":  "/releases/windows/VentioSetup-1.0.29-build29.exe",
+                         "version":  "1.0.29",
+                         "build":  29,
+                         "size":  17492433,
+                         "sha256":  "7b94a07ff81f473957cdebf56b692d01e4eb213088f5eee56475c700136860e2",
+                         "publishedAt":  "2026-06-26T05:30:00Z"
+                     },
+                     {
+                         "name":  "VentioSetup-1.0.28-build28.exe",
+                         "url":  "/releases/windows/VentioSetup-1.0.28-build28.exe",
+                         "version":  "1.0.28",
+                         "build":  28,
+                         "size":  17493342,
+                         "sha256":  "beca1a6df07b7f3838abcfda9ec81b16819f43e92ab4e20a39ba1a23cd9e9612",
+                         "publishedAt":  "2026-06-26T01:48:03Z"
+                     },
+                     {
+                         "name":  "VentioSetup-1.0.27-build27.exe",
+                         "url":  "/releases/windows/VentioSetup-1.0.27-build27.exe",
+                         "version":  "1.0.27",
+                         "build":  27,
+                         "size":  17492845,
+                         "sha256":  "5a54368839234ba71bde20d67935ae17c37d6e9148a5df04aaf3a3f429ca639b",
+                         "publishedAt":  "2026-06-26T01:36:04Z"
+                     },
+                     {
+                         "name":  "VentioSetup-1.0.26-build26.exe",
+                         "url":  "/releases/windows/VentioSetup-1.0.26-build26.exe",
+                         "version":  "1.0.26",
+                         "build":  26,
+                         "size":  17493942,
+                         "sha256":  "dfef5ca2bd0bbb7f8ca9fe4869b9a74ae65042dc60f44db22513441eae93bbb0",
+                         "publishedAt":  "2026-06-26T00:50:42Z"
+                     },
+                     {
+                         "name":  "VentioSetup-1.0.25-build25.exe",
+                         "url":  "/releases/windows/VentioSetup-1.0.25-build25.exe",
+                         "version":  "1.0.25",
+                         "build":  25,
+                         "size":  17485830,
+                         "sha256":  "e3aa32116de06728b991513060986b9a2d9003b6b7128c49c377e4c9a4511ef6",
+                         "publishedAt":  "2026-06-26T00:29:28Z"
+                     },
+                     {
+                         "name":  "VentioSetup-1.0.24-build24.exe",
+                         "url":  "/releases/windows/VentioSetup-1.0.24-build24.exe",
+                         "version":  "1.0.24",
+                         "build":  24,
+                         "size":  17484874,
+                         "sha256":  "993e2d2e7fe8370ad1e78ad1ca6606c564b1719153601dc0e5eabf55cd5a1bd4",
+                         "publishedAt":  "2026-06-25T23:57:17Z"
+                     },
+                     {
+                         "name":  "VentioSetup-1.0.23-build23.exe",
+                         "url":  "/releases/windows/VentioSetup-1.0.23-build23.exe",
+                         "version":  "1.0.23",
+                         "build":  23,
+                         "size":  17479027,
+                         "sha256":  "67112a9dc1e3203b76c597085ace256c1a3accfdfc358a86bc45845e205343dd",
+                         "publishedAt":  "2026-06-25T23:14:15Z"
+                     },
+                     {
+                         "name":  "VentioSetup-1.0.22-build22.exe",
+                         "url":  "/releases/windows/VentioSetup-1.0.22-build22.exe",
+                         "version":  "1.0.22",
+                         "build":  22,
+                         "size":  17478740,
+                         "sha256":  "d49d5401390bbefa9e062a1f02763c594cb0676482c0676611ec8063a712b80d",
+                         "publishedAt":  "2026-06-25T22:05:08Z"
+                     },
+                     {
+                         "name":  "VentioSetup-1.0.21-build21.exe",
+                         "url":  "/releases/windows/VentioSetup-1.0.21-build21.exe",
+                         "version":  "1.0.21",
+                         "build":  21,
+                         "size":  17474206,
+                         "sha256":  "d0c53322c675314eadca58b48bcb9715063936d38def8bdea3a0b46ec3bb6cc2",
+                         "publishedAt":  "2026-06-25T21:38:14Z"
+                     },
+                     {
+                         "name":  "VentioSetup-1.0.20-build20.exe",
+                         "url":  "/releases/windows/VentioSetup-1.0.20-build20.exe",
+                         "version":  "1.0.20",
+                         "build":  20,
+                         "size":  17471924,
+                         "sha256":  "eb2cf7a28225eab73bb31eacdb55759ba22007ce4c7a9dd94b03b19f5e4a049f",
+                         "publishedAt":  "2026-06-25T04:20:47Z"
+                     },
+                     {
+                         "name":  "VentioSetup-1.0.19-build19.exe",
+                         "url":  "/releases/windows/VentioSetup-1.0.19-build19.exe",
+                         "version":  "1.0.19",
+                         "build":  19,
+                         "size":  17462211,
+                         "sha256":  "9745fcff79191ded54f9f8411c6767ca0d93b7ee959e2fdb24f1eecd26c13821",
+                         "publishedAt":  "2026-06-25T01:23:05Z"
+                     },
+                     {
+                         "name":  "VentioSetup-1.0.18-build18.exe",
+                         "url":  "/releases/windows/VentioSetup-1.0.18-build18.exe",
+                         "version":  "1.0.18",
+                         "build":  18,
+                         "size":  17454921,
+                         "sha256":  "43f94c7290fee610b6faaa4ea50b6b2789e758a1f803155185d5ff2ee9fe54d6",
+                         "publishedAt":  "2026-06-25T01:00:28Z"
+                     },
+                     {
+                         "name":  "VentioSetup-1.0.17-build17.exe",
+                         "url":  "/releases/windows/VentioSetup-1.0.17-build17.exe",
+                         "version":  "1.0.17",
+                         "build":  17,
+                         "size":  17452334,
+                         "sha256":  "af1750d6ff0ebf3e5c44280e2ca665138427451787df3b17488d1ff2c7b7de6c",
+                         "publishedAt":  "2026-06-25T00:40:35Z"
+                     },
+                     {
+                         "name":  "VentioSetup-1.0.16-build16.exe",
+                         "url":  "/releases/windows/VentioSetup-1.0.16-build16.exe",
+                         "version":  "1.0.16",
+                         "build":  16,
+                         "size":  17451625,
+                         "sha256":  "72b20be8123efb3c437d87cc371bed7f955af1d0db22971a8f4553d5aa6d1326",
+                         "publishedAt":  "2026-06-25T00:30:32Z"
+                     },
+                     {
                          "name":  "VentioSetup-1.0.15-build15.exe",
                          "url":  "/releases/windows/VentioSetup-1.0.15-build15.exe",
                          "version":  "1.0.15",

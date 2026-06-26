@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -21,6 +22,15 @@ class LocalDatabaseService {
   static Map<String, String>? _webStore;
   static SharedPreferences? _webPreferences;
   static final Map<String, String> _sqliteMirror = <String, String>{};
+  static final Map<String, String> _pendingScalarWrites = <String, String>{};
+  static final Set<String> _pendingScalarDeletes = <String>{};
+  static final Map<String, List<_PendingBusinessEntityWrite>>
+      _pendingBusinessEntityWrites = <String, List<_PendingBusinessEntityWrite>>{};
+  static final List<SyncChange> _pendingSyncChanges = <SyncChange>[];
+  static final List<SyncQueueItem> _pendingSyncQueueItems = <SyncQueueItem>[];
+  static Timer? _flushTimer;
+  static Future<void>? _flushInProgress;
+  static const Duration _flushDelay = Duration(milliseconds: 120);
   static bool _sqliteReady = false;
 
   static bool get isSqliteAuthoritative =>
@@ -66,6 +76,14 @@ class LocalDatabaseService {
       ..clear()
       ..addAll(await BusinessSqliteStore.hydrateScalarKeyMirror(db))
       ..addAll(await SyncSqliteStore.hydrateScalarKeyMirror(db));
+    _pendingScalarWrites.clear();
+    _pendingScalarDeletes.clear();
+    _pendingBusinessEntityWrites.clear();
+    _pendingSyncChanges.clear();
+    _pendingSyncQueueItems.clear();
+    _flushTimer?.cancel();
+    _flushTimer = null;
+    _flushInProgress = null;
     _sqliteReady = true;
     await _hydrateAndMigrateSecureScalars();
   }
@@ -97,7 +115,7 @@ class LocalDatabaseService {
       _secureStringMirror[_secureRecoveryKeyKey] = secureRecoveryKey;
     }
 
-    await _deleteRawScalarValue('cloud_api_token');
+    await _deleteRawScalarValueImmediate('cloud_api_token');
 
     final rawIdentity = _rawScalarValue(_appIdentityKey);
     if (rawIdentity != null && rawIdentity.trim().isNotEmpty) {
@@ -123,7 +141,7 @@ class LocalDatabaseService {
         }
         final sanitized = _sanitizeAppIdentityJson(jsonEncode(decoded));
         if (sanitized != rawIdentity) {
-          await _writeRawScalarValue(_appIdentityKey, sanitized);
+          await _writeRawScalarValueImmediate(_appIdentityKey, sanitized);
         }
       }
     }
@@ -160,13 +178,16 @@ class LocalDatabaseService {
   }
 
   static String? _rawScalarValue(String key) {
+    if (_pendingScalarDeletes.contains(key)) return null;
+    final pending = _pendingScalarWrites[key];
+    if (pending != null) return pending;
     final memory = _memoryStore;
     if (memory != null) return memory[key];
     if (_webStore != null) return _webStore![key];
     return _sqliteMirror[key];
   }
 
-  static Future<void> _writeRawScalarValue(String key, String value) async {
+  static Future<void> _writeRawScalarValueImmediate(String key, String value) async {
     final memory = _memoryStore;
     if (memory != null) {
       memory[key] = value;
@@ -192,7 +213,7 @@ class LocalDatabaseService {
     throw StateError('SQLite database has not been initialized.');
   }
 
-  static Future<void> _deleteRawScalarValue(String key) async {
+  static Future<void> _deleteRawScalarValueImmediate(String key) async {
     final memory = _memoryStore;
     if (memory != null) {
       memory.remove(key);
@@ -216,6 +237,14 @@ class LocalDatabaseService {
         return;
       }
     }
+  }
+
+  static void _scheduleFlush() {
+    if (_memoryStore != null || _webStore != null) return;
+    _flushTimer?.cancel();
+    _flushTimer = Timer(_flushDelay, () {
+      unawaited(flushPendingWrites());
+    });
   }
 
   static String? getString(String key) {
@@ -252,32 +281,46 @@ class LocalDatabaseService {
       {int? sortIndex}) async {
     final memory = _memoryStore;
     if (memory != null) return;
+    if (_webStore != null) return;
     final db = SqliteMigrationManager.database;
     if (!_sqliteReady || db == null) return;
-    await BusinessSqliteStore.upsertEntityPayload(db, key, payloadJson,
-        sortIndex: sortIndex);
+    final pending = _pendingBusinessEntityWrites.putIfAbsent(
+      key,
+      () => <_PendingBusinessEntityWrite>[],
+    );
+    pending.add(
+      _PendingBusinessEntityWrite(
+        payload: Map<String, dynamic>.from(payloadJson),
+        sortIndex: sortIndex,
+      ),
+    );
+    _scheduleFlush();
   }
 
   static Future<void> upsertSyncChange(SyncChange change) async {
     final memory = _memoryStore;
     if (memory != null) return;
+    if (_webStore != null) return;
     final db = SqliteMigrationManager.database;
     if (!_sqliteReady || db == null) return;
-    await SyncSqliteStore.upsertSyncChange(db, change);
+    _pendingSyncChanges.add(change);
+    _scheduleFlush();
   }
 
   static Future<void> upsertSyncQueueItem(SyncQueueItem item) async {
     final memory = _memoryStore;
     if (memory != null) return;
+    if (_webStore != null) return;
     final db = SqliteMigrationManager.database;
     if (!_sqliteReady || db == null) return;
-    await SyncSqliteStore.upsertSyncQueueItem(db, item);
+    _pendingSyncQueueItems.add(item);
+    _scheduleFlush();
   }
 
   static Future<void> setString(String key, String value) async {
     if (key == _appIdentityKey) {
       if (_memoryStore != null || _webStore != null) {
-        await _writeRawScalarValue(key, value);
+        await _writeRawScalarValueImmediate(key, value);
         return;
       }
       final decoded = _tryDecodeJsonMap(value);
@@ -291,13 +334,31 @@ class LocalDatabaseService {
             key: _secureRecoveryKeyKey, value: cleanRecoveryKey);
         _secureStringMirror[_secureRecoveryKeyKey] = cleanRecoveryKey;
       }
-      await _writeRawScalarValue(key, _sanitizeAppIdentityJson(value));
+      await _writeRawScalarValueImmediate(key, _sanitizeAppIdentityJson(value));
       return;
     }
-    await _writeRawScalarValue(key, value);
+    final memory = _memoryStore;
+    if (memory != null) {
+      await _writeRawScalarValueImmediate(key, value);
+      return;
+    }
+    if (_webStore != null) {
+      await _writeRawScalarValueImmediate(key, value);
+      return;
+    }
+    if (_sqliteReady) {
+      _pendingScalarDeletes.remove(key);
+      _pendingScalarWrites[key] = value;
+      _sqliteMirror[key] = value;
+      _scheduleFlush();
+      return;
+    }
+    await _writeRawScalarValueImmediate(key, value);
   }
 
   static bool containsKey(String key) {
+    if (_pendingScalarDeletes.contains(key)) return false;
+    if (_pendingScalarWrites.containsKey(key)) return true;
     final memory = _memoryStore;
     if (memory != null) return memory.containsKey(key);
     if (_webStore != null) return _webStore!.containsKey(key);
@@ -332,8 +393,10 @@ class LocalDatabaseService {
           await setString(
               key, key == SyncSqliteStore.syncSequenceKey ? '0' : '[]');
         } else {
-          await BusinessSqliteStore.deleteKey(db, key);
+          _pendingScalarWrites.remove(key);
+          _pendingScalarDeletes.add(key);
           _sqliteMirror.remove(key);
+          _scheduleFlush();
         }
         return;
       }
@@ -342,6 +405,13 @@ class LocalDatabaseService {
   }
 
   static Future<void> clearAll() async {
+    _flushTimer?.cancel();
+    _flushTimer = null;
+    _pendingScalarWrites.clear();
+    _pendingScalarDeletes.clear();
+    _pendingBusinessEntityWrites.clear();
+    _pendingSyncChanges.clear();
+    _pendingSyncQueueItems.clear();
     final memory = _memoryStore;
     if (memory != null) {
       memory.clear();
@@ -380,6 +450,69 @@ class LocalDatabaseService {
       return;
     }
     return;
+  }
+
+  static Future<void> flushPendingWrites() async {
+    if (_memoryStore != null || _webStore != null) return;
+    if (_flushInProgress != null) return _flushInProgress!;
+
+    final completer = Completer<void>();
+    _flushInProgress = completer.future;
+    _flushTimer?.cancel();
+    _flushTimer = null;
+
+    try {
+      final db = SqliteMigrationManager.database;
+      if (!_sqliteReady || db == null) return;
+
+      final scalarDeletes = List<String>.from(_pendingScalarDeletes);
+      final scalarWrites = Map<String, String>.from(_pendingScalarWrites);
+      final businessWrites =
+          Map<String, List<_PendingBusinessEntityWrite>>.from(
+        _pendingBusinessEntityWrites,
+      );
+      final syncChanges = List<SyncChange>.from(_pendingSyncChanges);
+      final syncQueueItems = List<SyncQueueItem>.from(_pendingSyncQueueItems);
+
+      _pendingScalarDeletes.clear();
+      _pendingScalarWrites.clear();
+      _pendingBusinessEntityWrites.clear();
+      _pendingSyncChanges.clear();
+      _pendingSyncQueueItems.clear();
+
+      for (final key in scalarDeletes) {
+        await _deleteRawScalarValueImmediate(key);
+      }
+      for (final entry in scalarWrites.entries) {
+        await _writeRawScalarValueImmediate(entry.key, entry.value);
+      }
+      for (final entry in businessWrites.entries) {
+        await BusinessSqliteStore.upsertEntityPayloads(
+          db,
+          entry.key,
+          entry.value.map((item) => item.payload).toList(growable: false),
+          sortIndices: entry.value
+              .map((item) => item.sortIndex)
+              .toList(growable: false),
+        );
+      }
+      if (syncChanges.isNotEmpty) {
+        await SyncSqliteStore.upsertSyncChanges(db, syncChanges);
+      }
+      if (syncQueueItems.isNotEmpty) {
+        await SyncSqliteStore.upsertSyncQueueItems(db, syncQueueItems);
+      }
+    } finally {
+      _flushInProgress = null;
+      completer.complete();
+      if (_pendingScalarDeletes.isNotEmpty ||
+          _pendingScalarWrites.isNotEmpty ||
+          _pendingBusinessEntityWrites.isNotEmpty ||
+          _pendingSyncChanges.isNotEmpty ||
+          _pendingSyncQueueItems.isNotEmpty) {
+        _scheduleFlush();
+      }
+    }
   }
 
   static List<String> keys() {
@@ -432,4 +565,14 @@ class LocalDatabaseService {
     if (_sqliteReady) return _sqliteMirror.isEmpty;
     return true;
   }
+}
+
+class _PendingBusinessEntityWrite {
+  const _PendingBusinessEntityWrite({
+    required this.payload,
+    this.sortIndex,
+  });
+
+  final Map<String, dynamic> payload;
+  final int? sortIndex;
 }

@@ -77,44 +77,23 @@ class SyncSqliteStore {
 
 
   static Future<void> upsertSyncChange(VentioDriftDatabase db, SyncChange change) async {
-    final payloadJson = jsonEncode(change.payload);
-    final syncedAt = change.syncedAt?.toIso8601String() ?? '';
+    await upsertSyncChanges(db, <SyncChange>[change]);
+  }
+
+  static Future<void> upsertSyncChanges(VentioDriftDatabase db, List<SyncChange> changes) async {
+    if (changes.isEmpty) return;
     await db.transaction(() async {
-      await db.customInsert(
-        """
-        INSERT OR REPLACE INTO sync_events
-          (id, entity_type, entity_id, operation, device_id, store_id, branch_id,
-           payload_json, is_synced, created_at, synced_at, store_epoch, sequence)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        variables: <Variable<Object>>[
-          Variable<String>(change.id),
-          Variable<String>(change.entityType),
-          Variable<String>(change.entityId),
-          Variable<String>(change.operation),
-          Variable<String>(change.deviceId),
-          Variable<String>(change.storeId),
-          Variable<String>(change.branchId),
-          Variable<String>(payloadJson),
-          Variable<int>(change.isSynced ? 1 : 0),
-          Variable<String>(change.createdAt.toIso8601String()),
-          Variable<String>(syncedAt),
-          Variable<int>(change.storeEpoch),
-          Variable<int>(change.sequence),
-        ],
-      );
-      if (change.isSynced) {
-        await db.customStatement('DELETE FROM pending_sync_changes WHERE event_id = ?;', <Object?>[change.id]);
-      } else {
+      for (final change in changes) {
+        final payloadJson = jsonEncode(change.payload);
+        final syncedAt = change.syncedAt?.toIso8601String() ?? '';
         await db.customInsert(
           """
-          INSERT OR REPLACE INTO pending_sync_changes
-            (id, event_id, entity_type, entity_id, operation, device_id, store_id,
-             branch_id, payload_json, created_at, store_epoch, sequence)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT OR REPLACE INTO sync_events
+            (id, entity_type, entity_id, operation, device_id, store_id, branch_id,
+             payload_json, is_synced, created_at, synced_at, store_epoch, sequence)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           """,
           variables: <Variable<Object>>[
-            Variable<String>('pending_${change.id}'),
             Variable<String>(change.id),
             Variable<String>(change.entityType),
             Variable<String>(change.entityId),
@@ -123,34 +102,71 @@ class SyncSqliteStore {
             Variable<String>(change.storeId),
             Variable<String>(change.branchId),
             Variable<String>(payloadJson),
+            Variable<int>(change.isSynced ? 1 : 0),
             Variable<String>(change.createdAt.toIso8601String()),
+            Variable<String>(syncedAt),
             Variable<int>(change.storeEpoch),
             Variable<int>(change.sequence),
           ],
         );
+        if (change.isSynced) {
+          await db.customStatement('DELETE FROM pending_sync_changes WHERE event_id = ?;', <Object?>[change.id]);
+        } else {
+          await db.customInsert(
+            """
+            INSERT OR REPLACE INTO pending_sync_changes
+              (id, event_id, entity_type, entity_id, operation, device_id, store_id,
+               branch_id, payload_json, created_at, store_epoch, sequence)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            variables: <Variable<Object>>[
+              Variable<String>('pending_${change.id}'),
+              Variable<String>(change.id),
+              Variable<String>(change.entityType),
+              Variable<String>(change.entityId),
+              Variable<String>(change.operation),
+              Variable<String>(change.deviceId),
+              Variable<String>(change.storeId),
+              Variable<String>(change.branchId),
+              Variable<String>(payloadJson),
+              Variable<String>(change.createdAt.toIso8601String()),
+              Variable<int>(change.storeEpoch),
+              Variable<int>(change.sequence),
+            ],
+          );
+        }
       }
     });
   }
 
   static Future<void> upsertSyncQueueItem(VentioDriftDatabase db, SyncQueueItem item) async {
-    await db.customInsert(
-      """
-      INSERT OR REPLACE INTO sync_queue
-        (id, change_id, target, status, attempts, last_error, next_retry_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      """,
-      variables: <Variable<Object>>[
-        Variable<String>(item.id),
-        Variable<String>(item.changeId),
-        Variable<String>(item.target),
-        Variable<String>(item.status),
-        Variable<int>(item.attempts),
-        Variable<String>(item.lastError),
-        Variable<String>(item.nextRetryAt?.toIso8601String() ?? ''),
-        Variable<String>(item.createdAt.toIso8601String()),
-        Variable<String>(item.updatedAt.toIso8601String()),
-      ],
-    );
+    await upsertSyncQueueItems(db, <SyncQueueItem>[item]);
+  }
+
+  static Future<void> upsertSyncQueueItems(VentioDriftDatabase db, List<SyncQueueItem> items) async {
+    if (items.isEmpty) return;
+    await db.transaction(() async {
+      for (final item in items) {
+        await db.customInsert(
+          """
+          INSERT OR REPLACE INTO sync_queue
+            (id, change_id, target, status, attempts, last_error, next_retry_at, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          """,
+          variables: <Variable<Object>>[
+            Variable<String>(item.id),
+            Variable<String>(item.changeId),
+            Variable<String>(item.target),
+            Variable<String>(item.status),
+            Variable<int>(item.attempts),
+            Variable<String>(item.lastError),
+            Variable<String>(item.nextRetryAt?.toIso8601String() ?? ''),
+            Variable<String>(item.createdAt.toIso8601String()),
+            Variable<String>(item.updatedAt.toIso8601String()),
+          ],
+        );
+      }
+    });
   }
 
   static Future<void> migrateFromLegacyJsonIfNeeded(

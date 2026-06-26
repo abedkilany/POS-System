@@ -242,6 +242,15 @@ void main() {
       expect(store.totalExpensesAmount, 0);
       await store.postExpense('e1');
       expect(store.totalExpensesAmount, 125.5);
+      expect(
+        store.accountTransactions.where(
+          (tx) =>
+              !tx.isDeleted &&
+              tx.referenceId == 'e1' &&
+              tx.referenceNo == 'Rent',
+        ),
+        isNotEmpty,
+      );
       expect(store.estimateProfit(), -125.5);
       expect(
           store.addOrUpdateExpense(Expense(
@@ -312,6 +321,8 @@ void main() {
 
       await store.cancelSale(sale.id);
       expect(store.sales.single.isCancelled, isTrue);
+      expect(store.sales.single.paidAmount, 0);
+      expect(store.sales.single.cashReceivedAmount, 0);
       expect(store.totalSalesAmount, 0);
       expect(store.products.single.stock, 5);
       expect(store.stockMovements.where((m) => m.type == 'sale_restore'),
@@ -342,6 +353,8 @@ void main() {
 
       expect(store.sales.single.status, 'Returned');
       expect(store.sales.single.isCancelled, isTrue);
+      expect(store.sales.single.paidAmount, 0);
+      expect(store.sales.single.cashReceivedAmount, 0);
       expect(store.totalSalesAmount, 0);
       expect(store.products.single.stock, 5);
       expect(store.stockMovements.where((m) => m.type == 'sale_return'),

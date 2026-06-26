@@ -215,38 +215,63 @@ class BusinessSqliteStore {
     Map<String, dynamic> payload, {
     int? sortIndex,
   }) async {
+    await upsertEntityPayloads(
+      db,
+      key,
+      <Map<String, dynamic>>[payload],
+      sortIndices: <int?>[sortIndex],
+    );
+  }
+
+  static Future<void> upsertEntityPayloads(
+    VentioDriftDatabase db,
+    String key,
+    List<Map<String, dynamic>> payloads, {
+    List<int?>? sortIndices,
+  }) async {
     final table = _tableByKey[key];
     final entityType = _entityTypeByKey[key];
     if (table == null || entityType == null) {
       throw ArgumentError('Key $key is not a typed SQLite entity key.');
     }
-    final now = DateTime.now().toUtc().toIso8601String();
-    final id = (payload['id']?.toString().isNotEmpty ?? false) ? payload['id'].toString() : '${entityType}_${now.hashCode}';
-    final payloadJson = jsonEncode(payload);
-    final createdAt = _dateString(payload['createdAt']) ?? _dateString(payload['date']) ?? now;
-    final updatedAt = _dateString(payload['updatedAt']) ?? createdAt;
-    final deletedAt = _dateString(payload['deletedAt']) ?? '';
-    await db.customInsert(
-      """
-      INSERT OR REPLACE INTO $table
-        (id, entity_type, payload_json, created_at, updated_at, deleted_at, device_id, sync_status, store_id, branch_id, version, sort_index)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      """,
-      variables: <Variable<Object>>[
-        Variable<String>(id),
-        Variable<String>(entityType),
-        Variable<String>(payloadJson),
-        Variable<String>(createdAt),
-        Variable<String>(updatedAt),
-        Variable<String>(deletedAt),
-        Variable<String>(payload['deviceId']?.toString() ?? ''),
-        Variable<String>(payload['syncStatus']?.toString() ?? ''),
-        Variable<String>(payload['storeId']?.toString() ?? ''),
-        Variable<String>(payload['branchId']?.toString() ?? ''),
-        Variable<int>(_intValue(payload['version'], fallback: 1)),
-        Variable<int>(sortIndex ?? 0),
-      ],
-    );
+    await db.transaction(() async {
+      for (var index = 0; index < payloads.length; index += 1) {
+        final payload = payloads[index];
+        final sortIndex = sortIndices != null && index < sortIndices.length
+            ? sortIndices[index]
+            : null;
+        final now = DateTime.now().toUtc().toIso8601String();
+        final id = (payload['id']?.toString().isNotEmpty ?? false)
+            ? payload['id'].toString()
+            : '${entityType}_${now.hashCode}';
+        final payloadJson = jsonEncode(payload);
+        final createdAt =
+            _dateString(payload['createdAt']) ?? _dateString(payload['date']) ?? now;
+        final updatedAt = _dateString(payload['updatedAt']) ?? createdAt;
+        final deletedAt = _dateString(payload['deletedAt']) ?? '';
+        await db.customInsert(
+          """
+          INSERT OR REPLACE INTO $table
+            (id, entity_type, payload_json, created_at, updated_at, deleted_at, device_id, sync_status, store_id, branch_id, version, sort_index)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          """,
+          variables: <Variable<Object>>[
+            Variable<String>(id),
+            Variable<String>(entityType),
+            Variable<String>(payloadJson),
+            Variable<String>(createdAt),
+            Variable<String>(updatedAt),
+            Variable<String>(deletedAt),
+            Variable<String>(payload['deviceId']?.toString() ?? ''),
+            Variable<String>(payload['syncStatus']?.toString() ?? ''),
+            Variable<String>(payload['storeId']?.toString() ?? ''),
+            Variable<String>(payload['branchId']?.toString() ?? ''),
+            Variable<int>(_intValue(payload['version'], fallback: 1)),
+            Variable<int>(sortIndex ?? 0),
+          ],
+        );
+      }
+    });
   }
 
   static Future<void> deleteKey(VentioDriftDatabase db, String key) async {

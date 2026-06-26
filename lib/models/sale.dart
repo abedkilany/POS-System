@@ -195,7 +195,10 @@ class Sale {
     final subtotal = items.fold<double>(0, (sum, item) => sum + item.lineTotal);
     final total = (subtotal - discount).clamp(0, double.infinity).toDouble();
     final legacyStatus = json['status'] as String? ?? 'Paid';
-    final paymentStatus = json['paymentStatus'] as String? ?? (legacyStatus.toLowerCase() == 'paid' ? 'paid' : 'credit');
+    final normalizedLegacyStatus = legacyStatus.toLowerCase();
+    final paymentStatus = normalizedLegacyStatus == 'cancelled' || normalizedLegacyStatus == 'returned'
+        ? normalizedLegacyStatus
+        : json['paymentStatus'] as String? ?? (normalizedLegacyStatus == 'paid' ? 'paid' : 'credit');
     String normalizeCurrency(String? value, [String fallback = 'USD']) {
       final normalized = (value ?? fallback).trim().toUpperCase();
       return normalized.isEmpty ? fallback : normalized;
@@ -207,11 +210,20 @@ class Sale {
     final transactionAmount = (json['transactionAmount'] as num?)?.toDouble() ??
         (invoiceCurrency == 'LBP' ? total * (exchangeRateAtPayment <= 0 ? 89500 : exchangeRateAtPayment) : total);
     final invoiceTotal = transactionAmount;
-    final paidAmount = (json['paidAmount'] as num?)?.toDouble() ?? (paymentStatus == 'paid' ? invoiceTotal : 0);
+    final cancelledOrReturned = normalizedLegacyStatus == 'cancelled' || normalizedLegacyStatus == 'returned';
+    final paidAmount = cancelledOrReturned
+        ? 0.0
+        : (json['paidAmount'] as num?)?.toDouble() ?? (paymentStatus == 'paid' ? invoiceTotal : 0);
     final paymentMethod = json['paymentMethod'] as String? ?? 'Cash';
-    final cashReceivedAmount = (json['cashReceivedAmount'] as num?)?.toDouble() ?? (paymentMethod == 'Cash' ? paidAmount : 0);
-    final paidAmountInPaymentCurrency = (json['paidAmountInPaymentCurrency'] as num?)?.toDouble() ?? paidAmount;
-    final cashReceivedAmountInPaymentCurrency = (json['cashReceivedAmountInPaymentCurrency'] as num?)?.toDouble() ?? cashReceivedAmount;
+    final cashReceivedAmount = cancelledOrReturned
+        ? 0.0
+        : (json['cashReceivedAmount'] as num?)?.toDouble() ?? (paymentMethod == 'Cash' ? paidAmount : 0);
+    final paidAmountInPaymentCurrency = cancelledOrReturned
+        ? 0.0
+        : (json['paidAmountInPaymentCurrency'] as num?)?.toDouble() ?? paidAmount;
+    final cashReceivedAmountInPaymentCurrency = cancelledOrReturned
+        ? 0.0
+        : (json['cashReceivedAmountInPaymentCurrency'] as num?)?.toDouble() ?? cashReceivedAmount;
     return Sale(
       id: json['id'] as String,
       invoiceNo: json['invoiceNo'] as String,
@@ -232,9 +244,13 @@ class Sale {
           (invoiceCurrency == baseCurrency ? 1 : exchangeRateAtPayment),
       transactionAmount: transactionAmount,
       baseAmount: (json['baseAmount'] as num?)?.toDouble() ?? total,
-      paidBaseAmount: (json['paidBaseAmount'] as num?)?.toDouble() ?? 0,
+      paidBaseAmount: cancelledOrReturned
+          ? 0.0
+          : (json['paidBaseAmount'] as num?)?.toDouble() ?? 0,
       exchangeDifferenceAmount:
-          (json['exchangeDifferenceAmount'] as num?)?.toDouble() ?? 0,
+          cancelledOrReturned
+              ? 0.0
+              : (json['exchangeDifferenceAmount'] as num?)?.toDouble() ?? 0,
       exchangeRateAtPayment: exchangeRateAtPayment,
       paidAmount: paidAmount,
       cashReceivedAmount: cashReceivedAmount,
