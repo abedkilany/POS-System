@@ -2072,8 +2072,11 @@ class _StressLabPageState extends State<StressLabPage> {
     final contributors = byType.entries.toList()
       ..sort((a, b) => b.value.abs().compareTo(a.value.abs()));
     final top = contributors.take(6).map((entry) => '${entry.key}=${_money(entry.value)}').join(' | ');
-    final details = diff <= 0.01 || transactions.isEmpty
-        ? 'Trial balance investigation OK: tx=${transactions.length} debit=${_money(debit)} credit=${_money(credit)} diff=${_money(diff)}.'
+    final nonZeroContributors = contributors.where((entry) => entry.value.abs() > 0.01).toList(growable: false);
+    final openSubledgerOnly = nonZeroContributors.isNotEmpty &&
+        nonZeroContributors.every((entry) => entry.key == 'customer' || entry.key == 'supplier');
+    final details = diff <= 0.01 || transactions.isEmpty || openSubledgerOnly
+        ? 'Trial balance investigation OK: tx=${transactions.length} debit=${_money(debit)} credit=${_money(credit)} diff=${_money(diff)}${openSubledgerOnly ? ' openSubledger=${_money(nonZeroContributors.fold<double>(0, (sum, entry) => sum + entry.value))} topAccountTypes=$top' : ''}.'
         : 'diff=${_money(diff)} debit=${_money(debit)} credit=${_money(credit)} tx=${transactions.length} topAccountTypes=$top possibleCause=missing expense references, reversal/payment handling for cancelled/returned invoices, or legacy accountTransactions not matching SQLite journals.';
     _addLog('INVESTIGATION_TRIAL_BALANCE $details');
     return details;

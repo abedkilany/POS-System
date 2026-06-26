@@ -326,6 +326,9 @@ class AppStore extends ChangeNotifier {
   AppIdentity? _appIdentity;
   int _syncSequence = 0;
   bool _derivedListCachesDirty = true;
+  bool _productDerivedDataDirty = false;
+  Timer? _productDerivedDataFlushTimer;
+  Future<void>? _productDerivedDataFlushInFlight;
   UnmodifiableListView<Product>? _cachedProducts;
   UnmodifiableListView<Product>? _cachedStockTrackedProducts;
   UnmodifiableListView<Customer>? _cachedCustomers;
@@ -4517,6 +4520,71 @@ class AppStore extends ChangeNotifier {
     _rebuildCustomerIndexes();
   }
 
+  Future<void> _persistProductDerivedData() async {
+    if (!LocalDatabaseService.isSqliteAuthoritative) return;
+    await Future.wait(<Future<void>>[
+      LocalDatabaseService.setString(
+        _priceListsKey,
+        jsonEncode(_priceLists.map((item) => item.toJson()).toList()),
+      ),
+      LocalDatabaseService.setString(
+        _productPricesKey,
+        jsonEncode(_productPrices.map((item) => item.toJson()).toList()),
+      ),
+      LocalDatabaseService.setString(
+        _productPriceOverridesKey,
+        jsonEncode(_productPriceOverrides.map((item) => item.toJson()).toList()),
+      ),
+      LocalDatabaseService.setString(
+        _productCostsKey,
+        jsonEncode(_productCosts.map((item) => item.toJson()).toList()),
+      ),
+      LocalDatabaseService.setString(
+        _inventoryCostingMethodKey,
+        _inventoryCostingMethod.code,
+      ),
+      LocalDatabaseService.setString(
+        _costingMethodHistoryKey,
+        jsonEncode(_costingMethodHistory.map((item) => item.toJson()).toList()),
+      ),
+      LocalDatabaseService.setString(
+        _inventoryCostLayersKey,
+        jsonEncode(_inventoryCostLayers.map((item) => item.toJson()).toList()),
+      ),
+    ]);
+  }
+
+  void _markProductDerivedDataDirty() {
+    _productDerivedDataDirty = true;
+    _productDerivedDataFlushTimer?.cancel();
+    _productDerivedDataFlushTimer = Timer(
+      const Duration(milliseconds: 120),
+      () {
+        unawaited(_flushProductDerivedData());
+      },
+    );
+  }
+
+  Future<void> _flushProductDerivedData() async {
+    if (!_productDerivedDataDirty) return;
+    final inFlight = _productDerivedDataFlushInFlight;
+    if (inFlight != null) {
+      await inFlight;
+      return;
+    }
+    final future = _persistProductDerivedData();
+    _productDerivedDataFlushInFlight = future;
+    _productDerivedDataDirty = false;
+    try {
+      await future;
+    } finally {
+      _productDerivedDataFlushInFlight = null;
+      if (_productDerivedDataDirty) {
+        _markProductDerivedDataDirty();
+      }
+    }
+  }
+
   void _rebuildProductIndexes() {
     _productIndexById.clear();
     _productIdByNormalizedCode.clear();
@@ -4864,9 +4932,6 @@ class AppStore extends ChangeNotifier {
     }
 
     final writes = <Future<void>>[];
-    if (customers) {
-      _traceSync('saveDirty', 'normalize_customers', _normalizeCustomers);
-    }
     if (sync) {
       _traceSync('saveDirty', 'compact_sync_history', _compactSyncedHistory);
     }
@@ -5103,8 +5168,6 @@ class AppStore extends ChangeNotifier {
     bool purchaseCounter = false,
     bool sync = false,
   }) async {
-    if (customers) _normalizeCustomers();
-
     final writes = <Future<void>>[];
 
     Future<void> persistRows(String key) async {
@@ -5117,13 +5180,7 @@ class AppStore extends ChangeNotifier {
 
     if (products) {
       writes.add(persistRows(_productsKey));
-      writes.add(LocalDatabaseService.setString(_productCostsKey, jsonEncode(_productCosts.map((item) => item.toJson()).toList())));
-      writes.add(LocalDatabaseService.setString(_priceListsKey, jsonEncode(_priceLists.map((item) => item.toJson()).toList())));
-      writes.add(LocalDatabaseService.setString(_productPricesKey, jsonEncode(_productPrices.map((item) => item.toJson()).toList())));
-      writes.add(LocalDatabaseService.setString(_productPriceOverridesKey, jsonEncode(_productPriceOverrides.map((item) => item.toJson()).toList())));
-      writes.add(LocalDatabaseService.setString(_inventoryCostingMethodKey, _inventoryCostingMethod.code));
-      writes.add(LocalDatabaseService.setString(_costingMethodHistoryKey, jsonEncode(_costingMethodHistory.map((item) => item.toJson()).toList())));
-      writes.add(LocalDatabaseService.setString(_inventoryCostLayersKey, jsonEncode(_inventoryCostLayers.map((item) => item.toJson()).toList())));
+      _markProductDerivedDataDirty();
     }
     if (customers) writes.add(persistRows(_customersKey));
     if (sales) writes.add(persistRows(_salesKey));
@@ -7465,7 +7522,6 @@ class AppStore extends ChangeNotifier {
         payload: syncedCustomer.toJson(),
       );
     }, metadata: <String, Object?>{'customerId': syncedCustomer.id, 'isCreate': isCreate});
-    _traceSync(section, 'normalize_customers', _normalizeCustomers);
     await _traceAsync(section, 'save_dirty', () => _saveDirty(customers: true, sync: true), metadata: <String, Object?>{'customerId': syncedCustomer.id, 'isCreate': isCreate});
     notifyListeners();
   }
@@ -7490,7 +7546,6 @@ class AppStore extends ChangeNotifier {
       operation: 'delete',
       payload: _customers[index].toJson(),
     );
-    _normalizeCustomers();
     await _saveDirty(customers: true, sync: true);
     notifyListeners();
   }
@@ -13794,6 +13849,8 @@ class AppStore extends ChangeNotifier {
 
   @override
   void dispose() {
+    _productDerivedDataFlushTimer?.cancel();
+    unawaited(_flushProductDerivedData());
     unawaited(LocalDatabaseService.flushPendingWrites());
     super.dispose();
   }
