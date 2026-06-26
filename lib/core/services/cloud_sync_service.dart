@@ -548,6 +548,27 @@ class CloudSyncService {
   late final UnifiedSyncCoreService _syncCore = UnifiedSyncCoreService(store);
   static final Set<String> _activeSnapshotGenerationRebuilds = <String>{};
 
+  Future<void> _restorePreviousSyncMode(AppIdentity previousIdentity) async {
+    final current = store.appIdentity;
+    if (current.syncMode == previousIdentity.syncMode) return;
+    try {
+      await store.recoverExistingStoreIdentity(
+        storeId: current.storeId,
+        branchId: current.branchId,
+        recoveryKey: current.recoveryKey,
+        hostDeviceId: current.hostDeviceId,
+        deviceToken: current.deviceToken,
+        cloudTenantId: current.cloudTenantId,
+        deviceRole: current.deviceRole,
+        syncMode: previousIdentity.syncMode,
+      );
+    } catch (error) {
+      SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] cloudRecovery:restoreSyncStateFailed error=$error',
+      );
+    }
+  }
+
   Future<bool?> checkCloudSyncPlanAccess(CloudSyncSettings settings) async {
     final identity = store.appIdentity;
     final storeId = identity.storeId.trim();
@@ -1329,6 +1350,7 @@ class CloudSyncService {
     String? branchId,
     CloudSyncProgressCallback? onProgress,
   }) async {
+    final previousIdentity = store.appIdentity;
     final cleanStoreId = storeId.trim().toUpperCase();
     final cleanBranchId = (branchId == null || branchId.trim().isEmpty)
         ? ''
@@ -1504,6 +1526,7 @@ class CloudSyncService {
       await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
       await sendHostHeartbeat(settings);
       onProgress?.call(1.0, 'Store recovered.');
+      await _restorePreviousSyncMode(previousIdentity);
       return CloudStoreRecoveryResult(
         ok: true,
         message: 'Current Store recovered successfully.',
@@ -1519,6 +1542,7 @@ class CloudSyncService {
         deviceLimit: deviceLimit,
       );
     } catch (error) {
+      await _restorePreviousSyncMode(previousIdentity);
       return CloudStoreRecoveryResult(
           ok: false, message: 'Store recovery failed: $error');
     }
@@ -1531,6 +1555,7 @@ class CloudSyncService {
     String? branchId,
     CloudSyncProgressCallback? onProgress,
   }) async {
+    final previousIdentity = store.appIdentity;
     final cleanStoreId = storeId.trim().toUpperCase();
     final cleanBranchId = (branchId == null || branchId.trim().isEmpty)
         ? ''
@@ -1624,6 +1649,7 @@ class CloudSyncService {
       await settings.copyWith(enabled: true, clearLastPullCursor: true).save();
       await CloudSyncSettings.clearSavedPullCursor();
       onProgress?.call(1.0, 'Store identity recovered.');
+      await _restorePreviousSyncMode(previousIdentity);
       return CloudStoreRecoveryResult(
         ok: true,
         message: 'Store identity recovered.',
@@ -1637,6 +1663,7 @@ class CloudSyncService {
         deviceLimit: deviceLimit,
       );
     } catch (error) {
+      await _restorePreviousSyncMode(previousIdentity);
       return CloudStoreRecoveryResult(
           ok: false, message: 'Store identity recovery failed: $error');
     }

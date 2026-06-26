@@ -151,6 +151,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
     final tr = AppLocalizations.of(context);
     final cache = AccountAuthCache.load();
     final cloud = CloudSyncSettings.load();
+    final previousIdentity = widget.store.appIdentity;
     final storeId = (cache?.storeId.trim().isNotEmpty == true
             ? cache!.storeId
             : widget.store.appIdentity.storeId)
@@ -295,7 +296,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
             deviceToken: result.identity?.deviceToken ?? '',
             cloudTenantId: result.identity?.cloudTenantId ?? '',
             deviceRole: DeviceRole.host,
-            syncMode: SyncMode.cloudConnected,
+            syncMode: previousIdentity.syncMode,
           );
           await AccountAuthCache.save(
             recoveryCache.copyWith(
