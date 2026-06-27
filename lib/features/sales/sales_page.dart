@@ -942,9 +942,15 @@ class _SalesPageState extends State<SalesPage> {
             : 'الوردية النقدية مفتوحة';
         final subtitle = openSession == null
             ? (drawer == null
-                ? 'لا يوجد درج نقدية مربوط أو معرف لهذا الجهاز.'
-                : 'الدرج: ${drawer.name} • افتح وردية قبل البيع النقدي.')
-            : '${openSession.name} • ${openSession.accountName.isEmpty ? 'درج نقدية' : openSession.accountName} • المتوقع: ${formatUsdReferenceAmount(openSession.credit, widget.store.storeProfile)}';
+                ? (tr.isArabic
+                    ? 'لا يوجد درج نقدية مربوط أو معرف لهذا الجهاز.'
+                    : 'No cash drawer is linked or defined for this device.')
+                : (tr.isArabic
+                    ? 'الدرج: ${drawer.name} • افتح وردية قبل البيع النقدي.'
+                    : 'Drawer: ${drawer.name} • Open a shift before cash sales.'))
+            : (tr.isArabic
+                ? '${openSession.name} • ${openSession.accountName.isEmpty ? 'درج نقدية' : openSession.accountName} • المتوقع: ${formatUsdReferenceAmount(openSession.credit, widget.store.storeProfile)}'
+                : '${openSession.name} • ${openSession.accountName.isEmpty ? 'Cash drawer' : openSession.accountName} • Expected: ${formatUsdReferenceAmount(openSession.credit, widget.store.storeProfile)}');
         return Card(
           elevation: 0,
           color: openSession == null
@@ -992,7 +998,7 @@ class _SalesPageState extends State<SalesPage> {
                         ? null
                         : () => _openSaleDrawerDialog(status),
                     icon: const Icon(Icons.lock_open_outlined),
-                    label: const Text('فتح وردية'),
+                    label: Text(tr.isArabic ? 'فتح وردية' : 'Open shift'),
                   )
                 else
                   Wrap(
@@ -1003,7 +1009,7 @@ class _SalesPageState extends State<SalesPage> {
                             ? null
                             : () => _closeSaleDrawerDialog(openSession, status),
                         icon: const Icon(Icons.lock_outline),
-                        label: const Text('إغلاق / تسليم'),
+                        label: Text(tr.isArabic ? 'إغلاق / تسليم' : 'Close / Handover'),
                       ),
                     ],
                   ),
@@ -1059,7 +1065,7 @@ class _SalesPageState extends State<SalesPage> {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, setDialogState) => AlertDialog(
-          title: const Text('فتح وردية نقدية'),
+          title: Text(tr.isArabic ? 'فتح وردية نقدية' : 'Open cash shift'),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -1067,7 +1073,7 @@ class _SalesPageState extends State<SalesPage> {
                 DropdownButtonFormField<String>(
                   initialValue:
                       selectedDrawerId.isEmpty ? null : selectedDrawerId,
-                  decoration: const InputDecoration(labelText: 'درج النقدية'),
+                  decoration: InputDecoration(labelText: tr.isArabic ? 'درج النقدية' : 'Cash drawer'),
                   items: drawers
                       .map((item) => DropdownMenuItem(
                             value: item.id,
@@ -1082,13 +1088,13 @@ class _SalesPageState extends State<SalesPage> {
                   controller: controller,
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(labelText: 'مبلغ الافتتاح'),
+                  decoration: InputDecoration(labelText: tr.isArabic ? 'مبلغ الافتتاح' : 'Opening amount'),
                 ),
                 if (sources.isNotEmpty) ...[
                   const SizedBox(height: 12),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
-                    title: const Text('تحويل مبلغ الافتتاح من صندوق آخر'),
+                    title: Text(tr.isArabic ? 'تحويل مبلغ الافتتاح من صندوق آخر' : 'Transfer opening amount from another drawer'),
                     value: useFundingSource,
                     onChanged: (value) =>
                         setDialogState(() => useFundingSource = value),
@@ -1098,7 +1104,7 @@ class _SalesPageState extends State<SalesPage> {
                       initialValue:
                           selectedFundingId.isEmpty ? null : selectedFundingId,
                       decoration:
-                          const InputDecoration(labelText: 'مصدر المبلغ'),
+                          InputDecoration(labelText: tr.isArabic ? 'مصدر المبلغ' : 'Funding source'),
                       items: sources
                           .map((item) => DropdownMenuItem(
                                 value: item.id,
@@ -1121,7 +1127,7 @@ class _SalesPageState extends State<SalesPage> {
               onPressed: selectedDrawerId.isEmpty
                   ? null
                   : () => Navigator.pop(dialogContext, true),
-              child: const Text('فتح'),
+              child: Text(tr.isArabic ? 'فتح' : 'Open'),
             ),
           ],
         ),
@@ -1146,7 +1152,7 @@ class _SalesPageState extends State<SalesPage> {
         if (!mounted) return;
         setState(() => _cashShiftRefreshKey++);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم فتح الوردية النقدية')),
+          SnackBar(content: Text(tr.isArabic ? 'تم فتح الوردية النقدية' : 'Cash shift opened')),
         );
       }
     } catch (error) {
@@ -1182,38 +1188,38 @@ class _SalesPageState extends State<SalesPage> {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, setDialogState) => AlertDialog(
-          title: const Text('إغلاق / تسليم الوردية'),
+          title: Text(tr.isArabic ? 'إغلاق / تسليم الوردية' : 'Close / handover shift'),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(
-                    'المتوقع: ${formatUsdReferenceAmount(expected, widget.store.storeProfile)}'),
+                    '${tr.isArabic ? 'المتوقع' : 'Expected'}: ${formatUsdReferenceAmount(expected, widget.store.storeProfile)}'),
                 const SizedBox(height: 12),
                 TextField(
                   controller: counted,
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
                   decoration:
-                      const InputDecoration(labelText: 'المبلغ المعدود'),
+                      InputDecoration(labelText: tr.isArabic ? 'المبلغ المعدود' : 'Counted amount'),
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
                   initialValue: closeMode,
-                  decoration: const InputDecoration(labelText: 'طريقة الإغلاق'),
-                  items: const [
+                  decoration: InputDecoration(labelText: tr.isArabic ? 'طريقة الإغلاق' : 'Close action'),
+                  items: [
                     DropdownMenuItem(
                       value: 'keep_drawer',
-                      child: Text('إغلاق فقط وترك النقد بنفس الدرج'),
+              child: Text(tr.isArabic ? 'إغلاق فقط وترك النقد بنفس الدرج' : 'Close only and keep cash in the same drawer'),
                     ),
                     DropdownMenuItem(
                       value: 'transfer_location',
-                      child: Text('إغلاق وتحويل النقد إلى درج/صندوق آخر'),
+                      child: Text(tr.isArabic ? 'إغلاق وتحويل النقد إلى درج/صندوق آخر' : 'Close and transfer cash to another drawer / vault'),
                     ),
                     DropdownMenuItem(
                       value: 'handover_user',
-                      child: Text('تسليم لموظف جديد وفتح وردية جديدة'),
+                      child: Text(tr.isArabic ? 'تسليم لموظف جديد وفتح وردية جديدة' : 'Handover to a new employee and open a new shift'),
                     ),
                   ],
                   onChanged: (value) =>
@@ -1223,8 +1229,8 @@ class _SalesPageState extends State<SalesPage> {
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
                     initialValue: transferToId.isEmpty ? null : transferToId,
-                    decoration: const InputDecoration(
-                        labelText: 'الدرج / الصندوق المستلم'),
+                    decoration: InputDecoration(
+                        labelText: tr.isArabic ? 'الدرج / الصندوق المستلم' : 'Receiving drawer / vault'),
                     items: transferTargets
                         .map((item) => DropdownMenuItem(
                               value: item.id,
@@ -1240,7 +1246,7 @@ class _SalesPageState extends State<SalesPage> {
                   DropdownButtonFormField<String>(
                     initialValue: nextUserId.isEmpty ? null : nextUserId,
                     decoration:
-                        const InputDecoration(labelText: 'الموظف المستلم'),
+                        InputDecoration(labelText: tr.isArabic ? 'الموظف المستلم' : 'Receiving employee'),
                     items: handoverUsers
                         .map((user) => DropdownMenuItem(
                               value: user.id,
@@ -1252,7 +1258,9 @@ class _SalesPageState extends State<SalesPage> {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'سيتم إغلاق الوردية الحالية وفتح وردية جديدة للموظف المستلم بنفس المبلغ المعدود.',
+                    tr.isArabic
+                        ? 'سيتم إغلاق الوردية الحالية وفتح وردية جديدة للموظف المستلم بنفس المبلغ المعدود.'
+                        : 'The current shift will be closed and a new shift will be opened for the receiving employee with the same counted amount.',
                     style: Theme.of(dialogContext).textTheme.bodySmall,
                   ),
                 ],
@@ -1330,7 +1338,7 @@ class _SalesPageState extends State<SalesPage> {
         if (!mounted) return;
         setState(() => _cashShiftRefreshKey++);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم تحديث الوردية النقدية')),
+          SnackBar(content: Text(tr.isArabic ? 'تم تحديث الوردية النقدية' : 'Cash shift updated')),
         );
       }
     } catch (error) {
@@ -1360,7 +1368,7 @@ class _SalesPageState extends State<SalesPage> {
                 OutlinedButton.icon(
                   onPressed: _showSaleShiftQuickAction,
                   icon: const Icon(Icons.point_of_sale_outlined),
-                  label: const Text('إدارة الوردية'),
+                  label: Text(tr.isArabic ? 'إدارة الوردية' : 'Manage shift'),
                 ),
                 OutlinedButton.icon(
                   onPressed: _showInvoicesSheet,
@@ -3830,7 +3838,7 @@ class _SalesPageState extends State<SalesPage> {
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('تفاصيل خطأ حفظ الفاتورة'),
+        title: Text(tr.isArabic ? 'تفاصيل خطأ حفظ الفاتورة' : 'Invoice save error details'),
         content: SizedBox(
           width: 680,
           child: SingleChildScrollView(
@@ -3843,8 +3851,10 @@ class _SalesPageState extends State<SalesPage> {
                   style: Theme.of(dialogContext).textTheme.titleMedium,
                 ),
                 const SizedBox(height: 12),
-                const Text(
-                  'هذه رسالة تتبع مؤقتة. انسخها وأرسلها للمراجعة لمعرفة أين يفشل الحفظ بالضبط.',
+                Text(
+                  tr.isArabic
+                      ? 'هذه رسالة تتبع مؤقتة. انسخها وأرسلها للمراجعة لمعرفة أين يفشل الحفظ بالضبط.'
+                      : 'This is a temporary trace message. Copy it and send it for review to find exactly where saving fails.',
                 ),
                 const SizedBox(height: 12),
                 Container(
@@ -3878,11 +3888,11 @@ class _SalesPageState extends State<SalesPage> {
               await Clipboard.setData(ClipboardData(text: debugText));
               if (!dialogContext.mounted) return;
               ScaffoldMessenger.of(dialogContext).showSnackBar(
-                const SnackBar(content: Text('تم نسخ تفاصيل الخطأ')),
+                SnackBar(content: Text(tr.isArabic ? 'تم نسخ تفاصيل الخطأ' : 'Error details copied')),
               );
             },
             icon: const Icon(Icons.copy),
-            label: const Text('نسخ'),
+            label: Text(tr.isArabic ? 'نسخ' : 'Copy'),
           ),
         ],
       ),

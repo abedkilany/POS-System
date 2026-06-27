@@ -96,6 +96,7 @@ class _StatusChip extends StatelessWidget {
 }
 
 String _deviceLabel(
+  BuildContext context,
   String deviceId, {
   HostRegistryDevice? registryDevice,
   CloudDeviceStatus? cloudDevice,
@@ -107,7 +108,7 @@ String _deviceLabel(
           : '';
   if (name.isNotEmpty) return name;
   final id = deviceId.trim();
-  if (id.isEmpty) return 'Unknown device';
+  if (id.isEmpty) return AppLocalizations.of(context).text('unknown_device');
   if (id.length <= 8) return id;
   return '${id.substring(0, 4)}…${id.substring(id.length - 4)}';
 }

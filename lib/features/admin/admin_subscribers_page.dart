@@ -952,6 +952,7 @@ class _EmptyState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final tr = AppLocalizations.of(context);
     return Padding(
       padding: const EdgeInsets.all(44),
       child: Center(
@@ -960,11 +961,11 @@ class _EmptyState extends StatelessWidget {
             Icon(Icons.inbox_outlined,
                 size: 56, color: theme.colorScheme.onSurfaceVariant),
             const SizedBox(height: 12),
-            Text('No subscribers found',
+            Text(tr.text('no_subscribers_found'),
                 style: theme.textTheme.titleMedium
                     ?.copyWith(fontWeight: FontWeight.w800)),
             const SizedBox(height: 6),
-            Text('Try changing the search text or status filter.',
+            Text(tr.text('try_changing_search_text_or_status_filter'),
                 style: theme.textTheme.bodyMedium
                     ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
           ],

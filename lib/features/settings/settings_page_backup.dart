@@ -852,7 +852,7 @@ class SettingsBackupActions {
                   .add('${section.count} item${section.count == 1 ? '' : 's'}');
             }
             if (!section.available) {
-              subtitleParts.add('Not available in this backup');
+              subtitleParts.add(tr.text('not_available_in_this_backup'));
             }
             if (section.warning != null && checked) {
               subtitleParts.add(section.warning!);
@@ -896,16 +896,16 @@ class SettingsBackupActions {
               ? Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(child: group('Business data', businessSections)),
+                    Expanded(child: group(tr.text('business_data'), businessSections)),
                     const SizedBox(width: 24),
-                    Expanded(child: group('System data', systemSections)),
+                    Expanded(child: group(tr.text('system_data'), systemSections)),
                   ],
                 )
               : Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    group('Business data', businessSections),
-                    group('System data', systemSections),
+                    group(tr.text('business_data'), businessSections),
+                    group(tr.text('system_data'), systemSections),
                   ],
                 );
 
@@ -926,7 +926,7 @@ class SettingsBackupActions {
                     _BackupSummaryDetails(summary: plan.summary),
                     const SizedBox(height: 16),
                     Text(
-                      'Review backup sections. Business data is selected by default. System data is available but left unchecked by default.',
+                      tr.text('review_backup_sections_desc'),
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
                     sectionsLayout,

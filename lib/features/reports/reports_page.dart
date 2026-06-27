@@ -11,6 +11,45 @@ class ReportsPage extends StatelessWidget {
 
   final AppStore store;
 
+  String _movementTypeLabel(AppLocalizations tr, String type) {
+    switch (type) {
+      case 'auto_correction':
+        return tr.text('auto_correction');
+      case 'purchase_receive':
+        return tr.text('purchase_received');
+      case 'purchase_return':
+        return tr.text('purchase_return');
+      case 'purchase_cancel':
+        return tr.text('purchase_cancel');
+      case 'sale':
+        return tr.text('sale_invoice');
+      case 'sale_return':
+        return tr.text('return_sale');
+      case 'sale_restore':
+        return tr.text('sale_restore');
+      case 'sale_cancel':
+        return tr.text('sale_cancel');
+      case 'paymentReceived':
+        return tr.text('payment_received');
+      case 'paymentPaid':
+        return tr.text('payment_paid');
+      case 'paymentReversal':
+        return tr.text('payment_reversal');
+      case 'warehouse_transfer_in':
+        return tr.text('warehouse_transfer_in');
+      case 'warehouse_transfer_out':
+        return tr.text('warehouse_transfer_out');
+      case 'count_adjustment':
+        return tr.text('count_adjustment');
+      case 'manufacturing_consume':
+        return tr.text('manufacturing_consume');
+      case 'manufacturing_output':
+        return tr.text('manufacturing_output');
+      default:
+        return type.replaceAll('_', ' ');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
@@ -296,8 +335,8 @@ class ReportsPage extends StatelessWidget {
                         ? Icons.add_circle_outline
                         : Icons.remove_circle_outline),
                     title: Text(movement.productName),
-                    subtitle:
-                        Text('${movement.type} • ${movement.referenceNo}'),
+                    subtitle: Text(
+                        '${_movementTypeLabel(tr, movement.type)} • ${movement.referenceNo}'),
                     trailing: Text(movement.quantity > 0
                         ? '+${movement.quantity}'
                         : '${movement.quantity}')))

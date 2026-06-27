@@ -159,7 +159,10 @@ class _VentioAppState extends State<VentioApp> {
                 builder: (context, state, _) => UnifiedSnapshotProgressView(
                   value: state.value,
                   label: state.label.isEmpty
-                      ? 'Host restored data. Rebuilding this device from the latest snapshot...'
+                      ? localizeRuntimeMessage(
+                          'Host restored data. Rebuilding this device from the latest snapshot...',
+                          AppLocalizations.of(context),
+                        )
                       : state.label,
                   titleKey: state.transport.toLowerCase() == 'lan'
                       ? 'snapshot_progress_lan_rebuild_title'
@@ -391,7 +394,7 @@ class _CloudProvisioningPageState extends State<_CloudProvisioningPage> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(stage.label),
+                              Text(localizeRuntimeMessage(stage.label, tr)),
                               if (!stage.forceComplete)
                                 Text(
                                   _stageStatus(sections, stage.sections, tr),

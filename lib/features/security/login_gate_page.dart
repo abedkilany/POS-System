@@ -931,7 +931,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
                         textInputAction: TextInputAction.next,
                         decoration: InputDecoration(
                           labelText: tr.text('username'),
-                          helperText: 'Offline: user  |  Online: user@store',
+                          helperText: tr.text('login_username_helper'),
                         ),
                       ),
                       const SizedBox(height: 12),
@@ -1241,21 +1241,22 @@ class PlatformAdminDashboardPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Ventio • Subscribers'),
+        title: Text('Ventio - ${tr.text('subscribers')}'),
         actions: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
             child: Center(
               child: Text(
-                cache.loginName.isEmpty ? 'Platform admin' : cache.loginName,
+                cache.loginName.isEmpty ? tr.text('platform_admin') : cache.loginName,
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
             ),
           ),
           IconButton(
-            tooltip: 'Sign out',
+            tooltip: tr.text('logout'),
             onPressed: onLogout,
             icon: const Icon(Icons.logout),
           ),

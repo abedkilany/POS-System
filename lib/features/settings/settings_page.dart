@@ -582,23 +582,24 @@ class SettingsPage extends StatelessWidget {
     ];
   }
 
-  String _costingMethodTitle(InventoryCostingMethod method) {
+  String _costingMethodTitle(AppLocalizations tr, InventoryCostingMethod method) {
     switch (method) {
       case InventoryCostingMethod.fifo:
-        return 'FIFO';
+        return tr.text('fifo');
       case InventoryCostingMethod.lastPurchaseCost:
-        return 'Last Purchase Cost';
+        return tr.text('last_cost');
       case InventoryCostingMethod.weightedAverage:
-        return 'Weighted Average Cost';
+        return tr.text('weighted_average_cost');
     }
   }
 
   Widget _inventoryCostingCard(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     final method = store.inventoryCostingMethod;
     return _SectionCard(
       icon: Icons.inventory_2_outlined,
-      title: 'Inventory costing method',
-      subtitle: 'طريقة احتساب كلفة المنتج المستخدمة في البيع والربحية.',
+      title: tr.text('inventory_costing_method'),
+      subtitle: tr.text('inventory_costing_method_desc'),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -607,17 +608,17 @@ class SettingsPage extends StatelessWidget {
               ButtonSegment<InventoryCostingMethod>(
                 value: InventoryCostingMethod.weightedAverage,
                 icon: const Icon(Icons.functions_outlined),
-                label: const Text('Weighted Average'),
+                label: Text(tr.text('weighted_average_cost')),
               ),
               ButtonSegment<InventoryCostingMethod>(
                 value: InventoryCostingMethod.fifo,
                 icon: const Icon(Icons.low_priority_outlined),
-                label: const Text('FIFO'),
+                label: Text(tr.text('fifo')),
               ),
               ButtonSegment<InventoryCostingMethod>(
                 value: InventoryCostingMethod.lastPurchaseCost,
                 icon: const Icon(Icons.history_outlined),
-                label: const Text('Last Cost'),
+                label: Text(tr.text('last_cost')),
               ),
             ],
             selected: {method},
@@ -626,27 +627,27 @@ class SettingsPage extends StatelessWidget {
               if (next == method) return;
               await store.setInventoryCostingMethod(
                 next,
-                reason: 'Changed from settings',
+                reason: tr.text('changed_from_settings'),
               );
             },
           ),
           const SizedBox(height: 12),
-          Text('Current method: ${_costingMethodTitle(method)}'),
+          Text('${tr.text('current_method')}: ${_costingMethodTitle(tr, method)}'),
           const SizedBox(height: 8),
           Text(
-            'أي تغيير جديد يبدأ من لحظة التغيير ولا يعيد حساب فواتير البيع القديمة، لأن كل SaleItem يحتفظ بالكلفة والطريقة وقت البيع.',
+            tr.text('inventory_costing_method_note'),
             style: Theme.of(context).textTheme.bodySmall,
           ),
           if (store.costingMethodHistory.isNotEmpty) ...[
             const SizedBox(height: 12),
-            Text('History', style: Theme.of(context).textTheme.titleSmall),
+            Text(tr.text('history'), style: Theme.of(context).textTheme.titleSmall),
             for (final row in store.costingMethodHistory.reversed.take(5))
               ListTile(
                 dense: true,
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.timeline_outlined),
-                title: Text(_costingMethodTitle(row.method)),
-                subtitle: Text('${DateFormat.yMd().add_Hm().format(row.effectiveFrom)}${row.effectiveTo == null ? ' → active' : ' → ${DateFormat.yMd().add_Hm().format(row.effectiveTo!)}'}${row.reason.isEmpty ? '' : ' · ${row.reason}'}'),
+                title: Text(_costingMethodTitle(tr, row.method)),
+                subtitle: Text('${DateFormat.yMd().add_Hm().format(row.effectiveFrom)}${row.effectiveTo == null ? ' → ${tr.text('active')}' : ' → ${DateFormat.yMd().add_Hm().format(row.effectiveTo!)}'}${row.reason.isEmpty ? '' : ' · ${row.reason}'}'),
               ),
           ],
         ],
@@ -2544,6 +2545,7 @@ class _AutoLocalBackupSettingsCardState
   Future<void> _save({bool? enabled}) async {
     final current = _settings;
     if (current == null) return;
+    final tr = AppLocalizations.of(context);
     setState(() => _saving = true);
     final next = _draftSettings(enabled: enabled);
     try {
@@ -2555,23 +2557,25 @@ class _AutoLocalBackupSettingsCardState
         _hasChanges = false;
       });
       ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Local backup settings saved.')));
+          SnackBar(content: Text(tr.text('local_backup_settings_saved'))));
     } catch (error) {
       if (!mounted) return;
       setState(() => _saving = false);
       ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not save backup settings: $error')));
+          SnackBar(content: Text(tr.format('could_not_save_backup_settings', {'error': error.toString()}))));
     }
   }
 
   Future<void> _pickDirectory() async {
+    final tr = AppLocalizations.of(context);
     final picked = await FilePicker.platform
-        .getDirectoryPath(dialogTitle: 'Choose backup folder');
+        .getDirectoryPath(dialogTitle: tr.text('choose_backup_folder'));
     if (picked == null || picked.trim().isEmpty) return;
     _pathController.text = picked;
   }
 
   Future<void> _backupNow() async {
+    final tr = AppLocalizations.of(context);
     try {
       if (_hasChanges) {
         await _save();
@@ -2581,11 +2585,11 @@ class _AutoLocalBackupSettingsCardState
           settings: settings, reason: 'manual');
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Local backup completed.')));
+          SnackBar(content: Text(tr.text('local_backup_completed'))));
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Local backup failed: $error')));
+          .showSnackBar(SnackBar(content: Text(tr.format('local_backup_failed', {'error': error.toString()}))));
     }
   }
 
@@ -2593,6 +2597,7 @@ class _AutoLocalBackupSettingsCardState
   Widget build(BuildContext context) {
     final settings = _settings;
     final theme = Theme.of(context);
+    final tr = AppLocalizations.of(context);
     if (settings == null) {
       return const Center(child: LinearProgressIndicator());
     }
@@ -2615,9 +2620,9 @@ class _AutoLocalBackupSettingsCardState
                 children: [
                   const Icon(Icons.schedule_outlined),
                   const SizedBox(width: 16),
-                  const Expanded(
+                  Expanded(
                     child: Text(
-                      'Automatic local backup',
+                      tr.text('automatic_local_backup'),
                       style: TextStyle(fontWeight: FontWeight.w600),
                     ),
                   ),
@@ -2638,17 +2643,17 @@ class _AutoLocalBackupSettingsCardState
           if (_expanded) ...[
             const SizedBox(height: 8),
             Text(disabled
-                ? 'Local backup runs on the Host device only.'
-                : 'Runs in the background after login. If the 2:00 AM backup was missed, it runs at first app opening.'),
+                ? tr.text('local_backup_host_only')
+                : tr.text('local_backup_background_desc')),
             const SizedBox(height: 12),
             TextField(
               controller: _pathController,
               enabled: !disabled && !_saving,
               decoration: InputDecoration(
-                labelText: 'Backup location',
-                helperText: r'Default: C:\ProgramData\Ventio\Backup',
+                labelText: tr.text('backup_location'),
+                helperText: tr.text('backup_location_default'),
                 suffixIcon: IconButton(
-                  tooltip: 'Browse',
+                  tooltip: tr.text('browse'),
                   onPressed: disabled || _saving ? null : _pickDirectory,
                   icon: const Icon(Icons.folder_open_outlined),
                 ),
@@ -2670,15 +2675,15 @@ class _AutoLocalBackupSettingsCardState
                     SizedBox(
                         width: itemWidth,
                         child: _countField(
-                            _dailyController, 'Daily copies', disabled)),
+                            _dailyController, tr.text('daily_copies'), disabled)),
                     SizedBox(
                         width: itemWidth,
                         child: _countField(
-                            _weeklyController, 'Weekly copies', disabled)),
+                            _weeklyController, tr.text('weekly_copies'), disabled)),
                     SizedBox(
                         width: itemWidth,
                         child: _countField(
-                            _monthlyController, 'Monthly copies', disabled)),
+                            _monthlyController, tr.text('monthly_copies'), disabled)),
                   ],
                 );
               },
@@ -2693,12 +2698,12 @@ class _AutoLocalBackupSettingsCardState
                       ? null
                       : () => _save(),
                   icon: const Icon(Icons.save_outlined),
-                  label: const Text('Save backup settings'),
+                  label: Text(tr.text('save_backup_settings')),
                 ),
                 FilledButton.icon(
                   onPressed: disabled || _saving ? null : _backupNow,
                   icon: const Icon(Icons.backup_outlined),
-                  label: const Text('Backup now'),
+                  label: Text(tr.text('backup_now')),
                 ),
               ],
             ),
@@ -2828,6 +2833,7 @@ class _GoogleDriveBackupSettingsCardState
   Future<GoogleDriveBackupSettings?> _save({bool? enabled}) async {
     final current = _settings;
     if (current == null) return null;
+    final tr = AppLocalizations.of(context);
     setState(() => _saving = true);
     final next = _draftSettings(enabled: enabled);
     try {
@@ -2839,18 +2845,19 @@ class _GoogleDriveBackupSettingsCardState
         _hasChanges = false;
       });
       ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Google Drive backup settings saved.')));
+          SnackBar(content: Text(tr.text('google_drive_backup_settings_saved'))));
       return next;
     } catch (error) {
       if (!mounted) return null;
       setState(() => _saving = false);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Could not save Google Drive settings: $error')));
+          content: Text(tr.format('could_not_save_google_drive_settings', {'error': error.toString()}))));
       return null;
     }
   }
 
   Future<void> _startConnect() async {
+    final tr = AppLocalizations.of(context);
     setState(() => _saving = true);
     try {
       final settings = _hasChanges ? await _save() : _settings;
@@ -2866,26 +2873,28 @@ class _GoogleDriveBackupSettingsCardState
         _hasChanges = false;
       });
       ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Google Drive connected.')));
+          SnackBar(content: Text(tr.text('google_drive_connected'))));
     } catch (error) {
       if (!mounted) return;
       setState(() => _saving = false);
       ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Google Drive connection failed: $error')));
+          SnackBar(content: Text(tr.format('google_drive_connection_failed', {'error': error.toString()}))));
     }
   }
 
   Future<void> _disconnect() async {
+    final tr = AppLocalizations.of(context);
     setState(() => _saving = true);
     await GoogleDriveBackupService.disconnect();
     await _load();
     if (!mounted) return;
     setState(() => _saving = false);
     ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Google Drive disconnected.')));
+        SnackBar(content: Text(tr.text('google_drive_disconnected'))));
   }
 
   Future<void> _importGoogleCredentialsFile() async {
+    final tr = AppLocalizations.of(context);
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
@@ -2895,7 +2904,7 @@ class _GoogleDriveBackupSettingsCardState
       if (result == null || result.files.isEmpty) return;
       final bytes = result.files.single.bytes;
       if (bytes == null || bytes.isEmpty) {
-        throw Exception('Empty Google credentials file.');
+        throw Exception(tr.text('empty_google_credentials_file'));
       }
       final decoded = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
       final section = decoded['installed'] is Map
@@ -2904,50 +2913,53 @@ class _GoogleDriveBackupSettingsCardState
               ? decoded['web'] as Map
               : null;
       if (section == null) {
-        throw Exception('Invalid Google credentials file.');
+        throw Exception(tr.text('invalid_google_credentials_file'));
       }
       final clientId = (section['client_id'] ?? '').toString().trim();
       final clientSecret = (section['client_secret'] ?? '').toString().trim();
       if (clientId.isEmpty) {
-        throw Exception('Google Client ID was not found.');
+        throw Exception(tr.text('google_client_id_not_found'));
       }
       _clientIdController.text = clientId;
       _clientSecretController.text = clientSecret;
       final saved = await _save();
       if (!mounted || saved == null) return;
       setState(() => _showAdvancedSetup = false);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Google credentials imported. You can connect now.')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(tr.text('google_credentials_imported_connect_now'))));
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Could not import Google credentials: $error')));
+          content: Text(tr.format('could_not_import_google_credentials', {'error': error.toString()}))));
     }
   }
 
   void _handleDeveloperTap() {
+    final tr = AppLocalizations.of(context);
     if (_showAdvancedSetup) return;
     _developerTapCount += 1;
     if (_developerTapCount >= 5) {
       _developerTapCount = 0;
       setState(() => _showAdvancedSetup = true);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Developer setup unlocked.')),
+        SnackBar(content: Text(tr.text('developer_setup_unlocked'))),
       );
     }
   }
 
   Future<void> _copyDriveFolderLink() async {
+    final tr = AppLocalizations.of(context);
     final folderId = _settings?.folderId.trim() ?? '';
     if (folderId.isEmpty) return;
     await Clipboard.setData(ClipboardData(
         text: 'https://drive.google.com/drive/folders/$folderId'));
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Drive folder link copied.')));
+        SnackBar(content: Text(tr.text('drive_folder_link_copied'))));
   }
 
   Future<void> _backupNow() async {
+    final tr = AppLocalizations.of(context);
     try {
       if (_hasChanges) {
         await _save();
@@ -2957,16 +2969,17 @@ class _GoogleDriveBackupSettingsCardState
           settings: settings, reason: 'manual');
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Google Drive backup completed.')));
+          SnackBar(content: Text(tr.text('google_drive_backup_completed'))));
       await _load();
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Google Drive backup failed: $error')));
+          SnackBar(content: Text(tr.format('google_drive_backup_failed', {'error': error.toString()}))));
     }
   }
 
   Future<void> _downloadFromDrive() async {
+    final tr = AppLocalizations.of(context);
     try {
       if (_hasChanges) {
         await _save();
@@ -2976,14 +2989,14 @@ class _GoogleDriveBackupSettingsCardState
           await GoogleDriveBackupService.listBackupFiles(settings: settings);
       if (!mounted) return;
       if (files.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('No Google Drive backups were found.')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(tr.text('no_google_drive_backups_found'))));
         return;
       }
       final selected = await showDialog<GoogleDriveBackupFile>(
         context: context,
         builder: (dialogContext) => AlertDialog(
-          title: const Text('Download backup from Drive'),
+          title: Text(tr.text('download_backup_from_drive')),
           content: SizedBox(
             width: VentioResponsive.modalMaxWidth(context, 520),
             child: ListView.separated(
@@ -3005,7 +3018,7 @@ class _GoogleDriveBackupSettingsCardState
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Cancel'),
+              child: Text(tr.text('cancel')),
             ),
           ],
         ),
@@ -3016,16 +3029,16 @@ class _GoogleDriveBackupSettingsCardState
       await downloadBinaryFile(
         filename: selected.name,
         bytes: bytes,
-        dialogTitle: 'Save Google Drive backup',
-        cancelMessage: 'Backup download was cancelled.',
+        dialogTitle: tr.text('save_google_drive_backup'),
+        cancelMessage: tr.text('backup_download_cancelled'),
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Google Drive backup downloaded.')));
+          SnackBar(content: Text(tr.text('google_drive_backup_downloaded'))));
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Google Drive backup download failed: $error')));
+          content: Text(tr.format('google_drive_backup_download_failed', {'error': error.toString()}))));
     }
   }
 
@@ -3039,6 +3052,7 @@ class _GoogleDriveBackupSettingsCardState
   Widget build(BuildContext context) {
     final settings = _settings;
     final theme = Theme.of(context);
+    final tr = AppLocalizations.of(context);
     if (settings == null) {
       return const Center(child: LinearProgressIndicator());
     }
@@ -3066,9 +3080,9 @@ class _GoogleDriveBackupSettingsCardState
                 children: [
                   const Icon(Icons.cloud_upload_outlined),
                   const SizedBox(width: 16),
-                  const Expanded(
+                  Expanded(
                     child: Text(
-                      'Google Drive backup',
+                      tr.text('google_drive_backup'),
                       style: TextStyle(fontWeight: FontWeight.w600),
                     ),
                   ),
@@ -3089,12 +3103,12 @@ class _GoogleDriveBackupSettingsCardState
           if (_expanded) ...[
             const SizedBox(height: 8),
             Text(disabled
-                ? 'Google Drive backup runs on the Host device only.'
+                ? tr.text('google_drive_backup_host_only')
                 : connected
-                    ? 'Automatic Google Drive backup is available. Ventio keeps daily, weekly, and monthly copies using the limits below.'
+                    ? tr.text('google_drive_backup_available_desc')
                     : googleConfigured
-                        ? 'Connect once with Google, then enable automatic backups.'
-                        : 'Google Drive is not configured in this build.'),
+                        ? tr.text('google_drive_backup_connect_first')
+                        : tr.text('google_drive_backup_not_configured')),
             const SizedBox(height: 12),
             ListTile(
               contentPadding: EdgeInsets.zero,
@@ -3104,15 +3118,15 @@ class _GoogleDriveBackupSettingsCardState
                       ? Icons.account_circle_outlined
                       : Icons.info_outline),
               title: Text(connected
-                  ? 'Google Drive is connected'
+                  ? tr.text('google_drive_is_connected')
                   : googleConfigured
-                      ? 'Connect with Google'
-                      : 'Google Drive is not ready'),
+                      ? tr.text('connect_with_google')
+                      : tr.text('google_drive_not_ready')),
               subtitle: Text(connected
-                  ? 'Ventio can upload backup files to your Drive.'
+                  ? tr.text('google_drive_backup_upload_desc')
                   : googleConfigured
-                      ? 'Use your Google account. No setup fields are needed.'
-                      : 'The packaged app needs the Ventio server URL first.'),
+                      ? tr.text('google_drive_account_desc')
+                      : tr.text('google_drive_packaged_server_required')),
             ),
             const SizedBox(height: 12),
             LayoutBuilder(
@@ -3127,15 +3141,15 @@ class _GoogleDriveBackupSettingsCardState
                     SizedBox(
                         width: itemWidth,
                         child: _countField(
-                            _dailyController, 'Daily copies', disabled)),
+                            _dailyController, tr.text('daily_copies'), disabled)),
                     SizedBox(
                         width: itemWidth,
                         child: _countField(
-                            _weeklyController, 'Weekly copies', disabled)),
+                            _weeklyController, tr.text('weekly_copies'), disabled)),
                     SizedBox(
                         width: itemWidth,
                         child: _countField(
-                            _monthlyController, 'Monthly copies', disabled)),
+                            _monthlyController, tr.text('monthly_copies'), disabled)),
                   ],
                 );
               },
@@ -3149,24 +3163,22 @@ class _GoogleDriveBackupSettingsCardState
                   color: theme.colorScheme.surfaceContainerHighest,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Text(
-                    'This is only for packaging the app. Regular users should only connect with Google.'),
+                child: Text(tr.text('google_packaging_only_desc')),
               ),
               const SizedBox(height: 12),
               OutlinedButton.icon(
                 onPressed:
                     disabled || _saving ? null : _importGoogleCredentialsFile,
                 icon: const Icon(Icons.file_upload_outlined),
-                label: const Text('Import Google credentials file'),
+                label: Text(tr.text('import_google_credentials_file')),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: _clientIdController,
                 enabled: !disabled && !_saving,
-                decoration: const InputDecoration(
-                  labelText: 'Google OAuth Client ID',
-                  helperText:
-                      'One-time developer setup. After this, users only press Connect Drive.',
+                decoration: InputDecoration(
+                  labelText: tr.text('google_oauth_client_id'),
+                  helperText: tr.text('one_time_developer_setup_desc'),
                 ),
                 onSubmitted: (_) {
                   if (_hasChanges) _save();
@@ -3177,10 +3189,9 @@ class _GoogleDriveBackupSettingsCardState
                 controller: _clientSecretController,
                 enabled: !disabled && !_saving,
                 obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'Google OAuth Client Secret (optional)',
-                  helperText:
-                      'Leave empty if your OAuth client does not use a secret.',
+                decoration: InputDecoration(
+                  labelText: tr.text('google_oauth_client_secret_optional'),
+                  helperText: tr.text('google_oauth_client_secret_helper'),
                 ),
                 onSubmitted: (_) {
                   if (_hasChanges) _save();
@@ -3190,10 +3201,9 @@ class _GoogleDriveBackupSettingsCardState
               TextField(
                 controller: _folderIdController,
                 enabled: !disabled && !_saving,
-                decoration: const InputDecoration(
-                  labelText: 'Drive folder ID (optional)',
-                  helperText:
-                      'Leave empty to create/use a Ventio Backups folder.',
+                decoration: InputDecoration(
+                  labelText: tr.text('drive_folder_id_optional'),
+                  helperText: tr.text('drive_folder_id_helper'),
                 ),
                 onSubmitted: (_) {
                   if (_hasChanges) _save();
@@ -3210,7 +3220,7 @@ class _GoogleDriveBackupSettingsCardState
                       ? null
                       : () => _save(),
                   icon: const Icon(Icons.save_outlined),
-                  label: const Text('Save backup settings'),
+                  label: Text(tr.text('save_backup_settings')),
                 ),
                 OutlinedButton.icon(
                   onPressed: disabled || _saving || !googleConfigured
@@ -3218,34 +3228,34 @@ class _GoogleDriveBackupSettingsCardState
                       : _startConnect,
                   icon: const Icon(Icons.account_circle_outlined),
                   label: Text(connected
-                      ? 'Reconnect with Google'
-                      : 'Connect with Google'),
+                      ? tr.text('reconnect_with_google')
+                      : tr.text('connect_with_google')),
                 ),
                 FilledButton.icon(
                   onPressed:
                       disabled || _saving || !connected ? null : _backupNow,
                   icon: const Icon(Icons.cloud_upload_outlined),
-                  label: const Text('Backup now'),
+                  label: Text(tr.text('backup_now')),
                 ),
                 OutlinedButton.icon(
                   onPressed: disabled || _saving || !connected
                       ? null
                       : _downloadFromDrive,
                   icon: const Icon(Icons.cloud_download_outlined),
-                  label: const Text('Download from Drive'),
+                  label: Text(tr.text('download_from_drive')),
                 ),
                 if (connected && settings.folderId.trim().isNotEmpty)
                   OutlinedButton.icon(
                     onPressed:
                         disabled || _saving ? null : _copyDriveFolderLink,
                     icon: const Icon(Icons.folder_open_outlined),
-                    label: const Text('Copy Drive folder link'),
+                    label: Text(tr.text('copy_drive_folder_link')),
                   ),
                 if (connected)
                   TextButton.icon(
                     onPressed: disabled || _saving ? null : _disconnect,
                     icon: const Icon(Icons.link_off_outlined),
-                    label: const Text('Disconnect'),
+                    label: Text(tr.text('disconnect')),
                   ),
               ],
             ),
@@ -7245,7 +7255,7 @@ class _HostSyncMonitoringTableState extends State<_HostSyncMonitoringTable> {
         wipePending: wipePending);
     return DataRow(
       cells: [
-        DataCell(Text(_deviceLabel(deviceId,
+        DataCell(Text(_deviceLabel(context, deviceId,
             registryDevice: registryDevice, cloudDevice: cloudDevice))),
         DataCell(Text(_activeTransportForHostPeer(context,
             lanAuthorized: lanAuthorized,
@@ -7427,7 +7437,7 @@ class _HostPeerMonitoringCard extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                   child: Text(
-                      _deviceLabel(deviceId,
+                      _deviceLabel(context, deviceId,
                           registryDevice: registryDevice,
                           cloudDevice: cloudDevice),
                       style: Theme.of(context).textTheme.titleSmall)),

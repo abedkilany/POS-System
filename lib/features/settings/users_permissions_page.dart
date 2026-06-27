@@ -275,8 +275,8 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                       Card(
                         child: ListTile(
                           leading: const Icon(Icons.lock_outline),
-                          title: const Text('Store Owner protected account'),
-                          subtitle: const Text('Full Access is locked. Saving name, username, or password requires a successful cloud update first.'),
+                          title: Text(tr.text('store_owner_protected_account')),
+                          subtitle: Text(tr.text('store_owner_protected_account_desc')),
                         ),
                       ),
                     if (isStoreOwner) const SizedBox(height: 12),
@@ -414,6 +414,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
   }
 
   Future<bool?> _showCloudReauthDialog(String localUsername) async {
+    final tr = AppLocalizations.of(context);
     final loginController = TextEditingController(text: _defaultCloudLoginName(localUsername));
     final passwordController = TextEditingController();
     bool isSubmitting = false;
@@ -424,26 +425,28 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
       barrierDismissible: false,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text('تأكيد الحساب السحابي'),
+          title: Text(tr.isArabic ? 'تأكيد الحساب السحابي' : 'Confirm cloud account'),
           content: SizedBox(
             width: VentioResponsive.modalMaxWidth(context, 420),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Text(
-                  'جلسة السحابة غير متاحة أو منتهية. أدخل حساب المدير الأساسي السحابي للمتابعة دون مغادرة الصفحة.',
+                Text(
+                  tr.isArabic
+                      ? 'جلسة السحابة غير متاحة أو منتهية. أدخل حساب المدير الأساسي السحابي للمتابعة دون مغادرة الصفحة.'
+                      : 'The cloud session is unavailable or expired. Enter the primary cloud admin account to continue without leaving this page.',
                 ),
                 const SizedBox(height: 16),
                 TextField(
                   controller: loginController,
-                  decoration: const InputDecoration(labelText: 'الحساب السحابي'),
+                  decoration: InputDecoration(labelText: tr.isArabic ? 'الحساب السحابي' : 'Cloud account'),
                   enabled: !isSubmitting,
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: passwordController,
                   obscureText: true,
-                  decoration: const InputDecoration(labelText: 'كلمة المرور الحالية'),
+                  decoration: InputDecoration(labelText: tr.isArabic ? 'كلمة المرور الحالية' : 'Current password'),
                   enabled: !isSubmitting,
                 ),
                 if (errorMessage != null) ...[
@@ -459,7 +462,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
           actions: [
             TextButton(
               onPressed: isSubmitting ? null : () => Navigator.pop(dialogContext, false),
-              child: const Text('إلغاء'),
+              child: Text(tr.isArabic ? 'إلغاء' : 'Cancel'),
             ),
             FilledButton(
               onPressed: isSubmitting
@@ -468,7 +471,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                       final loginName = loginController.text.trim().toLowerCase();
                       final password = passwordController.text;
                       if (loginName.isEmpty || password.trim().isEmpty) {
-                        setDialogState(() => errorMessage = 'أدخل الحساب وكلمة المرور.');
+                        setDialogState(() => errorMessage = tr.isArabic ? 'أدخل الحساب وكلمة المرور.' : 'Enter the account and password.');
                         return;
                       }
                       setDialogState(() {
@@ -484,7 +487,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                           setDialogState(() {
                             isSubmitting = false;
                             errorMessage = result.message.isEmpty
-                                ? 'فشل تسجيل الدخول إلى السحابة.'
+                                ? (tr.isArabic ? 'فشل تسجيل الدخول إلى السحابة.' : 'Cloud login failed.')
                                 : result.message;
                           });
                           return;
@@ -507,7 +510,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                       height: 18,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Text('تأكيد'),
+                  : Text(tr.isArabic ? 'تأكيد' : 'Confirm'),
             ),
           ],
         ),

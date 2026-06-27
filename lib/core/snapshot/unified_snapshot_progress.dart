@@ -45,7 +45,11 @@ class UnifiedSnapshotProgressView extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 12),
-        Text(label.trim().isEmpty ? tr.text('snapshot_progress_preparing') : label),
+        Text(
+          label.trim().isEmpty
+              ? tr.text('snapshot_progress_preparing')
+              : localizeRuntimeMessage(label, tr),
+        ),
         const SizedBox(height: 10),
         LinearProgressIndicator(value: effectiveValue),
         const SizedBox(height: 14),

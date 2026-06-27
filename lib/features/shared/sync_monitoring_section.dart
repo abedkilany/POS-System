@@ -411,6 +411,7 @@ class _StatusChip extends StatelessWidget {
 }
 
 String _deviceLabel(
+  BuildContext context,
   String deviceId, {
   HostRegistryDevice? registryDevice,
   CloudDeviceStatus? cloudDevice,
@@ -422,7 +423,7 @@ String _deviceLabel(
           : '';
   if (name.isNotEmpty) return name;
   final id = deviceId.trim();
-  if (id.isEmpty) return 'Unknown device';
+  if (id.isEmpty) return AppLocalizations.of(context).text('unknown_device');
   if (id.length <= 8) return id;
   return '${id.substring(0, 4)}...${id.substring(id.length - 4)}';
 }
@@ -935,7 +936,7 @@ DataRow _hostPeerRow(
       wipePending: wipePending);
   return DataRow(
     cells: [
-      DataCell(Text(_deviceLabel(deviceId,
+      DataCell(Text(_deviceLabel(context, deviceId,
           registryDevice: registryDevice, cloudDevice: cloudDevice))),
       DataCell(Text(_activeTransportForHostPeer(context,
           lanAuthorized: lanAuthorized,
@@ -1110,7 +1111,7 @@ class _HostPeerMonitoringCard extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                   child: Text(
-                      _deviceLabel(deviceId,
+                      _deviceLabel(context, deviceId,
                           registryDevice: registryDevice,
                           cloudDevice: cloudDevice),
                       style: Theme.of(context).textTheme.titleSmall)),

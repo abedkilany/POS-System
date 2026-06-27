@@ -298,9 +298,17 @@ class _ProductsPageState extends State<ProductsPage> {
         }
       ];
     }
-    final shortName = (product.nameAr.trim().isNotEmpty
-            ? product.nameAr.trim()
-            : product.name.trim())
+    final shortName = (tr.locale.languageCode == 'ar'
+            ? (product.nameAr.trim().isNotEmpty
+                ? product.nameAr.trim()
+                : product.nameEn.trim().isNotEmpty
+                    ? product.nameEn.trim()
+                    : product.name.trim())
+            : (product.nameEn.trim().isNotEmpty
+                ? product.nameEn.trim()
+                : product.nameAr.trim().isNotEmpty
+                    ? product.nameAr.trim()
+                    : product.name.trim()))
         .trim();
     for (final page in pages) {
       if (page is! Map) continue;
@@ -1179,6 +1187,7 @@ class _CurrencyPriceOverridesEditor extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
     final baseCurrency = baseCurrencyCode.trim().toUpperCase();
     final currencies = <String>{
       ...availableCurrencyCodes
@@ -1205,11 +1214,11 @@ class _CurrencyPriceOverridesEditor extends StatelessWidget {
             final title = Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Currency Price Overrides',
-                    style: TextStyle(fontWeight: FontWeight.w700)),
+                Text(tr.text('currency_price_overrides'),
+                    style: const TextStyle(fontWeight: FontWeight.w700)),
                 const SizedBox(height: 4),
                 Text(
-                  'Optional fixed prices for specific currencies. Empty currencies are converted automatically from the base price.',
+                  tr.text('currency_price_overrides_desc'),
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ],
@@ -1217,7 +1226,7 @@ class _CurrencyPriceOverridesEditor extends StatelessWidget {
             final addButton = OutlinedButton.icon(
               onPressed: canAdd ? () => _addOverride(currencies) : null,
               icon: const Icon(Icons.add),
-              label: const Text('Add override'),
+              label: Text(tr.text('add_override')),
             );
             if (constraints.maxWidth < 460) {
               return Column(
@@ -1236,7 +1245,7 @@ class _CurrencyPriceOverridesEditor extends StatelessWidget {
           const SizedBox(height: 12),
           if (drafts.isEmpty)
             Text(
-              'No fixed currency prices. Other currencies will use automatic conversion.',
+              tr.text('no_fixed_currency_prices'),
               style: Theme.of(context).textTheme.bodySmall,
             )
           else
@@ -1267,7 +1276,7 @@ class _CurrencyPriceOverridesEditor extends StatelessWidget {
                       child: DropdownButtonFormField<String>(
                         initialValue: selectedCurrency,
                         decoration:
-                            const InputDecoration(labelText: 'Currency'),
+                            InputDecoration(labelText: tr.text('currency')),
                         items: rowCurrencies
                             .map((currency) => DropdownMenuItem(
                                   value: currency,
@@ -1285,13 +1294,13 @@ class _CurrencyPriceOverridesEditor extends StatelessWidget {
                       child: TextFormField(
                         initialValue: draft.amountText,
                         decoration:
-                            const InputDecoration(labelText: 'Fixed price'),
+                            InputDecoration(labelText: tr.text('fixed_price')),
                         keyboardType: const TextInputType.numberWithOptions(
                             decimal: true),
                         validator: (value) {
                           final amount = double.tryParse((value ?? '').trim());
                           if (amount == null || amount < 0) {
-                            return 'Invalid number';
+                            return tr.text('invalid_number');
                           }
                           return null;
                         },
@@ -1300,7 +1309,7 @@ class _CurrencyPriceOverridesEditor extends StatelessWidget {
                       ),
                     ),
                     IconButton(
-                      tooltip: 'Remove override',
+                      tooltip: tr.text('remove_override'),
                       onPressed: () => _remove(index),
                       icon: const Icon(Icons.delete_outline),
                     ),
@@ -1393,7 +1402,7 @@ class _SupplierPricesEditor extends StatelessWidget {
                 OutlinedButton.icon(
                   onPressed: canAdd ? () => _importCsv(context) : null,
                   icon: const Icon(Icons.upload_file_outlined),
-                  label: const Text('CSV'),
+                  label: Text(tr.text('csv')),
                 ),
                 FilledButton.icon(
                   onPressed: canAdd ? () => _openEditor(context) : null,

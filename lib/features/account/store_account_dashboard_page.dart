@@ -97,7 +97,12 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
                 } catch (error) {
                   if (!dialogContext.mounted) return;
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Cloud password changed, but local Owner password was not updated: $error')),
+                    SnackBar(
+                      content: Text(tr.format(
+                        'cloud_password_changed_local_owner_not_updated',
+                        {'error': error},
+                      )),
+                    ),
                   );
                   setDialogState(() => saving = false);
                   return;
@@ -108,7 +113,9 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
                   SnackBar(
                       content: Text(result.message.isEmpty
                           ? tr.text('account_password_changed_success')
-                          : '${result.message} Local Owner password updated.')),
+                          : tr.format('account_password_changed_local_owner_updated', {
+                              'message': result.message,
+                            }))),
                 );
               } else {
                 ScaffoldMessenger.of(context).showSnackBar(

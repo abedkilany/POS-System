@@ -2071,9 +2071,9 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     value: bindToCurrentDevice,
-                    title: const Text('ربط الدرج بالجهاز الحالي'),
+                    title: Text(tr.isArabic ? 'ربط الدرج بالجهاز الحالي' : 'Link drawer to current device'),
                     subtitle: Text(currentDeviceId.isEmpty
-                        ? 'لا يوجد Device ID متاح حالياً'
+                        ? (tr.isArabic ? 'لا يوجد Device ID متاح حالياً' : 'No Device ID is currently available')
                         : currentDeviceId),
                     onChanged: (value) =>
                         setDialogState(() => bindToCurrentDevice = value),
@@ -2194,7 +2194,7 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                 alignment: AlignmentDirectional.centerStart,
                 child: Text(
                   currentDeviceId.isEmpty
-                      ? 'تحذير: لا يوجد Device ID للجهاز الحالي.'
+                      ? (tr.isArabic ? 'تحذير: لا يوجد Device ID للجهاز الحالي.' : 'Warning: no Device ID is available for the current device.')
                       : (deviceDrawers.isEmpty
                           ? 'لم يتم العثور على درج مربوط بهذا الجهاز، تم عرض كل الأدراج.'
                           : 'يتم استخدام درج الجهاز الحالي.'),
@@ -2888,19 +2888,19 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                   decoration:
                       InputDecoration(labelText: tr.text('counted_cash'))),
               const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
+                DropdownButtonFormField<String>(
                 initialValue: closeMode,
-                decoration: const InputDecoration(labelText: 'إجراء الإغلاق'),
-                items: const [
+                decoration: InputDecoration(labelText: tr.isArabic ? 'إجراء الإغلاق' : 'Close action'),
+                items: [
                   DropdownMenuItem(
                       value: 'close_only',
-                      child: Text('إغلاق الوردية وترك النقد في نفس الدرج')),
+                      child: Text(tr.isArabic ? 'إغلاق الوردية وترك النقد في نفس الدرج' : 'Close the shift and keep cash in the same drawer')),
                   DropdownMenuItem(
                       value: 'transfer_location',
-                      child: Text('إغلاق وتحويل النقد إلى درج / صندوق آخر')),
+                      child: Text(tr.isArabic ? 'إغلاق وتحويل النقد إلى درج / صندوق آخر' : 'Close and transfer cash to another drawer / vault')),
                   DropdownMenuItem(
                       value: 'handover_user',
-                      child: Text('تسليم لموظف جديد وفتح وردية جديدة')),
+                      child: Text(tr.isArabic ? 'تسليم لموظف جديد وفتح وردية جديدة' : 'Handover to a new employee and open a new shift')),
                 ],
                 onChanged: (value) =>
                     setDialogState(() => closeMode = value ?? closeMode),

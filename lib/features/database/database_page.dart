@@ -743,8 +743,8 @@ class _DatabasePageState extends State<DatabasePage> {
                         minLines: 7,
                         maxLines: 12,
                         style: const TextStyle(fontFamily: 'monospace'),
-                        decoration: const InputDecoration(
-                          labelText: 'SQL',
+                        decoration: InputDecoration(
+                          labelText: _t('sql_editor'),
                           alignLabelWithHint: true,
                           border: OutlineInputBorder(),
                         ),

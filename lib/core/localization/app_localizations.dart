@@ -68,6 +68,49 @@ String localizeRuntimeMessage(String message, AppLocalizations tr) {
   if (value.isEmpty) return value;
 
   final exact = <String, String>{
+    'Host restored data. Rebuilding this device from the latest snapshot...':
+        'host_restored_data_rebuilding_from_snapshot',
+    'Preparing LAN sync...': 'preparing_lan_sync',
+    'Preparing Cloud sync...': 'preparing_cloud_sync',
+    'Preparing local sync...': 'preparing_local_sync',
+    'LAN sync failed while sending local changes.':
+        'lan_sync_failed_while_sending_local_changes',
+    'Cloud sync failed while sending local changes.':
+        'cloud_sync_failed_while_sending_local_changes',
+    'local sync failed while sending local changes.':
+        'local_sync_failed_while_sending_local_changes',
+    'Pulling authoritative LAN changes...':
+        'pulling_authoritative_lan_changes',
+    'Pulling authoritative Cloud changes...':
+        'pulling_authoritative_cloud_changes',
+    'Pulling authoritative local changes...':
+        'pulling_authoritative_local_changes',
+    'LAN pull failed. Trying snapshot repair...':
+        'lan_pull_failed_trying_snapshot_repair',
+    'Cloud pull failed. Trying snapshot repair...':
+        'cloud_pull_failed_trying_snapshot_repair',
+    'local pull failed. Trying snapshot repair...':
+        'local_pull_failed_trying_snapshot_repair',
+    'LAN sync completed.': 'lan_sync_completed',
+    'Cloud sync completed.': 'cloud_sync_completed',
+    'local sync completed.': 'local_sync_completed',
+    'LAN sync completed. Pushed {pushed} change(s), pulled {pulled} change(s).':
+        'lan_sync_completed_details',
+    'Cloud sync completed. Pushed {pushed} change(s), pulled {pulled} change(s).':
+        'cloud_sync_completed_details',
+    'local sync completed. Pushed {pushed} change(s), pulled {pulled} change(s).':
+        'local_sync_completed_details',
+    'Snapshot: requesting manifest...': 'snapshot_requesting_manifest',
+    'Snapshot: rebuilding local envelope...':
+        'snapshot_rebuilding_local_envelope',
+    'Snapshot: downloading chunk {chunk}/{total}...':
+        'snapshot_downloading_chunk',
+    'Snapshot: uploading chunk {chunk}/{total}...':
+        'snapshot_uploading_chunk',
+    'Snapshot chunk {chunk}/{total} failed after retry: {error}':
+        'snapshot_chunk_failed_after_retry',
+    'Snapshot returned chunk {chunk}, expected {expected}.':
+        'snapshot_chunk_mismatch',
     'Initial Store data is downloading from the Host.':
         'initial_store_data_downloading',
     'Initial Store data downloaded.': 'initial_store_data_downloaded',
@@ -214,6 +257,79 @@ String localizeRuntimeMessage(String message, AppLocalizations tr) {
   if (cloudPage != null) {
     return tr
         .format('pulling_cloud_changes_page', {'page': cloudPage.group(1)});
+  }
+
+  final progressMatch = RegExp(r'^(LAN|Cloud|local) sync completed\. Pushed (\d+) change\(s\), pulled (\d+) change\(s\)\.$')
+      .firstMatch(value);
+  if (progressMatch != null) {
+    final transport = progressMatch.group(1)!.toLowerCase();
+    return tr.format('${transport}_sync_completed_details', {
+      'pushed': progressMatch.group(2),
+      'pulled': progressMatch.group(3),
+    });
+  }
+  final prepareMatch =
+      RegExp(r'^Preparing (.+) sync\.\.\.$').firstMatch(value);
+  if (prepareMatch != null) {
+    final transport = prepareMatch.group(1)!.toLowerCase();
+    return tr.format('preparing_${transport}_sync', {});
+  }
+  final pullMatch =
+      RegExp(r'^Pulling authoritative (.+) changes\.\.\.$').firstMatch(value);
+  if (pullMatch != null) {
+    final transport = pullMatch.group(1)!.toLowerCase();
+    return tr.format('pulling_authoritative_${transport}_changes', {});
+  }
+  final failedMatch = RegExp(r'^(.+) pull failed\. Trying snapshot repair\.\.\.$')
+      .firstMatch(value);
+  if (failedMatch != null) {
+    final transport = failedMatch.group(1)!.toLowerCase();
+    return tr.format(
+        '${transport}_pull_failed_trying_snapshot_repair',
+        {});
+  }
+  final syncDoneMatch =
+      RegExp(r'^(.+) sync completed\.$').firstMatch(value);
+  if (syncDoneMatch != null) {
+    final transport = syncDoneMatch.group(1)!.toLowerCase();
+    return tr.format('${transport}_sync_completed', {});
+  }
+  final snapshotChunkMatch = RegExp(
+          r'^(.+): downloading chunk (\d+)/(\d+)\.\.\.$')
+      .firstMatch(value);
+  if (snapshotChunkMatch != null) {
+    return tr.format('snapshot_downloading_chunk', {
+      'chunk': snapshotChunkMatch.group(2),
+      'total': snapshotChunkMatch.group(3),
+    });
+  }
+  final snapshotUploadMatch = RegExp(
+          r'^(.+): uploading chunk (\d+)/(\d+)\.\.\.$')
+      .firstMatch(value);
+  if (snapshotUploadMatch != null) {
+    return tr.format('snapshot_uploading_chunk', {
+      'chunk': snapshotUploadMatch.group(2),
+      'total': snapshotUploadMatch.group(3),
+    });
+  }
+  final snapshotRetryMatch = RegExp(
+          r'^(.+) chunk (\d+)/(\d+) failed after retry: (.+)$')
+      .firstMatch(value);
+  if (snapshotRetryMatch != null) {
+    return tr.format('snapshot_chunk_failed_after_retry', {
+      'chunk': snapshotRetryMatch.group(2),
+      'total': snapshotRetryMatch.group(3),
+      'error': snapshotRetryMatch.group(4),
+    });
+  }
+  final snapshotMismatchMatch = RegExp(
+          r'^(.+) returned chunk (\d+), expected (\d+)\.$')
+      .firstMatch(value);
+  if (snapshotMismatchMatch != null) {
+    return tr.format('snapshot_chunk_mismatch', {
+      'chunk': snapshotMismatchMatch.group(2),
+      'expected': snapshotMismatchMatch.group(3),
+    });
   }
 
   if (value.startsWith(

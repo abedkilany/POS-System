@@ -8,6 +8,45 @@ import '../../models/product.dart';
 import '../../widgets/summary_card.dart';
 import '../barcode/barcode_scanner_page.dart';
 
+String _movementTypeLabel(AppLocalizations tr, String type) {
+  switch (type) {
+    case 'auto_correction':
+      return tr.text('auto_correction');
+    case 'purchase_receive':
+      return tr.text('purchase_received');
+    case 'purchase_return':
+      return tr.text('purchase_return');
+    case 'purchase_cancel':
+      return tr.text('purchase_cancel');
+    case 'sale':
+      return tr.text('sale_invoice');
+    case 'sale_return':
+      return tr.text('return_sale');
+    case 'sale_restore':
+      return tr.text('sale_restore');
+    case 'sale_cancel':
+      return tr.text('sale_cancel');
+    case 'paymentReceived':
+      return tr.text('payment_received');
+    case 'paymentPaid':
+      return tr.text('payment_paid');
+    case 'paymentReversal':
+      return tr.text('payment_reversal');
+    case 'warehouse_transfer_in':
+      return tr.text('warehouse_transfer_in');
+    case 'warehouse_transfer_out':
+      return tr.text('warehouse_transfer_out');
+    case 'count_adjustment':
+      return tr.text('count_adjustment');
+    case 'manufacturing_consume':
+      return tr.text('manufacturing_consume');
+    case 'manufacturing_output':
+      return tr.text('manufacturing_output');
+    default:
+      return type.replaceAll('_', ' ');
+  }
+}
+
 class InventoryPage extends StatefulWidget {
   const InventoryPage({super.key, required this.store});
 
@@ -29,6 +68,45 @@ class _InventoryPageState extends State<InventoryPage>
     _searchController.dispose();
     _tabController.dispose();
     super.dispose();
+  }
+
+  String _movementTypeLabel(AppLocalizations tr, String type) {
+    switch (type) {
+      case 'auto_correction':
+        return tr.text('auto_correction');
+      case 'purchase_receive':
+        return tr.text('purchase_received');
+      case 'purchase_return':
+        return tr.text('purchase_return');
+      case 'purchase_cancel':
+        return tr.text('purchase_cancel');
+      case 'sale':
+        return tr.text('sale_invoice');
+      case 'sale_return':
+        return tr.text('return_sale');
+      case 'sale_restore':
+        return tr.text('sale_restore');
+      case 'sale_cancel':
+        return tr.text('sale_cancel');
+      case 'paymentReceived':
+        return tr.text('payment_received');
+      case 'paymentPaid':
+        return tr.text('payment_paid');
+      case 'paymentReversal':
+        return tr.text('payment_reversal');
+      case 'warehouse_transfer_in':
+        return tr.text('warehouse_transfer_in');
+      case 'warehouse_transfer_out':
+        return tr.text('warehouse_transfer_out');
+      case 'count_adjustment':
+        return tr.text('count_adjustment');
+      case 'manufacturing_consume':
+        return tr.text('manufacturing_consume');
+      case 'manufacturing_output':
+        return tr.text('manufacturing_output');
+      default:
+        return type.replaceAll('_', ' ');
+    }
   }
 
   Future<void> _scanInventorySearchBarcode() async {
@@ -660,7 +738,7 @@ class _MovementsList extends StatelessWidget {
                                 : Icons.remove)),
                         title: Text(movement.productName),
                         subtitle: Text(
-                            "${movement.type} • ${movement.warehouseName} • ${movement.referenceNo} • ${movement.date.toLocal().toString().split('.').first}\n${movement.reason}${movement.notes.isNotEmpty ? ' • ${movement.notes}' : ''}${movement.evidenceRef.isNotEmpty ? ' • ${tr.text('evidence')}: ${movement.evidenceRef}' : ''}"),
+                            "${_movementTypeLabel(tr, movement.type)} • ${movement.warehouseName} • ${movement.referenceNo} • ${movement.date.toLocal().toString().split('.').first}\n${movement.reason}${movement.notes.isNotEmpty ? ' • ${movement.notes}' : ''}${movement.evidenceRef.isNotEmpty ? ' • ${tr.text('evidence')}: ${movement.evidenceRef}' : ''}"),
                         isThreeLine: true,
                         trailing: Column(
                             mainAxisAlignment: MainAxisAlignment.center,

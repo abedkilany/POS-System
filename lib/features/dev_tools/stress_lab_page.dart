@@ -169,6 +169,83 @@ class StressLabPage extends StatefulWidget {
 class _StressLabPageState extends State<StressLabPage> {
   String _t(String key) => AppLocalizations.of(context).text(key);
   String _tf(String key, Map<String, Object?> values) => AppLocalizations.of(context).format(key, values);
+  String _dual(String ar, String en) => AppLocalizations.of(context).isArabic ? ar : en;
+  String _reportLabel(String value, AppLocalizations tr) {
+    if (tr.isArabic) return value;
+    return switch (value) {
+      'الكتالوج' => 'Catalog',
+      'الموردون' => 'Suppliers',
+      'العملاء' => 'Customers',
+      'المنتجات' => 'Products',
+      'المخزون' => 'Inventory',
+      'الوردية النقدية' => 'Cash Drawer',
+      'المشتريات' => 'Purchases',
+      'الجرد' => 'Stock Count',
+      'التصنيع' => 'Manufacturing',
+      'المبيعات' => 'Sales',
+      'سندات التسليم' => 'Delivery Notes',
+      'عروض الأسعار' => 'Quotations',
+      'المصاريف' => 'Expenses',
+      'النسخ الاحتياطي' => 'Backup',
+      'المزامنة' => 'Sync',
+      'ملخص البيانات' => 'Data Summary',
+      'سلامة البيانات' => 'Data Integrity',
+      'صيانة التطبيق' => 'App Maintenance',
+      'أدلة الصيانة' => 'Maintenance Evidence',
+      'المحاسبة' => 'Accounting',
+      'المحاسبة المتقدمة' => 'Advanced Accounting',
+      'المخزون المتقدم' => 'Advanced Inventory',
+      'الأداء' => 'Performance',
+      'تحليل السبب الجذري' => 'Root Cause Analysis',
+      'اقتراحات الإصلاح' => 'Fix Suggestions',
+      'صلاحية مبالغ القيود' => 'Journal amount validity',
+      'تغطية فواتير البيع بقيود يومية' => 'Sale journal coverage',
+      'تغطية فواتير الشراء بقيود يومية' => 'Purchase journal coverage',
+      'تغطية المصاريف بقيود يومية' => 'Expense journal coverage',
+      'توازن دفتر اليومية' => 'Journal balance',
+      'صلاحية أرصدة المنتجات' => 'Product balance validity',
+      'عدم وجود مخزون اختبار سالب' => 'No negative test stock',
+      'عدم وجود حركات مخزون يتيمة' => 'No orphan stock movements',
+      'منحنى التباطؤ' => 'Slowdown curve',
+      'تغطية قياس المبيعات' => 'Sales measurement coverage',
+      'تشخيص المصاريف المحاسبي' => 'Accounting expense diagnosis',
+      'تشخيص فرق المدين والدائن' => 'Debit/Credit difference diagnosis',
+      'تشخيص الفواتير المدفوعة بزيادة' => 'Overpaid invoices diagnosis',
+      'تشخيص تباطؤ الأداء' => 'Performance slowdown diagnosis',
+      'تشخيص حالة المزامنة' => 'Sync state diagnosis',
+      'خطوات مقترحة حسب الأدلة' => 'Suggested steps from evidence',
+      'نمو البيانات بعد الاختبار' => 'Data growth after test',
+      'حركات تشغيلية جديدة' => 'New operational movements',
+      'سلامة أرقام المخزون' => 'Inventory number validity',
+      'عدم وجود Queue فاشلة/مرفوضة' => 'No failed/rejected queue items',
+      'ترحيل محاسبي محلي' => 'Local accounting posting',
+      'منطق نتيجة المبيعات' => 'Sales result logic',
+      'PASS' => 'PASS',
+      'WARN' => 'WARN',
+      'FAIL' => 'FAIL',
+      _ => value,
+    };
+  }
+
+  bool _sectionMatches(String actual, String canonical) {
+    if (actual == canonical || actual.startsWith('$canonical ')) return true;
+    return switch (canonical) {
+      'ضغط' => actual.startsWith('ضغط ') || actual.endsWith(' pressure') || actual == 'Pressure',
+      'الأداء' => actual == 'Performance',
+      'المحاسبة' => actual == 'Accounting',
+      'المحاسبة المتقدمة' => actual == 'Advanced Accounting',
+      'المخزون' => actual == 'Inventory',
+      'المخزون المتقدم' => actual == 'Advanced Inventory',
+      'ملخص البيانات' => actual == 'Data Summary',
+      'سلامة البيانات' => actual == 'Data Integrity',
+      'صيانة التطبيق' => actual == 'App Maintenance',
+      'أدلة الصيانة' => actual == 'Maintenance Evidence',
+      'المزامنة' => actual == 'Sync',
+      'تحليل السبب الجذري' => actual == 'Root Cause Analysis',
+      'اقتراحات الإصلاح' => actual == 'Fix Suggestions',
+      _ => false,
+    };
+  }
   final _productsController = TextEditingController(text: '1000');
   final _customersController = TextEditingController(text: '500');
   final _suppliersController = TextEditingController(text: '100');
@@ -1214,6 +1291,7 @@ class _StressLabPageState extends State<StressLabPage> {
     double endProgress = 1.0,
   }) async {
     final stats = _StressPerfStats(section, name);
+    final tr = AppLocalizations.of(context);
     _resetTraceCapture();
     final swTotal = Stopwatch()..start();
     final progressEvery = max<int>(1, count ~/ 20);
@@ -1233,7 +1311,7 @@ class _StressLabPageState extends State<StressLabPage> {
       }
       if (i % progressEvery == 0) {
         final ratio = count <= 1 ? 1.0 : i / (count - 1);
-        _setStatus('$section / $name: ${i + 1}/$count', progress: startProgress + (endProgress - startProgress) * ratio);
+        _setStatus('${_reportLabel(section, tr)} / ${_reportLabel(name, tr)}: ${i + 1}/$count', progress: startProgress + (endProgress - startProgress) * ratio);
         await Future<void>.delayed(Duration.zero);
       }
     }
@@ -1253,13 +1331,13 @@ class _StressLabPageState extends State<StressLabPage> {
     final count = _pressureMultiplier;
     AppStore.setTraceSink(_captureTrace);
     try {
-      await _auditStep('الوردية النقدية', 'تجهيز وردية نقدية للاختبار الضاغط', () async {
+      await _auditStep(_dual('الوردية النقدية', 'Cash Drawer'), _dual('تجهيز وردية نقدية للاختبار الضاغط', 'Prepare cash drawer for pressure test'), () async {
         await _ensureAuditCashDrawerOpen();
-        return AccountingService.isAvailable ? 'تم التأكد من وجود وردية نقدية أو فتح وردية اختبارية.' : 'SQLite Accounting غير متاح؛ تم تجاوز فتح الوردية.';
+        return AccountingService.isAvailable ? _dual('تم التأكد من وجود وردية نقدية أو فتح وردية اختبارية.', 'Cash drawer confirmed or test drawer opened.') : _dual('SQLite Accounting غير متاح؛ تم تجاوز فتح الوردية.', 'SQLite Accounting is unavailable; cash drawer opening was skipped.');
       }, successDetails: (value) => value);
 
     final pressureCustomers = <Customer>[];
-    await _pressureStep('ضغط العملاء', 'إنشاء $count عميل', count, (i) async {
+    await _pressureStep(_dual('ضغط العملاء', 'Customer pressure'), _dual('إنشاء $count عميل', 'Create $count customers'), count, (i) async {
       final customer = Customer(
         id: '${_currentBatchId}_pc_$i',
         name: '[PRESSURE] Customer $i $_currentBatchId',
@@ -1271,7 +1349,7 @@ class _StressLabPageState extends State<StressLabPage> {
     }, startProgress: 0.79, endProgress: 0.815);
 
     final pressureSuppliers = <Supplier>[];
-    await _pressureStep('ضغط الموردين', 'إنشاء $count مورد', count, (i) async {
+    await _pressureStep(_dual('ضغط الموردين', 'Supplier pressure'), _dual('إنشاء $count مورد', 'Create $count suppliers'), count, (i) async {
       final supplier = Supplier(
         id: '${_currentBatchId}_ps_$i',
         name: '[PRESSURE] Supplier $i $_currentBatchId',
@@ -1284,7 +1362,7 @@ class _StressLabPageState extends State<StressLabPage> {
     }, startProgress: 0.815, endProgress: 0.84);
 
     final pressureProducts = <Product>[];
-    await _pressureStep('ضغط المنتجات', 'إنشاء $count منتج', count, (i) async {
+    await _pressureStep(_dual('ضغط المنتجات', 'Product pressure'), _dual('إنشاء $count منتج', 'Create $count products'), count, (i) async {
       final product = Product(
         id: '${_currentBatchId}_pp_$i',
         name: '[PRESSURE] Product $i $_currentBatchId',
@@ -1313,7 +1391,7 @@ class _StressLabPageState extends State<StressLabPage> {
     final supplierPool = pressureSuppliers.isNotEmpty ? pressureSuppliers : (baseSupplier == null ? <Supplier>[] : <Supplier>[baseSupplier]);
 
     if (salePool.isNotEmpty) {
-      await _pressureStep('ضغط المخزون', 'تنفيذ $count تعديل مخزون', count, (i) async {
+      await _pressureStep(_dual('ضغط المخزون', 'Inventory pressure'), _dual('تنفيذ $count تعديل مخزون', 'Apply $count stock adjustments'), count, (i) async {
         final product = salePool[i % salePool.length];
         await store.adjustStock(
           productId: product.id,
@@ -1326,7 +1404,7 @@ class _StressLabPageState extends State<StressLabPage> {
     }
 
     if (salePool.isNotEmpty && supplierPool.isNotEmpty) {
-      await _pressureStep('ضغط المشتريات', 'إنشاء واستلام $count فاتورة شراء', count, (i) async {
+      await _pressureStep(_dual('ضغط المشتريات', 'Purchase pressure'), _dual('إنشاء واستلام $count فاتورة شراء', 'Create and receive $count purchase invoices'), count, (i) async {
         final product = salePool[i % salePool.length];
         final supplier = supplierPool[i % supplierPool.length];
         await store.createPurchase(
@@ -1342,7 +1420,7 @@ class _StressLabPageState extends State<StressLabPage> {
     }
 
     if (salePool.isNotEmpty && customerPool.isNotEmpty) {
-      await _pressureStep('ضغط المبيعات', 'إنشاء $count فاتورة بيع', count, (i) async {
+      await _pressureStep(_dual('ضغط المبيعات', 'Sales pressure'), _dual('إنشاء $count فاتورة بيع', 'Create $count sale invoices'), count, (i) async {
         final product = salePool[i % salePool.length];
         final customer = customerPool[i % customerPool.length];
         await store.createSale(
@@ -1356,7 +1434,7 @@ class _StressLabPageState extends State<StressLabPage> {
       }, startProgress: 0.915, endProgress: 0.94);
     }
 
-      await _pressureStep('ضغط المصاريف', 'إنشاء وترحيل $count مصروف', count, (i) async {
+      await _pressureStep(_dual('ضغط المصاريف', 'Expense pressure'), _dual('إنشاء وترحيل $count مصروف', 'Create and post $count expenses'), count, (i) async {
         final expense = Expense(
           id: '${_currentBatchId}_pe_$i',
           title: '[PRESSURE] Expense $i $_currentBatchId',
@@ -1378,7 +1456,7 @@ class _StressLabPageState extends State<StressLabPage> {
     setState(() {
       _running = true;
       _progress = 0;
-      _status = 'تشغيل اختبار شامل...';
+      _status = _dual('تشغيل اختبار شامل...', 'Running full test...');
       _report.clear();
       _assertions.clear();
       _log.clear();
@@ -1400,37 +1478,37 @@ class _StressLabPageState extends State<StressLabPage> {
       _addLog(_snapshotLine('AUDIT_BEFORE'));
       _logDatabaseMetrics('AUDIT_BEFORE_DB');
 
-      _setStatus('إنشاء الكتالوج...', progress: 0.05);
-      final category = await _auditStep('الكتالوج', 'إنشاء تصنيف', () async {
+      _setStatus(_dual('إنشاء الكتالوج...', 'Building catalog...'), progress: 0.05);
+      final category = await _auditStep(_dual('الكتالوج', 'Catalog'), _dual('إنشاء تصنيف', 'Create category'), () async {
         final item = CatalogItem(id: '${_currentBatchId}_cat', nameEn: 'Stress Audit Category $_currentBatchId', nameAr: 'تصنيف اختبار شامل $_currentBatchId', code: 'AUD-CAT-${DateTime.now().millisecondsSinceEpoch}');
         await store.addOrUpdateCategory(item);
         return item;
-      }, successDetails: (item) => 'تم إنشاء التصنيف ${item.code}.');
-      final brand = await _auditStep('الكتالوج', 'إنشاء براند', () async {
+      }, successDetails: (item) => _dual('تم إنشاء التصنيف ${item.code}.', 'Category ${item.code} created.'));
+      final brand = await _auditStep(_dual('الكتالوج', 'Catalog'), _dual('إنشاء براند', 'Create brand'), () async {
         final item = CatalogItem(id: '${_currentBatchId}_brand', nameEn: 'Stress Audit Brand $_currentBatchId', nameAr: 'براند اختبار شامل $_currentBatchId', code: 'AUD-BRD-${DateTime.now().millisecondsSinceEpoch}');
         await store.addOrUpdateBrand(item);
         return item;
-      }, successDetails: (item) => 'تم إنشاء البراند ${item.code}.');
-      final unit = await _auditStep('الكتالوج', 'إنشاء وحدة', () async {
+      }, successDetails: (item) => _dual('تم إنشاء البراند ${item.code}.', 'Brand ${item.code} created.'));
+      final unit = await _auditStep(_dual('الكتالوج', 'Catalog'), _dual('إنشاء وحدة', 'Create unit'), () async {
         final item = CatalogItem(id: '${_currentBatchId}_unit', nameEn: 'Piece Audit $_currentBatchId', nameAr: 'قطعة اختبار $_currentBatchId', code: 'AUD-PCS-${DateTime.now().millisecondsSinceEpoch}');
         await store.addOrUpdateUnit(item);
         return item;
-      }, successDetails: (item) => 'تم إنشاء الوحدة ${item.code}.');
+      }, successDetails: (item) => _dual('تم إنشاء الوحدة ${item.code}.', 'Unit ${item.code} created.'));
 
-      _setStatus('إنشاء الأطراف والمنتجات...', progress: 0.14);
-      final supplier = await _auditStep('الموردون', 'إنشاء مورد', () async {
+      _setStatus(_dual('إنشاء الأطراف والمنتجات...', 'Building parties and products...'), progress: 0.14);
+      final supplier = await _auditStep(_dual('الموردون', 'Suppliers'), _dual('إنشاء مورد', 'Create supplier'), () async {
         final item = Supplier(id: '${_currentBatchId}_supplier', name: '[AUDIT] Supplier $_currentBatchId', phone: '+96170000000', address: 'Audit supplier address', notes: 'Generated by one-button Stress Lab audit');
         await store.addOrUpdateSupplier(item);
         return item;
-      }, successDetails: (item) => 'المورد: ${item.name}.');
-      final customer = await _auditStep('العملاء', 'إنشاء عميل', () async {
+      }, successDetails: (item) => _dual('المورد: ${item.name}.', 'Supplier: ${item.name}.'));
+      final customer = await _auditStep(_dual('العملاء', 'Customers'), _dual('إنشاء عميل', 'Create customer'), () async {
         final item = Customer(id: '${_currentBatchId}_customer', name: '[AUDIT] Customer $_currentBatchId', phone: '+96171000000', address: 'Audit customer address');
         await store.addOrUpdateCustomer(item);
         return item;
-      }, successDetails: (item) => 'العميل: ${item.name}.');
+      }, successDetails: (item) => _dual('العميل: ${item.name}.', 'Customer: ${item.name}.'));
 
       final products = <Product>[];
-      await _auditStep('المنتجات', 'إنشاء منتجات متنوعة', () async {
+      await _auditStep(_dual('المنتجات', 'Products'), _dual('إنشاء منتجات متنوعة', 'Create sample products'), () async {
         for (var i = 1; i <= 4; i++) {
           final product = Product(
             id: '${_currentBatchId}_product_$i',
@@ -1455,10 +1533,10 @@ class _StressLabPageState extends State<StressLabPage> {
           products.add(product);
         }
         return products.length;
-      }, successDetails: (count) => 'تم إنشاء $count منتجات قابلة للبيع والجرد.');
+      }, successDetails: (count) => _dual('تم إنشاء $count منتجات قابلة للبيع والجرد.', '$count sellable inventory products created.'));
 
       if (products.isNotEmpty && supplier != null) {
-        await _auditStep('الموردون', 'ربط سعر مورد بمنتج', () async {
+        await _auditStep(_dual('الموردون', 'Suppliers'), _dual('ربط سعر مورد بمنتج', 'Link supplier price to product'), () async {
           await store.addOrUpdateSupplierProductPrice(SupplierProductPrice(
             id: '${_currentBatchId}_spp',
             productId: products.first.id,
@@ -1472,34 +1550,34 @@ class _StressLabPageState extends State<StressLabPage> {
             notes: 'Generated by one-button Stress Lab audit',
           ));
           return store.supplierProductPricesForProduct(products.first.id).length;
-        }, successDetails: (count) => 'أسعار الموردين لهذا المنتج: $count.');
+        }, successDetails: (count) => _dual('أسعار الموردين لهذا المنتج: $count.', 'Supplier prices for this product: $count.'));
       }
 
-      _setStatus('اختبار المخزون...', progress: 0.28);
-      final warehouse = await _auditStep('المخزون', 'إنشاء مستودع', () async => store.createWarehouse(name: '[AUDIT] Warehouse $_currentBatchId', code: 'AUD-WH-${DateTime.now().millisecondsSinceEpoch}', location: 'Stress Lab'), successDetails: (wh) => 'تم إنشاء المستودع ${wh.name}.');
+      _setStatus(_dual('اختبار المخزون...', 'Running inventory test...'), progress: 0.28);
+      final warehouse = await _auditStep(_dual('المخزون', 'Inventory'), _dual('إنشاء مستودع', 'Create warehouse'), () async => store.createWarehouse(name: '[AUDIT] Warehouse $_currentBatchId', code: 'AUD-WH-${DateTime.now().millisecondsSinceEpoch}', location: 'Stress Lab'), successDetails: (wh) => _dual('تم إنشاء المستودع ${wh.name}.', 'Warehouse ${wh.name} created.'));
       if (products.isNotEmpty) {
-        await _auditStep('المخزون', 'تعديل مخزون يدوي', () async {
+        await _auditStep(_dual('المخزون', 'Inventory'), _dual('تعديل مخزون يدوي', 'Manual stock adjustment'), () async {
           final before = store.products.firstWhere((p) => p.id == products.first.id).stock;
           await store.adjustStock(productId: products.first.id, quantityDelta: 7, reason: 'Stress Lab audit adjustment', adjustmentCategory: 'audit_adjustment', notes: _currentBatchId);
           final after = store.products.firstWhere((p) => p.id == products.first.id).stock;
           return after - before;
-        }, successDetails: (delta) => 'فرق المخزون المسجل: ${_money(delta)}.');
+        }, successDetails: (delta) => _dual('فرق المخزون المسجل: ${_money(delta)}.', 'Recorded stock delta: ${_money(delta)}.'));
         if (warehouse != null) {
-          await _auditStep('المخزون', 'تحويل مخزون بين المستودعات', () async {
+          await _auditStep(_dual('المخزون', 'Inventory'), _dual('تحويل مخزون بين المستودعات', 'Transfer stock between warehouses'), () async {
             await store.transferStock(productId: products.first.id, fromWarehouseId: store.defaultWarehouse.id, toWarehouseId: warehouse.id, quantity: 3.0, notes: 'Stress Lab audit transfer');
             return store.stockForWarehouse(products.first.id, warehouse.id);
-          }, successDetails: (qty) => 'رصيد المستودع الجديد للمنتج: ${_money(qty)}.');
+          }, successDetails: (qty) => _dual('رصيد المستودع الجديد للمنتج: ${_money(qty)}.', 'New warehouse balance for product: ${_money(qty)}.'));
         }
       }
 
-      await _auditStep('الوردية النقدية', 'تجهيز وردية نقدية قبل العمليات النقدية', () async {
+      await _auditStep(_dual('الوردية النقدية', 'Cash Drawer'), _dual('تجهيز وردية نقدية قبل العمليات النقدية', 'Prepare cash drawer before cash operations'), () async {
         await _ensureAuditCashDrawerOpen();
-        return AccountingService.isAvailable ? 'تم فتح/تأكيد وردية نقدية قبل الشراء والمصاريف.' : 'SQLite Accounting غير متاح؛ تم تجاوز فتح الوردية.';
+        return AccountingService.isAvailable ? _dual('تم فتح/تأكيد وردية نقدية قبل الشراء والمصاريف.', 'Cash drawer opened/confirmed before purchases and expenses.') : _dual('SQLite Accounting غير متاح؛ تم تجاوز فتح الوردية.', 'SQLite Accounting is not available; cash drawer opening was skipped.');
       }, successDetails: (value) => value);
 
-      _setStatus('اختبار المشتريات والجرد...', progress: 0.40);
+      _setStatus(_dual('اختبار المشتريات والجرد...', 'Running purchases and stock count test...'), progress: 0.40);
       if (products.length >= 2 && supplier != null) {
-        final purchase = await _auditStep('المشتريات', 'إنشاء واستلام فاتورة شراء', () async => store.createPurchase(
+        final purchase = await _auditStep(_dual('المشتريات', 'Purchases'), _dual('إنشاء واستلام فاتورة شراء', 'Create and receive purchase invoice'), () async => store.createPurchase(
               supplierId: supplier.id,
               supplierName: supplier.name,
               receiveNow: true,
@@ -1507,129 +1585,129 @@ class _StressLabPageState extends State<StressLabPage> {
               paidAmount: 10.0,
               note: 'Stress Lab audit purchase',
               items: [PurchaseItem(productId: products[1].id, productName: products[1].name, quantity: 6.0, unitCost: products[1].cost, purchaseUnitName: products[1].unit, conversionToBase: 1.0)],
-            ), successDetails: (po) => 'فاتورة شراء ${po.purchaseNo} بقيمة ${_money(po.subtotal)}.');
-        _auditCheck('المشتريات', 'تدقيق أثر الشراء على المخزون', purchase != null && store.stockMovements.any((m) => m.referenceId == purchase.id && m.type == 'purchase_receive'), 'تم تسجيل حركة استلام مخزون للشراء.', 'لم يتم العثور على حركة استلام مخزون مرتبطة بالشراء.');
+            ), successDetails: (po) => _dual('فاتورة شراء ${po.purchaseNo} بقيمة ${_money(po.subtotal)}.', 'Purchase invoice ${po.purchaseNo} worth ${_money(po.subtotal)}.'));
+        _auditCheck(_dual('المشتريات', 'Purchases'), _dual('تدقيق أثر الشراء على المخزون', 'Verify purchase stock impact'), purchase != null && store.stockMovements.any((m) => m.referenceId == purchase.id && m.type == 'purchase_receive'), _dual('تم تسجيل حركة استلام مخزون للشراء.', 'A stock receipt movement was recorded for the purchase.'), _dual('لم يتم العثور على حركة استلام مخزون مرتبطة بالشراء.', 'No stock receipt movement was linked to the purchase.'));
       }
       if (products.isNotEmpty) {
-        await _auditStep('الجرد', 'فتح واعتماد جلسة جرد', () async {
+        await _auditStep(_dual('الجرد', 'Stock Count'), _dual('فتح واعتماد جلسة جرد', 'Open and approve stock count session'), () async {
           final session = await store.createInventoryCountSession(notes: 'Stress Lab audit count');
           final line = session.lines.firstWhere((line) => line.productId == products.first.id);
           await store.countInventoryLine(sessionId: session.id, productId: products.first.id, countedQty: line.snapshotStock + 1, note: 'Audit counted +1');
           await store.approveInventoryCount(session.id);
           return session.countNo;
-        }, successDetails: (countNo) => 'تم اعتماد جلسة الجرد $countNo.');
+        }, successDetails: (countNo) => _dual('تم اعتماد جلسة الجرد $countNo.', 'Stock count session $countNo approved.'));
       }
 
-      _setStatus('اختبار التصنيع...', progress: 0.52);
+      _setStatus(_dual('اختبار التصنيع...', 'Running manufacturing test...'), progress: 0.52);
       if (products.length >= 3) {
-        final bom = await _auditStep('التصنيع', 'إنشاء وصفة تصنيع BOM', () async => store.createBillOfMaterials(
+        final bom = await _auditStep(_dual('التصنيع', 'Manufacturing'), _dual('إنشاء وصفة تصنيع BOM', 'Create BOM recipe'), () async => store.createBillOfMaterials(
               name: '[AUDIT] BOM $_currentBatchId',
               outputProductId: products[2].id,
               outputQuantity: 1.0,
               components: [BillOfMaterialsLine(productId: products.first.id, productName: products.first.name, quantity: 1.0, unitCost: products.first.cost)],
               notes: 'Stress Lab audit BOM',
-            ), successDetails: (value) => 'تم إنشاء BOM ${value.name}.');
+            ), successDetails: (value) => _dual('تم إنشاء BOM ${value.name}.', 'BOM ${value.name} created.'));
         if (bom != null) {
-          await _auditStep('التصنيع', 'تنفيذ أمر تصنيع', () async => store.completeManufacturingOrder(bomId: bom.id, quantity: 2.0, notes: 'Stress Lab audit manufacturing'), successDetails: (order) => 'تم تنفيذ أمر تصنيع ${order.orderNo}.');
+          await _auditStep(_dual('التصنيع', 'Manufacturing'), _dual('تنفيذ أمر تصنيع', 'Complete manufacturing order'), () async => store.completeManufacturingOrder(bomId: bom.id, quantity: 2.0, notes: 'Stress Lab audit manufacturing'), successDetails: (order) => _dual('تم تنفيذ أمر تصنيع ${order.orderNo}.', 'Manufacturing order ${order.orderNo} completed.'));
         }
       }
 
-      _setStatus('اختبار المبيعات والوثائق...', progress: 0.64);
+      _setStatus(_dual('اختبار المبيعات والوثائق...', 'Running sales and documents test...'), progress: 0.64);
       Sale? normalSale;
       if (products.length >= 2 && customer != null) {
-        normalSale = await _auditStep('المبيعات', 'إنشاء فاتورة بيع مدفوعة بالبطاقة', () async => store.createSale(customerName: customer.name, customerId: customer.id, items: _saleItemsFromProducts(products.take(2).toList(), quantity: 2.0), discount: 1.0, paymentMethod: 'Card', paymentStatus: 'paid'), successDetails: (sale) => 'فاتورة ${sale.invoiceNo} بقيمة ${_money(sale.total)} وربح ${_money(sale.grossProfit)}.');
+        normalSale = await _auditStep(_dual('المبيعات', 'Sales'), _dual('إنشاء فاتورة بيع مدفوعة بالبطاقة', 'Create card sale invoice'), () async => store.createSale(customerName: customer.name, customerId: customer.id, items: _saleItemsFromProducts(products.take(2).toList(), quantity: 2.0), discount: 1.0, paymentMethod: 'Card', paymentStatus: 'paid'), successDetails: (sale) => _dual('فاتورة ${sale.invoiceNo} بقيمة ${_money(sale.total)} وربح ${_money(sale.grossProfit)}.', 'Invoice ${sale.invoiceNo} worth ${_money(sale.total)} and profit ${_money(sale.grossProfit)}.'));
         if (normalSale != null) {
-          await _auditStep('سندات التسليم', 'إنشاء وتسليم سند تسليم', () async {
+          await _auditStep(_dual('سندات التسليم', 'Delivery Notes'), _dual('إنشاء وتسليم سند تسليم', 'Create and deliver delivery note'), () async {
             final note = await store.createDeliveryNoteFromSale(normalSale!.id, note: 'Stress Lab audit delivery');
             await store.markDeliveryNoteDelivered(note.id);
             return note.deliveryNo;
-          }, successDetails: (deliveryNo) => 'تم إنشاء وتسليم السند $deliveryNo.');
+          }, successDetails: (deliveryNo) => _dual('تم إنشاء وتسليم السند $deliveryNo.', 'Delivery note $deliveryNo created and delivered.'));
         }
       }
       if (products.isNotEmpty && customer != null) {
-        await _auditStep('عروض الأسعار', 'إنشاء عرض سعر وتحويله إلى بيع', () async {
+        await _auditStep(_dual('عروض الأسعار', 'Quotations'), _dual('إنشاء عرض سعر وتحويله إلى بيع', 'Create quotation and convert to sale'), () async {
           final quotation = await store.createSaleQuotation(customerName: customer.name, customerId: customer.id, items: _saleItemsFromProducts([products.last], quantity: 1.0), discount: 0.5, note: 'Stress Lab audit quotation');
           final sale = await store.convertSaleQuotationToSale(quotation.id, paymentMethod: 'Card', paymentStatus: 'paid');
           return '${quotation.quotationNo} -> ${sale.invoiceNo}';
-        }, successDetails: (value) => 'تم التحويل: $value.');
+        }, successDetails: (value) => _dual('تم التحويل: $value.', 'Converted: $value.'));
       }
       if (products.length >= 2 && customer != null) {
-        await _auditStep('المبيعات', 'إنشاء وإرجاع فاتورة بيع', () async {
+        await _auditStep(_dual('المبيعات', 'Sales'), _dual('إنشاء وإرجاع فاتورة بيع', 'Create and return sale invoice'), () async {
           final sale = await store.createSale(customerName: customer.name, customerId: customer.id, items: _saleItemsFromProducts([products[1]], quantity: 1.0), paymentMethod: 'Card', paymentStatus: 'paid');
           await store.returnSale(sale.id, restoreStock: true);
           return sale.invoiceNo;
-        }, successDetails: (invoice) => 'تم إنشاء ثم إرجاع الفاتورة $invoice.');
-        await _auditStep('المبيعات', 'إنشاء وإلغاء فاتورة بيع', () async {
+        }, successDetails: (invoice) => _dual('تم إنشاء ثم إرجاع الفاتورة $invoice.', 'Invoice $invoice created and returned.'));
+        await _auditStep(_dual('المبيعات', 'Sales'), _dual('إنشاء وإلغاء فاتورة بيع', 'Create and cancel sale invoice'), () async {
           final sale = await store.createSale(customerName: customer.name, customerId: customer.id, items: _saleItemsFromProducts([products[1]], quantity: 1.0), paymentMethod: 'Card', paymentStatus: 'paid');
           await store.cancelSale(sale.id, restoreStock: true);
           return sale.invoiceNo;
-        }, successDetails: (invoice) => 'تم إنشاء ثم إلغاء الفاتورة $invoice.');
+        }, successDetails: (invoice) => _dual('تم إنشاء ثم إلغاء الفاتورة $invoice.', 'Invoice $invoice created and cancelled.'));
       }
 
-      _setStatus('اختبار المصاريف والمحاسبة...', progress: 0.78);
-      final expense = await _auditStep('المصاريف', 'إنشاء وترحيل مصروف', () async {
+      _setStatus(_dual('اختبار المصاريف والمحاسبة...', 'Running expenses and accounting test...'), progress: 0.78);
+      final expense = await _auditStep(_dual('المصاريف', 'Expenses'), _dual('إنشاء وترحيل مصروف', 'Create and post expense'), () async {
         final item = Expense(id: '${_currentBatchId}_expense', title: '[AUDIT] Expense $_currentBatchId', category: 'Operations', amount: 12.75, date: DateTime.now(), notes: 'Stress Lab audit expense');
         await store.addOrUpdateExpense(item);
         await store.postExpense(item.id);
         return item.id;
-      }, successDetails: (id) => 'تم إنشاء وترحيل المصروف $id.');
+      }, successDetails: (id) => _dual('تم إنشاء وترحيل المصروف $id.', 'Expense $id created and posted.'));
       if (expense != null) {
-        await _auditStep('المصاريف', 'إلغاء مصروف مرحّل', () async {
+        await _auditStep(_dual('المصاريف', 'Expenses'), _dual('إلغاء مصروف مرحّل', 'Cancel posted expense'), () async {
           await store.cancelExpense(expense, reason: 'Stress Lab audit cancel');
           return expense;
-        }, successDetails: (id) => 'تم إلغاء المصروف $id.');
+        }, successDetails: (id) => _dual('تم إلغاء المصروف $id.', 'Expense $id cancelled.'));
       }
 
-      _setStatus('تشغيل اختبار الضغط 1000x...', progress: 0.79);
+      _setStatus(_dual('تشغيل اختبار الضغط 1000x...', 'Running x1000 pressure test...'), progress: 0.79);
       await _runPressureAudit(baseProducts: products, baseCustomer: customer, baseSupplier: supplier);
 
-      _setStatus('اختبار النسخ الاحتياطي والمزامنة...', progress: 0.97);
-      await _auditStep('النسخ الاحتياطي', 'توليد Backup JSON', () async {
+      _setStatus(_dual('اختبار النسخ الاحتياطي والمزامنة...', 'Running backup and sync test...'), progress: 0.97);
+      await _auditStep(_dual('النسخ الاحتياطي', 'Backup'), _dual('توليد Backup JSON', 'Generate backup JSON'), () async {
         final raw = store.exportBackupJson();
         final decoded = jsonDecode(raw) as Map<String, dynamic>;
         return '${raw.length} bytes, keys=${decoded.keys.length}';
-      }, successDetails: (value) => 'نجح توليد النسخة الاحتياطية: $value.');
-      await _auditStep('المزامنة', 'فحص حالة Queue بدون إجبار شبكة', () async {
+      }, successDetails: (value) => _dual('نجح توليد النسخة الاحتياطية: $value.', 'Backup JSON generated: $value.'));
+      await _auditStep(_dual('المزامنة', 'Sync'), _dual('فحص حالة Queue بدون إجبار شبكة', 'Check queue state without forcing network'), () async {
         final rejectedQueue = store.syncQueue.where((item) => item.status.toLowerCase() == 'rejected').length;
         final failedQueue = store.syncQueue.where((item) => item.status.toLowerCase() == 'failed').length;
         return 'pendingQueue=${store.pendingSyncQueue.length}, pendingChanges=${store.pendingSyncChanges.length}, failed=$failedQueue, rejected=$rejectedQueue, transport=${_effectiveSyncTransport()}';
       }, successDetails: (value) => value);
 
-      _setStatus('تدقيق النتائج...', progress: 0.99);
+      _setStatus(_dual('تدقيق النتائج...', 'Reviewing results...'), progress: 0.99);
       final newSales = store.sales.length - beforeSales;
       final newPurchases = store.purchases.length - beforePurchases;
       final newExpenses = store.expenses.length - beforeExpenses;
       final newMovements = store.stockMovements.length - beforeMovements;
       final newTransactions = store.accountTransactions.length - beforeTransactions;
-      _auditCheck('ملخص البيانات', 'نمو البيانات بعد الاختبار', store.products.length > beforeProducts && store.customers.length > beforeCustomers && store.suppliers.length > beforeSuppliers, 'تم إنشاء بيانات أساسية جديدة: منتجات ${store.products.length - beforeProducts}, عملاء ${store.customers.length - beforeCustomers}, موردون ${store.suppliers.length - beforeSuppliers}.', 'لم تنمُ البيانات الأساسية كما هو متوقع.');
-      _auditCheck('ملخص البيانات', 'حركات تشغيلية جديدة', newSales > 0 && newPurchases > 0 && newExpenses > 0 && newMovements > 0, 'تم إنشاء عمليات: مبيعات $newSales، مشتريات $newPurchases، مصاريف $newExpenses، حركات مخزون $newMovements.', 'هناك نقص في العمليات المنشأة: مبيعات $newSales، مشتريات $newPurchases، مصاريف $newExpenses، حركات مخزون $newMovements.');
+      _auditCheck(_dual('ملخص البيانات', 'Data Summary'), _dual('نمو البيانات بعد الاختبار', 'Data growth after test'), store.products.length > beforeProducts && store.customers.length > beforeCustomers && store.suppliers.length > beforeSuppliers, _dual('تم إنشاء بيانات أساسية جديدة: منتجات ${store.products.length - beforeProducts}, عملاء ${store.customers.length - beforeCustomers}, موردون ${store.suppliers.length - beforeSuppliers}.', 'New base data created: products ${store.products.length - beforeProducts}, customers ${store.customers.length - beforeCustomers}, suppliers ${store.suppliers.length - beforeSuppliers}.'), _dual('لم تنمُ البيانات الأساسية كما هو متوقع.', 'Base data did not grow as expected.'));
+      _auditCheck(_dual('ملخص البيانات', 'Data Summary'), _dual('حركات تشغيلية جديدة', 'New operational movements'), newSales > 0 && newPurchases > 0 && newExpenses > 0 && newMovements > 0, _dual('تم إنشاء عمليات: مبيعات $newSales، مشتريات $newPurchases، مصاريف $newExpenses، حركات مخزون $newMovements.', 'Operations created: sales $newSales, purchases $newPurchases, expenses $newExpenses, stock movements $newMovements.'), _dual('هناك نقص في العمليات المنشأة: مبيعات $newSales، مشتريات $newPurchases، مصاريف $newExpenses، حركات مخزون $newMovements.', 'Some created operations are missing: sales $newSales, purchases $newPurchases, expenses $newExpenses, stock movements $newMovements.'));
       final hasInvalidStock = products.any((product) {
         final current = store.products.where((item) => item.id == product.id).toList();
         return current.isNotEmpty && !current.first.stock.isFinite;
       });
-      _auditCheck('المخزون', 'سلامة أرقام المخزون', !hasInvalidStock, 'كل أرصدة منتجات الاختبار أرقام صالحة.', 'تم العثور على رصيد مخزون غير صالح في أحد منتجات الاختبار.');
+      _auditCheck(_dual('المخزون', 'Inventory'), _dual('سلامة أرقام المخزون', 'Inventory number validity'), !hasInvalidStock, _dual('كل أرصدة منتجات الاختبار أرقام صالحة.', 'All test product balances are valid numbers.'), _dual('تم العثور على رصيد مخزون غير صالح في أحد منتجات الاختبار.', 'An invalid inventory balance was found in one of the test products.'));
       final failedQueue = store.syncQueue.where((item) => item.status.toLowerCase() == 'failed' || item.status.toLowerCase() == 'rejected').length;
-      _auditCheck('المزامنة', 'عدم وجود Queue فاشلة/مرفوضة', failedQueue == 0, 'لا توجد عناصر sync failed/rejected.', 'يوجد $failedQueue عناصر sync failed/rejected.', warning: true);
-      _auditCheck('المحاسبة', 'ترحيل محاسبي محلي', newTransactions > 0 || AccountingService.isAvailable, newTransactions > 0 ? 'تم إنشاء $newTransactions حركات حساب محلية.' : 'SQLite Accounting متاح؛ بعض القيود قد تكون في دفتر اليومية وليس accountTransactions.', 'لم يتم رصد حركات حساب جديدة ودفتر SQLite غير متاح.', warning: true);
+      _auditCheck(_dual('المزامنة', 'Sync'), _dual('عدم وجود Queue فاشلة/مرفوضة', 'No failed/rejected queue items'), failedQueue == 0, _dual('لا توجد عناصر sync failed/rejected.', 'No failed/rejected sync items.'), _dual('يوجد $failedQueue عناصر sync failed/rejected.', 'There are $failedQueue failed/rejected sync items.'), warning: true);
+      _auditCheck(_dual('المحاسبة', 'Accounting'), _dual('ترحيل محاسبي محلي', 'Local accounting posting'), newTransactions > 0 || AccountingService.isAvailable, newTransactions > 0 ? _dual('تم إنشاء $newTransactions حركات حساب محلية.', '$newTransactions local accounting entries were created.') : _dual('SQLite Accounting متاح؛ بعض القيود قد تكون في دفتر اليومية وليس accountTransactions.', 'SQLite Accounting is available; some entries may be in the journal rather than accountTransactions.'), _dual('لم يتم رصد حركات حساب جديدة ودفتر SQLite غير متاح.', 'No new accounting entries were detected and SQLite is unavailable.'), warning: true);
       final activeSalesTotal = store.sales.where((sale) => sale.customerName.contains(_currentBatchId)).where((sale) => !sale.isCancelled && !sale.isDeleted).fold<double>(0, (sum, sale) => sum + sale.total);
       final expectedMinimumRevenue = normalSale == null ? 0.0 : max<double>(0.0, normalSale.total);
-      _auditCheck('المحاسبة', 'منطق نتيجة المبيعات', activeSalesTotal + 0.001 >= expectedMinimumRevenue, 'إجمالي المبيعات النشطة لاختبار الدفعة ${_money(activeSalesTotal)}، وهو متوافق مبدئياً مع الفواتير غير الملغاة.', 'إجمالي المبيعات النشطة ${_money(activeSalesTotal)} أقل من المتوقع ${_money(expectedMinimumRevenue)}.');
+      _auditCheck(_dual('المحاسبة', 'Accounting'), _dual('منطق نتيجة المبيعات', 'Sales result logic'), activeSalesTotal + 0.001 >= expectedMinimumRevenue, _dual('إجمالي المبيعات النشطة لاختبار الدفعة ${_money(activeSalesTotal)}، وهو متوافق مبدئياً مع الفواتير غير الملغاة.', 'Active test sales total ${_money(activeSalesTotal)} is roughly consistent with uncancelled invoices.'), _dual('إجمالي المبيعات النشطة ${_money(activeSalesTotal)} أقل من المتوقع ${_money(expectedMinimumRevenue)}.', 'Active sales total ${_money(activeSalesTotal)} is lower than expected ${_money(expectedMinimumRevenue)}.'));
       await _runDeepAccountingChecks();
       _runInventoryConsistencyChecks();
       _runPerformanceHealthChecks();
       await _runMaintenanceHealthCheckIntegration();
       await _runReleaseAssertions();
       _runInvestigationMode();
-      await _auditStep('سلامة البيانات', 'Integrity Check داخلي', () async {
+      await _auditStep(_dual('سلامة البيانات', 'Data Integrity'), _dual('Integrity Check داخلي', 'Internal integrity check'), () async {
         await _runIntegrityCheckBodyForOneButton();
-        return 'اكتمل فحص العلاقات الأساسية.';
+        return _dual('اكتمل فحص العلاقات الأساسية.', 'Core relationship check completed.');
       }, successDetails: (value) => value);
 
       _logDatabaseMetrics('AUDIT_AFTER_DB');
       _addLog(_snapshotLine('AUDIT_AFTER'));
       _addHealthSummary('ONE_BUTTON_AUDIT_SUMMARY');
       _addFinalAuditReport(startedAt);
-      _setStatus('انتهى الاختبار الشامل', progress: 1);
+      _setStatus(_dual('انتهى الاختبار الشامل', 'Full test completed'), progress: 1);
     } finally {
       if (mounted) setState(() => _running = false);
     }
@@ -1666,22 +1744,25 @@ class _StressLabPageState extends State<StressLabPage> {
 
 
   Future<void> _runMaintenanceHealthCheckIntegration() async {
-    final summary = await _auditStep('صيانة التطبيق', 'تشغيل Maintenance Health Check', () async {
+    final summary = await _auditStep(_dual('صيانة التطبيق', 'App Maintenance'), _dual('تشغيل Maintenance Health Check', 'Run maintenance health check'), () async {
       final summary = await MaintenanceService(store).runHealthCheck(deep: true);
       return summary;
     }, successDetails: (summary) {
       final actionable = summary.issues
           .where((issue) => issue.severity != MaintenanceSeverity.ok)
           .length;
-      return 'score=${summary.healthScore}/100 status=${summary.healthStatusLabel} issues=${summary.issues.length} actionable=$actionable db=${summary.databaseEngine} size=${summary.databaseSizeBytes} bytes.';
+      return _dual(
+        'score=${summary.healthScore}/100 status=${summary.healthStatusLabel} issues=${summary.issues.length} actionable=$actionable db=${summary.databaseEngine} size=${summary.databaseSizeBytes} bytes.',
+        'score=${summary.healthScore}/100 status=${summary.healthStatusLabel} issues=${summary.issues.length} actionable=$actionable db=${summary.databaseEngine} size=${summary.databaseSizeBytes} bytes.',
+      );
     });
     if (summary == null) {
       _auditCheck(
-        'صيانة التطبيق',
-        'دمج نتائج Maintenance',
+        _dual('صيانة التطبيق', 'App Maintenance'),
+        _dual('دمج نتائج Maintenance', 'Merge maintenance results'),
         false,
-        'تم دمج نتائج Maintenance بنجاح.',
-        'تعذر تشغيل Maintenance Health Check ودمجه مع تقرير Stress Lab.',
+        _dual('تم دمج نتائج Maintenance بنجاح.', 'Maintenance results merged successfully.'),
+        _dual('تعذر تشغيل Maintenance Health Check ودمجه مع تقرير Stress Lab.', 'Could not run the maintenance health check and merge it into the Stress Lab report.'),
       );
       return;
     }
@@ -1698,11 +1779,11 @@ class _StressLabPageState extends State<StressLabPage> {
         .where((issue) => issue.severity == MaintenanceSeverity.critical)
         .length;
     _auditCheck(
-      'صيانة التطبيق',
-      'ملخص فحص الصيانة',
+      _dual('صيانة التطبيق', 'App Maintenance'),
+      _dual('ملخص فحص الصيانة', 'Maintenance summary'),
       criticalCount == 0 && warningCount == 0,
-      'Maintenance clean: ok=$okCount info=$infoCount warning=0 critical=0 score=${summary.healthScore}/100.',
-      'Maintenance findings: ok=$okCount info=$infoCount warning=$warningCount critical=$criticalCount score=${summary.healthScore}/100.',
+      _dual('Maintenance clean: ok=$okCount info=$infoCount warning=0 critical=0 score=${summary.healthScore}/100.', 'Maintenance clean: ok=$okCount info=$infoCount warning=0 critical=0 score=${summary.healthScore}/100.'),
+      _dual('Maintenance findings: ok=$okCount info=$infoCount warning=$warningCount critical=$criticalCount score=${summary.healthScore}/100.', 'Maintenance findings: ok=$okCount info=$infoCount warning=$warningCount critical=$criticalCount score=${summary.healthScore}/100.'),
       warning: true,
     );
 
@@ -1712,7 +1793,7 @@ class _StressLabPageState extends State<StressLabPage> {
           : 'WARN';
       final details = _maintenanceIssueDetails(issue);
       _report.add(_StressAuditStep(
-        section: 'صيانة التطبيق',
+        section: _dual('صيانة التطبيق', 'App Maintenance'),
         name: issue.title,
         status: status,
         details: details,
@@ -1748,13 +1829,13 @@ class _StressLabPageState extends State<StressLabPage> {
         .where((sale) => !sale.isDeleted && !sale.isCancelled && sale.paidAmount > sale.invoiceTotal + 0.01)
         .toList(growable: false);
     if (overpaid.isEmpty) {
-      _auditCheck(
-        'أدلة الصيانة',
-        'فواتير مدفوعة بزيادة',
-        true,
-        'لا توجد فواتير مدفوعة بأكثر من إجماليها.',
-        'يوجد فواتير مدفوعة بزيادة.',
-      );
+    _auditCheck(
+      _dual('أدلة الصيانة', 'Maintenance Evidence'),
+      _dual('فواتير مدفوعة بزيادة', 'Overpaid invoices'),
+      true,
+      _dual('لا توجد فواتير مدفوعة بأكثر من إجماليها.', 'No invoices were paid above their total.'),
+      _dual('يوجد فواتير مدفوعة بزيادة.', 'There are overpaid invoices.'),
+    );
       return;
     }
     final totalExtra = overpaid.fold<double>(
@@ -1766,10 +1847,10 @@ class _StressLabPageState extends State<StressLabPage> {
         .map((sale) => '${sale.invoiceNo}: total=${_money(sale.invoiceTotal)} paid=${_money(sale.paidAmount)} extra=${_money(max<double>(0, sale.paidAmount - sale.invoiceTotal))}')
         .join(' | ');
     _auditCheck(
-      'أدلة الصيانة',
-      'فواتير مدفوعة بزيادة',
+      _dual('أدلة الصيانة', 'Maintenance Evidence'),
+      _dual('فواتير مدفوعة بزيادة', 'Overpaid invoices'),
       false,
-      'لا توجد فواتير مدفوعة بأكثر من إجماليها.',
+      _dual('لا توجد فواتير مدفوعة بأكثر من إجماليها.', 'No invoices were paid above their total.'),
       'count=${overpaid.length} totalExtra=${_money(totalExtra)} sample=$sample',
       warning: true,
     );
@@ -1813,11 +1894,11 @@ class _StressLabPageState extends State<StressLabPage> {
       referenceIds: activeBatchExpenses.map((expense) => expense.id),
     ) : 0;
 
-    _auditCheck('المحاسبة المتقدمة', 'صلاحية مبالغ القيود', invalidTransactions == 0, 'كل القيود المحاسبية تحمل مبالغ صالحة وغير سالبة.', 'يوجد $invalidTransactions قيد محاسبي بمبلغ غير صالح.');
-    _auditCheck('المحاسبة المتقدمة', 'تغطية فواتير البيع بقيود يومية', accountingAvailable ? activeSalesJournalCount == activeBatchSales.length : false, accountingAvailable ? 'كل فواتير البيع النشطة في دفعة الاختبار لها قيد يومية منشور.' : 'SQLite accounting غير متاح؛ لا يمكن التحقق من قيود اليومية لفواتير البيع.', accountingAvailable ? 'القيود اليومية لفواتير البيع النشطة: $activeSalesJournalCount من ${activeBatchSales.length}.' : 'SQLite accounting unavailable; journal coverage not verified.', warning: !accountingAvailable);
-    _auditCheck('المحاسبة المتقدمة', 'تغطية فواتير الشراء بقيود يومية', accountingAvailable ? activePurchasesJournalCount == activeBatchPurchases.length : false, accountingAvailable ? 'كل فواتير الشراء النشطة في دفعة الاختبار لها قيد يومية منشور.' : 'SQLite accounting غير متاح؛ لا يمكن التحقق من قيود اليومية لفواتير الشراء.', accountingAvailable ? 'القيود اليومية لفواتير الشراء النشطة: $activePurchasesJournalCount من ${activeBatchPurchases.length}.' : 'SQLite accounting unavailable; journal coverage not verified.', warning: !accountingAvailable);
-    _auditCheck('المحاسبة المتقدمة', 'تغطية المصاريف بقيود يومية', accountingAvailable ? activeExpensesJournalCount == activeBatchExpenses.length : false, accountingAvailable ? 'كل المصاريف النشطة في دفعة الاختبار لها قيد يومية منشور.' : 'SQLite accounting غير متاح؛ لا يمكن التحقق من قيود اليومية للمصاريف.', accountingAvailable ? 'القيود اليومية للمصاريف النشطة: $activeExpensesJournalCount من ${activeBatchExpenses.length}.' : 'SQLite accounting unavailable; journal coverage not verified.', warning: !accountingAvailable);
-    _auditCheck('المحاسبة المتقدمة', 'توازن دفتر اليومية', accountingAvailable ? trialDiff <= 0.01 : false, accountingAvailable ? 'دفتر اليومية متوازن: debit=${_money(trialDebit)} credit=${_money(trialCredit)}.' : 'SQLite accounting غير متاح؛ لا يمكن التحقق من توازن دفتر اليومية.', accountingAvailable ? 'دفتر اليومية غير متوازن: debit=${_money(trialDebit)} credit=${_money(trialCredit)} diff=${_money(trialDiff)}.' : 'SQLite accounting unavailable; balance not verified.', warning: !accountingAvailable);
+    _auditCheck(_dual('المحاسبة المتقدمة', 'Advanced Accounting'), _dual('صلاحية مبالغ القيود', 'Journal amount validity'), invalidTransactions == 0, _dual('كل القيود المحاسبية تحمل مبالغ صالحة وغير سالبة.', 'All accounting entries have valid, non-negative amounts.'), _dual('يوجد $invalidTransactions قيد محاسبي بمبلغ غير صالح.', 'There are $invalidTransactions accounting entries with an invalid amount.'));
+    _auditCheck(_dual('المحاسبة المتقدمة', 'Advanced Accounting'), _dual('تغطية فواتير البيع بقيود يومية', 'Sale journal coverage'), accountingAvailable ? activeSalesJournalCount == activeBatchSales.length : false, accountingAvailable ? _dual('كل فواتير البيع النشطة في دفعة الاختبار لها قيد يومية منشور.', 'Every active test sale has a posted journal entry.') : _dual('SQLite accounting غير متاح؛ لا يمكن التحقق من قيود اليومية لفواتير البيع.', 'SQLite accounting is unavailable; sale journal coverage cannot be verified.'), accountingAvailable ? _dual('القيود اليومية لفواتير البيع النشطة: $activeSalesJournalCount من ${activeBatchSales.length}.', 'Active sale journal entries: $activeSalesJournalCount of ${activeBatchSales.length}.') : _dual('SQLite accounting unavailable; journal coverage not verified.', 'SQLite accounting unavailable; journal coverage not verified.'), warning: !accountingAvailable);
+    _auditCheck(_dual('المحاسبة المتقدمة', 'Advanced Accounting'), _dual('تغطية فواتير الشراء بقيود يومية', 'Purchase journal coverage'), accountingAvailable ? activePurchasesJournalCount == activeBatchPurchases.length : false, accountingAvailable ? _dual('كل فواتير الشراء النشطة في دفعة الاختبار لها قيد يومية منشور.', 'Every active test purchase has a posted journal entry.') : _dual('SQLite accounting غير متاح؛ لا يمكن التحقق من قيود اليومية لفواتير الشراء.', 'SQLite accounting is unavailable; purchase journal coverage cannot be verified.'), accountingAvailable ? _dual('القيود اليومية لفواتير الشراء النشطة: $activePurchasesJournalCount من ${activeBatchPurchases.length}.', 'Active purchase journal entries: $activePurchasesJournalCount of ${activeBatchPurchases.length}.') : _dual('SQLite accounting unavailable; journal coverage not verified.', 'SQLite accounting unavailable; journal coverage not verified.'), warning: !accountingAvailable);
+    _auditCheck(_dual('المحاسبة المتقدمة', 'Advanced Accounting'), _dual('تغطية المصاريف بقيود يومية', 'Expense journal coverage'), accountingAvailable ? activeExpensesJournalCount == activeBatchExpenses.length : false, accountingAvailable ? _dual('كل المصاريف النشطة في دفعة الاختبار لها قيد يومية منشور.', 'Every active test expense has a posted journal entry.') : _dual('SQLite accounting غير متاح؛ لا يمكن التحقق من قيود اليومية للمصاريف.', 'SQLite accounting is unavailable; expense journal coverage cannot be verified.'), accountingAvailable ? _dual('القيود اليومية للمصاريف النشطة: $activeExpensesJournalCount من ${activeBatchExpenses.length}.', 'Active expense journal entries: $activeExpensesJournalCount of ${activeBatchExpenses.length}.') : _dual('SQLite accounting unavailable; journal coverage not verified.', 'SQLite accounting unavailable; journal coverage not verified.'), warning: !accountingAvailable);
+    _auditCheck(_dual('المحاسبة المتقدمة', 'Advanced Accounting'), _dual('توازن دفتر اليومية', 'Journal balance'), accountingAvailable ? trialDiff <= 0.01 : false, accountingAvailable ? _dual('دفتر اليومية متوازن: debit=${_money(trialDebit)} credit=${_money(trialCredit)}.', 'Trial balance is balanced: debit=${_money(trialDebit)} credit=${_money(trialCredit)}.') : _dual('SQLite accounting غير متاح؛ لا يمكن التحقق من توازن دفتر اليومية.', 'SQLite accounting is unavailable; balance cannot be verified.'), accountingAvailable ? _dual('دفتر اليومية غير متوازن: debit=${_money(trialDebit)} credit=${_money(trialCredit)} diff=${_money(trialDiff)}.', 'Trial balance is not balanced: debit=${_money(trialDebit)} credit=${_money(trialCredit)} diff=${_money(trialDiff)}.') : _dual('SQLite accounting unavailable; balance not verified.', 'SQLite accounting unavailable; balance not verified.'), warning: !accountingAvailable);
     _addLog('SUBLEDGER_SNAPSHOT batchDebit=${_money(batchDebit)} batchCredit=${_money(batchCredit)} batchDiff=${_money((batchDebit - batchCredit).abs())} note=Open customer/supplier balances may remain after partial settlement and are reported separately from trial balance.');
   }
 
@@ -1906,8 +1987,8 @@ class _StressLabPageState extends State<StressLabPage> {
     final invalidStock = batchProducts.where((product) => !product.stock.isFinite).length;
     final negativeStock = batchProducts.where((product) => product.stock < -0.001).length;
     final overpaidCancelled = batchSales.where((sale) => !sale.isDeleted && sale.paidAmount > sale.invoiceTotal + 0.01 && (sale.isCancelled || sale.status.toLowerCase().contains('return'))).length;
-    final perfWarns = _report.where((row) => row.section.startsWith('ضغط ') && row.isWarn).length;
-    final perfFails = _report.where((row) => row.section.startsWith('ضغط ') && row.isFail).length;
+    final perfWarns = _report.where((row) => _sectionMatches(row.section, 'ضغط') && row.isWarn).length;
+    final perfFails = _report.where((row) => _sectionMatches(row.section, 'ضغط') && row.isFail).length;
     final failedOrRejectedQueue = store.syncQueue.where((item) {
       final status = item.status.toLowerCase();
       return status == 'failed' || status == 'rejected';
@@ -1976,48 +2057,48 @@ class _StressLabPageState extends State<StressLabPage> {
     final suggestionDetails = _buildAutoSuggestions(expenseEvidence, balanceEvidence, overpaidEvidence, performanceEvidence, syncEvidence);
 
     _auditCheck(
-      'تحليل السبب الجذري',
-      'تشخيص المصاريف المحاسبي',
+      _dual('تحليل السبب الجذري', 'Root Cause Analysis'),
+      _dual('تشخيص المصاريف المحاسبي', 'Accounting expense diagnosis'),
       !expenseEvidence.contains('missing='),
       expenseEvidence,
       expenseEvidence,
       warning: true,
     );
     _auditCheck(
-      'تحليل السبب الجذري',
-      'تشخيص فرق المدين والدائن',
+      _dual('تحليل السبب الجذري', 'Root Cause Analysis'),
+      _dual('تشخيص فرق المدين والدائن', 'Debit/Credit difference diagnosis'),
       !balanceEvidence.contains('diff='),
       balanceEvidence,
       balanceEvidence,
       warning: true,
     );
     _auditCheck(
-      'تحليل السبب الجذري',
-      'تشخيص الفواتير المدفوعة بزيادة',
+      _dual('تحليل السبب الجذري', 'Root Cause Analysis'),
+      _dual('تشخيص الفواتير المدفوعة بزيادة', 'Overpaid invoices diagnosis'),
       !overpaidEvidence.contains('count='),
       overpaidEvidence,
       overpaidEvidence,
       warning: true,
     );
     _auditCheck(
-      'تحليل السبب الجذري',
-      'تشخيص تباطؤ الأداء',
+      _dual('تحليل السبب الجذري', 'Root Cause Analysis'),
+      _dual('تشخيص تباطؤ الأداء', 'Performance slowdown diagnosis'),
       !performanceEvidence.contains('slowSections='),
       performanceEvidence,
       performanceEvidence,
       warning: true,
     );
     _auditCheck(
-      'تحليل السبب الجذري',
-      'تشخيص حالة المزامنة',
+      _dual('تحليل السبب الجذري', 'Root Cause Analysis'),
+      _dual('تشخيص حالة المزامنة', 'Sync state diagnosis'),
       !syncEvidence.contains('needsSync=true'),
       syncEvidence,
       syncEvidence,
       warning: true,
     );
     _auditCheck(
-      'اقتراحات الإصلاح',
-      'خطوات مقترحة حسب الأدلة',
+      _dual('اقتراحات الإصلاح', 'Fix Suggestions'),
+      _dual('خطوات مقترحة حسب الأدلة', 'Suggested steps from evidence'),
       true,
       suggestionDetails,
       suggestionDetails,
@@ -2042,8 +2123,8 @@ class _StressLabPageState extends State<StressLabPage> {
     }
     final sample = missing.take(8).map((expense) => '${expense.id}:${expense.title}:amount=${_money(expense.amount)}:status=${expense.status}').join(' | ');
     final details = missing.isEmpty
-        ? 'Expense journals OK: active=${expenses.length} linked=${linked.length}. كل مصروف نشط في الدفعة له أثر ضمن accountTransactions.'
-        : 'missing=${missing.length}/${expenses.length} linked=${linked.length} sample=$sample possibleCause=Expense journal may be stored only in SQLite journal_entries, or postExpense did not create a legacy accountTransaction reference.';
+        ? _dual('Expense journals OK: active=${expenses.length} linked=${linked.length}. كل مصروف نشط في الدفعة له أثر ضمن accountTransactions.', 'Expense journals OK: active=${expenses.length} linked=${linked.length}. Every active batch expense has an accountTransactions trace.')
+        : _dual('missing=${missing.length}/${expenses.length} linked=${linked.length} sample=$sample possibleCause=Expense journal may be stored only in SQLite journal_entries, or postExpense did not create a legacy accountTransaction reference.', 'missing=${missing.length}/${expenses.length} linked=${linked.length} sample=$sample possibleCause=Expense journal may be stored only in SQLite journal_entries, or postExpense did not create a legacy accountTransaction reference.');
     _addLog('INVESTIGATION_EXPENSE_JOURNALS $details');
     return details;
   }
@@ -2076,8 +2157,14 @@ class _StressLabPageState extends State<StressLabPage> {
     final openSubledgerOnly = nonZeroContributors.isNotEmpty &&
         nonZeroContributors.every((entry) => entry.key == 'customer' || entry.key == 'supplier');
     final details = diff <= 0.01 || transactions.isEmpty || openSubledgerOnly
-        ? 'Trial balance investigation OK: tx=${transactions.length} debit=${_money(debit)} credit=${_money(credit)} diff=${_money(diff)}${openSubledgerOnly ? ' openSubledger=${_money(nonZeroContributors.fold<double>(0, (sum, entry) => sum + entry.value))} topAccountTypes=$top' : ''}.'
-        : 'diff=${_money(diff)} debit=${_money(debit)} credit=${_money(credit)} tx=${transactions.length} topAccountTypes=$top possibleCause=missing expense references, reversal/payment handling for cancelled/returned invoices, or legacy accountTransactions not matching SQLite journals.';
+        ? _dual(
+            'Trial balance investigation OK: tx=${transactions.length} debit=${_money(debit)} credit=${_money(credit)} diff=${_money(diff)}${openSubledgerOnly ? ' openSubledger=${_money(nonZeroContributors.fold<double>(0, (sum, entry) => sum + entry.value))} topAccountTypes=$top' : ''}.',
+            'Trial balance investigation OK: tx=${transactions.length} debit=${_money(debit)} credit=${_money(credit)} diff=${_money(diff)}${openSubledgerOnly ? ' openSubledger=${_money(nonZeroContributors.fold<double>(0, (sum, entry) => sum + entry.value))} topAccountTypes=$top' : ''}.',
+          )
+        : _dual(
+            'diff=${_money(diff)} debit=${_money(debit)} credit=${_money(credit)} tx=${transactions.length} topAccountTypes=$top possibleCause=missing expense references, reversal/payment handling for cancelled/returned invoices, or legacy accountTransactions not matching SQLite journals.',
+            'diff=${_money(diff)} debit=${_money(debit)} credit=${_money(credit)} tx=${transactions.length} topAccountTypes=$top possibleCause=missing expense references, reversal/payment handling for cancelled/returned invoices, or legacy accountTransactions not matching SQLite journals.',
+          );
     _addLog('INVESTIGATION_TRIAL_BALANCE $details');
     return details;
   }
@@ -2095,14 +2182,17 @@ class _StressLabPageState extends State<StressLabPage> {
     final zeroTotal = overpaid.where((sale) => sale.invoiceTotal.abs() <= 0.01 && sale.paidAmount > 0.01).length;
     final totalExtra = overpaid.fold<double>(0, (sum, sale) => sum + max<double>(0, sale.paidAmount - sale.invoiceTotal));
     final sample = overpaid.take(10).map((sale) => '${sale.invoiceNo}:status=${sale.status}:cancelled=${sale.isCancelled}:total=${_money(sale.invoiceTotal)}:paid=${_money(sale.paidAmount)}:extra=${_money(max<double>(0, sale.paidAmount - sale.invoiceTotal))}').join(' | ');
-    final details = 'count=${overpaid.length} totalExtra=${_money(totalExtra)} zeroTotalPaid=$zeroTotal cancelledOrReturned=$cancelledOrReturned sample=$sample possibleCause=cancel/return flow may zero invoice total without reversing or clearing paid amount, or Maintenance check should ignore cancelled/returned invoices.';
+    final details = _dual(
+      'count=${overpaid.length} totalExtra=${_money(totalExtra)} zeroTotalPaid=$zeroTotal cancelledOrReturned=$cancelledOrReturned sample=$sample possibleCause=cancel/return flow may zero invoice total without reversing or clearing paid amount, or Maintenance check should ignore cancelled/returned invoices.',
+      'count=${overpaid.length} totalExtra=${_money(totalExtra)} zeroTotalPaid=$zeroTotal cancelledOrReturned=$cancelledOrReturned sample=$sample possibleCause=cancel/return flow may zero invoice total without reversing or clearing paid amount, or Maintenance check should ignore cancelled/returned invoices.',
+    );
     _addLog('INVESTIGATION_OVERPAID_SALES $details');
     return details;
   }
 
   String _investigatePerformanceSlowdown() {
     final slowRows = _report
-        .where((item) => item.section.startsWith('ضغط ') && item.isWarn)
+        .where((item) => _sectionMatches(item.section, 'ضغط') && item.isWarn)
         .toList(growable: false);
     if (slowRows.isEmpty) {
       const details = 'Performance investigation OK: no pressure section crossed the slowdown threshold.';
@@ -2124,7 +2214,10 @@ class _StressLabPageState extends State<StressLabPage> {
       final last = buckets.isEmpty ? 'n/a' : buckets.last;
       return '${row.section}:${row.name}:avg=$avg opsPerSecond=$ops slowdown=$slowdown firstBucket=$first lastBucket=$last severity=Medium';
     }).join(' || ');
-    final details = 'slowSections=${slowRows.length} evidence=$evidence possibleCause=growing lookup/validation cost, sync-change creation cost, or unindexed purchase/product queries under pressure.';
+    final details = _dual(
+      'slowSections=${slowRows.length} evidence=$evidence possibleCause=growing lookup/validation cost, sync-change creation cost, or unindexed purchase/product queries under pressure.',
+      'slowSections=${slowRows.length} evidence=$evidence possibleCause=growing lookup/validation cost, sync-change creation cost, or unindexed purchase/product queries under pressure.',
+    );
     _addLog('INVESTIGATION_PERFORMANCE $details');
     return details;
   }
@@ -2137,8 +2230,8 @@ class _StressLabPageState extends State<StressLabPage> {
     final rejectedQueue = store.syncQueue.where((item) => item.status.toLowerCase() == 'rejected').length;
     final isCloud = transport == 'cloud';
     final details = isCloud
-        ? 'mode=cloud pendingQueue=$pendingQueue pendingChanges=$pendingChanges failed=$failedQueue rejected=$rejectedQueue needsSync=${pendingQueue > 0 || pendingChanges > 0} interpretation=Pending changes are expected immediately after generating stress data until cloud sync completes; failed/rejected must remain zero.'
-        : 'mode=$transport pendingQueue=$pendingQueue pendingChanges=$pendingChanges failed=$failedQueue rejected=$rejectedQueue needsSync=false interpretation=Local/LAN mode should not accumulate failed or rejected queue items.';
+        ? _dual('mode=cloud pendingQueue=$pendingQueue pendingChanges=$pendingChanges failed=$failedQueue rejected=$rejectedQueue needsSync=${pendingQueue > 0 || pendingChanges > 0} interpretation=Pending changes are expected immediately after generating stress data until cloud sync completes; failed/rejected must remain zero.', 'mode=cloud pendingQueue=$pendingQueue pendingChanges=$pendingChanges failed=$failedQueue rejected=$rejectedQueue needsSync=${pendingQueue > 0 || pendingChanges > 0} interpretation=Pending changes are expected immediately after generating stress data until cloud sync completes; failed/rejected must remain zero.')
+        : _dual('mode=$transport pendingQueue=$pendingQueue pendingChanges=$pendingChanges failed=$failedQueue rejected=$rejectedQueue needsSync=false interpretation=Local/LAN mode should not accumulate failed or rejected queue items.', 'mode=$transport pendingQueue=$pendingQueue pendingChanges=$pendingChanges failed=$failedQueue rejected=$rejectedQueue needsSync=false interpretation=Local/LAN mode should not accumulate failed or rejected queue items.');
     _addLog('INVESTIGATION_SYNC_MODE $details');
     return details;
   }
@@ -2146,27 +2239,27 @@ class _StressLabPageState extends State<StressLabPage> {
   String _buildAutoSuggestions(String expenseEvidence, String balanceEvidence, String overpaidEvidence, String performanceEvidence, String syncEvidence) {
     final suggestions = <String>[];
     if (expenseEvidence.contains('missing=')) {
-      suggestions.add('[1] راجع store.postExpense / AccountingService.recordExpense وتأكد من referenceType=expense و referenceId=expense.id.');
-      suggestions.add('[2] إذا كانت القيود محفوظة في SQLite فقط، عدّل Stress Lab ليفحص journal_entries بدل accountTransactions للمصاريف.');
+      suggestions.add(_dual('[1] راجع store.postExpense / AccountingService.recordExpense وتأكد من referenceType=expense و referenceId=expense.id.', '[1] Check store.postExpense / AccountingService.recordExpense and make sure referenceType=expense and referenceId=expense.id.'));
+      suggestions.add(_dual('[2] إذا كانت القيود محفوظة في SQLite فقط، عدّل Stress Lab ليفحص journal_entries بدل accountTransactions للمصاريف.', '[2] If entries are stored only in SQLite, adjust Stress Lab to inspect journal_entries instead of accountTransactions for expenses.'));
     }
     if (balanceEvidence.contains('diff=')) {
-      suggestions.add('[3] شغّل مطابقة بين legacy accountTransactions و SQLite journal_entries لنفس batch.');
-      suggestions.add('[4] افحص عكس القيود عند إلغاء/إرجاع البيع والشراء.');
+      suggestions.add(_dual('[3] شغّل مطابقة بين legacy accountTransactions و SQLite journal_entries لنفس batch.', '[3] Reconcile legacy accountTransactions with SQLite journal_entries for the same batch.'));
+      suggestions.add(_dual('[4] افحص عكس القيود عند إلغاء/إرجاع البيع والشراء.', '[4] Check reversal entries when cancelling/returning sales and purchases.'));
     }
     if (overpaidEvidence.contains('count=')) {
-      suggestions.add('[HIGH] افحص منطق إلغاء/إرجاع الفاتورة: لا تترك paidAmount أكبر من invoiceTotal إلا إذا كان هناك رصيد عميل مقابل.');
-      suggestions.add('[MEDIUM] عدّل Maintenance overpaid_sales ليتجاهل الفواتير الملغاة/المرتجعة أو يطلب قيد عكسي واضح.');
+      suggestions.add(_dual('[HIGH] افحص منطق إلغاء/إرجاع الفاتورة: لا تترك paidAmount أكبر من invoiceTotal إلا إذا كان هناك رصيد عميل مقابل.', '[HIGH] Check invoice cancel/return logic: do not leave paidAmount above invoiceTotal unless there is a matching customer credit.'));
+      suggestions.add(_dual('[MEDIUM] عدّل Maintenance overpaid_sales ليتجاهل الفواتير الملغاة/المرتجعة أو يطلب قيد عكسي واضح.', '[MEDIUM] Adjust Maintenance overpaid_sales to ignore cancelled/returned invoices or require an explicit reversal entry.'));
     }
     if (performanceEvidence.contains('slowSections=')) {
-      suggestions.add('[MEDIUM] راجع أقسام الأداء المتباطئة المذكورة في Performance Investigation، وابدأ بالاستعلامات/الفهارس الخاصة بالمشتريات والمنتجات.');
+      suggestions.add(_dual('[MEDIUM] راجع أقسام الأداء المتباطئة المذكورة في Performance Investigation، وابدأ بالاستعلامات/الفهارس الخاصة بالمشتريات والمنتجات.', '[MEDIUM] Review the slow performance areas reported by Performance Investigation, starting with purchase and product queries/indexes.'));
     }
     if (syncEvidence.contains('mode=cloud') && syncEvidence.contains('needsSync=true')) {
-      suggestions.add('[LOW] في وضع Cloud، شغّل/انتظر المزامنة بعد الاختبار ثم أعد الفحص؛ pending queue وحدها ليست فشلًا ما دام failed/rejected = 0.');
+      suggestions.add(_dual('[LOW] في وضع Cloud، شغّل/انتظر المزامنة بعد الاختبار ثم أعد الفحص؛ pending queue وحدها ليست فشلًا ما دام failed/rejected = 0.', '[LOW] In Cloud mode, run or wait for sync after the test and re-check; a pending queue alone is not a failure as long as failed/rejected = 0.'));
     }
-    if (_report.any((row) => row.section == 'المشتريات' && row.isFail) || _report.any((row) => row.section == 'المصاريف' && row.isFail)) {
-      suggestions.insert(0, '[CRITICAL] تأكد أن Stress Lab يفتح الوردية النقدية قبل أي شراء أو مصروف نقدي، وليس بعدهما.');
+    if (_report.any((row) => _sectionMatches(row.section, 'المشتريات') && row.isFail) || _report.any((row) => _sectionMatches(row.section, 'المصاريف') && row.isFail)) {
+      suggestions.insert(0, _dual('[CRITICAL] تأكد أن Stress Lab يفتح الوردية النقدية قبل أي شراء أو مصروف نقدي، وليس بعدهما.', '[CRITICAL] Make sure Stress Lab opens the cash drawer before any cash purchase or expense, not after.'));
     }
-    if (suggestions.isEmpty) suggestions.add('[OK] لا توجد أسباب جذرية واضحة؛ استمر بمراقبة الأداء والنسخ الاحتياطي والمزامنة.' );
+    if (suggestions.isEmpty) suggestions.add(_dual('[OK] لا توجد أسباب جذرية واضحة؛ استمر بمراقبة الأداء والنسخ الاحتياطي والمزامنة.', '[OK] No clear root cause was found; keep monitoring performance, backup, and sync.'));
     return 'NEXT_ACTIONS ${suggestions.join(' | ')}';
   }
 
@@ -2184,22 +2277,22 @@ class _StressLabPageState extends State<StressLabPage> {
       if (type.contains('purchase')) return !purchaseIds.contains(movement.referenceId);
       return false;
     }).length;
-    _auditCheck('المخزون المتقدم', 'صلاحية أرصدة المنتجات', badStockValues == 0, 'كل أرصدة المنتجات أرقام صالحة.', 'يوجد $badStockValues منتجات برصيد غير صالح.');
-    _auditCheck('المخزون المتقدم', 'عدم وجود مخزون اختبار سالب', negativeStressStocks == 0, 'لا توجد منتجات اختبار برصيد سالب.', 'يوجد $negativeStressStocks منتجات اختبار برصيد سالب.');
-    _auditCheck('المخزون المتقدم', 'عدم وجود حركات مخزون يتيمة', orphanStockProducts == 0 && orphanReferences == 0, 'لا توجد حركات مخزون يتيمة أو مراجع مفقودة.', 'حركات مخزون يتيمة: products=$orphanStockProducts references=$orphanReferences.');
+    _auditCheck(_dual('المخزون المتقدم', 'Advanced Inventory'), _dual('صلاحية أرصدة المنتجات', 'Product balance validity'), badStockValues == 0, _dual('كل أرصدة المنتجات أرقام صالحة.', 'All product balances are valid numbers.'), _dual('يوجد $badStockValues منتجات برصيد غير صالح.', 'There are $badStockValues products with invalid balances.'));
+    _auditCheck(_dual('المخزون المتقدم', 'Advanced Inventory'), _dual('عدم وجود مخزون اختبار سالب', 'No negative test stock'), negativeStressStocks == 0, _dual('لا توجد منتجات اختبار برصيد سالب.', 'There are no test products with negative stock.'), _dual('يوجد $negativeStressStocks منتجات اختبار برصيد سالب.', 'There are $negativeStressStocks test products with negative stock.'));
+    _auditCheck(_dual('المخزون المتقدم', 'Advanced Inventory'), _dual('عدم وجود حركات مخزون يتيمة', 'No orphan stock movements'), orphanStockProducts == 0 && orphanReferences == 0, _dual('لا توجد حركات مخزون يتيمة أو مراجع مفقودة.', 'There are no orphan stock movements or missing references.'), _dual('حركات مخزون يتيمة: products=$orphanStockProducts references=$orphanReferences.', 'Orphan stock movements: products=$orphanStockProducts references=$orphanReferences.'));
   }
 
   void _runPerformanceHealthChecks() {
-    final perfRows = _report.where((item) => item.section.startsWith('ضغط ')).toList(growable: false);
+    final perfRows = _report.where((item) => _sectionMatches(item.section, 'ضغط')).toList(growable: false);
     final slowRows = perfRows.where((item) => item.isWarn).length;
     final failedRows = perfRows.where((item) => item.isFail).length;
-    final hasSalesPerf = perfRows.any((item) => item.section == 'ضغط المبيعات');
-    _auditCheck('الأداء', 'منحنى التباطؤ', slowRows == 0 && failedRows == 0, 'لا يوجد تباطؤ حاد في منحنيات الأداء المسجلة كل 100 عملية.', 'يوجد $slowRows منحنيات أداء متباطئة و $failedRows اختبارات ضغط فاشلة.', warning: true);
-    _auditCheck('الأداء', 'تغطية قياس المبيعات', hasSalesPerf, 'تم قياس أداء المبيعات تحت ضغط 1000 عملية.', 'لم يتم العثور على قياس ضغط للمبيعات.', warning: true);
+    final hasSalesPerf = perfRows.any((item) => _sectionMatches(item.section, 'ضغط المبيعات'));
+    _auditCheck(_dual('الأداء', 'Performance'), _dual('منحنى التباطؤ', 'Slowdown curve'), slowRows == 0 && failedRows == 0, _dual('لا يوجد تباطؤ حاد في منحنيات الأداء المسجلة كل 100 عملية.', 'No sharp slowdown was detected in the performance curves recorded every 100 operations.'), _dual('يوجد $slowRows منحنيات أداء متباطئة و $failedRows اختبارات ضغط فاشلة.', 'There are $slowRows slow performance curves and $failedRows failed pressure tests.'), warning: true);
+    _auditCheck(_dual('الأداء', 'Performance'), _dual('تغطية قياس المبيعات', 'Sales measurement coverage'), hasSalesPerf, _dual('تم قياس أداء المبيعات تحت ضغط 1000 عملية.', 'Sales performance was measured under 1000-operation pressure.'), _dual('لم يتم العثور على قياس ضغط للمبيعات.', 'No sales pressure measurement was found.'), warning: true);
   }
 
   int _scoreForSection(String section, int weight) {
-    final rows = _report.where((item) => item.section == section || item.section.startsWith('$section ')).toList(growable: false);
+    final rows = _report.where((item) => _sectionMatches(item.section, section)).toList(growable: false);
     if (rows.isEmpty) return weight;
     final fails = rows.where((item) => item.isFail).length;
     final warns = rows.where((item) => item.isWarn).length;
@@ -2308,16 +2401,17 @@ class _StressLabPageState extends State<StressLabPage> {
   @override
   Widget build(BuildContext context) {
     final identity = store.appIdentity;
+    final tr = AppLocalizations.of(context);
     final pass = _report.where((item) => item.isPass).length;
     final warn = _report.where((item) => item.isWarn).length;
     final fail = _report.where((item) => item.isFail).length;
     final overall = _report.isEmpty
-        ? 'لم يتم تشغيل الاختبار بعد'
+        ? tr.text('stress_lab_not_run')
         : fail > 0
-            ? 'فشل'
+            ? tr.text('stress_lab_failed')
             : warn > 0
-                ? 'نجح مع تحذيرات'
-                : 'نجح بالكامل';
+                ? tr.text('stress_lab_passed_with_warnings')
+                : tr.text('stress_lab_passed');
     return Scaffold(
       body: Padding(
         padding: const EdgeInsets.all(16),
@@ -2330,20 +2424,20 @@ class _StressLabPageState extends State<StressLabPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Ventio Stress Lab', style: Theme.of(context).textTheme.headlineSmall),
+                    Text(tr.text('stress_lab'), style: Theme.of(context).textTheme.headlineSmall),
                     const SizedBox(height: 8),
-                    const Text('اختبار شامل بزر واحد ينشئ حالات حقيقية من أقسام التطبيق، ثم يضرب عدد العمليات ×1000 ويقيس سرعة كل نوع إضافة وتباطؤ الأداء.'),
+                    Text(tr.text('stress_lab_desc')),
                     const SizedBox(height: 8),
                     Text(_tf('role_device_transport_epoch', {'role': _roleLabel(), 'device': identity.deviceId, 'transport': _effectiveSyncTransport(), 'epoch': identity.storeEpoch})),
                     const SizedBox(height: 16),
                     LinearProgressIndicator(value: _running ? _progress : null),
                     const SizedBox(height: 8),
-                    Text(_status),
+                    Text(localizeRuntimeMessage(_status, tr)),
                     const SizedBox(height: 16),
                     FilledButton.icon(
                       onPressed: _running ? null : _runOneButtonSystemAudit,
                       icon: const Icon(Icons.health_and_safety_outlined),
-                      label: const Text('تشغيل اختبار الضغط الشامل ×1000'),
+                      label: Text(tr.text('run_stress_lab_audit')),
                     ),
                     const SizedBox(height: 8),
                     Wrap(
@@ -2353,12 +2447,12 @@ class _StressLabPageState extends State<StressLabPage> {
                         OutlinedButton.icon(
                           onPressed: _log.isEmpty ? null : _copyLog,
                           icon: const Icon(Icons.copy),
-                          label: const Text('نسخ التقرير الكامل'),
+                          label: Text(tr.text('copy_full_report')),
                         ),
                         OutlinedButton.icon(
                           onPressed: _running ? null : _clearLog,
                           icon: const Icon(Icons.clear_all),
-                          label: const Text('مسح التقرير'),
+                          label: Text(tr.text('clear_report')),
                         ),
                       ],
                     ),
@@ -2374,9 +2468,9 @@ class _StressLabPageState extends State<StressLabPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('النتيجة العامة: $overall', style: Theme.of(context).textTheme.titleLarge),
+                      Text('${tr.text('overall_result')}: $overall', style: Theme.of(context).textTheme.titleLarge),
                       const SizedBox(height: 8),
-                      Text('نجاح: $pass   تحذيرات: $warn   فشل: $fail'),
+                      Text(tr.format('stress_lab_pass_warn_fail', {'pass': pass, 'warn': warn, 'fail': fail})),
                     ],
                   ),
                 ),
@@ -2386,7 +2480,7 @@ class _StressLabPageState extends State<StressLabPage> {
               child: _report.isEmpty
                   ? DecoratedBox(
                       decoration: BoxDecoration(border: Border.all(color: Theme.of(context).dividerColor), borderRadius: BorderRadius.circular(8)),
-                      child: const Center(child: Text('اضغط تشغيل الاختبار الشامل للحصول على تقرير.')),
+                      child: Center(child: Text(tr.text('stress_lab_report_prompt'))),
                     )
                   : ListView.builder(
                       itemCount: _report.length,
@@ -2400,10 +2494,10 @@ class _StressLabPageState extends State<StressLabPage> {
                         return Card(
                           child: ListTile(
                             leading: Icon(icon),
-                            title: Text('${item.section} — ${item.name}'),
-                            subtitle: Text('${item.details}\nالمدة: ${item.elapsedMs} ms'),
+                            title: Text('${_reportLabel(item.section, tr)} — ${_reportLabel(item.name, tr)}'),
+                            subtitle: Text('${localizeRuntimeMessage(item.details, tr)}\n${tr.isArabic ? 'المدة' : 'Duration'}: ${item.elapsedMs} ms'),
                             isThreeLine: true,
-                            trailing: Text(item.status),
+                            trailing: Text(_reportLabel(item.status, tr)),
                           ),
                         );
                       },
