@@ -16,6 +16,7 @@ import '../../models/product_pricing.dart';
 import '../../models/store_profile.dart';
 import '../../models/supplier.dart';
 import '../../models/supplier_product_price.dart';
+import '../../models/user_role.dart';
 import '../../widgets/app_section_header.dart';
 import '../../widgets/empty_state_card.dart';
 import '../barcode/barcode_scanner_page.dart';
@@ -54,6 +55,12 @@ class _ProductsPageState extends State<ProductsPage> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
+    if (!widget.store.canViewProducts) {
+      return _PermissionDeniedScaffold(
+        title: tr.text('products'),
+        message: 'This page is available in read-only mode only for users who can access product data.',
+      );
+    }
     final allProducts = widget.store.products;
     final products = _filteredProducts(allProducts);
     final categories = <String>{
@@ -171,11 +178,14 @@ class _ProductsPageState extends State<ProductsPage> {
                             child: _ProductTile(
                               row: row,
                               compact: constraints.maxWidth < 620,
-                              onEdit: widget.store.canManageProducts
+                onEdit: widget.store.canManageProducts
                                   ? () => _openProductForm(context,
                                       product: row.product)
                                   : null,
-                              onDelete: widget.store.canDeleteOrCancel
+                              onDelete: widget.store.hasAnyPermission(<String>{
+                                AppPermission.productsDelete,
+                                AppPermission.productsManage,
+                              })
                                   ? () => _deleteProduct(context, row.product)
                                   : null,
                             ),
@@ -216,6 +226,7 @@ class _ProductsPageState extends State<ProductsPage> {
   }
 
   Future<void> _deleteProduct(BuildContext context, Product product) async {
+    if (!widget.store.canManageProducts) return;
     final tr = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
@@ -236,6 +247,7 @@ class _ProductsPageState extends State<ProductsPage> {
   }
 
   Future<void> _openCatalogManager(BuildContext context, String type) async {
+    if (!widget.store.canManageProducts) return;
     await showDialog<void>(
       context: context,
       builder: (_) => _CatalogManagerDialog(store: widget.store, type: type),
@@ -245,6 +257,7 @@ class _ProductsPageState extends State<ProductsPage> {
 
   Future<void> _openProductForm(BuildContext context,
       {Product? product}) async {
+    if (!widget.store.canManageProducts) return;
     final tr = AppLocalizations.of(context);
     final result = await showDialog<_ProductFormResult>(
       context: context,
@@ -350,6 +363,44 @@ class _ProductsPageState extends State<ProductsPage> {
       }
     }
     await LocalDatabaseService.setString(storageKey, jsonEncode(pages));
+  }
+}
+
+class _PermissionDeniedScaffold extends StatelessWidget {
+  const _PermissionDeniedScaffold({required this.title, required this.message});
+
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(title)),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.lock_outline, size: 42),
+                  const SizedBox(height: 12),
+                  Text(title,
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleLarge
+                          ?.copyWith(fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 8),
+                  Text(message, textAlign: TextAlign.center),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

@@ -58,71 +58,121 @@ class SettingsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final navItems = [
-      _SettingsNavData(
-          icon: Icons.store_outlined,
-          label: tr.text('store_information'),
-          description: tr.text('store_information_desc')),
-      _SettingsNavData(
-          icon: Icons.description_outlined,
-          label: tr.text('document_settings'),
-          description: tr.text('document_settings_desc')),
-      _SettingsNavData(
-          icon: Icons.account_tree_outlined,
-          label: tr.text('branches'),
-          description: tr.text('branches_desc')),
-      _SettingsNavData(
-          icon: Icons.receipt_long_outlined,
-          label: tr.text('tax_settings'),
-          description: tr.text('tax_settings_desc')),
-      _SettingsNavData(
-          icon: Icons.currency_exchange_outlined,
-          label: tr.text('currencies'),
-          description: tr.text('currencies_pricing_desc')),
-      _SettingsNavData(
-          icon: Icons.account_balance_wallet_outlined,
-          label: tr.text('banks_cash_drawers'),
-          description: tr.text('banks_cash_drawers_desc')),
-      _SettingsNavData(
-          icon: Icons.sync_outlined,
-          label: tr.text('sync'),
-          description: tr.text('sync_nav_desc')),
-      _SettingsNavData(
-          icon: Icons.backup_outlined,
-          label: tr.text('backup_restore'),
-          description: tr.text('backup_preview_desc')),
-      _SettingsNavData(
-          icon: Icons.admin_panel_settings_outlined,
-          label: tr.text('users_permissions'),
-          description: tr.text('users_permissions_desc')),
-      _SettingsNavData(
-          icon: Icons.keyboard_command_key_outlined,
-          label: tr.text('keyboard_shortcuts'),
-          description: tr.text('keyboard_shortcuts_desc')),
-      _SettingsNavData(
-          icon: Icons.info_outline,
-          label: tr.text('about_ventio'),
-          description: tr.text('about_ventio_desc')),
+    final canAccessGeneralSettings = store.hasAnyPermission(<String>{
+      AppPermission.settingsView,
+      AppPermission.settingsManage,
+      AppPermission.usersManage,
+      AppPermission.rolesManage,
+      AppPermission.permissionsManage,
+    });
+    final canAccessSyncSettings = store.hasAnyPermission(<String>{
+      AppPermission.syncView,
+      AppPermission.syncManage,
+    });
+    final canAccessBackupSettings = store.hasAnyPermission(<String>{
+      AppPermission.backupExport,
+      AppPermission.backupRestore,
+      AppPermission.backupManage,
+    });
+    final sections = <_SettingsSection>[
+      if (canAccessGeneralSettings)
+        _SettingsSection(
+          nav: _SettingsNavData(
+              icon: Icons.store_outlined,
+              label: tr.text('store_information'),
+              description: tr.text('store_information_desc')),
+          page: _settingsList(context, _generalCards(context)),
+        ),
+      if (canAccessGeneralSettings)
+        _SettingsSection(
+          nav: _SettingsNavData(
+              icon: Icons.description_outlined,
+              label: tr.text('document_settings'),
+              description: tr.text('document_settings_desc')),
+          page: _settingsList(context, _documentCards(context)),
+        ),
+      if (canAccessGeneralSettings)
+        _SettingsSection(
+          nav: _SettingsNavData(
+              icon: Icons.account_tree_outlined,
+              label: tr.text('branches'),
+              description: tr.text('branches_desc')),
+          page: _settingsList(context, _branchCards(context)),
+        ),
+      if (canAccessGeneralSettings)
+        _SettingsSection(
+          nav: _SettingsNavData(
+              icon: Icons.receipt_long_outlined,
+              label: tr.text('tax_settings'),
+              description: tr.text('tax_settings_desc')),
+          page: _settingsList(context, _taxCards(context)),
+        ),
+      if (canAccessGeneralSettings)
+        _SettingsSection(
+          nav: _SettingsNavData(
+              icon: Icons.currency_exchange_outlined,
+              label: tr.text('currencies'),
+              description: tr.text('currencies_pricing_desc')),
+          page: _settingsList(context, _financialCards(context)),
+        ),
+      if (canAccessGeneralSettings)
+        _SettingsSection(
+          nav: _SettingsNavData(
+              icon: Icons.account_balance_wallet_outlined,
+              label: tr.text('banks_cash_drawers'),
+              description: tr.text('banks_cash_drawers_desc')),
+          page: _settingsList(context, _cashBankCards(context)),
+        ),
+      if (canAccessSyncSettings)
+        _SettingsSection(
+          nav: _SettingsNavData(
+              icon: Icons.sync_outlined,
+              label: tr.text('sync'),
+              description: tr.text('sync_nav_desc')),
+          page: _settingsList(context, _syncCards(context)),
+        ),
+      if (canAccessBackupSettings)
+        _SettingsSection(
+          nav: _SettingsNavData(
+              icon: Icons.backup_outlined,
+              label: tr.text('backup_restore'),
+              description: tr.text('backup_preview_desc')),
+          page: _settingsList(context, _backupCards(context)),
+        ),
+      if (store.canManageUsers)
+        _SettingsSection(
+          nav: _SettingsNavData(
+              icon: Icons.admin_panel_settings_outlined,
+              label: tr.text('users_permissions'),
+              description: tr.text('users_permissions_desc')),
+          page: _settingsList(context, _adminCards(context)),
+        ),
+      _SettingsSection(
+        nav: _SettingsNavData(
+            icon: Icons.keyboard_command_key_outlined,
+            label: tr.text('keyboard_shortcuts'),
+            description: tr.text('keyboard_shortcuts_desc')),
+        page: _settingsList(context, _shortcutCards(context)),
+      ),
+      _SettingsSection(
+        nav: _SettingsNavData(
+            icon: Icons.info_outline,
+            label: tr.text('about_ventio'),
+            description: tr.text('about_ventio_desc')),
+        page: _settingsList(context, _aboutCards(context)),
+      ),
     ];
 
     return DefaultTabController(
-      length: navItems.length,
+      length: sections.length,
       child: LayoutBuilder(
         builder: (context, constraints) {
           final isWide = constraints.maxWidth >= 900;
-          final pages = [
-            _settingsList(context, _generalCards(context)),
-            _settingsList(context, _documentCards(context)),
-            _settingsList(context, _branchCards(context)),
-            _settingsList(context, _taxCards(context)),
-            _settingsList(context, _financialCards(context)),
-            _settingsList(context, _cashBankCards(context)),
-            _settingsList(context, _syncCards(context)),
-            _settingsList(context, _backupCards(context)),
-            _settingsList(context, _adminCards(context)),
-            _settingsList(context, _shortcutCards(context)),
-            _settingsList(context, _aboutCards(context)),
-          ];
+          if (sections.isEmpty) {
+            return const SizedBox.shrink();
+          }
+          final navItems = sections.map((section) => section.nav).toList();
+          final pages = sections.map((section) => section.page).toList();
 
           if (!isWide) {
             return Column(
@@ -206,7 +256,9 @@ class SettingsPage extends StatelessWidget {
         title: tr.text('organization_general'),
         subtitle: tr.text('organization_general_desc'),
         trailing: FilledButton.icon(
-          onPressed: () => _editOrganizationGeneral(context, profile),
+          onPressed: store.hasPermission(AppPermission.settingsManage)
+              ? () => _editOrganizationGeneral(context, profile)
+              : null,
           icon: const Icon(Icons.edit_outlined),
           label: Text(tr.text('edit')),
         ),
@@ -240,7 +292,9 @@ class SettingsPage extends StatelessWidget {
         title: tr.text('organization_legal'),
         subtitle: tr.text('organization_legal_desc'),
         trailing: FilledButton.icon(
-          onPressed: () => _editOrganizationLegal(context, profile),
+          onPressed: store.hasPermission(AppPermission.settingsManage)
+              ? () => _editOrganizationLegal(context, profile)
+              : null,
           icon: const Icon(Icons.edit_outlined),
           label: Text(tr.text('edit')),
         ),
@@ -319,7 +373,9 @@ class SettingsPage extends StatelessWidget {
         title: tr.text('organization_branding'),
         subtitle: tr.text('organization_branding_desc'),
         trailing: FilledButton.icon(
-          onPressed: () => _editOrganizationBranding(context, profile),
+          onPressed: store.hasPermission(AppPermission.settingsManage)
+              ? () => _editOrganizationBranding(context, profile)
+              : null,
           icon: const Icon(Icons.edit_outlined),
           label: Text(tr.text('edit')),
         ),
@@ -448,7 +504,9 @@ class SettingsPage extends StatelessWidget {
         title: tr.text('document_settings'),
         subtitle: tr.text('document_settings_desc'),
         trailing: FilledButton.icon(
-          onPressed: () => _editDocumentNumbering(context, profile),
+          onPressed: store.hasPermission(AppPermission.settingsManage)
+              ? () => _editDocumentNumbering(context, profile)
+              : null,
           icon: const Icon(Icons.edit_outlined),
           label: Text(tr.text('edit')),
         ),
@@ -501,7 +559,9 @@ class SettingsPage extends StatelessWidget {
         title: tr.text('branches'),
         subtitle: tr.text('branches_desc'),
         trailing: FilledButton.icon(
-          onPressed: () => _editBranch(context, profile, null),
+          onPressed: store.hasPermission(AppPermission.settingsManage)
+              ? () => _editBranch(context, profile, null)
+              : null,
           icon: const Icon(Icons.add_outlined),
           label: Text(tr.text('add_branch')),
         ),
@@ -532,7 +592,9 @@ class SettingsPage extends StatelessWidget {
                       trailing: IconButton(
                         tooltip: tr.text('edit'),
                         icon: const Icon(Icons.edit_outlined),
-                        onPressed: () => _editBranch(context, profile, branch),
+                        onPressed: store.hasPermission(AppPermission.settingsManage)
+                            ? () => _editBranch(context, profile, branch)
+                            : null,
                       ),
                     ),
                 ],
@@ -694,7 +756,9 @@ class SettingsPage extends StatelessWidget {
         title: tr.text('currencies_pricing'),
         subtitle: tr.text('currencies_pricing_desc'),
         trailing: FilledButton.icon(
-          onPressed: () => _editFinancialSettings(context, profile),
+          onPressed: store.hasPermission(AppPermission.settingsManage)
+              ? () => _editFinancialSettings(context, profile)
+              : null,
           icon: const Icon(Icons.edit_outlined),
           label: Text(tr.text('edit')),
         ),
@@ -741,7 +805,9 @@ class SettingsPage extends StatelessWidget {
         title: tr.text('currencies'),
         subtitle: tr.text('currencies_desc'),
         trailing: FilledButton.icon(
-          onPressed: () => _editCurrency(context, profile),
+          onPressed: store.hasPermission(AppPermission.settingsManage)
+              ? () => _editCurrency(context, profile)
+              : null,
           icon: const Icon(Icons.add_outlined),
           label: Text(tr.text('add_currency')),
         ),
@@ -762,8 +828,10 @@ class SettingsPage extends StatelessWidget {
                     IconButton(
                       tooltip: tr.text('edit'),
                       icon: const Icon(Icons.edit_outlined),
-                      onPressed: () =>
-                          _editCurrency(context, profile, currency: currency),
+                      onPressed: store.hasPermission(AppPermission.settingsManage)
+                          ? () => _editCurrency(context, profile,
+                              currency: currency)
+                          : null,
                     ),
                   ],
                 ),
@@ -777,7 +845,9 @@ class SettingsPage extends StatelessWidget {
         title: tr.text('exchange_rates'),
         subtitle: tr.text('exchange_rates_desc'),
         trailing: FilledButton.icon(
-          onPressed: () => _editExchangeRate(context, profile),
+          onPressed: store.hasPermission(AppPermission.settingsManage)
+              ? () => _editExchangeRate(context, profile)
+              : null,
           icon: const Icon(Icons.add_outlined),
           label: Text(tr.text('add_exchange_rate')),
         ),
@@ -803,8 +873,9 @@ class SettingsPage extends StatelessWidget {
                 trailing: IconButton(
                   tooltip: tr.text('edit'),
                   icon: const Icon(Icons.edit_outlined),
-                  onPressed: () =>
-                      _editExchangeRate(context, profile, rate: rate),
+                  onPressed: store.hasPermission(AppPermission.settingsManage)
+                      ? () => _editExchangeRate(context, profile, rate: rate)
+                      : null,
                 ),
               ),
           ],
@@ -882,7 +953,8 @@ class SettingsPage extends StatelessWidget {
                         SizedBox(
                           width: itemWidth,
                           child: OutlinedButton.icon(
-                            onPressed: hasStoreIdentity && !canRecoverStoreData
+                            onPressed: (hasStoreIdentity && !canRecoverStoreData) ||
+                                    !store.hasPermission(AppPermission.backupManage)
                                 ? null
                                 : () => _recoverExistingStore(context),
                             icon: Icon(recoverIcon),
@@ -892,7 +964,12 @@ class SettingsPage extends StatelessWidget {
                         SizedBox(
                           width: itemWidth,
                           child: OutlinedButton.icon(
-                            onPressed: () => _downloadRecoveryFile(context),
+                            onPressed: store.hasAnyPermission(<String>{
+                              AppPermission.backupRestore,
+                              AppPermission.backupManage,
+                            })
+                                ? () => _downloadRecoveryFile(context)
+                                : null,
                             icon: const Icon(Icons.security_outlined),
                             label: Text(tr.text('download_recovery_file')),
                           ),
@@ -900,7 +977,12 @@ class SettingsPage extends StatelessWidget {
                         SizedBox(
                           width: itemWidth,
                           child: FilledButton.icon(
-                            onPressed: () => _downloadBackupFile(context),
+                            onPressed: store.hasAnyPermission(<String>{
+                              AppPermission.backupExport,
+                              AppPermission.backupManage,
+                            })
+                                ? () => _downloadBackupFile(context)
+                                : null,
                             icon: const Icon(Icons.download_outlined),
                             label: Text(tr.text('export')),
                           ),
@@ -908,7 +990,12 @@ class SettingsPage extends StatelessWidget {
                         SizedBox(
                           width: itemWidth,
                           child: OutlinedButton.icon(
-                            onPressed: () => _importBackupFile(context),
+                            onPressed: store.hasAnyPermission(<String>{
+                              AppPermission.backupRestore,
+                              AppPermission.backupManage,
+                            })
+                                ? () => _importBackupFile(context)
+                                : null,
                             icon: const Icon(Icons.upload_file_outlined),
                             label: Text(tr.text('import')),
                           ),
@@ -966,7 +1053,9 @@ class SettingsPage extends StatelessWidget {
             child: FilledButton.icon(
               style: FilledButton.styleFrom(
                   backgroundColor: Theme.of(context).colorScheme.error),
-              onPressed: () => _resetBusinessData(context),
+              onPressed: store.hasPermission(AppPermission.databaseManage)
+                  ? () => _resetBusinessData(context)
+                  : null,
               icon: const Icon(Icons.delete_forever_outlined),
               label: Text(tr.text('reset_all_data')),
             ),
@@ -975,7 +1064,9 @@ class SettingsPage extends StatelessWidget {
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
-              onPressed: () => _clearLocalData(context),
+              onPressed: store.hasPermission(AppPermission.syncManage)
+                  ? () => _clearLocalData(context)
+                  : null,
               icon: const Icon(Icons.cleaning_services_outlined),
               label: Text(tr.text('clear_local_data')),
             ),
@@ -984,7 +1075,9 @@ class SettingsPage extends StatelessWidget {
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
-              onPressed: () => _rebuildFromHost(context),
+              onPressed: store.hasPermission(AppPermission.syncManage)
+                  ? () => _rebuildFromHost(context)
+                  : null,
               icon: const Icon(Icons.restore_page_outlined),
               label: Text(tr.text('rebuild_from_host')),
             ),
@@ -996,6 +1089,17 @@ class SettingsPage extends StatelessWidget {
 
   List<Widget> _adminCards(BuildContext context) {
     final tr = AppLocalizations.of(context);
+    if (!store.canManageUsers) {
+      return [
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.lock_outline),
+            title: Text(tr.text('users_permissions')),
+            subtitle: const Text('You do not have access to user or role management.'),
+          ),
+        ),
+      ];
+    }
     return [
       Card(
         child: ListTile(
@@ -7601,6 +7705,13 @@ class _SettingsNavData {
   final IconData icon;
   final String label;
   final String description;
+}
+
+class _SettingsSection {
+  const _SettingsSection({required this.nav, required this.page});
+
+  final _SettingsNavData nav;
+  final Widget page;
 }
 
 class _SettingsSideNav extends StatelessWidget {

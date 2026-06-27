@@ -53,6 +53,12 @@ class ReportsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
+    if (!store.canViewReports) {
+      return const _AccessDeniedScaffold(
+        title: 'Reports',
+        message: 'You do not have access to reports.',
+      );
+    }
     final totalExpenses = store.totalExpensesAmount;
     final estimatedProfit = store.estimateProfit();
     final sales = store.sales;
@@ -343,6 +349,44 @@ class ReportsPage extends StatelessWidget {
                 .toList(),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _AccessDeniedScaffold extends StatelessWidget {
+  const _AccessDeniedScaffold({required this.title, required this.message});
+
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(title)),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.lock_outline, size: 42),
+                  const SizedBox(height: 12),
+                  Text(title,
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleLarge
+                          ?.copyWith(fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 8),
+                  Text(message, textAlign: TextAlign.center),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

@@ -1568,7 +1568,7 @@ class LanSyncService {
             branchId: wipedBranchId,
             deviceId: wipedDeviceId,
             deviceToken: wipedToken);
-        await store.factoryResetLocalDevice();
+        await store.factoryResetLocalDevice(enforcePermission: false);
         return const LanSyncResult(
             ok: false,
             message: 'Device deleted by Host. Local data was wiped.');

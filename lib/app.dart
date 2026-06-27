@@ -19,10 +19,10 @@ import 'core/services/local_auto_backup_service.dart';
 import 'core/services/app_update_service.dart';
 import 'core/services/account_auth_service.dart';
 import 'data/app_store.dart';
-import 'models/user_role.dart';
 import 'features/accounting/accounting_page.dart';
 import 'features/customers/customers_page.dart';
 import 'features/dashboard/dashboard_page.dart';
+import 'features/database/database_page.dart';
 import 'features/expenses/expenses_page.dart';
 import 'features/inventory/inventory_page.dart';
 import 'features/inventory/manufacturing_page.dart';
@@ -35,7 +35,6 @@ import 'features/sales/quotations_page.dart';
 import 'features/sales/delivery_notes_page.dart';
 import 'features/security/login_gate_page.dart';
 import 'features/settings/settings_page.dart';
-import 'features/dev_tools/stress_lab_page.dart';
 import 'features/admin/admin_subscribers_page.dart';
 import 'features/suppliers/suppliers_page.dart';
 
@@ -584,7 +583,9 @@ class _MainShellState extends State<MainShell> {
         _availableUpdate = update;
         final updateChanged =
             previousUpdate?.displayVersion != update?.displayVersion;
-        if (update == null || updateChanged || _downloadedInstallerPath == null ||
+        if (update == null ||
+            updateChanged ||
+            _downloadedInstallerPath == null ||
             _downloadedInstallerPath!.isEmpty) {
           _downloadedInstallerPath = null;
           _downloadProgress = null;
@@ -651,7 +652,9 @@ class _MainShellState extends State<MainShell> {
         _cancelDownloadUpdate = null;
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(AppLocalizations.of(context).text('update_downloaded'))),
+        SnackBar(
+            content:
+                Text(AppLocalizations.of(context).text('update_downloaded'))),
       );
     } catch (error) {
       if (!mounted) return;
@@ -696,8 +699,7 @@ class _MainShellState extends State<MainShell> {
       setState(() => _installingUpdate = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content:
-                Text(AppLocalizations.of(context).format('update_failed', {
+            content: Text(AppLocalizations.of(context).format('update_failed', {
           'error': error.toString(),
         }))),
       );
@@ -810,10 +812,12 @@ class _MainShellState extends State<MainShell> {
         ),
       );
     }
-    final background =
-        update.required ? colorScheme.errorContainer : colorScheme.primaryContainer;
-    final foreground =
-        update.required ? colorScheme.onErrorContainer : colorScheme.onPrimaryContainer;
+    final background = update.required
+        ? colorScheme.errorContainer
+        : colorScheme.primaryContainer;
+    final foreground = update.required
+        ? colorScheme.onErrorContainer
+        : colorScheme.onPrimaryContainer;
     return Padding(
       padding: const EdgeInsets.only(right: 8),
       child: Material(
@@ -971,108 +975,116 @@ class _MainShellState extends State<MainShell> {
             icon: Icons.admin_panel_settings_outlined,
             selectedIcon: Icons.admin_panel_settings,
             page: AdminSubscribersPage()),
-      _ShellItem(
-          label: tr.text('dashboard'),
-          icon: Icons.dashboard_outlined,
-          selectedIcon: Icons.dashboard,
-          page: DashboardPage(store: widget.store)),
-      if (widget.store.hasPermission(AppPermission.productsCreate) ||
-          widget.store.hasPermission(AppPermission.productsEdit) ||
-          widget.store.hasPermission(AppPermission.productsDelete))
+      if (widget.store.canAccessPage('dashboard'))
+        _ShellItem(
+            label: tr.text('dashboard'),
+            icon: Icons.dashboard_outlined,
+            selectedIcon: Icons.dashboard,
+            page: DashboardPage(store: widget.store)),
+      if (widget.store.canAccessPage('products'))
         _ShellItem(
             label: tr.text('products'),
             icon: Icons.inventory_2_outlined,
             selectedIcon: Icons.inventory_2,
             page: ProductsPage(store: widget.store)),
-      if (widget.store.hasPermission(AppPermission.customersManage))
+      if (widget.store.canAccessPage('customers'))
         _ShellItem(
             label: tr.text('customers'),
             icon: Icons.people_outline,
             selectedIcon: Icons.people,
             page: CustomersPage(store: widget.store)),
-      if (widget.store.hasPermission(AppPermission.suppliersManage))
+      if (widget.store.canAccessPage('suppliers'))
         _ShellItem(
             label: tr.text('suppliers'),
             icon: Icons.local_shipping_outlined,
             selectedIcon: Icons.local_shipping,
             page: SuppliersPage(store: widget.store)),
-      if (widget.store.hasPermission(AppPermission.salesCreate) ||
-          widget.store.hasPermission(AppPermission.salesCancel))
+      if (widget.store.canAccessPage('sales'))
         _ShellItem(
             label: tr.text('sales'),
             icon: Icons.receipt_long_outlined,
             selectedIcon: Icons.receipt_long,
             page: SalesPage(store: widget.store)),
-      if (widget.store.hasPermission(AppPermission.salesCreate))
+      if (widget.store.canAccessPage('quotations'))
         _ShellItem(
             label: tr.text('quotations'),
             icon: Icons.request_quote_outlined,
             selectedIcon: Icons.request_quote,
             page: QuotationsPage(store: widget.store)),
-      _ShellItem(
-          label: tr.text('delivery_notes'),
-          icon: Icons.local_shipping_outlined,
-          selectedIcon: Icons.local_shipping,
-          page: DeliveryNotesPage(store: widget.store)),
-      if (widget.store.hasPermission(AppPermission.suppliersManage))
+      if (widget.store.canAccessPage('delivery_notes'))
+        _ShellItem(
+            label: tr.text('delivery_notes'),
+            icon: Icons.local_shipping_outlined,
+            selectedIcon: Icons.local_shipping,
+            page: DeliveryNotesPage(store: widget.store)),
+      if (widget.store.canAccessPage('purchases'))
         _ShellItem(
             label: tr.text('purchases'),
             icon: Icons.add_shopping_cart_outlined,
             selectedIcon: Icons.add_shopping_cart,
             page: PurchasesPage(store: widget.store)),
-      if (widget.store.hasPermission(AppPermission.expensesManage))
+      if (widget.store.canAccessPage('expenses'))
         _ShellItem(
             label: tr.text('expenses'),
             icon: Icons.payments_outlined,
             selectedIcon: Icons.payments,
             page: ExpensesPage(store: widget.store)),
-      if (widget.store.hasPermission(AppPermission.reportsView) ||
-          widget.store.hasPermission(AppPermission.customersManage) ||
-          widget.store.hasPermission(AppPermission.suppliersManage))
+      if (widget.store.canAccessPage('accounting'))
         _ShellItem(
             label: tr.text('accounting'),
             icon: Icons.account_balance_wallet_outlined,
             selectedIcon: Icons.account_balance_wallet,
             page: AccountingPage(store: widget.store)),
-      _ShellItem(
-          label: tr.text('inventory'),
-          icon: Icons.warehouse_outlined,
-          selectedIcon: Icons.warehouse,
-          page: InventoryPage(store: widget.store)),
-      if (widget.store.hasPermission(AppPermission.productsEdit))
+      if (widget.store.canAccessPage('inventory'))
+        _ShellItem(
+            label: tr.text('inventory'),
+            icon: Icons.warehouse_outlined,
+            selectedIcon: Icons.warehouse,
+            page: InventoryPage(store: widget.store)),
+      if (widget.store.canAccessPage('manufacturing'))
         _ShellItem(
             label: tr.text('manufacturing_page'),
             icon: Icons.precision_manufacturing_outlined,
             selectedIcon: Icons.precision_manufacturing,
             page: ManufacturingPage(store: widget.store)),
-      if (widget.store.hasPermission(AppPermission.reportsView))
+      if (widget.store.canAccessPage('reports'))
         _ShellItem(
             label: tr.text('reports'),
             icon: Icons.bar_chart_outlined,
             selectedIcon: Icons.bar_chart,
             page: ReportsPage(store: widget.store)),
-      if (widget.store.hasPermission(AppPermission.databaseManage))
+      if (widget.store.canAccessPage('maintenance'))
         _ShellItem(
             label: tr.text('maintenance'),
             icon: Icons.health_and_safety_outlined,
             selectedIcon: Icons.health_and_safety,
             page: MaintenancePage(store: widget.store)),
-      _ShellItem(
-          label: tr.text('settings'),
-          icon: Icons.settings_outlined,
-          selectedIcon: Icons.settings,
-          page: SettingsPage(
-              store: widget.store,
-              onLocaleChanged: widget.onLocaleChanged,
-              onThemeModeChanged: widget.onThemeModeChanged,
-              themeMode: widget.themeMode,
-              onSyncSettingsChanged: widget.onSyncSettingsChanged)),
-      _ShellItem(
-          label: tr.text('stress_lab'),
-          icon: Icons.science_outlined,
-          selectedIcon: Icons.science,
-          page: StressLabPage(store: widget.store)),
+      if (widget.store.canAccessPage('database'))
+        _ShellItem(
+            label: tr.text('database'),
+            icon: Icons.storage_outlined,
+            selectedIcon: Icons.storage,
+            page: DatabasePage(store: widget.store)),
+      if (widget.store.canAccessPage('settings'))
+        _ShellItem(
+            label: tr.text('settings'),
+            icon: Icons.settings_outlined,
+            selectedIcon: Icons.settings,
+            page: SettingsPage(
+                store: widget.store,
+                onLocaleChanged: widget.onLocaleChanged,
+                onThemeModeChanged: widget.onThemeModeChanged,
+                themeMode: widget.themeMode,
+                onSyncSettingsChanged: widget.onSyncSettingsChanged)),
     ];
+    if (items.isEmpty) {
+      items.add(const _ShellItem(
+        label: 'Access denied',
+        icon: Icons.lock_outline,
+        selectedIcon: Icons.lock,
+        page: _NoAccessPage(),
+      ));
+    }
     final resolvedItems = items;
     if (selectedIndex >= resolvedItems.length) {
       selectedIndex = resolvedItems.length - 1;
@@ -1180,6 +1192,45 @@ class _MainShellState extends State<MainShell> {
               : resolvedItems[selectedIndex].page,
         );
       },
+    );
+  }
+}
+
+class _NoAccessPage extends StatelessWidget {
+  const _NoAccessPage();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.lock_outline, size: 42),
+                  const SizedBox(height: 12),
+                  Text(
+                    'No accessible pages',
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleLarge
+                        ?.copyWith(fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'This account does not have permissions to open any section.',
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

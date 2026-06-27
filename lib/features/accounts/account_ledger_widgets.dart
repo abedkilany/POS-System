@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 import '../../core/localization/app_localizations.dart';
 import '../../core/utils/currency_utils.dart';
@@ -109,10 +110,13 @@ class _AccountLedgerSheet extends StatelessWidget {
             Expanded(
               child: rows.isEmpty
                   ? Center(child: Text(AppLocalizations.of(context).text('no_account_transactions')))
-                  : ListView.separated(
+                  : ListView.builder(
+                      scrollCacheExtent: const ScrollCacheExtent.pixels(2000),
+                      keyboardDismissBehavior:
+                          ScrollViewKeyboardDismissBehavior.onDrag,
                       controller: scrollController,
+                      itemExtent: 72.0,
                       itemCount: rows.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
                       itemBuilder: (context, index) => _TransactionTile(store: store, transaction: rows[index]),
                     ),
             ),

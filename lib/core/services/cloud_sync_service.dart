@@ -1991,7 +1991,7 @@ class CloudSyncService {
           deviceId: wipedDeviceId,
           deviceToken: wipedToken,
         );
-        await store.factoryResetLocalDevice();
+        await store.factoryResetLocalDevice(enforcePermission: false);
         return const CloudSyncResult(
             ok: false,
             message: 'Device revoked by Host. Local data was wiped.');

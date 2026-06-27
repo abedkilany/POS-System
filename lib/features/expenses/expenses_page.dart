@@ -1,5 +1,8 @@
+// ignore_for_file: curly_braces_in_flow_control_structures
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/rendering.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/localization/app_localizations.dart';
@@ -28,6 +31,12 @@ class _ExpensesPageState extends State<ExpensesPage> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
+    if (!widget.store.canViewExpenses) {
+      return const _AccessDeniedScaffold(
+        title: 'Expenses',
+        message: 'You do not have access to expense records.',
+      );
+    }
     final normalizedQuery = query.trim().toLowerCase();
     final expenses = widget.store.expenses.where((expense) {
       final matchesStatus = statusFilter == 'all' ||
@@ -52,7 +61,9 @@ class _ExpensesPageState extends State<ExpensesPage> {
             title: tr.text('expenses'),
             subtitle: tr.text('expenses_page_desc'),
             action: FilledButton.icon(
-              onPressed: () => _openExpenseForm(context),
+              onPressed: widget.store.canManageExpenses
+                  ? () => _openExpenseForm(context)
+                  : null,
               icon: const Icon(Icons.add_card_outlined),
               label: Text(tr.text('add_expense')),
             ),
@@ -106,19 +117,25 @@ class _ExpensesPageState extends State<ExpensesPage> {
           Expanded(
             child: expenses.isEmpty
                 ? EmptyStateCard(icon: Icons.payments_outlined, title: tr.text('no_expenses'), subtitle: tr.text('no_expenses_desc'))
-                : ListView.separated(
-                    keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-                    itemCount: expenses.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 10),
-                    itemBuilder: (context, index) => _ExpenseCard(
-                      expense: expenses[index],
-                      storeProfile: widget.store.storeProfile,
-                      onEdit: expenses[index].isDraft ? () => _openExpenseForm(context, expense: expenses[index]) : null,
-                      onPost: expenses[index].isDraft ? () => _postExpense(context, expenses[index]) : null,
-                      onCancel: expenses[index].isPosted ? () => _cancelExpense(context, expenses[index]) : null,
-                      onDeleteDraft: expenses[index].isDraft ? () => _deleteExpense(context, expenses[index]) : null,
-                      onPermanentDelete: expenses[index].isCancelled && widget.store.hasPermission(AppPermission.databaseManage) ? () => _permanentlyDeleteExpense(context, expenses[index]) : null,
-                    ),
+                : LayoutBuilder(
+                    builder: (context, constraints) {
+                      final rowExtent = constraints.maxWidth < 620 ? 188.0 : 168.0;
+                      return ListView.builder(
+                        scrollCacheExtent: const ScrollCacheExtent.pixels(2000),
+                        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+                        itemExtent: rowExtent,
+                        itemCount: expenses.length,
+                        itemBuilder: (context, index) => _ExpenseCard(
+                          expense: expenses[index],
+                          storeProfile: widget.store.storeProfile,
+                          onEdit: expenses[index].isDraft && widget.store.canManageExpenses ? () => _openExpenseForm(context, expense: expenses[index]) : null,
+                          onPost: expenses[index].isDraft && widget.store.hasAnyPermission(<String>{AppPermission.expensesApprove, AppPermission.expensesManage}) ? () => _postExpense(context, expenses[index]) : null,
+                          onCancel: expenses[index].isPosted && widget.store.hasAnyPermission(<String>{AppPermission.expensesCancel, AppPermission.expensesManage}) ? () => _cancelExpense(context, expenses[index]) : null,
+                          onDeleteDraft: expenses[index].isDraft && widget.store.hasAnyPermission(<String>{AppPermission.expensesDelete, AppPermission.expensesManage}) ? () => _deleteExpense(context, expenses[index]) : null,
+                          onPermanentDelete: expenses[index].isCancelled && widget.store.hasPermission(AppPermission.databaseManage) ? () => _permanentlyDeleteExpense(context, expenses[index]) : null,
+                        ),
+                      );
+                    },
                   ),
           ),
         ],
@@ -127,6 +144,10 @@ class _ExpensesPageState extends State<ExpensesPage> {
   }
 
   Future<void> _deleteExpense(BuildContext context, Expense expense) async {
+    if (!widget.store.hasAnyPermission(<String>{
+      AppPermission.expensesDelete,
+      AppPermission.expensesManage,
+    })) return;
     final tr = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
@@ -143,18 +164,34 @@ class _ExpensesPageState extends State<ExpensesPage> {
         ],
       ),
     );
-    if (confirmed != true) return;
+    if (confirmed != true) {
+      return;
+    }
     try {
       await widget.store.deleteDraftExpense(expense.id);
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('expense_deleted').replaceAll('{title}', expense.title))));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              tr.text('expense_deleted').replaceAll('{title}', expense.title),
+            ),
+          ),
+        );
       }
     } catch (error) {
-      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error.toString())),
+        );
+      }
     }
   }
 
   Future<void> _postExpense(BuildContext context, Expense expense) async {
+    if (!widget.store.hasAnyPermission(<String>{
+      AppPermission.expensesApprove,
+      AppPermission.expensesManage,
+    })) return;
     final tr = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
@@ -167,16 +204,30 @@ class _ExpensesPageState extends State<ExpensesPage> {
         ],
       ),
     );
-    if (confirmed != true) return;
+    if (confirmed != true) {
+      return;
+    }
     try {
       await widget.store.postExpense(expense.id);
-      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('expense_posted'))));
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr.text('expense_posted'))),
+        );
+      }
     } catch (error) {
-      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error.toString())),
+        );
+      }
     }
   }
 
   Future<void> _cancelExpense(BuildContext context, Expense expense) async {
+    if (!widget.store.hasAnyPermission(<String>{
+      AppPermission.expensesCancel,
+      AppPermission.expensesManage,
+    })) return;
     final tr = AppLocalizations.of(context);
     final reasonController = TextEditingController();
     final confirmed = await showDialog<bool>(
@@ -206,13 +257,22 @@ class _ExpensesPageState extends State<ExpensesPage> {
     reasonController.dispose();
     try {
       await widget.store.cancelExpense(expense.id, reason: reason);
-      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('expense_cancelled'))));
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr.text('expense_cancelled'))),
+        );
+      }
     } catch (error) {
-      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error.toString())),
+        );
+      }
     }
   }
 
   Future<void> _permanentlyDeleteExpense(BuildContext context, Expense expense) async {
+    if (!widget.store.hasPermission(AppPermission.databaseManage)) return;
     final tr = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
@@ -225,16 +285,27 @@ class _ExpensesPageState extends State<ExpensesPage> {
         ],
       ),
     );
-    if (confirmed != true) return;
+    if (confirmed != true) {
+      return;
+    }
     try {
       await widget.store.permanentlyDeleteCancelledExpense(expense.id);
-      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('expense_permanently_deleted'))));
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr.text('expense_permanently_deleted'))),
+        );
+      }
     } catch (error) {
-      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error.toString())),
+        );
+      }
     }
   }
 
   Future<void> _openExpenseForm(BuildContext context, {Expense? expense}) async {
+    if (!widget.store.canManageExpenses) return;
     final result = await showDialog<Expense>(
       context: context,
       builder: (_) => _ExpenseDialog(expense: expense, storeProfile: widget.store.storeProfile),
@@ -246,9 +317,51 @@ class _ExpensesPageState extends State<ExpensesPage> {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text(expense == null ? 'expense_saved_as_draft' : 'expense_updated'))));
         }
       } catch (error) {
-        if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(error.toString())),
+          );
+        }
       }
     }
+  }
+}
+
+class _AccessDeniedScaffold extends StatelessWidget {
+  const _AccessDeniedScaffold({required this.title, required this.message});
+
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(title)),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.lock_outline, size: 42),
+                  const SizedBox(height: 12),
+                  Text(title,
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleLarge
+                          ?.copyWith(fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 8),
+                  Text(message, textAlign: TextAlign.center),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

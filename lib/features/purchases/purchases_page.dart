@@ -1,3 +1,5 @@
+// ignore_for_file: curly_braces_in_flow_control_structures
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../core/localization/app_localizations.dart';
@@ -164,6 +166,12 @@ class _PurchasesPageState extends State<PurchasesPage> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
+    if (!widget.store.canViewPurchases) {
+      return const _AccessDeniedScaffold(
+        title: 'Purchases',
+        message: 'You do not have access to purchase records.',
+      );
+    }
     final allPurchases = widget.store.purchases;
     final query = _searchController.text.toLowerCase().trim();
     var purchases = allPurchases.where((p) {
@@ -232,7 +240,9 @@ class _PurchasesPageState extends State<PurchasesPage> {
               ],
             );
             final button = FilledButton.icon(
-              onPressed: () => _openPurchaseDialog(context),
+              onPressed: widget.store.canManagePurchases
+                  ? () => _openPurchaseDialog(context)
+                  : null,
               icon: const Icon(Icons.add_shopping_cart),
               label: Text(tr.text('new_purchase')),
             );
@@ -377,13 +387,18 @@ class _PurchasesPageState extends State<PurchasesPage> {
                           storeProfile: widget.store.storeProfile,
                           onTap: () => _showPurchaseDetails(context, purchase),
                           onReceive: purchase.status == 'Draft'
-                              ? () => _receivePurchase(context, purchase.id)
+                              ? (widget.store.canManagePurchases
+                                  ? () => _receivePurchase(context, purchase.id)
+                                  : null)
                               : null,
                           onCancel: purchase.isReceived && !purchase.isReturned
-                              ? () => _returnPurchase(context, purchase.id)
+                              ? (widget.store.hasPermission(AppPermission.purchasesCancel) || widget.store.canManagePurchases
+                                  ? () => _returnPurchase(context, purchase.id)
+                                  : null)
                               : null,
                           onDeleteDraft: !purchase.isReceived &&
-                                  !purchase.isCancelled
+                                  !purchase.isCancelled &&
+                                  widget.store.canManagePurchases
                               ? () => _deleteDraftPurchase(context, purchase.id)
                               : null,
                           onPermanentDelete:
@@ -393,8 +408,10 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                   ? () => _permanentlyDeletePurchase(
                                       context, purchase.id)
                                   : null,
-                          onDuplicate: () =>
-                              _openPurchaseDialog(context, template: purchase),
+                          onDuplicate: widget.store.canManagePurchases
+                              ? () => _openPurchaseDialog(context,
+                                  template: purchase)
+                              : null,
                           formatDate: _formatShortDate,
                         ),
                         const Divider(height: 1),
@@ -408,6 +425,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
   }
 
   Future<void> _receivePurchase(BuildContext context, String id) async {
+    if (!widget.store.canManagePurchases) return;
     try {
       await widget.store.receivePurchase(id);
       if (!context.mounted) return;
@@ -423,6 +441,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
   }
 
   Future<void> _deleteDraftPurchase(BuildContext context, String id) async {
+    if (!widget.store.canManagePurchases) return;
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -456,6 +475,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
 
   Future<void> _permanentlyDeletePurchase(
       BuildContext context, String id) async {
+    if (!widget.store.hasPermission(AppPermission.databaseManage)) return;
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -490,6 +510,10 @@ class _PurchasesPageState extends State<PurchasesPage> {
   }
 
   Future<void> _returnPurchase(BuildContext context, String id) async {
+    if (!widget.store.hasAnyPermission(<String>{
+      AppPermission.purchasesCancel,
+      AppPermission.purchasesManage,
+    })) return;
     final reasonController = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
@@ -720,6 +744,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
 
   Future<void> _openPurchaseDialog(BuildContext context,
       {Purchase? template}) async {
+    if (!widget.store.canManagePurchases) return;
     final tr = AppLocalizations.of(context);
     final formKey = GlobalKey<FormState>();
     final items = template == null
@@ -2440,6 +2465,44 @@ class _PurchasesPageState extends State<PurchasesPage> {
     qtyFocusNode.dispose();
     costFocusNode.dispose();
     paidAmountFocusNode.dispose();
+  }
+}
+
+class _AccessDeniedScaffold extends StatelessWidget {
+  const _AccessDeniedScaffold({required this.title, required this.message});
+
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(title)),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.lock_outline, size: 42),
+                  const SizedBox(height: 12),
+                  Text(title,
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleLarge
+                          ?.copyWith(fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 8),
+                  Text(message, textAlign: TextAlign.center),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

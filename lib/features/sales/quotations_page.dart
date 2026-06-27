@@ -19,6 +19,7 @@ class QuotationsPage extends StatefulWidget {
 
 class _QuotationsPageState extends State<QuotationsPage> {
   Future<void> _createQuotation() async {
+    if (!widget.store.canManageQuotations) return;
     final tr = AppLocalizations.of(context);
     final result = await showDialog<_QuotationDraft>(
       context: context,
@@ -42,6 +43,7 @@ class _QuotationsPageState extends State<QuotationsPage> {
   }
 
   Future<void> _convertQuotation(SaleQuotation quotation) async {
+    if (!widget.store.canManageQuotations) return;
     final tr = AppLocalizations.of(context);
     final confirm = await showDialog<bool>(
       context: context,
@@ -68,6 +70,7 @@ class _QuotationsPageState extends State<QuotationsPage> {
   }
 
   Future<void> _deleteQuotation(SaleQuotation quotation) async {
+    if (!widget.store.canManageQuotations) return;
     final tr = AppLocalizations.of(context);
     final confirm = await showDialog<bool>(
       context: context,
@@ -86,14 +89,26 @@ class _QuotationsPageState extends State<QuotationsPage> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
+    if (!widget.store.canViewQuotations) {
+      return const _AccessDeniedScaffold(
+        title: 'Quotations',
+        message: 'You do not have access to quotation records.',
+      );
+    }
     final quotations = widget.store.saleQuotations;
     return Scaffold(
       appBar: AppBar(
         title: Text(tr.text('quotations')),
-        actions: [IconButton(onPressed: _createQuotation, icon: const Icon(Icons.add), tooltip: tr.text('new_quotation'))],
+        actions: [
+          IconButton(
+            onPressed: widget.store.canManageQuotations ? _createQuotation : null,
+            icon: const Icon(Icons.add),
+            tooltip: tr.text('new_quotation'),
+          )
+        ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _createQuotation,
+        onPressed: widget.store.canManageQuotations ? _createQuotation : null,
         icon: const Icon(Icons.add),
         label: Text(tr.text('new_quotation')),
       ),
@@ -115,12 +130,12 @@ class _QuotationsPageState extends State<QuotationsPage> {
                       children: [
                         IconButton(
                           tooltip: tr.text('convert_to_sale'),
-                          onPressed: quotation.isConverted ? null : () => _convertQuotation(quotation),
+                          onPressed: quotation.isConverted || !widget.store.canManageQuotations ? null : () => _convertQuotation(quotation),
                           icon: const Icon(Icons.receipt_long),
                         ),
                         IconButton(
                           tooltip: tr.text('delete'),
-                          onPressed: quotation.isConverted ? null : () => _deleteQuotation(quotation),
+                          onPressed: quotation.isConverted || !widget.store.canManageQuotations ? null : () => _deleteQuotation(quotation),
                           icon: const Icon(Icons.delete_outline),
                         ),
                       ],
@@ -129,6 +144,44 @@ class _QuotationsPageState extends State<QuotationsPage> {
                 );
               },
             ),
+    );
+  }
+}
+
+class _AccessDeniedScaffold extends StatelessWidget {
+  const _AccessDeniedScaffold({required this.title, required this.message});
+
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(title)),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.lock_outline, size: 42),
+                  const SizedBox(height: 12),
+                  Text(title,
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleLarge
+                          ?.copyWith(fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 8),
+                  Text(message, textAlign: TextAlign.center),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

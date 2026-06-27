@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 import '../../core/localization/app_localizations.dart';
 import '../../core/utils/currency_utils.dart';
@@ -13,6 +14,9 @@ import '../../models/journal_entry.dart';
 import '../../models/aging_report.dart';
 import '../../models/user_role.dart';
 import '../accounts/account_ledger_widgets.dart';
+
+const ScrollCacheExtent _kAccountingListCacheExtent =
+    ScrollCacheExtent.pixels(2000);
 
 class AccountingPage extends StatefulWidget {
   const AccountingPage({super.key, required this.store});
@@ -47,6 +51,12 @@ class _AccountingPageState extends State<AccountingPage>
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
+    if (!widget.store.canViewAccounting) {
+      return const _AccessDeniedScaffold(
+        title: 'Accounting',
+        message: 'You do not have access to accounting data.',
+      );
+    }
     final metrics = _AccountingMetrics.fromStore(widget.store);
 
     return Padding(
@@ -77,6 +87,44 @@ class _AccountingPageState extends State<AccountingPage>
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _AccessDeniedScaffold extends StatelessWidget {
+  const _AccessDeniedScaffold({required this.title, required this.message});
+
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(title)),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.lock_outline, size: 42),
+                  const SizedBox(height: 12),
+                  Text(title,
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleLarge
+                          ?.copyWith(fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 8),
+                  Text(message, textAlign: TextAlign.center),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -635,24 +683,48 @@ class _AccountsTab extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final isWide = constraints.maxWidth >= 760;
+        final rowExtent = isWide ? 84.0 : 104.0;
         return Card(
           elevation: 0,
           clipBehavior: Clip.antiAlias,
-          child: ListView.separated(
-            itemCount: rows.length + (isWide ? 1 : 0),
-            separatorBuilder: (_, index) => const Divider(height: 1),
-            itemBuilder: (context, index) {
-              if (isWide && index == 0) {
-                return _AccountTableHeader(accountType: accountType);
-              }
-              final row = rows[isWide ? index - 1 : index];
-              return _AccountListRow(
-                  store: store,
-                  accountType: accountType,
-                  row: row,
-                  isWide: isWide);
-            },
-          ),
+          child: isWide
+              ? Column(
+                  children: [
+                    _AccountTableHeader(accountType: accountType),
+                    Expanded(
+                      child: ListView.builder(
+                        scrollCacheExtent: _kAccountingListCacheExtent,
+                        keyboardDismissBehavior:
+                            ScrollViewKeyboardDismissBehavior.onDrag,
+                        itemExtent: rowExtent,
+                        itemCount: rows.length,
+                        itemBuilder: (context, index) {
+                          final row = rows[index];
+                          return _AccountListRow(
+                              store: store,
+                              accountType: accountType,
+                              row: row,
+                              isWide: isWide);
+                        },
+                      ),
+                    ),
+                  ],
+                )
+              : ListView.builder(
+                  scrollCacheExtent: _kAccountingListCacheExtent,
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  itemExtent: rowExtent,
+                  itemCount: rows.length,
+                  itemBuilder: (context, index) {
+                    final row = rows[index];
+                    return _AccountListRow(
+                        store: store,
+                        accountType: accountType,
+                        row: row,
+                        isWide: isWide);
+                  },
+                ),
         );
       },
     );
@@ -1132,19 +1204,46 @@ class _TransactionsTab extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final isWide = constraints.maxWidth >= 780;
+        final rowExtent = isWide ? 72.0 : 92.0;
         return Card(
           elevation: 0,
           clipBehavior: Clip.antiAlias,
-          child: ListView.separated(
-            itemCount: rows.length + (isWide ? 1 : 0),
-            separatorBuilder: (_, __) => const Divider(height: 1),
-            itemBuilder: (context, index) {
-              if (isWide && index == 0) return const _TransactionTableHeader();
-              final transaction = rows[isWide ? index - 1 : index];
-              return _TransactionRow(
-                  store: store, transaction: transaction, isWide: isWide);
-            },
-          ),
+          child: isWide
+              ? Column(
+                  children: [
+                    const _TransactionTableHeader(),
+                    Expanded(
+                      child: ListView.builder(
+                        scrollCacheExtent: _kAccountingListCacheExtent,
+                        keyboardDismissBehavior:
+                            ScrollViewKeyboardDismissBehavior.onDrag,
+                        itemExtent: rowExtent,
+                        itemCount: rows.length,
+                        itemBuilder: (context, index) {
+                          final transaction = rows[index];
+                          return _TransactionRow(
+                              store: store,
+                              transaction: transaction,
+                              isWide: isWide);
+                        },
+                      ),
+                    ),
+                  ],
+                )
+              : ListView.builder(
+                  scrollCacheExtent: _kAccountingListCacheExtent,
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  itemExtent: rowExtent,
+                  itemCount: rows.length,
+                  itemBuilder: (context, index) {
+                    final transaction = rows[index];
+                    return _TransactionRow(
+                        store: store,
+                        transaction: transaction,
+                        isWide: isWide);
+                  },
+                ),
         );
       },
     );
@@ -1660,17 +1759,23 @@ class _CashBankReportTab extends StatelessWidget {
         return Card(
           elevation: 0,
           clipBehavior: Clip.antiAlias,
-          child: ListView.separated(
+          child: ListView.builder(
+            scrollCacheExtent: _kAccountingListCacheExtent,
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            itemExtent: 76.0,
             itemCount: rows.length,
-            separatorBuilder: (_, __) => const Divider(height: 1),
             itemBuilder: (context, index) {
               final row = rows[index];
               return ListTile(
                 leading: const Icon(Icons.account_balance_wallet_outlined),
                 title: Text(
-                    '${row.accountCode} • ${_localizedAccountingName(row.accountName, tr)}'),
+                    '${row.accountCode} ? ${_localizedAccountingName(row.accountName, tr)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
                 subtitle: Text(
-                    '${tr.text('in')} ${_money(store, row.moneyIn)} • ${tr.text('out')} ${_money(store, row.moneyOut)}'),
+                    '${tr.text('in')} ${_money(store, row.moneyIn)} ? ${tr.text('out')} ${_money(store, row.moneyOut)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
                 trailing: Text(_money(store, row.closingBalance),
                     style: Theme.of(context)
                         .textTheme
@@ -2071,9 +2176,9 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     value: bindToCurrentDevice,
-                    title: Text(tr.isArabic ? 'ربط الدرج بالجهاز الحالي' : 'Link drawer to current device'),
+                    title: Text(tr.isArabic ? '??? ????? ??????? ??????' : 'Link drawer to current device'),
                     subtitle: Text(currentDeviceId.isEmpty
-                        ? (tr.isArabic ? 'لا يوجد Device ID متاح حالياً' : 'No Device ID is currently available')
+                        ? (tr.isArabic ? '?? ???? Device ID ???? ??????' : 'No Device ID is currently available')
                         : currentDeviceId),
                     onChanged: (value) =>
                         setDialogState(() => bindToCurrentDevice = value),
@@ -2194,10 +2299,10 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                 alignment: AlignmentDirectional.centerStart,
                 child: Text(
                   currentDeviceId.isEmpty
-                      ? (tr.isArabic ? 'تحذير: لا يوجد Device ID للجهاز الحالي.' : 'Warning: no Device ID is available for the current device.')
+                      ? (tr.isArabic ? '?????: ?? ???? Device ID ?????? ??????.' : 'Warning: no Device ID is available for the current device.')
                       : (deviceDrawers.isEmpty
-                          ? 'لم يتم العثور على درج مربوط بهذا الجهاز، تم عرض كل الأدراج.'
-                          : 'يتم استخدام درج الجهاز الحالي.'),
+                          ? '?? ??? ?????? ??? ??? ????? ???? ??????? ?? ??? ?? ???????.'
+                          : '??? ??????? ??? ?????? ??????.'),
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),
@@ -2252,7 +2357,7 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
         drawerNo: drawers
             .firstWhere((item) => item.id == selectedDrawerId,
                 orElse: () => AdvancedAccountingItem(
-                    id: selectedDrawerId, name: 'درج النقد'))
+                    id: selectedDrawerId, name: '??? ?????'))
             .name,
         cashLocationId: selectedDrawerId,
         fundingLocationId: selectedFundingId,
@@ -2890,17 +2995,17 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
               const SizedBox(height: 8),
                 DropdownButtonFormField<String>(
                 initialValue: closeMode,
-                decoration: InputDecoration(labelText: tr.isArabic ? 'إجراء الإغلاق' : 'Close action'),
+                decoration: InputDecoration(labelText: tr.isArabic ? '????? ???????' : 'Close action'),
                 items: [
                   DropdownMenuItem(
                       value: 'close_only',
-                      child: Text(tr.isArabic ? 'إغلاق الوردية وترك النقد في نفس الدرج' : 'Close the shift and keep cash in the same drawer')),
+                      child: Text(tr.isArabic ? '????? ??????? ???? ????? ?? ??? ?????' : 'Close the shift and keep cash in the same drawer')),
                   DropdownMenuItem(
                       value: 'transfer_location',
-                      child: Text(tr.isArabic ? 'إغلاق وتحويل النقد إلى درج / صندوق آخر' : 'Close and transfer cash to another drawer / vault')),
+                      child: Text(tr.isArabic ? '????? ?????? ????? ??? ??? / ????? ???' : 'Close and transfer cash to another drawer / vault')),
                   DropdownMenuItem(
                       value: 'handover_user',
-                      child: Text(tr.isArabic ? 'تسليم لموظف جديد وفتح وردية جديدة' : 'Handover to a new employee and open a new shift')),
+                      child: Text(tr.isArabic ? '????? ????? ???? ???? ????? ?????' : 'Handover to a new employee and open a new shift')),
                 ],
                 onChanged: (value) =>
                     setDialogState(() => closeMode = value ?? closeMode),
@@ -2909,7 +3014,7 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                 const SizedBox(height: 8),
                 DropdownButtonFormField<String>(
                   initialValue: transferToId.isEmpty ? null : transferToId,
-                  decoration: const InputDecoration(labelText: 'التحويل إلى'),
+                  decoration: const InputDecoration(labelText: '??????? ???'),
                   items: transferTargets
                       .map((location) => DropdownMenuItem(
                           value: location.id,
@@ -2925,7 +3030,7 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                 DropdownButtonFormField<String>(
                   initialValue: nextUserId.isEmpty ? null : nextUserId,
                   decoration:
-                      const InputDecoration(labelText: 'الموظف المستلم'),
+                      const InputDecoration(labelText: '?????? ???????'),
                   items: handoverUsers.map((user) {
                     final label = user.fullName.trim().isNotEmpty
                         ? user.fullName.trim()
@@ -2939,7 +3044,7 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                    'سيتم إغلاق وردية الموظف الحالي وفتح وردية جديدة للموظف المستلم بنفس المبلغ المعدود.',
+                    '???? ????? ????? ?????? ?????? ???? ????? ????? ?????? ??????? ???? ?????? ???????.',
                     style: Theme.of(context).textTheme.bodySmall),
               ],
               TextField(
@@ -2993,9 +3098,9 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
       final effectiveNotes = [
         notes.text.trim(),
         if (closeMode == 'transfer_location')
-          'تحويل النقد بعد الإغلاق إلى $transferTargetName',
+          '????? ????? ??? ??????? ??? $transferTargetName',
         if (closeMode == 'handover_user')
-          'تسليم الوردية إلى $selectedNextUserName',
+          '????? ??????? ??? $selectedNextUserName',
       ].where((part) => part.trim().isNotEmpty).join(' • ');
       await AccountingService.closeCashDrawer(
         sessionId: item.id,

@@ -4,6 +4,7 @@ import '../../core/localization/app_localizations.dart';
 import '../../data/app_store.dart';
 import '../../models/delivery_note.dart';
 import '../../models/sale.dart';
+import '../../models/user_role.dart';
 
 class DeliveryNotesPage extends StatefulWidget {
   const DeliveryNotesPage({super.key, required this.store});
@@ -94,13 +95,41 @@ class _DeliveryNotesPageState extends State<DeliveryNotesPage> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
+    final canCreate = widget.store.hasAnyPermission(<String>{
+      AppPermission.deliveryNotesManage,
+      AppPermission.salesCreate,
+    });
+    final canDelete = widget.store.hasAnyPermission(<String>{
+      AppPermission.deliveryNotesManage,
+      AppPermission.salesCancel,
+    });
+    final canAccess = canCreate || canDelete;
+    if (!canAccess) {
+      return _AccessDeniedScaffold(
+        title: tr.text('delivery_notes'),
+        message: 'This section is not available for your current role.',
+      );
+    }
     final notes = widget.store.deliveryNotes;
     return Scaffold(
       appBar: AppBar(
         title: Text(tr.text('delivery_notes')),
-        actions: [IconButton(onPressed: _createFromSale, icon: const Icon(Icons.add), tooltip: tr.text('create_delivery_note'))],
+        actions: [
+          if (canCreate)
+            IconButton(
+              onPressed: _createFromSale,
+              icon: const Icon(Icons.add),
+              tooltip: tr.text('create_delivery_note'),
+            )
+        ],
       ),
-      floatingActionButton: FloatingActionButton.extended(onPressed: _createFromSale, icon: const Icon(Icons.local_shipping_outlined), label: Text(tr.text('create_delivery_note'))),
+      floatingActionButton: canCreate
+          ? FloatingActionButton.extended(
+              onPressed: _createFromSale,
+              icon: const Icon(Icons.local_shipping_outlined),
+              label: Text(tr.text('create_delivery_note')),
+            )
+          : null,
       body: notes.isEmpty
           ? Center(child: Text(tr.text('no_delivery_notes')))
           : ListView.separated(
@@ -131,9 +160,19 @@ class _DeliveryNotesPageState extends State<DeliveryNotesPage> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.end,
                         children: [
-                          TextButton.icon(onPressed: note.isDelivered ? null : () => _markDelivered(note), icon: const Icon(Icons.done_all), label: Text(tr.text('delivered'))),
-                          const SizedBox(width: 8),
-                          TextButton.icon(onPressed: () => _delete(note), icon: const Icon(Icons.delete_outline), label: Text(tr.text('delete'))),
+                          if (canCreate)
+                            TextButton.icon(
+                              onPressed: note.isDelivered ? null : () => _markDelivered(note),
+                              icon: const Icon(Icons.done_all),
+                              label: Text(tr.text('delivered')),
+                            ),
+                          if (canCreate && canDelete) const SizedBox(width: 8),
+                          if (canDelete)
+                            TextButton.icon(
+                              onPressed: () => _delete(note),
+                              icon: const Icon(Icons.delete_outline),
+                              label: Text(tr.text('delete')),
+                            ),
                         ],
                       ),
                     ],
@@ -141,6 +180,43 @@ class _DeliveryNotesPageState extends State<DeliveryNotesPage> {
                 );
               },
             ),
+    );
+  }
+}
+
+class _AccessDeniedScaffold extends StatelessWidget {
+  const _AccessDeniedScaffold({required this.title, required this.message});
+
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(title)),
+      body: Center(
+        child: Card(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.lock_outline, size: 42),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'No access to this section.',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(message, textAlign: TextAlign.center),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

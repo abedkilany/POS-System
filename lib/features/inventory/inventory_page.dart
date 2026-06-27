@@ -5,6 +5,7 @@ import '../../core/utils/responsive.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../data/app_store.dart';
 import '../../models/product.dart';
+import '../../models/user_role.dart';
 import '../../widgets/summary_card.dart';
 import '../barcode/barcode_scanner_page.dart';
 
@@ -70,45 +71,6 @@ class _InventoryPageState extends State<InventoryPage>
     super.dispose();
   }
 
-  String _movementTypeLabel(AppLocalizations tr, String type) {
-    switch (type) {
-      case 'auto_correction':
-        return tr.text('auto_correction');
-      case 'purchase_receive':
-        return tr.text('purchase_received');
-      case 'purchase_return':
-        return tr.text('purchase_return');
-      case 'purchase_cancel':
-        return tr.text('purchase_cancel');
-      case 'sale':
-        return tr.text('sale_invoice');
-      case 'sale_return':
-        return tr.text('return_sale');
-      case 'sale_restore':
-        return tr.text('sale_restore');
-      case 'sale_cancel':
-        return tr.text('sale_cancel');
-      case 'paymentReceived':
-        return tr.text('payment_received');
-      case 'paymentPaid':
-        return tr.text('payment_paid');
-      case 'paymentReversal':
-        return tr.text('payment_reversal');
-      case 'warehouse_transfer_in':
-        return tr.text('warehouse_transfer_in');
-      case 'warehouse_transfer_out':
-        return tr.text('warehouse_transfer_out');
-      case 'count_adjustment':
-        return tr.text('count_adjustment');
-      case 'manufacturing_consume':
-        return tr.text('manufacturing_consume');
-      case 'manufacturing_output':
-        return tr.text('manufacturing_output');
-      default:
-        return type.replaceAll('_', ' ');
-    }
-  }
-
   Future<void> _scanInventorySearchBarcode() async {
     final code = await Navigator.of(context).push<String>(
       MaterialPageRoute(builder: (_) => const BarcodeScannerPage()),
@@ -123,7 +85,53 @@ class _InventoryPageState extends State<InventoryPage>
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
+    if (!widget.store.canViewInventory) {
+      return _InventoryAccessDenied(
+        title: tr.text('inventory'),
+        message: 'This section is not available for your current role.',
+      );
+    }
     final products = _filterProducts(widget.store.stockTrackedProducts, query);
+    final canViewOverview = widget.store.hasPermission(AppPermission.inventoryView) ||
+        widget.store.hasPermission(AppPermission.reportsView) ||
+        widget.store.hasPermission(AppPermission.productsCreate) ||
+        widget.store.hasPermission(AppPermission.productsEdit) ||
+        widget.store.hasPermission(AppPermission.productsDelete);
+    final canManageWarehouses = widget.store.hasAnyPermission(<String>{
+      AppPermission.inventoryWarehousesManage,
+      AppPermission.productsEdit,
+    });
+    final canViewMovements = widget.store.hasAnyPermission(<String>{
+      AppPermission.inventoryMovementsView,
+      AppPermission.reportsView,
+      AppPermission.productsEdit,
+    });
+    final canViewCorrections = widget.store.hasAnyPermission(<String>{
+      AppPermission.inventoryCorrectionsManage,
+      AppPermission.reportsView,
+      AppPermission.productsEdit,
+    });
+    final canManageCounts = widget.store.hasAnyPermission(<String>{
+      AppPermission.inventoryCountsManage,
+      AppPermission.productsEdit,
+    });
+    final canViewWasteLoss = widget.store.hasAnyPermission(<String>{
+      AppPermission.inventoryWasteView,
+      AppPermission.reportsView,
+      AppPermission.productsEdit,
+    });
+
+    if (!canViewOverview &&
+        !canManageWarehouses &&
+        !canViewMovements &&
+        !canViewCorrections &&
+        !canManageCounts &&
+        !canViewWasteLoss) {
+      return _InventoryAccessDenied(
+        title: tr.text('inventory'),
+        message: 'This section is not available for your current role.',
+      );
+    }
 
     return Column(
       children: [
@@ -146,13 +154,15 @@ class _InventoryPageState extends State<InventoryPage>
             controller: _tabController,
             children: [
               _InventoryOverview(
-                  store: widget.store,
-                  products: products,
-                  query: query,
-                  searchController: _searchController,
-                  onScanBarcode: _scanInventorySearchBarcode,
-                  onQuery: (value) => setState(() => query = value),
-                  onAdjust: _openAdjustmentDialog),
+                store: widget.store,
+                products: products,
+                query: query,
+                searchController: _searchController,
+                onScanBarcode: _scanInventorySearchBarcode,
+                onQuery: (value) => setState(() => query = value),
+                onAdjust: canManageCounts ? _openAdjustmentDialog : null,
+                canAdjust: canManageCounts,
+              ),
               _WarehousesTab(store: widget.store),
               _MovementsList(store: widget.store),
               _AutoCorrectionsTab(store: widget.store),
@@ -271,7 +281,8 @@ class _InventoryOverview extends StatelessWidget {
       required this.searchController,
       required this.onScanBarcode,
       required this.onQuery,
-      required this.onAdjust});
+      required this.onAdjust,
+      required this.canAdjust});
 
   final AppStore store;
   final List<Product> products;
@@ -279,7 +290,8 @@ class _InventoryOverview extends StatelessWidget {
   final TextEditingController searchController;
   final VoidCallback onScanBarcode;
   final ValueChanged<String> onQuery;
-  final ValueChanged<String> onAdjust;
+  final ValueChanged<String>? onAdjust;
+  final bool canAdjust;
 
   @override
   Widget build(BuildContext context) {
@@ -378,6 +390,7 @@ class _InventoryOverview extends StatelessWidget {
                             product: product,
                             store: store,
                             compact: compact,
+                            canAdjust: canAdjust,
                             onAdjust: onAdjust,
                           ),
                         ),
@@ -399,12 +412,14 @@ class _InventoryProductTile extends StatelessWidget {
       {required this.product,
       required this.store,
       required this.compact,
-      required this.onAdjust});
+      required this.onAdjust,
+      required this.canAdjust});
 
   final Product product;
   final AppStore store;
   final bool compact;
-  final ValueChanged<String> onAdjust;
+  final ValueChanged<String>? onAdjust;
+  final bool canAdjust;
 
   @override
   Widget build(BuildContext context) {
@@ -420,10 +435,11 @@ class _InventoryProductTile extends StatelessWidget {
         Chip(
             avatar: isLow ? const Icon(Icons.priority_high, size: 16) : null,
             label: Text('${tr.text('stock')}: ${product.stock}')),
-        TextButton.icon(
-            onPressed: () => onAdjust(product.id),
-            icon: const Icon(Icons.tune),
-            label: Text(tr.text('adjust'))),
+        if (canAdjust)
+          TextButton.icon(
+              onPressed: onAdjust == null ? null : () => onAdjust!(product.id),
+              icon: const Icon(Icons.tune),
+              label: Text(tr.text('adjust'))),
       ],
     );
     if (compact) {
@@ -640,6 +656,15 @@ class _WarehousesTabState extends State<_WarehousesTab> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
+    if (!widget.store.hasAnyPermission(<String>{
+      AppPermission.inventoryWarehousesManage,
+      AppPermission.productsEdit,
+    })) {
+      return const _InventorySectionDenied(
+        title: 'Warehouses',
+        message: 'Warehouse management is not available for your current role.',
+      );
+    }
     final warehouses = widget.store.warehouses;
     final products = widget.store.stockTrackedProducts;
     final stockRowsByWarehouse = <String, List<_WarehouseProductStock>>{
@@ -719,6 +744,16 @@ class _MovementsList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
+    if (!store.hasAnyPermission(<String>{
+      AppPermission.inventoryMovementsView,
+      AppPermission.reportsView,
+      AppPermission.productsEdit,
+    })) {
+      return const _InventorySectionDenied(
+        title: 'Stock movements',
+        message: 'Stock movement history is not available for your current role.',
+      );
+    }
     final movements = store.stockMovements;
     return ListView(
       padding: VentioResponsive.pageInsets(context),
@@ -780,6 +815,21 @@ class _AutoCorrectionsTabState extends State<_AutoCorrectionsTab> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
+    final canReview = widget.store.hasAnyPermission(<String>{
+      AppPermission.inventoryCorrectionsManage,
+      AppPermission.productsEdit,
+    });
+    if (!widget.store.hasAnyPermission(<String>{
+      AppPermission.inventoryCorrectionsManage,
+      AppPermission.inventoryMovementsView,
+      AppPermission.reportsView,
+      AppPermission.productsEdit,
+    })) {
+      return const _InventorySectionDenied(
+        title: 'Auto corrections',
+        message: 'Auto correction review is not available for your current role.',
+      );
+    }
     final allCorrections = widget.store.autoCorrectionMovements;
     final pending = widget.store.pendingAutoCorrectionMovements;
     final corrections = showReviewed ? allCorrections : pending;
@@ -868,11 +918,13 @@ class _AutoCorrectionsTabState extends State<_AutoCorrectionsTab> {
                         isThreeLine: true,
                         trailing: movement.isReviewed
                             ? const Icon(Icons.done_all_outlined)
-                            : FilledButton.icon(
-                                onPressed: () => _reviewMovement(movement.id),
-                                icon: const Icon(Icons.check),
-                                label: Text(tr.text('mark_reviewed')),
-                              ),
+                            : canReview
+                                ? FilledButton.icon(
+                                    onPressed: () => _reviewMovement(movement.id),
+                                    icon: const Icon(Icons.check),
+                                    label: Text(tr.text('mark_reviewed')),
+                                  )
+                                : const Icon(Icons.lock_outline),
                       ),
                       const Divider(height: 1),
                     ],
@@ -916,6 +968,15 @@ class _StockCountTabState extends State<_StockCountTab> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
+    if (!widget.store.hasAnyPermission(<String>{
+      AppPermission.inventoryCountsManage,
+      AppPermission.productsEdit,
+    })) {
+      return const _InventorySectionDenied(
+        title: 'Stock count',
+        message: 'Stock count actions are not available for your current role.',
+      );
+    }
     final sessions = widget.store.inventoryCountSessions;
     final active = widget.store.activeInventoryCountSession;
     final needle = query.trim().toLowerCase();
@@ -1175,6 +1236,16 @@ class _WasteLossReport extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
+    if (!store.hasAnyPermission(<String>{
+      AppPermission.inventoryWasteView,
+      AppPermission.reportsView,
+      AppPermission.productsEdit,
+    })) {
+      return const _InventorySectionDenied(
+        title: 'Waste loss report',
+        message: 'Waste and loss reporting is not available for your current role.',
+      );
+    }
     final lossMovements = store.stockMovements
         .where((item) =>
             item.type == 'inventory_loss' ||
@@ -1244,6 +1315,61 @@ class _WasteLossReport extends StatelessWidget {
                   ],
                 ),
         ),
+      ],
+    );
+  }
+}
+
+class _InventoryAccessDenied extends StatelessWidget {
+  const _InventoryAccessDenied({required this.title, required this.message});
+
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: VentioResponsive.pageInsets(context),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 460),
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.lock_outline, size: 42),
+                  const SizedBox(height: 12),
+                  Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleLarge,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(message, textAlign: TextAlign.center),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _InventorySectionDenied extends StatelessWidget {
+  const _InventorySectionDenied({required this.title, required this.message});
+
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: VentioResponsive.pageInsets(context),
+      children: [
+        _InventoryAccessDenied(title: title, message: message),
       ],
     );
   }

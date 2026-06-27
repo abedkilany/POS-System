@@ -1,3 +1,5 @@
+// ignore_for_file: curly_braces_in_flow_control_structures
+
 import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
@@ -5,6 +7,7 @@ import '../../core/localization/app_localizations.dart';
 import '../../data/app_store.dart';
 import '../../models/manufacturing.dart';
 import '../../models/product.dart';
+import '../../models/user_role.dart';
 
 class ManufacturingPage extends StatefulWidget {
   const ManufacturingPage({super.key, required this.store});
@@ -19,6 +22,15 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
   String _tf(String key, Map<String, Object?> values) => AppLocalizations.of(context).format(key, values);
   @override
   Widget build(BuildContext context) {
+    if (!widget.store.hasAnyPermission(<String>{
+      AppPermission.inventoryManufacturingManage,
+      AppPermission.productsEdit,
+    })) {
+      return const _AccessDeniedScaffold(
+        title: 'Manufacturing',
+        message: 'You do not have access to manufacturing tools.',
+      );
+    }
     return AnimatedBuilder(
       animation: widget.store,
       builder: (context, _) {
@@ -27,7 +39,12 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
         return Scaffold(
           appBar: AppBar(title: Text(_t('manufacturing_page'))),
           floatingActionButton: FloatingActionButton.extended(
-            onPressed: _showCreateBomDialog,
+            onPressed: widget.store.hasAnyPermission(<String>{
+                  AppPermission.inventoryManufacturingManage,
+                  AppPermission.productsEdit,
+                })
+                ? _showCreateBomDialog
+                : null,
             icon: const Icon(Icons.add),
             label: Text(_t('new_bom')),
           ),
@@ -80,6 +97,12 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
   }
 
   Future<void> _showCreateBomDialog() async {
+    if (!widget.store.hasAnyPermission(<String>{
+      AppPermission.inventoryManufacturingManage,
+      AppPermission.productsEdit,
+    })) {
+      return;
+    }
     final products = widget.store.products.where((p) => p.trackStock).toList();
     if (products.length < 2) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_t('create_two_stock_products_first'))));
@@ -160,7 +183,9 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
         ),
       ),
     );
-    if (confirmed != true) return;
+    if (confirmed != true) {
+      return;
+    }
     try {
       final components = <BillOfMaterialsLine>[];
       for (var i = 0; i < componentProductIds.length; i++) {
@@ -180,6 +205,10 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
   }
 
   Future<void> _showCompleteOrderDialog(BillOfMaterials bom) async {
+    if (!widget.store.hasAnyPermission(<String>{
+      AppPermission.inventoryManufacturingManage,
+      AppPermission.productsEdit,
+    })) return;
     final qtyController = TextEditingController(text: bom.outputQuantity.toString());
     final confirmed = await showDialog<bool>(
       context: context,
@@ -199,6 +228,44 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
     }
+  }
+}
+
+class _AccessDeniedScaffold extends StatelessWidget {
+  const _AccessDeniedScaffold({required this.title, required this.message});
+
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(title)),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.lock_outline, size: 42),
+                  const SizedBox(height: 12),
+                  Text(title,
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleLarge
+                          ?.copyWith(fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 8),
+                  Text(message, textAlign: TextAlign.center),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

@@ -217,6 +217,12 @@ class _MaintenancePageState extends State<MaintenancePage> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
+    if (!widget.store.canViewMaintenance) {
+      return const _AccessDeniedScaffold(
+        title: 'Maintenance',
+        message: 'You do not have access to maintenance tools.',
+      );
+    }
     final summary = _summary;
     final availableRepairActions = summary?.issues
             .map((issue) => issue.repairAction)
@@ -420,34 +426,44 @@ class _MaintenancePageState extends State<MaintenancePage> {
           runSpacing: 12,
           children: [
             FilledButton.icon(
-              onPressed: _loading ? null : () => _refresh(deep: false),
+              onPressed: (!_loading && widget.store.canManageMaintenance)
+                  ? () => _refresh(deep: false)
+                  : null,
               icon: const Icon(Icons.cleaning_services_outlined),
               label: Text(tr.text('quick_recheck')),
             ),
             OutlinedButton.icon(
-              onPressed: _loading ? null : () => _refresh(deep: true),
+              onPressed: (!_loading && widget.store.canManageMaintenance)
+                  ? () => _refresh(deep: true)
+                  : null,
               icon: const Icon(Icons.fact_check_outlined),
               label: Text(tr.text('run_deep_diagnostics')),
             ),
             OutlinedButton.icon(
-              onPressed: summary == null ? null : _exportDiagnosticReport,
+              onPressed: summary == null || !widget.store.canManageMaintenance
+                  ? null
+                  : _exportDiagnosticReport,
               icon: const Icon(Icons.description_outlined),
               label: Text(tr.text('export_technical_report')),
             ),
             OutlinedButton.icon(
-              onPressed: () => setState(() => _showDatabaseExplorer = true),
+              onPressed: widget.store.canManageDatabase
+                  ? () => setState(() => _showDatabaseExplorer = true)
+                  : null,
               icon: const Icon(Icons.storage_outlined),
               label: Text(tr.text('database_explorer')),
             ),
             OutlinedButton.icon(
-              onPressed: _showWindowsInstallerReleases,
+              onPressed: widget.store.canManageMaintenance
+                  ? _showWindowsInstallerReleases
+                  : null,
               icon: const Icon(Icons.download_for_offline_outlined),
               label: Text(tr.text('windows_installer_versions')),
             ),
             if (availableRepairActions
                 .contains(MaintenanceRepairAction.repairMissingCloudQueue))
               OutlinedButton.icon(
-                onPressed: _loading
+                onPressed: _loading || !widget.store.canManageMaintenance
                     ? null
                     : () => _confirmAndRunRepair(
                         MaintenanceRepairAction.repairMissingCloudQueue),
@@ -485,6 +501,44 @@ class _MaintenancePageState extends State<MaintenancePage> {
               ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AccessDeniedScaffold extends StatelessWidget {
+  const _AccessDeniedScaffold({required this.title, required this.message});
+
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(title)),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.lock_outline, size: 42),
+                  const SizedBox(height: 12),
+                  Text(title,
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleLarge
+                          ?.copyWith(fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 8),
+                  Text(message, textAlign: TextAlign.center),
+                ],
+              ),
+            ),
+          ),
         ),
       ),
     );

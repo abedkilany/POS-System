@@ -475,7 +475,7 @@ class SettingsBackupActions {
       },
     );
     if (confirmed != true) return;
-    await store.factoryResetLocalDevice();
+    await store.factoryResetLocalDevice(enforcePermission: false);
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content:

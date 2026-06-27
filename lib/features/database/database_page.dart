@@ -8,6 +8,7 @@ import '../../core/services/local_database_service.dart';
 import '../../core/services/database_sql_editor_service.dart';
 import '../../core/services/sql_result_export_service.dart';
 import '../../data/app_store.dart';
+import '../../models/user_role.dart';
 
 class DatabasePage extends StatefulWidget {
   const DatabasePage({super.key, required this.store});
@@ -106,6 +107,13 @@ class _DatabasePageState extends State<DatabasePage> {
 
   @override
   Widget build(BuildContext context) {
+    if (!widget.store.canManageDatabase &&
+        !widget.store.hasPermission(AppPermission.databaseView)) {
+      return const _AccessDeniedScaffold(
+        title: 'Database',
+        message: 'You do not have access to database tools.',
+      );
+    }
     final allKeys = _entries.keys.toList()..sort();
     final normalizedTableQuery = _tableQuery.trim().toLowerCase();
     final keys = allKeys
@@ -167,6 +175,7 @@ class _DatabasePageState extends State<DatabasePage> {
   }
 
   void _deleteSelectedRows() async {
+    if (!widget.store.canManageDatabase) return;
     final raw = _selectedKey.isEmpty ? '' : (_entries[_selectedKey] ?? '');
     final decoded = _decode(raw);
     if (decoded is! List) return;
@@ -640,18 +649,23 @@ class _DatabasePageState extends State<DatabasePage> {
                         PopupMenuItem(
                             value: 'sql', child: Text(_t('sql_editor'))),
                       PopupMenuItem(
-                          enabled: decoded is List,
+                          enabled:
+                              decoded is List && widget.store.canManageDatabase,
                           value: 'add',
                           child: Text(_t('add_record'))),
                       if (_selectedRowIndexes.isNotEmpty)
                         PopupMenuItem(
+                            enabled: widget.store.canManageDatabase,
                             value: 'deleteSelected',
                             child: Text(_tf('delete_selected_records_count',
                                 {'count': _selectedRowIndexes.length}))),
                       const PopupMenuDivider(),
                       PopupMenuItem(
-                          value: 'raw', child: Text(_t('edit_raw_json'))),
+                          enabled: widget.store.canManageDatabase,
+                          value: 'raw',
+                          child: Text(_t('edit_raw_json'))),
                       PopupMenuItem(
+                          enabled: widget.store.canManageDatabase,
                           value: 'delete',
                           child: Text(_t('delete_selected_table_key'))),
                       const PopupMenuDivider(),
@@ -692,6 +706,7 @@ class _DatabasePageState extends State<DatabasePage> {
 
   Widget _buildSqlEditorView() {
     final theme = Theme.of(context);
+    final canWrite = widget.store.canManageDatabase;
     final exportResultIndex = _latestExportableSqlResultIndex();
     final exportRows =
         exportResultIndex == null ? null : _sqlResults[exportResultIndex].rows;
@@ -721,8 +736,8 @@ class _DatabasePageState extends State<DatabasePage> {
                           ),
                           FilterChip(
                             label: Text(_t('write_mode')),
-                            selected: _sqlAllowWrites,
-                            onSelected: _sqlRunning
+                            selected: canWrite && _sqlAllowWrites,
+                            onSelected: _sqlRunning || !canWrite
                                 ? null
                                 : (value) =>
                                     setState(() => _sqlAllowWrites = value),
@@ -1039,6 +1054,11 @@ class _DatabasePageState extends State<DatabasePage> {
   }
 
   Future<void> _runSqlEditor() async {
+    if (!widget.store.canManageDatabase) {
+      if (_sqlAllowWrites) {
+        setState(() => _sqlAllowWrites = false);
+      }
+    }
     final script = _sqlController.text.trim();
     if (script.isEmpty) return;
     final statements = DatabaseSqlEditorService.splitStatements(script);
@@ -1188,13 +1208,16 @@ class _DatabasePageState extends State<DatabasePage> {
                 IconButton(
                     tooltip: _t('edit_record'),
                     icon: const Icon(Icons.edit_outlined, size: 20),
-                    onPressed: () =>
-                        _openRowEditor(rowIndex: rowIndex, row: row)),
+                    onPressed: widget.store.canManageDatabase
+                        ? () => _openRowEditor(rowIndex: rowIndex, row: row)
+                        : null),
                 IconButton(
                   tooltip: _t('delete_record'),
                   icon: Icon(Icons.delete_outline,
                       size: 20, color: Theme.of(context).colorScheme.error),
-                  onPressed: decoded is List && rowIndex >= 0
+                  onPressed: decoded is List &&
+                          rowIndex >= 0 &&
+                          widget.store.canManageDatabase
                       ? () => _confirmDeleteRow(rowIndex)
                       : null,
                 ),
@@ -1434,6 +1457,7 @@ class _DatabasePageState extends State<DatabasePage> {
 
   Future<void> _openRowEditor(
       {int? rowIndex, Map<String, dynamic>? row}) async {
+    if (!widget.store.canManageDatabase) return;
     final decoded = _decode(_entries[_selectedKey] ?? '');
     final isNew = row == null;
     final existingRows = _rowsFor(decoded);
@@ -1519,6 +1543,7 @@ class _DatabasePageState extends State<DatabasePage> {
   }
 
   Future<void> _writeRow(int rowIndex, Map<String, dynamic> row) async {
+    if (!widget.store.canManageDatabase) return;
     final decoded = _decode(_entries[_selectedKey] ?? '');
     if (decoded is List) {
       final list = List<dynamic>.from(decoded);
@@ -1534,6 +1559,7 @@ class _DatabasePageState extends State<DatabasePage> {
   }
 
   Future<void> _writeSelectedKey(String value) async {
+    if (!widget.store.canManageDatabase) return;
     final changedKey = _selectedKey;
     await LocalDatabaseService.setString(changedKey, value);
     await widget.store.refreshAfterDatabaseChange(changedKey);
@@ -1544,6 +1570,7 @@ class _DatabasePageState extends State<DatabasePage> {
   }
 
   Future<void> _openRawEditor() async {
+    if (!widget.store.canManageDatabase) return;
     final controller =
         TextEditingController(text: _entries[_selectedKey] ?? '');
     final saved = await showDialog<bool>(
@@ -1584,6 +1611,7 @@ class _DatabasePageState extends State<DatabasePage> {
   }
 
   Future<void> _confirmDeleteRow(int rowIndex) async {
+    if (!widget.store.canManageDatabase) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -1612,6 +1640,7 @@ class _DatabasePageState extends State<DatabasePage> {
   }
 
   Future<void> _confirmDeleteKey() async {
+    if (!widget.store.canManageDatabase) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -1633,5 +1662,43 @@ class _DatabasePageState extends State<DatabasePage> {
     await LocalDatabaseService.deleteString(changedKey);
     await widget.store.refreshAfterDatabaseChange(changedKey);
     await _reload();
+  }
+}
+
+class _AccessDeniedScaffold extends StatelessWidget {
+  const _AccessDeniedScaffold({required this.title, required this.message});
+
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(title)),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.lock_outline, size: 42),
+                  const SizedBox(height: 12),
+                  Text(title,
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleLarge
+                          ?.copyWith(fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 8),
+                  Text(message, textAlign: TextAlign.center),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

@@ -20,6 +20,7 @@ import '../../models/customer.dart';
 import '../../models/product.dart';
 import '../../models/sale.dart';
 import '../../models/sale_item.dart';
+import '../../models/user_role.dart';
 import '../../widgets/app_section_header.dart';
 import '../../widgets/empty_state_card.dart';
 import '../barcode/barcode_scanner_page.dart';
@@ -518,6 +519,12 @@ class _SalesPageState extends State<SalesPage> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
+    if (!widget.store.canViewSales) {
+      return const _AccessDeniedScaffold(
+        title: 'Sales',
+        message: 'You do not have access to sales data.',
+      );
+    }
     final sales = widget.store.sales;
     final products = _visibleProducts();
 
@@ -1022,6 +1029,7 @@ class _SalesPageState extends State<SalesPage> {
   }
 
   Future<void> _showSaleShiftQuickAction() async {
+    if (!widget.store.canSell) return;
     final tr = AppLocalizations.of(context);
     try {
       final status = await _loadSaleShiftStatus();
@@ -1366,7 +1374,7 @@ class _SalesPageState extends State<SalesPage> {
               runSpacing: 8,
               children: [
                 OutlinedButton.icon(
-                  onPressed: _showSaleShiftQuickAction,
+                  onPressed: widget.store.canSell ? _showSaleShiftQuickAction : null,
                   icon: const Icon(Icons.point_of_sale_outlined),
                   label: Text(tr.isArabic ? 'إدارة الوردية' : 'Manage shift'),
                 ),
@@ -2383,6 +2391,7 @@ class _SalesPageState extends State<SalesPage> {
   }
 
   Future<void> _holdCurrentCart() async {
+    if (!widget.store.canSell) return;
     if (_cart.isEmpty) return;
     final tr = AppLocalizations.of(context);
     final nameController = TextEditingController(text: _defaultHeldCartName());
@@ -2993,17 +3002,17 @@ class _SalesPageState extends State<SalesPage> {
                         '${tr.text('items')}: ${_formatQuantity(_itemsCount)}')),
                 if (_cart.isNotEmpty)
                   TextButton.icon(
-                      onPressed: _confirmClearCart,
+                      onPressed: widget.store.canSell ? _confirmClearCart : null,
                       icon: const Icon(Icons.delete_sweep_outlined),
                       label: Text(tr.text('clear_cart'))),
                 if (_cart.isNotEmpty)
                   TextButton.icon(
-                      onPressed: _holdCurrentCart,
+                      onPressed: widget.store.canSell ? _holdCurrentCart : null,
                       icon: const Icon(Icons.pause_circle_outline),
                       label: Text(tr.text('hold'))),
                 if (_heldCarts.isNotEmpty)
                   TextButton.icon(
-                      onPressed: _showHeldCartsDialog,
+                      onPressed: widget.store.canSell ? _showHeldCartsDialog : null,
                       icon:
                           const Icon(Icons.playlist_add_check_circle_outlined),
                       label:
@@ -3043,13 +3052,13 @@ class _SalesPageState extends State<SalesPage> {
               LayoutBuilder(
                 builder: (context, constraints) {
                   final primary = FilledButton.icon(
-                      onPressed: _cart.isEmpty
+                      onPressed: _cart.isEmpty || !widget.store.canSell
                           ? null
                           : () => _openPaymentPage(printAfterSave: true),
                       icon: const Icon(Icons.payments_outlined),
                       label: Text(tr.text('continue_payment')));
                   final secondary = OutlinedButton.icon(
-                      onPressed: _cart.isEmpty
+                      onPressed: _cart.isEmpty || !widget.store.canSell
                           ? null
                           : () => _openPaymentPage(printAfterSave: false),
                       icon: const Icon(Icons.payments_outlined),
@@ -3160,22 +3169,26 @@ class _SalesPageState extends State<SalesPage> {
                                 runSpacing: 8,
                                 children: [
                                   OutlinedButton.icon(
-                                    onPressed: () => _handleInvoiceAction(() =>
-                                        InvoicePdfService.printInvoice(
-                                            sale: sale,
-                                            profile: widget.store.storeProfile,
-                                            locale: AppLocalizations.of(context)
-                                                .locale)),
+                                    onPressed: widget.store.hasPermission(AppPermission.salesPrint)
+                                        ? () => _handleInvoiceAction(() =>
+                                            InvoicePdfService.printInvoice(
+                                                sale: sale,
+                                                profile: widget.store.storeProfile,
+                                                locale: AppLocalizations.of(context)
+                                                    .locale))
+                                        : null,
                                     icon: const Icon(Icons.print_outlined),
                                     label: Text(tr.text('print_invoice')),
                                   ),
                                   OutlinedButton.icon(
-                                    onPressed: () => _handleInvoiceAction(() =>
-                                        InvoicePdfService.shareInvoice(
-                                            sale: sale,
-                                            profile: widget.store.storeProfile,
-                                            locale: AppLocalizations.of(context)
-                                                .locale)),
+                                    onPressed: widget.store.hasPermission(AppPermission.salesExport)
+                                        ? () => _handleInvoiceAction(() =>
+                                            InvoicePdfService.shareInvoice(
+                                                sale: sale,
+                                                profile: widget.store.storeProfile,
+                                                locale: AppLocalizations.of(context)
+                                                    .locale))
+                                        : null,
                                     icon: const Icon(Icons.share_outlined),
                                     label: Text(tr.text('share_pdf')),
                                   ),
@@ -3183,7 +3196,8 @@ class _SalesPageState extends State<SalesPage> {
                                     onPressed: (!sale.isCancelled &&
                                             widget.store.deliveryNoteForSale(
                                                     sale.id) ==
-                                                null)
+                                                null &&
+                                            widget.store.canManageDeliveryNotes)
                                         ? () =>
                                             _createDeliveryNote(context, sale)
                                         : null,
@@ -3900,6 +3914,7 @@ class _SalesPageState extends State<SalesPage> {
   }
 
   Future<void> _createDeliveryNote(BuildContext context, Sale sale) async {
+    if (!widget.store.canManageDeliveryNotes) return;
     final tr = AppLocalizations.of(context);
     try {
       await widget.store.createDeliveryNoteFromSale(sale.id);
@@ -3914,6 +3929,7 @@ class _SalesPageState extends State<SalesPage> {
   }
 
   Future<void> _returnSale(BuildContext context, Sale sale) async {
+    if (!widget.store.canDeleteOrCancel) return;
     final tr = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
@@ -4067,6 +4083,7 @@ class _SalesPageState extends State<SalesPage> {
   }
 
   Future<void> _openPaymentPage({required bool printAfterSave}) async {
+    if (!widget.store.canSell) return;
     if (_cart.isEmpty) return;
     _invoiceCurrency = widget.store.storeProfile.defaultSaleInvoiceCurrency;
     _discountCurrency = _invoiceCurrency;
@@ -4616,5 +4633,43 @@ class _DraftSaleItem {
         product: product ?? this.product,
         quantity: quantity ?? this.quantity,
         saleUnit: saleUnit ?? this.saleUnit);
+  }
+}
+
+class _AccessDeniedScaffold extends StatelessWidget {
+  const _AccessDeniedScaffold({required this.title, required this.message});
+
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(title)),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.lock_outline, size: 42),
+                  const SizedBox(height: 12),
+                  Text(title,
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleLarge
+                          ?.copyWith(fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 8),
+                  Text(message, textAlign: TextAlign.center),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
