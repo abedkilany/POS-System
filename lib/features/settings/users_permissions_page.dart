@@ -436,10 +436,12 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                                           setDialogState(() {
                                             extra.remove(permission);
                                             denied.remove(permission);
-                                            if (value == 'allow')
+                                            if (value == 'allow') {
                                               extra.add(permission);
-                                            if (value == 'deny')
+                                            }
+                                            if (value == 'deny') {
                                               denied.add(permission);
+                                            }
                                           });
                                         },
                                 ),
@@ -671,8 +673,9 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                           result,
                           mode: 'online',
                         );
-                        if (dialogContext.mounted)
+                        if (dialogContext.mounted) {
                           Navigator.pop(dialogContext, true);
+                        }
                       } catch (error) {
                         setDialogState(() {
                           isSubmitting = false;

@@ -1,4 +1,4 @@
-﻿{
+{
   "stress_lab": "مختبر الضغط",
   "stress_lab_desc": "اختبار شامل بزر واحد ينشئ حالات حقيقية من أقسام التطبيق، ثم يضرب عدد العمليات ×1000 ويقيس سرعة كل نوع إضافة وتباطؤ الأداء.",
   "run_stress_lab_audit": "تشغيل اختبار الضغط الشامل ×1000",
@@ -10,7 +10,8 @@
   "stress_lab_not_run": "لم يتم تشغيل الاختبار بعد",
   "stress_lab_failed": "فشل",
   "stress_lab_passed_with_warnings": "نجح مع تحذيرات",
-  "stress_lab_passed": "نجح بالكامل",  "host_restored_data_rebuilding_from_snapshot": "تمت استعادة بيانات الهوست. يجري إعادة بناء هذا الجهاز من أحدث لقطة...",
+  "stress_lab_passed": "نجح بالكامل",
+  "host_restored_data_rebuilding_from_snapshot": "تمت استعادة بيانات الهوست. يجري إعادة بناء هذا الجهاز من أحدث لقطة...",
   "preparing_lan_sync": "جاري تجهيز مزامنة LAN...",
   "preparing_cloud_sync": "جاري تجهيز المزامنة السحابية...",
   "preparing_local_sync": "جاري تجهيز المزامنة المحلية...",
@@ -24,7 +25,7 @@
   "cloud_pull_failed_trying_snapshot_repair": "فشل سحب السحابة. جارٍ محاولة إصلاح اللقطة...",
   "local_pull_failed_trying_snapshot_repair": "فشل السحب المحلي. جارٍ محاولة إصلاح اللقطة...",
   "lan_sync_completed": "اكتملت مزامنة LAN.",
-  "cloud_sync_completed": "اكتملت المزامنة السحابية.",
+  "cloud_sync_completed": "اكتملت مزامنة الاتصال السحابي.",
   "local_sync_completed": "اكتملت المزامنة المحلية.",
   "lan_sync_completed_details": "اكتملت مزامنة LAN. تم إرسال {pushed} تغيير/تغييرات وسحب {pulled} تغيير/تغييرات.",
   "cloud_sync_completed_details": "اكتملت المزامنة السحابية. تم إرسال {pushed} تغيير/تغييرات وسحب {pulled} تغيير/تغييرات.",
@@ -88,7 +89,7 @@
   "accumulated_depreciation_account_desc": "حساب مقابل للأصول يتم دائنه بقيود إهلاك الأصول الثابتة.",
   "actions": "الإجراءات",
   "activate_approved_host_transfer": "تفعيل نقل الهوست المعتمد",
-  "active": "نشطة",
+  "active": "نشط",
   "active_currencies": "العملات النشطة",
   "active_product": "منتج نشط",
   "active_product_desc": "المنتجات غير النشطة تبقى محفوظة ويمكن فلترتها.",
@@ -417,7 +418,6 @@
   "cloud_setup": "إعداد الاتصال السحابي",
   "cloud_sync": "مزامنة الاتصال السحابي",
   "cloud_sync_allowed": "السماح بالمزامنة السحابية",
-  "cloud_sync_completed": "اكتملت مزامنة الاتصال السحابي.",
   "cloud_sync_desc": "السماح للأجهزة البعيدة بالمزامنة عبر الاتصال السحابي.",
   "cloud_sync_failed": "فشلت مزامنة الاتصال السحابي",
   "cloud_sync_not_enabled_for_store": "مزامنة اتصال سحابي غير مفعّلة لهذا المتجر. فعّلها من Admin > Subscribers ثم سجّل الدخول من جديد.",
@@ -1868,7 +1868,6 @@
   "store_slug_required_no_spaces": "رمز المتجر مطلوب ويجب ألا يحتوي على مسافات.",
   "stored_in_appdata": "محفوظة في تخزين Ventio ضمن AppData.",
   "stores": "المتاجر",
-  "stress_lab": "مختبر الضغط",
   "stress_lab_description": "محاكاة مؤقتة للتطبيق الحقيقي. تستخدم خدمات AppStore الحقيقية ومنطق المخزون وطابور المزامنة ووسيلة المزامنة النشطة. يبقى السجل في الذاكرة حتى الضغط على مسح السجل.",
   "structure_name": "البنية: {name}",
   "subscription": "الاشتراك",
@@ -2167,7 +2166,6 @@
   "try_changing_search_text_or_status_filter": "جرّب تغيير نص البحث أو فلتر الحالة.",
   "store_owner_protected_account": "حساب مالك المتجر المحمي",
   "store_owner_protected_account_desc": "الوصول الكامل مقفل. حفظ الاسم أو اسم المستخدم أو كلمة المرور يتطلب تحديثًا سحابيًا ناجحًا أولًا.",
-  "active": "نشط",
   "history": "السجل",
   "inventory_costing_method": "طريقة احتساب كلفة المخزون",
   "inventory_costing_method_desc": "الطريقة المستخدمة لحساب كلفة المنتج في البيع والربحية.",
@@ -2232,8 +2230,18 @@
   "daily_copies": "نسخ يومية",
   "weekly_copies": "نسخ أسبوعية",
   "monthly_copies": "نسخ شهرية",
-  "sync_stale": "المزامنة قديمة"
+  "sync_stale": "المزامنة قديمة",
+  "expense_category": "فئة المصروف",
+  "expense_category_helper": "مجموعة التقارير الرئيسية مثل المرافق أو المكتب",
+  "expense_type": "نوع المصروف",
+  "expense_type_helper": "مرجع ثابت للتقارير مثل الكهرباء",
+  "select_expense_category_first": "اختر فئة المصروف أولاً",
+  "expense_description": "الوصف",
+  "expense_description_helper": "تفاصيل اختيارية مثل الشهر أو الفرع أو المورد",
+  "manage_expense_categories": "إدارة فئات المصاريف",
+  "manage_expense_types": "إدارة أنواع المصاريف",
+  "english_name": "الاسم بالإنجليزية",
+  "arabic_name": "الاسم بالعربية",
+  "done": "تم",
+  "no_items": "لا توجد عناصر بعد"
 }
-
-
-

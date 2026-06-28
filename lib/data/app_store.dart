@@ -462,7 +462,9 @@ class AppStore extends ChangeNotifier {
       if (item.productId == productId &&
           item.priceListId == priceListId &&
           item.unitId == unitId &&
-          item.isActive) return item;
+          item.isActive) {
+        return item;
+      }
     }
     return null;
   }
@@ -488,7 +490,9 @@ class AppStore extends ChangeNotifier {
       return fromUsdReferencePrice(fallbackUsd, currencyCode, storeProfile);
     }
     final override = productPriceOverrideFor(price, currencyCode);
-    if (override != null) return override.amount;
+    if (override != null) {
+      return override.amount;
+    }
     return convertCurrency(
       price.baseAmount,
       price.baseCurrencyCode,
@@ -499,8 +503,9 @@ class AppStore extends ChangeNotifier {
 
   double defaultProductUsdPrice(Product product, {String unitId = 'base'}) {
     final price = defaultProductPriceFor(product.id, unitId: unitId);
-    if (price == null)
+    if (price == null) {
       return unitId == 'base' ? product.usdPrice : product.price;
+    }
     final saleCurrency = storeProfile.defaultSaleInvoiceCurrency;
     final override = productPriceOverrideFor(price, saleCurrency);
     if (override != null) {
@@ -7280,8 +7285,9 @@ class AppStore extends ChangeNotifier {
   Future<void> setInventoryCostingMethod(InventoryCostingMethod method,
       {String reason = ''}) async {
     requirePermission(AppPermission.productsEdit);
-    if (_inventoryCostingMethod == method && _costingMethodHistory.isNotEmpty)
+    if (_inventoryCostingMethod == method && _costingMethodHistory.isNotEmpty) {
       return;
+    }
     final now = DateTime.now();
     if (_costingMethodHistory.isNotEmpty) {
       final openIndex =
