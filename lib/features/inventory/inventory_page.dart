@@ -3,8 +3,12 @@ import 'package:flutter/material.dart';
 import '../../core/localization/app_localizations.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/utils/currency_utils.dart';
+import '../../core/utils/revision_cache.dart';
+import '../../core/services/page_timing_scope.dart';
 import '../../data/app_store.dart';
+import '../../models/inventory_count.dart';
 import '../../models/product.dart';
+import '../../models/stock_movement.dart';
 import '../../models/user_role.dart';
 import '../../widgets/summary_card.dart';
 import '../barcode/barcode_scanner_page.dart';
@@ -57,12 +61,53 @@ class InventoryPage extends StatefulWidget {
   State<InventoryPage> createState() => _InventoryPageState();
 }
 
+class _InventoryOverviewMetrics {
+  const _InventoryOverviewMetrics({
+    required this.productCount,
+    required this.totalUnits,
+    required this.lowStockCount,
+    required this.inventoryRetailValue,
+    required this.pendingAutoCorrectionCount,
+  });
+
+  final int productCount;
+  final double totalUnits;
+  final int lowStockCount;
+  final double inventoryRetailValue;
+  final int pendingAutoCorrectionCount;
+
+  factory _InventoryOverviewMetrics.fromStore(AppStore store) {
+    final products = store.stockTrackedProducts;
+    var totalUnits = 0.0;
+    var lowStockCount = 0;
+    var inventoryRetailValue = 0.0;
+    for (final product in products) {
+      totalUnits += product.stock;
+      inventoryRetailValue += product.usdPrice * product.stock;
+      if (product.stock <= product.lowStockThreshold) {
+        lowStockCount += 1;
+      }
+    }
+    return _InventoryOverviewMetrics(
+      productCount: store.products.length,
+      totalUnits: totalUnits,
+      lowStockCount: lowStockCount,
+      inventoryRetailValue: inventoryRetailValue,
+      pendingAutoCorrectionCount: store.pendingAutoCorrectionCount,
+    );
+  }
+}
+
 class _InventoryPageState extends State<InventoryPage>
     with SingleTickerProviderStateMixin {
   String query = '';
   final TextEditingController _searchController = TextEditingController();
   late final TabController _tabController =
       TabController(length: 6, vsync: this);
+  final RevisionKeyCache<List<Product>> _filteredProductsCache =
+      RevisionKeyCache<List<Product>>();
+  final RevisionValueCache<_InventoryOverviewMetrics> _overviewCache =
+      RevisionValueCache<_InventoryOverviewMetrics>();
 
   @override
   void dispose() {
@@ -71,9 +116,24 @@ class _InventoryPageState extends State<InventoryPage>
     super.dispose();
   }
 
+  @override
+  void didUpdateWidget(covariant InventoryPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != widget.store) {
+      _filteredProductsCache.invalidate();
+      _overviewCache.invalidate();
+    }
+  }
+
   Future<void> _scanInventorySearchBarcode() async {
     final code = await Navigator.of(context).push<String>(
-      MaterialPageRoute(builder: (_) => const BarcodeScannerPage()),
+      MaterialPageRoute(
+        builder: (_) => const PageTimingScope(
+          pageKey: 'BarcodeScannerPage',
+          pageLabel: 'Barcode scanner',
+          child: BarcodeScannerPage(),
+        ),
+      ),
     );
     if (!mounted || code == null || code.trim().isEmpty) return;
     setState(() {
@@ -91,12 +151,24 @@ class _InventoryPageState extends State<InventoryPage>
         message: 'This section is not available for your current role.',
       );
     }
-    final products = _filterProducts(widget.store.stockTrackedProducts, query);
-    final canViewOverview = widget.store.hasPermission(AppPermission.inventoryView) ||
-        widget.store.hasPermission(AppPermission.reportsView) ||
-        widget.store.hasPermission(AppPermission.productsCreate) ||
-        widget.store.hasPermission(AppPermission.productsEdit) ||
-        widget.store.hasPermission(AppPermission.productsDelete);
+    if (!widget.store.isCoreDataLoaded) {
+      return const Center(child: CircularProgressIndicator.adaptive());
+    }
+    final products = _filteredProductsCache.getOrCompute(
+      widget.store.inventoryRevision,
+      query.trim().toLowerCase(),
+      () => _filterProducts(widget.store.stockTrackedProducts, query),
+    );
+    final overview = _overviewCache.getOrCompute(
+      widget.store.inventoryRevision,
+      () => _InventoryOverviewMetrics.fromStore(widget.store),
+    );
+    final canViewOverview =
+        widget.store.hasPermission(AppPermission.inventoryView) ||
+            widget.store.hasPermission(AppPermission.reportsView) ||
+            widget.store.hasPermission(AppPermission.productsCreate) ||
+            widget.store.hasPermission(AppPermission.productsEdit) ||
+            widget.store.hasPermission(AppPermission.productsDelete);
     final canManageWarehouses = widget.store.hasAnyPermission(<String>{
       AppPermission.inventoryWarehousesManage,
       AppPermission.productsEdit,
@@ -156,6 +228,7 @@ class _InventoryPageState extends State<InventoryPage>
               _InventoryOverview(
                 store: widget.store,
                 products: products,
+                overview: overview,
                 query: query,
                 searchController: _searchController,
                 onScanBarcode: _scanInventorySearchBarcode,
@@ -277,6 +350,7 @@ class _InventoryOverview extends StatelessWidget {
   const _InventoryOverview(
       {required this.store,
       required this.products,
+      required this.overview,
       required this.query,
       required this.searchController,
       required this.onScanBarcode,
@@ -286,6 +360,7 @@ class _InventoryOverview extends StatelessWidget {
 
   final AppStore store;
   final List<Product> products;
+  final _InventoryOverviewMetrics overview;
   final String query;
   final TextEditingController searchController;
   final VoidCallback onScanBarcode;
@@ -310,24 +385,24 @@ class _InventoryOverview extends StatelessWidget {
                 children: [
                   SummaryCard(
                       title: tr.text('product_count'),
-                      value: '${store.products.length}',
+                      value: '${overview.productCount}',
                       icon: Icons.inventory_2_outlined),
                   SummaryCard(
                       title: tr.text('total_units'),
-                      value: '${store.totalUnitsInStock}',
+                      value: '${overview.totalUnits}',
                       icon: Icons.layers_outlined),
                   SummaryCard(
                       title: tr.text('low_stock_alerts'),
-                      value: '${store.lowStockCount}',
+                      value: '${overview.lowStockCount}',
                       icon: Icons.warning_amber_rounded),
                   SummaryCard(
                       title: tr.text('inventory_value'),
                       value: formatUsdReferenceAmount(
-                          store.inventoryRetailValue, store.storeProfile),
+                          overview.inventoryRetailValue, store.storeProfile),
                       icon: Icons.payments_outlined),
                   SummaryCard(
                       title: tr.text('pending_auto_corrections'),
-                      value: '${store.pendingAutoCorrectionCount}',
+                      value: '${overview.pendingAutoCorrectionCount}',
                       icon: Icons.notifications_active_outlined),
                 ],
               ),
@@ -502,6 +577,46 @@ class _WarehousesTab extends StatefulWidget {
 }
 
 class _WarehousesTabState extends State<_WarehousesTab> {
+  final RevisionKeyCache<Map<String, List<_WarehouseProductStock>>>
+      _stockRowsCache =
+      RevisionKeyCache<Map<String, List<_WarehouseProductStock>>>();
+
+  @override
+  void didUpdateWidget(covariant _WarehousesTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != widget.store) {
+      _stockRowsCache.invalidate();
+    }
+  }
+
+  Map<String, List<_WarehouseProductStock>> _stockRowsByWarehouse() {
+    return _stockRowsCache.getOrCompute(
+      widget.store.inventoryRevision,
+      widget.store.appIdentity.storeId,
+      () {
+        final warehouses = widget.store.warehouses;
+        final products = widget.store.stockTrackedProducts;
+        final stockRowsByWarehouse = <String, List<_WarehouseProductStock>>{
+          for (final warehouse in warehouses)
+            warehouse.id: <_WarehouseProductStock>[],
+        };
+        for (final product in products) {
+          for (final entry
+              in widget.store.warehouseStockForProduct(product.id).entries) {
+            if (entry.value != 0) {
+              (stockRowsByWarehouse[entry.key] ??= <_WarehouseProductStock>[])
+                  .add(_WarehouseProductStock(
+                product: product,
+                stock: entry.value,
+              ));
+            }
+          }
+        }
+        return stockRowsByWarehouse;
+      },
+    );
+  }
+
   Future<void> _createWarehouse() async {
     final tr = AppLocalizations.of(context);
     final nameController = TextEditingController();
@@ -666,20 +781,7 @@ class _WarehousesTabState extends State<_WarehousesTab> {
       );
     }
     final warehouses = widget.store.warehouses;
-    final products = widget.store.stockTrackedProducts;
-    final stockRowsByWarehouse = <String, List<_WarehouseProductStock>>{
-      for (final warehouse in warehouses)
-        warehouse.id: <_WarehouseProductStock>[],
-    };
-    for (final product in products) {
-      for (final entry
-          in widget.store.warehouseStockForProduct(product.id).entries) {
-        if (entry.value != 0) {
-          (stockRowsByWarehouse[entry.key] ??= <_WarehouseProductStock>[]).add(
-              _WarehouseProductStock(product: product, stock: entry.value));
-        }
-      }
-    }
+    final stockRowsByWarehouse = _stockRowsByWarehouse();
     return ListView.builder(
       padding: VentioResponsive.pageInsets(context),
       itemCount: warehouses.length + 1,
@@ -740,6 +842,8 @@ class _WarehouseProductStock {
 class _MovementsList extends StatelessWidget {
   const _MovementsList({required this.store});
   final AppStore store;
+  static final RevisionKeyCache<List<StockMovement>> _movementsCache =
+      RevisionKeyCache<List<StockMovement>>();
 
   @override
   Widget build(BuildContext context) {
@@ -751,10 +855,15 @@ class _MovementsList extends StatelessWidget {
     })) {
       return const _InventorySectionDenied(
         title: 'Stock movements',
-        message: 'Stock movement history is not available for your current role.',
+        message:
+            'Stock movement history is not available for your current role.',
       );
     }
-    final movements = store.stockMovements;
+    final movements = _movementsCache.getOrCompute(
+      store.stockMovementsRevision,
+      store.appIdentity.storeId,
+      () => store.stockMovements.toList(growable: false),
+    );
     return ListView(
       padding: VentioResponsive.pageInsets(context),
       children: [
@@ -811,6 +920,19 @@ class _AutoCorrectionsTab extends StatefulWidget {
 
 class _AutoCorrectionsTabState extends State<_AutoCorrectionsTab> {
   bool showReviewed = false;
+  final RevisionKeyCache<List<StockMovement>> _allCache =
+      RevisionKeyCache<List<StockMovement>>();
+  final RevisionKeyCache<List<StockMovement>> _pendingCache =
+      RevisionKeyCache<List<StockMovement>>();
+
+  @override
+  void didUpdateWidget(covariant _AutoCorrectionsTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != widget.store) {
+      _allCache.invalidate();
+      _pendingCache.invalidate();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -827,11 +949,20 @@ class _AutoCorrectionsTabState extends State<_AutoCorrectionsTab> {
     })) {
       return const _InventorySectionDenied(
         title: 'Auto corrections',
-        message: 'Auto correction review is not available for your current role.',
+        message:
+            'Auto correction review is not available for your current role.',
       );
     }
-    final allCorrections = widget.store.autoCorrectionMovements;
-    final pending = widget.store.pendingAutoCorrectionMovements;
+    final allCorrections = _allCache.getOrCompute(
+      widget.store.stockMovementsRevision,
+      widget.store.appIdentity.storeId,
+      () => widget.store.autoCorrectionMovements.toList(growable: false),
+    );
+    final pending = _pendingCache.getOrCompute(
+      widget.store.stockMovementsRevision,
+      '${widget.store.appIdentity.storeId}|pending',
+      () => widget.store.pendingAutoCorrectionMovements.toList(growable: false),
+    );
     final corrections = showReviewed ? allCorrections : pending;
     double totalQty = 0;
     double totalValue = 0;
@@ -920,7 +1051,8 @@ class _AutoCorrectionsTabState extends State<_AutoCorrectionsTab> {
                             ? const Icon(Icons.done_all_outlined)
                             : canReview
                                 ? FilledButton.icon(
-                                    onPressed: () => _reviewMovement(movement.id),
+                                    onPressed: () =>
+                                        _reviewMovement(movement.id),
                                     icon: const Icon(Icons.check),
                                     label: Text(tr.text('mark_reviewed')),
                                   )
@@ -964,6 +1096,22 @@ class _StockCountTab extends StatefulWidget {
 
 class _StockCountTabState extends State<_StockCountTab> {
   String query = '';
+  final RevisionKeyCache<List<Product>> _productsCache =
+      RevisionKeyCache<List<Product>>();
+  final RevisionKeyCache<Map<String, InventoryCountLine>> _lineLookupCache =
+      RevisionKeyCache<Map<String, InventoryCountLine>>();
+  final RevisionKeyCache<Map<String, int>> _movementCountCache =
+      RevisionKeyCache<Map<String, int>>();
+
+  @override
+  void didUpdateWidget(covariant _StockCountTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != widget.store) {
+      _productsCache.invalidate();
+      _lineLookupCache.invalidate();
+      _movementCountCache.invalidate();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -979,12 +1127,58 @@ class _StockCountTabState extends State<_StockCountTab> {
     }
     final sessions = widget.store.inventoryCountSessions;
     final active = widget.store.activeInventoryCountSession;
+    final lineLookup = _lineLookupCache.getOrCompute(
+      widget.store.inventoryRevision,
+      active?.id ?? 'no_active',
+      () {
+        final map = <String, InventoryCountLine>{};
+        if (active != null) {
+          for (final line in active.lines) {
+            map[line.productId] = line;
+          }
+        }
+        return map;
+      },
+    );
+    final movementCounts = _movementCountCache.getOrCompute(
+      widget.store.inventoryRevision,
+      active?.id ?? 'no_active',
+      () {
+        final counts = <String, int>{};
+        if (active != null) {
+          final countedAtByProduct = <String, DateTime>{};
+          for (final line in active.lines) {
+            final countedAt = line.countedAt;
+            if (countedAt == null) continue;
+            countedAtByProduct[line.productId] = countedAt;
+            counts[line.productId] = 0;
+          }
+          if (countedAtByProduct.isNotEmpty) {
+            for (final movement in widget.store.stockMovements) {
+              final countedAt = countedAtByProduct[movement.productId];
+              if (countedAt == null) continue;
+              if (movement.type == 'count_adjustment' ||
+                  !movement.date.isAfter(countedAt)) {
+                continue;
+              }
+              counts[movement.productId] =
+                  (counts[movement.productId] ?? 0) + 1;
+            }
+          }
+        }
+        return counts;
+      },
+    );
     final needle = query.trim().toLowerCase();
-    final products = widget.store.stockTrackedProducts.where((product) {
-      if (active == null || needle.isEmpty) return true;
-      return product.name.toLowerCase().contains(needle) ||
-          product.code.toLowerCase().contains(needle);
-    }).toList();
+    final products = _productsCache.getOrCompute(
+      widget.store.inventoryRevision,
+      '${active?.id ?? 'no_active'}|$needle',
+      () => widget.store.stockTrackedProducts.where((product) {
+        if (active == null || needle.isEmpty) return true;
+        return product.name.toLowerCase().contains(needle) ||
+            product.code.toLowerCase().contains(needle);
+      }).toList(growable: false),
+    );
 
     return ListView(
       padding: VentioResponsive.pageInsets(context),
@@ -1073,8 +1267,9 @@ class _StockCountTabState extends State<_StockCountTab> {
                 for (final product in products.take(200))
                   _StockCountProductTile(
                       store: widget.store,
-                      sessionId: active.id,
-                      product: product),
+                      product: product,
+                      line: lineLookup[product.id],
+                      movementsAfter: movementCounts[product.id] ?? 0),
               ],
             ),
           ),
@@ -1155,22 +1350,19 @@ class _StockCountTabState extends State<_StockCountTab> {
 
 class _StockCountProductTile extends StatelessWidget {
   const _StockCountProductTile(
-      {required this.store, required this.sessionId, required this.product});
+      {required this.store,
+      required this.product,
+      required this.line,
+      required this.movementsAfter});
 
   final AppStore store;
-  final String sessionId;
   final Product product;
+  final InventoryCountLine? line;
+  final int movementsAfter;
 
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final session = store.activeInventoryCountSession;
-    final matchingLines =
-        session?.lines.where((item) => item.productId == product.id).toList() ??
-            const [];
-    final line = matchingLines.isEmpty ? null : matchingLines.first;
-    final movementsAfter =
-        line == null ? 0 : store.movementCountAfterInventoryLine(line);
     return ListTile(
       title: Text(product.name),
       subtitle: Text([
@@ -1218,8 +1410,10 @@ class _StockCountProductTile extends StatelessWidget {
     );
     if (value == null) return;
     try {
+      final activeSessionId = store.activeInventoryCountSession?.id;
+      if (activeSessionId == null) return;
       await store.countInventoryLine(
-          sessionId: sessionId, productId: product.id, countedQty: value);
+          sessionId: activeSessionId, productId: product.id, countedQty: value);
     } catch (error) {
       if (context.mounted) {
         ScaffoldMessenger.of(context)
@@ -1232,6 +1426,8 @@ class _StockCountProductTile extends StatelessWidget {
 class _WasteLossReport extends StatelessWidget {
   const _WasteLossReport({required this.store});
   final AppStore store;
+  static final RevisionKeyCache<List<StockMovement>> _rowsCache =
+      RevisionKeyCache<List<StockMovement>>();
 
   @override
   Widget build(BuildContext context) {
@@ -1243,14 +1439,19 @@ class _WasteLossReport extends StatelessWidget {
     })) {
       return const _InventorySectionDenied(
         title: 'Waste loss report',
-        message: 'Waste and loss reporting is not available for your current role.',
+        message:
+            'Waste and loss reporting is not available for your current role.',
       );
     }
-    final lossMovements = store.stockMovements
-        .where((item) =>
-            item.type == 'inventory_loss' ||
-            (item.type == 'inventory_adjustment' && item.quantity < 0))
-        .toList();
+    final lossMovements = _rowsCache.getOrCompute(
+      store.stockMovementsRevision,
+      store.appIdentity.storeId,
+      () => store.stockMovements
+          .where((item) =>
+              item.type == 'inventory_loss' ||
+              (item.type == 'inventory_adjustment' && item.quantity < 0))
+          .toList(growable: false),
+    );
     final totals = <String, _WasteTotal>{};
     double totalValue = 0;
     double totalQty = 0;

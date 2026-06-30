@@ -569,33 +569,34 @@ class AccountAuthService {
     );
   }
 
-  static Future<void> cacheOnlineResult(
+  static Future<AccountAuthCache> cacheOnlineResult(
     AccountAuthResult result, {
     required String mode,
   }) async {
-    await AccountAuthCache.save(
-      AccountAuthCache(
-        mode: mode,
-        accountId: result.accountId,
-        storeId: result.storeId,
-        branchId: result.branchId,
-        subscriptionStatus: result.subscriptionStatus,
-        username: result.username,
-        storeSlug: result.storeSlug,
-        storeName: result.storeName,
-        loginName: result.loginName,
-        accountType: result.accountType,
-        trialEndsAt: result.trialEndsAt,
-        devicesLimit: result.devicesLimit,
-        adminToken: result.adminToken.isNotEmpty
-            ? result.adminToken
-            : (AccountAuthCache.load()?.adminToken ?? ''),
-        accountToken: result.accountToken.isNotEmpty
-            ? result.accountToken
-            : (AccountAuthCache.load()?.accountToken ?? ''),
-        cloudSyncEnabled: result.cloudSyncEnabled,
-        lastVerifiedAt: DateTime.now(),
-      ),
+    final existing = AccountAuthCache.load();
+    final cache = AccountAuthCache(
+      mode: mode,
+      accountId: result.accountId,
+      storeId: result.storeId,
+      branchId: result.branchId,
+      subscriptionStatus: result.subscriptionStatus,
+      username: result.username,
+      storeSlug: result.storeSlug,
+      storeName: result.storeName,
+      loginName: result.loginName,
+      accountType: result.accountType,
+      trialEndsAt: result.trialEndsAt,
+      devicesLimit: result.devicesLimit,
+      adminToken: result.adminToken.isNotEmpty
+          ? result.adminToken
+          : (existing?.adminToken ?? ''),
+      accountToken: result.accountToken.isNotEmpty
+          ? result.accountToken
+          : (existing?.accountToken ?? ''),
+      cloudSyncEnabled: result.cloudSyncEnabled,
+      lastVerifiedAt: DateTime.now(),
     );
+    await AccountAuthCache.save(cache);
+    return cache;
   }
 }

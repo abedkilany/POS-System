@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'dart:convert';
 import 'dart:math' as math;
 
@@ -17,8 +19,10 @@ import '../../models/store_profile.dart';
 import '../../models/supplier.dart';
 import '../../models/supplier_product_price.dart';
 import '../../models/user_role.dart';
+import '../../core/services/page_timing_scope.dart';
 import '../../widgets/app_section_header.dart';
 import '../../widgets/empty_state_card.dart';
+import '../../widgets/page_data_load_indicator.dart';
 import '../barcode/barcode_scanner_page.dart';
 
 class ProductsPage extends StatefulWidget {
@@ -34,21 +38,100 @@ class _ProductsPageState extends State<ProductsPage> {
   String query = '';
   String categoryFilter = 'All';
   final TextEditingController _searchController = TextEditingController();
+  Timer? _productRevealTimer;
+  int _visibleProductCount = 100;
+  int _productRevealTargetCount = 0;
+  int _cachedRevision = -1;
+  List<Product>? _cachedProductSource;
+  List<Product>? _cachedCategorySource;
+  String _cachedQuery = '';
+  String _cachedCategoryFilter = 'All';
+  List<Product> _cachedFilteredProducts = const <Product>[];
+  List<String> _cachedCategories = const <String>[];
+  final Map<String, _RowCacheEntry> _rowCache = <String, _RowCacheEntry>{};
+  final Map<String, String> _searchIndexCache = <String, String>{};
 
   @override
   void dispose() {
+    _productRevealTimer?.cancel();
     _searchController.dispose();
     super.dispose();
   }
 
+  @override
+  void didUpdateWidget(covariant ProductsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != widget.store) {
+      _cachedRevision = -1;
+      _cachedProductSource = null;
+      _cachedCategorySource = null;
+      _cachedQuery = '';
+      _cachedCategoryFilter = 'All';
+      _cachedFilteredProducts = const <Product>[];
+      _cachedCategories = const <String>[];
+      _rowCache.clear();
+      _searchIndexCache.clear();
+      _resetProductReveal();
+    }
+  }
+
+  void _resetProductReveal() {
+    _productRevealTimer?.cancel();
+    _productRevealTimer = null;
+    _visibleProductCount = 100;
+    _productRevealTargetCount = 0;
+  }
+
+  void _syncProductReveal(int totalCount) {
+    _productRevealTargetCount = totalCount;
+    if (_visibleProductCount > totalCount) {
+      _visibleProductCount = totalCount;
+    }
+    if (_visibleProductCount >= totalCount) {
+      _productRevealTimer?.cancel();
+      _productRevealTimer = null;
+      return;
+    }
+    _productRevealTimer ??=
+        Timer.periodic(const Duration(milliseconds: 20), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        _productRevealTimer = null;
+        return;
+      }
+      if (_visibleProductCount >= _productRevealTargetCount) {
+        timer.cancel();
+        _productRevealTimer = null;
+        return;
+      }
+      setState(() {
+        _visibleProductCount = math.min(
+          _productRevealTargetCount,
+          _visibleProductCount + 100,
+        );
+      });
+      if (_visibleProductCount >= _productRevealTargetCount) {
+        timer.cancel();
+        _productRevealTimer = null;
+      }
+    });
+  }
+
   Future<void> _scanProductSearchBarcode() async {
     final code = await Navigator.of(context).push<String>(
-      MaterialPageRoute(builder: (_) => const BarcodeScannerPage()),
+      MaterialPageRoute(
+        builder: (_) => const PageTimingScope(
+          pageKey: 'BarcodeScannerPage',
+          pageLabel: 'Barcode scanner',
+          child: BarcodeScannerPage(),
+        ),
+      ),
     );
     if (!mounted || code == null || code.trim().isEmpty) return;
     setState(() {
       query = code.trim();
       _searchController.text = query;
+      _resetProductReveal();
     });
   }
 
@@ -58,16 +141,17 @@ class _ProductsPageState extends State<ProductsPage> {
     if (!widget.store.canViewProducts) {
       return _PermissionDeniedScaffold(
         title: tr.text('products'),
-        message: 'This page is available in read-only mode only for users who can access product data.',
+        message:
+            'This page is available in read-only mode only for users who can access product data.',
       );
+    }
+    if (!widget.store.isCoreDataLoaded) {
+      return const Center(child: CircularProgressIndicator.adaptive());
     }
     final allProducts = widget.store.products;
     final products = _filteredProducts(allProducts);
-    final categories = <String>{
-      'All',
-      ...allProducts.map((p) => p.category).where((e) => e.trim().isNotEmpty)
-    }.toList()
-      ..sort();
+    final categories = _categoriesFor(allProducts);
+    final localeTag = Localizations.localeOf(context).toLanguageTag();
 
     return Padding(
       padding: VentioResponsive.pageInsets(context),
@@ -81,6 +165,10 @@ class _ProductsPageState extends State<ProductsPage> {
               runSpacing: 8,
               alignment: WrapAlignment.end,
               children: [
+                PageDataLoadIndicator(
+                  loadedCount: math.min(_visibleProductCount, products.length),
+                  totalCount: products.length,
+                ),
                 OutlinedButton.icon(
                   onPressed: widget.store.canManageProducts
                       ? () => _openCatalogManager(context, 'category')
@@ -119,7 +207,10 @@ class _ProductsPageState extends State<ProductsPage> {
                     icon: const Icon(Icons.camera_alt_outlined),
                   ),
                 ),
-                onChanged: (value) => setState(() => query = value),
+                onChanged: (value) => setState(() {
+                  query = value;
+                  _resetProductReveal();
+                }),
               );
               final categoryField = DropdownButtonFormField<String>(
                 initialValue: categoryFilter,
@@ -129,8 +220,10 @@ class _ProductsPageState extends State<ProductsPage> {
                         value: item,
                         child: Text(item == 'All' ? tr.text('all') : item)))
                     .toList(),
-                onChanged: (value) =>
-                    setState(() => categoryFilter = value ?? 'All'),
+                onChanged: (value) => setState(() {
+                  categoryFilter = value ?? 'All';
+                  _resetProductReveal();
+                }),
               );
               if (constraints.maxWidth < 620) {
                 return Column(
@@ -162,23 +255,26 @@ class _ProductsPageState extends State<ProductsPage> {
                     builder: (context, constraints) {
                       final rowExtent =
                           constraints.maxWidth < 620 ? 158.0 : 94.0;
+                      _syncProductReveal(products.length);
+                      final visibleProducts = products
+                          .take(math.min(_visibleProductCount, products.length))
+                          .toList(growable: false);
                       return ListView.builder(
                         itemExtent: rowExtent,
-                        itemCount: products.length,
+                        itemCount: visibleProducts.length,
                         itemBuilder: (context, index) {
-                          final product = products[index];
-                          final row = _ProductRowData.fromStore(
+                          final product = visibleProducts[index];
+                          final row = _rowDataFor(
                             product,
-                            widget.store,
-                            widget.store.storeProfile,
                             tr,
+                            localeTag,
                           );
                           return Padding(
                             padding: const EdgeInsets.only(bottom: 10),
                             child: _ProductTile(
                               row: row,
                               compact: constraints.maxWidth < 620,
-                onEdit: widget.store.canManageProducts
+                              onEdit: widget.store.canManageProducts
                                   ? () => _openProductForm(context,
                                       product: row.product)
                                   : null,
@@ -202,27 +298,148 @@ class _ProductsPageState extends State<ProductsPage> {
 
   List<Product> _filteredProducts(List<Product> source) {
     final value = query.trim().toLowerCase();
+    final revision = widget.store.productsRevision;
+    if (_cachedRevision != revision) {
+      _cachedProductSource = null;
+      _cachedCategorySource = null;
+      _cachedQuery = '';
+      _cachedCategoryFilter = 'All';
+      _cachedFilteredProducts = const <Product>[];
+      _cachedCategories = const <String>[];
+      _rowCache.clear();
+      _searchIndexCache.clear();
+      _cachedRevision = revision;
+    }
+    if (identical(source, _cachedProductSource) &&
+        _cachedQuery == value &&
+        _cachedCategoryFilter == categoryFilter) {
+      return _cachedFilteredProducts;
+    }
+    if (_cachedProductSource != null &&
+        !identical(source, _cachedProductSource)) {
+      _rowCache.clear();
+      _searchIndexCache.clear();
+    }
+    Stopwatch? sw;
+    if (kDebugMode) {
+      sw = Stopwatch()..start();
+    }
     final filtered = source.where((product) {
-      final matchesQuery = value.isEmpty ||
-          product.name.toLowerCase().contains(value) ||
-          product.nameEn.toLowerCase().contains(value) ||
-          product.nameAr.toLowerCase().contains(value) ||
-          product.code.toLowerCase().contains(value) ||
-          product.barcode.toLowerCase().contains(value) ||
-          product.effectiveSaleUnits
-              .any((unit) => unit.barcode.toLowerCase().contains(value)) ||
-          product.effectivePurchaseUnits
-              .any((unit) => unit.barcode.toLowerCase().contains(value)) ||
-          product.category.toLowerCase().contains(value) ||
-          product.brand.toLowerCase().contains(value) ||
-          product.supplier.toLowerCase().contains(value);
+      final matchesQuery =
+          value.isEmpty || _searchIndexFor(product).contains(value);
       final matchesCategory =
           categoryFilter == 'All' || product.category == categoryFilter;
       return matchesQuery && matchesCategory;
     }).toList(growable: false);
     filtered
         .sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    _cachedProductSource = source;
+    _cachedQuery = value;
+    _cachedCategoryFilter = categoryFilter;
+    _cachedFilteredProducts = filtered;
+    if (kDebugMode) {
+      final elapsed = sw?.elapsedMicroseconds ?? 0;
+      if (elapsed > 2000) {
+        debugPrint(
+          '[ProductsPage] filter query="$value" category="$categoryFilter" '
+          'products=${source.length} matched=${filtered.length} '
+          'took=${elapsed / 1000.0}ms',
+        );
+      }
+    }
     return filtered;
+  }
+
+  String _searchIndexFor(Product product) {
+    final cached = _searchIndexCache[product.id];
+    if (cached != null) return cached;
+    final buffer = StringBuffer()
+      ..write(product.name)
+      ..write(' ')
+      ..write(product.nameEn)
+      ..write(' ')
+      ..write(product.nameAr)
+      ..write(' ')
+      ..write(product.code)
+      ..write(' ')
+      ..write(product.barcode)
+      ..write(' ')
+      ..write(product.category)
+      ..write(' ')
+      ..write(product.brand)
+      ..write(' ')
+      ..write(product.supplier)
+      ..write(' ')
+      ..write(product.unit);
+    for (final unit in product.saleUnits) {
+      buffer
+        ..write(' ')
+        ..write(unit.name)
+        ..write(' ')
+        ..write(unit.barcode);
+    }
+    for (final unit in product.purchaseUnits) {
+      buffer
+        ..write(' ')
+        ..write(unit.name)
+        ..write(' ')
+        ..write(unit.barcode);
+    }
+    final value = buffer.toString().toLowerCase();
+    _searchIndexCache[product.id] = value;
+    return value;
+  }
+
+  List<String> _categoriesFor(List<Product> source) {
+    if (_cachedRevision != widget.store.productsRevision) {
+      _cachedCategorySource = null;
+      _cachedCategories = const <String>[];
+    }
+    if (identical(source, _cachedCategorySource)) {
+      return _cachedCategories;
+    }
+    final categories = <String>{
+      'All',
+      ...source.map((p) => p.category).where((e) => e.trim().isNotEmpty)
+    }.toList()
+      ..sort();
+    _cachedCategorySource = source;
+    _cachedCategories = categories;
+    return categories;
+  }
+
+  _ProductRowData _rowDataFor(
+    Product product,
+    AppLocalizations tr,
+    String localeTag,
+  ) {
+    final cacheKey = product.id;
+    final signature = '${widget.store.productsPageRevision}|$localeTag';
+    final cached = _rowCache[cacheKey];
+    if (cached != null && cached.signature == signature) {
+      return cached.row;
+    }
+    Stopwatch? sw;
+    if (kDebugMode) {
+      sw = Stopwatch()..start();
+    }
+    final row = _ProductRowData.fromStore(
+      product,
+      widget.store,
+      widget.store.storeProfile,
+      tr,
+    );
+    _rowCache[cacheKey] = _RowCacheEntry(signature, row);
+    if (kDebugMode) {
+      final elapsed = sw?.elapsedMicroseconds ?? 0;
+      if (elapsed > 1000) {
+        debugPrint(
+          '[ProductsPage] row productId=${product.id} '
+          'revision=${widget.store.productsPageRevision} took=${elapsed / 1000.0}ms',
+        );
+      }
+    }
+    return row;
   }
 
   Future<void> _deleteProduct(BuildContext context, Product product) async {
@@ -554,6 +771,13 @@ class _ProductRowData {
   }
 }
 
+class _RowCacheEntry {
+  const _RowCacheEntry(this.signature, this.row);
+
+  final String signature;
+  final _ProductRowData row;
+}
+
 class _ProductFormResult {
   const _ProductFormResult(
       {required this.product,
@@ -682,7 +906,13 @@ class _ProductDialogState extends State<_ProductDialog> {
 
   Future<void> _scanBarcodeWithCamera() async {
     final code = await Navigator.of(context).push<String>(
-      MaterialPageRoute(builder: (_) => const BarcodeScannerPage()),
+      MaterialPageRoute(
+        builder: (_) => const PageTimingScope(
+          pageKey: 'BarcodeScannerPage',
+          pageLabel: 'Barcode scanner',
+          child: BarcodeScannerPage(),
+        ),
+      ),
     );
     if (!mounted || code == null || code.trim().isEmpty) return;
     setState(() => barcodeController.text = code.trim());
@@ -2013,7 +2243,13 @@ class _SaleUnitsEditor extends StatelessWidget {
   Future<void> _scanUnitBarcode(
       BuildContext context, _SaleUnitDraft unit) async {
     final code = await Navigator.of(context).push<String>(
-      MaterialPageRoute(builder: (_) => const BarcodeScannerPage()),
+      MaterialPageRoute(
+        builder: (_) => const PageTimingScope(
+          pageKey: 'BarcodeScannerPage',
+          pageLabel: 'Barcode scanner',
+          child: BarcodeScannerPage(),
+        ),
+      ),
     );
     if (code == null || code.trim().isEmpty) return;
     unit.barcode = code.trim();

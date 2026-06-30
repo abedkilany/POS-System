@@ -19,6 +19,9 @@ class AccountingService {
   static final Random _random = Random.secure();
   static bool get isAvailable => SqliteMigrationManager.database != null;
   static StoreProfile _moneyProfile = StoreProfile.defaults;
+  static int? _entryNoCacheDbIdentity;
+  static final Map<int, int> _entryNoSequenceByYear = <int, int>{};
+  static Future<void> _entryNoQueue = Future<void>.value();
 
   static void configureMoneyPolicy(StoreProfile profile) {
     _moneyProfile = profile;
@@ -2971,13 +2974,58 @@ class AccountingService {
     VentioDriftDatabase db,
     DateTime date,
   ) async {
-    final prefix = 'JE-${date.toUtc().year}-';
+    final pending = _entryNoQueue.then((_) => _nextEntryNoUnlocked(db, date));
+    _entryNoQueue = pending.then((_) {}, onError: (_) {});
+    return pending;
+  }
+
+  static Future<String> _nextEntryNoUnlocked(
+    VentioDriftDatabase db,
+    DateTime date,
+  ) async {
+    final year = date.toUtc().year;
+    _ensureEntryNoCache(db);
+    final sequence = await _nextEntrySequenceForYear(db, year);
+    _entryNoSequenceByYear[year] = sequence + 1;
+    return 'JE-$year-${sequence.toString().padLeft(6, '0')}';
+  }
+
+  static Future<int> _nextEntrySequenceForYear(
+    VentioDriftDatabase db,
+    int year,
+  ) async {
+    final cached = _entryNoSequenceByYear[year];
+    if (cached != null) {
+      return cached;
+    }
+    final prefix = 'JE-$year-';
     final row = await db.customSelect(
-      'SELECT COUNT(*) AS count FROM journal_entries WHERE entry_no LIKE ?',
-      variables: <Variable<Object>>[Variable<String>('$prefix%')],
-    ).getSingle();
-    final count = (row.data['count'] as int? ?? 0) + 1;
-    return '$prefix${count.toString().padLeft(6, '0')}';
+      '''
+      SELECT entry_no
+      FROM journal_entries
+      WHERE deleted_at = '' AND entry_no LIKE ?
+      ORDER BY entry_no DESC
+      LIMIT 1
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>('$prefix%'),
+      ],
+    ).getSingleOrNull();
+    final entryNo = row?.read<String>('entry_no') ?? '';
+    final sequence = entryNo.length <= prefix.length
+        ? 1
+        : (int.tryParse(entryNo.substring(prefix.length)) ?? 0) + 1;
+    _entryNoSequenceByYear[year] = sequence;
+    return sequence;
+  }
+
+  static void _ensureEntryNoCache(VentioDriftDatabase db) {
+    final dbIdentity = identityHashCode(db);
+    if (_entryNoCacheDbIdentity == dbIdentity) {
+      return;
+    }
+    _entryNoCacheDbIdentity = dbIdentity;
+    _entryNoSequenceByYear.clear();
   }
 
   static DateTime _parseDate(Object? value) =>

@@ -7,7 +7,26 @@ import '../storage/sqlite/sqlite_migration_manager.dart';
 import '../storage/sqlite/sync_sqlite_store.dart';
 import '../../models/sync_change.dart';
 import '../../models/sync_queue_item.dart';
+import '../../models/account_transaction.dart';
+import '../../models/catalog_item.dart';
+import '../../models/customer.dart';
+import '../../models/delivery_note.dart';
+import '../../models/expense.dart';
+import '../../models/inventory_count.dart';
+import '../../models/inventory_cost_layer.dart';
+import '../../models/manufacturing.dart';
+import '../../models/product.dart';
+import '../../models/product_costing.dart';
+import '../../models/product_pricing.dart';
+import '../../models/purchase.dart';
+import '../../models/sale.dart';
+import '../../models/sale_quotation.dart';
+import '../../models/stock_movement.dart';
+import '../../models/supplier.dart';
+import '../../models/supplier_product_price.dart';
+import '../../models/warehouse.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'startup_timing_service.dart';
 
 class LocalDatabaseService {
   LocalDatabaseService._();
@@ -25,7 +44,8 @@ class LocalDatabaseService {
   static final Map<String, String> _pendingScalarWrites = <String, String>{};
   static final Set<String> _pendingScalarDeletes = <String>{};
   static final Map<String, List<_PendingBusinessEntityWrite>>
-      _pendingBusinessEntityWrites = <String, List<_PendingBusinessEntityWrite>>{};
+      _pendingBusinessEntityWrites =
+      <String, List<_PendingBusinessEntityWrite>>{};
   static final List<SyncChange> _pendingSyncChanges = <SyncChange>[];
   static final List<SyncQueueItem> _pendingSyncQueueItems = <SyncQueueItem>[];
   static Timer? _flushTimer;
@@ -61,31 +81,69 @@ class LocalDatabaseService {
       return;
     }
 
-    final existingSqliteStatus =
-        await SqliteMigrationManager.initializeFromExistingSqliteIfValidated();
-    var db = SqliteMigrationManager.database;
-    if (!existingSqliteStatus.sqliteFoundationReady || db == null) {
-      await SqliteMigrationManager.initializeFreshSqlite();
-      db = SqliteMigrationManager.database;
-    }
-    if (db == null) {
-      throw StateError('SQLite database failed to initialize.');
-    }
+    await StartupTimingService.measure(
+      'local_database.sqlite_bootstrap',
+      () async {
+        final existingSqliteStatus = await StartupTimingService.measure(
+          'sqlite_restore_or_validate',
+          SqliteMigrationManager.initializeFromExistingSqliteIfValidated,
+          category: 'database',
+        );
+        var db = SqliteMigrationManager.database;
+        if (!existingSqliteStatus.sqliteFoundationReady || db == null) {
+          await StartupTimingService.measure(
+            'sqlite_fresh_initialize',
+            SqliteMigrationManager.initializeFreshSqlite,
+            category: 'database',
+          );
+          db = SqliteMigrationManager.database;
+        }
+        if (db == null) {
+          throw StateError('SQLite database failed to initialize.');
+        }
+        final activeDb = db;
 
-    _sqliteMirror
-      ..clear()
-      ..addAll(await BusinessSqliteStore.hydrateScalarKeyMirror(db))
-      ..addAll(await SyncSqliteStore.hydrateScalarKeyMirror(db));
-    _pendingScalarWrites.clear();
-    _pendingScalarDeletes.clear();
-    _pendingBusinessEntityWrites.clear();
-    _pendingSyncChanges.clear();
-    _pendingSyncQueueItems.clear();
-    _flushTimer?.cancel();
-    _flushTimer = null;
-    _flushInProgress = null;
-    _sqliteReady = true;
-    await _hydrateAndMigrateSecureScalars();
+        _sqliteMirror
+          ..clear()
+          ..addAll(await StartupTimingService.measure(
+            'hydrate_business_scalar_mirror',
+            () => BusinessSqliteStore.hydrateScalarKeyMirror(activeDb),
+            category: 'database',
+          ))
+          ..addAll(await StartupTimingService.measure(
+            'hydrate_sync_scalar_mirror',
+            () => SyncSqliteStore.hydrateScalarKeyMirror(activeDb),
+            category: 'database',
+          ));
+        _pendingScalarWrites.clear();
+        _pendingScalarDeletes.clear();
+        _pendingBusinessEntityWrites.clear();
+        _pendingSyncChanges.clear();
+        _pendingSyncQueueItems.clear();
+        _flushTimer?.cancel();
+        _flushTimer = null;
+        _flushInProgress = null;
+        await StartupTimingService.measure(
+          'migrate_complex_business_tables',
+          () => BusinessSqliteStore.migrateComplexTablesFromPayloadJson(
+            activeDb,
+          ),
+          category: 'database',
+        );
+        await StartupTimingService.measure(
+          'rebuild_business_tables_without_payload_json',
+          () => activeDb.rebuildBusinessTablesWithoutPayloadJson(),
+          category: 'database',
+        );
+        _sqliteReady = true;
+        await StartupTimingService.measure(
+          'hydrate_secure_scalars',
+          _hydrateAndMigrateSecureScalars,
+          category: 'database',
+        );
+      },
+      category: 'bootstrap',
+    );
   }
 
   static Map<String, String>? get _memoryStore => _memoryStoreForTesting;
@@ -187,7 +245,8 @@ class LocalDatabaseService {
     return _sqliteMirror[key];
   }
 
-  static Future<void> _writeRawScalarValueImmediate(String key, String value) async {
+  static Future<void> _writeRawScalarValueImmediate(
+      String key, String value) async {
     final memory = _memoryStore;
     if (memory != null) {
       memory[key] = value;
@@ -276,6 +335,267 @@ class LocalDatabaseService {
     return null;
   }
 
+  static Future<List<String>> getBusinessEntityListJsonBatches(
+    String key, {
+    int batchSize = 100,
+  }) async {
+    final memory = _memoryStore;
+    if (memory != null) {
+      final value = memory[key];
+      return value == null ? const <String>[] : <String>[value];
+    }
+    if (_webStore != null) {
+      final value = _webStore![key];
+      return value == null ? const <String>[] : <String>[value];
+    }
+    if (_sqliteReady) {
+      final cached = _sqliteMirror[key];
+      if (cached != null) return <String>[cached];
+      final db = SqliteMigrationManager.database;
+      if (db == null) return const <String>[];
+      if (BusinessSqliteStore.isTypedEntityKey(key)) {
+        return BusinessSqliteStore.readEntityListJsonBatches(
+          db,
+          key,
+          batchSize: batchSize,
+        );
+      }
+      if (key == SyncSqliteStore.syncChangesKey) {
+        return SyncSqliteStore.readSyncChangesJsonBatches(
+          db,
+          batchSize: batchSize,
+        );
+      }
+      if (key == SyncSqliteStore.syncQueueKey) {
+        return SyncSqliteStore.readSyncQueueJsonBatches(
+          db,
+          batchSize: batchSize,
+        );
+      }
+    }
+    return const <String>[];
+  }
+
+  static Future<List<StockMovement>?> getStockMovementsFromSqlite() async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+      return null;
+    }
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    return BusinessSqliteStore.readStockMovements(db);
+  }
+
+  static Future<List<AccountTransaction>?>
+      getAccountTransactionsFromSqlite() async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+      return null;
+    }
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    return BusinessSqliteStore.readAccountTransactions(db);
+  }
+
+  static Future<List<Customer>?> getCustomersFromSqlite() async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+      return null;
+    }
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    return BusinessSqliteStore.readCustomers(db);
+  }
+
+  static Future<List<Product>?> getProductsFromSqlite() async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+      return null;
+    }
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    return BusinessSqliteStore.readProducts(db);
+  }
+
+  static Future<List<Sale>?> getSalesFromSqlite() async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+      return null;
+    }
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    return BusinessSqliteStore.readSales(db);
+  }
+
+  static Future<List<SaleQuotation>?> getSaleQuotationsFromSqlite() async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+      return null;
+    }
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    return BusinessSqliteStore.readSaleQuotations(db);
+  }
+
+  static Future<List<DeliveryNote>?> getDeliveryNotesFromSqlite() async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+      return null;
+    }
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    return BusinessSqliteStore.readDeliveryNotes(db);
+  }
+
+  static Future<List<Supplier>?> getSuppliersFromSqlite() async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+      return null;
+    }
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    return BusinessSqliteStore.readSuppliers(db);
+  }
+
+  static Future<List<Expense>?> getExpensesFromSqlite() async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+      return null;
+    }
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    return BusinessSqliteStore.readExpenses(db);
+  }
+
+  static Future<List<Warehouse>?> getWarehousesFromSqlite() async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+      return null;
+    }
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    return BusinessSqliteStore.readWarehouses(db);
+  }
+
+  static Future<List<Purchase>?> getPurchasesFromSqlite() async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+      return null;
+    }
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    return BusinessSqliteStore.readPurchases(db);
+  }
+
+  static Future<List<InventoryCountSession>?>
+      getInventoryCountsFromSqlite() async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+      return null;
+    }
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    return BusinessSqliteStore.readInventoryCounts(db);
+  }
+
+  static Future<List<BillOfMaterials>?> getBillOfMaterialsFromSqlite() async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+      return null;
+    }
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    return BusinessSqliteStore.readBillOfMaterials(db);
+  }
+
+  static Future<List<ManufacturingOrder>?>
+      getManufacturingOrdersFromSqlite() async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+      return null;
+    }
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    return BusinessSqliteStore.readManufacturingOrders(db);
+  }
+
+  static Future<List<CatalogItem>?> getCatalogItemsFromSqlite(
+      String key) async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+      return null;
+    }
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    if (!BusinessSqliteStore.isTypedEntityKey(key)) return null;
+    if (key != BusinessSqliteStore.categoriesKey &&
+        key != BusinessSqliteStore.brandsKey &&
+        key != BusinessSqliteStore.unitsKey) {
+      return null;
+    }
+    final table = BusinessSqliteStore.adminEntityKeys.contains(key)
+        ? (key == BusinessSqliteStore.categoriesKey
+            ? 'catalog_categories'
+            : key == BusinessSqliteStore.brandsKey
+                ? 'catalog_brands'
+                : 'catalog_units')
+        : null;
+    if (table == null) return null;
+    return BusinessSqliteStore.readCatalogItems(db, table);
+  }
+
+  static Future<List<SupplierProductPrice>?>
+      getSupplierProductPricesFromSqlite() async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+      return null;
+    }
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    return BusinessSqliteStore.readSupplierProductPrices(db);
+  }
+
+  static Future<List<PriceList>?> getPriceListsFromSqlite() async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+      return null;
+    }
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    return BusinessSqliteStore.readPriceLists(db);
+  }
+
+  static Future<List<ProductPrice>?> getProductPricesFromSqlite() async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+      return null;
+    }
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    return BusinessSqliteStore.readProductPrices(db);
+  }
+
+  static Future<List<ProductPriceOverride>?>
+      getProductPriceOverridesFromSqlite() async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+      return null;
+    }
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    return BusinessSqliteStore.readProductPriceOverrides(db);
+  }
+
+  static Future<List<ProductCost>?> getProductCostsFromSqlite() async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+      return null;
+    }
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    return BusinessSqliteStore.readProductCosts(db);
+  }
+
+  static Future<List<CostingMethodHistory>?>
+      getCostingMethodHistoryFromSqlite() async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+      return null;
+    }
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    return BusinessSqliteStore.readCostingMethodHistory(db);
+  }
+
+  static Future<List<InventoryCostLayer>?>
+      getInventoryCostLayersFromSqlite() async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+      return null;
+    }
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    return BusinessSqliteStore.readInventoryCostLayers(db);
+  }
+
   static Future<void> upsertBusinessEntityJson(
       String key, Map<String, dynamic> payloadJson,
       {int? sortIndex}) async {
@@ -294,6 +614,7 @@ class LocalDatabaseService {
         sortIndex: sortIndex,
       ),
     );
+    _sqliteMirror.remove(key);
     _scheduleFlush();
   }
 
@@ -304,6 +625,7 @@ class LocalDatabaseService {
     final db = SqliteMigrationManager.database;
     if (!_sqliteReady || db == null) return;
     _pendingSyncChanges.add(change);
+    _sqliteMirror.remove(SyncSqliteStore.syncChangesKey);
     _scheduleFlush();
   }
 
@@ -314,6 +636,7 @@ class LocalDatabaseService {
     final db = SqliteMigrationManager.database;
     if (!_sqliteReady || db == null) return;
     _pendingSyncQueueItems.add(item);
+    _sqliteMirror.remove(SyncSqliteStore.syncQueueKey);
     _scheduleFlush();
   }
 
@@ -440,6 +763,8 @@ class LocalDatabaseService {
       await SyncSqliteStore.saveKeyJson(db, SyncSqliteStore.syncQueueKey, '[]');
       await SyncSqliteStore.saveKeyJson(
           db, SyncSqliteStore.syncSequenceKey, '0');
+      await db.customUpdate('DELETE FROM app_logs');
+      await db.customUpdate('DELETE FROM audit_logs');
       _sqliteMirror
         ..clear()
         ..addAll(<String, String>{
@@ -487,13 +812,13 @@ class LocalDatabaseService {
         await _writeRawScalarValueImmediate(entry.key, entry.value);
       }
       for (final entry in businessWrites.entries) {
+        _sqliteMirror.remove(entry.key);
         await BusinessSqliteStore.upsertEntityPayloads(
           db,
           entry.key,
           entry.value.map((item) => item.payload).toList(growable: false),
-          sortIndices: entry.value
-              .map((item) => item.sortIndex)
-              .toList(growable: false),
+          sortIndices:
+              entry.value.map((item) => item.sortIndex).toList(growable: false),
         );
       }
       if (syncChanges.isNotEmpty) {

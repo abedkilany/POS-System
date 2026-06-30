@@ -25,7 +25,14 @@ class Expense {
   })  : createdAt =
             createdAt ?? updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0),
         updatedAt =
-            updatedAt ?? createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+            updatedAt ?? createdAt ?? DateTime.fromMillisecondsSinceEpoch(0),
+        searchText = _buildSearchText(
+          title,
+          category,
+          notes,
+          status,
+          cancelReason,
+        );
 
   final String id,
       title,
@@ -48,6 +55,7 @@ class Expense {
   final DateTime date, createdAt, updatedAt;
   final DateTime? deletedAt, cancelledAt;
   final int version;
+  final String searchText;
 
   bool get isDeleted => deletedAt != null;
   bool get isDraft => status.toLowerCase() == 'draft';
@@ -68,6 +76,29 @@ class Expense {
   static double _parseRate(dynamic value) {
     if (value is num) return _safeRate(value.toDouble());
     return _safeRate(double.tryParse(value?.toString() ?? '') ?? 0);
+  }
+
+  static String _normalizeSearchPart(String value) =>
+      value.trim().toLowerCase();
+
+  static String _buildSearchText(
+    String title,
+    String category,
+    String notes,
+    String status,
+    String cancelReason,
+  ) {
+    final parts = <String>[
+      title,
+      category,
+      notes,
+      status,
+      cancelReason,
+    ];
+    return parts
+        .map(_normalizeSearchPart)
+        .where((part) => part.isNotEmpty)
+        .join(' ');
   }
 
   Expense copyWith({

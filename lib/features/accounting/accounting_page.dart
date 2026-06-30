@@ -4,9 +4,11 @@ import 'package:flutter/rendering.dart';
 import '../../core/localization/app_localizations.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../core/utils/responsive.dart';
+import '../../core/utils/revision_cache.dart';
 import '../../core/services/accounting_service.dart';
 import '../../core/services/accounting_aging_service.dart';
 import '../../data/app_store.dart';
+import 'accounting_snapshot_service.dart';
 import '../../models/account_transaction.dart';
 import '../../models/app_user.dart';
 import '../../models/accounting_account.dart';
@@ -32,6 +34,8 @@ class _AccountingPageState extends State<AccountingPage>
   late final TabController _tabController;
   final TextEditingController _searchController = TextEditingController();
   String _query = '';
+  static const AccountingSnapshotService _snapshotService =
+      AccountingSnapshotService();
 
   @override
   void initState() {
@@ -57,7 +61,9 @@ class _AccountingPageState extends State<AccountingPage>
         message: 'You do not have access to accounting data.',
       );
     }
-    final metrics = _AccountingMetrics.fromStore(widget.store);
+    if (!widget.store.isCoreDataLoaded || !widget.store.isLedgerDataLoaded) {
+      return const Center(child: CircularProgressIndicator.adaptive());
+    }
 
     return Padding(
       padding: VentioResponsive.pageInsets(context),
@@ -69,7 +75,7 @@ class _AccountingPageState extends State<AccountingPage>
             onRefresh: () => setState(() {}),
           ),
           const SizedBox(height: 12),
-          _CompactSummaryStrip(store: widget.store, metrics: metrics),
+          _AccountingSummaryStripLoader(store: widget.store),
           const SizedBox(height: 12),
           _AccountingTabs(controller: _tabController),
           const SizedBox(height: 10),
@@ -188,11 +194,13 @@ class _CachedFuturePanel<T> extends StatefulWidget {
 
 class _CachedFuturePanelState<T> extends State<_CachedFuturePanel<T>> {
   late Future<T> _future;
+  int _lastSeenRevision = -1;
 
   @override
   void initState() {
     super.initState();
     _future = widget.loadFuture();
+    _lastSeenRevision = widget.store.accountingRevision;
     widget.store.addListener(_refresh);
   }
 
@@ -202,9 +210,10 @@ class _CachedFuturePanelState<T> extends State<_CachedFuturePanel<T>> {
     if (oldWidget.store != widget.store) {
       oldWidget.store.removeListener(_refresh);
       widget.store.addListener(_refresh);
+      _lastSeenRevision = widget.store.accountingRevision;
     }
     if (oldWidget.cacheKey != widget.cacheKey) {
-      _refresh();
+      _refresh(force: true);
     }
   }
 
@@ -214,8 +223,11 @@ class _CachedFuturePanelState<T> extends State<_CachedFuturePanel<T>> {
     super.dispose();
   }
 
-  void _refresh() {
+  void _refresh({bool force = false}) {
     if (!mounted) return;
+    final revision = widget.store.accountingRevision;
+    if (!force && revision == _lastSeenRevision) return;
+    _lastSeenRevision = revision;
     setState(() => _future = widget.loadFuture());
   }
 
@@ -224,6 +236,67 @@ class _CachedFuturePanelState<T> extends State<_CachedFuturePanel<T>> {
     return FutureBuilder<T>(
       future: _future,
       builder: widget.builder,
+    );
+  }
+}
+
+class _AccountingSummaryStripLoader extends StatelessWidget {
+  const _AccountingSummaryStripLoader({required this.store});
+
+  final AppStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now().toLocal();
+    final cached =
+        _AccountingPageState._snapshotService.peekMetrics(store, now: now);
+    if (cached != null) {
+      return _CompactSummaryStrip(
+        store: store,
+        metrics: _AccountingMetrics.fromSummary(cached),
+      );
+    }
+
+    return FutureBuilder<Map<String, Object?>>(
+      future: _AccountingPageState._snapshotService.metricsFor(
+        store,
+        now: now,
+      ),
+      builder: (context, snapshot) {
+        final summary = snapshot.data;
+        if (summary != null) {
+          return _CompactSummaryStrip(
+            store: store,
+            metrics: _AccountingMetrics.fromSummary(summary),
+          );
+        }
+        if (snapshot.hasError) {
+          return _CompactSummaryStrip(
+            store: store,
+            metrics: _AccountingMetrics.fromStore(store),
+          );
+        }
+        return const _SummaryStripPlaceholder();
+      },
+    );
+  }
+}
+
+class _SummaryStripPlaceholder extends StatelessWidget {
+  const _SummaryStripPlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 86,
+      child: Center(
+        child: CircularProgressIndicator.adaptive(
+          strokeWidth: 2.4,
+          valueColor: AlwaysStoppedAnimation<Color>(
+            Theme.of(context).colorScheme.primary,
+          ),
+        ),
+      ),
     );
   }
 }
@@ -636,42 +709,84 @@ class _AccountsTab extends StatelessWidget {
   final AppStore store;
   final String query;
   final String accountType;
+  static final RevisionKeyCache<List<_AccountRowData>> _rowsCache =
+      RevisionKeyCache<List<_AccountRowData>>();
+  static final RevisionKeyCache<Map<String, String>> _searchIndexCache =
+      RevisionKeyCache<Map<String, String>>();
 
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final normalizedQuery = _normalizedSearchQuery(query);
-    final rows = accountType == 'customer'
-        ? store.customers
-            .where((customer) => _matchesNormalized(normalizedQuery,
-                [customer.name, customer.phone, customer.address]))
-            .map((customer) => _AccountRowData(
-                  id: customer.id,
-                  name: customer.name,
-                  subtitle: [customer.phone, customer.address]
-                      .where((part) => part.trim().isNotEmpty)
-                      .join(' • '),
-                  balance: store.accountBalance('customer', customer.id),
-                ))
-            .toList()
-        : store.suppliers
-            .where((supplier) => _matchesNormalized(normalizedQuery, [
-                  supplier.name,
-                  supplier.nameEn,
-                  supplier.nameAr,
-                  supplier.phone,
-                  supplier.address
-                ]))
-            .map((supplier) => _AccountRowData(
-                  id: supplier.id,
-                  name: supplier.name,
-                  subtitle: [supplier.phone, supplier.address]
-                      .where((part) => part.trim().isNotEmpty)
-                      .join(' • '),
-                  balance: store.accountBalance('supplier', supplier.id),
-                ))
-            .toList();
-    rows.sort((a, b) => b.balance.abs().compareTo(a.balance.abs()));
+    final dataRevision = accountType == 'customer'
+        ? store.customersRevision
+        : store.suppliersRevision;
+    final rowsRevision = Object.hashAll(<Object?>[
+      dataRevision,
+      store.accountTransactionsRevision,
+    ]);
+    final index = _searchIndexCache.getOrCompute(
+      dataRevision,
+      '${store.appIdentity.storeId}|$accountType',
+      () {
+        final map = <String, String>{};
+        if (accountType == 'customer') {
+          for (final customer in store.customers) {
+            map[customer.id] = [
+              customer.name,
+              customer.phone,
+              customer.address,
+            ].join(' ').toLowerCase();
+          }
+        } else {
+          for (final supplier in store.suppliers) {
+            map[supplier.id] = [
+              supplier.name,
+              supplier.nameEn,
+              supplier.nameAr,
+              supplier.phone,
+              supplier.address,
+            ].join(' ').toLowerCase();
+          }
+        }
+        return map;
+      },
+    );
+    final rows = _rowsCache.getOrCompute(
+      rowsRevision,
+      '${store.appIdentity.storeId}|$accountType|$normalizedQuery',
+      () {
+        final computed = accountType == 'customer'
+            ? store.customers
+                .where((customer) =>
+                    normalizedQuery.isEmpty ||
+                    (index[customer.id]?.contains(normalizedQuery) ?? false))
+                .map((customer) => _AccountRowData(
+                      id: customer.id,
+                      name: customer.name,
+                      subtitle: [customer.phone, customer.address]
+                          .where((part) => part.trim().isNotEmpty)
+                          .join(' • '),
+                      balance: store.accountBalance('customer', customer.id),
+                    ))
+                .toList()
+            : store.suppliers
+                .where((supplier) =>
+                    normalizedQuery.isEmpty ||
+                    (index[supplier.id]?.contains(normalizedQuery) ?? false))
+                .map((supplier) => _AccountRowData(
+                      id: supplier.id,
+                      name: supplier.name,
+                      subtitle: [supplier.phone, supplier.address]
+                          .where((part) => part.trim().isNotEmpty)
+                          .join(' • '),
+                      balance: store.accountBalance('supplier', supplier.id),
+                    ))
+                .toList();
+        computed.sort((a, b) => b.balance.abs().compareTo(a.balance.abs()));
+        return computed;
+      },
+    );
 
     if (rows.isEmpty) {
       return _EmptyAccountingState(
@@ -940,17 +1055,26 @@ class _AgingReportsTab extends StatelessWidget {
 
   final AppStore store;
   final String query;
+  static final RevisionValueCache<_AgingReportsData> _cache =
+      RevisionValueCache<_AgingReportsData>();
 
   @override
   Widget build(BuildContext context) {
-    final customerReport = AccountingAgingService.customerAgingFromStore(
-      sales: store.sales,
-      accountTransactions: store.accountTransactions,
+    final reports = _cache.getOrCompute(
+      store.accountingRevision,
+      () => _AgingReportsData(
+        customerReport: AccountingAgingService.customerAgingFromStore(
+          sales: store.sales,
+          accountTransactions: store.accountTransactions,
+        ),
+        supplierReport: AccountingAgingService.supplierAgingFromStore(
+          purchases: store.purchases,
+          accountTransactions: store.accountTransactions,
+        ),
+      ),
     );
-    final supplierReport = AccountingAgingService.supplierAgingFromStore(
-      purchases: store.purchases,
-      accountTransactions: store.accountTransactions,
-    );
+    final customerReport = reports.customerReport;
+    final supplierReport = reports.supplierReport;
 
     return ListView(
       children: [
@@ -976,6 +1100,16 @@ class _AgingReportsTab extends StatelessWidget {
       ],
     );
   }
+}
+
+class _AgingReportsData {
+  const _AgingReportsData({
+    required this.customerReport,
+    required this.supplierReport,
+  });
+
+  final AgingReportResult customerReport;
+  final AgingReportResult supplierReport;
 }
 
 class _AgingReportSection extends StatelessWidget {
@@ -1178,22 +1312,31 @@ class _TransactionsTab extends StatelessWidget {
   final AppStore store;
   final String query;
   final bool cashOnly;
+  static final RevisionKeyCache<List<AccountTransaction>> _rowsCache =
+      RevisionKeyCache<List<AccountTransaction>>();
 
   @override
   Widget build(BuildContext context) {
     final normalizedQuery = _normalizedSearchQuery(query);
-    final rows = store.accountTransactions
-        .where((txn) =>
-            (!cashOnly || _isCashTxn(txn)) &&
-            _matchesNormalized(normalizedQuery, [
-              txn.accountName,
-              txn.referenceNo,
-              txn.paymentMethod,
-              txn.note,
-              txn.type
-            ]))
-        .toList()
-      ..sort((a, b) => b.date.compareTo(a.date));
+    final rows = _rowsCache.getOrCompute(
+      store.accountTransactionsRevision,
+      '${store.appIdentity.storeId}|$cashOnly|$normalizedQuery',
+      () {
+        final computed = store.accountTransactions
+            .where((txn) =>
+                (!cashOnly || _isCashTxn(txn)) &&
+                _matchesNormalized(normalizedQuery, [
+                  txn.accountName,
+                  txn.referenceNo,
+                  txn.paymentMethod,
+                  txn.note,
+                  txn.type
+                ]))
+            .toList(growable: false);
+        computed.sort((a, b) => b.date.compareTo(a.date));
+        return computed;
+      },
+    );
 
     if (rows.isEmpty) {
       return _EmptyAccountingState(
@@ -1239,9 +1382,7 @@ class _TransactionsTab extends StatelessWidget {
                   itemBuilder: (context, index) {
                     final transaction = rows[index];
                     return _TransactionRow(
-                        store: store,
-                        transaction: transaction,
-                        isWide: isWide);
+                        store: store, transaction: transaction, isWide: isWide);
                   },
                 ),
         );
@@ -2051,11 +2192,13 @@ class _AdvancedAccountingTab extends StatefulWidget {
 
 class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
   late Future<_AdvancedAccountingData> _future;
+  int _lastSeenRevision = -1;
 
   @override
   void initState() {
     super.initState();
     _future = _load();
+    _lastSeenRevision = widget.store.accountingRevision;
     widget.store.addListener(_refresh);
   }
 
@@ -2092,7 +2235,13 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
     );
   }
 
-  void _refresh() => setState(() => _future = _load());
+  void _refresh({bool force = false}) {
+    if (!mounted) return;
+    final revision = widget.store.accountingRevision;
+    if (!force && revision == _lastSeenRevision) return;
+    _lastSeenRevision = revision;
+    setState(() => _future = _load());
+  }
 
   @override
   void dispose() {
@@ -2176,9 +2325,13 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     value: bindToCurrentDevice,
-                    title: Text(tr.isArabic ? '??? ????? ??????? ??????' : 'Link drawer to current device'),
+                    title: Text(tr.isArabic
+                        ? '??? ????? ??????? ??????'
+                        : 'Link drawer to current device'),
                     subtitle: Text(currentDeviceId.isEmpty
-                        ? (tr.isArabic ? '?? ???? Device ID ???? ??????' : 'No Device ID is currently available')
+                        ? (tr.isArabic
+                            ? '?? ???? Device ID ???? ??????'
+                            : 'No Device ID is currently available')
                         : currentDeviceId),
                     onChanged: (value) =>
                         setDialogState(() => bindToCurrentDevice = value),
@@ -2299,7 +2452,9 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                 alignment: AlignmentDirectional.centerStart,
                 child: Text(
                   currentDeviceId.isEmpty
-                      ? (tr.isArabic ? '?????: ?? ???? Device ID ?????? ??????.' : 'Warning: no Device ID is available for the current device.')
+                      ? (tr.isArabic
+                          ? '?????: ?? ???? Device ID ?????? ??????.'
+                          : 'Warning: no Device ID is available for the current device.')
                       : (deviceDrawers.isEmpty
                           ? '?? ??? ?????? ??? ??? ????? ???? ??????? ?? ??? ?? ???????.'
                           : '??? ??????? ??? ?????? ??????.'),
@@ -2368,7 +2523,7 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
         branchId: currentBranchId,
         deviceId: currentDeviceId,
       );
-      if (mounted) _refresh();
+      if (mounted) _refresh(force: true);
     }
   }
 
@@ -2443,7 +2598,7 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
         amount: double.tryParse(amount.text) ?? 0,
         notes: notes.text,
       );
-      if (mounted) _refresh();
+      if (mounted) _refresh(force: true);
     }
   }
 
@@ -2993,19 +3148,26 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
                   decoration:
                       InputDecoration(labelText: tr.text('counted_cash'))),
               const SizedBox(height: 8),
-                DropdownButtonFormField<String>(
+              DropdownButtonFormField<String>(
                 initialValue: closeMode,
-                decoration: InputDecoration(labelText: tr.isArabic ? '????? ???????' : 'Close action'),
+                decoration: InputDecoration(
+                    labelText: tr.isArabic ? '????? ???????' : 'Close action'),
                 items: [
                   DropdownMenuItem(
                       value: 'close_only',
-                      child: Text(tr.isArabic ? '????? ??????? ???? ????? ?? ??? ?????' : 'Close the shift and keep cash in the same drawer')),
+                      child: Text(tr.isArabic
+                          ? '????? ??????? ???? ????? ?? ??? ?????'
+                          : 'Close the shift and keep cash in the same drawer')),
                   DropdownMenuItem(
                       value: 'transfer_location',
-                      child: Text(tr.isArabic ? '????? ?????? ????? ??? ??? / ????? ???' : 'Close and transfer cash to another drawer / vault')),
+                      child: Text(tr.isArabic
+                          ? '????? ?????? ????? ??? ??? / ????? ???'
+                          : 'Close and transfer cash to another drawer / vault')),
                   DropdownMenuItem(
                       value: 'handover_user',
-                      child: Text(tr.isArabic ? '????? ????? ???? ???? ????? ?????' : 'Handover to a new employee and open a new shift')),
+                      child: Text(tr.isArabic
+                          ? '????? ????? ???? ???? ????? ?????'
+                          : 'Handover to a new employee and open a new shift')),
                 ],
                 onChanged: (value) =>
                     setDialogState(() => closeMode = value ?? closeMode),
@@ -3697,6 +3859,9 @@ class _AccountingSettingsTab extends StatefulWidget {
 
 class _AccountingSettingsTabState extends State<_AccountingSettingsTab> {
   late Future<_AccountingSettingsData> _future;
+  int _lastSeenRevision = -1;
+  static final RevisionKeyCache<Future<_AccountingSettingsData>> _futureCache =
+      RevisionKeyCache<Future<_AccountingSettingsData>>();
 
   static const List<_AccountingSettingDefinition> _definitions = [
     _AccountingSettingDefinition(
@@ -3788,7 +3953,19 @@ class _AccountingSettingsTabState extends State<_AccountingSettingsTab> {
   @override
   void initState() {
     super.initState();
-    _future = _load();
+    _future = _loadCached();
+    _lastSeenRevision = widget.store.accountingRevision;
+    widget.store.addListener(_refresh);
+  }
+
+  @override
+  void didUpdateWidget(covariant _AccountingSettingsTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != widget.store) {
+      oldWidget.store.removeListener(_refresh);
+      widget.store.addListener(_refresh);
+      _lastSeenRevision = widget.store.accountingRevision;
+    }
   }
 
   Future<_AccountingSettingsData> _load() async {
@@ -3810,7 +3987,7 @@ class _AccountingSettingsTabState extends State<_AccountingSettingsTab> {
     await AccountingService.updateDefaultAccount(
         key: key, accountId: accountId);
     if (!mounted) return;
-    setState(() => _future = _load());
+    _refresh(force: true);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
           content: Text(
@@ -3821,12 +3998,34 @@ class _AccountingSettingsTabState extends State<_AccountingSettingsTab> {
   Future<void> _updateVatRate(double ratePercent) async {
     await AccountingService.updateDefaultVatRatePercent(ratePercent);
     if (!mounted) return;
-    setState(() => _future = _load());
+    _refresh(force: true);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
           content: Text(
               AppLocalizations.of(context).text('accounting_setting_updated'))),
     );
+  }
+
+  Future<_AccountingSettingsData> _loadCached() {
+    return _futureCache.getOrCompute(
+      widget.store.accountingRevision,
+      widget.store.appIdentity.storeId,
+      _load,
+    );
+  }
+
+  void _refresh({bool force = false}) {
+    if (!mounted) return;
+    final revision = widget.store.accountingRevision;
+    if (!force && revision == _lastSeenRevision) return;
+    _lastSeenRevision = revision;
+    setState(() => _future = _loadCached());
+  }
+
+  @override
+  void dispose() {
+    widget.store.removeListener(_refresh);
+    super.dispose();
   }
 
   @override
@@ -4286,6 +4485,17 @@ class _AccountingMetrics {
   final double todayCashIn;
   final double todayCashOut;
 
+  factory _AccountingMetrics.fromSummary(Map<String, Object?> summary) {
+    return _AccountingMetrics(
+      customerReceivables: _doubleValue(summary['customerReceivables']),
+      customerCredits: _doubleValue(summary['customerCredits']),
+      supplierPayables: _doubleValue(summary['supplierPayables']),
+      supplierAdvances: _doubleValue(summary['supplierAdvances']),
+      todayCashIn: _doubleValue(summary['todayCashIn']),
+      todayCashOut: _doubleValue(summary['todayCashOut']),
+    );
+  }
+
   factory _AccountingMetrics.fromStore(AppStore store) {
     final customers = store.customers;
     final suppliers = store.suppliers;
@@ -4342,6 +4552,11 @@ class _AccountingMetrics {
       (txn.type == 'paymentReversal' && txn.accountType == 'customer');
   static double _cashAmount(AccountTransaction txn) =>
       txn.debit > 0 ? txn.debit : txn.credit;
+}
+
+double _doubleValue(Object? value) {
+  if (value is num) return value.toDouble();
+  return double.tryParse(value?.toString() ?? '') ?? 0;
 }
 
 String _localizedAccountingType(String value, AppLocalizations tr) {

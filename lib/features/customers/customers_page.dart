@@ -1,5 +1,8 @@
 // ignore_for_file: curly_braces_in_flow_control_structures
 
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
@@ -11,6 +14,7 @@ import '../../models/user_role.dart';
 import '../accounts/account_ledger_widgets.dart';
 import '../../widgets/app_section_header.dart';
 import '../../widgets/empty_state_card.dart';
+import '../../widgets/page_data_load_indicator.dart';
 
 class CustomersPage extends StatefulWidget {
   const CustomersPage({super.key, required this.store});
@@ -23,6 +27,57 @@ class CustomersPage extends StatefulWidget {
 
 class _CustomersPageState extends State<CustomersPage> {
   String query = '';
+  Timer? _customerRevealTimer;
+  int _visibleCustomerCount = 100;
+  int _customerRevealTargetCount = 0;
+
+  @override
+  void dispose() {
+    _customerRevealTimer?.cancel();
+    super.dispose();
+  }
+
+  void _resetCustomerReveal() {
+    _customerRevealTimer?.cancel();
+    _customerRevealTimer = null;
+    _visibleCustomerCount = 100;
+    _customerRevealTargetCount = 0;
+  }
+
+  void _syncCustomerReveal(int totalCount) {
+    _customerRevealTargetCount = totalCount;
+    if (_visibleCustomerCount > totalCount) {
+      _visibleCustomerCount = totalCount;
+    }
+    if (_visibleCustomerCount >= totalCount) {
+      _customerRevealTimer?.cancel();
+      _customerRevealTimer = null;
+      return;
+    }
+    _customerRevealTimer ??=
+        Timer.periodic(const Duration(milliseconds: 20), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        _customerRevealTimer = null;
+        return;
+      }
+      if (_visibleCustomerCount >= _customerRevealTargetCount) {
+        timer.cancel();
+        _customerRevealTimer = null;
+        return;
+      }
+      setState(() {
+        _visibleCustomerCount = math.min(
+          _customerRevealTargetCount,
+          _visibleCustomerCount + 100,
+        );
+      });
+      if (_visibleCustomerCount >= _customerRevealTargetCount) {
+        timer.cancel();
+        _customerRevealTimer = null;
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -42,6 +97,12 @@ class _CustomersPageState extends State<CustomersPage> {
       return customer.name.toLowerCase().contains(value) ||
           customer.phone.toLowerCase().contains(value);
     }).toList();
+    _syncCustomerReveal(customers.length);
+    final visibleCustomers = customers
+        .take(math.min(_visibleCustomerCount, customers.length))
+        .toList(
+          growable: false,
+        );
 
     return Padding(
       padding: VentioResponsive.pageInsets(context),
@@ -50,12 +111,23 @@ class _CustomersPageState extends State<CustomersPage> {
           AppSectionHeader(
             title: tr.text('customers'),
             subtitle: tr.text('customers_page_desc'),
-            action: FilledButton.icon(
-              onPressed: widget.store.canManageCustomers
-                  ? () => _openCustomerForm(context)
-                  : null,
-              icon: const Icon(Icons.person_add_alt_1),
-              label: Text(tr.text('add_customer')),
+            action: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              alignment: WrapAlignment.end,
+              children: [
+                PageDataLoadIndicator(
+                  loadedCount: visibleCustomers.length,
+                  totalCount: customers.length,
+                ),
+                FilledButton.icon(
+                  onPressed: widget.store.canManageCustomers
+                      ? () => _openCustomerForm(context)
+                      : null,
+                  icon: const Icon(Icons.person_add_alt_1),
+                  label: Text(tr.text('add_customer')),
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 16),
@@ -63,7 +135,10 @@ class _CustomersPageState extends State<CustomersPage> {
             decoration: InputDecoration(
                 hintText: tr.text('search_customer'),
                 prefixIcon: const Icon(Icons.search)),
-            onChanged: (value) => setState(() => query = value),
+            onChanged: (value) => setState(() {
+              query = value;
+              _resetCustomerReveal();
+            }),
           ),
           const SizedBox(height: 16),
           Expanded(
@@ -83,9 +158,9 @@ class _CustomersPageState extends State<CustomersPage> {
                           keyboardDismissBehavior:
                               ScrollViewKeyboardDismissBehavior.onDrag,
                           itemExtent: rowExtent,
-                          itemCount: customers.length,
+                          itemCount: visibleCustomers.length,
                           itemBuilder: (context, index) {
-                            final customer = customers[index];
+                            final customer = visibleCustomers[index];
                             return ListTile(
                               leading: const CircleAvatar(
                                   child: Icon(Icons.person_outline)),
@@ -93,7 +168,8 @@ class _CustomersPageState extends State<CustomersPage> {
                               subtitle: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text('${customer.phone} ? ${customer.address}',
+                                  Text(
+                                      '${customer.phone} ? ${customer.address}',
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis),
                                   const SizedBox(height: 4),
@@ -103,7 +179,8 @@ class _CustomersPageState extends State<CustomersPage> {
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
-                                        color: accountBalanceColor(context,
+                                        color: accountBalanceColor(
+                                            context,
                                             widget.store,
                                             'customer',
                                             customer.id),
@@ -116,7 +193,8 @@ class _CustomersPageState extends State<CustomersPage> {
                                       tooltip: tr.text('actions'),
                                       onSelected: (value) {
                                         if (value == 'ledger' &&
-                                            widget.store.hasAnyPermission(<String>{
+                                            widget.store
+                                                .hasAnyPermission(<String>{
                                               AppPermission.customersLedgerView,
                                               AppPermission.customersManage,
                                             })) {
@@ -128,8 +206,10 @@ class _CustomersPageState extends State<CustomersPage> {
                                               accountName: customer.name);
                                         }
                                         if (value == 'payment' &&
-                                            widget.store.hasAnyPermission(<String>{
-                                              AppPermission.customersPaymentManage,
+                                            widget.store
+                                                .hasAnyPermission(<String>{
+                                              AppPermission
+                                                  .customersPaymentManage,
                                               AppPermission.customersManage,
                                             })) {
                                           showAccountPaymentDialog(
@@ -169,52 +249,57 @@ class _CustomersPageState extends State<CustomersPage> {
                                   : Wrap(
                                       children: [
                                         IconButton(
-                                            onPressed: widget.store.hasAnyPermission(<String>{
-                                                      AppPermission.customersLedgerView,
-                                                      AppPermission.customersManage,
-                                                    })
+                                            onPressed: widget.store
+                                                    .hasAnyPermission(<String>{
+                                              AppPermission.customersLedgerView,
+                                              AppPermission.customersManage,
+                                            })
                                                 ? () => showAccountLedgerSheet(
                                                     context: context,
                                                     store: widget.store,
                                                     accountType: 'customer',
                                                     accountId: customer.id,
-                                                    accountName:
-                                                        customer.name)
+                                                    accountName: customer.name)
                                                 : null,
                                             icon: const Icon(
                                                 Icons.receipt_long_outlined),
                                             tooltip: tr.text('account_ledger')),
                                         IconButton(
-                                            onPressed: widget.store.hasAnyPermission(<String>{
-                                                      AppPermission.customersPaymentManage,
-                                                      AppPermission.customersManage,
-                                                    })
-                                                ? () => showAccountPaymentDialog(
-                                                    context: context,
-                                                    store: widget.store,
-                                                    accountType: 'customer',
-                                                    accountId: customer.id,
-                                                    accountName:
-                                                        customer.name)
+                                            onPressed: widget.store
+                                                    .hasAnyPermission(<String>{
+                                              AppPermission
+                                                  .customersPaymentManage,
+                                              AppPermission.customersManage,
+                                            })
+                                                ? () =>
+                                                    showAccountPaymentDialog(
+                                                        context: context,
+                                                        store: widget.store,
+                                                        accountType: 'customer',
+                                                        accountId: customer.id,
+                                                        accountName:
+                                                            customer.name)
                                                 : null,
                                             icon: const Icon(
                                                 Icons.payments_outlined),
-                                            tooltip: tr.text('receive_payment')),
+                                            tooltip:
+                                                tr.text('receive_payment')),
                                         IconButton(
-                                            onPressed: widget.store.canManageCustomers
-                                                ? () => _openCustomerForm(
-                                                    context,
-                                                    customer: customer)
-                                                : null,
-                                            icon: const Icon(
-                                                Icons.edit_outlined),
+                                            onPressed:
+                                                widget.store.canManageCustomers
+                                                    ? () => _openCustomerForm(
+                                                        context,
+                                                        customer: customer)
+                                                    : null,
+                                            icon:
+                                                const Icon(Icons.edit_outlined),
                                             tooltip: tr.text('edit')),
                                         IconButton(
-                                            onPressed: widget.store.canManageCustomers
-                                                ? () => _deleteCustomer(
-                                                    context,
-                                                    customer)
-                                                : null,
+                                            onPressed:
+                                                widget.store.canManageCustomers
+                                                    ? () => _deleteCustomer(
+                                                        context, customer)
+                                                    : null,
                                             icon: const Icon(
                                                 Icons.delete_outline),
                                             tooltip: tr.text('delete')),
@@ -226,7 +311,7 @@ class _CustomersPageState extends State<CustomersPage> {
                       },
                     ),
                   ),
-              ),
+          ),
         ],
       ),
     );

@@ -26,7 +26,8 @@ class SyncSqliteStore {
 
   static bool isSqliteBackedKey(String key) => sqliteBackedKeys.contains(key);
 
-  static Future<Map<String, String>> hydrateKeyMirror(VentioDriftDatabase db) async {
+  static Future<Map<String, String>> hydrateKeyMirror(
+      VentioDriftDatabase db) async {
     return <String, String>{
       syncChangesKey: await readSyncChangesJson(db),
       syncQueueKey: await readSyncQueueJson(db),
@@ -34,7 +35,8 @@ class SyncSqliteStore {
     };
   }
 
-  static Future<Map<String, String>> hydrateScalarKeyMirror(VentioDriftDatabase db) async {
+  static Future<Map<String, String>> hydrateScalarKeyMirror(
+      VentioDriftDatabase db) async {
     return <String, String>{
       syncSequenceKey: await readSyncSequence(db),
     };
@@ -52,19 +54,22 @@ class SyncSqliteStore {
     return null;
   }
 
-  static Future<void> saveKeyJson(VentioDriftDatabase db, String key, String value) async {
+  static Future<void> saveKeyJson(
+      VentioDriftDatabase db, String key, String value) async {
     switch (key) {
       case syncChangesKey:
         final decoded = _decodeList(value);
         final changes = decoded
-            .map((item) => SyncChange.fromJson(Map<String, dynamic>.from(item as Map)))
+            .map((item) =>
+                SyncChange.fromJson(Map<String, dynamic>.from(item as Map)))
             .toList(growable: false);
         await replaceSyncChanges(db, changes);
         return;
       case syncQueueKey:
         final decoded = _decodeList(value);
         final queue = decoded
-            .map((item) => SyncQueueItem.fromJson(Map<String, dynamic>.from(item as Map)))
+            .map((item) =>
+                SyncQueueItem.fromJson(Map<String, dynamic>.from(item as Map)))
             .toList(growable: false);
         await replaceSyncQueue(db, queue);
         return;
@@ -74,13 +79,13 @@ class SyncSqliteStore {
     }
   }
 
-
-
-  static Future<void> upsertSyncChange(VentioDriftDatabase db, SyncChange change) async {
+  static Future<void> upsertSyncChange(
+      VentioDriftDatabase db, SyncChange change) async {
     await upsertSyncChanges(db, <SyncChange>[change]);
   }
 
-  static Future<void> upsertSyncChanges(VentioDriftDatabase db, List<SyncChange> changes) async {
+  static Future<void> upsertSyncChanges(
+      VentioDriftDatabase db, List<SyncChange> changes) async {
     if (changes.isEmpty) return;
     await db.transaction(() async {
       for (final change in changes) {
@@ -110,7 +115,9 @@ class SyncSqliteStore {
           ],
         );
         if (change.isSynced) {
-          await db.customStatement('DELETE FROM pending_sync_changes WHERE event_id = ?;', <Object?>[change.id]);
+          await db.customStatement(
+              'DELETE FROM pending_sync_changes WHERE event_id = ?;',
+              <Object?>[change.id]);
         } else {
           await db.customInsert(
             """
@@ -139,11 +146,13 @@ class SyncSqliteStore {
     });
   }
 
-  static Future<void> upsertSyncQueueItem(VentioDriftDatabase db, SyncQueueItem item) async {
+  static Future<void> upsertSyncQueueItem(
+      VentioDriftDatabase db, SyncQueueItem item) async {
     await upsertSyncQueueItems(db, <SyncQueueItem>[item]);
   }
 
-  static Future<void> upsertSyncQueueItems(VentioDriftDatabase db, List<SyncQueueItem> items) async {
+  static Future<void> upsertSyncQueueItems(
+      VentioDriftDatabase db, List<SyncQueueItem> items) async {
     if (items.isEmpty) return;
     await db.transaction(() async {
       for (final item in items) {
@@ -177,9 +186,12 @@ class SyncSqliteStore {
   }) async {
     final metaRows = await db.customSelect(
       'SELECT value FROM migration_meta WHERE key = ?',
-      variables: <Variable<Object>>[const Variable<String>('sqlite_phase2_sync_migrated')],
+      variables: <Variable<Object>>[
+        const Variable<String>('sqlite_phase2_sync_migrated')
+      ],
     ).get();
-    if (metaRows.isNotEmpty && metaRows.first.read<String>('value') == 'true') return;
+    if (metaRows.isNotEmpty && metaRows.first.read<String>('value') == 'true')
+      return;
 
     if (syncChangesJson != null && syncChangesJson.trim().isNotEmpty) {
       await saveKeyJson(db, syncChangesKey, syncChangesJson);
@@ -204,7 +216,8 @@ class SyncSqliteStore {
     );
   }
 
-  static Future<void> replaceSyncChanges(VentioDriftDatabase db, List<SyncChange> changes) async {
+  static Future<void> replaceSyncChanges(
+      VentioDriftDatabase db, List<SyncChange> changes) async {
     // Performance fix: merge changes instead of deleting/reinserting the whole
     // sync history. With thousands of pending changes, the old path made every
     // normal save rewrite thousands of rows and kept the old legacy JSON storage slowdown alive.
@@ -214,9 +227,12 @@ class SyncSqliteStore {
     ''').get();
     final existingEventSignatureById = <String, String>{
       for (final row in existingEventRows)
-        row.read<String>('id'): "${row.read<String>('payload_json')}|${row.read<int>('is_synced')}|${row.read<String>('synced_at')}|${row.read<int>('sequence')}",
+        row.read<String>('id'):
+            "${row.read<String>('payload_json')}|${row.read<int>('is_synced')}|${row.read<String>('synced_at')}|${row.read<int>('sequence')}",
     };
-    final existingPendingRows = await db.customSelect('SELECT event_id FROM pending_sync_changes').get();
+    final existingPendingRows = await db
+        .customSelect('SELECT event_id FROM pending_sync_changes')
+        .get();
     final existingPendingEventIds = <String>{
       for (final row in existingPendingRows) row.read<String>('event_id'),
     };
@@ -228,7 +244,8 @@ class SyncSqliteStore {
         seenEventIds.add(change.id);
         final payloadJson = jsonEncode(change.payload);
         final syncedAt = change.syncedAt?.toIso8601String() ?? '';
-        final signature = '$payloadJson|${change.isSynced ? 1 : 0}|$syncedAt|${change.sequence}';
+        final signature =
+            '$payloadJson|${change.isSynced ? 1 : 0}|$syncedAt|${change.sequence}';
         if (existingEventSignatureById[change.id] != signature) {
           await db.customInsert(
             '''
@@ -257,7 +274,8 @@ class SyncSqliteStore {
 
         if (!change.isSynced) {
           pendingEventIds.add(change.id);
-          if (!existingPendingEventIds.contains(change.id) || existingEventSignatureById[change.id] != signature) {
+          if (!existingPendingEventIds.contains(change.id) ||
+              existingEventSignatureById[change.id] != signature) {
             await db.customInsert(
               '''
               INSERT OR REPLACE INTO pending_sync_changes
@@ -284,18 +302,26 @@ class SyncSqliteStore {
         }
       }
 
-      final staleEventIds = existingEventSignatureById.keys.where((id) => !seenEventIds.contains(id)).toList(growable: false);
+      final staleEventIds = existingEventSignatureById.keys
+          .where((id) => !seenEventIds.contains(id))
+          .toList(growable: false);
       for (final id in staleEventIds) {
-        await db.customStatement('DELETE FROM sync_events WHERE id = ?;', <Object?>[id]);
+        await db.customStatement(
+            'DELETE FROM sync_events WHERE id = ?;', <Object?>[id]);
       }
-      final stalePendingIds = existingPendingEventIds.where((id) => !pendingEventIds.contains(id)).toList(growable: false);
+      final stalePendingIds = existingPendingEventIds
+          .where((id) => !pendingEventIds.contains(id))
+          .toList(growable: false);
       for (final eventId in stalePendingIds) {
-        await db.customStatement('DELETE FROM pending_sync_changes WHERE event_id = ?;', <Object?>[eventId]);
+        await db.customStatement(
+            'DELETE FROM pending_sync_changes WHERE event_id = ?;',
+            <Object?>[eventId]);
       }
     });
   }
 
-  static Future<void> replaceSyncQueue(VentioDriftDatabase db, List<SyncQueueItem> queue) async {
+  static Future<void> replaceSyncQueue(
+      VentioDriftDatabase db, List<SyncQueueItem> queue) async {
     // Performance fix: merge queue rows instead of full-table replacement.
     final existingRows = await db.customSelect('''
       SELECT id, change_id, target, status, attempts, last_error, next_retry_at, updated_at
@@ -303,7 +329,8 @@ class SyncSqliteStore {
     ''').get();
     final existingSignatureById = <String, String>{
       for (final row in existingRows)
-        row.read<String>('id'): "${row.read<String>('change_id')}|${row.read<String>('target')}|${row.read<String>('status')}|${row.read<int>('attempts')}|${row.read<String>('last_error')}|${row.read<String>('next_retry_at')}|${row.read<String>('updated_at')}",
+        row.read<String>('id'):
+            "${row.read<String>('change_id')}|${row.read<String>('target')}|${row.read<String>('status')}|${row.read<int>('attempts')}|${row.read<String>('last_error')}|${row.read<String>('next_retry_at')}|${row.read<String>('updated_at')}",
     };
     final seenIds = <String>{};
 
@@ -312,7 +339,8 @@ class SyncSqliteStore {
         seenIds.add(item.id);
         final nextRetryAt = item.nextRetryAt?.toIso8601String() ?? '';
         final updatedAt = item.updatedAt.toIso8601String();
-        final signature = '${item.changeId}|${item.target}|${item.status}|${item.attempts}|${item.lastError}|$nextRetryAt|$updatedAt';
+        final signature =
+            '${item.changeId}|${item.target}|${item.status}|${item.attempts}|${item.lastError}|$nextRetryAt|$updatedAt';
         if (existingSignatureById[item.id] == signature) {
           continue;
         }
@@ -336,14 +364,18 @@ class SyncSqliteStore {
         );
       }
 
-      final staleIds = existingSignatureById.keys.where((id) => !seenIds.contains(id)).toList(growable: false);
+      final staleIds = existingSignatureById.keys
+          .where((id) => !seenIds.contains(id))
+          .toList(growable: false);
       for (final id in staleIds) {
-        await db.customStatement('DELETE FROM sync_queue WHERE id = ?;', <Object?>[id]);
+        await db.customStatement(
+            'DELETE FROM sync_queue WHERE id = ?;', <Object?>[id]);
       }
     });
   }
 
-  static Future<void> saveSyncSequence(VentioDriftDatabase db, String value) async {
+  static Future<void> saveSyncSequence(
+      VentioDriftDatabase db, String value) async {
     await db.customInsert(
       'INSERT OR REPLACE INTO migration_meta (key, value, updated_at) VALUES (?, ?, ?)',
       variables: <Variable<Object>>[
@@ -390,6 +422,53 @@ class SyncSqliteStore {
     return jsonEncode(items);
   }
 
+  static Future<List<String>> readSyncChangesJsonBatches(
+    VentioDriftDatabase db, {
+    int batchSize = 100,
+  }) async {
+    final size = batchSize.clamp(1, 1000).toInt();
+    final batches = <String>[];
+    var offset = 0;
+
+    while (true) {
+      final rows = await db.customSelect('''
+        SELECT id, entity_type, entity_id, operation, device_id, store_id, branch_id,
+               payload_json, is_synced, created_at, synced_at, store_epoch, sequence
+        FROM sync_events
+        ORDER BY sequence ASC, created_at ASC, id ASC
+        LIMIT ? OFFSET ?
+      ''', variables: <Variable<Object>>[
+        Variable<int>(size),
+        Variable<int>(offset),
+      ]).get();
+      if (rows.isEmpty) break;
+
+      final items = rows.map((row) {
+        final syncedAt = row.read<String>('synced_at');
+        return <String, dynamic>{
+          'id': row.read<String>('id'),
+          'entityType': row.read<String>('entity_type'),
+          'entityId': row.read<String>('entity_id'),
+          'operation': row.read<String>('operation'),
+          'deviceId': row.read<String>('device_id'),
+          'createdAt': row.read<String>('created_at'),
+          'payload': _decodeMap(row.read<String>('payload_json')),
+          'storeId': row.read<String>('store_id'),
+          'branchId': row.read<String>('branch_id'),
+          'isSynced': row.read<int>('is_synced') == 1,
+          'syncedAt': syncedAt.isEmpty ? null : syncedAt,
+          'storeEpoch': row.read<int>('store_epoch'),
+          'sequence': row.read<int>('sequence'),
+        };
+      }).toList(growable: false);
+      batches.add(jsonEncode(items));
+      if (rows.length < size) break;
+      offset += rows.length;
+    }
+
+    return batches;
+  }
+
   static Future<String> readSyncQueueJson(VentioDriftDatabase db) async {
     final rows = await db.customSelect('''
       SELECT id, change_id, target, status, attempts, last_error, next_retry_at, created_at, updated_at
@@ -413,6 +492,48 @@ class SyncSqliteStore {
     return jsonEncode(items);
   }
 
+  static Future<List<String>> readSyncQueueJsonBatches(
+    VentioDriftDatabase db, {
+    int batchSize = 100,
+  }) async {
+    final size = batchSize.clamp(1, 1000).toInt();
+    final batches = <String>[];
+    var offset = 0;
+
+    while (true) {
+      final rows = await db.customSelect('''
+        SELECT id, change_id, target, status, attempts, last_error, next_retry_at, created_at, updated_at
+        FROM sync_queue
+        ORDER BY created_at ASC, id ASC
+        LIMIT ? OFFSET ?
+      ''', variables: <Variable<Object>>[
+        Variable<int>(size),
+        Variable<int>(offset),
+      ]).get();
+      if (rows.isEmpty) break;
+
+      final items = rows.map((row) {
+        final nextRetryAt = row.read<String>('next_retry_at');
+        return <String, dynamic>{
+          'id': row.read<String>('id'),
+          'changeId': row.read<String>('change_id'),
+          'target': row.read<String>('target'),
+          'status': row.read<String>('status'),
+          'attempts': row.read<int>('attempts'),
+          'createdAt': row.read<String>('created_at'),
+          'updatedAt': row.read<String>('updated_at'),
+          'lastError': row.read<String>('last_error'),
+          'nextRetryAt': nextRetryAt.isEmpty ? null : nextRetryAt,
+        };
+      }).toList(growable: false);
+      batches.add(jsonEncode(items));
+      if (rows.length < size) break;
+      offset += rows.length;
+    }
+
+    return batches;
+  }
+
   static List<dynamic> _decodeList(String value) {
     if (value.trim().isEmpty) return <dynamic>[];
     final decoded = jsonDecode(value);
@@ -422,6 +543,8 @@ class SyncSqliteStore {
   static Map<String, dynamic> _decodeMap(String value) {
     if (value.trim().isEmpty) return <String, dynamic>{};
     final decoded = jsonDecode(value);
-    return decoded is Map ? Map<String, dynamic>.from(decoded) : <String, dynamic>{};
+    return decoded is Map
+        ? Map<String, dynamic>.from(decoded)
+        : <String, dynamic>{};
   }
 }

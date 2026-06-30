@@ -11,6 +11,7 @@ import '../../core/services/lan_sync_service.dart';
 import '../../core/sync_unified/sync_unified.dart';
 import '../../core/snapshot/unified_snapshot_progress.dart';
 import '../../data/app_store.dart';
+import '../../core/services/page_timing_scope.dart';
 import '../barcode/barcode_scanner_page.dart';
 
 enum _ConnectMode { lan, cloud }
@@ -213,10 +214,15 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
   Future<void> _scanQr() async {
     final code = await Navigator.of(context).push<String>(
       MaterialPageRoute(
-        builder: (_) => BarcodeScannerPage(
-          title: AppLocalizations.of(context).text('scan_pairing_qr'),
-          helpText: AppLocalizations.of(context).text('scan_pairing_qr_help'),
-          formats: const [BarcodeFormat.qrCode],
+        builder: (_) => PageTimingScope(
+          key: const ValueKey('BarcodeScannerPage'),
+          pageKey: 'BarcodeScannerPage',
+          pageLabel: 'Barcode scanner',
+          child: BarcodeScannerPage(
+            title: AppLocalizations.of(context).text('scan_pairing_qr'),
+            helpText: AppLocalizations.of(context).text('scan_pairing_qr_help'),
+            formats: const [BarcodeFormat.qrCode],
+          ),
         ),
       ),
     );

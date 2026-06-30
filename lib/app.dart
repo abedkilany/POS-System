@@ -18,8 +18,11 @@ import 'core/services/lan_sync_service.dart';
 import 'core/services/local_auto_backup_service.dart';
 import 'core/services/app_update_service.dart';
 import 'core/services/account_auth_service.dart';
+import 'core/services/page_timing_scope.dart';
+import 'core/services/startup_timing_service.dart';
 import 'data/app_store.dart';
 import 'features/accounting/accounting_page.dart';
+import 'features/accounting/accounting_snapshot_service.dart';
 import 'features/customers/customers_page.dart';
 import 'features/dashboard/dashboard_page.dart';
 import 'features/database/database_page.dart';
@@ -30,6 +33,7 @@ import 'features/maintenance/maintenance_page.dart';
 import 'features/products/products_page.dart';
 import 'features/purchases/purchases_page.dart';
 import 'features/reports/reports_page.dart';
+import 'features/reports/reports_snapshot_service.dart';
 import 'features/sales/sales_page.dart';
 import 'features/sales/quotations_page.dart';
 import 'features/sales/delivery_notes_page.dart';
@@ -58,6 +62,11 @@ class VentioApp extends StatefulWidget {
 }
 
 class _VentioAppState extends State<VentioApp> {
+  static const ReportsSnapshotService _reportsSnapshotService =
+      ReportsSnapshotService();
+  static const AccountingSnapshotService _accountingSnapshotService =
+      AccountingSnapshotService();
+
   Locale _locale = const Locale('en');
   ThemeMode _themeMode = ThemeMode.system;
   final AppStore _store = AppStore();
@@ -77,25 +86,95 @@ class _VentioAppState extends State<VentioApp> {
   );
   bool _syncStarted = false;
   bool _autoSnapshotProgressDialogOpen = false;
+  bool _firstFrameMarked = false;
 
   @override
   void initState() {
     super.initState();
+    _registerPageTimings();
     _initializeApp();
   }
 
-  Future<void> _initializeApp() async {
-    await _store.initialize();
-    final savedTheme = await _store.loadThemeMode();
-    final savedLocale = await _store.loadLocale();
-    if (mounted) {
-      setState(() {
-        _themeMode = savedTheme;
-        _locale = savedLocale;
-      });
+  void _registerPageTimings() {
+    const pages = <({String key, String label})>[
+      (key: 'LoginGatePage', label: 'Login gate'),
+      (key: 'MainShell', label: 'Main shell'),
+      (key: 'DashboardPage', label: 'Dashboard'),
+      (key: 'ProductsPage', label: 'Products'),
+      (key: 'CustomersPage', label: 'Customers'),
+      (key: 'SuppliersPage', label: 'Suppliers'),
+      (key: 'SalesPage', label: 'Sales'),
+      (key: 'QuotationsPage', label: 'Quotations'),
+      (key: 'DeliveryNotesPage', label: 'Delivery notes'),
+      (key: 'PurchasesPage', label: 'Purchases'),
+      (key: 'ExpensesPage', label: 'Expenses'),
+      (key: 'AccountingPage', label: 'Accounting'),
+      (key: 'InventoryPage', label: 'Inventory'),
+      (key: 'ManufacturingPage', label: 'Manufacturing'),
+      (key: 'ReportsPage', label: 'Reports'),
+      (key: 'MaintenancePage', label: 'Maintenance'),
+      (key: 'DatabasePage', label: 'Database'),
+      (key: 'SettingsPage', label: 'Settings'),
+      (key: 'AdminSubscribersPage', label: 'Admin subscribers'),
+      (key: 'StoreAccountDashboardPage', label: 'Store account dashboard'),
+      (key: 'PlatformAdminDashboardPage', label: 'Platform admin dashboard'),
+      (key: 'DiagnosticsPage', label: 'Diagnostics'),
+      (key: 'SyncSetupPage', label: 'Sync setup'),
+      (key: 'UsersPermissionsPage', label: 'Users permissions'),
+      (key: 'BarcodeScannerPage', label: 'Barcode scanner'),
+      (key: 'StressLabPage', label: 'Stress lab'),
+      (key: '_NoAccessPage', label: 'No access'),
+    ];
+    for (final page in pages) {
+      StartupTimingService.registerPage(
+        pageKey: page.key,
+        pageLabel: page.label,
+      );
     }
-    if (_store.activeUser != null) {
-      unawaited(_startSyncAfterLogin());
+  }
+
+  Future<void> _initializeApp() async {
+    await StartupTimingService.measure(
+      'ventio_app.initialize',
+      () async {
+        await _store.initialize();
+        final savedTheme = await _store.loadThemeMode();
+        final savedLocale = await _store.loadLocale();
+        if (mounted) {
+          setState(() {
+            _themeMode = savedTheme;
+            _locale = savedLocale;
+          });
+        }
+        unawaited(_primeHeavyCaches());
+        if (_store.activeUser != null) {
+          unawaited(_startSyncAfterLogin());
+        }
+      },
+      category: 'ui',
+    );
+  }
+
+  Future<void> _primeHeavyCaches() async {
+    try {
+      await _store.warmDeferredPageCaches();
+    } catch (error, stackTrace) {
+      debugPrint('Warm deferred caches failed: $error');
+      debugPrint('$stackTrace');
+    }
+    if (!mounted) return;
+    try {
+      await _reportsSnapshotService.prewarm(_store);
+    } catch (error, stackTrace) {
+      debugPrint('Reports prewarm failed: $error');
+      debugPrint('$stackTrace');
+    }
+    if (!mounted) return;
+    try {
+      await _accountingSnapshotService.prewarm(_store);
+    } catch (error, stackTrace) {
+      debugPrint('Accounting prewarm failed: $error');
+      debugPrint('$stackTrace');
     }
   }
 
@@ -205,6 +284,15 @@ class _VentioAppState extends State<VentioApp> {
 
   @override
   Widget build(BuildContext context) {
+    if (!_firstFrameMarked) {
+      _firstFrameMarked = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        StartupTimingService.event(
+          'ventio_app_first_frame_painted',
+          category: 'ui',
+        );
+      });
+    }
     return AnimatedBuilder(
       animation: _store,
       builder: (context, _) {
@@ -234,16 +322,21 @@ class _VentioAppState extends State<VentioApp> {
               ? LoginGatePage(
                   store: _store,
                   onLocaleChanged: _changeLocale,
-                  child: MainShell(
-                    store: _store,
-                    onLogout: _stopSyncForLogout,
-                    onLocaleChanged: _changeLocale,
-                    onThemeModeChanged: _changeThemeMode,
-                    themeMode: _themeMode,
-                    onSyncSettingsChanged: () async {
-                      _syncStarted = false;
-                      unawaited(_startSyncAfterLogin());
-                    },
+                  child: PageTimingScope(
+                    key: const ValueKey('MainShellScope'),
+                    pageKey: 'MainShell',
+                    pageLabel: 'Main shell',
+                    child: MainShell(
+                      store: _store,
+                      onLogout: _stopSyncForLogout,
+                      onLocaleChanged: _changeLocale,
+                      onThemeModeChanged: _changeThemeMode,
+                      themeMode: _themeMode,
+                      onSyncSettingsChanged: () async {
+                        _syncStarted = false;
+                        unawaited(_startSyncAfterLogin());
+                      },
+                    ),
                   ),
                 )
               : const Scaffold(
@@ -534,6 +627,7 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell> {
   int selectedIndex = 0;
   bool _drawerNavigationLocked = false;
+  bool _firstBuildMarked = false;
   late final AppUpdateService _updateService = getAppUpdateService();
   late final VoidCallback _updateStatusListener;
   VoidCallback? _cancelDownloadUpdate;
@@ -543,6 +637,7 @@ class _MainShellState extends State<MainShell> {
   bool _installingUpdate = false;
   double? _downloadProgress;
   String? _downloadedInstallerPath;
+  late final AccountAuthCache? _authCache = AccountAuthCache.load();
 
   @override
   void initState() {
@@ -959,130 +1054,167 @@ class _MainShellState extends State<MainShell> {
 
   @override
   Widget build(BuildContext context) {
+    if (!_firstBuildMarked) {
+      _firstBuildMarked = true;
+      StartupTimingService.event('main_shell_first_build', category: 'ui');
+    }
     final tr = AppLocalizations.of(context);
+    Widget timedPage(String pageKey, String pageLabel, Widget page) {
+      return PageTimingScope(
+        key: ValueKey<String>(pageKey),
+        pageKey: pageKey,
+        pageLabel: pageLabel,
+        child: page,
+      );
+    }
+
     final storeName = widget.store.storeProfile.name.trim();
     final shellTitle = storeName.isEmpty ||
             storeName == 'My Store' ||
             storeName == tr.text('my_store')
         ? 'Ventio'
         : storeName;
-    final authCache = AccountAuthCache.load();
+    final authCache = _authCache;
     final isPlatformAdmin = authCache?.accountType == 'platform_admin';
     final items = [
       if (isPlatformAdmin)
-        const _ShellItem(
+        _ShellItem(
             label: 'Subscribers',
             icon: Icons.admin_panel_settings_outlined,
             selectedIcon: Icons.admin_panel_settings,
-            page: AdminSubscribersPage()),
+            page: timedPage('AdminSubscribersPage', 'Admin subscribers',
+                const AdminSubscribersPage())),
       if (widget.store.canAccessPage('dashboard'))
         _ShellItem(
             label: tr.text('dashboard'),
             icon: Icons.dashboard_outlined,
             selectedIcon: Icons.dashboard,
-            page: DashboardPage(store: widget.store)),
+            page: PageTimingScope(
+              key: const ValueKey('DashboardPage'),
+              pageKey: 'DashboardPage',
+              pageLabel: tr.text('dashboard'),
+              autoReady: false,
+              child: DashboardPage(store: widget.store),
+            )),
       if (widget.store.canAccessPage('products'))
         _ShellItem(
             label: tr.text('products'),
             icon: Icons.inventory_2_outlined,
             selectedIcon: Icons.inventory_2,
-            page: ProductsPage(store: widget.store)),
+            page: timedPage('ProductsPage', tr.text('products'),
+                ProductsPage(store: widget.store))),
       if (widget.store.canAccessPage('customers'))
         _ShellItem(
             label: tr.text('customers'),
             icon: Icons.people_outline,
             selectedIcon: Icons.people,
-            page: CustomersPage(store: widget.store)),
+            page: timedPage('CustomersPage', tr.text('customers'),
+                CustomersPage(store: widget.store))),
       if (widget.store.canAccessPage('suppliers'))
         _ShellItem(
             label: tr.text('suppliers'),
             icon: Icons.local_shipping_outlined,
             selectedIcon: Icons.local_shipping,
-            page: SuppliersPage(store: widget.store)),
+            page: timedPage('SuppliersPage', tr.text('suppliers'),
+                SuppliersPage(store: widget.store))),
       if (widget.store.canAccessPage('sales'))
         _ShellItem(
             label: tr.text('sales'),
             icon: Icons.receipt_long_outlined,
             selectedIcon: Icons.receipt_long,
-            page: SalesPage(store: widget.store)),
+            page: timedPage(
+                'SalesPage', tr.text('sales'), SalesPage(store: widget.store))),
       if (widget.store.canAccessPage('quotations'))
         _ShellItem(
             label: tr.text('quotations'),
             icon: Icons.request_quote_outlined,
             selectedIcon: Icons.request_quote,
-            page: QuotationsPage(store: widget.store)),
+            page: timedPage('QuotationsPage', tr.text('quotations'),
+                QuotationsPage(store: widget.store))),
       if (widget.store.canAccessPage('delivery_notes'))
         _ShellItem(
             label: tr.text('delivery_notes'),
             icon: Icons.local_shipping_outlined,
             selectedIcon: Icons.local_shipping,
-            page: DeliveryNotesPage(store: widget.store)),
+            page: timedPage('DeliveryNotesPage', tr.text('delivery_notes'),
+                DeliveryNotesPage(store: widget.store))),
       if (widget.store.canAccessPage('purchases'))
         _ShellItem(
             label: tr.text('purchases'),
             icon: Icons.add_shopping_cart_outlined,
             selectedIcon: Icons.add_shopping_cart,
-            page: PurchasesPage(store: widget.store)),
+            page: timedPage('PurchasesPage', tr.text('purchases'),
+                PurchasesPage(store: widget.store))),
       if (widget.store.canAccessPage('expenses'))
         _ShellItem(
             label: tr.text('expenses'),
             icon: Icons.payments_outlined,
             selectedIcon: Icons.payments,
-            page: ExpensesPage(store: widget.store)),
+            page: timedPage('ExpensesPage', tr.text('expenses'),
+                ExpensesPage(store: widget.store))),
       if (widget.store.canAccessPage('accounting'))
         _ShellItem(
             label: tr.text('accounting'),
             icon: Icons.account_balance_wallet_outlined,
             selectedIcon: Icons.account_balance_wallet,
-            page: AccountingPage(store: widget.store)),
+            page: timedPage('AccountingPage', tr.text('accounting'),
+                AccountingPage(store: widget.store))),
       if (widget.store.canAccessPage('inventory'))
         _ShellItem(
             label: tr.text('inventory'),
             icon: Icons.warehouse_outlined,
             selectedIcon: Icons.warehouse,
-            page: InventoryPage(store: widget.store)),
+            page: timedPage('InventoryPage', tr.text('inventory'),
+                InventoryPage(store: widget.store))),
       if (widget.store.canAccessPage('manufacturing'))
         _ShellItem(
             label: tr.text('manufacturing_page'),
             icon: Icons.precision_manufacturing_outlined,
             selectedIcon: Icons.precision_manufacturing,
-            page: ManufacturingPage(store: widget.store)),
+            page: timedPage('ManufacturingPage', tr.text('manufacturing_page'),
+                ManufacturingPage(store: widget.store))),
       if (widget.store.canAccessPage('reports'))
         _ShellItem(
             label: tr.text('reports'),
             icon: Icons.bar_chart_outlined,
             selectedIcon: Icons.bar_chart,
-            page: ReportsPage(store: widget.store)),
+            page: timedPage('ReportsPage', tr.text('reports'),
+                ReportsPage(store: widget.store))),
       if (widget.store.canAccessPage('maintenance'))
         _ShellItem(
             label: tr.text('maintenance'),
             icon: Icons.health_and_safety_outlined,
             selectedIcon: Icons.health_and_safety,
-            page: MaintenancePage(store: widget.store)),
+            page: timedPage('MaintenancePage', tr.text('maintenance'),
+                MaintenancePage(store: widget.store))),
       if (widget.store.canAccessPage('database'))
         _ShellItem(
             label: tr.text('database'),
             icon: Icons.storage_outlined,
             selectedIcon: Icons.storage,
-            page: DatabasePage(store: widget.store)),
+            page: timedPage('DatabasePage', tr.text('database'),
+                DatabasePage(store: widget.store))),
       if (widget.store.canAccessPage('settings'))
         _ShellItem(
             label: tr.text('settings'),
             icon: Icons.settings_outlined,
             selectedIcon: Icons.settings,
-            page: SettingsPage(
-                store: widget.store,
-                onLocaleChanged: widget.onLocaleChanged,
-                onThemeModeChanged: widget.onThemeModeChanged,
-                themeMode: widget.themeMode,
-                onSyncSettingsChanged: widget.onSyncSettingsChanged)),
+            page: timedPage(
+                'SettingsPage',
+                tr.text('settings'),
+                SettingsPage(
+                    store: widget.store,
+                    onLocaleChanged: widget.onLocaleChanged,
+                    onThemeModeChanged: widget.onThemeModeChanged,
+                    themeMode: widget.themeMode,
+                    onSyncSettingsChanged: widget.onSyncSettingsChanged))),
     ];
     if (items.isEmpty) {
-      items.add(const _ShellItem(
+      items.add(_ShellItem(
         label: 'Access denied',
         icon: Icons.lock_outline,
         selectedIcon: Icons.lock,
-        page: _NoAccessPage(),
+        page: timedPage('_NoAccessPage', 'No access', const _NoAccessPage()),
       ));
     }
     final resolvedItems = items;
@@ -1555,9 +1687,11 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
 
   _TransportSnapshot _readSyncHealthStatus() {
     final identity = widget.store.appIdentity;
-    final pending = identity.isClient
-        ? widget.store.activeClientPendingSyncCount
-        : widget.store.pendingSyncCount;
+    final pending = widget.store.isSyncDataLoaded
+        ? (identity.isClient
+            ? widget.store.activeClientPendingSyncCount
+            : widget.store.pendingSyncCount)
+        : 0;
     final lastSuccessfulSync =
         SyncDeviceStateStore.lastSuccessfulSyncAt(identity);
 
@@ -1651,9 +1785,11 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
           state: _TransportState.checking,
           message: _t('connection_sync_checking')),
       activeTransportLabel: _activeTransportLabel(),
-      pendingChanges: widget.store.appIdentity.isClient
-          ? widget.store.activeClientPendingSyncCount
-          : widget.store.pendingSyncCount,
+      pendingChanges: widget.store.isSyncDataLoaded
+          ? (widget.store.appIdentity.isClient
+              ? widget.store.activeClientPendingSyncCount
+              : widget.store.pendingSyncCount)
+          : 0,
     );
     if (mounted) setState(() => _snapshot = checking);
 
@@ -1669,9 +1805,11 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
         cloud: cloud,
         syncHealth: syncHealth,
         activeTransportLabel: _activeTransportLabel(),
-        pendingChanges: widget.store.appIdentity.isClient
-            ? widget.store.activeClientPendingSyncCount
-            : widget.store.pendingSyncCount,
+        pendingChanges: widget.store.isSyncDataLoaded
+            ? (widget.store.appIdentity.isClient
+                ? widget.store.activeClientPendingSyncCount
+                : widget.store.pendingSyncCount)
+            : 0,
       );
     });
   }

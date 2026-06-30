@@ -6,6 +6,7 @@ import '../../core/services/google_drive_backup_service.dart';
 import '../../core/services/local_auto_backup_service.dart';
 import '../../data/app_store.dart';
 import '../../models/aging_report.dart';
+import '../../models/sale.dart';
 
 enum DashboardStatusLevel { healthy, warning, danger, neutral }
 
@@ -135,6 +136,7 @@ class DashboardState {
     required this.recentOperations,
     required this.syncStatus,
     required this.backupStatus,
+    this.isHydrated = true,
   });
 
   final String storeName;
@@ -150,6 +152,7 @@ class DashboardState {
   final List<DashboardOperationItem> recentOperations;
   final DashboardHealthSnapshot syncStatus;
   final DashboardHealthSnapshot backupStatus;
+  final bool isHydrated;
 }
 
 class DashboardService {
@@ -223,10 +226,18 @@ class DashboardService {
     );
   }
 
+  double _saleReportingTotal(Sale sale) {
+    final effectiveAmount = sale.effectiveTransactionAmount;
+    if (effectiveAmount > 0) {
+      return effectiveAmount;
+    }
+    return sale.total;
+  }
+
   double todaySalesAmount(AppStore store, DateTime reference) {
     return store.sales
         .where((sale) => _isSameDay(sale.date, reference) && !sale.isDeleted)
-        .fold<double>(0, (sum, sale) => sum + sale.total);
+        .fold<double>(0, (sum, sale) => sum + _saleReportingTotal(sale));
   }
 
   double todayProfitAmount(AppStore store, DateTime reference) {
@@ -577,7 +588,7 @@ class DashboardService {
       final date = sale.date.toLocal();
       if (date.isBefore(start) || date.isAfter(reference)) continue;
       final key = _dateKey(date);
-      values[key] = (values[key] ?? 0) + sale.total;
+      values[key] = (values[key] ?? 0) + _saleReportingTotal(sale);
     }
     return values.entries
         .map(
@@ -596,7 +607,7 @@ class DashboardService {
             !sale.isDeleted &&
             !sale.isCancelled &&
             !sale.date.toLocal().isBefore(from))
-        .fold<double>(0, (sum, sale) => sum + sale.total);
+        .fold<double>(0, (sum, sale) => sum + _saleReportingTotal(sale));
   }
 
   double _profitTotalSince(AppStore store, DateTime from) {
@@ -668,7 +679,7 @@ class DashboardService {
       final name = sale.customerName.trim().isEmpty
           ? 'Walk-in customer'
           : sale.customerName.trim();
-      totals[name] = (totals[name] ?? 0) + sale.total;
+      totals[name] = (totals[name] ?? 0) + _saleReportingTotal(sale);
     }
     final entries = totals.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
@@ -696,7 +707,7 @@ class DashboardService {
           title: sale.invoiceNo,
           subtitle:
               sale.customerName.trim().isEmpty ? 'Sale' : sale.customerName,
-          amount: sale.total,
+          amount: _saleReportingTotal(sale),
           at: sale.date,
         ),
       for (final purchase

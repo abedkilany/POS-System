@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -9,11 +10,13 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../core/localization/app_localizations.dart';
 import '../../core/shortcuts/app_shortcuts.dart';
 import '../../core/services/barcode_feedback_service.dart';
+import '../../core/services/page_timing_scope.dart';
 import '../../core/services/invoice_pdf_service.dart';
 import '../../core/services/accounting_service.dart';
 import '../../core/services/local_database_service.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../core/utils/responsive.dart';
+import '../../core/utils/revision_cache.dart';
 import '../../data/app_store.dart';
 import '../../models/app_user.dart';
 import '../../models/customer.dart';
@@ -23,6 +26,7 @@ import '../../models/sale_item.dart';
 import '../../models/user_role.dart';
 import '../../widgets/app_section_header.dart';
 import '../../widgets/empty_state_card.dart';
+import '../../widgets/page_data_load_indicator.dart';
 import '../barcode/barcode_scanner_page.dart';
 
 enum _BarcodeAddResult {
@@ -89,6 +93,15 @@ class _SalesPageState extends State<SalesPage> {
   int _cashShiftRefreshKey = 0;
   int? _selectedCartIndex;
   int? _pendingDeleteCartIndex;
+  final RevisionKeyCache<List<Product>> _visibleProductsCache =
+      RevisionKeyCache<List<Product>>();
+  final RevisionKeyCache<List<Product>> _activeProductsCache =
+      RevisionKeyCache<List<Product>>();
+  final RevisionKeyCache<List<Product>> _nonDeletedProductsCache =
+      RevisionKeyCache<List<Product>>();
+  final RevisionKeyCache<Map<String, String>> _productSearchIndexCache =
+      RevisionKeyCache<Map<String, String>>();
+  Timer? _productSearchRevealTimer;
 
   @override
   void initState() {
@@ -110,8 +123,21 @@ class _SalesPageState extends State<SalesPage> {
   }
 
   @override
+  void didUpdateWidget(covariant SalesPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != widget.store) {
+      _visibleProductsCache.invalidate();
+      _activeProductsCache.invalidate();
+      _nonDeletedProductsCache.invalidate();
+      _productSearchIndexCache.invalidate();
+      _resetProductSearchReveal();
+    }
+  }
+
+  @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_handleSaleHardwareShortcutKey);
+    _productSearchRevealTimer?.cancel();
     _searchController.dispose();
     _barcodeController.dispose();
     _discountController.dispose();
@@ -233,21 +259,77 @@ class _SalesPageState extends State<SalesPage> {
   String _formatSaleCurrency(double amount, String currency) =>
       formatCurrency(amount, currency: currency);
 
+  Map<String, String> _productSearchIndex() {
+    return _productSearchIndexCache.getOrCompute(
+      widget.store.productsRevision,
+      'product_search_index',
+      () {
+        final index = <String, String>{};
+        for (final product in widget.store.products) {
+          final buffer = StringBuffer()
+            ..write(product.name)
+            ..write(' ')
+            ..write(product.nameEn)
+            ..write(' ')
+            ..write(product.nameAr)
+            ..write(' ')
+            ..write(product.code)
+            ..write(' ')
+            ..write(product.barcode)
+            ..write(' ')
+            ..write(product.category)
+            ..write(' ')
+            ..write(product.brand)
+            ..write(' ')
+            ..write(product.supplier)
+            ..write(' ')
+            ..write(product.unit);
+          for (final unit in product.effectiveSaleUnits) {
+            buffer
+              ..write(' ')
+              ..write(unit.name)
+              ..write(' ')
+              ..write(unit.barcode);
+          }
+          for (final unit in product.effectivePurchaseUnits) {
+            buffer
+              ..write(' ')
+              ..write(unit.name)
+              ..write(' ')
+              ..write(unit.barcode);
+          }
+          index[product.id] = buffer.toString().toLowerCase();
+        }
+        return index;
+      },
+    );
+  }
+
+  void _resetProductSearchReveal() {
+    _productSearchRevealTimer?.cancel();
+    _productSearchRevealTimer = null;
+  }
+
   List<Product> _visibleProducts() {
     final q = _search.trim().toLowerCase();
-    return widget.store.products
-        .where((product) => product.isActive && !product.isDeleted)
-        .where((product) {
-      if (q.isEmpty) return true;
-      return product.name.toLowerCase().contains(q) ||
-          product.code.toLowerCase().contains(q) ||
-          product.barcode.toLowerCase().contains(q) ||
-          product.effectiveSaleUnits
-              .any((unit) => unit.barcode.toLowerCase().contains(q)) ||
-          product.effectivePurchaseUnits
-              .any((unit) => unit.barcode.toLowerCase().contains(q)) ||
-          product.category.toLowerCase().contains(q);
-    }).toList();
+    return _visibleProductsCache.getOrCompute(
+      widget.store.productsRevision,
+      q,
+      () {
+        final activeProducts = _activeProductsCache.getOrCompute(
+          widget.store.productsRevision,
+          'active_products',
+          () => widget.store.products
+              .where((product) => product.isActive && !product.isDeleted)
+              .toList(growable: false),
+        );
+        if (q.isEmpty) return activeProducts;
+        final index = _productSearchIndex();
+        return activeProducts
+            .where((product) => index[product.id]?.contains(q) ?? false)
+            .toList(growable: false);
+      },
+    );
   }
 
   bool _handleSaleHardwareShortcutKey(KeyEvent event) {
@@ -525,6 +607,9 @@ class _SalesPageState extends State<SalesPage> {
         message: 'You do not have access to sales data.',
       );
     }
+    if (!widget.store.isCoreDataLoaded) {
+      return const Center(child: CircularProgressIndicator.adaptive());
+    }
     final sales = widget.store.sales;
     final products = _visibleProducts();
 
@@ -596,7 +681,7 @@ class _SalesPageState extends State<SalesPage> {
         Expanded(
           child: RawAutocomplete<Customer>(
             key: ValueKey(
-                'sale_customer_${_selectedCustomerId}_${widget.store.customers.length}'),
+                'sale_customer_${_selectedCustomerId}_${widget.store.customersRevision}'),
             initialValue: TextEditingValue(
                 text: _customerSearchText(_selectedCustomer())),
             displayStringForOption: _customerSearchText,
@@ -1016,7 +1101,8 @@ class _SalesPageState extends State<SalesPage> {
                             ? null
                             : () => _closeSaleDrawerDialog(openSession, status),
                         icon: const Icon(Icons.lock_outline),
-                        label: Text(tr.isArabic ? 'إغلاق / تسليم' : 'Close / Handover'),
+                        label: Text(
+                            tr.isArabic ? 'إغلاق / تسليم' : 'Close / Handover'),
                       ),
                     ],
                   ),
@@ -1081,7 +1167,8 @@ class _SalesPageState extends State<SalesPage> {
                 DropdownButtonFormField<String>(
                   initialValue:
                       selectedDrawerId.isEmpty ? null : selectedDrawerId,
-                  decoration: InputDecoration(labelText: tr.isArabic ? 'درج النقدية' : 'Cash drawer'),
+                  decoration: InputDecoration(
+                      labelText: tr.isArabic ? 'درج النقدية' : 'Cash drawer'),
                   items: drawers
                       .map((item) => DropdownMenuItem(
                             value: item.id,
@@ -1096,13 +1183,17 @@ class _SalesPageState extends State<SalesPage> {
                   controller: controller,
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
-                  decoration: InputDecoration(labelText: tr.isArabic ? 'مبلغ الافتتاح' : 'Opening amount'),
+                  decoration: InputDecoration(
+                      labelText:
+                          tr.isArabic ? 'مبلغ الافتتاح' : 'Opening amount'),
                 ),
                 if (sources.isNotEmpty) ...[
                   const SizedBox(height: 12),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
-                    title: Text(tr.isArabic ? 'تحويل مبلغ الافتتاح من صندوق آخر' : 'Transfer opening amount from another drawer'),
+                    title: Text(tr.isArabic
+                        ? 'تحويل مبلغ الافتتاح من صندوق آخر'
+                        : 'Transfer opening amount from another drawer'),
                     value: useFundingSource,
                     onChanged: (value) =>
                         setDialogState(() => useFundingSource = value),
@@ -1111,8 +1202,9 @@ class _SalesPageState extends State<SalesPage> {
                     DropdownButtonFormField<String>(
                       initialValue:
                           selectedFundingId.isEmpty ? null : selectedFundingId,
-                      decoration:
-                          InputDecoration(labelText: tr.isArabic ? 'مصدر المبلغ' : 'Funding source'),
+                      decoration: InputDecoration(
+                          labelText:
+                              tr.isArabic ? 'مصدر المبلغ' : 'Funding source'),
                       items: sources
                           .map((item) => DropdownMenuItem(
                                 value: item.id,
@@ -1160,7 +1252,10 @@ class _SalesPageState extends State<SalesPage> {
         if (!mounted) return;
         setState(() => _cashShiftRefreshKey++);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(tr.isArabic ? 'تم فتح الوردية النقدية' : 'Cash shift opened')),
+          SnackBar(
+              content: Text(tr.isArabic
+                  ? 'تم فتح الوردية النقدية'
+                  : 'Cash shift opened')),
         );
       }
     } catch (error) {
@@ -1196,7 +1291,8 @@ class _SalesPageState extends State<SalesPage> {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, setDialogState) => AlertDialog(
-          title: Text(tr.isArabic ? 'إغلاق / تسليم الوردية' : 'Close / handover shift'),
+          title: Text(
+              tr.isArabic ? 'إغلاق / تسليم الوردية' : 'Close / handover shift'),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -1209,25 +1305,34 @@ class _SalesPageState extends State<SalesPage> {
                   controller: counted,
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
-                  decoration:
-                      InputDecoration(labelText: tr.isArabic ? 'المبلغ المعدود' : 'Counted amount'),
+                  decoration: InputDecoration(
+                      labelText:
+                          tr.isArabic ? 'المبلغ المعدود' : 'Counted amount'),
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
                   initialValue: closeMode,
-                  decoration: InputDecoration(labelText: tr.isArabic ? 'طريقة الإغلاق' : 'Close action'),
+                  decoration: InputDecoration(
+                      labelText:
+                          tr.isArabic ? 'طريقة الإغلاق' : 'Close action'),
                   items: [
                     DropdownMenuItem(
                       value: 'keep_drawer',
-              child: Text(tr.isArabic ? 'إغلاق فقط وترك النقد بنفس الدرج' : 'Close only and keep cash in the same drawer'),
+                      child: Text(tr.isArabic
+                          ? 'إغلاق فقط وترك النقد بنفس الدرج'
+                          : 'Close only and keep cash in the same drawer'),
                     ),
                     DropdownMenuItem(
                       value: 'transfer_location',
-                      child: Text(tr.isArabic ? 'إغلاق وتحويل النقد إلى درج/صندوق آخر' : 'Close and transfer cash to another drawer / vault'),
+                      child: Text(tr.isArabic
+                          ? 'إغلاق وتحويل النقد إلى درج/صندوق آخر'
+                          : 'Close and transfer cash to another drawer / vault'),
                     ),
                     DropdownMenuItem(
                       value: 'handover_user',
-                      child: Text(tr.isArabic ? 'تسليم لموظف جديد وفتح وردية جديدة' : 'Handover to a new employee and open a new shift'),
+                      child: Text(tr.isArabic
+                          ? 'تسليم لموظف جديد وفتح وردية جديدة'
+                          : 'Handover to a new employee and open a new shift'),
                     ),
                   ],
                   onChanged: (value) =>
@@ -1238,7 +1343,9 @@ class _SalesPageState extends State<SalesPage> {
                   DropdownButtonFormField<String>(
                     initialValue: transferToId.isEmpty ? null : transferToId,
                     decoration: InputDecoration(
-                        labelText: tr.isArabic ? 'الدرج / الصندوق المستلم' : 'Receiving drawer / vault'),
+                        labelText: tr.isArabic
+                            ? 'الدرج / الصندوق المستلم'
+                            : 'Receiving drawer / vault'),
                     items: transferTargets
                         .map((item) => DropdownMenuItem(
                               value: item.id,
@@ -1253,8 +1360,10 @@ class _SalesPageState extends State<SalesPage> {
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
                     initialValue: nextUserId.isEmpty ? null : nextUserId,
-                    decoration:
-                        InputDecoration(labelText: tr.isArabic ? 'الموظف المستلم' : 'Receiving employee'),
+                    decoration: InputDecoration(
+                        labelText: tr.isArabic
+                            ? 'الموظف المستلم'
+                            : 'Receiving employee'),
                     items: handoverUsers
                         .map((user) => DropdownMenuItem(
                               value: user.id,
@@ -1346,7 +1455,10 @@ class _SalesPageState extends State<SalesPage> {
         if (!mounted) return;
         setState(() => _cashShiftRefreshKey++);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(tr.isArabic ? 'تم تحديث الوردية النقدية' : 'Cash shift updated')),
+          SnackBar(
+              content: Text(tr.isArabic
+                  ? 'تم تحديث الوردية النقدية'
+                  : 'Cash shift updated')),
         );
       }
     } catch (error) {
@@ -1374,7 +1486,8 @@ class _SalesPageState extends State<SalesPage> {
               runSpacing: 8,
               children: [
                 OutlinedButton.icon(
-                  onPressed: widget.store.canSell ? _showSaleShiftQuickAction : null,
+                  onPressed:
+                      widget.store.canSell ? _showSaleShiftQuickAction : null,
                   icon: const Icon(Icons.point_of_sale_outlined),
                   label: Text(tr.isArabic ? 'إدارة الوردية' : 'Manage shift'),
                 ),
@@ -2002,9 +2115,14 @@ class _SalesPageState extends State<SalesPage> {
       _QuickProductPage page, int slotIndex) async {
     if (slotIndex < 0 || slotIndex >= page.slots.length) return;
     final tr = AppLocalizations.of(context);
-    final products = widget.store.products
-        .where((product) => product.isActive && !product.isDeleted)
-        .toList();
+    final products = _activeProductsCache.getOrCompute(
+      widget.store.productsRevision,
+      'active_products',
+      () => widget.store.products
+          .where((product) => product.isActive && !product.isDeleted)
+          .toList(growable: false),
+    );
+    final searchIndex = _productSearchIndex();
     final nameController =
         TextEditingController(text: page.slots[slotIndex].shortName ?? '');
     final quickSearchController = TextEditingController();
@@ -2017,18 +2135,13 @@ class _SalesPageState extends State<SalesPage> {
       isScrollControlled: true,
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setSheetState) {
-          final filtered = products.where((product) {
-            if (query.trim().isEmpty) return true;
-            final q = query.toLowerCase();
-            return product.name.toLowerCase().contains(q) ||
-                product.code.toLowerCase().contains(q) ||
-                product.barcode.toLowerCase().contains(q) ||
-                product.effectiveSaleUnits
-                    .any((unit) => unit.barcode.toLowerCase().contains(q)) ||
-                product.effectivePurchaseUnits
-                    .any((unit) => unit.barcode.toLowerCase().contains(q)) ||
-                product.category.toLowerCase().contains(q);
-          }).toList();
+          final q = query.trim().toLowerCase();
+          final filtered = q.isEmpty
+              ? products
+              : products
+                  .where((product) =>
+                      searchIndex[product.id]?.contains(q) ?? false)
+                  .toList(growable: false);
           return SafeArea(
             child: Padding(
               padding: EdgeInsets.only(
@@ -3002,7 +3115,8 @@ class _SalesPageState extends State<SalesPage> {
                         '${tr.text('items')}: ${_formatQuantity(_itemsCount)}')),
                 if (_cart.isNotEmpty)
                   TextButton.icon(
-                      onPressed: widget.store.canSell ? _confirmClearCart : null,
+                      onPressed:
+                          widget.store.canSell ? _confirmClearCart : null,
                       icon: const Icon(Icons.delete_sweep_outlined),
                       label: Text(tr.text('clear_cart'))),
                 if (_cart.isNotEmpty)
@@ -3012,7 +3126,8 @@ class _SalesPageState extends State<SalesPage> {
                       label: Text(tr.text('hold'))),
                 if (_heldCarts.isNotEmpty)
                   TextButton.icon(
-                      onPressed: widget.store.canSell ? _showHeldCartsDialog : null,
+                      onPressed:
+                          widget.store.canSell ? _showHeldCartsDialog : null,
                       icon:
                           const Icon(Icons.playlist_add_check_circle_outlined),
                       label:
@@ -3169,25 +3284,31 @@ class _SalesPageState extends State<SalesPage> {
                                 runSpacing: 8,
                                 children: [
                                   OutlinedButton.icon(
-                                    onPressed: widget.store.hasPermission(AppPermission.salesPrint)
+                                    onPressed: widget.store.hasPermission(
+                                            AppPermission.salesPrint)
                                         ? () => _handleInvoiceAction(() =>
                                             InvoicePdfService.printInvoice(
                                                 sale: sale,
-                                                profile: widget.store.storeProfile,
-                                                locale: AppLocalizations.of(context)
-                                                    .locale))
+                                                profile:
+                                                    widget.store.storeProfile,
+                                                locale:
+                                                    AppLocalizations.of(context)
+                                                        .locale))
                                         : null,
                                     icon: const Icon(Icons.print_outlined),
                                     label: Text(tr.text('print_invoice')),
                                   ),
                                   OutlinedButton.icon(
-                                    onPressed: widget.store.hasPermission(AppPermission.salesExport)
+                                    onPressed: widget.store.hasPermission(
+                                            AppPermission.salesExport)
                                         ? () => _handleInvoiceAction(() =>
                                             InvoicePdfService.shareInvoice(
                                                 sale: sale,
-                                                profile: widget.store.storeProfile,
-                                                locale: AppLocalizations.of(context)
-                                                    .locale))
+                                                profile:
+                                                    widget.store.storeProfile,
+                                                locale:
+                                                    AppLocalizations.of(context)
+                                                        .locale))
                                         : null,
                                     icon: const Icon(Icons.share_outlined),
                                     label: Text(tr.text('share_pdf')),
@@ -3651,7 +3772,13 @@ class _SalesPageState extends State<SalesPage> {
 
   Future<String?> _scanCodeWithCameraOnce() async {
     final code = await Navigator.of(context).push<String>(
-      MaterialPageRoute(builder: (_) => const BarcodeScannerPage()),
+      MaterialPageRoute(
+        builder: (_) => const PageTimingScope(
+          pageKey: 'BarcodeScannerPage',
+          pageLabel: 'Barcode scanner',
+          child: BarcodeScannerPage(),
+        ),
+      ),
     );
     final trimmed = code?.trim();
     return trimmed == null || trimmed.isEmpty ? null : trimmed;
@@ -3661,23 +3788,68 @@ class _SalesPageState extends State<SalesPage> {
     final tr = AppLocalizations.of(context);
     final controller = TextEditingController(text: _search);
     var query = _search;
+    final searchIndex = _productSearchIndex();
+    Timer? revealTimer;
+    int visibleCount = 100;
+    int revealTargetCount = 0;
+
+    void resetReveal() {
+      revealTimer?.cancel();
+      revealTimer = null;
+      visibleCount = 100;
+      revealTargetCount = 0;
+    }
+
+    void syncReveal(
+      int totalCount,
+      void Function(VoidCallback) setModalState,
+    ) {
+      revealTargetCount = totalCount;
+      if (visibleCount > totalCount) {
+        visibleCount = totalCount;
+      }
+      if (visibleCount >= totalCount) {
+        revealTimer?.cancel();
+        revealTimer = null;
+        return;
+      }
+      revealTimer ??= Timer.periodic(const Duration(milliseconds: 20), (timer) {
+        if (!mounted) {
+          timer.cancel();
+          revealTimer = null;
+          return;
+        }
+        if (visibleCount >= revealTargetCount) {
+          timer.cancel();
+          revealTimer = null;
+          return;
+        }
+        setModalState(() {
+          visibleCount = math.min(revealTargetCount, visibleCount + 100);
+        });
+        if (visibleCount >= revealTargetCount) {
+          timer.cancel();
+          revealTimer = null;
+        }
+      });
+    }
+
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setModalState) {
-          final filteredProducts = products.where((product) {
-            if (query.trim().isEmpty) return true;
-            final q = query.toLowerCase();
-            return product.name.toLowerCase().contains(q) ||
-                product.code.toLowerCase().contains(q) ||
-                product.barcode.toLowerCase().contains(q) ||
-                product.effectiveSaleUnits
-                    .any((unit) => unit.barcode.toLowerCase().contains(q)) ||
-                product.effectivePurchaseUnits
-                    .any((unit) => unit.barcode.toLowerCase().contains(q)) ||
-                product.category.toLowerCase().contains(q);
-          }).toList();
+          final q = query.trim().toLowerCase();
+          final filteredProducts = q.isEmpty
+              ? products
+              : products
+                  .where((product) =>
+                      searchIndex[product.id]?.contains(q) ?? false)
+                  .toList(growable: false);
+          syncReveal(filteredProducts.length, setModalState);
+          final visibleProducts = filteredProducts
+              .take(math.min(visibleCount, filteredProducts.length))
+              .toList(growable: false);
           return SafeArea(
             child: Padding(
               padding: EdgeInsets.only(
@@ -3690,8 +3862,21 @@ class _SalesPageState extends State<SalesPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text(tr.text('search_product'),
-                        style: Theme.of(context).textTheme.titleLarge),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(tr.text('search_product'),
+                              style: Theme.of(context).textTheme.titleLarge),
+                        ),
+                        PageDataLoadIndicator(
+                          loadedCount: visibleProducts.length,
+                          totalCount: filteredProducts.length,
+                          label: tr.isArabic
+                              ? 'جارٍ تجهيز نتائج البحث'
+                              : 'Preparing search results',
+                        ),
+                      ],
+                    ),
                     const SizedBox(height: 12),
                     TextField(
                       controller: controller,
@@ -3710,18 +3895,21 @@ class _SalesPageState extends State<SalesPage> {
                           icon: const Icon(Icons.camera_alt_outlined),
                         ),
                       ),
-                      onChanged: (value) => setModalState(() => query = value),
+                      onChanged: (value) => setModalState(() {
+                        query = value;
+                        resetReveal();
+                      }),
                     ),
                     const SizedBox(height: 12),
                     Expanded(
-                      child: filteredProducts.isEmpty
+                      child: visibleProducts.isEmpty
                           ? Center(child: Text(tr.text('no_products')))
                           : ListView.separated(
-                              itemCount: filteredProducts.length,
+                              itemCount: visibleProducts.length,
                               separatorBuilder: (_, __) =>
                                   const Divider(height: 1),
                               itemBuilder: (context, index) {
-                                final product = filteredProducts[index];
+                                final product = visibleProducts[index];
                                 return ListTile(
                                   title: Text(product.name,
                                       maxLines: 1,
@@ -3738,6 +3926,7 @@ class _SalesPageState extends State<SalesPage> {
                                     Navigator.pop(sheetContext);
                                     _search = '';
                                     _searchController.clear();
+                                    _resetProductSearchReveal();
                                     FocusScope.of(context).unfocus();
                                     _addProduct(product);
                                   },
@@ -3752,7 +3941,10 @@ class _SalesPageState extends State<SalesPage> {
           );
         },
       ),
-    ).whenComplete(controller.dispose);
+    ).whenComplete(() {
+      revealTimer?.cancel();
+      controller.dispose();
+    });
   }
 
   String _saleSaveFailureMessage(BuildContext context, Object error) {
@@ -3852,7 +4044,9 @@ class _SalesPageState extends State<SalesPage> {
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text(tr.isArabic ? 'تفاصيل خطأ حفظ الفاتورة' : 'Invoice save error details'),
+        title: Text(tr.isArabic
+            ? 'تفاصيل خطأ حفظ الفاتورة'
+            : 'Invoice save error details'),
         content: SizedBox(
           width: 680,
           child: SingleChildScrollView(
@@ -3902,7 +4096,10 @@ class _SalesPageState extends State<SalesPage> {
               await Clipboard.setData(ClipboardData(text: debugText));
               if (!dialogContext.mounted) return;
               ScaffoldMessenger.of(dialogContext).showSnackBar(
-                SnackBar(content: Text(tr.isArabic ? 'تم نسخ تفاصيل الخطأ' : 'Error details copied')),
+                SnackBar(
+                    content: Text(tr.isArabic
+                        ? 'تم نسخ تفاصيل الخطأ'
+                        : 'Error details copied')),
               );
             },
             icon: const Icon(Icons.copy),
@@ -4023,8 +4220,14 @@ class _SalesPageState extends State<SalesPage> {
 
     Product? product;
     ProductSaleUnit? saleUnit;
-    for (final candidate
-        in widget.store.products.where((item) => !item.isDeleted)) {
+    final candidates = _nonDeletedProductsCache.getOrCompute(
+      widget.store.productsRevision,
+      'non_deleted_products',
+      () => widget.store.products
+          .where((item) => !item.isDeleted)
+          .toList(growable: false),
+    );
+    for (final candidate in candidates) {
       final matchedUnit = candidate.unitForBarcode(cleanCode);
       if (candidate.code.trim().toLowerCase() == cleanCode.toLowerCase() ||
           matchedUnit != null) {

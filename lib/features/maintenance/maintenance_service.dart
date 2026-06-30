@@ -6,6 +6,7 @@ import '../../core/services/local_database_service.dart';
 import '../../core/services/google_drive_backup_service.dart';
 import '../../core/services/local_auto_backup_service.dart';
 import '../../core/services/maintenance_storage_info.dart';
+import '../../core/services/startup_timing_service.dart';
 import '../../core/storage/sqlite/sqlite_migration_manager.dart';
 import '../../data/app_store.dart';
 import 'maintenance_models.dart';
@@ -24,8 +25,10 @@ class MaintenanceService {
       'customers': sqliteCounts['customers'] ?? store.customers.length,
       'suppliers': sqliteCounts['suppliers'] ?? store.suppliers.length,
       'sales': sqliteCounts['sales'] ?? store.sales.length,
-      'purchases': sqliteCounts['purchases'] ?? store.purchases.length,
-      'expenses': sqliteCounts['expenses'] ?? store.expenses.length,
+      'purchases':
+          sqliteCounts['purchases'] ?? store.purchasesOverview.totalCount,
+      'expenses':
+          sqliteCounts['expenses'] ?? store.expensesOverview.totalCount,
       'stockMovements':
           sqliteCounts['stockMovements'] ?? store.stockMovements.length,
       'accountTransactions': sqliteCounts['accountTransactions'] ??
@@ -40,6 +43,8 @@ class MaintenanceService {
           sqliteCounts['pendingSyncQueue'] ?? store.pendingSyncQueue.length,
       'dataConflicts':
           sqliteCounts['dataConflicts'] ?? store.dataConflicts.length,
+      'appLogs': sqliteCounts['appLogs'] ?? 0,
+      'auditLogs': sqliteCounts['auditLogs'] ?? 0,
       ...backupSnapshot.counts,
     };
 
@@ -73,7 +78,10 @@ class MaintenanceService {
   }
 
   String buildDiagnosticReport(MaintenanceSummary summary) {
-    return const JsonEncoder.withIndent('  ').convert(summary.toJson());
+    return const JsonEncoder.withIndent('  ').convert(<String, dynamic>{
+      'maintenance': summary.toJson(),
+      'startupTiming': StartupTimingService.snapshotJson(),
+    });
   }
 
   Future<MaintenanceRepairResult> runRepair(
@@ -478,6 +486,8 @@ class MaintenanceService {
       'pendingSyncQueue': 'sync_queue',
       'dataConflicts': 'sync_conflicts',
       'localDatabaseKeys': 'local_key_values',
+      'appLogs': 'app_logs',
+      'auditLogs': 'audit_logs',
     };
 
     final counts = <String, int>{};

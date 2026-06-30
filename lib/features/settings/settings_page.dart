@@ -21,6 +21,7 @@ import '../../core/services/local_database_service.dart';
 import '../../core/services/local_auto_backup_service.dart';
 import '../../core/services/app_update_service.dart';
 import '../../core/services/sync_diagnostics_log.dart';
+import '../../core/services/page_timing_scope.dart';
 import '../../core/shortcuts/app_shortcuts.dart';
 import '../../core/sync_unified/sync_device_state.dart';
 import '../../core/sync_unified/sync_unified.dart';
@@ -1114,7 +1115,12 @@ class SettingsPage extends StatelessWidget {
                 ? () => Navigator.push(
                     context,
                     MaterialPageRoute(
-                        builder: (_) => UsersPermissionsPage(store: store)))
+                        builder: (_) => PageTimingScope(
+                              key: const ValueKey('UsersPermissionsPage'),
+                              pageKey: 'UsersPermissionsPage',
+                              pageLabel: 'Users permissions',
+                              child: UsersPermissionsPage(store: store),
+                            )))
                 : null,
             icon: const Icon(Icons.manage_accounts_outlined),
             label: Text(tr.text('manage')),
@@ -4581,10 +4587,15 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       SyncMode fallbackMode) async {
     final raw = await Navigator.of(context).push<String>(
       MaterialPageRoute(
-        builder: (_) => BarcodeScannerPage(
-          title: AppLocalizations.of(context).text('scan_pairing_qr'),
-          helpText: AppLocalizations.of(context).text('scan_pairing_qr_help'),
-          formats: const [BarcodeFormat.qrCode],
+        builder: (_) => PageTimingScope(
+          key: const ValueKey('BarcodeScannerPage'),
+          pageKey: 'BarcodeScannerPage',
+          pageLabel: 'Barcode scanner',
+          child: BarcodeScannerPage(
+            title: AppLocalizations.of(context).text('scan_pairing_qr'),
+            helpText: AppLocalizations.of(context).text('scan_pairing_qr_help'),
+            formats: const [BarcodeFormat.qrCode],
+          ),
         ),
       ),
     );
@@ -4602,10 +4613,15 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   Future<void> _scanPairingQr() async {
     final raw = await Navigator.of(context).push<String>(
       MaterialPageRoute(
-        builder: (_) => BarcodeScannerPage(
-          title: AppLocalizations.of(context).text('scan_pairing_qr'),
-          helpText: AppLocalizations.of(context).text('scan_pairing_qr_help'),
-          formats: const [BarcodeFormat.qrCode],
+        builder: (_) => PageTimingScope(
+          key: const ValueKey('BarcodeScannerPage'),
+          pageKey: 'BarcodeScannerPage',
+          pageLabel: 'Barcode scanner',
+          child: BarcodeScannerPage(
+            title: AppLocalizations.of(context).text('scan_pairing_qr'),
+            helpText: AppLocalizations.of(context).text('scan_pairing_qr_help'),
+            formats: const [BarcodeFormat.qrCode],
+          ),
         ),
       ),
     );

@@ -1,5 +1,8 @@
 // ignore_for_file: curly_braces_in_flow_control_structures
 
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
@@ -11,6 +14,7 @@ import '../../models/user_role.dart';
 import '../accounts/account_ledger_widgets.dart';
 import '../../widgets/app_section_header.dart';
 import '../../widgets/empty_state_card.dart';
+import '../../widgets/page_data_load_indicator.dart';
 
 class SuppliersPage extends StatefulWidget {
   const SuppliersPage({super.key, required this.store});
@@ -23,6 +27,57 @@ class SuppliersPage extends StatefulWidget {
 
 class _SuppliersPageState extends State<SuppliersPage> {
   String query = '';
+  Timer? _supplierRevealTimer;
+  int _visibleSupplierCount = 100;
+  int _supplierRevealTargetCount = 0;
+
+  @override
+  void dispose() {
+    _supplierRevealTimer?.cancel();
+    super.dispose();
+  }
+
+  void _resetSupplierReveal() {
+    _supplierRevealTimer?.cancel();
+    _supplierRevealTimer = null;
+    _visibleSupplierCount = 100;
+    _supplierRevealTargetCount = 0;
+  }
+
+  void _syncSupplierReveal(int totalCount) {
+    _supplierRevealTargetCount = totalCount;
+    if (_visibleSupplierCount > totalCount) {
+      _visibleSupplierCount = totalCount;
+    }
+    if (_visibleSupplierCount >= totalCount) {
+      _supplierRevealTimer?.cancel();
+      _supplierRevealTimer = null;
+      return;
+    }
+    _supplierRevealTimer ??=
+        Timer.periodic(const Duration(milliseconds: 20), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        _supplierRevealTimer = null;
+        return;
+      }
+      if (_visibleSupplierCount >= _supplierRevealTargetCount) {
+        timer.cancel();
+        _supplierRevealTimer = null;
+        return;
+      }
+      setState(() {
+        _visibleSupplierCount = math.min(
+          _supplierRevealTargetCount,
+          _visibleSupplierCount + 100,
+        );
+      });
+      if (_visibleSupplierCount >= _supplierRevealTargetCount) {
+        timer.cancel();
+        _supplierRevealTimer = null;
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -38,6 +93,12 @@ class _SuppliersPageState extends State<SuppliersPage> {
       return supplier.name.toLowerCase().contains(value) ||
           supplier.phone.toLowerCase().contains(value);
     }).toList();
+    _syncSupplierReveal(suppliers.length);
+    final visibleSuppliers = suppliers
+        .take(math.min(_visibleSupplierCount, suppliers.length))
+        .toList(
+          growable: false,
+        );
 
     return Padding(
       padding: VentioResponsive.pageInsets(context),
@@ -46,12 +107,23 @@ class _SuppliersPageState extends State<SuppliersPage> {
           AppSectionHeader(
             title: tr.text('suppliers'),
             subtitle: tr.text('suppliers_page_desc'),
-            action: FilledButton.icon(
-              onPressed: widget.store.canManageSuppliers
-                  ? () => _openSupplierForm(context)
-                  : null,
-              icon: const Icon(Icons.local_shipping_outlined),
-              label: Text(tr.text('add_supplier')),
+            action: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              alignment: WrapAlignment.end,
+              children: [
+                PageDataLoadIndicator(
+                  loadedCount: visibleSuppliers.length,
+                  totalCount: suppliers.length,
+                ),
+                FilledButton.icon(
+                  onPressed: widget.store.canManageSuppliers
+                      ? () => _openSupplierForm(context)
+                      : null,
+                  icon: const Icon(Icons.local_shipping_outlined),
+                  label: Text(tr.text('add_supplier')),
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 16),
@@ -59,7 +131,10 @@ class _SuppliersPageState extends State<SuppliersPage> {
             decoration: InputDecoration(
                 hintText: tr.text('search_supplier'),
                 prefixIcon: const Icon(Icons.search)),
-            onChanged: (value) => setState(() => query = value),
+            onChanged: (value) => setState(() {
+              query = value;
+              _resetSupplierReveal();
+            }),
           ),
           const SizedBox(height: 16),
           Expanded(
@@ -79,9 +154,9 @@ class _SuppliersPageState extends State<SuppliersPage> {
                           keyboardDismissBehavior:
                               ScrollViewKeyboardDismissBehavior.onDrag,
                           itemExtent: rowExtent,
-                          itemCount: suppliers.length,
+                          itemCount: visibleSuppliers.length,
                           itemBuilder: (context, index) {
-                            final supplier = suppliers[index];
+                            final supplier = visibleSuppliers[index];
                             return ListTile(
                               leading: const CircleAvatar(
                                   child: Icon(Icons.local_shipping_outlined)),
@@ -89,11 +164,12 @@ class _SuppliersPageState extends State<SuppliersPage> {
                               subtitle: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text([
-                                    supplier.phone,
-                                    supplier.address,
-                                    supplier.notes
-                                  ].where((e) => e.isNotEmpty).join(' ? '),
+                                  Text(
+                                      [
+                                        supplier.phone,
+                                        supplier.address,
+                                        supplier.notes
+                                      ].where((e) => e.isNotEmpty).join(' ? '),
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis),
                                   const SizedBox(height: 4),
@@ -103,7 +179,8 @@ class _SuppliersPageState extends State<SuppliersPage> {
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
-                                        color: accountBalanceColor(context,
+                                        color: accountBalanceColor(
+                                            context,
                                             widget.store,
                                             'supplier',
                                             supplier.id),
@@ -116,7 +193,8 @@ class _SuppliersPageState extends State<SuppliersPage> {
                                       tooltip: tr.text('actions'),
                                       onSelected: (value) {
                                         if (value == 'ledger' &&
-                                            widget.store.hasAnyPermission(<String>{
+                                            widget.store
+                                                .hasAnyPermission(<String>{
                                               AppPermission.suppliersLedgerView,
                                               AppPermission.suppliersManage,
                                             })) {
@@ -128,8 +206,10 @@ class _SuppliersPageState extends State<SuppliersPage> {
                                               accountName: supplier.name);
                                         }
                                         if (value == 'payment' &&
-                                            widget.store.hasAnyPermission(<String>{
-                                              AppPermission.suppliersPaymentManage,
+                                            widget.store
+                                                .hasAnyPermission(<String>{
+                                              AppPermission
+                                                  .suppliersPaymentManage,
                                               AppPermission.suppliersManage,
                                             })) {
                                           showAccountPaymentDialog(
@@ -156,7 +236,8 @@ class _SuppliersPageState extends State<SuppliersPage> {
                                                 tr.text('account_ledger'))),
                                         PopupMenuItem(
                                             value: 'payment',
-                                            child: Text(tr.text('pay_supplier'))),
+                                            child:
+                                                Text(tr.text('pay_supplier'))),
                                         PopupMenuItem(
                                             value: 'edit',
                                             child: Text(tr.text('edit'))),
@@ -168,52 +249,56 @@ class _SuppliersPageState extends State<SuppliersPage> {
                                   : Wrap(
                                       children: [
                                         IconButton(
-                                            onPressed: widget.store.hasAnyPermission(<String>{
-                                                      AppPermission.suppliersLedgerView,
-                                                      AppPermission.suppliersManage,
-                                                    })
+                                            onPressed: widget.store
+                                                    .hasAnyPermission(<String>{
+                                              AppPermission.suppliersLedgerView,
+                                              AppPermission.suppliersManage,
+                                            })
                                                 ? () => showAccountLedgerSheet(
                                                     context: context,
                                                     store: widget.store,
                                                     accountType: 'supplier',
                                                     accountId: supplier.id,
-                                                    accountName:
-                                                        supplier.name)
+                                                    accountName: supplier.name)
                                                 : null,
                                             icon: const Icon(
                                                 Icons.receipt_long_outlined),
                                             tooltip: tr.text('account_ledger')),
                                         IconButton(
-                                            onPressed: widget.store.hasAnyPermission(<String>{
-                                                      AppPermission.suppliersPaymentManage,
-                                                      AppPermission.suppliersManage,
-                                                    })
-                                                ? () => showAccountPaymentDialog(
-                                                    context: context,
-                                                    store: widget.store,
-                                                    accountType: 'supplier',
-                                                    accountId: supplier.id,
-                                                    accountName:
-                                                        supplier.name)
+                                            onPressed: widget.store
+                                                    .hasAnyPermission(<String>{
+                                              AppPermission
+                                                  .suppliersPaymentManage,
+                                              AppPermission.suppliersManage,
+                                            })
+                                                ? () =>
+                                                    showAccountPaymentDialog(
+                                                        context: context,
+                                                        store: widget.store,
+                                                        accountType: 'supplier',
+                                                        accountId: supplier.id,
+                                                        accountName:
+                                                            supplier.name)
                                                 : null,
                                             icon: const Icon(
                                                 Icons.payments_outlined),
                                             tooltip: tr.text('pay_supplier')),
                                         IconButton(
-                                            onPressed: widget.store.canManageSuppliers
-                                                ? () => _openSupplierForm(
-                                                    context,
-                                                    supplier: supplier)
-                                                : null,
-                                            icon: const Icon(
-                                                Icons.edit_outlined),
+                                            onPressed:
+                                                widget.store.canManageSuppliers
+                                                    ? () => _openSupplierForm(
+                                                        context,
+                                                        supplier: supplier)
+                                                    : null,
+                                            icon:
+                                                const Icon(Icons.edit_outlined),
                                             tooltip: tr.text('edit')),
                                         IconButton(
-                                            onPressed: widget.store.canManageSuppliers
-                                                ? () => _deleteSupplier(
-                                                    context,
-                                                    supplier)
-                                                : null,
+                                            onPressed:
+                                                widget.store.canManageSuppliers
+                                                    ? () => _deleteSupplier(
+                                                        context, supplier)
+                                                    : null,
                                             icon: const Icon(
                                                 Icons.delete_outline),
                                             tooltip: tr.text('delete')),
@@ -225,7 +310,7 @@ class _SuppliersPageState extends State<SuppliersPage> {
                       },
                     ),
                   ),
-              ),
+          ),
         ],
       ),
     );

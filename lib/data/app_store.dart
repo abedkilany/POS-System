@@ -12,6 +12,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../core/services/local_database_service.dart';
 import '../core/services/accounting_service.dart';
 import '../core/services/account_auth_service.dart';
+import '../core/services/app_logging_service.dart';
+import '../core/services/startup_timing_service.dart';
 import '../core/services/sync_diagnostics_log.dart';
 import '../core/sync_unified/sync_device_state.dart';
 import '../core/snapshot/unified_snapshot.dart';
@@ -80,6 +82,19 @@ String _hashPasswordInBackground(Map<String, String> request) {
   return '$prefix$iterations:$salt:${base64UrlEncode(hash)}';
 }
 
+List<Map<String, dynamic>> _decodeJsonListPayload(String rawJson) {
+  try {
+    final decoded = jsonDecode(rawJson);
+    if (decoded is! List) return const <Map<String, dynamic>>[];
+    return decoded
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList(growable: false);
+  } catch (_) {
+    return const <Map<String, dynamic>>[];
+  }
+}
+
 class DataConflict {
   const DataConflict({
     required this.entityType,
@@ -109,6 +124,50 @@ class BusinessDataIntegrityResult {
   final bool ok;
   final String message;
   final int problemCount;
+}
+
+class PurchasesOverview {
+  const PurchasesOverview({
+    required this.totalCount,
+    required this.totalPurchasesAmount,
+    required this.monthlyTotal,
+    required this.monthlyCount,
+    required this.draftTotal,
+    required this.draftCount,
+    required this.receivedCount,
+    required this.returnedCount,
+    required this.cancelledCount,
+    required this.pendingPurchaseCount,
+  });
+
+  final int totalCount;
+  final double totalPurchasesAmount;
+  final double monthlyTotal;
+  final int monthlyCount;
+  final double draftTotal;
+  final int draftCount;
+  final int receivedCount;
+  final int returnedCount;
+  final int cancelledCount;
+  final int pendingPurchaseCount;
+}
+
+class ExpensesOverview {
+  const ExpensesOverview({
+    required this.totalCount,
+    required this.totalExpensesAmount,
+    required this.draftCount,
+    required this.postedCount,
+    required this.cancelledCount,
+    required this.categoryCount,
+  });
+
+  final int totalCount;
+  final double totalExpensesAmount;
+  final int draftCount;
+  final int postedCount;
+  final int cancelledCount;
+  final int categoryCount;
 }
 
 class _ProductPurchaseMetrics {
@@ -285,6 +344,10 @@ class AppStore extends ChangeNotifier {
   final List<InventoryCountSession> _inventoryCounts = [];
   final List<Warehouse> _warehouses = [];
   final List<AccountTransaction> _accountTransactions = [];
+  final Map<String, int> _purchaseIndexById = <String, int>{};
+  final Map<String, int> _stockMovementIndexById = <String, int>{};
+  final Map<String, int> _expenseIndexById = <String, int>{};
+  final Map<String, int> _accountTransactionIndexById = <String, int>{};
   final Map<String, int> _productIndexById = <String, int>{};
   final Map<String, String> _productIdByNormalizedCode = <String, String>{};
   final Map<String, String> _productIdByNormalizedBarcode = <String, String>{};
@@ -292,6 +355,10 @@ class AppStore extends ChangeNotifier {
   final Map<String, String> _customerIdByNormalizedName = <String, String>{};
   final Map<String, int> _supplierIndexById = <String, int>{};
   final Map<String, String> _supplierIdByNormalizedName = <String, String>{};
+  final Map<String, ProductPrice> _productPriceByLookupKey =
+      <String, ProductPrice>{};
+  final Map<String, ProductCost> _productCostByProductId =
+      <String, ProductCost>{};
   final Map<String, double> _accountBalanceCache = <String, double>{};
   final Map<String, List<AccountTransaction>>
       _accountTransactionsByAccountCache = <String, List<AccountTransaction>>{};
@@ -307,6 +374,19 @@ class AppStore extends ChangeNotifier {
   final List<SyncChange> _syncChanges = [];
   final List<SyncQueueItem> _syncQueue = [];
   final List<SyncChange> _sqliteDirtySyncChanges = [];
+  int _storeRevision = 0;
+  int _productsRevision = 0;
+  int _customersRevision = 0;
+  int _salesRevision = 0;
+  int _suppliersRevision = 0;
+  int _supplierProductPricesRevision = 0;
+  int _purchasesRevision = 0;
+  int _expensesRevision = 0;
+  int _stockMovementsRevision = 0;
+  int _inventoryCountsRevision = 0;
+  int _warehousesRevision = 0;
+  int _accountTransactionsRevision = 0;
+  int _storeProfileRevision = 0;
   final List<SyncQueueItem> _sqliteDirtySyncQueue = [];
   final Map<String, Map<String, Map<String, dynamic>>>
       _sqliteDirtyBusinessRows = <String, Map<String, Map<String, dynamic>>>{};
@@ -323,7 +403,6 @@ class AppStore extends ChangeNotifier {
   bool _rememberLogin = false;
   AppIdentity? _appIdentity;
   int _syncSequence = 0;
-  bool _derivedListCachesDirty = true;
   bool _productDerivedDataDirty = false;
   Timer? _productDerivedDataFlushTimer;
   Future<void>? _productDerivedDataFlushInFlight;
@@ -353,6 +432,37 @@ class AppStore extends ChangeNotifier {
   UnmodifiableListView<Warehouse>? _cachedWarehouses;
   UnmodifiableListView<AccountTransaction>? _cachedAccountTransactions;
   UnmodifiableListView<DataConflict>? _cachedDataConflicts;
+  PurchasesOverview? _cachedPurchasesOverview;
+  int _cachedPurchasesOverviewRevision = -1;
+  String _cachedPurchasesOverviewMonthKey = '';
+  ExpensesOverview? _cachedExpensesOverview;
+  int _cachedExpensesOverviewRevision = -1;
+  int _derivedListCacheGeneration = 0;
+  int _cachedProductsGeneration = -1;
+  int _cachedCustomersGeneration = -1;
+  int _cachedSalesGeneration = -1;
+  int _cachedSaleQuotationsGeneration = -1;
+  int _cachedDeliveryNotesGeneration = -1;
+  int _cachedBillsOfMaterialsGeneration = -1;
+  int _cachedManufacturingOrdersGeneration = -1;
+  int _cachedSuppliersGeneration = -1;
+  int _cachedSupplierProductPricesGeneration = -1;
+  int _cachedPriceListsGeneration = -1;
+  int _cachedProductPricesGeneration = -1;
+  int _cachedProductPriceOverridesGeneration = -1;
+  int _cachedProductCostsGeneration = -1;
+  int _cachedCostingMethodHistoryGeneration = -1;
+  int _cachedInventoryCostLayersGeneration = -1;
+  int _cachedCategoriesGeneration = -1;
+  int _cachedBrandsGeneration = -1;
+  int _cachedUnitsGeneration = -1;
+  int _cachedDataConflictsGeneration = -1;
+  int _cachedExpensesGeneration = -1;
+  int _cachedPurchasesGeneration = -1;
+  int _cachedStockMovementsGeneration = -1;
+  int _cachedInventoryCountSessionsGeneration = -1;
+  int _cachedWarehousesGeneration = -1;
+  int _cachedAccountTransactionsGeneration = -1;
 
   Customer get walkInCustomer => Customer(
         id: walkInCustomerId,
@@ -362,90 +472,250 @@ class AppStore extends ChangeNotifier {
       );
 
   bool _isReady = false;
+  bool _heavyDataLoadCompleted = false;
+  Future<void>? _heavyDataLoadFuture;
+  bool _ledgerDataLoadCompleted = false;
+  Future<void>? _ledgerDataLoadFuture;
+  bool _syncDataLoadCompleted = false;
+  Future<void>? _syncDataLoadFuture;
 
   bool get isReady => _isReady;
+  int get productsRevision => _productsRevision;
+  int get customersRevision => _customersRevision;
+  int get salesRevision => _salesRevision;
+  int get suppliersRevision => _suppliersRevision;
+  int get supplierProductPricesRevision => _supplierProductPricesRevision;
+  int get purchasesRevision => _purchasesRevision;
+  int get expensesRevision => _expensesRevision;
+  int get stockMovementsRevision => _stockMovementsRevision;
+  int get inventoryCountsRevision => _inventoryCountsRevision;
+  int get warehousesRevision => _warehousesRevision;
+  int get accountTransactionsRevision => _accountTransactionsRevision;
+  int get storeProfileRevision => _storeProfileRevision;
+  int get accountingRevision => Object.hashAll(<Object?>[
+        _customersRevision,
+        _suppliersRevision,
+        _salesRevision,
+        _purchasesRevision,
+        _expensesRevision,
+        _accountTransactionsRevision,
+        _storeProfileRevision,
+      ]);
+  int get dashboardRevision => Object.hashAll(<Object?>[
+        _productsRevision,
+        _customersRevision,
+        _suppliersRevision,
+        _salesRevision,
+        _purchasesRevision,
+        _expensesRevision,
+        _stockMovementsRevision,
+        _accountTransactionsRevision,
+        _storeProfileRevision,
+        _syncSequence,
+      ]);
+  int get reportsRevision => Object.hashAll(<Object?>[
+        _productsRevision,
+        _customersRevision,
+        _suppliersRevision,
+        _salesRevision,
+        _purchasesRevision,
+        _expensesRevision,
+        _stockMovementsRevision,
+        _accountTransactionsRevision,
+        _storeProfileRevision,
+      ]);
+  int get inventoryRevision => Object.hashAll(<Object?>[
+        _productsRevision,
+        _stockMovementsRevision,
+        _inventoryCountsRevision,
+        _warehousesRevision,
+      ]);
+  int get salesPageRevision => Object.hashAll(<Object?>[
+        _productsRevision,
+        _customersRevision,
+        _salesRevision,
+      ]);
+  int get productsPageRevision => Object.hashAll(<Object?>[
+        _productsRevision,
+        _purchasesRevision,
+        _storeProfileRevision,
+      ]);
+  bool get isCoreDataLoaded => _heavyDataLoadCompleted;
+  bool get isLedgerDataLoaded => _ledgerDataLoadCompleted;
+  bool get isSyncDataLoaded => _syncDataLoadCompleted;
+  bool get isHeavyDataLoaded =>
+      _heavyDataLoadCompleted &&
+      _ledgerDataLoadCompleted &&
+      _syncDataLoadCompleted;
+  Future<void> ensureHeavyDataLoaded() async {
+    await _requestHeavyDataLoad();
+    await _requestLedgerDataLoad();
+    await _requestSyncDataLoad();
+  }
+
+  Future<void> warmDeferredPageCaches() async {
+    await StartupTimingService.measure(
+      'app_store.post_startup_cache_warm',
+      () async {
+        await _requestHeavyDataLoad();
+        await Future<void>.delayed(Duration.zero);
+        _ensureProductsCache();
+        _ensureCustomersCache();
+        _ensureSalesCache();
+        _ensureSuppliersCache();
+        _ensureExpensesCache();
+        _ensurePurchasesCache();
+        _ensureStockMovementsCache();
+        purchasesOverview;
+        expensesOverview;
+
+        await _requestLedgerDataLoad();
+        await Future<void>.delayed(Duration.zero);
+        _ensureAccountLedgerCache();
+
+        await _requestSyncDataLoad();
+      },
+      category: 'app_store',
+    );
+  }
+
+  Future<void> _requestHeavyDataLoad() {
+    if (_heavyDataLoadCompleted) return Future.value();
+    final existing = _heavyDataLoadFuture;
+    if (existing != null) return existing;
+    final future = _loadDeferredStartupData();
+    _heavyDataLoadFuture = future.whenComplete(() {
+      _heavyDataLoadFuture = null;
+      _heavyDataLoadCompleted = true;
+    });
+    return _heavyDataLoadFuture!;
+  }
+
+  Future<void> _requestLedgerDataLoad() {
+    if (_ledgerDataLoadCompleted) return Future.value();
+    final existing = _ledgerDataLoadFuture;
+    if (existing != null) return existing;
+    final future = _loadLedgerDeferredStartupData();
+    _ledgerDataLoadFuture = future.whenComplete(() {
+      _ledgerDataLoadFuture = null;
+      _ledgerDataLoadCompleted = true;
+    });
+    return _ledgerDataLoadFuture!;
+  }
+
+  Future<void> _requestSyncDataLoad() {
+    if (_syncDataLoadCompleted) return Future.value();
+    final existing = _syncDataLoadFuture;
+    if (existing != null) return existing;
+    final future = _loadSyncDeferredStartupData();
+    _syncDataLoadFuture = future.whenComplete(() {
+      _syncDataLoadFuture = null;
+      _syncDataLoadCompleted = true;
+    });
+    return _syncDataLoadFuture!;
+  }
+
   List<Product> get products {
-    _ensureDerivedListCaches();
+    _requestHeavyDataLoad();
+    _ensureProductsCache();
     return _cachedProducts!;
   }
 
   List<Product> get allProductsForDiagnostics => List.unmodifiable(_products);
+  List<Customer> get allCustomersForDiagnostics =>
+      List.unmodifiable(_customers);
+  List<Supplier> get allSuppliersForDiagnostics =>
+      List.unmodifiable(_suppliers);
   List<Customer> get customers {
-    _ensureDerivedListCaches();
+    _requestHeavyDataLoad();
+    _ensureCustomersCache();
     return _cachedCustomers!;
   }
 
   List<Sale> get sales {
-    _ensureDerivedListCaches();
+    _requestHeavyDataLoad();
+    _ensureSalesCache();
     return _cachedSales!;
   }
 
   List<SaleQuotation> get saleQuotations {
-    _ensureDerivedListCaches();
+    _requestHeavyDataLoad();
+    _ensureSaleQuotationsCache();
     return _cachedSaleQuotations!;
   }
 
   List<DeliveryNote> get deliveryNotes {
-    _ensureDerivedListCaches();
+    _requestHeavyDataLoad();
+    _ensureDeliveryNotesCache();
     return _cachedDeliveryNotes!;
   }
 
   List<BillOfMaterials> get billsOfMaterials {
-    _ensureDerivedListCaches();
+    _requestHeavyDataLoad();
+    _ensureBillsOfMaterialsCache();
     return _cachedBillsOfMaterials!;
   }
 
   List<ManufacturingOrder> get manufacturingOrders {
-    _ensureDerivedListCaches();
+    _requestHeavyDataLoad();
+    _ensureManufacturingOrdersCache();
     return _cachedManufacturingOrders!;
   }
 
   List<Supplier> get suppliers {
-    _ensureDerivedListCaches();
+    _requestHeavyDataLoad();
+    _ensureSuppliersCache();
     return _cachedSuppliers!;
   }
 
   List<SupplierProductPrice> get supplierProductPrices {
-    _ensureDerivedListCaches();
+    _requestHeavyDataLoad();
+    _ensureSupplierProductPricesCache();
     return _cachedSupplierProductPrices!;
   }
 
   List<PriceList> get priceLists {
-    _ensureDerivedListCaches();
+    _requestHeavyDataLoad();
+    _ensurePriceListsCache();
     return _cachedPriceLists!;
   }
 
   List<ProductPrice> get productPrices {
-    _ensureDerivedListCaches();
+    _requestHeavyDataLoad();
+    _ensureProductPricesCache();
     return _cachedProductPrices!;
   }
 
   List<ProductPriceOverride> get productPriceOverrides {
-    _ensureDerivedListCaches();
+    _requestHeavyDataLoad();
+    _ensureProductPriceOverridesCache();
     return _cachedProductPriceOverrides!;
   }
 
   List<ProductCost> get productCosts {
-    _ensureDerivedListCaches();
+    _requestHeavyDataLoad();
+    _ensureProductCostsCache();
     return _cachedProductCosts!;
   }
 
   List<CostingMethodHistory> get costingMethodHistory {
-    _ensureDerivedListCaches();
+    _requestHeavyDataLoad();
+    _ensureCostingMethodHistoryCache();
     return _cachedCostingMethodHistory!;
   }
 
   InventoryCostingMethod get inventoryCostingMethod => _inventoryCostingMethod;
 
   List<InventoryCostLayer> get inventoryCostLayers {
-    _ensureDerivedListCaches();
+    _requestHeavyDataLoad();
+    _ensureInventoryCostLayersCache();
     return _cachedInventoryCostLayers!;
   }
 
   ProductCost productCostFor(String productId) {
-    _ensureProductCostEntries();
-    return _productCosts.firstWhere((item) => item.productId == productId,
-        orElse: () => ProductCost(productId: productId));
+    _ensureProductPricingLookupCaches();
+    return _productCostByProductId[productId] ??
+        ProductCost(productId: productId);
   }
 
   PriceList get defaultPriceList {
@@ -456,17 +726,11 @@ class AppStore extends ChangeNotifier {
 
   ProductPrice? defaultProductPriceFor(String productId,
       {String unitId = 'base'}) {
+    _ensureProductPricingLookupCaches();
     _ensureDefaultProductPriceEntries();
     final priceListId = defaultPriceList.id;
-    for (final item in _productPrices) {
-      if (item.productId == productId &&
-          item.priceListId == priceListId &&
-          item.unitId == unitId &&
-          item.isActive) {
-        return item;
-      }
-    }
-    return null;
+    return _productPriceByLookupKey[
+        _productPriceLookupKey(productId, priceListId, unitId)];
   }
 
   ProductPriceOverride? productPriceOverrideFor(
@@ -519,22 +783,26 @@ class AppStore extends ChangeNotifier {
   List<SupplierProductPrice> get allSupplierProductPricesForDiagnostics =>
       List.unmodifiable(_supplierProductPrices);
   List<CatalogItem> get categories {
-    _ensureDerivedListCaches();
+    _requestHeavyDataLoad();
+    _ensureCategoriesCache();
     return _cachedCategories!;
   }
 
   List<CatalogItem> get brands {
-    _ensureDerivedListCaches();
+    _requestHeavyDataLoad();
+    _ensureBrandsCache();
     return _cachedBrands!;
   }
 
   List<CatalogItem> get units {
-    _ensureDerivedListCaches();
+    _requestHeavyDataLoad();
+    _ensureUnitsCache();
     return _cachedUnits!;
   }
 
   List<DataConflict> get dataConflicts {
-    _ensureDerivedListCaches();
+    _requestHeavyDataLoad();
+    _ensureDataConflictsCache();
     return _cachedDataConflicts!;
   }
 
@@ -542,17 +810,20 @@ class AppStore extends ChangeNotifier {
   int get blockingDataConflictCount =>
       dataConflicts.where((item) => item.blocking).length;
   List<Expense> get expenses {
-    _ensureDerivedListCaches();
+    _requestHeavyDataLoad();
+    _ensureExpensesCache();
     return _cachedExpenses!;
   }
 
   List<Purchase> get purchases {
-    _ensureDerivedListCaches();
+    _requestHeavyDataLoad();
+    _ensurePurchasesCache();
     return _cachedPurchases!;
   }
 
   List<StockMovement> get stockMovements {
-    _ensureDerivedListCaches();
+    _requestHeavyDataLoad();
+    _ensureStockMovementsCache();
     return _cachedStockMovements!;
   }
 
@@ -573,7 +844,8 @@ class AppStore extends ChangeNotifier {
       );
   int get pendingAutoCorrectionCount => pendingAutoCorrectionMovements.length;
   List<InventoryCountSession> get inventoryCountSessions {
-    _ensureDerivedListCaches();
+    _requestHeavyDataLoad();
+    _ensureInventoryCountSessionsCache();
     return _cachedInventoryCountSessions!;
   }
 
@@ -585,7 +857,8 @@ class AppStore extends ChangeNotifier {
   }
 
   List<Warehouse> get warehouses {
-    _ensureDerivedListCaches();
+    _requestHeavyDataLoad();
+    _ensureWarehousesCache();
     return _cachedWarehouses!;
   }
 
@@ -623,16 +896,21 @@ class AppStore extends ChangeNotifier {
         lastModifiedByDeviceId: _deviceId,
       ),
     );
+    _rememberSqliteDirtyBusinessRow(
+      _warehousesKey,
+      _warehouses.first.toJson(),
+    );
   }
 
   void _invalidateDerivedDataCaches() {
-    _derivedListCachesDirty = true;
+    _derivedListCacheGeneration += 1;
     _warehouseStockCacheDirty = true;
     _purchaseInsightsCacheDirty = true;
   }
 
   @override
   void notifyListeners() {
+    _storeRevision += 1;
     _invalidateDerivedDataCaches();
     SyncDiagnosticsLog.add(
       '[SYNC_TRACE] notifyListeners device=$_deviceId '
@@ -644,9 +922,17 @@ class AppStore extends ChangeNotifier {
     super.notifyListeners();
   }
 
-  void _ensureDerivedListCaches() {
-    if (!_derivedListCachesDirty) return;
+  int get storeRevision => _storeRevision;
 
+  bool _isDerivedCacheCurrent(int generation) =>
+      generation == _derivedListCacheGeneration;
+
+  void _ensureProductsCache() {
+    if (_cachedProductsGeneration == _productsRevision &&
+        _cachedProducts != null &&
+        _cachedStockTrackedProducts != null) {
+      return;
+    }
     _cachedProducts = UnmodifiableListView(
       _sortedProducts(
         _products.where((item) => !item.isDeleted).toList(growable: false),
@@ -659,9 +945,24 @@ class AppStore extends ChangeNotifier {
             .toList(growable: false),
       ),
     );
+    _cachedProductsGeneration = _productsRevision;
+  }
+
+  void _ensureCustomersCache() {
+    if (_cachedCustomersGeneration == _customersRevision &&
+        _cachedCustomers != null) {
+      return;
+    }
     _cachedCustomers = UnmodifiableListView(
       _customers.where((item) => !item.isDeleted).toList(growable: false),
     );
+    _cachedCustomersGeneration = _customersRevision;
+  }
+
+  void _ensureSalesCache() {
+    if (_cachedSalesGeneration == _salesRevision && _cachedSales != null) {
+      return;
+    }
     _cachedSales = UnmodifiableListView(
       _sales
           .where((item) => !item.isDeleted)
@@ -669,6 +970,14 @@ class AppStore extends ChangeNotifier {
           .reversed
           .toList(growable: false),
     );
+    _cachedSalesGeneration = _salesRevision;
+  }
+
+  void _ensureSaleQuotationsCache() {
+    if (_isDerivedCacheCurrent(_cachedSaleQuotationsGeneration) &&
+        _cachedSaleQuotations != null) {
+      return;
+    }
     _cachedSaleQuotations = UnmodifiableListView(
       _saleQuotations
           .where((item) => !item.isDeleted)
@@ -676,6 +985,14 @@ class AppStore extends ChangeNotifier {
           .reversed
           .toList(growable: false),
     );
+    _cachedSaleQuotationsGeneration = _derivedListCacheGeneration;
+  }
+
+  void _ensureDeliveryNotesCache() {
+    if (_isDerivedCacheCurrent(_cachedDeliveryNotesGeneration) &&
+        _cachedDeliveryNotes != null) {
+      return;
+    }
     _cachedDeliveryNotes = UnmodifiableListView(
       _deliveryNotes
           .where((item) => !item.isDeleted)
@@ -683,6 +1000,14 @@ class AppStore extends ChangeNotifier {
           .reversed
           .toList(growable: false),
     );
+    _cachedDeliveryNotesGeneration = _derivedListCacheGeneration;
+  }
+
+  void _ensureBillsOfMaterialsCache() {
+    if (_isDerivedCacheCurrent(_cachedBillsOfMaterialsGeneration) &&
+        _cachedBillsOfMaterials != null) {
+      return;
+    }
     _cachedBillsOfMaterials = UnmodifiableListView(
       _billsOfMaterials
           .where((item) => !item.isDeleted && item.isActive)
@@ -690,6 +1015,14 @@ class AppStore extends ChangeNotifier {
           .reversed
           .toList(growable: false),
     );
+    _cachedBillsOfMaterialsGeneration = _derivedListCacheGeneration;
+  }
+
+  void _ensureManufacturingOrdersCache() {
+    if (_isDerivedCacheCurrent(_cachedManufacturingOrdersGeneration) &&
+        _cachedManufacturingOrders != null) {
+      return;
+    }
     _cachedManufacturingOrders = UnmodifiableListView(
       _manufacturingOrders
           .where((item) => !item.isDeleted)
@@ -697,45 +1030,142 @@ class AppStore extends ChangeNotifier {
           .reversed
           .toList(growable: false),
     );
+    _cachedManufacturingOrdersGeneration = _derivedListCacheGeneration;
+  }
+
+  void _ensureSuppliersCache() {
+    if (_cachedSuppliersGeneration == _suppliersRevision &&
+        _cachedSuppliers != null) {
+      return;
+    }
     _cachedSuppliers = UnmodifiableListView(
       _suppliers.where((item) => !item.isDeleted).toList(growable: false),
     );
+    _cachedSuppliersGeneration = _suppliersRevision;
+  }
+
+  void _ensureSupplierProductPricesCache() {
+    if (_cachedSupplierProductPricesGeneration ==
+            _supplierProductPricesRevision &&
+        _cachedSupplierProductPrices != null) {
+      return;
+    }
     _cachedSupplierProductPrices = UnmodifiableListView(
       _supplierProductPrices
           .where((item) => !item.isDeleted)
           .toList(growable: false),
     );
+    _cachedSupplierProductPricesGeneration = _supplierProductPricesRevision;
+  }
+
+  void _ensurePriceListsCache() {
+    if (_cachedPriceListsGeneration == _productsRevision &&
+        _cachedPriceLists != null) {
+      return;
+    }
     _cachedPriceLists = UnmodifiableListView(
       _priceLists.where((item) => item.isActive).toList(growable: false),
     );
+    _cachedPriceListsGeneration = _productsRevision;
+  }
+
+  void _ensureProductPricesCache() {
+    if (_cachedProductPricesGeneration == _productsRevision &&
+        _cachedProductPrices != null) {
+      return;
+    }
     _cachedProductPrices = UnmodifiableListView(
       _productPrices.where((item) => item.isActive).toList(growable: false),
     );
+    _cachedProductPricesGeneration = _productsRevision;
+  }
+
+  void _ensureProductPriceOverridesCache() {
+    if (_cachedProductPriceOverridesGeneration == _productsRevision &&
+        _cachedProductPriceOverrides != null) {
+      return;
+    }
     _cachedProductPriceOverrides = UnmodifiableListView(
       _productPriceOverrides
           .where((item) => item.isActive)
           .toList(growable: false),
     );
+    _cachedProductPriceOverridesGeneration = _productsRevision;
+  }
+
+  void _ensureProductCostsCache() {
+    if (_cachedProductCostsGeneration == _productsRevision &&
+        _cachedProductCosts != null) {
+      return;
+    }
     _cachedProductCosts = UnmodifiableListView(
       _productCosts.toList(growable: false),
     );
+    _cachedProductCostsGeneration = _productsRevision;
+  }
+
+  void _ensureCostingMethodHistoryCache() {
+    if (_cachedCostingMethodHistoryGeneration == _productsRevision &&
+        _cachedCostingMethodHistory != null) {
+      return;
+    }
     _cachedCostingMethodHistory = UnmodifiableListView(
       _costingMethodHistory.toList(growable: false)
         ..sort((a, b) => b.effectiveFrom.compareTo(a.effectiveFrom)),
     );
+    _cachedCostingMethodHistoryGeneration = _productsRevision;
+  }
+
+  void _ensureInventoryCostLayersCache() {
+    if (_cachedInventoryCostLayersGeneration == _productsRevision &&
+        _cachedInventoryCostLayers != null) {
+      return;
+    }
     _cachedInventoryCostLayers = UnmodifiableListView(
       _inventoryCostLayers.toList(growable: false)
         ..sort((a, b) => a.createdAt.compareTo(b.createdAt)),
     );
+    _cachedInventoryCostLayersGeneration = _productsRevision;
+  }
+
+  void _ensureCategoriesCache() {
+    if (_isDerivedCacheCurrent(_cachedCategoriesGeneration) &&
+        _cachedCategories != null) {
+      return;
+    }
     _cachedCategories = UnmodifiableListView(
       _categories.where((item) => !item.isDeleted).toList(growable: false),
     );
+    _cachedCategoriesGeneration = _derivedListCacheGeneration;
+  }
+
+  void _ensureBrandsCache() {
+    if (_isDerivedCacheCurrent(_cachedBrandsGeneration) &&
+        _cachedBrands != null) {
+      return;
+    }
     _cachedBrands = UnmodifiableListView(
       _brands.where((item) => !item.isDeleted).toList(growable: false),
     );
+    _cachedBrandsGeneration = _derivedListCacheGeneration;
+  }
+
+  void _ensureUnitsCache() {
+    if (_isDerivedCacheCurrent(_cachedUnitsGeneration) &&
+        _cachedUnits != null) {
+      return;
+    }
     _cachedUnits = UnmodifiableListView(
       _units.where((item) => !item.isDeleted).toList(growable: false),
     );
+    _cachedUnitsGeneration = _derivedListCacheGeneration;
+  }
+
+  void _ensureExpensesCache() {
+    if (_cachedExpensesGeneration == _expensesRevision &&
+        _cachedExpenses != null) {
+      return;
+    }
     _cachedExpenses = UnmodifiableListView(
       _expenses
           .where((item) => !item.isDeleted)
@@ -743,6 +1173,14 @@ class AppStore extends ChangeNotifier {
           .reversed
           .toList(growable: false),
     );
+    _cachedExpensesGeneration = _expensesRevision;
+  }
+
+  void _ensurePurchasesCache() {
+    if (_cachedPurchasesGeneration == _purchasesRevision &&
+        _cachedPurchases != null) {
+      return;
+    }
     _cachedPurchases = UnmodifiableListView(
       _purchases
           .where((item) => !item.isDeleted)
@@ -750,17 +1188,49 @@ class AppStore extends ChangeNotifier {
           .reversed
           .toList(growable: false),
     );
+    _cachedPurchasesGeneration = _purchasesRevision;
+  }
+
+  void _ensureStockMovementsCache() {
+    if (_cachedStockMovementsGeneration == _stockMovementsRevision &&
+        _cachedStockMovements != null) {
+      return;
+    }
     _cachedStockMovements = UnmodifiableListView(
       _stockMovements.toList(growable: false).reversed.toList(growable: false),
     );
+    _cachedStockMovementsGeneration = _stockMovementsRevision;
+  }
+
+  void _ensureInventoryCountSessionsCache() {
+    if (_cachedInventoryCountSessionsGeneration == _inventoryCountsRevision &&
+        _cachedInventoryCountSessions != null) {
+      return;
+    }
     _cachedInventoryCountSessions = UnmodifiableListView(
       _inventoryCounts.toList(growable: false).reversed.toList(growable: false),
     );
+    _cachedInventoryCountSessionsGeneration = _inventoryCountsRevision;
+  }
+
+  void _ensureWarehousesCache() {
+    if (_cachedWarehousesGeneration == _warehousesRevision &&
+        _cachedWarehouses != null) {
+      return;
+    }
     _cachedWarehouses = UnmodifiableListView(
       _warehouses
           .where((item) => !item.isDeleted && item.isActive)
           .toList(growable: false),
     );
+    _cachedWarehousesGeneration = _warehousesRevision;
+  }
+
+  void _ensureAccountTransactionsCache() {
+    if (_cachedAccountTransactionsGeneration == _accountTransactionsRevision &&
+        _cachedAccountTransactions != null) {
+      return;
+    }
     _cachedAccountTransactions = UnmodifiableListView(
       _accountTransactions
           .where((item) => !item.isDeleted)
@@ -768,10 +1238,18 @@ class AppStore extends ChangeNotifier {
           .reversed
           .toList(growable: false),
     );
+    _cachedAccountTransactionsGeneration = _accountTransactionsRevision;
+  }
+
+  void _ensureDataConflictsCache() {
+    if (_isDerivedCacheCurrent(_cachedDataConflictsGeneration) &&
+        _cachedDataConflicts != null) {
+      return;
+    }
     _cachedDataConflicts = UnmodifiableListView(
       _detectDataConflicts(),
     );
-    _derivedListCachesDirty = false;
+    _cachedDataConflictsGeneration = _derivedListCacheGeneration;
   }
 
   void _ensureWarehouseStockCache() {
@@ -834,7 +1312,8 @@ class AppStore extends ChangeNotifier {
   }
 
   List<AccountTransaction> get accountTransactions {
-    _ensureDerivedListCaches();
+    _requestLedgerDataLoad();
+    _ensureAccountTransactionsCache();
     return _cachedAccountTransactions!;
   }
 
@@ -843,6 +1322,60 @@ class AppStore extends ChangeNotifier {
 
   void _invalidateAccountLedgerCache() {
     _accountLedgerCacheDirty = true;
+  }
+
+  bool _isLedgerTrackedAccountTransaction(AccountTransaction item) {
+    if (item.isDeleted) return false;
+    final type = item.accountType.trim().toLowerCase();
+    if (type != 'customer' && type != 'supplier') return false;
+    return item.accountId.trim().isNotEmpty;
+  }
+
+  void _removeAccountTransactionFromLedgerCache(AccountTransaction item) {
+    if (_accountLedgerCacheDirty || !_isLedgerTrackedAccountTransaction(item)) {
+      return;
+    }
+    final key = _accountLedgerKey(item.accountType, item.accountId);
+    final balance = _accountBalanceCache[key];
+    if (balance != null) {
+      final nextBalance = balance - item.signedAmount;
+      if (nextBalance.abs() < 0.000001) {
+        _accountBalanceCache.remove(key);
+      } else {
+        _accountBalanceCache[key] = nextBalance;
+      }
+    }
+    final rows = _accountTransactionsByAccountCache[key];
+    if (rows == null) return;
+    rows.removeWhere((row) => row.id == item.id);
+    if (rows.isEmpty) {
+      _accountTransactionsByAccountCache.remove(key);
+    }
+  }
+
+  void _addAccountTransactionToLedgerCache(AccountTransaction item) {
+    if (_accountLedgerCacheDirty || !_isLedgerTrackedAccountTransaction(item)) {
+      return;
+    }
+    final key = _accountLedgerKey(item.accountType, item.accountId);
+    _accountBalanceCache[key] =
+        (_accountBalanceCache[key] ?? 0) + item.signedAmount;
+    final rows =
+        _accountTransactionsByAccountCache[key] ??= <AccountTransaction>[];
+    rows.removeWhere((row) => row.id == item.id);
+    rows.add(item);
+    rows.sort((a, b) => b.date.compareTo(a.date));
+  }
+
+  void _replaceAccountTransactionInLedgerCache({
+    AccountTransaction? previous,
+    required AccountTransaction current,
+  }) {
+    if (_accountLedgerCacheDirty) return;
+    if (previous != null) {
+      _removeAccountTransactionFromLedgerCache(previous);
+    }
+    _addAccountTransactionToLedgerCache(current);
   }
 
   void _ensureAccountLedgerCache() {
@@ -872,6 +1405,7 @@ class AppStore extends ChangeNotifier {
     String accountType,
     String accountId,
   ) {
+    _requestLedgerDataLoad();
     _ensureAccountLedgerCache();
     return List.unmodifiable(
       _accountTransactionsByAccountCache[_accountLedgerKey(
@@ -883,6 +1417,7 @@ class AppStore extends ChangeNotifier {
   }
 
   double accountBalance(String accountType, String accountId) {
+    _requestLedgerDataLoad();
     _ensureAccountLedgerCache();
     return _accountBalanceCache[_accountLedgerKey(accountType, accountId)] ?? 0;
   }
@@ -1045,17 +1580,32 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  List<SyncChange> get syncChanges => List.unmodifiable(_syncChanges);
+  List<SyncChange> get syncChanges {
+    _requestSyncDataLoad();
+    return List.unmodifiable(_syncChanges);
+  }
+
   int get currentSyncSequence => _syncSequence;
-  List<SyncQueueItem> get syncQueue => List.unmodifiable(_syncQueue);
-  List<SyncQueueItem> get pendingSyncQueue =>
-      List.unmodifiable(_syncQueue.where((item) => item.isPending));
-  List<SyncChange> get pendingSyncChanges =>
-      List.unmodifiable(_syncChanges.where((item) => !item.isSynced));
+  List<SyncQueueItem> get syncQueue {
+    _requestSyncDataLoad();
+    return List.unmodifiable(_syncQueue);
+  }
+
+  List<SyncQueueItem> get pendingSyncQueue {
+    _requestSyncDataLoad();
+    return List.unmodifiable(_syncQueue.where((item) => item.isPending));
+  }
+
+  List<SyncChange> get pendingSyncChanges {
+    _requestSyncDataLoad();
+    return List.unmodifiable(_syncChanges.where((item) => !item.isSynced));
+  }
+
   List<SyncQueueItem> pendingSyncQueueForTarget(
     String target, {
     bool readyOnly = true,
   }) {
+    _requestSyncDataLoad();
     final items = _syncQueue.where(
       (item) => item.target == target && item.isPending,
     );
@@ -1068,6 +1618,7 @@ class AppStore extends ChangeNotifier {
     String target, {
     bool readyOnly = true,
   }) {
+    _requestSyncDataLoad();
     final queueItems = pendingSyncQueueForTarget(target, readyOnly: readyOnly);
     final ids = queueItems.map((item) => item.changeId).toSet();
     return List.unmodifiable(
@@ -1078,6 +1629,7 @@ class AppStore extends ChangeNotifier {
   }
 
   List<SyncChange> submittedSyncChangesForTarget(String target) {
+    _requestSyncDataLoad();
     final ids = _syncQueue
         .where((item) => item.target == target && item.status == 'submitted')
         .map((item) => item.changeId)
@@ -1102,12 +1654,14 @@ class AppStore extends ChangeNotifier {
   }
 
   int get activeClientPendingSyncCount {
+    _requestSyncDataLoad();
     final target = activeClientSyncTarget;
     if (target.isEmpty) return pendingSyncCount;
     return pendingSyncQueueForTarget(target, readyOnly: false).length;
   }
 
   DateTime? get latestResetSyncAt {
+    _requestSyncDataLoad();
     DateTime? latest;
     for (final change in _syncChanges) {
       if (change.entityType == 'system' &&
@@ -1554,14 +2108,102 @@ class AppStore extends ChangeNotifier {
 
   double get totalSalesAmount =>
       sales.fold<double>(0, (sum, sale) => sum + sale.total);
-  double get totalExpensesAmount => expenses
-      .where((item) => item.isPosted)
-      .fold<double>(0, (sum, expense) => sum + expense.amount);
-  double get totalPurchasesAmount => purchases
-      .where((item) => !item.isCancelled)
-      .fold<double>(0, (sum, purchase) => sum + purchase.subtotal);
-  int get pendingPurchaseCount =>
-      purchases.where((item) => item.status.toLowerCase() == 'draft').length;
+  double get totalExpensesAmount => expensesOverview.totalExpensesAmount;
+  double get totalPurchasesAmount => purchasesOverview.totalPurchasesAmount;
+  int get pendingPurchaseCount => purchasesOverview.pendingPurchaseCount;
+
+  PurchasesOverview get purchasesOverview {
+    final now = DateTime.now();
+    final monthKey = '${now.year}-${now.month}';
+    if (_cachedPurchasesOverviewRevision == _purchasesRevision &&
+        _cachedPurchasesOverviewMonthKey == monthKey &&
+        _cachedPurchasesOverview != null) {
+      return _cachedPurchasesOverview!;
+    }
+    var totalCount = 0;
+    var totalPurchasesAmount = 0.0;
+    var monthlyTotal = 0.0;
+    var monthlyCount = 0;
+    var draftTotal = 0.0;
+    var draftCount = 0;
+    var receivedCount = 0;
+    var returnedCount = 0;
+    var cancelledCount = 0;
+
+    for (final purchase in _purchases) {
+      if (purchase.isDeleted) continue;
+      totalCount += 1;
+      final isCancelled = purchase.isCancelled;
+      final isReceived = purchase.isReceived;
+      final isReturned = purchase.isReturned;
+      if (!isReceived && !isCancelled) draftCount += 1;
+      if (isReceived && !isReturned) receivedCount += 1;
+      if (isReturned) returnedCount += 1;
+      if (purchase.status.toLowerCase() == 'cancelled') {
+        cancelledCount += 1;
+      }
+      if (isCancelled) continue;
+      totalPurchasesAmount += purchase.subtotal;
+      if (purchase.date.year == now.year && purchase.date.month == now.month) {
+        monthlyTotal += purchase.subtotal;
+        monthlyCount += 1;
+      }
+      if (!isReceived) {
+        draftTotal += purchase.subtotal;
+      }
+    }
+
+    _cachedPurchasesOverview = PurchasesOverview(
+      totalCount: totalCount,
+      totalPurchasesAmount: totalPurchasesAmount,
+      monthlyTotal: monthlyTotal,
+      monthlyCount: monthlyCount,
+      draftTotal: draftTotal,
+      draftCount: draftCount,
+      receivedCount: receivedCount,
+      returnedCount: returnedCount,
+      cancelledCount: cancelledCount,
+      pendingPurchaseCount: draftCount,
+    );
+    _cachedPurchasesOverviewRevision = _purchasesRevision;
+    _cachedPurchasesOverviewMonthKey = monthKey;
+    return _cachedPurchasesOverview!;
+  }
+
+  ExpensesOverview get expensesOverview {
+    if (_cachedExpensesOverviewRevision == _expensesRevision &&
+        _cachedExpensesOverview != null) {
+      return _cachedExpensesOverview!;
+    }
+    var totalCount = 0;
+    var totalExpensesAmount = 0.0;
+    var draftCount = 0;
+    var postedCount = 0;
+    var cancelledCount = 0;
+    final categories = <String>{};
+    for (final expense in _expenses) {
+      if (expense.isDeleted) continue;
+      totalCount += 1;
+      final category = expense.category.trim();
+      if (category.isNotEmpty) categories.add(category);
+      if (expense.isDraft) draftCount += 1;
+      if (expense.isPosted) {
+        postedCount += 1;
+        totalExpensesAmount += expense.amount;
+      }
+      if (expense.isCancelled) cancelledCount += 1;
+    }
+    _cachedExpensesOverview = ExpensesOverview(
+      totalCount: totalCount,
+      totalExpensesAmount: totalExpensesAmount,
+      draftCount: draftCount,
+      postedCount: postedCount,
+      cancelledCount: cancelledCount,
+      categoryCount: categories.length,
+    );
+    _cachedExpensesOverviewRevision = _expensesRevision;
+    return _cachedExpensesOverview!;
+  }
 
   void _ensurePurchaseInsightsCache() {
     if (!_purchaseInsightsCacheDirty) return;
@@ -2048,7 +2690,7 @@ class AppStore extends ChangeNotifier {
       .where((product) => product.trackStock && product.isLowStock)
       .length;
   List<Product> get stockTrackedProducts {
-    _ensureDerivedListCaches();
+    _ensureProductsCache();
     return _cachedStockTrackedProducts!;
   }
 
@@ -2076,6 +2718,8 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> initialize() async {
+    StartupTimingService.event('app_store.initialize.begin',
+        category: 'app_store');
     await _migrateLegacySharedPreferencesIfNeeded();
     await _ensureDeviceId();
 
@@ -2086,110 +2730,107 @@ class AppStore extends ChangeNotifier {
         LocalDatabaseService.isSqliteAuthoritative && schemaVersion >= 17;
 
     if (canUseFastStartup) {
-      // Startup performance fix: do not hydrate every large business table while
-      // the splash/login shell is opening. The SQLite service now mirrors only
-      // scalar keys plus small login/catalog lists. Large lists are loaded right
-      // after startup and the UI is notified when they become available.
-      _categories
-        ..clear()
-        ..addAll(_loadCatalogItems(_categoriesKey));
-      _brands
-        ..clear()
-        ..addAll(_loadCatalogItems(_brandsKey));
-      _units
-        ..clear()
-        ..addAll(_loadCatalogItems(_unitsKey));
-      _storeProfile = _loadStoreProfile();
-      AccountingService.configureMoneyPolicy(_storeProfile);
-      _invoiceCounter = _loadInvoiceCounter();
-      _purchaseCounter = _loadPurchaseCounter();
-      _currentRole = LocalDatabaseService.getString(_currentRoleKey) ?? 'admin';
-      _roles
-        ..clear()
-        ..addAll(_loadRoles());
-      _users
-        ..clear()
-        ..addAll(_loadUsers());
-      await _ensureDefaultAdminUser();
-      _rememberLogin =
-          LocalDatabaseService.getString(_rememberLoginKey) == 'true';
-      _restoreActiveUser();
-      _appIdentity = _loadOrCreateAppIdentity();
-      _syncSequence = int.tryParse(
-            LocalDatabaseService.getString(_syncSequenceKey) ?? '',
-          ) ??
-          0;
-      _ensureCatalogDefaults();
-      _rebuildMutableEntityIndexes();
+      await StartupTimingService.measure(
+        'app_store.fast_startup_load',
+        () async {
+          // Startup performance fix: keep the first shell light.
+          // Only scalar keys plus small login/catalog lists are hydrated here.
+          // Core business lists load in the background after the app is ready.
+          _categories
+            ..clear()
+            ..addAll(await _loadCatalogItemsForStartup(_categoriesKey));
+          _brands
+            ..clear()
+            ..addAll(await _loadCatalogItemsForStartup(_brandsKey));
+          _units
+            ..clear()
+            ..addAll(await _loadCatalogItemsForStartup(_unitsKey));
+          _storeProfile = _loadStoreProfile();
+          AccountingService.configureMoneyPolicy(_storeProfile);
+          _invoiceCounter = _loadInvoiceCounter();
+          _purchaseCounter = _loadPurchaseCounter();
+          _currentRole =
+              LocalDatabaseService.getString(_currentRoleKey) ?? 'admin';
+          _roles
+            ..clear()
+            ..addAll(_loadRoles());
+          _users
+            ..clear()
+            ..addAll(_loadUsers());
+          await _ensureDefaultAdminUser();
+          _rememberLogin =
+              LocalDatabaseService.getString(_rememberLoginKey) == 'true';
+          _restoreActiveUser();
+          _appIdentity = _loadOrCreateAppIdentity();
+          _syncSequence = int.tryParse(
+                LocalDatabaseService.getString(_syncSequenceKey) ?? '',
+              ) ??
+              0;
+          _ensureCatalogDefaults();
+          _rebuildMutableEntityIndexes();
+        },
+        category: 'app_store',
+      );
 
       _isReady = true;
       notifyListeners();
-      unawaited(_loadDeferredStartupData());
+      unawaited(_requestHeavyDataLoad());
+      StartupTimingService.event('app_store.ready', category: 'app_store');
       return;
     }
 
     _products
       ..clear()
-      ..addAll(_loadProducts());
+      ..addAll(await _loadProductsForStartup());
     _customers
       ..clear()
-      ..addAll(_loadCustomers());
+      ..addAll(await _loadCustomersForStartup());
     _sales
       ..clear()
-      ..addAll(_loadSales());
+      ..addAll(await _loadSalesForStartup());
     _saleQuotations
       ..clear()
-      ..addAll(_loadSaleQuotations());
+      ..addAll(await _loadSaleQuotationsForStartup());
     _deliveryNotes
       ..clear()
-      ..addAll(_loadDeliveryNotes());
+      ..addAll(await _loadDeliveryNotesForStartup());
     _billsOfMaterials
       ..clear()
-      ..addAll(_loadBillsOfMaterials());
+      ..addAll(await _loadBillsOfMaterialsForStartup());
     _manufacturingOrders
       ..clear()
-      ..addAll(_loadManufacturingOrders());
+      ..addAll(await _loadManufacturingOrdersForStartup());
     _suppliers
       ..clear()
-      ..addAll(_loadSuppliers());
+      ..addAll(await _loadSuppliersForStartup());
     _supplierProductPrices
       ..clear()
-      ..addAll(_loadSupplierProductPrices());
+      ..addAll(await _loadSupplierProductPricesForStartup());
     _categories
       ..clear()
-      ..addAll(_loadCatalogItems(_categoriesKey));
+      ..addAll(await _loadCatalogItemsForStartup(_categoriesKey));
     _brands
       ..clear()
-      ..addAll(_loadCatalogItems(_brandsKey));
+      ..addAll(await _loadCatalogItemsForStartup(_brandsKey));
     _units
       ..clear()
-      ..addAll(_loadCatalogItems(_unitsKey));
+      ..addAll(await _loadCatalogItemsForStartup(_unitsKey));
     _expenses
       ..clear()
-      ..addAll(_loadExpenses());
+      ..addAll(await _loadExpensesForStartup());
     _purchases
       ..clear()
-      ..addAll(_loadPurchases());
+      ..addAll(await _loadPurchasesForStartup());
     _stockMovements
       ..clear()
       ..addAll(_loadStockMovements());
     _inventoryCounts
       ..clear()
-      ..addAll(_loadInventoryCounts());
+      ..addAll(await _loadInventoryCountsForStartup());
     _warehouses
       ..clear()
-      ..addAll(_loadWarehouses());
+      ..addAll(await _loadWarehousesForStartup());
     _ensureDefaultWarehouse();
-    _accountTransactions
-      ..clear()
-      ..addAll(_loadAccountTransactions());
-    _invalidateAccountLedgerCache();
-    _syncChanges
-      ..clear()
-      ..addAll(_loadSyncChanges());
-    _syncQueue
-      ..clear()
-      ..addAll(_loadSyncQueue());
     _storeProfile = _loadStoreProfile();
     AccountingService.configureMoneyPolicy(_storeProfile);
     _invoiceCounter = _loadInvoiceCounter();
@@ -2212,195 +2853,480 @@ class AppStore extends ChangeNotifier {
     _ensureDefaultPriceLists();
     _ensureDefaultProductPriceEntries();
     await _runDataMigrationsIfNeeded();
+    _rebuildStockMovementIndexes();
+    _rebuildPurchaseIndexes();
+    _rebuildExpenseIndexes();
+    _touchPurchasesData();
+    _touchExpensesData();
+    _heavyDataLoadCompleted = true;
+    _ledgerDataLoadCompleted = true;
+    _syncDataLoadCompleted = true;
 
     _isReady = true;
     notifyListeners();
+    StartupTimingService.event('app_store.ready', category: 'app_store');
   }
 
   Future<String?> _loadEntityListJsonForStartup(String key) {
     return LocalDatabaseService.getBusinessEntityListJson(key);
   }
 
-  Future<List<T>> _decodeDeferredList<T>(
-    String key,
-    T Function(Map<String, dynamic>) fromJson,
-  ) async {
-    var raw = await _loadEntityListJsonForStartup(key);
-    raw ??= LocalDatabaseService.getString(key);
-    if (raw == null || raw.isEmpty) return <T>[];
-    final decoded = jsonDecode(raw) as List<dynamic>;
-    return decoded
-        .map((item) => fromJson(Map<String, dynamic>.from(item as Map)))
-        .toList();
+  Future<List<String>> _loadEntityListJsonBatchesForStartup(
+    String key, {
+    int batchSize = 100,
+  }) {
+    return LocalDatabaseService.getBusinessEntityListJsonBatches(
+      key,
+      batchSize: batchSize,
+    );
   }
+
+  Future<List<T>> _decodeDeferredList<T>(
+      String key, T Function(Map<String, dynamic>) fromJson,
+      {int? batchSize}) async {
+    return StartupTimingService.measure(
+      'app_store.decode.$key',
+      () async {
+        if (batchSize != null && batchSize > 0) {
+          final batches = await _loadEntityListJsonBatchesForStartup(
+            key,
+            batchSize: batchSize,
+          );
+          if (batches.isNotEmpty) {
+            final result = <T>[];
+            for (final batchRaw in batches) {
+              if (batchRaw.trim().isEmpty) {
+                await Future<void>.delayed(Duration.zero);
+                continue;
+              }
+              final decoded = batchRaw.length > 250000
+                  ? await compute(_decodeJsonListPayload, batchRaw)
+                  : _decodeJsonListPayload(batchRaw);
+              for (final item in decoded) {
+                result.add(fromJson(item));
+              }
+              await Future<void>.delayed(Duration.zero);
+            }
+            return result;
+          }
+        }
+        var raw = await _loadEntityListJsonForStartup(key);
+        raw ??= LocalDatabaseService.getString(key);
+        if (raw == null || raw.isEmpty) return <T>[];
+        final decoded = raw.length > 250000
+            ? await compute(_decodeJsonListPayload, raw)
+            : _decodeJsonListPayload(raw);
+        final result = <T>[];
+        const chunkSize = 750;
+        for (var index = 0; index < decoded.length; index += 1) {
+          result.add(fromJson(decoded[index]));
+          if ((index + 1) % chunkSize == 0) {
+            await Future<void>.delayed(Duration.zero);
+          }
+        }
+        return result;
+      },
+      category: 'app_store',
+    );
+  }
+
+  Future<List<T>> _loadTypedOrLegacyList<T>(
+    String key,
+    Future<List<T>?> Function() typedLoader,
+    T Function(Map<String, dynamic>) fromJson, {
+    int? batchSize,
+  }) async {
+    final typed = await typedLoader();
+    if (typed != null) return typed;
+    return _decodeDeferredList<T>(
+      key,
+      fromJson,
+      batchSize: batchSize,
+    );
+  }
+
+  Future<List<StockMovement>> _loadStockMovementsForStartup() async {
+    final typed = await LocalDatabaseService.getStockMovementsFromSqlite();
+    if (typed != null) return typed;
+    return _decodeDeferredList<StockMovement>(
+      _stockMovementsKey,
+      StockMovement.fromJson,
+      batchSize: 100,
+    );
+  }
+
+  Future<List<Product>> _loadProductsForStartup() async =>
+      _loadTypedOrLegacyList<Product>(
+        _productsKey,
+        LocalDatabaseService.getProductsFromSqlite,
+        Product.fromJson,
+        batchSize: 100,
+      );
+
+  Future<List<Sale>> _loadSalesForStartup() async =>
+      _loadTypedOrLegacyList<Sale>(
+        _salesKey,
+        LocalDatabaseService.getSalesFromSqlite,
+        Sale.fromJson,
+        batchSize: 100,
+      );
+
+  Future<List<SaleQuotation>> _loadSaleQuotationsForStartup() async =>
+      _loadTypedOrLegacyList<SaleQuotation>(
+        _saleQuotationsKey,
+        LocalDatabaseService.getSaleQuotationsFromSqlite,
+        SaleQuotation.fromJson,
+        batchSize: 100,
+      );
+
+  Future<List<DeliveryNote>> _loadDeliveryNotesForStartup() async =>
+      _loadTypedOrLegacyList<DeliveryNote>(
+        _deliveryNotesKey,
+        LocalDatabaseService.getDeliveryNotesFromSqlite,
+        DeliveryNote.fromJson,
+        batchSize: 100,
+      );
+
+  Future<List<Purchase>> _loadPurchasesForStartup() async =>
+      _loadTypedOrLegacyList<Purchase>(
+        _purchasesKey,
+        LocalDatabaseService.getPurchasesFromSqlite,
+        Purchase.fromJson,
+        batchSize: 100,
+      );
+
+  Future<List<InventoryCountSession>> _loadInventoryCountsForStartup() async =>
+      _loadTypedOrLegacyList<InventoryCountSession>(
+        _inventoryCountsKey,
+        LocalDatabaseService.getInventoryCountsFromSqlite,
+        InventoryCountSession.fromJson,
+        batchSize: 100,
+      );
+
+  Future<List<BillOfMaterials>> _loadBillsOfMaterialsForStartup() async =>
+      _loadTypedOrLegacyList<BillOfMaterials>(
+        _billsOfMaterialsKey,
+        LocalDatabaseService.getBillOfMaterialsFromSqlite,
+        BillOfMaterials.fromJson,
+        batchSize: 100,
+      );
+
+  Future<List<ManufacturingOrder>> _loadManufacturingOrdersForStartup() async =>
+      _loadTypedOrLegacyList<ManufacturingOrder>(
+        _manufacturingOrdersKey,
+        LocalDatabaseService.getManufacturingOrdersFromSqlite,
+        ManufacturingOrder.fromJson,
+        batchSize: 100,
+      );
+
+  Future<List<AccountTransaction>> _loadAccountTransactionsForStartup() async {
+    final typed = await LocalDatabaseService.getAccountTransactionsFromSqlite();
+    if (typed != null) return typed;
+    return _decodeDeferredList<AccountTransaction>(
+      _accountTransactionsKey,
+      AccountTransaction.fromJson,
+      batchSize: 100,
+    );
+  }
+
+  Future<List<Customer>> _loadCustomersForStartup() async =>
+      _loadTypedOrLegacyList<Customer>(
+        _customersKey,
+        LocalDatabaseService.getCustomersFromSqlite,
+        Customer.fromJson,
+      );
+
+  Future<List<Supplier>> _loadSuppliersForStartup() async =>
+      _loadTypedOrLegacyList<Supplier>(
+        _suppliersKey,
+        LocalDatabaseService.getSuppliersFromSqlite,
+        Supplier.fromJson,
+      );
+
+  Future<List<Expense>> _loadExpensesForStartup() async =>
+      _loadTypedOrLegacyList<Expense>(
+        _expensesKey,
+        LocalDatabaseService.getExpensesFromSqlite,
+        Expense.fromJson,
+      );
+
+  Future<List<Warehouse>> _loadWarehousesForStartup() async =>
+      _loadTypedOrLegacyList<Warehouse>(
+        _warehousesKey,
+        LocalDatabaseService.getWarehousesFromSqlite,
+        Warehouse.fromJson,
+      );
+
+  Future<List<CatalogItem>> _loadCatalogItemsForStartup(String key) async =>
+      _loadTypedOrLegacyList<CatalogItem>(
+        key,
+        () => LocalDatabaseService.getCatalogItemsFromSqlite(key),
+        CatalogItem.fromJson,
+      );
+
+  Future<List<SupplierProductPrice>>
+      _loadSupplierProductPricesForStartup() async =>
+          _loadTypedOrLegacyList<SupplierProductPrice>(
+            _supplierProductPricesKey,
+            LocalDatabaseService.getSupplierProductPricesFromSqlite,
+            SupplierProductPrice.fromJson,
+          );
+
+  Future<List<PriceList>> _loadPriceListsForStartup() async =>
+      _loadTypedOrLegacyList<PriceList>(
+        _priceListsKey,
+        LocalDatabaseService.getPriceListsFromSqlite,
+        PriceList.fromJson,
+      );
+
+  Future<List<ProductPrice>> _loadProductPricesForStartup() async =>
+      _loadTypedOrLegacyList<ProductPrice>(
+        _productPricesKey,
+        LocalDatabaseService.getProductPricesFromSqlite,
+        ProductPrice.fromJson,
+      );
+
+  Future<List<ProductPriceOverride>>
+      _loadProductPriceOverridesForStartup() async =>
+          _loadTypedOrLegacyList<ProductPriceOverride>(
+            _productPriceOverridesKey,
+            LocalDatabaseService.getProductPriceOverridesFromSqlite,
+            ProductPriceOverride.fromJson,
+          );
+
+  Future<List<ProductCost>> _loadProductCostsForStartup() async =>
+      _loadTypedOrLegacyList<ProductCost>(
+        _productCostsKey,
+        LocalDatabaseService.getProductCostsFromSqlite,
+        ProductCost.fromJson,
+      );
+
+  Future<List<CostingMethodHistory>>
+      _loadCostingMethodHistoryForStartup() async =>
+          _loadTypedOrLegacyList<CostingMethodHistory>(
+            _costingMethodHistoryKey,
+            LocalDatabaseService.getCostingMethodHistoryFromSqlite,
+            CostingMethodHistory.fromJson,
+          );
+
+  Future<List<InventoryCostLayer>> _loadInventoryCostLayersForStartup() async =>
+      _loadTypedOrLegacyList<InventoryCostLayer>(
+        _inventoryCostLayersKey,
+        LocalDatabaseService.getInventoryCostLayersFromSqlite,
+        InventoryCostLayer.fromJson,
+      );
 
   Future<void> _loadDeferredStartupData() async {
     try {
-      final results = await Future.wait<List<dynamic>>(<Future<List<dynamic>>>[
-        _decodeDeferredList<Product>(_productsKey, Product.fromJson),
-        _decodeDeferredList<Customer>(_customersKey, Customer.fromJson),
-        _decodeDeferredList<Sale>(_salesKey, Sale.fromJson),
-        _decodeDeferredList<SaleQuotation>(
-          _saleQuotationsKey,
-          SaleQuotation.fromJson,
-        ),
-        _decodeDeferredList<DeliveryNote>(
-          _deliveryNotesKey,
-          DeliveryNote.fromJson,
-        ),
-        _decodeDeferredList<BillOfMaterials>(
-          _billsOfMaterialsKey,
-          BillOfMaterials.fromJson,
-        ),
-        _decodeDeferredList<ManufacturingOrder>(
-          _manufacturingOrdersKey,
-          ManufacturingOrder.fromJson,
-        ),
-        _decodeDeferredList<Supplier>(_suppliersKey, Supplier.fromJson),
-        _decodeDeferredList<SupplierProductPrice>(
-          _supplierProductPricesKey,
-          SupplierProductPrice.fromJson,
-        ),
-        _decodeDeferredList<PriceList>(
-          _priceListsKey,
-          PriceList.fromJson,
-        ),
-        _decodeDeferredList<ProductPrice>(
-          _productPricesKey,
-          ProductPrice.fromJson,
-        ),
-        _decodeDeferredList<ProductPriceOverride>(
-          _productPriceOverridesKey,
-          ProductPriceOverride.fromJson,
-        ),
-        _decodeDeferredList<ProductCost>(
-          _productCostsKey,
-          ProductCost.fromJson,
-        ),
-        _decodeDeferredList<CostingMethodHistory>(
-          _costingMethodHistoryKey,
-          CostingMethodHistory.fromJson,
-        ),
-        _decodeDeferredList<InventoryCostLayer>(
-          _inventoryCostLayersKey,
-          InventoryCostLayer.fromJson,
-        ),
-        _decodeDeferredList<Expense>(_expensesKey, Expense.fromJson),
-        _decodeDeferredList<Purchase>(_purchasesKey, Purchase.fromJson),
-        _decodeDeferredList<StockMovement>(
-          _stockMovementsKey,
-          StockMovement.fromJson,
-        ),
-        _decodeDeferredList<InventoryCountSession>(
-          _inventoryCountsKey,
-          InventoryCountSession.fromJson,
-        ),
-        _decodeDeferredList<Warehouse>(_warehousesKey, Warehouse.fromJson),
-        _decodeDeferredList<AccountTransaction>(
-          _accountTransactionsKey,
-          AccountTransaction.fromJson,
-        ),
-        _decodeDeferredList<SyncChange>(_syncChangesKey, SyncChange.fromJson),
-        _decodeDeferredList<SyncQueueItem>(
-          _syncQueueKey,
-          SyncQueueItem.fromJson,
-        ),
-      ]);
+      await StartupTimingService.measure(
+        'app_store.core_deferred_startup',
+        () async {
+          await Future<void>.delayed(Duration.zero);
+          final products = await _loadProductsForStartup();
+          _products
+            ..clear()
+            ..addAll(products);
+          await Future<void>.delayed(Duration.zero);
 
-      _products
-        ..clear()
-        ..addAll(results[0].cast<Product>());
-      _customers
-        ..clear()
-        ..addAll(results[1].cast<Customer>());
-      _sales
-        ..clear()
-        ..addAll(results[2].cast<Sale>());
-      _saleQuotations
-        ..clear()
-        ..addAll(results[3].cast<SaleQuotation>());
-      _deliveryNotes
-        ..clear()
-        ..addAll(results[4].cast<DeliveryNote>());
-      _billsOfMaterials
-        ..clear()
-        ..addAll(results[5].cast<BillOfMaterials>());
-      _manufacturingOrders
-        ..clear()
-        ..addAll(results[6].cast<ManufacturingOrder>());
-      _suppliers
-        ..clear()
-        ..addAll(results[7].cast<Supplier>());
-      _supplierProductPrices
-        ..clear()
-        ..addAll(results[8].cast<SupplierProductPrice>());
-      _priceLists
-        ..clear()
-        ..addAll(results[9].cast<PriceList>());
-      _productPrices
-        ..clear()
-        ..addAll(results[10].cast<ProductPrice>());
-      _productPriceOverrides
-        ..clear()
-        ..addAll(results[11].cast<ProductPriceOverride>());
-      _productCosts
-        ..clear()
-        ..addAll(results[12]
-            .cast<ProductCost>()
-            .where((item) => item.productId.isNotEmpty));
-      _costingMethodHistory
-        ..clear()
-        ..addAll(results[13]
-            .cast<CostingMethodHistory>()
-            .where((item) => item.id.isNotEmpty));
-      _inventoryCostLayers
-        ..clear()
-        ..addAll(results[14]
-            .cast<InventoryCostLayer>()
-            .where((item) => item.id.isNotEmpty && item.productId.isNotEmpty));
-      _inventoryCostingMethod = InventoryCostingMethodJson.fromCode(
-        LocalDatabaseService.getString(_inventoryCostingMethodKey),
+          final customers = await _loadCustomersForStartup();
+          _customers
+            ..clear()
+            ..addAll(customers);
+          await Future<void>.delayed(Duration.zero);
+
+          final sales = await _loadSalesForStartup();
+          _sales
+            ..clear()
+            ..addAll(sales);
+          await Future<void>.delayed(Duration.zero);
+
+          final saleQuotations = await _loadSaleQuotationsForStartup();
+          _saleQuotations
+            ..clear()
+            ..addAll(saleQuotations);
+          await Future<void>.delayed(Duration.zero);
+
+          final deliveryNotes = await _loadDeliveryNotesForStartup();
+          _deliveryNotes
+            ..clear()
+            ..addAll(deliveryNotes);
+          await Future<void>.delayed(Duration.zero);
+
+          final billsOfMaterials = await _loadBillsOfMaterialsForStartup();
+          _billsOfMaterials
+            ..clear()
+            ..addAll(billsOfMaterials);
+          await Future<void>.delayed(Duration.zero);
+
+          final manufacturingOrders =
+              await _loadManufacturingOrdersForStartup();
+          _manufacturingOrders
+            ..clear()
+            ..addAll(manufacturingOrders);
+          await Future<void>.delayed(Duration.zero);
+
+          final suppliers = await _loadSuppliersForStartup();
+          _suppliers
+            ..clear()
+            ..addAll(suppliers);
+          await Future<void>.delayed(Duration.zero);
+
+          final supplierProductPrices =
+              await _loadSupplierProductPricesForStartup();
+          _supplierProductPrices
+            ..clear()
+            ..addAll(supplierProductPrices);
+          await Future<void>.delayed(Duration.zero);
+
+          final priceLists = await _loadPriceListsForStartup();
+          _priceLists
+            ..clear()
+            ..addAll(priceLists);
+          await Future<void>.delayed(Duration.zero);
+
+          final productPrices = await _loadProductPricesForStartup();
+          _productPrices
+            ..clear()
+            ..addAll(productPrices);
+          await Future<void>.delayed(Duration.zero);
+
+          final productPriceOverrides =
+              await _loadProductPriceOverridesForStartup();
+          _productPriceOverrides
+            ..clear()
+            ..addAll(productPriceOverrides);
+          await Future<void>.delayed(Duration.zero);
+
+          final productCosts = await _loadProductCostsForStartup();
+          _productCosts
+            ..clear()
+            ..addAll(productCosts);
+          _rebuildProductPricingLookupCaches();
+          await Future<void>.delayed(Duration.zero);
+
+          final costingMethodHistory =
+              await _loadCostingMethodHistoryForStartup();
+          _costingMethodHistory
+            ..clear()
+            ..addAll(costingMethodHistory);
+          await Future<void>.delayed(Duration.zero);
+
+          final inventoryCostLayers =
+              await _loadInventoryCostLayersForStartup();
+          _inventoryCostLayers
+            ..clear()
+            ..addAll(inventoryCostLayers);
+          _inventoryCostingMethod = InventoryCostingMethodJson.fromCode(
+            LocalDatabaseService.getString(_inventoryCostingMethodKey),
+          );
+          await Future<void>.delayed(Duration.zero);
+
+          final expenses = await _loadExpensesForStartup();
+          _expenses
+            ..clear()
+            ..addAll(expenses);
+          await Future<void>.delayed(Duration.zero);
+
+          final purchases = await _loadPurchasesForStartup();
+          _purchases
+            ..clear()
+            ..addAll(purchases);
+          await Future<void>.delayed(Duration.zero);
+
+          final stockMovements = await _loadStockMovementsForStartup();
+          _stockMovements
+            ..clear()
+            ..addAll(stockMovements);
+          await Future<void>.delayed(Duration.zero);
+
+          final inventoryCounts = await _loadInventoryCountsForStartup();
+          _inventoryCounts
+            ..clear()
+            ..addAll(inventoryCounts);
+          await Future<void>.delayed(Duration.zero);
+
+          final warehouses = await _loadWarehousesForStartup();
+          _warehouses
+            ..clear()
+            ..addAll(warehouses);
+          await Future<void>.delayed(Duration.zero);
+
+          _ensureDefaultPriceLists();
+          _ensureDefaultProductPriceEntries();
+          _ensureProductCostEntries();
+          _ensureCostingMethodHistory();
+          _ensureDefaultWarehouse();
+
+          _normalizeCustomers();
+          _ensureCatalogDefaults();
+          _rebuildMutableEntityIndexes();
+          _touchPurchasesData();
+          _touchExpensesData();
+          _invoiceCounter = _loadInvoiceCounter();
+          _purchaseCounter = _loadPurchaseCounter();
+          notifyListeners();
+        },
+        category: 'app_store',
       );
-      _expenses
-        ..clear()
-        ..addAll(results[15].cast<Expense>());
-      _purchases
-        ..clear()
-        ..addAll(results[16].cast<Purchase>());
-      _stockMovements
-        ..clear()
-        ..addAll(results[17].cast<StockMovement>());
-      _inventoryCounts
-        ..clear()
-        ..addAll(results[18].cast<InventoryCountSession>());
-      _warehouses
-        ..clear()
-        ..addAll(results[19].cast<Warehouse>());
-      _accountTransactions
-        ..clear()
-        ..addAll(results[20].cast<AccountTransaction>());
-      _syncChanges
-        ..clear()
-        ..addAll(results[21].cast<SyncChange>());
-      _syncQueue
-        ..clear()
-        ..addAll(results[22].cast<SyncQueueItem>());
-      _ensureDefaultPriceLists();
-      _ensureDefaultProductPriceEntries();
-      _ensureProductCostEntries();
-      _ensureCostingMethodHistory();
-      _ensureDefaultWarehouse();
-
-      _normalizeCustomers();
-      _ensureCatalogDefaults();
-      _rebuildMutableEntityIndexes();
-      _invoiceCounter = _loadInvoiceCounter();
-      _purchaseCounter = _loadPurchaseCounter();
-      _syncSequence = _loadSyncSequence();
-      _invalidateAccountLedgerCache();
-      notifyListeners();
     } catch (error, stackTrace) {
       debugPrint('Deferred startup data load failed: $error');
+      debugPrint('$stackTrace');
+    }
+  }
+
+  Future<void> _loadLedgerDeferredStartupData() async {
+    try {
+      await StartupTimingService.measure(
+        'app_store.ledger_deferred_startup',
+        () async {
+          await Future<void>.delayed(Duration.zero);
+          final accountTransactions =
+              await _loadAccountTransactionsForStartup();
+          _accountTransactions
+            ..clear()
+            ..addAll(accountTransactions);
+          _invalidateAccountLedgerCache();
+          _touchDataRevisions(accountTransactions: true);
+          notifyListeners();
+        },
+        category: 'app_store',
+      );
+    } catch (error, stackTrace) {
+      debugPrint('Ledger startup data load failed: $error');
+      debugPrint('$stackTrace');
+    }
+  }
+
+  Future<void> _loadSyncDeferredStartupData() async {
+    try {
+      await StartupTimingService.measure(
+        'app_store.sync_deferred_startup',
+        () async {
+          await Future<void>.delayed(Duration.zero);
+          final syncChanges = await _decodeDeferredList<SyncChange>(
+            _syncChangesKey,
+            SyncChange.fromJson,
+            batchSize: 100,
+          );
+          _syncChanges
+            ..clear()
+            ..addAll(syncChanges);
+          await Future<void>.delayed(Duration.zero);
+
+          final syncQueue = await _decodeDeferredList<SyncQueueItem>(
+            _syncQueueKey,
+            SyncQueueItem.fromJson,
+            batchSize: 100,
+          );
+          _syncQueue
+            ..clear()
+            ..addAll(syncQueue);
+          notifyListeners();
+        },
+        category: 'app_store',
+      );
+    } catch (error, stackTrace) {
+      debugPrint('Sync startup data load failed: $error');
       debugPrint('$stackTrace');
     }
   }
@@ -2420,123 +3346,182 @@ class AppStore extends ChangeNotifier {
         case _storeProfileKey:
           _storeProfile = _loadStoreProfile();
           AccountingService.configureMoneyPolicy(_storeProfile);
+          _touchDataRevisions(storeProfile: true);
           break;
 
         case _productsKey:
           _products
             ..clear()
-            ..addAll(_loadProducts());
+            ..addAll(await _loadProductsForStartup());
           _ensureCatalogDefaults();
+          _touchDataRevisions(products: true);
           break;
 
         case _customersKey:
           _customers
             ..clear()
-            ..addAll(_loadCustomers());
+            ..addAll(await _loadCustomersForStartup());
           _normalizeCustomers();
+          _touchDataRevisions(customers: true);
           break;
 
         case _salesKey:
           _sales
             ..clear()
-            ..addAll(_loadSales());
+            ..addAll(await _loadSalesForStartup());
           _invoiceCounter = _loadInvoiceCounter();
+          _touchDataRevisions(sales: true);
           break;
 
         case _saleQuotationsKey:
           _saleQuotations
             ..clear()
-            ..addAll(_loadSaleQuotations());
+            ..addAll(await _loadSaleQuotationsForStartup());
           break;
 
         case _deliveryNotesKey:
           _deliveryNotes
             ..clear()
-            ..addAll(_loadDeliveryNotes());
+            ..addAll(await _loadDeliveryNotesForStartup());
           break;
 
         case _billsOfMaterialsKey:
           _billsOfMaterials
             ..clear()
-            ..addAll(_loadBillsOfMaterials());
+            ..addAll(await _loadBillsOfMaterialsForStartup());
           break;
 
         case _manufacturingOrdersKey:
           _manufacturingOrders
             ..clear()
-            ..addAll(_loadManufacturingOrders());
+            ..addAll(await _loadManufacturingOrdersForStartup());
           break;
 
         case _suppliersKey:
           _suppliers
             ..clear()
-            ..addAll(_loadSuppliers());
+            ..addAll(await _loadSuppliersForStartup());
+          _touchDataRevisions(suppliers: true);
           break;
 
         case _supplierProductPricesKey:
           _supplierProductPrices
             ..clear()
-            ..addAll(_loadSupplierProductPrices());
+            ..addAll(await _loadSupplierProductPricesForStartup());
+          _touchDataRevisions(supplierProductPrices: true);
+          break;
+
+        case _priceListsKey:
+          _priceLists
+            ..clear()
+            ..addAll(await _loadPriceListsForStartup());
+          _ensureDefaultPriceLists();
+          _rebuildProductPricingLookupCaches();
+          break;
+
+        case _productPricesKey:
+          _productPrices
+            ..clear()
+            ..addAll(await _loadProductPricesForStartup());
+          _ensureDefaultProductPriceEntries();
+          _rebuildProductPricingLookupCaches();
+          break;
+
+        case _productPriceOverridesKey:
+          _productPriceOverrides
+            ..clear()
+            ..addAll(await _loadProductPriceOverridesForStartup());
+          _rebuildProductPricingLookupCaches();
+          break;
+
+        case _productCostsKey:
+          _productCosts
+            ..clear()
+            ..addAll(await _loadProductCostsForStartup());
+          _rebuildProductPricingLookupCaches();
+          break;
+
+        case _costingMethodHistoryKey:
+          _costingMethodHistory
+            ..clear()
+            ..addAll(await _loadCostingMethodHistoryForStartup());
+          break;
+
+        case _inventoryCostLayersKey:
+          _inventoryCostLayers
+            ..clear()
+            ..addAll(await _loadInventoryCostLayersForStartup());
           break;
 
         case _expensesKey:
           _expenses
             ..clear()
-            ..addAll(_loadExpenses());
+            ..addAll(await _loadExpensesForStartup());
+          _rebuildExpenseIndexes();
+          _touchExpensesData();
           break;
 
         case _purchasesKey:
           _purchases
             ..clear()
-            ..addAll(_loadPurchases());
+            ..addAll(await _loadPurchasesForStartup());
+          _rebuildPurchaseIndexes();
+          _touchPurchasesData();
           _purchaseCounter = _loadPurchaseCounter();
           break;
 
         case _stockMovementsKey:
           _stockMovements
             ..clear()
-            ..addAll(_loadStockMovements());
+            ..addAll(await _loadStockMovementsForStartup());
+          _touchDataRevisions(stockMovements: true);
           break;
 
         case _inventoryCountsKey:
           _inventoryCounts
             ..clear()
-            ..addAll(_loadInventoryCounts());
+            ..addAll(await _loadInventoryCountsForStartup());
+          _touchDataRevisions(inventoryCounts: true);
           break;
 
         case _warehousesKey:
           _warehouses
             ..clear()
-            ..addAll(_loadWarehouses());
+            ..addAll(await _loadWarehousesForStartup());
           _ensureDefaultWarehouse();
+          _touchDataRevisions(warehouses: true);
           break;
 
         case _accountTransactionsKey:
           _accountTransactions
             ..clear()
-            ..addAll(_loadAccountTransactions());
+            ..addAll(await _loadAccountTransactionsForStartup());
           _invalidateAccountLedgerCache();
+          _touchDataRevisions(accountTransactions: true);
           break;
 
         case _categoriesKey:
           _categories
             ..clear()
-            ..addAll(_loadCatalogItems(_categoriesKey));
+            ..addAll(await _loadCatalogItemsForStartup(_categoriesKey));
           _ensureCatalogDefaults();
+          _touchDataRevisions(products: true);
           break;
 
         case _brandsKey:
           _brands
             ..clear()
-            ..addAll(_loadCatalogItems(_brandsKey));
+            ..addAll(await _loadCatalogItemsForStartup(_brandsKey));
           _ensureCatalogDefaults();
+          _touchDataRevisions(products: true);
           break;
 
         case _unitsKey:
           _units
             ..clear()
-            ..addAll(_loadCatalogItems(_unitsKey));
+            ..addAll(await _loadCatalogItemsForStartup(_unitsKey));
           _ensureCatalogDefaults();
+          _touchDataRevisions(products: true);
           break;
 
         case _rolesKey:
@@ -2586,6 +3571,7 @@ class AppStore extends ChangeNotifier {
       }
 
       _rebuildMutableEntityIndexes();
+      _rebuildProductPricingLookupCaches();
       _invalidateDerivedDataCaches();
       notifyListeners();
     } catch (error, stackTrace) {
@@ -2603,58 +3589,76 @@ class AppStore extends ChangeNotifier {
     AccountingService.configureMoneyPolicy(_storeProfile);
     _products
       ..clear()
-      ..addAll(_loadProducts());
+      ..addAll(await _loadProductsForStartup());
     _customers
       ..clear()
-      ..addAll(_loadCustomers());
+      ..addAll(await _loadCustomersForStartup());
     _sales
       ..clear()
-      ..addAll(_loadSales());
+      ..addAll(await _loadSalesForStartup());
     _saleQuotations
       ..clear()
-      ..addAll(_loadSaleQuotations());
+      ..addAll(await _loadSaleQuotationsForStartup());
     _deliveryNotes
       ..clear()
-      ..addAll(_loadDeliveryNotes());
+      ..addAll(await _loadDeliveryNotesForStartup());
     _billsOfMaterials
       ..clear()
-      ..addAll(_loadBillsOfMaterials());
+      ..addAll(await _loadBillsOfMaterialsForStartup());
     _manufacturingOrders
       ..clear()
-      ..addAll(_loadManufacturingOrders());
+      ..addAll(await _loadManufacturingOrdersForStartup());
     _suppliers
       ..clear()
-      ..addAll(_loadSuppliers());
+      ..addAll(await _loadSuppliersForStartup());
     _supplierProductPrices
       ..clear()
-      ..addAll(_loadSupplierProductPrices());
+      ..addAll(await _loadSupplierProductPricesForStartup());
     _expenses
       ..clear()
-      ..addAll(_loadExpenses());
+      ..addAll(await _loadExpensesForStartup());
     _purchases
       ..clear()
-      ..addAll(_loadPurchases());
+      ..addAll(await _loadPurchasesForStartup());
     _stockMovements
       ..clear()
       ..addAll(_loadStockMovements());
     _inventoryCounts
       ..clear()
-      ..addAll(_loadInventoryCounts());
+      ..addAll(await _loadInventoryCountsForStartup());
     _warehouses
       ..clear()
-      ..addAll(_loadWarehouses());
+      ..addAll(await _loadWarehousesForStartup());
+    _priceLists
+      ..clear()
+      ..addAll(await _loadPriceListsForStartup());
+    _productPrices
+      ..clear()
+      ..addAll(await _loadProductPricesForStartup());
+    _productPriceOverrides
+      ..clear()
+      ..addAll(await _loadProductPriceOverridesForStartup());
+    _productCosts
+      ..clear()
+      ..addAll(await _loadProductCostsForStartup());
+    _costingMethodHistory
+      ..clear()
+      ..addAll(await _loadCostingMethodHistoryForStartup());
+    _inventoryCostLayers
+      ..clear()
+      ..addAll(await _loadInventoryCostLayersForStartup());
     _accountTransactions
       ..clear()
-      ..addAll(_loadAccountTransactions());
+      ..addAll(await _loadAccountTransactionsForStartup());
     _categories
       ..clear()
-      ..addAll(_loadCatalogItems(_categoriesKey));
+      ..addAll(await _loadCatalogItemsForStartup(_categoriesKey));
     _brands
       ..clear()
-      ..addAll(_loadCatalogItems(_brandsKey));
+      ..addAll(await _loadCatalogItemsForStartup(_brandsKey));
     _units
       ..clear()
-      ..addAll(_loadCatalogItems(_unitsKey));
+      ..addAll(await _loadCatalogItemsForStartup(_unitsKey));
     _roles
       ..clear()
       ..addAll(_loadRoles());
@@ -2679,6 +3683,21 @@ class AppStore extends ChangeNotifier {
     _purchaseCounter = _loadPurchaseCounter();
     _syncSequence = _loadSyncSequence();
     _rebuildMutableEntityIndexes();
+    _rebuildProductPricingLookupCaches();
+    _touchDataRevisions(
+      products: true,
+      customers: true,
+      sales: true,
+      suppliers: true,
+      supplierProductPrices: true,
+      expenses: true,
+      purchases: true,
+      stockMovements: true,
+      inventoryCounts: true,
+      warehouses: true,
+      accountTransactions: true,
+      storeProfile: true,
+    );
     _invalidateAccountLedgerCache();
     _invalidateDerivedDataCaches();
     notifyListeners();
@@ -2779,119 +3798,6 @@ class AppStore extends ChangeNotifier {
     return trimmed.toUpperCase();
   }
 
-  List<Product> _loadProducts() {
-    final raw = LocalDatabaseService.getString(_productsKey);
-    if (raw == null) return <Product>[];
-    final decoded = jsonDecode(raw) as List<dynamic>;
-    return decoded
-        .map((item) => Product.fromJson(Map<String, dynamic>.from(item as Map)))
-        .toList();
-  }
-
-  List<Customer> _loadCustomers() {
-    final raw = LocalDatabaseService.getString(_customersKey);
-    if (raw == null) return <Customer>[];
-    final decoded = jsonDecode(raw) as List<dynamic>;
-    return decoded
-        .map(
-          (item) => Customer.fromJson(Map<String, dynamic>.from(item as Map)),
-        )
-        .toList();
-  }
-
-  List<SaleQuotation> _loadSaleQuotations() {
-    final raw = LocalDatabaseService.getString(_saleQuotationsKey);
-    if (raw == null || raw.isEmpty) return [];
-    final decoded = jsonDecode(raw) as List<dynamic>;
-    return decoded
-        .map(
-          (item) =>
-              SaleQuotation.fromJson(Map<String, dynamic>.from(item as Map)),
-        )
-        .toList();
-  }
-
-  List<DeliveryNote> _loadDeliveryNotes() {
-    final raw = LocalDatabaseService.getString(_deliveryNotesKey);
-    if (raw == null || raw.isEmpty) return <DeliveryNote>[];
-    final decoded = jsonDecode(raw) as List<dynamic>;
-    return decoded
-        .map(
-          (item) =>
-              DeliveryNote.fromJson(Map<String, dynamic>.from(item as Map)),
-        )
-        .toList();
-  }
-
-  List<BillOfMaterials> _loadBillsOfMaterials() {
-    final raw = LocalDatabaseService.getString(_billsOfMaterialsKey);
-    if (raw == null || raw.isEmpty) return <BillOfMaterials>[];
-    final decoded = jsonDecode(raw) as List<dynamic>;
-    return decoded
-        .map(
-          (item) =>
-              BillOfMaterials.fromJson(Map<String, dynamic>.from(item as Map)),
-        )
-        .toList();
-  }
-
-  List<ManufacturingOrder> _loadManufacturingOrders() {
-    final raw = LocalDatabaseService.getString(_manufacturingOrdersKey);
-    if (raw == null || raw.isEmpty) return <ManufacturingOrder>[];
-    final decoded = jsonDecode(raw) as List<dynamic>;
-    return decoded
-        .map(
-          (item) => ManufacturingOrder.fromJson(
-            Map<String, dynamic>.from(item as Map),
-          ),
-        )
-        .toList();
-  }
-
-  List<Sale> _loadSales() {
-    final raw = LocalDatabaseService.getString(_salesKey);
-    if (raw == null) return <Sale>[];
-    final decoded = jsonDecode(raw) as List<dynamic>;
-    return decoded
-        .map((item) => Sale.fromJson(Map<String, dynamic>.from(item as Map)))
-        .toList();
-  }
-
-  List<Supplier> _loadSuppliers() {
-    final raw = LocalDatabaseService.getString(_suppliersKey);
-    if (raw == null) return <Supplier>[];
-    final decoded = jsonDecode(raw) as List<dynamic>;
-    return decoded
-        .map(
-          (item) => Supplier.fromJson(Map<String, dynamic>.from(item as Map)),
-        )
-        .toList();
-  }
-
-  List<SupplierProductPrice> _loadSupplierProductPrices() {
-    final raw = LocalDatabaseService.getString(_supplierProductPricesKey);
-    if (raw == null) return <SupplierProductPrice>[];
-    final decoded = jsonDecode(raw) as List<dynamic>;
-    return decoded
-        .map(
-          (item) => SupplierProductPrice.fromJson(
-            Map<String, dynamic>.from(item as Map),
-          ),
-        )
-        .toList();
-  }
-
-  List<Purchase> _loadPurchases() {
-    final raw = LocalDatabaseService.getString(_purchasesKey);
-    if (raw == null) return <Purchase>[];
-    final decoded = jsonDecode(raw) as List<dynamic>;
-    return decoded
-        .map(
-          (item) => Purchase.fromJson(Map<String, dynamic>.from(item as Map)),
-        )
-        .toList();
-  }
-
   List<StockMovement> _loadStockMovements() {
     final raw = LocalDatabaseService.getString(_stockMovementsKey);
     if (raw == null) return <StockMovement>[];
@@ -2900,55 +3806,6 @@ class AppStore extends ChangeNotifier {
         .map(
           (item) =>
               StockMovement.fromJson(Map<String, dynamic>.from(item as Map)),
-        )
-        .toList();
-  }
-
-  List<InventoryCountSession> _loadInventoryCounts() {
-    final raw = LocalDatabaseService.getString(_inventoryCountsKey);
-    if (raw == null || raw.isEmpty) return <InventoryCountSession>[];
-    final decoded = jsonDecode(raw) as List<dynamic>;
-    return decoded
-        .map(
-          (item) => InventoryCountSession.fromJson(
-            Map<String, dynamic>.from(item as Map),
-          ),
-        )
-        .toList();
-  }
-
-  List<Warehouse> _loadWarehouses() {
-    final raw = LocalDatabaseService.getString(_warehousesKey);
-    if (raw == null) return <Warehouse>[];
-    final decoded = jsonDecode(raw) as List<dynamic>;
-    return decoded
-        .map(
-          (item) => Warehouse.fromJson(Map<String, dynamic>.from(item as Map)),
-        )
-        .toList();
-  }
-
-  List<AccountTransaction> _loadAccountTransactions() {
-    final raw = LocalDatabaseService.getString(_accountTransactionsKey);
-    if (raw == null) return <AccountTransaction>[];
-    final decoded = jsonDecode(raw) as List<dynamic>;
-    return decoded
-        .map(
-          (item) => AccountTransaction.fromJson(
-            Map<String, dynamic>.from(item as Map),
-          ),
-        )
-        .toList();
-  }
-
-  List<CatalogItem> _loadCatalogItems(String key) {
-    final raw = LocalDatabaseService.getString(key);
-    if (raw == null) return <CatalogItem>[];
-    final decoded = jsonDecode(raw) as List<dynamic>;
-    return decoded
-        .map(
-          (item) =>
-              CatalogItem.fromJson(Map<String, dynamic>.from(item as Map)),
         )
         .toList();
   }
@@ -3165,15 +4022,6 @@ class AppStore extends ChangeNotifier {
           (item) =>
               SyncQueueItem.fromJson(Map<String, dynamic>.from(item as Map)),
         )
-        .toList();
-  }
-
-  List<Expense> _loadExpenses() {
-    final raw = LocalDatabaseService.getString(_expensesKey);
-    if (raw == null) return <Expense>[];
-    final decoded = jsonDecode(raw) as List<dynamic>;
-    return decoded
-        .map((item) => Expense.fromJson(Map<String, dynamic>.from(item as Map)))
         .toList();
   }
 
@@ -4155,6 +5003,21 @@ class AppStore extends ChangeNotifier {
         .toList();
     if (activeMatches.length > 1) {
       // Security conflict: never guess which duplicated username should log in.
+      unawaited(
+        AppLogger.warning(
+          area: 'login',
+          action: 'login_conflict',
+          message: 'Duplicate active username prevented login.',
+          details: 'username=$normalized count=${activeMatches.length}',
+          storeId: appIdentity.storeId,
+          branchId: appIdentity.branchId,
+          devicePlatform: appIdentity.platform.name,
+          deviceModel: appIdentity.deviceName.isNotEmpty
+              ? appIdentity.deviceName
+              : _deviceId,
+          isImportant: true,
+        ),
+      );
       return false;
     }
     for (var index = 0; index < _users.length; index++) {
@@ -4163,6 +5026,21 @@ class AppStore extends ChangeNotifier {
         continue;
       }
       if (!await _verifyPasswordAsync(password, user.passwordHash)) {
+        unawaited(
+          AppLogger.warning(
+            area: 'login',
+            action: 'login_failed',
+            message: 'Invalid credentials.',
+            details: 'username=$normalized',
+            storeId: appIdentity.storeId,
+            branchId: appIdentity.branchId,
+            devicePlatform: appIdentity.platform.name,
+            deviceModel: appIdentity.deviceName.isNotEmpty
+                ? appIdentity.deviceName
+                : _deviceId,
+            isImportant: true,
+          ),
+        );
         return false;
       }
       final updated = user.copyWith(lastLoginAt: DateTime.now());
@@ -4183,16 +5061,68 @@ class AppStore extends ChangeNotifier {
         ),
       );
       unawaited(_saveRolesAndUsers());
+      unawaited(
+        AppLogger.info(
+          area: 'login',
+          action: 'login_success',
+          message: 'User logged in successfully.',
+          details:
+              'userId=${updated.id} username=${updated.username} remember=$remember',
+          userId: updated.id,
+          storeId: appIdentity.storeId,
+          branchId: appIdentity.branchId,
+          sessionId: _deviceId,
+          traceId: _deviceId,
+          devicePlatform: appIdentity.platform.name,
+          deviceModel: appIdentity.deviceName.isNotEmpty
+              ? appIdentity.deviceName
+              : _deviceId,
+          isImportant: true,
+        ),
+      );
       return true;
     }
+    unawaited(
+      AppLogger.warning(
+        area: 'login',
+        action: 'login_failed',
+        message: 'User not found or inactive.',
+        details: 'username=$normalized',
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        devicePlatform: appIdentity.platform.name,
+        deviceModel: appIdentity.deviceName.isNotEmpty
+            ? appIdentity.deviceName
+            : _deviceId,
+        isImportant: true,
+      ),
+    );
     return false;
   }
 
   Future<void> logout() async {
+    final user = _activeUser;
     _activeUser = null;
     _rememberLogin = false;
     await LocalDatabaseService.setString(_activeUserKey, '');
     await LocalDatabaseService.setString(_rememberLoginKey, 'false');
+    unawaited(
+      AppLogger.info(
+        area: 'login',
+        action: 'logout',
+        message: 'User logged out.',
+        details:
+            user == null ? '' : 'userId=${user.id} username=${user.username}',
+        userId: user?.id ?? '',
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        devicePlatform: appIdentity.platform.name,
+        deviceModel: appIdentity.deviceName.isNotEmpty
+            ? appIdentity.deviceName
+            : _deviceId,
+        isImportant: true,
+      ),
+    );
     notifyListeners();
   }
 
@@ -4806,6 +5736,205 @@ class AppStore extends ChangeNotifier {
     _rebuildProductIndexes();
     _rebuildCustomerIndexes();
     _rebuildSupplierIndexes();
+    _rebuildPurchaseIndexes();
+    _rebuildExpenseIndexes();
+    _rebuildAccountTransactionIndexes();
+    _rebuildStockMovementIndexes();
+  }
+
+  void _rebuildStockMovementIndexes() {
+    _stockMovementIndexById.clear();
+    for (var i = 0; i < _stockMovements.length; i++) {
+      final id = _stockMovements[i].id.trim();
+      if (id.isEmpty) continue;
+      _stockMovementIndexById[id] = i;
+    }
+  }
+
+  int _stockMovementIndexForId(String id) =>
+      _stockMovementIndexById[id.trim()] ?? -1;
+
+  void _rebuildPurchaseIndexes() {
+    _purchaseIndexById.clear();
+    for (var i = 0; i < _purchases.length; i++) {
+      final id = _purchases[i].id.trim();
+      if (id.isEmpty) continue;
+      _purchaseIndexById[id] = i;
+    }
+  }
+
+  int _purchaseIndexForId(String id) => _purchaseIndexById[id.trim()] ?? -1;
+
+  void _putStockMovementAtIndex(StockMovement movement, int index) {
+    final id = movement.id.trim();
+    if (id.isEmpty) return;
+    if (index == _stockMovements.length) {
+      _stockMovements.add(movement);
+    } else {
+      _stockMovements[index] = movement;
+    }
+    _stockMovementIndexById[id] = index;
+    _warehouseStockCacheDirty = true;
+  }
+
+  void _rebuildExpenseIndexes() {
+    _expenseIndexById.clear();
+    for (var i = 0; i < _expenses.length; i++) {
+      final id = _expenses[i].id.trim();
+      if (id.isEmpty) continue;
+      _expenseIndexById[id] = i;
+    }
+  }
+
+  void _rebuildAccountTransactionIndexes() {
+    _accountTransactionIndexById.clear();
+    for (var i = 0; i < _accountTransactions.length; i++) {
+      final id = _accountTransactions[i].id.trim();
+      if (id.isEmpty) continue;
+      _accountTransactionIndexById[id] = i;
+    }
+  }
+
+  int _expenseIndexForId(String id) => _expenseIndexById[id.trim()] ?? -1;
+
+  int _accountTransactionIndexForId(String id) =>
+      _accountTransactionIndexById[id.trim()] ?? -1;
+
+  void _touchDataRevisions({
+    bool products = false,
+    bool customers = false,
+    bool sales = false,
+    bool suppliers = false,
+    bool supplierProductPrices = false,
+    bool expenses = false,
+    bool purchases = false,
+    bool stockMovements = false,
+    bool inventoryCounts = false,
+    bool warehouses = false,
+    bool accountTransactions = false,
+    bool storeProfile = false,
+  }) {
+    if (products) {
+      _productsRevision += 1;
+      _warehouseStockCacheDirty = true;
+    }
+    if (customers) _customersRevision += 1;
+    if (sales) _salesRevision += 1;
+    if (suppliers) _suppliersRevision += 1;
+    if (supplierProductPrices) _supplierProductPricesRevision += 1;
+    if (expenses) {
+      _expensesRevision += 1;
+      _cachedExpensesOverview = null;
+      _cachedExpensesOverviewRevision = -1;
+    }
+    if (purchases) {
+      _purchasesRevision += 1;
+      _purchaseInsightsCacheDirty = true;
+      _cachedPurchasesOverview = null;
+      _cachedPurchasesOverviewRevision = -1;
+      _cachedPurchasesOverviewMonthKey = '';
+    }
+    if (stockMovements) {
+      _stockMovementsRevision += 1;
+      _warehouseStockCacheDirty = true;
+    }
+    if (inventoryCounts) _inventoryCountsRevision += 1;
+    if (warehouses) {
+      _warehousesRevision += 1;
+      _warehouseStockCacheDirty = true;
+    }
+    if (accountTransactions) {
+      _accountTransactionsRevision += 1;
+      _accountLedgerCacheDirty = true;
+    }
+    if (storeProfile) _storeProfileRevision += 1;
+  }
+
+  void _touchPurchasesData() {
+    _touchDataRevisions(purchases: true);
+  }
+
+  void _touchExpensesData() {
+    _touchDataRevisions(expenses: true);
+  }
+
+  void _putPurchaseAtIndex(Purchase purchase, int index) {
+    final id = purchase.id.trim();
+    if (id.isEmpty) return;
+    if (index == _purchases.length) {
+      _purchases.add(purchase);
+    } else {
+      _purchases[index] = purchase;
+    }
+    _purchaseIndexById[id] = index;
+  }
+
+  void _removePurchaseAtIndex(int index) {
+    if (index < 0 || index >= _purchases.length) return;
+    final removedId = _purchases[index].id.trim();
+    _purchases.removeAt(index);
+    if (removedId.isNotEmpty) {
+      _purchaseIndexById.remove(removedId);
+    }
+    for (var i = index; i < _purchases.length; i++) {
+      final id = _purchases[i].id.trim();
+      if (id.isNotEmpty) {
+        _purchaseIndexById[id] = i;
+      }
+    }
+  }
+
+  void _putExpenseAtIndex(Expense expense, int index) {
+    final id = expense.id.trim();
+    if (id.isEmpty) return;
+    if (index == _expenses.length) {
+      _expenses.add(expense);
+    } else {
+      _expenses[index] = expense;
+    }
+    _expenseIndexById[id] = index;
+  }
+
+  void _putAccountTransactionAtIndex(
+      AccountTransaction transaction, int index) {
+    final id = transaction.id.trim();
+    if (id.isEmpty) return;
+    if (index == _accountTransactions.length) {
+      _accountTransactions.add(transaction);
+    } else {
+      _accountTransactions[index] = transaction;
+    }
+    _accountTransactionIndexById[id] = index;
+  }
+
+  void _removeExpenseAtIndex(int index) {
+    if (index < 0 || index >= _expenses.length) return;
+    final removedId = _expenses[index].id.trim();
+    _expenses.removeAt(index);
+    if (removedId.isNotEmpty) {
+      _expenseIndexById.remove(removedId);
+    }
+    for (var i = index; i < _expenses.length; i++) {
+      final id = _expenses[i].id.trim();
+      if (id.isNotEmpty) {
+        _expenseIndexById[id] = i;
+      }
+    }
+  }
+
+  void _removeAccountTransactionAtIndex(int index) {
+    if (index < 0 || index >= _accountTransactions.length) return;
+    final removedId = _accountTransactions[index].id.trim();
+    _accountTransactions.removeAt(index);
+    if (removedId.isNotEmpty) {
+      _accountTransactionIndexById.remove(removedId);
+    }
+    for (var i = index; i < _accountTransactions.length; i++) {
+      final id = _accountTransactions[i].id.trim();
+      if (id.isNotEmpty) {
+        _accountTransactionIndexById[id] = i;
+      }
+    }
   }
 
   String resolveCustomerName(String? customerId) {
@@ -5063,6 +6192,20 @@ class AppStore extends ChangeNotifier {
     bool purchaseCounter = false,
     bool sync = false,
   }) async {
+    _touchDataRevisions(
+      products: products,
+      customers: customers,
+      sales: sales,
+      suppliers: suppliers,
+      supplierProductPrices: supplierProductPrices,
+      expenses: expenses,
+      purchases: purchases,
+      stockMovements: stockMovements,
+      inventoryCounts: inventoryCounts,
+      warehouses: warehouses,
+      accountTransactions: accountTransactions,
+      storeProfile: storeProfile,
+    );
     if (LocalDatabaseService.isSqliteAuthoritative) {
       await _traceAsync(
         'saveDirty',
@@ -5385,6 +6528,20 @@ class AppStore extends ChangeNotifier {
     bool purchaseCounter = false,
     bool sync = false,
   }) async {
+    _touchDataRevisions(
+      products: products,
+      customers: customers,
+      sales: sales,
+      suppliers: suppliers,
+      supplierProductPrices: supplierProductPrices,
+      expenses: expenses,
+      purchases: purchases,
+      stockMovements: stockMovements,
+      inventoryCounts: inventoryCounts,
+      warehouses: warehouses,
+      accountTransactions: accountTransactions,
+      storeProfile: storeProfile,
+    );
     final writes = <Future<void>>[];
 
     Future<void> persistRows(String key) async {
@@ -5402,42 +6559,16 @@ class AppStore extends ChangeNotifier {
     if (customers) writes.add(persistRows(_customersKey));
     if (sales) writes.add(persistRows(_salesKey));
     if (saleQuotations) {
-      _sqliteDirtyBusinessRows.remove(_saleQuotationsKey);
-      writes.add(
-        LocalDatabaseService.setString(
-          _saleQuotationsKey,
-          jsonEncode(_saleQuotations.map((item) => item.toJson()).toList()),
-        ),
-      );
+      writes.add(persistRows(_saleQuotationsKey));
     }
     if (deliveryNotes) {
-      _sqliteDirtyBusinessRows.remove(_deliveryNotesKey);
-      writes.add(
-        LocalDatabaseService.setString(
-          _deliveryNotesKey,
-          jsonEncode(_deliveryNotes.map((item) => item.toJson()).toList()),
-        ),
-      );
+      writes.add(persistRows(_deliveryNotesKey));
     }
     if (billsOfMaterials) {
-      _sqliteDirtyBusinessRows.remove(_billsOfMaterialsKey);
-      writes.add(
-        LocalDatabaseService.setString(
-          _billsOfMaterialsKey,
-          jsonEncode(_billsOfMaterials.map((item) => item.toJson()).toList()),
-        ),
-      );
+      writes.add(persistRows(_billsOfMaterialsKey));
     }
     if (manufacturingOrders) {
-      _sqliteDirtyBusinessRows.remove(_manufacturingOrdersKey);
-      writes.add(
-        LocalDatabaseService.setString(
-          _manufacturingOrdersKey,
-          jsonEncode(
-            _manufacturingOrders.map((item) => item.toJson()).toList(),
-          ),
-        ),
-      );
+      writes.add(persistRows(_manufacturingOrdersKey));
     }
     if (suppliers) writes.add(persistRows(_suppliersKey));
     if (supplierProductPrices) {
@@ -5450,20 +6581,10 @@ class AppStore extends ChangeNotifier {
     if (purchases) writes.add(persistRows(_purchasesKey));
     if (stockMovements) writes.add(persistRows(_stockMovementsKey));
     if (inventoryCounts) {
-      writes.add(
-        LocalDatabaseService.setString(
-          _inventoryCountsKey,
-          jsonEncode(_inventoryCounts.map((item) => item.toJson()).toList()),
-        ),
-      );
+      writes.add(persistRows(_inventoryCountsKey));
     }
     if (warehouses) {
-      writes.add(
-        LocalDatabaseService.setString(
-          _warehousesKey,
-          jsonEncode(_warehouses.map((item) => item.toJson()).toList()),
-        ),
-      );
+      writes.add(persistRows(_warehousesKey));
     }
     if (accountTransactions) writes.add(persistRows(_accountTransactionsKey));
 
@@ -5552,6 +6673,12 @@ class AppStore extends ChangeNotifier {
     _customers
       ..clear()
       ..add(walkInCustomer);
+    _productPrices.clear();
+    _productPriceOverrides.clear();
+    _productCosts.clear();
+    _inventoryCostLayers.clear();
+    _productPriceByLookupKey.clear();
+    _productCostByProductId.clear();
     _sales.clear();
     _suppliers.clear();
     _supplierProductPrices.clear();
@@ -5559,8 +6686,27 @@ class AppStore extends ChangeNotifier {
     _purchases.clear();
     _stockMovements.clear();
     _accountTransactions.clear();
+    _purchaseIndexById.clear();
+    _stockMovementIndexById.clear();
+    _expenseIndexById.clear();
+    _accountTransactionIndexById.clear();
+    _accountLedgerCacheDirty = true;
     _invoiceCounter = 0;
     _purchaseCounter = 0;
+    _touchDataRevisions(
+      products: true,
+      customers: true,
+      sales: true,
+      suppliers: true,
+      supplierProductPrices: true,
+      expenses: true,
+      purchases: true,
+      stockMovements: true,
+      inventoryCounts: true,
+      warehouses: true,
+      accountTransactions: true,
+      storeProfile: !keepStoreProfile,
+    );
     if (!keepStoreProfile) {
       _storeProfile = StoreProfile.defaults;
       AccountingService.configureMoneyPolicy(_storeProfile);
@@ -5675,6 +6821,12 @@ class AppStore extends ChangeNotifier {
     _purchases.clear();
     _stockMovements.clear();
     _accountTransactions.clear();
+    _purchaseIndexById.clear();
+    _expenseIndexById.clear();
+    _accountTransactionIndexById.clear();
+    _stockMovementIndexById.clear();
+    _touchPurchasesData();
+    _touchExpensesData();
     _categories.clear();
     _brands.clear();
     _units.clear();
@@ -5741,6 +6893,14 @@ class AppStore extends ChangeNotifier {
   }) async {
     final cutoff = DateTime.now().subtract(retention);
     var removed = 0;
+    var productsChanged = false;
+    var catalogChanged = false;
+    var customersChanged = false;
+    var suppliersChanged = false;
+    var supplierProductPricesChanged = false;
+    var expensesChanged = false;
+    var salesChanged = false;
+    var purchasesChanged = false;
 
     bool expired(DateTime? deletedAt) =>
         deletedAt != null && deletedAt.isBefore(cutoff);
@@ -5753,6 +6913,7 @@ class AppStore extends ChangeNotifier {
           !isProductReferenced(item.id),
     );
     removed += beforeProducts - _products.length;
+    productsChanged = productsChanged || beforeProducts != _products.length;
 
     final beforeCustomers = _customers.length;
     _customers.removeWhere(
@@ -5762,6 +6923,7 @@ class AppStore extends ChangeNotifier {
           !_hasPendingSyncFor('customer', item.id),
     );
     removed += beforeCustomers - _customers.length;
+    customersChanged = customersChanged || beforeCustomers != _customers.length;
 
     final beforeSuppliers = _suppliers.length;
     _suppliers.removeWhere(
@@ -5769,6 +6931,7 @@ class AppStore extends ChangeNotifier {
           expired(item.deletedAt) && !_hasPendingSyncFor('supplier', item.id),
     );
     removed += beforeSuppliers - _suppliers.length;
+    suppliersChanged = suppliersChanged || beforeSuppliers != _suppliers.length;
 
     final beforeSupplierProductPrices = _supplierProductPrices.length;
     _supplierProductPrices.removeWhere(
@@ -5777,6 +6940,8 @@ class AppStore extends ChangeNotifier {
           !_hasPendingSyncFor('supplier_product_price', item.id),
     );
     removed += beforeSupplierProductPrices - _supplierProductPrices.length;
+    supplierProductPricesChanged = supplierProductPricesChanged ||
+        beforeSupplierProductPrices != _supplierProductPrices.length;
 
     final beforeExpenses = _expenses.length;
     _expenses.removeWhere(
@@ -5784,6 +6949,7 @@ class AppStore extends ChangeNotifier {
           expired(item.deletedAt) && !_hasPendingSyncFor('expense', item.id),
     );
     removed += beforeExpenses - _expenses.length;
+    expensesChanged = expensesChanged || beforeExpenses != _expenses.length;
 
     final beforeCategories = _categories.length;
     _categories.removeWhere(
@@ -5791,6 +6957,7 @@ class AppStore extends ChangeNotifier {
           expired(item.deletedAt) && !_hasPendingSyncFor('category', item.id),
     );
     removed += beforeCategories - _categories.length;
+    catalogChanged = catalogChanged || beforeCategories != _categories.length;
 
     final beforeBrands = _brands.length;
     _brands.removeWhere(
@@ -5798,18 +6965,21 @@ class AppStore extends ChangeNotifier {
           expired(item.deletedAt) && !_hasPendingSyncFor('brand', item.id),
     );
     removed += beforeBrands - _brands.length;
+    catalogChanged = catalogChanged || beforeBrands != _brands.length;
 
     final beforeUnits = _units.length;
     _units.removeWhere(
       (item) => expired(item.deletedAt) && !_hasPendingSyncFor('unit', item.id),
     );
     removed += beforeUnits - _units.length;
+    catalogChanged = catalogChanged || beforeUnits != _units.length;
 
     final beforeSales = _sales.length;
     _sales.removeWhere(
       (item) => expired(item.deletedAt) && !_hasPendingSyncFor('sale', item.id),
     );
     removed += beforeSales - _sales.length;
+    salesChanged = salesChanged || beforeSales != _sales.length;
 
     final beforePurchases = _purchases.length;
     _purchases.removeWhere(
@@ -5817,8 +6987,47 @@ class AppStore extends ChangeNotifier {
           expired(item.deletedAt) && !_hasPendingSyncFor('purchase', item.id),
     );
     removed += beforePurchases - _purchases.length;
+    purchasesChanged = purchasesChanged || beforePurchases != _purchases.length;
 
     if (removed > 0) {
+      if (productsChanged) {
+        _rebuildProductIndexes();
+        _rebuildProductPricingLookupCaches();
+      }
+      if (customersChanged) {
+        _rebuildCustomerIndexes();
+      }
+      if (suppliersChanged) {
+        _rebuildSupplierIndexes();
+      }
+      if (supplierProductPricesChanged) {
+        _markSingleSupplierPerProductAsPreferred();
+      }
+      if (expensesChanged) {
+        _rebuildExpenseIndexes();
+      }
+      if (purchasesChanged) {
+        _rebuildPurchaseIndexes();
+      }
+      _touchDataRevisions(
+        products: productsChanged || catalogChanged,
+        customers: customersChanged,
+        sales: salesChanged,
+        suppliers: suppliersChanged,
+        supplierProductPrices: supplierProductPricesChanged,
+        expenses: expensesChanged,
+        purchases: purchasesChanged,
+      );
+      if (productsChanged ||
+          customersChanged ||
+          suppliersChanged ||
+          supplierProductPricesChanged ||
+          expensesChanged ||
+          salesChanged ||
+          purchasesChanged) {
+        _warehouseStockCacheDirty = true;
+        _accountLedgerCacheDirty = true;
+      }
       await _saveSyncStateOnly();
       notifyListeners();
     }
@@ -6022,6 +7231,10 @@ class AppStore extends ChangeNotifier {
         return _manufacturingOrdersKey;
       case 'purchase':
         return _purchasesKey;
+      case 'inventory_count':
+        return _inventoryCountsKey;
+      case 'warehouse':
+        return _warehousesKey;
       case 'expense':
         return _expensesKey;
       case 'stock_movement':
@@ -6490,20 +7703,21 @@ class AppStore extends ChangeNotifier {
     if (normalized.debit == 0 && normalized.credit == 0) {
       throw ArgumentError('Account transaction amount is required.');
     }
-    final index = _accountTransactions.indexWhere(
-      (item) => item.id == normalized.id,
-    );
+    final index = _accountTransactionIndexForId(normalized.id);
     final synced = _withSyncMeta<AccountTransaction>(
       normalized,
       now,
       isCreate: index == -1,
     );
-    if (index == -1) {
-      _accountTransactions.add(synced);
-    } else {
-      _accountTransactions[index] = synced;
-    }
-    _invalidateAccountLedgerCache();
+    final previous = index == -1 ? null : _accountTransactions[index];
+    _putAccountTransactionAtIndex(
+      synced,
+      index == -1 ? _accountTransactions.length : index,
+    );
+    _replaceAccountTransactionInLedgerCache(
+      previous: previous,
+      current: synced,
+    );
     _recordSyncChange(
       entityType: 'account_transaction',
       entityId: synced.id,
@@ -6517,7 +7731,7 @@ class AppStore extends ChangeNotifier {
 
   Future<void> deleteAccountTransaction(String id) async {
     requirePermission(AppPermission.accountingManage);
-    final index = _accountTransactions.indexWhere((item) => item.id == id);
+    final index = _accountTransactionIndexForId(id);
     if (index == -1) return;
     final now = DateTime.now();
     final deleted = _withSyncMeta<AccountTransaction>(
@@ -6525,8 +7739,12 @@ class AppStore extends ChangeNotifier {
       now,
       clearDeletedAt: false,
     );
-    _accountTransactions[index] = deleted;
-    _invalidateAccountLedgerCache();
+    final previous = _accountTransactions[index];
+    _putAccountTransactionAtIndex(deleted, index);
+    _replaceAccountTransactionInLedgerCache(
+      previous: previous,
+      current: deleted,
+    );
     _recordSyncChange(
       entityType: 'account_transaction',
       entityId: id,
@@ -6565,20 +7783,21 @@ class AppStore extends ChangeNotifier {
     }
     if (normalized.accountId.trim().isEmpty) return;
     if (normalized.debit == 0 && normalized.credit == 0) return;
-    final index = _accountTransactions.indexWhere(
-      (item) => item.id == normalized.id,
-    );
+    final index = _accountTransactionIndexForId(normalized.id);
     final synced = _withSyncMeta<AccountTransaction>(
       normalized,
       now,
       isCreate: index == -1,
     );
-    if (index == -1) {
-      _accountTransactions.add(synced);
-    } else {
-      _accountTransactions[index] = synced;
-    }
-    _invalidateAccountLedgerCache();
+    final previous = index == -1 ? null : _accountTransactions[index];
+    _putAccountTransactionAtIndex(
+      synced,
+      index == -1 ? _accountTransactions.length : index,
+    );
+    _replaceAccountTransactionInLedgerCache(
+      previous: previous,
+      current: synced,
+    );
     _recordSyncChange(
       entityType: 'account_transaction',
       entityId: synced.id,
@@ -7100,12 +8319,58 @@ class AppStore extends ChangeNotifier {
     }
   }
 
+  String _productPriceLookupKey(
+    String productId,
+    String priceListId,
+    String unitId,
+  ) =>
+      '$productId|$priceListId|$unitId';
+
+  void _rebuildProductPriceLookupCache() {
+    _productPriceByLookupKey.clear();
+    for (final item in _productPrices) {
+      if (!item.isActive) continue;
+      _productPriceByLookupKey[_productPriceLookupKey(
+        item.productId,
+        item.priceListId,
+        item.unitId,
+      )] = item;
+    }
+  }
+
+  void _rebuildProductCostLookupCache() {
+    _productCostByProductId.clear();
+    for (final item in _productCosts) {
+      if (item.productId.trim().isEmpty) continue;
+      _productCostByProductId[item.productId] = item;
+    }
+  }
+
+  void _rebuildProductPricingLookupCaches() {
+    _rebuildProductPriceLookupCache();
+    _rebuildProductCostLookupCache();
+  }
+
+  void _ensureProductPricingLookupCaches() {
+    if (_productPriceByLookupKey.isEmpty && _productPrices.isNotEmpty) {
+      _rebuildProductPriceLookupCache();
+    }
+    if (_productCostByProductId.isEmpty && _productCosts.isNotEmpty) {
+      _rebuildProductCostLookupCache();
+    }
+  }
+
+  void _removeProductPricingLookupEntries(String productId) {
+    _productPriceByLookupKey.removeWhere(
+      (_, value) => value.productId == productId,
+    );
+    _productCostByProductId.remove(productId);
+  }
+
   void _ensureDefaultProductPriceEntries({Product? product}) {
     _ensureDefaultPriceLists();
+    _ensureProductPricingLookupCaches();
     final retailId = defaultPriceList.id;
-    final existing = _productPrices
-        .map((item) => '${item.productId}|${item.priceListId}|${item.unitId}')
-        .toSet();
     final now = DateTime.now();
     final productsToCheck = product == null
         ? _products.where((item) => !item.isDeleted)
@@ -7113,8 +8378,8 @@ class AppStore extends ChangeNotifier {
     for (final current in productsToCheck) {
       if (current.isDeleted) continue;
       final key = '${current.id}|$retailId|base';
-      if (!existing.contains(key)) {
-        _productPrices.add(ProductPrice(
+      if (!_productPriceByLookupKey.containsKey(key)) {
+        final price = ProductPrice(
           id: 'pp_${current.id}_${retailId}_base',
           productId: current.id,
           priceListId: retailId,
@@ -7123,13 +8388,14 @@ class AppStore extends ChangeNotifier {
           baseAmount: current.originalPrice,
           createdAt: current.createdAt,
           updatedAt: now,
-        ));
-        existing.add(key);
+        );
+        _productPrices.add(price);
+        _productPriceByLookupKey[key] = price;
       }
       for (final unit in current.saleUnits) {
         final unitKey = '${current.id}|$retailId|${unit.id}';
-        if (existing.contains(unitKey)) continue;
-        _productPrices.add(ProductPrice(
+        if (_productPriceByLookupKey.containsKey(unitKey)) continue;
+        final price = ProductPrice(
           id: 'pp_${current.id}_${retailId}_${unit.id}',
           productId: current.id,
           priceListId: retailId,
@@ -7138,8 +8404,9 @@ class AppStore extends ChangeNotifier {
           baseAmount: unit.originalPrice,
           createdAt: current.createdAt,
           updatedAt: now,
-        ));
-        existing.add(unitKey);
+        );
+        _productPrices.add(price);
+        _productPriceByLookupKey[unitKey] = price;
       }
     }
   }
@@ -7177,11 +8444,14 @@ class AppStore extends ChangeNotifier {
     } else {
       _productPrices[index] = price;
     }
+    _productPriceByLookupKey[
+        _productPriceLookupKey(productId, priceListId, unitId)] = price;
     await LocalDatabaseService.setString(_priceListsKey,
         jsonEncode(_priceLists.map((item) => item.toJson()).toList()));
     await LocalDatabaseService.setString(_productPricesKey,
         jsonEncode(_productPrices.map((item) => item.toJson()).toList()));
-    _derivedListCachesDirty = true;
+    _touchDataRevisions(products: true);
+    _invalidateDerivedDataCaches();
     notifyListeners();
   }
 
@@ -7224,7 +8494,8 @@ class AppStore extends ChangeNotifier {
         _productPriceOverridesKey,
         jsonEncode(
             _productPriceOverrides.map((item) => item.toJson()).toList()));
-    _derivedListCachesDirty = true;
+    _touchDataRevisions(products: true);
+    _invalidateDerivedDataCaches();
     notifyListeners();
   }
 
@@ -7244,28 +8515,30 @@ class AppStore extends ChangeNotifier {
         _productPriceOverridesKey,
         jsonEncode(
             _productPriceOverrides.map((item) => item.toJson()).toList()));
-    _derivedListCachesDirty = true;
+    _touchDataRevisions(products: true);
+    _invalidateDerivedDataCaches();
     notifyListeners();
   }
 
   void _ensureProductCostEntries({Product? product}) {
-    final existing = _productCosts.map((item) => item.productId).toSet();
+    _ensureProductPricingLookupCaches();
     final now = DateTime.now();
     final productsToCheck = product == null
         ? _products.where((item) => !item.isDeleted)
         : <Product>[product];
     for (final current in productsToCheck) {
       if (current.isDeleted) continue;
-      if (existing.contains(current.id)) continue;
-      _productCosts.add(ProductCost(
+      if (_productCostByProductId.containsKey(current.id)) continue;
+      final cost = ProductCost(
         productId: current.id,
         averageCost: _safeUsdCost(current),
         lastCost: _safeUsdCost(current),
         currencyCode: 'USD',
         createdAt: current.createdAt,
         updatedAt: now,
-      ));
-      existing.add(current.id);
+      );
+      _productCosts.add(cost);
+      _productCostByProductId[current.id] = cost;
     }
   }
 
@@ -7312,7 +8585,8 @@ class AppStore extends ChangeNotifier {
         _costingMethodHistoryKey,
         jsonEncode(
             _costingMethodHistory.map((item) => item.toJson()).toList()));
-    _derivedListCachesDirty = true;
+    _touchDataRevisions(products: true);
+    _invalidateDerivedDataCaches();
     notifyListeners();
   }
 
@@ -7323,17 +8597,15 @@ class AppStore extends ChangeNotifier {
     required DateTime now,
   }) {
     _ensureProductCostEntries();
-    final index =
-        _productCosts.indexWhere((item) => item.productId == product.id);
-    final current = index == -1
-        ? ProductCost(
-            productId: product.id,
-            averageCost: _safeUsdCost(product),
-            lastCost: _safeUsdCost(product),
-            currencyCode: 'USD',
-            createdAt: now,
-            updatedAt: now)
-        : _productCosts[index];
+    final current = _productCostByProductId[product.id] ??
+        ProductCost(
+          productId: product.id,
+          averageCost: _safeUsdCost(product),
+          lastCost: _safeUsdCost(product),
+          currencyCode: 'USD',
+          createdAt: now,
+          updatedAt: now,
+        );
     final stockBefore = max(0, product.stock);
     final stockAfter = stockBefore + receivedQty;
     final averageCost = stockAfter <= 0
@@ -7346,11 +8618,14 @@ class AppStore extends ChangeNotifier {
       currencyCode: 'USD',
       updatedAt: now,
     );
+    final index =
+        _productCosts.indexWhere((item) => item.productId == product.id);
     if (index == -1) {
       _productCosts.add(updated);
     } else {
       _productCosts[index] = updated;
     }
+    _productCostByProductId[product.id] = updated;
     return updated;
   }
 
@@ -7667,6 +8942,45 @@ class AppStore extends ChangeNotifier {
           'productId': syncedProduct.id,
           'isCreate': isCreate
         });
+    unawaited(
+      AppLogger.info(
+        area: 'products',
+        action: isCreate ? 'create_product' : 'update_product',
+        message: isCreate
+            ? 'Product created successfully.'
+            : 'Product updated successfully.',
+        details:
+            'productId=${syncedProduct.id} code=${syncedProduct.code} name=${syncedProduct.name}',
+        userId: _activeUser?.id ?? '',
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        sessionId: _deviceId,
+        traceId: _deviceId,
+        devicePlatform: appIdentity.platform.name,
+        deviceModel: appIdentity.deviceName.isNotEmpty
+            ? appIdentity.deviceName
+            : _deviceId,
+        isImportant: true,
+      ),
+    );
+    unawaited(
+      AuditLogger.record(
+        entityType: 'product',
+        entityId: syncedProduct.id,
+        action: isCreate ? 'create' : 'update',
+        summary: isCreate ? 'Product created' : 'Product updated',
+        details: jsonEncode(syncedProduct.toJson()),
+        userId: _activeUser?.id ?? '',
+        userName: _actorName(),
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        sessionId: _deviceId,
+        traceId: _deviceId,
+        deviceId: _deviceId,
+        sourceModule: 'products',
+        isImportant: true,
+      ),
+    );
     notifyListeners();
   }
 
@@ -7711,6 +9025,7 @@ class AppStore extends ChangeNotifier {
       payload: deletedProduct.toJson(),
     );
     _unindexProduct(previousProduct);
+    _removeProductPricingLookupEntries(id);
     final affectedPrices = _softDeleteSupplierProductPrices(
       productId: id,
       now: now,
@@ -7720,6 +9035,42 @@ class AppStore extends ChangeNotifier {
       products: true,
       supplierProductPrices: affectedPrices > 0,
       sync: true,
+    );
+    unawaited(
+      AppLogger.info(
+        area: 'products',
+        action: 'delete_product',
+        message: 'Product deleted successfully.',
+        details: 'productId=$id affectedSupplierProductPrices=$affectedPrices',
+        userId: _activeUser?.id ?? '',
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        sessionId: _deviceId,
+        traceId: _deviceId,
+        devicePlatform: appIdentity.platform.name,
+        deviceModel: appIdentity.deviceName.isNotEmpty
+            ? appIdentity.deviceName
+            : _deviceId,
+        isImportant: true,
+      ),
+    );
+    unawaited(
+      AuditLogger.record(
+        entityType: 'product',
+        entityId: id,
+        action: 'delete',
+        summary: 'Product deleted',
+        details: jsonEncode(deletedProduct.toJson()),
+        userId: _activeUser?.id ?? '',
+        userName: _actorName(),
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        sessionId: _deviceId,
+        traceId: _deviceId,
+        deviceId: _deviceId,
+        sourceModule: 'products',
+        isImportant: true,
+      ),
     );
     notifyListeners();
   }
@@ -7837,6 +9188,44 @@ class AppStore extends ChangeNotifier {
           'customerId': syncedCustomer.id,
           'isCreate': isCreate
         });
+    unawaited(
+      AppLogger.info(
+        area: 'customers',
+        action: isCreate ? 'create_customer' : 'update_customer',
+        message: isCreate
+            ? 'Customer created successfully.'
+            : 'Customer updated successfully.',
+        details: 'customerId=${syncedCustomer.id} name=${syncedCustomer.name}',
+        userId: _activeUser?.id ?? '',
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        sessionId: _deviceId,
+        traceId: _deviceId,
+        devicePlatform: appIdentity.platform.name,
+        deviceModel: appIdentity.deviceName.isNotEmpty
+            ? appIdentity.deviceName
+            : _deviceId,
+        isImportant: true,
+      ),
+    );
+    unawaited(
+      AuditLogger.record(
+        entityType: 'customer',
+        entityId: syncedCustomer.id,
+        action: isCreate ? 'create' : 'update',
+        summary: isCreate ? 'Customer created' : 'Customer updated',
+        details: jsonEncode(syncedCustomer.toJson()),
+        userId: _activeUser?.id ?? '',
+        userName: _actorName(),
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        sessionId: _deviceId,
+        traceId: _deviceId,
+        deviceId: _deviceId,
+        sourceModule: 'customers',
+        isImportant: true,
+      ),
+    );
     notifyListeners();
   }
 
@@ -7861,6 +9250,42 @@ class AppStore extends ChangeNotifier {
       payload: _customers[index].toJson(),
     );
     await _saveDirty(customers: true, sync: true);
+    unawaited(
+      AppLogger.info(
+        area: 'customers',
+        action: 'delete_customer',
+        message: 'Customer deleted successfully.',
+        details: 'customerId=$id',
+        userId: _activeUser?.id ?? '',
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        sessionId: _deviceId,
+        traceId: _deviceId,
+        devicePlatform: appIdentity.platform.name,
+        deviceModel: appIdentity.deviceName.isNotEmpty
+            ? appIdentity.deviceName
+            : _deviceId,
+        isImportant: true,
+      ),
+    );
+    unawaited(
+      AuditLogger.record(
+        entityType: 'customer',
+        entityId: id,
+        action: 'delete',
+        summary: 'Customer deleted',
+        details: jsonEncode(_customers[index].toJson()),
+        userId: _activeUser?.id ?? '',
+        userName: _actorName(),
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        sessionId: _deviceId,
+        traceId: _deviceId,
+        deviceId: _deviceId,
+        sourceModule: 'customers',
+        isImportant: true,
+      ),
+    );
     notifyListeners();
   }
 
@@ -7917,6 +9342,44 @@ class AppStore extends ChangeNotifier {
           'supplierId': syncedSupplier.id,
           'isCreate': isCreate
         });
+    unawaited(
+      AppLogger.info(
+        area: 'suppliers',
+        action: isCreate ? 'create_supplier' : 'update_supplier',
+        message: isCreate
+            ? 'Supplier created successfully.'
+            : 'Supplier updated successfully.',
+        details: 'supplierId=${syncedSupplier.id} name=${syncedSupplier.name}',
+        userId: _activeUser?.id ?? '',
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        sessionId: _deviceId,
+        traceId: _deviceId,
+        devicePlatform: appIdentity.platform.name,
+        deviceModel: appIdentity.deviceName.isNotEmpty
+            ? appIdentity.deviceName
+            : _deviceId,
+        isImportant: true,
+      ),
+    );
+    unawaited(
+      AuditLogger.record(
+        entityType: 'supplier',
+        entityId: syncedSupplier.id,
+        action: isCreate ? 'create' : 'update',
+        summary: isCreate ? 'Supplier created' : 'Supplier updated',
+        details: jsonEncode(syncedSupplier.toJson()),
+        userId: _activeUser?.id ?? '',
+        userName: _actorName(),
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        sessionId: _deviceId,
+        traceId: _deviceId,
+        deviceId: _deviceId,
+        sourceModule: 'suppliers',
+        isImportant: true,
+      ),
+    );
     notifyListeners();
   }
 
@@ -8136,7 +9599,7 @@ class AppStore extends ChangeNotifier {
       throw ArgumentError('Invalid expense values.');
     }
     final now = DateTime.now();
-    final index = _expenses.indexWhere((item) => item.id == expense.id);
+    final index = _expenseIndexForId(expense.id);
     final isCreate = index == -1;
     if (!isCreate) {
       final current = _expenses[index];
@@ -8157,11 +9620,7 @@ class AppStore extends ChangeNotifier {
       now,
       isCreate: isCreate,
     );
-    if (isCreate) {
-      _expenses.add(syncedExpense);
-    } else {
-      _expenses[index] = syncedExpense;
-    }
+    _putExpenseAtIndex(syncedExpense, isCreate ? _expenses.length : index);
     _recordSyncChange(
       entityType: 'expense',
       entityId: syncedExpense.id,
@@ -8169,12 +9628,50 @@ class AppStore extends ChangeNotifier {
       payload: syncedExpense.toJson(),
     );
     await _saveDirty(expenses: true, sync: true);
+    unawaited(
+      AppLogger.info(
+        area: 'expenses',
+        action: isCreate ? 'create_expense' : 'update_expense',
+        message: isCreate
+            ? 'Expense created successfully.'
+            : 'Expense updated successfully.',
+        details:
+            'expenseId=${syncedExpense.id} title=${syncedExpense.title} amount=${syncedExpense.amount}',
+        userId: _activeUser?.id ?? '',
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        sessionId: _deviceId,
+        traceId: _deviceId,
+        devicePlatform: appIdentity.platform.name,
+        deviceModel: _deviceId,
+        isImportant: true,
+      ),
+    );
+    unawaited(
+      AuditLogger.record(
+        entityType: 'expense',
+        entityId: syncedExpense.id,
+        action: isCreate ? 'create' : 'update',
+        summary: isCreate ? 'Expense created' : 'Expense updated',
+        details: jsonEncode(syncedExpense.toJson()),
+        userId: _activeUser?.id ?? '',
+        userName: _activeUser?.fullName ?? _activeUser?.username ?? '',
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        sessionId: _deviceId,
+        traceId: _deviceId,
+        deviceId: _deviceId,
+        sourceModule: 'expenses',
+        isImportant: true,
+      ),
+    );
+    _touchExpensesData();
     notifyListeners();
   }
 
   Future<void> postExpense(String id) async {
     requirePermission(AppPermission.expensesManage);
-    final index = _expenses.indexWhere((item) => item.id == id);
+    final index = _expenseIndexForId(id);
     if (index == -1) throw ArgumentError('Expense not found.');
     final expense = _expenses[index];
     if (expense.isPosted || expense.isCancelled) return;
@@ -8193,12 +9690,13 @@ class AppStore extends ChangeNotifier {
       payload: posted.toJson(),
     );
     await _saveDirty(expenses: true, accountTransactions: true, sync: true);
+    _touchExpensesData();
     notifyListeners();
   }
 
   Future<void> deleteDraftExpense(String id) async {
     requirePermission(AppPermission.expensesManage);
-    final index = _expenses.indexWhere((item) => item.id == id);
+    final index = _expenseIndexForId(id);
     if (index == -1) return;
     final expense = _expenses[index];
     if (expense.isPosted) {
@@ -8215,7 +9713,7 @@ class AppStore extends ChangeNotifier {
       now,
       clearDeletedAt: false,
     );
-    _expenses[index] = deleted;
+    _putExpenseAtIndex(deleted, index);
     _recordSyncChange(
       entityType: 'expense',
       entityId: id,
@@ -8223,12 +9721,13 @@ class AppStore extends ChangeNotifier {
       payload: deleted.toJson(),
     );
     await _saveDirty(expenses: true, sync: true);
+    _touchExpensesData();
     notifyListeners();
   }
 
   Future<void> cancelExpense(String id, {String reason = ''}) async {
     requirePermission(AppPermission.expensesManage);
-    final index = _expenses.indexWhere((item) => item.id == id);
+    final index = _expenseIndexForId(id);
     if (index == -1) throw ArgumentError('Expense not found.');
     final expense = _expenses[index];
     if (expense.isCancelled) return;
@@ -8253,7 +9752,7 @@ class AppStore extends ChangeNotifier {
       reason: reason.trim().isEmpty ? 'Expense cancelled' : reason.trim(),
       createdBy: _deviceId,
     );
-    _expenses[index] = cancelled;
+    _putExpenseAtIndex(cancelled, index);
     _reverseExpenseLedger(
       cancelled,
       now,
@@ -8266,12 +9765,13 @@ class AppStore extends ChangeNotifier {
       payload: cancelled.toJson(),
     );
     await _saveDirty(expenses: true, accountTransactions: true, sync: true);
+    _touchExpensesData();
     notifyListeners();
   }
 
   Future<void> permanentlyDeleteCancelledExpense(String id) async {
     requirePermission(AppPermission.databaseManage);
-    final index = _expenses.indexWhere((item) => item.id == id);
+    final index = _expenseIndexForId(id);
     if (index == -1) return;
     final expense = _expenses[index];
     if (!expense.isCancelled) {
@@ -8283,7 +9783,7 @@ class AppStore extends ChangeNotifier {
       now,
       clearDeletedAt: false,
     );
-    _expenses[index] = deleted;
+    _putExpenseAtIndex(deleted, index);
     _recordSyncChange(
       entityType: 'expense',
       entityId: id,
@@ -8291,6 +9791,7 @@ class AppStore extends ChangeNotifier {
       payload: deleted.toJson(),
     );
     await _saveDirty(expenses: true, sync: true);
+    _touchExpensesData();
     notifyListeners();
   }
 
@@ -8339,6 +9840,7 @@ class AppStore extends ChangeNotifier {
       lastModifiedByDeviceId: _deviceId,
     );
     _warehouses.add(warehouse);
+    _rememberSqliteDirtyBusinessRow(_warehousesKey, warehouse.toJson());
     _recordSyncChange(
       entityType: 'warehouse',
       entityId: warehouse.id,
@@ -8346,6 +9848,42 @@ class AppStore extends ChangeNotifier {
       payload: warehouse.toJson(),
     );
     await _saveDirty(warehouses: true, sync: true);
+    unawaited(
+      AppLogger.info(
+        area: 'inventory',
+        action: 'create_warehouse',
+        message: 'Warehouse created successfully.',
+        details: 'warehouseId=${warehouse.id} name=${warehouse.name}',
+        userId: _activeUser?.id ?? '',
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        sessionId: _deviceId,
+        traceId: _deviceId,
+        devicePlatform: appIdentity.platform.name,
+        deviceModel: appIdentity.deviceName.isNotEmpty
+            ? appIdentity.deviceName
+            : _deviceId,
+        isImportant: true,
+      ),
+    );
+    unawaited(
+      AuditLogger.record(
+        entityType: 'warehouse',
+        entityId: warehouse.id,
+        action: 'create',
+        summary: 'Warehouse created',
+        details: jsonEncode(warehouse.toJson()),
+        userId: _activeUser?.id ?? '',
+        userName: _actorName(),
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        sessionId: _deviceId,
+        traceId: _deviceId,
+        deviceId: _deviceId,
+        sourceModule: 'inventory',
+        isImportant: true,
+      ),
+    );
     notifyListeners();
     return warehouse;
   }
@@ -8434,6 +9972,49 @@ class AppStore extends ChangeNotifier {
       recordSync: true,
     );
     await _saveDirty(stockMovements: true, sync: true);
+    unawaited(
+      AppLogger.info(
+        area: 'inventory',
+        action: 'transfer_stock',
+        message: 'Stock transferred successfully.',
+        details:
+            'productId=$productId from=$fromWarehouseId to=$toWarehouseId quantity=$quantity',
+        userId: _activeUser?.id ?? '',
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        sessionId: _deviceId,
+        traceId: _deviceId,
+        devicePlatform: appIdentity.platform.name,
+        deviceModel: appIdentity.deviceName.isNotEmpty
+            ? appIdentity.deviceName
+            : _deviceId,
+        isImportant: true,
+      ),
+    );
+    unawaited(
+      AuditLogger.record(
+        entityType: 'stock_movement',
+        entityId: transferId,
+        action: 'transfer',
+        summary: 'Stock transferred',
+        details: jsonEncode(<String, Object?>{
+          'productId': productId,
+          'fromWarehouseId': fromWarehouseId,
+          'toWarehouseId': toWarehouseId,
+          'quantity': quantity,
+          'notes': notes,
+        }),
+        userId: _activeUser?.id ?? '',
+        userName: _actorName(),
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        sessionId: _deviceId,
+        traceId: _deviceId,
+        deviceId: _deviceId,
+        sourceModule: 'inventory',
+        isImportant: true,
+      ),
+    );
     notifyListeners();
   }
 
@@ -8503,7 +10084,7 @@ class AppStore extends ChangeNotifier {
       version: 1,
       lastModifiedByDeviceId: _deviceId,
     );
-    _purchases.add(purchase);
+    _putPurchaseAtIndex(purchase, _purchases.length);
     _recordSyncChange(
       entityType: 'purchase',
       entityId: purchase.id,
@@ -8525,13 +10106,51 @@ class AppStore extends ChangeNotifier {
     if (receiveNow) {
       await AccountingService.recordPurchase(purchase);
     }
+    unawaited(
+      AppLogger.info(
+        area: 'purchases',
+        action: 'create_purchase',
+        message: 'Purchase created successfully.',
+        details:
+            'purchaseId=${purchase.id} purchaseNo=${purchase.purchaseNo} total=$purchaseTotal receiveNow=$receiveNow',
+        userId: _activeUser?.id ?? '',
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        sessionId: _deviceId,
+        traceId: _deviceId,
+        devicePlatform: appIdentity.platform.name,
+        deviceModel: appIdentity.deviceName.isNotEmpty
+            ? appIdentity.deviceName
+            : _deviceId,
+        isImportant: true,
+      ),
+    );
+    unawaited(
+      AuditLogger.record(
+        entityType: 'purchase',
+        entityId: purchase.id,
+        action: 'create',
+        summary: 'Purchase created',
+        details: jsonEncode(purchase.toJson()),
+        userId: _activeUser?.id ?? '',
+        userName: _actorName(),
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        sessionId: _deviceId,
+        traceId: _deviceId,
+        deviceId: _deviceId,
+        sourceModule: 'purchases',
+        isImportant: true,
+      ),
+    );
+    _touchPurchasesData();
     notifyListeners();
     return purchase;
   }
 
   Future<void> receivePurchase(String id) async {
     requirePermission(AppPermission.suppliersManage);
-    final index = _purchases.indexWhere((item) => item.id == id);
+    final index = _purchaseIndexForId(id);
     if (index == -1) throw ArgumentError('Purchase not found.');
     final purchase = _purchases[index];
     if (purchase.isReceived || purchase.isCancelled) return;
@@ -8540,7 +10159,7 @@ class AppStore extends ChangeNotifier {
       purchase.copyWith(status: 'Received'),
       now,
     );
-    _purchases[index] = received;
+    _putPurchaseAtIndex(received, index);
     _recordSyncChange(
       entityType: 'purchase',
       entityId: received.id,
@@ -8557,12 +10176,49 @@ class AppStore extends ChangeNotifier {
       sync: true,
     );
     await AccountingService.recordPurchase(received);
+    unawaited(
+      AppLogger.info(
+        area: 'purchases',
+        action: 'receive_purchase',
+        message: 'Purchase received successfully.',
+        details: 'purchaseId=${received.id} purchaseNo=${received.purchaseNo}',
+        userId: _activeUser?.id ?? '',
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        sessionId: _deviceId,
+        traceId: _deviceId,
+        devicePlatform: appIdentity.platform.name,
+        deviceModel: appIdentity.deviceName.isNotEmpty
+            ? appIdentity.deviceName
+            : _deviceId,
+        isImportant: true,
+      ),
+    );
+    unawaited(
+      AuditLogger.record(
+        entityType: 'purchase',
+        entityId: received.id,
+        action: 'receive',
+        summary: 'Purchase received',
+        details: jsonEncode(received.toJson()),
+        userId: _activeUser?.id ?? '',
+        userName: _actorName(),
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        sessionId: _deviceId,
+        traceId: _deviceId,
+        deviceId: _deviceId,
+        sourceModule: 'purchases',
+        isImportant: true,
+      ),
+    );
+    _touchPurchasesData();
     notifyListeners();
   }
 
   Future<void> deleteDraftPurchase(String id) async {
     requirePermission(AppPermission.suppliersManage);
-    final index = _purchases.indexWhere((item) => item.id == id);
+    final index = _purchaseIndexForId(id);
     if (index == -1) return;
     final purchase = _purchases[index];
     if (purchase.isReceived) {
@@ -8581,7 +10237,7 @@ class AppStore extends ChangeNotifier {
       now,
       clearDeletedAt: false,
     );
-    _purchases[index] = deleted;
+    _putPurchaseAtIndex(deleted, index);
     _recordSyncChange(
       entityType: 'purchase',
       entityId: id,
@@ -8589,12 +10245,49 @@ class AppStore extends ChangeNotifier {
       payload: deleted.toJson(),
     );
     await _saveDirty(purchases: true, sync: true);
+    unawaited(
+      AppLogger.info(
+        area: 'purchases',
+        action: 'delete_purchase',
+        message: 'Draft purchase deleted successfully.',
+        details: 'purchaseId=$id purchaseNo=${purchase.purchaseNo}',
+        userId: _activeUser?.id ?? '',
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        sessionId: _deviceId,
+        traceId: _deviceId,
+        devicePlatform: appIdentity.platform.name,
+        deviceModel: appIdentity.deviceName.isNotEmpty
+            ? appIdentity.deviceName
+            : _deviceId,
+        isImportant: true,
+      ),
+    );
+    unawaited(
+      AuditLogger.record(
+        entityType: 'purchase',
+        entityId: id,
+        action: 'delete',
+        summary: 'Draft purchase deleted',
+        details: jsonEncode(deleted.toJson()),
+        userId: _activeUser?.id ?? '',
+        userName: _actorName(),
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        sessionId: _deviceId,
+        traceId: _deviceId,
+        deviceId: _deviceId,
+        sourceModule: 'purchases',
+        isImportant: true,
+      ),
+    );
+    _touchPurchasesData();
     notifyListeners();
   }
 
   Future<void> permanentlyDeleteCancelledPurchase(String id) async {
     requirePermission(AppPermission.databaseManage);
-    final index = _purchases.indexWhere((item) => item.id == id);
+    final index = _purchaseIndexForId(id);
     if (index == -1) return;
     final purchase = _purchases[index];
     if (purchase.status.toLowerCase() != 'cancelled') {
@@ -8608,7 +10301,7 @@ class AppStore extends ChangeNotifier {
       now,
       clearDeletedAt: false,
     );
-    _purchases[index] = deleted;
+    _putPurchaseAtIndex(deleted, index);
     _recordSyncChange(
       entityType: 'purchase',
       entityId: id,
@@ -8616,6 +10309,43 @@ class AppStore extends ChangeNotifier {
       payload: deleted.toJson(),
     );
     await _saveDirty(purchases: true, sync: true);
+    unawaited(
+      AppLogger.info(
+        area: 'purchases',
+        action: 'permanent_delete_purchase',
+        message: 'Cancelled purchase permanently deleted.',
+        details: 'purchaseId=$id purchaseNo=${purchase.purchaseNo}',
+        userId: _activeUser?.id ?? '',
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        sessionId: _deviceId,
+        traceId: _deviceId,
+        devicePlatform: appIdentity.platform.name,
+        deviceModel: appIdentity.deviceName.isNotEmpty
+            ? appIdentity.deviceName
+            : _deviceId,
+        isImportant: true,
+      ),
+    );
+    unawaited(
+      AuditLogger.record(
+        entityType: 'purchase',
+        entityId: id,
+        action: 'permanent_delete',
+        summary: 'Cancelled purchase permanently deleted',
+        details: jsonEncode(deleted.toJson()),
+        userId: _activeUser?.id ?? '',
+        userName: _actorName(),
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        sessionId: _deviceId,
+        traceId: _deviceId,
+        deviceId: _deviceId,
+        sourceModule: 'purchases',
+        isImportant: true,
+      ),
+    );
+    _touchPurchasesData();
     notifyListeners();
   }
 
@@ -8625,7 +10355,7 @@ class AppStore extends ChangeNotifier {
     String reason = '',
   }) async {
     requirePermission(AppPermission.suppliersManage);
-    final index = _purchases.indexWhere((item) => item.id == id);
+    final index = _purchaseIndexForId(id);
     if (index == -1) throw ArgumentError('Purchase not found.');
     final purchase = _purchases[index];
     if (purchase.isCancelled) return;
@@ -8691,7 +10421,7 @@ class AppStore extends ChangeNotifier {
       ),
       now,
     );
-    _purchases[index] = returned;
+    _putPurchaseAtIndex(returned, index);
     _recordSyncChange(
       entityType: 'purchase',
       entityId: id,
@@ -8706,6 +10436,44 @@ class AppStore extends ChangeNotifier {
       accountTransactions: true,
       sync: true,
     );
+    unawaited(
+      AppLogger.info(
+        area: 'purchases',
+        action: 'return_purchase',
+        message: 'Purchase returned successfully.',
+        details:
+            'purchaseId=$id purchaseNo=${purchase.purchaseNo} reverseStock=$reverseStock',
+        userId: _activeUser?.id ?? '',
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        sessionId: _deviceId,
+        traceId: _deviceId,
+        devicePlatform: appIdentity.platform.name,
+        deviceModel: appIdentity.deviceName.isNotEmpty
+            ? appIdentity.deviceName
+            : _deviceId,
+        isImportant: true,
+      ),
+    );
+    unawaited(
+      AuditLogger.record(
+        entityType: 'purchase',
+        entityId: id,
+        action: 'return',
+        summary: 'Purchase returned',
+        details: jsonEncode(returned.toJson()),
+        userId: _activeUser?.id ?? '',
+        userName: _actorName(),
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        sessionId: _deviceId,
+        traceId: _deviceId,
+        deviceId: _deviceId,
+        sourceModule: 'purchases',
+        isImportant: true,
+      ),
+    );
+    _touchPurchasesData();
     notifyListeners();
   }
 
@@ -8715,7 +10483,7 @@ class AppStore extends ChangeNotifier {
     String reason = '',
   }) async {
     requirePermission(AppPermission.suppliersManage);
-    final index = _purchases.indexWhere((item) => item.id == id);
+    final index = _purchaseIndexForId(id);
     if (index == -1) throw ArgumentError('Purchase not found.');
     final purchase = _purchases[index];
     if (purchase.isCancelled) return;
@@ -8781,7 +10549,7 @@ class AppStore extends ChangeNotifier {
       ),
       now,
     );
-    _purchases[index] = cancelled;
+    _putPurchaseAtIndex(cancelled, index);
     _recordSyncChange(
       entityType: 'purchase',
       entityId: id,
@@ -8802,6 +10570,44 @@ class AppStore extends ChangeNotifier {
       accountTransactions: true,
       sync: true,
     );
+    unawaited(
+      AppLogger.info(
+        area: 'purchases',
+        action: 'cancel_purchase',
+        message: 'Purchase cancelled successfully.',
+        details:
+            'purchaseId=$id purchaseNo=${purchase.purchaseNo} reverseStock=$reverseStock',
+        userId: _activeUser?.id ?? '',
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        sessionId: _deviceId,
+        traceId: _deviceId,
+        devicePlatform: appIdentity.platform.name,
+        deviceModel: appIdentity.deviceName.isNotEmpty
+            ? appIdentity.deviceName
+            : _deviceId,
+        isImportant: true,
+      ),
+    );
+    unawaited(
+      AuditLogger.record(
+        entityType: 'purchase',
+        entityId: id,
+        action: 'cancel',
+        summary: 'Purchase cancelled',
+        details: jsonEncode(cancelled.toJson()),
+        userId: _activeUser?.id ?? '',
+        userName: _actorName(),
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        sessionId: _deviceId,
+        traceId: _deviceId,
+        deviceId: _deviceId,
+        sourceModule: 'purchases',
+        isImportant: true,
+      ),
+    );
+    _touchPurchasesData();
     notifyListeners();
   }
 
@@ -8863,6 +10669,7 @@ class AppStore extends ChangeNotifier {
           .toList(),
     );
     _inventoryCounts.add(session);
+    _rememberSqliteDirtyBusinessRow(_inventoryCountsKey, session.toJson());
     await _saveDirty(inventoryCounts: true);
     notifyListeners();
     return session;
@@ -8905,6 +10712,10 @@ class AppStore extends ChangeNotifier {
     _inventoryCounts[sessionIndex] = session.copyWith(
       lines: lines,
       updatedAt: now,
+    );
+    _rememberSqliteDirtyBusinessRow(
+      _inventoryCountsKey,
+      _inventoryCounts[sessionIndex].toJson(),
     );
     await _saveDirty(inventoryCounts: true);
     notifyListeners();
@@ -8988,6 +10799,10 @@ class AppStore extends ChangeNotifier {
       approvedBy: _actorName(),
       updatedAt: now,
     );
+    _rememberSqliteDirtyBusinessRow(
+      _inventoryCountsKey,
+      _inventoryCounts[sessionIndex].toJson(),
+    );
     await _saveDirty(
       products: true,
       stockMovements: true,
@@ -9011,6 +10826,10 @@ class AppStore extends ChangeNotifier {
     _inventoryCounts[sessionIndex] = session.copyWith(
       status: 'cancelled',
       updatedAt: now,
+    );
+    _rememberSqliteDirtyBusinessRow(
+      _inventoryCountsKey,
+      _inventoryCounts[sessionIndex].toJson(),
     );
     await _saveDirty(inventoryCounts: true);
     notifyListeners();
@@ -9043,7 +10862,7 @@ class AppStore extends ChangeNotifier {
       version: movement.version + 1,
       lastModifiedByDeviceId: _deviceId,
     );
-    _stockMovements[index] = updated;
+    _putStockMovementAtIndex(updated, index);
     _recordSyncChange(
       entityType: 'stock_movement',
       entityId: updated.id,
@@ -9169,8 +10988,9 @@ class AppStore extends ChangeNotifier {
   }
 
   void _addStockMovement(StockMovement movement, {bool recordSync = false}) {
-    if (_stockMovements.any((item) => item.id == movement.id)) return;
-    _stockMovements.add(movement);
+    final index = _stockMovementIndexForId(movement.id);
+    if (index != -1) return;
+    _putStockMovementAtIndex(movement, _stockMovements.length);
     if (recordSync) {
       _recordSyncChange(
         entityType: 'stock_movement',
@@ -9939,6 +11759,41 @@ class AppStore extends ChangeNotifier {
       sync: true,
     );
     await AccountingService.recordSale(sale);
+    unawaited(
+      AppLogger.info(
+        area: 'sales',
+        action: 'create_invoice',
+        message: 'Sale invoice created successfully.',
+        details:
+            'saleId=${sale.id} invoiceNo=${sale.invoiceNo} total=${sale.invoiceTotal}',
+        userId: _activeUser?.id ?? '',
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        sessionId: _deviceId,
+        traceId: _deviceId,
+        devicePlatform: appIdentity.platform.name,
+        deviceModel: _deviceId,
+        isImportant: true,
+      ),
+    );
+    unawaited(
+      AuditLogger.record(
+        entityType: 'sale',
+        entityId: sale.id,
+        action: 'create',
+        summary: 'Sale invoice created',
+        details: jsonEncode(sale.toJson()),
+        userId: _activeUser?.id ?? '',
+        userName: _activeUser?.fullName ?? _activeUser?.username ?? '',
+        storeId: appIdentity.storeId,
+        branchId: appIdentity.branchId,
+        sessionId: _deviceId,
+        traceId: _deviceId,
+        deviceId: _deviceId,
+        sourceModule: 'sales',
+        isImportant: true,
+      ),
+    );
     notifyListeners();
     return sale;
   }
@@ -12299,6 +14154,7 @@ class AppStore extends ChangeNotifier {
         ..addAll(accountTransactions);
     }
     _invalidateAccountLedgerCache();
+    _rebuildProductPricingLookupCaches();
     _syncChanges
       ..clear()
       ..addAll(
@@ -13607,13 +15463,20 @@ class AppStore extends ChangeNotifier {
         break;
       case 'expense':
         if (change.operation == 'delete' && p.isEmpty) {
-          _expenses.removeWhere((item) => item.id == change.entityId);
+          final expenseIndex = _expenseIndexForId(change.entityId);
+          if (expenseIndex != -1) {
+            _removeExpenseAtIndex(expenseIndex);
+            _touchExpensesData();
+          }
         } else {
+          final incoming = Expense.fromJson(p);
           _upsertByUpdatedAt<Expense>(
             _expenses,
-            Expense.fromJson(p),
+            incoming,
             (item) => item.id,
           );
+          _rebuildExpenseIndexes();
+          _touchExpensesData();
         }
         break;
       case 'category':
@@ -13706,32 +15569,66 @@ class AppStore extends ChangeNotifier {
         }
         break;
       case 'purchase':
-        final incomingPurchase = Purchase.fromJson(p);
-        _upsertByUpdatedAt<Purchase>(
-          _purchases,
-          incomingPurchase,
-          (item) => item.id,
-        );
+        if (change.operation == 'delete' && p.isEmpty) {
+          final purchaseIndex = _purchaseIndexForId(change.entityId);
+          if (purchaseIndex != -1) {
+            _removePurchaseAtIndex(purchaseIndex);
+            _touchPurchasesData();
+          }
+        } else {
+          final incomingPurchase = Purchase.fromJson(p);
+          _upsertByUpdatedAt<Purchase>(
+            _purchases,
+            incomingPurchase,
+            (item) => item.id,
+          );
+          _rebuildPurchaseIndexes();
+          _touchPurchasesData();
+        }
         break;
       case 'account_transaction':
         if (change.operation == 'delete' && p.isEmpty) {
-          _accountTransactions.removeWhere(
-            (item) => item.id == change.entityId,
-          );
+          final transactionIndex =
+              _accountTransactionIndexForId(change.entityId);
+          if (transactionIndex != -1) {
+            final previous = _accountTransactions[transactionIndex];
+            _removeAccountTransactionAtIndex(transactionIndex);
+            _replaceAccountTransactionInLedgerCache(
+              previous: previous,
+              current: previous.copyWith(deletedAt: DateTime.now()),
+            );
+          }
           _invalidateAccountLedgerCache();
         } else {
+          final incoming = AccountTransaction.fromJson(p);
+          final previousIndex = _accountTransactionIndexForId(incoming.id);
+          final previous =
+              previousIndex == -1 ? null : _accountTransactions[previousIndex];
           _upsertByUpdatedAt<AccountTransaction>(
             _accountTransactions,
-            AccountTransaction.fromJson(p),
+            incoming,
             (item) => item.id,
           );
+          final currentIndex = _accountTransactionIndexForId(incoming.id);
+          final current =
+              currentIndex == -1 ? null : _accountTransactions[currentIndex];
+          if (current != null) {
+            _replaceAccountTransactionInLedgerCache(
+              previous: previous,
+              current: current,
+            );
+          }
+          _rebuildAccountTransactionIndexes();
           _invalidateAccountLedgerCache();
         }
         break;
       case 'stock_movement':
         final movement = StockMovement.fromJson(p);
-        if (_stockMovements.any((item) => item.id == movement.id)) break;
-        _stockMovements.add(movement.copyWith(syncStatus: 'synced'));
+        if (_stockMovementIndexForId(movement.id) != -1) break;
+        _putStockMovementAtIndex(
+          movement.copyWith(syncStatus: 'synced'),
+          _stockMovements.length,
+        );
         final productId = movement.productId;
         final quantity = movement.quantity;
         final index = _productIndexById[productId];

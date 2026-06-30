@@ -5,6 +5,8 @@ import '../../core/localization/app_localizations.dart';
 import '../../core/services/account_auth_service.dart';
 import '../../core/services/cloud_sync_service.dart';
 import '../../core/services/sync_diagnostics_log.dart';
+import '../../core/services/page_timing_scope.dart';
+import '../../core/services/startup_timing_service.dart';
 import '../../core/services/windows_release_catalog.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/sync_unified/sync_unified.dart';
@@ -37,6 +39,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
       TextEditingController();
   final TextEditingController _storeNameController =
       TextEditingController(text: 'my_store');
+  AccountAuthCache? _authCache;
 
   bool _savingSetup = false;
   bool _loggingIn = false;
@@ -44,11 +47,18 @@ class _LoginGatePageState extends State<LoginGatePage> {
   bool _showRegister = false;
   bool _showPassword = false;
   bool _checkingSuspension = false;
+  bool _firstBuildMarked = false;
+  bool _firstReadyMarked = false;
   String _onlineSessionPassword = '';
 
   @override
   void initState() {
     super.initState();
+    StartupTimingService.markPageEntered(
+      'LoginGatePage',
+      pageLabel: 'Login gate',
+    );
+    _authCache = AccountAuthCache.load();
     _rememberLogin = widget.store.rememberLogin;
     _storeNameController.text = widget.store.storeProfile.name.trim().isEmpty
         ? 'my_store'
@@ -57,6 +67,10 @@ class _LoginGatePageState extends State<LoginGatePage> {
 
   @override
   void dispose() {
+    StartupTimingService.markPageExited(
+      'LoginGatePage',
+      pageLabel: 'Login gate',
+    );
     _usernameController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
@@ -77,20 +91,25 @@ class _LoginGatePageState extends State<LoginGatePage> {
         .showSnackBar(SnackBar(content: Text(message)));
   }
 
+  void _setAuthCache(AccountAuthCache? cache) {
+    if (!mounted) return;
+    setState(() => _authCache = cache);
+  }
+
   Future<void> _persistRecoveredStoreAuthCache({
     required String storeId,
     required String branchId,
   }) async {
-    final cache = AccountAuthCache.load();
+    final cache = _authCache;
     if (cache == null) return;
-    await AccountAuthCache.save(
-      cache.copyWith(
-        mode: 'login',
-        storeId: storeId.trim().toUpperCase(),
-        branchId: branchId.trim().toUpperCase(),
-        lastVerifiedAt: DateTime.now(),
-      ),
+    final updatedCache = cache.copyWith(
+      mode: 'login',
+      storeId: storeId.trim().toUpperCase(),
+      branchId: branchId.trim().toUpperCase(),
+      lastVerifiedAt: DateTime.now(),
     );
+    await AccountAuthCache.save(updatedCache);
+    _setAuthCache(updatedCache);
   }
 
   String _recoveryUsernameFromCache(AccountAuthCache cache) {
@@ -149,7 +168,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
 
   Future<void> _recoverStoreIdentity(BuildContext context) async {
     final tr = AppLocalizations.of(context);
-    final cache = AccountAuthCache.load();
+    final cache = _authCache ?? AccountAuthCache.load();
     final cloud = CloudSyncSettings.load();
     final previousIdentity = widget.store.appIdentity;
     final storeId = (cache?.storeId.trim().isNotEmpty == true
@@ -274,7 +293,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
         'deviceLimit=${result.deviceLimit?.allowed ?? -1}',
       );
       if (result.ok) {
-        final recoveryCache = AccountAuthCache.load();
+        final recoveryCache = _authCache ?? AccountAuthCache.load();
         final recoveryUsername = recoveryCache == null
             ? ''
             : _recoveryUsernameFromResult(result, recoveryCache);
@@ -298,30 +317,29 @@ class _LoginGatePageState extends State<LoginGatePage> {
             deviceRole: DeviceRole.host,
             syncMode: previousIdentity.syncMode,
           );
-          await AccountAuthCache.save(
-            recoveryCache.copyWith(
-              mode: 'login',
-              storeId: result.identity?.storeId ?? storeId,
-              branchId: result.identity?.branchId ?? branchId,
-              username: recoveryUsername,
-              storeSlug: result.storeSlug.trim().isNotEmpty
-                  ? result.storeSlug
-                  : recoveryCache.storeSlug,
-              storeName: result.storeName.trim().isNotEmpty
-                  ? result.storeName
-                  : recoveryCache.storeName,
-              loginName: result.loginName.trim().isNotEmpty
-                  ? result.loginName
-                  : recoveryCache.loginName,
-              // Keep the cached entitlement unchanged here. Store recovery may
-              // rebuild the identity, but the subscription gate must still be
-              // decided by the live plan check, not by the recovery response.
-              cloudSyncEnabled: recoveryCache.cloudSyncEnabled,
-              devicesLimit:
-                  result.deviceLimit?.allowed ?? recoveryCache.devicesLimit,
-              lastVerifiedAt: DateTime.now(),
-            ),
+          final updatedCache = recoveryCache.copyWith(
+            mode: 'login',
+            storeId: result.identity?.storeId ?? storeId,
+            branchId: result.identity?.branchId ?? branchId,
+            username: recoveryUsername,
+            storeSlug: result.storeSlug.trim().isNotEmpty
+                ? result.storeSlug
+                : recoveryCache.storeSlug,
+            storeName: result.storeName.trim().isNotEmpty
+                ? result.storeName
+                : recoveryCache.storeName,
+            loginName: result.loginName.trim().isNotEmpty
+                ? result.loginName
+                : recoveryCache.loginName,
+            // Keep the cached entitlement unchanged here. Store recovery may
+            // rebuild the identity, but the subscription gate must still be
+            // decided by the live plan check, not by the recovery response.
+            cloudSyncEnabled: recoveryCache.cloudSyncEnabled,
+            devicesLimit: result.deviceLimit?.allowed ?? recoveryCache.devicesLimit,
+            lastVerifiedAt: DateTime.now(),
           );
+          await AccountAuthCache.save(updatedCache);
+          _setAuthCache(updatedCache);
         } else {
           await _persistRecoveredStoreAuthCache(
             storeId: result.identity?.storeId ?? storeId,
@@ -346,7 +364,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
 
   Future<void> _recoverStoreData(BuildContext context) async {
     final tr = AppLocalizations.of(context);
-    final cache = AccountAuthCache.load();
+    final cache = _authCache ?? AccountAuthCache.load();
     final cloud = CloudSyncSettings.load();
     SyncDiagnosticsLog.add(
       '[RECOVER_DATA] press '
@@ -382,9 +400,9 @@ class _LoginGatePageState extends State<LoginGatePage> {
     final sessionResult = await AccountAuthService()
         .refreshSession(accountToken: cache.accountToken.trim());
     if (sessionResult.ok) {
-      await AccountAuthService.cacheOnlineResult(sessionResult,
+      latestCache = await AccountAuthService.cacheOnlineResult(sessionResult,
           mode: cache.mode.isEmpty ? 'login' : cache.mode);
-      latestCache = AccountAuthCache.load() ?? cache;
+      _setAuthCache(latestCache);
     }
     SyncDiagnosticsLog.add(
       '[RECOVER_DATA] refresh_session result ok=${sessionResult.ok} '
@@ -544,8 +562,17 @@ class _LoginGatePageState extends State<LoginGatePage> {
           ));
           return;
         }
+        StartupTimingService.event(
+          'login_success',
+          category: 'auth',
+          details: 'mode=online',
+        );
         _onlineSessionPassword = _passwordController.text;
-        await AccountAuthService.cacheOnlineResult(onlineResult, mode: 'login');
+        final cached = await AccountAuthService.cacheOnlineResult(
+          onlineResult,
+          mode: 'login',
+        );
+        _setAuthCache(cached);
         await widget.store.applyCloudStoreOwnerCredentials(
           username: onlineResult.username.isNotEmpty
               ? onlineResult.username
@@ -578,6 +605,11 @@ class _LoginGatePageState extends State<LoginGatePage> {
     setState(() => _loggingIn = false);
 
     if (ok) {
+      StartupTimingService.event(
+        'login_success',
+        category: 'auth',
+        details: 'mode=local',
+      );
       setState(() {});
     } else {
       _passwordController.clear();
@@ -635,8 +667,11 @@ class _LoginGatePageState extends State<LoginGatePage> {
             ? tr.text('online_register_failed')
             : onlineResult.message);
       }
-      await AccountAuthService.cacheOnlineResult(onlineResult,
-          mode: 'registered_local');
+      final cached = await AccountAuthService.cacheOnlineResult(
+        onlineResult,
+        mode: 'registered_local',
+      );
+      _setAuthCache(cached);
       await widget.store.recoverOnlineStoreOwnerIdentity(
         storeId: onlineResult.storeId,
         branchId: onlineResult.branchId,
@@ -775,36 +810,61 @@ class _LoginGatePageState extends State<LoginGatePage> {
 
   @override
   Widget build(BuildContext context) {
-    final authCache = AccountAuthCache.load();
+    if (!_firstBuildMarked) {
+      _firstBuildMarked = true;
+      StartupTimingService.markPageBuilt(
+        'LoginGatePage',
+        pageLabel: 'Login gate',
+      );
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _firstReadyMarked) return;
+        _firstReadyMarked = true;
+        StartupTimingService.markPageReady(
+          'LoginGatePage',
+          pageLabel: 'Login gate',
+        );
+      });
+    }
+    final authCache = _authCache;
     final platformAdminUnlocked = authCache?.accountType == 'platform_admin';
     final storeAccountUnlocked = authCache?.accountType == 'store_owner' &&
         authCache?.mode == 'login' &&
         (authCache?.storeSlug ?? '').trim().isNotEmpty &&
         authCache?.storeSlug != 'ventio';
     if (platformAdminUnlocked && authCache != null) {
-      return PlatformAdminDashboardPage(
-        cache: authCache,
-        onLogout: () async {
-          await AccountAuthCache.clear();
-          if (mounted) setState(() {});
-        },
+      return PageTimingScope(
+        key: const ValueKey('PlatformAdminDashboardPage'),
+        pageKey: 'PlatformAdminDashboardPage',
+        pageLabel: 'Platform admin dashboard',
+        child: PlatformAdminDashboardPage(
+          cache: authCache,
+          onLogout: () async {
+            await AccountAuthCache.clear();
+            if (mounted) setState(() => _authCache = null);
+          },
+        ),
       );
     }
     if (storeAccountUnlocked && authCache != null) {
-      return StoreAccountDashboardPage(
-        store: widget.store,
-        cache: authCache,
-        hasStoreIdentity:
-            widget.store.appIdentity.hostDeviceId.trim().isNotEmpty,
-        hasLocalStoreData: widget.store.hasLocalAdminUser,
-        canRecoverStoreData: authCache.cloudSyncEnabled,
-        onRecoverStoreIdentity: () => _recoverStoreIdentity(context),
-        onRecoverStoreData: () => _recoverStoreData(context),
-        onLogout: () async {
-          await AccountAuthCache.clear();
-          if (mounted) setState(() {});
-        },
-        onLocaleChanged: widget.onLocaleChanged,
+      return PageTimingScope(
+        key: const ValueKey('StoreAccountDashboardPage'),
+        pageKey: 'StoreAccountDashboardPage',
+        pageLabel: 'Store account dashboard',
+        child: StoreAccountDashboardPage(
+          store: widget.store,
+          cache: authCache,
+          hasStoreIdentity:
+              widget.store.appIdentity.hostDeviceId.trim().isNotEmpty,
+          hasLocalStoreData: widget.store.hasLocalAdminUser,
+          canRecoverStoreData: authCache.cloudSyncEnabled,
+          onRecoverStoreIdentity: () => _recoverStoreIdentity(context),
+          onRecoverStoreData: () => _recoverStoreData(context),
+          onLogout: () async {
+            await AccountAuthCache.clear();
+            if (mounted) setState(() => _authCache = null);
+          },
+          onLocaleChanged: widget.onLocaleChanged,
+        ),
       );
     }
     if (widget.store.activeUser != null) return widget.child;
@@ -1022,14 +1082,19 @@ class _LoginGatePageState extends State<LoginGatePage> {
                                     : () async {
                                         await Navigator.of(context).push(
                                           MaterialPageRoute<void>(
-                                            builder: (_) => SyncSetupPage(
-                                              store: widget.store,
-                                              onDone: () async {
-                                                if (Navigator.of(context)
-                                                    .canPop()) {
-                                                  Navigator.of(context).pop();
-                                                }
-                                              },
+                                            builder: (_) => PageTimingScope(
+                                              key: const ValueKey('SyncSetupPage'),
+                                              pageKey: 'SyncSetupPage',
+                                              pageLabel: 'Sync setup',
+                                              child: SyncSetupPage(
+                                                store: widget.store,
+                                                onDone: () async {
+                                                  if (Navigator.of(context)
+                                                      .canPop()) {
+                                                    Navigator.of(context).pop();
+                                                  }
+                                                },
+                                              ),
                                             ),
                                           ),
                                         );
@@ -1262,7 +1327,11 @@ class PlatformAdminDashboardPage extends StatelessWidget {
           ),
         ],
       ),
-      body: const AdminSubscribersPage(),
+      body: const PageTimingScope(
+        pageKey: 'AdminSubscribersPage',
+        pageLabel: 'Admin subscribers',
+        child: AdminSubscribersPage(),
+      ),
     );
   }
 }

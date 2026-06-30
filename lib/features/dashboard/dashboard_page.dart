@@ -1,18 +1,22 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/localization/app_localizations.dart';
+import '../../core/services/startup_timing_service.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../core/utils/responsive.dart';
 import '../../data/app_store.dart';
+import '../../widgets/page_data_load_indicator.dart';
 import '../accounting/accounting_page.dart';
 import '../expenses/expenses_page.dart';
 import '../products/products_page.dart';
 import '../purchases/purchases_page.dart';
 import '../reports/reports_page.dart';
 import '../sales/sales_page.dart';
+import 'dashboard_snapshot_service.dart';
 import 'dashboard_service.dart';
 
 class DashboardPage extends StatefulWidget {
@@ -25,15 +29,18 @@ class DashboardPage extends StatefulWidget {
 }
 
 class _DashboardPageState extends State<DashboardPage> {
-  static const DashboardService _service = DashboardService();
-
-  late Future<DashboardState> _stateFuture;
+  static const DashboardSnapshotService _service = DashboardSnapshotService();
+  DashboardState? _state;
+  bool _refreshInProgress = false;
+  bool _firstReadyMarked = false;
+  bool _suppressStartupRefresh = true;
+  Timer? _refreshDebounce;
 
   @override
   void initState() {
     super.initState();
-    _stateFuture = _loadState();
     widget.store.addListener(_handleStoreChanged);
+    _bootstrapDashboard();
   }
 
   @override
@@ -42,22 +49,102 @@ class _DashboardPageState extends State<DashboardPage> {
     if (oldWidget.store != widget.store) {
       oldWidget.store.removeListener(_handleStoreChanged);
       widget.store.addListener(_handleStoreChanged);
-      _stateFuture = _loadState();
+      _suppressStartupRefresh = true;
+      _bootstrapDashboard(forceRefresh: true);
     }
   }
 
   @override
   void dispose() {
+    _refreshDebounce?.cancel();
     widget.store.removeListener(_handleStoreChanged);
     super.dispose();
   }
 
   void _handleStoreChanged() {
     if (!mounted) return;
-    setState(() => _stateFuture = _loadState());
+    final hasHydratedState = _state?.isHydrated ?? false;
+    if (hasHydratedState && !widget.store.isHeavyDataLoaded) return;
+    if (widget.store.isHeavyDataLoaded && _suppressStartupRefresh) {
+      _suppressStartupRefresh = false;
+      if (hasHydratedState) return;
+    }
+    _scheduleRefresh();
   }
 
-  Future<DashboardState> _loadState() => _service.buildState(widget.store);
+  Future<void> _bootstrapDashboard({bool forceRefresh = false}) async {
+    final cachedSummary = await _service.loadCachedSummary(
+      storeId: widget.store.appIdentity.storeId,
+    );
+    if (!mounted) return;
+    if (cachedSummary != null) {
+      final cachedState = await _service.buildQuickStateFromCachedSummary(
+        widget.store,
+        cachedSummary,
+      );
+      if (!mounted) return;
+      setState(() {
+        _state = cachedState;
+      });
+      if (!_firstReadyMarked) {
+        _firstReadyMarked = true;
+        StartupTimingService.markPageReady(
+          'DashboardPage',
+          pageLabel: 'Dashboard',
+          details: 'cached_quick_ready',
+        );
+      }
+    }
+
+    if (cachedSummary == null) {
+      _scheduleRefresh(immediate: true);
+    } else if (forceRefresh) {
+      _scheduleRefresh();
+    } else {
+      _scheduleRefresh();
+    }
+  }
+
+  void _scheduleRefresh({bool immediate = false}) {
+    if (!mounted) return;
+    if (_refreshInProgress) return;
+    if ((_state?.isHydrated ?? false) && !widget.store.isHeavyDataLoaded) {
+      return;
+    }
+    _refreshDebounce?.cancel();
+    final delay = immediate ? Duration.zero : const Duration(seconds: 1);
+    _refreshDebounce = Timer(delay, () {
+      if (!mounted || _refreshInProgress) return;
+      _refreshInProgress = true;
+      unawaited(_refreshSnapshot());
+    });
+  }
+
+  Future<void> _refreshSnapshot() async {
+    try {
+      final state = await _service.buildState(widget.store);
+      if (!mounted) return;
+      setState(() {
+        _state = state;
+      });
+      if (!_firstReadyMarked) {
+        _firstReadyMarked = true;
+        StartupTimingService.markPageReady(
+          'DashboardPage',
+          pageLabel: 'Dashboard',
+          details: 'fresh_snapshot_ready',
+        );
+      } else {
+        StartupTimingService.markPageReady(
+          'DashboardPage',
+          pageLabel: 'Dashboard',
+          details: 'dashboard_refreshed',
+        );
+      }
+    } finally {
+      _refreshInProgress = false;
+    }
+  }
 
   void _openQuickActionPage(String title, Widget page) {
     Navigator.of(context).push(
@@ -194,255 +281,228 @@ class _DashboardPageState extends State<DashboardPage> {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final theme = Theme.of(context);
+    final state = _state;
+    if (state == null) {
+      return _DashboardScaffold(
+        child: Center(
+          child: Container(
+            width: 96,
+            height: 96,
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surface,
+              borderRadius: BorderRadius.circular(28),
+              boxShadow: _softShadow(context),
+            ),
+            child: const Center(child: CircularProgressIndicator()),
+          ),
+        ),
+      );
+    }
 
-    return FutureBuilder<DashboardState>(
-      future: _stateFuture,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting &&
-            !snapshot.hasData) {
-          return _DashboardScaffold(
-            child: Center(
-              child: Container(
-                width: 96,
-                height: 96,
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surface,
-                  borderRadius: BorderRadius.circular(28),
-                  boxShadow: _softShadow(context),
+    final allCharts = state.charts;
+    final mainChart = allCharts.isNotEmpty ? allCharts.first : null;
+    final leadingFinancial = state.financialSummary.take(5).toList();
+
+    final metrics = <_KpiData>[
+      _KpiData(
+        title: tr.text('today_sales'),
+        value: _money(state.todaySalesTotal),
+        note: _t(tr, 'dashboard_better_than_yesterday', 'أداء اليوم', 'Today'),
+        icon: Icons.shopping_cart_outlined,
+        color: const Color(0xFF2563EB),
+      ),
+      _KpiData(
+        title: tr.text('net_profit'),
+        value: _money(state.todayProfitTotal),
+        note: state.todayProfitTotal >= 0
+            ? _t(tr, 'dashboard_positive_profit', 'ربح موجب', 'Positive profit')
+            : _t(tr, 'dashboard_negative_profit', 'تحتاج مراجعة',
+                'Needs review'),
+        icon: Icons.trending_up_rounded,
+        color: const Color(0xFF16A34A),
+      ),
+      _KpiData(
+        title: tr.text('today_invoices'),
+        value: '${state.todayInvoiceCount}',
+        note: _t(tr, 'dashboard_invoice_count_note', 'فاتورة اليوم',
+            'Invoices today'),
+        icon: Icons.receipt_long_outlined,
+        color: const Color(0xFF8B5CF6),
+      ),
+      _KpiData(
+        title: tr.text('closing_cash_balance'),
+        value: state.isHydrated ? _money(state.currentCashTotal) : '—',
+        note: state.isHydrated
+            ? tr.text('cash')
+            : _t(tr, 'dashboard_preparing_indicator', 'جارٍ التجهيز',
+                'Preparing'),
+        icon: Icons.account_balance_wallet_outlined,
+        color: const Color(0xFFF97316),
+      ),
+    ];
+
+    return _DashboardScaffold(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _HeroHeader(
+            storeName: state.storeName,
+            date: _formatDate(state.generatedAt),
+            title: _t(
+              tr,
+              'dashboard_good_morning',
+              'صباح الخير، ${state.storeName}',
+              'Good morning, ${state.storeName}',
+            ),
+            subtitle: _t(
+              tr,
+              'dashboard_business_summary',
+              'إليك ملخص أعمالك لهذا اليوم',
+              'Here is your business summary for today',
+            ),
+            sales: _money(state.todaySalesTotal),
+            syncStatus: state.syncStatus,
+            backupStatus: state.backupStatus,
+            statusColor: (level) => _statusColor(context, level),
+          ),
+          if (!state.isHydrated) ...[
+            const SizedBox(height: 12),
+            Align(
+              alignment: AlignmentDirectional.centerEnd,
+              child: PageDataLoadIndicator(
+                loadedCount: 1,
+                totalCount: 2,
+                label: _t(
+                  tr,
+                  'dashboard_preparing_indicator',
+                  'جارٍ تجهيز بيانات اللوحة',
+                  'Preparing dashboard data',
                 ),
-                child: const Center(child: CircularProgressIndicator()),
               ),
             ),
-          );
-        }
-
-        if (snapshot.hasError) {
-          return _DashboardScaffold(
-            child: _PremiumSurface(
-              padding: const EdgeInsets.all(24),
-              child: Text(snapshot.error.toString()),
-            ),
-          );
-        }
-
-        final state = snapshot.data;
-        if (state == null) return const SizedBox.shrink();
-
-        final allCharts = state.charts;
-        final mainChart = allCharts.isNotEmpty ? allCharts.first : null;
-        final secondaryCharts = allCharts.skip(1).take(2).toList();
-        final leadingFinancial = state.financialSummary.take(5).toList();
-
-        final metrics = <_KpiData>[
-          _KpiData(
-            title: tr.text('today_sales'),
-            value: _money(state.todaySalesTotal),
-            note: _t(tr, 'dashboard_better_than_yesterday', 'أداء اليوم', 'Today'),
-            icon: Icons.shopping_cart_outlined,
-            color: const Color(0xFF2563EB),
+          ],
+          const SizedBox(height: 18),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final width = constraints.maxWidth;
+              final columns = width >= 1100
+                  ? 4
+                  : width >= 760
+                      ? 2
+                      : 1;
+              final itemWidth = (width - (columns - 1) * 14) / columns;
+              return Wrap(
+                spacing: 14,
+                runSpacing: 14,
+                children: metrics
+                    .map(
+                      (metric) => SizedBox(
+                        width: itemWidth,
+                        child: _KpiCard(data: metric),
+                      ),
+                    )
+                    .toList(),
+              );
+            },
           ),
-          _KpiData(
-            title: tr.text('net_profit'),
-            value: _money(state.todayProfitTotal),
-            note: state.todayProfitTotal >= 0
-                ? _t(tr, 'dashboard_positive_profit', 'ربح موجب', 'Positive profit')
-                : _t(tr, 'dashboard_negative_profit', 'تحتاج مراجعة', 'Needs review'),
-            icon: Icons.trending_up_rounded,
-            color: const Color(0xFF16A34A),
-          ),
-          _KpiData(
-            title: tr.text('today_invoices'),
-            value: '${state.todayInvoiceCount}',
-            note: _t(tr, 'dashboard_invoice_count_note', 'فاتورة اليوم', 'Invoices today'),
-            icon: Icons.receipt_long_outlined,
-            color: const Color(0xFF8B5CF6),
-          ),
-          _KpiData(
-            title: tr.text('closing_cash_balance'),
-            value: _money(state.currentCashTotal),
-            note: tr.text('cash'),
-            icon: Icons.account_balance_wallet_outlined,
-            color: const Color(0xFFF97316),
-          ),
-        ];
-
-        return _DashboardScaffold(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _HeroHeader(
-                storeName: state.storeName,
-                date: _formatDate(state.generatedAt),
-                title: _t(
+          const SizedBox(height: 18),
+          _QuickActionsPanel(actions: _quickActions(tr)),
+          const SizedBox(height: 18),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final isWide = constraints.maxWidth >= 980;
+              final chart = _MainChartPanel(
+                series: mainChart,
+                title: mainChart?.title ??
+                    _t(tr, 'sales_chart', 'مؤشر المبيعات', 'Sales trend'),
+                formatValue: mainChart == null
+                    ? (_) => ''
+                    : (item) => _chartValue(mainChart, item),
+                emptyLabel: _t(
                   tr,
-                  'dashboard_good_morning',
-                  'صباح الخير، ${state.storeName}',
-                  'Good morning, ${state.storeName}',
+                  'no_data_available',
+                  'لا توجد بيانات كافية للعرض',
+                  'No data available',
                 ),
-                subtitle: _t(
-                  tr,
-                  'dashboard_business_summary',
-                  'إليك ملخص أعمالك لهذا اليوم',
-                  'Here is your business summary for today',
-                ),
-                sales: _money(state.todaySalesTotal),
-                syncStatus: state.syncStatus,
-                backupStatus: state.backupStatus,
+              );
+              final alerts = _AlertsPanel(
+                title: tr.text('dashboard_alerts'),
+                clearText: tr.text('dashboard_alerts_clear'),
+                alerts: state.alerts,
                 statusColor: (level) => _statusColor(context, level),
-              ),
-              const SizedBox(height: 18),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final width = constraints.maxWidth;
-                  final columns = width >= 1100
-                      ? 4
-                      : width >= 760
-                          ? 2
-                          : 1;
-                  final itemWidth = (width - (columns - 1) * 14) / columns;
-                  return Wrap(
-                    spacing: 14,
-                    runSpacing: 14,
-                    children: metrics
-                        .map(
-                          (metric) => SizedBox(
-                            width: itemWidth,
-                            child: _KpiCard(data: metric),
-                          ),
-                        )
-                        .toList(),
-                  );
-                },
-              ),
-              const SizedBox(height: 18),
-              _QuickActionsPanel(actions: _quickActions(tr)),
-              const SizedBox(height: 18),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final isWide = constraints.maxWidth >= 980;
-                  final chart = _MainChartPanel(
-                    series: mainChart,
-                    title: mainChart?.title ??
-                        _t(tr, 'sales_chart', 'مؤشر المبيعات', 'Sales trend'),
-                    formatValue: mainChart == null
-                        ? (_) => ''
-                        : (item) => _chartValue(mainChart, item),
-                    emptyLabel: _t(
-                      tr,
-                      'no_data_available',
-                      'لا توجد بيانات كافية للعرض',
-                      'No data available',
-                    ),
-                  );
-                  final alerts = _AlertsPanel(
-                    title: tr.text('dashboard_alerts'),
-                    clearText: tr.text('dashboard_alerts_clear'),
-                    alerts: state.alerts,
-                    statusColor: (level) => _statusColor(context, level),
-                  );
-                  if (!isWide) {
-                    return Column(
-                      children: [chart, const SizedBox(height: 18), alerts],
-                    );
-                  }
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(flex: 7, child: chart),
-                      const SizedBox(width: 18),
-                      Expanded(flex: 3, child: alerts),
-                    ],
-                  );
-                },
-              ),
-              const SizedBox(height: 18),
-              _FinancialSummaryPanel(
-                title: tr.text('financial_summary'),
-                items: leadingFinancial,
-                labelBuilder: (item) => _financialLabel(tr, item),
-                moneyBuilder: (value) => _money(value),
-                statusColor: (level) => _statusColor(context, level),
-              ),
-              const SizedBox(height: 18),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final isWide = constraints.maxWidth >= 980;
-                  final charts = _SmallChartsPanel(
-                    title: _t(tr, 'dashboard_more_indicators', 'مؤشرات إضافية', 'More indicators'),
-                    charts: secondaryCharts,
-                    formatValue: _chartValue,
-                    emptyLabel: _t(
-                      tr,
-                      'no_data_available',
-                      'لا توجد بيانات إضافية',
-                      'No extra data',
-                    ),
-                  );
-                  final operations = _OperationsPanel(
-                    title: tr.text('latest_operations'),
-                    emptyText: tr.text('no_sales_desc'),
-                    operations: state.recentOperations,
-                    operationIcon: _operationIcon,
-                    moneyBuilder: _money,
-                    dateBuilder: _formatDateTime,
-                  );
-                  if (!isWide) {
-                    return Column(
-                      children: [charts, const SizedBox(height: 18), operations],
-                    );
-                  }
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(child: charts),
-                      const SizedBox(width: 18),
-                      Expanded(child: operations),
-                    ],
-                  );
-                },
-              ),
-              const SizedBox(height: 18),
-              _SystemStatusPanel(
-                title: _t(tr, 'system_status', 'حالة النظام', 'System status'),
-                items: [
-                  _SystemStatusData(
-                    title: tr.text('sync_status'),
-                    value: state.syncStatus.title,
-                    icon: Icons.sync_rounded,
-                    color: _statusColor(context, state.syncStatus.level),
-                  ),
-                  _SystemStatusData(
-                    title: tr.text('current_backup_status'),
-                    value: state.backupStatus.title,
-                    icon: Icons.cloud_done_outlined,
-                    color: _statusColor(context, state.backupStatus.level),
-                  ),
-                  _SystemStatusData(
-                    title: tr.text('products'),
-                    value: '${widget.store.products.length}',
-                    icon: Icons.inventory_2_outlined,
-                    color: const Color(0xFF2563EB),
-                  ),
-                  _SystemStatusData(
-                    title: tr.text('customers'),
-                    value: '${widget.store.customers.length}',
-                    icon: Icons.people_alt_outlined,
-                    color: const Color(0xFF16A34A),
-                  ),
-                  _SystemStatusData(
-                    title: tr.text('low_stock_alerts'),
-                    value: '${state.lowStockCount}',
-                    icon: Icons.warning_amber_rounded,
-                    color: state.lowStockCount > 0
-                        ? const Color(0xFFF59E0B)
-                        : const Color(0xFF16A34A),
-                  ),
+              );
+              if (!isWide) {
+                return Column(
+                  children: [chart, const SizedBox(height: 18), alerts],
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(flex: 7, child: chart),
+                  const SizedBox(width: 18),
+                  Expanded(flex: 3, child: alerts),
                 ],
+              );
+            },
+          ),
+          const SizedBox(height: 18),
+          _FinancialSummaryPanel(
+            title: tr.text('financial_summary'),
+            items: leadingFinancial,
+            labelBuilder: (item) => _financialLabel(tr, item),
+            moneyBuilder: (value) => _money(value),
+            statusColor: (level) => _statusColor(context, level),
+          ),
+          const SizedBox(height: 18),
+          _OperationsPanel(
+            title: tr.text('latest_operations'),
+            emptyText: tr.text('no_sales_desc'),
+            operations: state.recentOperations,
+            operationIcon: _operationIcon,
+            moneyBuilder: _money,
+            dateBuilder: _formatDateTime,
+          ),
+          const SizedBox(height: 18),
+          _SystemStatusPanel(
+            title: _t(tr, 'system_status', 'حالة النظام', 'System status'),
+            items: [
+              _SystemStatusData(
+                title: tr.text('sync_status'),
+                value: state.syncStatus.title,
+                icon: Icons.sync_rounded,
+                color: _statusColor(context, state.syncStatus.level),
+              ),
+              _SystemStatusData(
+                title: tr.text('current_backup_status'),
+                value: state.backupStatus.title,
+                icon: Icons.cloud_done_outlined,
+                color: _statusColor(context, state.backupStatus.level),
+              ),
+              _SystemStatusData(
+                title: tr.text('products'),
+                value: '${widget.store.allProductsForDiagnostics.length}',
+                icon: Icons.inventory_2_outlined,
+                color: const Color(0xFF2563EB),
+              ),
+              _SystemStatusData(
+                title: tr.text('customers'),
+                value: '${widget.store.allCustomersForDiagnostics.length}',
+                icon: Icons.people_alt_outlined,
+                color: const Color(0xFF16A34A),
+              ),
+              _SystemStatusData(
+                title: tr.text('low_stock_alerts'),
+                value: '${state.lowStockCount}',
+                icon: Icons.warning_amber_rounded,
+                color: state.lowStockCount > 0
+                    ? const Color(0xFFF59E0B)
+                    : const Color(0xFF16A34A),
               ),
             ],
           ),
-        );
-      },
+        ],
+      ),
     );
   }
 }
@@ -782,7 +842,8 @@ class _QuickActionsPanel extends StatelessWidget {
                   : constraints.maxWidth >= 620
                       ? 3
                       : 2;
-              final width = (constraints.maxWidth - (columns - 1) * 12) / columns;
+              final width =
+                  (constraints.maxWidth - (columns - 1) * 12) / columns;
               return Wrap(
                 spacing: 12,
                 runSpacing: 12,
@@ -869,7 +930,8 @@ class _MainChartPanel extends StatelessWidget {
               runSpacing: 10,
               children: items.take(7).map((item) {
                 return Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
                     color: theme.colorScheme.surfaceContainerHighest
                         .withValues(alpha: 0.45),
@@ -912,7 +974,8 @@ class _AlertsPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _SectionHeader(title: title, icon: Icons.notifications_active_outlined),
+          _SectionHeader(
+              title: title, icon: Icons.notifications_active_outlined),
           const SizedBox(height: 14),
           if (alerts.isEmpty)
             Container(
@@ -1002,7 +1065,8 @@ class _FinancialSummaryPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _SectionHeader(title: title, icon: Icons.account_balance_wallet_outlined),
+          _SectionHeader(
+              title: title, icon: Icons.account_balance_wallet_outlined),
           const SizedBox(height: 16),
           LayoutBuilder(
             builder: (context, constraints) {
@@ -1011,7 +1075,8 @@ class _FinancialSummaryPanel extends StatelessWidget {
                   : constraints.maxWidth >= 680
                       ? 3
                       : 1;
-              final width = (constraints.maxWidth - (columns - 1) * 12) / columns;
+              final width =
+                  (constraints.maxWidth - (columns - 1) * 12) / columns;
               return Wrap(
                 spacing: 12,
                 runSpacing: 12,
@@ -1024,7 +1089,8 @@ class _FinancialSummaryPanel extends StatelessWidget {
                       decoration: BoxDecoration(
                         color: color.withValues(alpha: 0.055),
                         borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: color.withValues(alpha: 0.08)),
+                        border:
+                            Border.all(color: color.withValues(alpha: 0.08)),
                       ),
                       child: Row(
                         children: [
@@ -1060,102 +1126,6 @@ class _FinancialSummaryPanel extends StatelessWidget {
               );
             },
           ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SmallChartsPanel extends StatelessWidget {
-  const _SmallChartsPanel({
-    required this.title,
-    required this.charts,
-    required this.formatValue,
-    required this.emptyLabel,
-  });
-
-  final String title;
-  final List<DashboardChartSeries> charts;
-  final String Function(DashboardChartSeries series, DashboardChartItem item)
-      formatValue;
-  final String emptyLabel;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return _PremiumSurface(
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _SectionHeader(title: title, icon: Icons.leaderboard_outlined),
-          const SizedBox(height: 14),
-          if (charts.isEmpty)
-            Padding(
-              padding: const EdgeInsets.all(18),
-              child: Text(emptyLabel),
-            )
-          else
-            ...charts.map((series) {
-              final maxValue = series.items.isEmpty
-                  ? 0.0
-                  : series.items.map((item) => item.value).fold<double>(0, (a, b) => math.max(a, b).toDouble());
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      series.title,
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    ...series.items.take(4).map((item) {
-                      final percent = maxValue <= 0 ? 0.0 : item.value / maxValue;
-                      final color = item.color ?? theme.colorScheme.primary;
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    item.label,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  formatValue(series, item),
-                                  style: theme.textTheme.labelMedium?.copyWith(
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 6),
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(999),
-                              child: LinearProgressIndicator(
-                                value: percent.clamp(0.0, 1.0).toDouble(),
-                                minHeight: 8,
-                                backgroundColor: color.withValues(alpha: 0.10),
-                                valueColor: AlwaysStoppedAnimation<Color>(color),
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    }),
-                  ],
-                ),
-              );
-            }),
         ],
       ),
     );
@@ -1292,7 +1262,8 @@ class _SystemStatusPanel extends StatelessWidget {
                   : constraints.maxWidth >= 720
                       ? 3
                       : 1;
-              final width = (constraints.maxWidth - (columns - 1) * 12) / columns;
+              final width =
+                  (constraints.maxWidth - (columns - 1) * 12) / columns;
               return Wrap(
                 spacing: 12,
                 runSpacing: 12,
@@ -1310,7 +1281,8 @@ class _SystemStatusPanel extends StatelessWidget {
                       ),
                       child: Row(
                         children: [
-                          _IconBubble(icon: item.icon, color: item.color, size: 40),
+                          _IconBubble(
+                              icon: item.icon, color: item.color, size: 40),
                           const SizedBox(width: 12),
                           Expanded(
                             child: Column(
@@ -1362,7 +1334,8 @@ class _PremiumSurface extends StatelessWidget {
       decoration: BoxDecoration(
         color: scheme.surface,
         borderRadius: BorderRadius.circular(30),
-        border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.45)),
+        border:
+            Border.all(color: scheme.outlineVariant.withValues(alpha: 0.45)),
         boxShadow: _softShadow(context),
       ),
       child: child,
@@ -1538,14 +1511,16 @@ class _LineChartPainter extends CustomPainter {
     }
 
     final values = items.map((item) => item.value).toList();
-    final maxValue = values.fold<double>(values.first, (a, b) => math.max(a, b).toDouble());
+    final maxValue =
+        values.fold<double>(values.first, (a, b) => math.max(a, b).toDouble());
     final minValue = values.reduce(math.min);
     final span = math.max(1.0, maxValue - minValue).toDouble();
     final dx = items.length <= 1 ? size.width : size.width / (items.length - 1);
     final points = <Offset>[];
     for (var i = 0; i < values.length; i++) {
       final normalized = (values[i] - minValue) / span;
-      final y = size.height - (normalized * size.height * 0.72) - size.height * 0.14;
+      final y =
+          size.height - (normalized * size.height * 0.72) - size.height * 0.14;
       points.add(Offset(dx * i, y));
     }
 
@@ -1554,7 +1529,8 @@ class _LineChartPainter extends CustomPainter {
       final previous = points[i - 1];
       final current = points[i];
       final controlX = (previous.dx + current.dx) / 2;
-      path.cubicTo(controlX, previous.dy, controlX, current.dy, current.dx, current.dy);
+      path.cubicTo(
+          controlX, previous.dy, controlX, current.dy, current.dx, current.dy);
     }
 
     final fillPath = Path.from(path)
