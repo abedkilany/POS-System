@@ -267,6 +267,8 @@ class _StressLabPageState extends State<StressLabPage> {
   final _suppliersController = TextEditingController(text: '100');
   final _salesController = TextEditingController(text: '500');
   final _progressEveryController = TextEditingController(text: '25');
+  final _pressureMultiplierController = TextEditingController(text: '1000');
+  final _pressureProgressEveryController = TextEditingController(text: '50');
   static final List<String> _persistentLog = <String>[];
   static final List<Map<String, int>> _healthHistory = <Map<String, int>>[];
   final _log = _persistentLog;
@@ -278,6 +280,8 @@ class _StressLabPageState extends State<StressLabPage> {
   double _progress = 0;
   String _status = 'Ready';
   String _currentBatchId = '';
+  int _lastPressureMultiplier = 1000;
+  int _lastPressureProgressEvery = 50;
   final List<_StressAuditStep> _report = <_StressAuditStep>[];
   final List<_StressAssertionResult> _assertions = <_StressAssertionResult>[];
 
@@ -290,6 +294,8 @@ class _StressLabPageState extends State<StressLabPage> {
     _suppliersController.dispose();
     _salesController.dispose();
     _progressEveryController.dispose();
+    _pressureMultiplierController.dispose();
+    _pressureProgressEveryController.dispose();
     super.dispose();
   }
 
@@ -1810,8 +1816,6 @@ class _StressLabPageState extends State<StressLabPage> {
               ))
           .toList();
 
-  static const int _pressureMultiplier = 1000;
-
   Future<void> _ensureAuditCashDrawerOpen() async {
     if (!AccountingService.isAvailable) return;
     final hasOpenDrawer = await AccountingService.hasOpenCashDrawerForDevice(
@@ -1837,12 +1841,13 @@ class _StressLabPageState extends State<StressLabPage> {
     Future<void> Function(int index) action, {
     double startProgress = 0.0,
     double endProgress = 1.0,
+    int? progressEvery,
   }) async {
     final stats = _StressPerfStats(section, name);
     final tr = AppLocalizations.of(context);
     _resetTraceCapture();
     final swTotal = Stopwatch()..start();
-    final progressEvery = max<int>(1, count ~/ 20);
+    final progressInterval = max<int>(1, progressEvery ?? count ~/ 20);
     String? firstError;
     for (var i = 0; i < count; i++) {
       final sw = Stopwatch()..start();
@@ -1857,7 +1862,7 @@ class _StressLabPageState extends State<StressLabPage> {
         _addLog('PRESSURE_ITEM_FAIL [$section] $name index=$i error=$error');
         _addLog(stack.toString().split('\n').take(3).join(' | '));
       }
-      if (i % progressEvery == 0) {
+      if (i % progressInterval == 0) {
         final ratio = count <= 1 ? 1.0 : i / (count - 1);
         _setStatus(
             '${_reportLabel(section, tr)} / ${_reportLabel(name, tr)}: ${i + 1}/$count',
@@ -1886,7 +1891,11 @@ class _StressLabPageState extends State<StressLabPage> {
     required Customer? baseCustomer,
     required Supplier? baseSupplier,
   }) async {
-    final count = _pressureMultiplier;
+    final count = max(1, _readInt(_pressureMultiplierController, 1000));
+    final progressEvery =
+        max(1, _readInt(_pressureProgressEveryController, 50));
+    _lastPressureMultiplier = count;
+    _lastPressureProgressEvery = progressEvery;
     AppStore.setTraceSink(_captureTrace);
     try {
       await _auditStep(
@@ -1914,7 +1923,7 @@ class _StressLabPageState extends State<StressLabPage> {
         );
         await store.addOrUpdateCustomer(customer);
         if (i < 20) pressureCustomers.add(customer);
-      }, startProgress: 0.79, endProgress: 0.815);
+      }, startProgress: 0.79, endProgress: 0.815, progressEvery: progressEvery);
 
       final pressureSuppliers = <Supplier>[];
       await _pressureStep(
@@ -1930,7 +1939,7 @@ class _StressLabPageState extends State<StressLabPage> {
         );
         await store.addOrUpdateSupplier(supplier);
         if (i < 20) pressureSuppliers.add(supplier);
-      }, startProgress: 0.815, endProgress: 0.84);
+      }, startProgress: 0.815, endProgress: 0.84, progressEvery: progressEvery);
 
       final pressureProducts = <Product>[];
       await _pressureStep(
@@ -1958,7 +1967,7 @@ class _StressLabPageState extends State<StressLabPage> {
         );
         await store.addOrUpdateProduct(product);
         if (i < 50) pressureProducts.add(product);
-      }, startProgress: 0.84, endProgress: 0.865);
+      }, startProgress: 0.84, endProgress: 0.865, progressEvery: progressEvery);
 
       final salePool =
           pressureProducts.isNotEmpty ? pressureProducts : baseProducts;
@@ -1982,7 +1991,10 @@ class _StressLabPageState extends State<StressLabPage> {
             adjustmentCategory: 'pressure_adjustment',
             notes: '$_currentBatchId pressure $i',
           );
-        }, startProgress: 0.865, endProgress: 0.89);
+        },
+            startProgress: 0.865,
+            endProgress: 0.89,
+            progressEvery: progressEvery);
       }
 
       if (salePool.isNotEmpty && supplierPool.isNotEmpty) {
@@ -2010,7 +2022,10 @@ class _StressLabPageState extends State<StressLabPage> {
                   conversionToBase: 1.0)
             ],
           );
-        }, startProgress: 0.89, endProgress: 0.915);
+        },
+            startProgress: 0.89,
+            endProgress: 0.915,
+            progressEvery: progressEvery);
       }
 
       if (salePool.isNotEmpty && customerPool.isNotEmpty) {
@@ -2029,7 +2044,10 @@ class _StressLabPageState extends State<StressLabPage> {
             paymentMethod: 'Card',
             paymentStatus: 'paid',
           );
-        }, startProgress: 0.915, endProgress: 0.94);
+        },
+            startProgress: 0.915,
+            endProgress: 0.94,
+            progressEvery: progressEvery);
       }
 
       await _pressureStep(
@@ -2046,7 +2064,7 @@ class _StressLabPageState extends State<StressLabPage> {
         );
         await store.addOrUpdateExpense(expense);
         await store.postExpense(expense.id);
-      }, startProgress: 0.94, endProgress: 0.965);
+      }, startProgress: 0.94, endProgress: 0.965, progressEvery: progressEvery);
     } finally {
       AppStore.setTraceSink(null);
     }
@@ -2489,8 +2507,8 @@ class _StressLabPageState extends State<StressLabPage> {
       }
 
       _setStatus(
-          _dual(
-              'تشغيل اختبار الضغط 1000x...', 'Running x1000 pressure test...'),
+          _dual('تشغيل اختبار الضغط ${_lastPressureMultiplier}x...',
+              'Running x$_lastPressureMultiplier pressure test...'),
           progress: 0.79);
       await _runPressureAudit(
           baseProducts: products,
@@ -3660,8 +3678,8 @@ class _StressLabPageState extends State<StressLabPage> {
         _dual('الأداء', 'Performance'),
         _dual('تغطية قياس المبيعات', 'Sales measurement coverage'),
         hasSalesPerf,
-        _dual('تم قياس أداء المبيعات تحت ضغط 1000 عملية.',
-            'Sales performance was measured under 1000-operation pressure.'),
+        _dual('تم قياس أداء المبيعات تحت ضغط $_lastPressureMultiplier عملية.',
+            'Sales performance was measured under $_lastPressureMultiplier-operation pressure.'),
         _dual('لم يتم العثور على قياس ضغط للمبيعات.',
             'No sales pressure measurement was found.'),
         warning: true);
@@ -3849,6 +3867,18 @@ class _StressLabPageState extends State<StressLabPage> {
                       onPressed: _running ? null : _runOneButtonSystemAudit,
                       icon: const Icon(Icons.health_and_safety_outlined),
                       label: Text(tr.text('run_stress_lab_audit')),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _numberField(
+                            _dual('مضاعف الضغط', 'Pressure multiplier'),
+                            _pressureMultiplierController),
+                        _numberField(_dual('تقدم كل', 'Progress every'),
+                            _pressureProgressEveryController),
+                      ],
                     ),
                     const SizedBox(height: 8),
                     Wrap(

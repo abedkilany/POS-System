@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
 import '../../core/localization/app_localizations.dart';
+import '../../core/services/local_database_service.dart';
 import '../../core/utils/responsive.dart';
 import '../../data/app_store.dart';
 import '../../models/customer.dart';
@@ -30,11 +31,23 @@ class _CustomersPageState extends State<CustomersPage> {
   Timer? _customerRevealTimer;
   int _visibleCustomerCount = 100;
   int _customerRevealTargetCount = 0;
+  Future<_CustomerQueryResult?>? _customerQueryFuture;
+  String _customerQueryFutureKey = '';
 
   @override
   void dispose() {
     _customerRevealTimer?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant CustomersPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != widget.store) {
+      _customerQueryFuture = null;
+      _customerQueryFutureKey = '';
+      _resetCustomerReveal();
+    }
   }
 
   void _resetCustomerReveal() {
@@ -89,6 +102,45 @@ class _CustomersPageState extends State<CustomersPage> {
       );
     }
     final value = query.trim().toLowerCase();
+    if (LocalDatabaseService.canQueryBusinessSqlite) {
+      return FutureBuilder<_CustomerQueryResult?>(
+        future: _queryCustomersFromSqlite(value),
+        builder: (context, snapshot) {
+          final result = snapshot.data;
+          if (result != null && !snapshot.hasError) {
+            return _buildCustomersView(
+              context,
+              tr,
+              customers: result.items,
+              totalCount: result.totalCount,
+              loading: snapshot.connectionState == ConnectionState.waiting &&
+                  result.items.isEmpty,
+              onLoadMore: result.hasMore
+                  ? () => _loadMoreCustomers(result.totalCount)
+                  : null,
+            );
+          }
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return _buildCustomersView(
+              context,
+              tr,
+              customers: const <Customer>[],
+              totalCount: 0,
+              loading: true,
+            );
+          }
+          return _buildCustomersFromMemory(context, tr, value);
+        },
+      );
+    }
+    return _buildCustomersFromMemory(context, tr, value);
+  }
+
+  Widget _buildCustomersFromMemory(
+    BuildContext context,
+    AppLocalizations tr,
+    String value,
+  ) {
     final customers = widget.store.customers.where((customer) {
       final isWalkIn = customer.id == AppStore.walkInCustomerId ||
           customer.name.trim().toLowerCase() ==
@@ -103,7 +155,51 @@ class _CustomersPageState extends State<CustomersPage> {
         .toList(
           growable: false,
         );
+    return _buildCustomersView(
+      context,
+      tr,
+      customers: visibleCustomers,
+      totalCount: customers.length,
+    );
+  }
 
+  Future<_CustomerQueryResult?> _queryCustomersFromSqlite(String value) {
+    final limit = math.max(1, _visibleCustomerCount);
+    final key = '${widget.store.customersRevision}|$value|$limit';
+    if (_customerQueryFuture == null || _customerQueryFutureKey != key) {
+      _customerQueryFutureKey = key;
+      _customerQueryFuture = () async {
+        final page = await LocalDatabaseService.queryCustomersFromSqlite(
+          query: value,
+          limit: limit,
+        );
+        if (page == null) return null;
+        return _CustomerQueryResult(
+          items: page.items,
+          totalCount: page.totalCount,
+        );
+      }();
+    }
+    return _customerQueryFuture!;
+  }
+
+  void _loadMoreCustomers(int totalCount) {
+    setState(() {
+      _customerRevealTimer?.cancel();
+      _customerRevealTimer = null;
+      _visibleCustomerCount = math.min(totalCount, _visibleCustomerCount + 100);
+    });
+  }
+
+  Widget _buildCustomersView(
+    BuildContext context,
+    AppLocalizations tr, {
+    required List<Customer> customers,
+    required int totalCount,
+    bool loading = false,
+    VoidCallback? onLoadMore,
+  }) {
+    final hasLoadMore = onLoadMore != null;
     return Padding(
       padding: VentioResponsive.pageInsets(context),
       child: Column(
@@ -117,8 +213,8 @@ class _CustomersPageState extends State<CustomersPage> {
               alignment: WrapAlignment.end,
               children: [
                 PageDataLoadIndicator(
-                  loadedCount: visibleCustomers.length,
-                  totalCount: customers.length,
+                  loadedCount: customers.length,
+                  totalCount: totalCount,
                 ),
                 FilledButton.icon(
                   onPressed: widget.store.canManageCustomers
@@ -142,175 +238,206 @@ class _CustomersPageState extends State<CustomersPage> {
           ),
           const SizedBox(height: 16),
           Expanded(
-            child: customers.isEmpty
-                ? EmptyStateCard(
-                    icon: Icons.people_outline,
-                    title: tr.text('no_customers'),
-                    subtitle: tr.text('no_customers_desc'))
-                : Card(
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        final rowExtent =
-                            constraints.maxWidth < 620 ? 132.0 : 104.0;
-                        return ListView.builder(
-                          scrollCacheExtent:
-                              const ScrollCacheExtent.pixels(2000),
-                          keyboardDismissBehavior:
-                              ScrollViewKeyboardDismissBehavior.onDrag,
-                          itemExtent: rowExtent,
-                          itemCount: visibleCustomers.length,
-                          itemBuilder: (context, index) {
-                            final customer = visibleCustomers[index];
-                            return ListTile(
-                              leading: const CircleAvatar(
-                                  child: Icon(Icons.person_outline)),
-                              title: Text(customer.name),
-                              subtitle: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                      '${customer.phone} ? ${customer.address}',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    accountBalanceText(context, widget.store,
-                                        'customer', customer.id),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                        color: accountBalanceColor(
+            child: loading
+                ? const Center(child: CircularProgressIndicator.adaptive())
+                : totalCount == 0
+                    ? EmptyStateCard(
+                        icon: Icons.people_outline,
+                        title: tr.text('no_customers'),
+                        subtitle: tr.text('no_customers_desc'))
+                    : Card(
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final rowExtent =
+                                constraints.maxWidth < 620 ? 132.0 : 104.0;
+                            return ListView.builder(
+                              scrollCacheExtent:
+                                  const ScrollCacheExtent.pixels(2000),
+                              keyboardDismissBehavior:
+                                  ScrollViewKeyboardDismissBehavior.onDrag,
+                              itemExtent: rowExtent,
+                              itemCount:
+                                  customers.length + (hasLoadMore ? 1 : 0),
+                              itemBuilder: (context, index) {
+                                if (index >= customers.length) {
+                                  return Center(
+                                    child: TextButton.icon(
+                                      onPressed: onLoadMore,
+                                      icon: const Icon(Icons.expand_more),
+                                      label: Text(
+                                        '${tr.text('more')} '
+                                        '(${customers.length}/$totalCount)',
+                                      ),
+                                    ),
+                                  );
+                                }
+                                final customer = customers[index];
+                                return ListTile(
+                                  leading: const CircleAvatar(
+                                      child: Icon(Icons.person_outline)),
+                                  title: Text(customer.name),
+                                  subtitle: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                          '${customer.phone} ? ${customer.address}',
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        accountBalanceText(
                                             context,
                                             widget.store,
                                             'customer',
                                             customer.id),
-                                        fontWeight: FontWeight.w700),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                            color: accountBalanceColor(
+                                                context,
+                                                widget.store,
+                                                'customer',
+                                                customer.id),
+                                            fontWeight: FontWeight.w700),
+                                      ),
+                                    ],
                                   ),
-                                ],
-                              ),
-                              trailing: VentioResponsive.isMobile(context)
-                                  ? PopupMenuButton<String>(
-                                      tooltip: tr.text('actions'),
-                                      onSelected: (value) {
-                                        if (value == 'ledger' &&
-                                            widget.store
-                                                .hasAnyPermission(<String>{
-                                              AppPermission.customersLedgerView,
-                                              AppPermission.customersManage,
-                                            })) {
-                                          showAccountLedgerSheet(
-                                              context: context,
-                                              store: widget.store,
-                                              accountType: 'customer',
-                                              accountId: customer.id,
-                                              accountName: customer.name);
-                                        }
-                                        if (value == 'payment' &&
-                                            widget.store
-                                                .hasAnyPermission(<String>{
-                                              AppPermission
-                                                  .customersPaymentManage,
-                                              AppPermission.customersManage,
-                                            })) {
-                                          showAccountPaymentDialog(
-                                              context: context,
-                                              store: widget.store,
-                                              accountType: 'customer',
-                                              accountId: customer.id,
-                                              accountName: customer.name);
-                                        }
-                                        if (value == 'edit' &&
-                                            widget.store.canManageCustomers) {
-                                          _openCustomerForm(context,
-                                              customer: customer);
-                                        }
-                                        if (value == 'delete' &&
-                                            widget.store.canManageCustomers) {
-                                          _deleteCustomer(context, customer);
-                                        }
-                                      },
-                                      itemBuilder: (context) => [
-                                        PopupMenuItem(
-                                            value: 'ledger',
-                                            child: Text(
-                                                tr.text('account_ledger'))),
-                                        PopupMenuItem(
-                                            value: 'payment',
-                                            child: Text(
-                                                tr.text('receive_payment'))),
-                                        PopupMenuItem(
-                                            value: 'edit',
-                                            child: Text(tr.text('edit'))),
-                                        PopupMenuItem(
-                                            value: 'delete',
-                                            child: Text(tr.text('delete'))),
-                                      ],
-                                    )
-                                  : Wrap(
-                                      children: [
-                                        IconButton(
-                                            onPressed: widget.store
+                                  trailing: VentioResponsive.isMobile(context)
+                                      ? PopupMenuButton<String>(
+                                          tooltip: tr.text('actions'),
+                                          onSelected: (value) {
+                                            if (value == 'ledger' &&
+                                                widget.store
                                                     .hasAnyPermission(<String>{
-                                              AppPermission.customersLedgerView,
-                                              AppPermission.customersManage,
-                                            })
-                                                ? () => showAccountLedgerSheet(
-                                                    context: context,
-                                                    store: widget.store,
-                                                    accountType: 'customer',
-                                                    accountId: customer.id,
-                                                    accountName: customer.name)
-                                                : null,
-                                            icon: const Icon(
-                                                Icons.receipt_long_outlined),
-                                            tooltip: tr.text('account_ledger')),
-                                        IconButton(
-                                            onPressed: widget.store
+                                                  AppPermission
+                                                      .customersLedgerView,
+                                                  AppPermission.customersManage,
+                                                })) {
+                                              showAccountLedgerSheet(
+                                                  context: context,
+                                                  store: widget.store,
+                                                  accountType: 'customer',
+                                                  accountId: customer.id,
+                                                  accountName: customer.name);
+                                            }
+                                            if (value == 'payment' &&
+                                                widget.store
                                                     .hasAnyPermission(<String>{
-                                              AppPermission
-                                                  .customersPaymentManage,
-                                              AppPermission.customersManage,
-                                            })
-                                                ? () =>
-                                                    showAccountPaymentDialog(
-                                                        context: context,
-                                                        store: widget.store,
-                                                        accountType: 'customer',
-                                                        accountId: customer.id,
-                                                        accountName:
-                                                            customer.name)
-                                                : null,
-                                            icon: const Icon(
-                                                Icons.payments_outlined),
-                                            tooltip:
-                                                tr.text('receive_payment')),
-                                        IconButton(
-                                            onPressed:
-                                                widget.store.canManageCustomers
+                                                  AppPermission
+                                                      .customersPaymentManage,
+                                                  AppPermission.customersManage,
+                                                })) {
+                                              showAccountPaymentDialog(
+                                                  context: context,
+                                                  store: widget.store,
+                                                  accountType: 'customer',
+                                                  accountId: customer.id,
+                                                  accountName: customer.name);
+                                            }
+                                            if (value == 'edit' &&
+                                                widget
+                                                    .store.canManageCustomers) {
+                                              _openCustomerForm(context,
+                                                  customer: customer);
+                                            }
+                                            if (value == 'delete' &&
+                                                widget
+                                                    .store.canManageCustomers) {
+                                              _deleteCustomer(
+                                                  context, customer);
+                                            }
+                                          },
+                                          itemBuilder: (context) => [
+                                            PopupMenuItem(
+                                                value: 'ledger',
+                                                child: Text(
+                                                    tr.text('account_ledger'))),
+                                            PopupMenuItem(
+                                                value: 'payment',
+                                                child: Text(tr
+                                                    .text('receive_payment'))),
+                                            PopupMenuItem(
+                                                value: 'edit',
+                                                child: Text(tr.text('edit'))),
+                                            PopupMenuItem(
+                                                value: 'delete',
+                                                child: Text(tr.text('delete'))),
+                                          ],
+                                        )
+                                      : Wrap(
+                                          children: [
+                                            IconButton(
+                                                onPressed: widget.store
+                                                        .hasAnyPermission(<String>{
+                                                  AppPermission
+                                                      .customersLedgerView,
+                                                  AppPermission.customersManage,
+                                                })
+                                                    ? () =>
+                                                        showAccountLedgerSheet(
+                                                            context: context,
+                                                            store: widget.store,
+                                                            accountType:
+                                                                'customer',
+                                                            accountId:
+                                                                customer.id,
+                                                            accountName:
+                                                                customer.name)
+                                                    : null,
+                                                icon: const Icon(Icons
+                                                    .receipt_long_outlined),
+                                                tooltip:
+                                                    tr.text('account_ledger')),
+                                            IconButton(
+                                                onPressed: widget.store
+                                                        .hasAnyPermission(<String>{
+                                                  AppPermission
+                                                      .customersPaymentManage,
+                                                  AppPermission.customersManage,
+                                                })
+                                                    ? () =>
+                                                        showAccountPaymentDialog(
+                                                            context: context,
+                                                            store: widget.store,
+                                                            accountType:
+                                                                'customer',
+                                                            accountId:
+                                                                customer.id,
+                                                            accountName:
+                                                                customer.name)
+                                                    : null,
+                                                icon: const Icon(
+                                                    Icons.payments_outlined),
+                                                tooltip:
+                                                    tr.text('receive_payment')),
+                                            IconButton(
+                                                onPressed: widget.store
+                                                        .canManageCustomers
                                                     ? () => _openCustomerForm(
                                                         context,
                                                         customer: customer)
                                                     : null,
-                                            icon:
-                                                const Icon(Icons.edit_outlined),
-                                            tooltip: tr.text('edit')),
-                                        IconButton(
-                                            onPressed:
-                                                widget.store.canManageCustomers
+                                                icon: const Icon(
+                                                    Icons.edit_outlined),
+                                                tooltip: tr.text('edit')),
+                                            IconButton(
+                                                onPressed: widget.store
+                                                        .canManageCustomers
                                                     ? () => _deleteCustomer(
                                                         context, customer)
                                                     : null,
-                                            icon: const Icon(
-                                                Icons.delete_outline),
-                                            tooltip: tr.text('delete')),
-                                      ],
-                                    ),
+                                                icon: const Icon(
+                                                    Icons.delete_outline),
+                                                tooltip: tr.text('delete')),
+                                          ],
+                                        ),
+                                );
+                              },
                             );
                           },
-                        );
-                      },
-                    ),
-                  ),
+                        ),
+                      ),
           ),
         ],
       ),
@@ -364,6 +491,18 @@ class _CustomersPageState extends State<CustomersPage> {
       }
     }
   }
+}
+
+class _CustomerQueryResult {
+  const _CustomerQueryResult({
+    required this.items,
+    required this.totalCount,
+  });
+
+  final List<Customer> items;
+  final int totalCount;
+
+  bool get hasMore => items.length < totalCount;
 }
 
 class _AccessDeniedScaffold extends StatelessWidget {

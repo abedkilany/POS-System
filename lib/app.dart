@@ -156,6 +156,8 @@ class _VentioAppState extends State<VentioApp> {
   }
 
   Future<void> _primeHeavyCaches() async {
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    if (!mounted) return;
     try {
       await _store.warmDeferredPageCaches();
     } catch (error, stackTrace) {

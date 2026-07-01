@@ -52,6 +52,23 @@ class AccountingSnapshotService {
     AppStore store,
     DateTime reference,
   ) async {
+    if (LocalDatabaseService.canQueryBusinessSqlite) {
+      try {
+        final sqliteMetrics = await StartupTimingService.measure(
+          'accounting.snapshot_sql_metrics',
+          () => LocalDatabaseService.buildAccountingMetricsFromSqlite(
+            reference: reference,
+          ),
+          category: 'accounting',
+        );
+        if (sqliteMetrics != null) {
+          _summaryCache[_cacheKey(store, reference)] = sqliteMetrics;
+          return sqliteMetrics;
+        }
+      } catch (_) {
+        // Fall back to the legacy snapshot path if SQLite metrics generation fails.
+      }
+    }
     final raw = await StartupTimingService.measure(
       'accounting.snapshot_raw_load',
       _loadRawData,

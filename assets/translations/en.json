@@ -280,6 +280,7 @@
   "cash_drawer_sessions": "Cash Drawer Sessions",
   "cash_drawer_variance_report": "Cash Drawer Variance",
   "cash_flow_details": "Cash flow details",
+  "cash_flow_details_limit_notice": "Showing the first {count} cash flow movements to keep this page responsive.",
   "cash_flow_statement": "Cash Flow Statement",
   "cash_in": "In",
   "cash_inflows": "Cash inflows",

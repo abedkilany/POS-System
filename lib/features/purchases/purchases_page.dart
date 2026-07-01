@@ -11,6 +11,7 @@ import '../../core/utils/currency_utils.dart';
 import '../../core/utils/revision_cache.dart';
 import '../../core/services/page_timing_scope.dart';
 import '../../core/services/barcode_feedback_service.dart';
+import '../../core/services/local_database_service.dart';
 import '../../core/shortcuts/app_shortcuts.dart';
 import '../../data/app_store.dart';
 import '../../widgets/page_data_load_indicator.dart';
@@ -113,6 +114,43 @@ class _PurchasesPageState extends State<PurchasesPage> {
     final day = local.day.toString().padLeft(2, '0');
     final month = local.month.toString().padLeft(2, '0');
     return '$day/$month/${local.year}';
+  }
+
+  bool _purchaseProductMatchesSearch(Product product, String query) {
+    final q = query.toLowerCase().trim();
+    if (q.isEmpty) return true;
+    return product.name.toLowerCase().contains(q) ||
+        product.code.toLowerCase().contains(q) ||
+        product.barcode.toLowerCase().contains(q) ||
+        product.effectivePurchaseUnits.any((unit) =>
+            unit.name.toLowerCase().contains(q) ||
+            unit.barcode.toLowerCase().contains(q)) ||
+        product.effectiveSaleUnits.any((unit) =>
+            unit.name.toLowerCase().contains(q) ||
+            unit.barcode.toLowerCase().contains(q));
+  }
+
+  Future<List<Product>> _resolvePurchaseSearchProducts(
+    List<Product> fallbackProducts,
+    String query,
+  ) async {
+    final normalized = query.trim().toLowerCase();
+    if (normalized.isEmpty) {
+      return fallbackProducts;
+    }
+    final sqlite = await LocalDatabaseService.queryProductsFromSqlite(
+      query: normalized,
+      limit: 80,
+      activeOnly: true,
+      stockTrackedOnly: true,
+    );
+    if (sqlite != null) {
+      return sqlite.items;
+    }
+    return fallbackProducts
+        .where((product) => _purchaseProductMatchesSearch(product, normalized))
+        .take(80)
+        .toList(growable: false);
   }
 
   Future<String?> _scanBarcodeWithCamera() async {
@@ -823,7 +861,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                       child: ListTile(
                         title: Text(item.productName),
                         subtitle: Text(
-                            '${_formatQuantity(item.quantity)} ${item.purchaseUnitName.isEmpty ? tr.text('unit') : item.purchaseUnitName} • ${formatCurrency(item.originalUnitCost ?? item.unitCost, currency: item.unitCostCurrency)}'),
+                            '${_formatQuantity(item.quantity)} ${item.purchaseUnitName.isEmpty ? tr.text('unit') : item.purchaseUnitName} â€¢ ${formatCurrency(item.originalUnitCost ?? item.unitCost, currency: item.unitCostCurrency)}'),
                         trailing: Text(formatUsdReferenceAmount(
                             item.lineTotal, widget.store.storeProfile)),
                       ),
@@ -1024,7 +1062,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
         parts.add(
             '$supplierCount ${tr.text(supplierCount == 1 ? 'supplier' : 'suppliers')}');
       }
-      return parts.join(' • ');
+      return parts.join(' â€¢ ');
     }
 
     String unitConversionSummary(PurchaseItem item) {
@@ -1283,7 +1321,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                 .map((unit) => DropdownMenuItem(
                                     value: unit.id,
                                     child: Text(
-                                        '${unit.name} × ${_formatQuantity(unit.conversionToBase)}')))
+                                        '${unit.name} Ã— ${_formatQuantity(unit.conversionToBase)}')))
                                 .toList(),
                             onChanged: (value) {
                               final matches = product.effectivePurchaseUnits
@@ -1507,20 +1545,6 @@ class _PurchasesPageState extends State<PurchasesPage> {
           product, unit, qty, enteredCost, costCurrency, setDialogState);
     }
 
-    bool productMatchesPurchaseSearch(Product product, String query) {
-      final q = query.toLowerCase().trim();
-      if (q.isEmpty) return true;
-      return product.name.toLowerCase().contains(q) ||
-          product.code.toLowerCase().contains(q) ||
-          product.barcode.toLowerCase().contains(q) ||
-          product.effectivePurchaseUnits.any((unit) =>
-              unit.name.toLowerCase().contains(q) ||
-              unit.barcode.toLowerCase().contains(q)) ||
-          product.effectiveSaleUnits.any((unit) =>
-              unit.name.toLowerCase().contains(q) ||
-              unit.barcode.toLowerCase().contains(q));
-    }
-
     ({Product product, ProductSaleUnit unit})? findPurchaseProductByBarcode(
         String rawCode) {
       final code = rawCode.trim();
@@ -1565,11 +1589,8 @@ class _PurchasesPageState extends State<PurchasesPage> {
         useSafeArea: true,
         builder: (pickerContext) => StatefulBuilder(
           builder: (pickerContext, setPickerState) {
-            final matches = purchaseProducts
-                .where((product) =>
-                    productMatchesPurchaseSearch(product, pickerQuery))
-                .take(80)
-                .toList();
+            final matchesFuture =
+                _resolvePurchaseSearchProducts(purchaseProducts, pickerQuery);
             final height = MediaQuery.sizeOf(pickerContext).height * 0.82;
             return Padding(
               padding: EdgeInsets.only(
@@ -1636,49 +1657,64 @@ class _PurchasesPageState extends State<PurchasesPage> {
                           ),
                         ),
                         Expanded(
-                          child: matches.isEmpty
-                              ? Center(child: Text(tr.text('no_products')))
-                              : ListView.separated(
-                                  keyboardDismissBehavior:
-                                      ScrollViewKeyboardDismissBehavior.onDrag,
-                                  padding:
-                                      const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                                  itemCount: matches.length,
-                                  separatorBuilder: (_, __) =>
-                                      const Divider(height: 1),
-                                  itemBuilder: (context, index) {
-                                    final product = matches[index];
-                                    final unit =
-                                        product.effectivePurchaseUnits.first;
-                                    final configuredPrice = supplierId.isEmpty
-                                        ? null
-                                        : widget.store.supplierProductPriceFor(
-                                            productId: product.id,
-                                            supplierId: supplierId);
-                                    final subtitleParts = <String>[
-                                      if (product.code.trim().isNotEmpty)
-                                        product.code.trim(),
-                                      if (product.barcode.trim().isNotEmpty)
-                                        product.barcode.trim(),
-                                      '${tr.text('stock')}: ${_formatQuantity(product.stock)}',
-                                      if (configuredPrice != null)
-                                        '${tr.text('supplier_price')}: ${formatCurrency(configuredPrice.cost, currency: configuredPrice.currency)}',
-                                    ];
-                                    return ListTile(
-                                      leading: const Icon(
-                                          Icons.inventory_2_outlined),
-                                      title: Text(product.name,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis),
-                                      subtitle: Text(subtitleParts.join(' • '),
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis),
-                                      trailing: const Icon(Icons.chevron_right),
-                                      onTap: () => Navigator.pop(pickerContext,
-                                          (product: product, unit: unit)),
-                                    );
-                                  },
-                                ),
+                          child: FutureBuilder<List<Product>>(
+                            future: matchesFuture,
+                            builder: (context, snapshot) {
+                              if (snapshot.connectionState !=
+                                  ConnectionState.done) {
+                                return const Center(
+                                  child: CircularProgressIndicator.adaptive(),
+                                );
+                              }
+                              final matches =
+                                  snapshot.data ?? const <Product>[];
+                              if (matches.isEmpty) {
+                                return Center(
+                                    child: Text(tr.text('no_products')));
+                              }
+                              return ListView.separated(
+                                keyboardDismissBehavior:
+                                    ScrollViewKeyboardDismissBehavior.onDrag,
+                                padding:
+                                    const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                                itemCount: matches.length,
+                                separatorBuilder: (_, __) =>
+                                    const Divider(height: 1),
+                                itemBuilder: (context, index) {
+                                  final product = matches[index];
+                                  final unit =
+                                      product.effectivePurchaseUnits.first;
+                                  final configuredPrice = supplierId.isEmpty
+                                      ? null
+                                      : widget.store.supplierProductPriceFor(
+                                          productId: product.id,
+                                          supplierId: supplierId);
+                                  final subtitleParts = <String>[
+                                    if (product.code.trim().isNotEmpty)
+                                      product.code.trim(),
+                                    if (product.barcode.trim().isNotEmpty)
+                                      product.barcode.trim(),
+                                    '${tr.text('stock')}: ${_formatQuantity(product.stock)}',
+                                    if (configuredPrice != null)
+                                      '${tr.text('supplier_price')}: ${formatCurrency(configuredPrice.cost, currency: configuredPrice.currency)}',
+                                  ];
+                                  return ListTile(
+                                    leading:
+                                        const Icon(Icons.inventory_2_outlined),
+                                    title: Text(product.name,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis),
+                                    subtitle: Text(subtitleParts.join(' • '),
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis),
+                                    trailing: const Icon(Icons.chevron_right),
+                                    onTap: () => Navigator.pop(pickerContext,
+                                        (product: product, unit: unit)),
+                                  );
+                                },
+                              );
+                            },
+                          ),
                         ),
                         Padding(
                           padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
@@ -2123,7 +2159,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                                     selectedProduct!.barcode
                                                         .trim(),
                                                   '${tr.text('stock')}: ${_formatQuantity(selectedProduct!.stock)}',
-                                                ].join(' • ');
+                                                ].join(' â€¢ ');
                                       return sectionCard(
                                         title: tr.text('add_product'),
                                         icon: Icons.add_box_outlined,
@@ -2208,7 +2244,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                                     .map((unit) => DropdownMenuItem(
                                                         value: unit.id,
                                                         child: Text(
-                                                            '${unit.name} × ${_formatQuantity(unit.conversionToBase)}')))
+                                                            '${unit.name} Ã— ${_formatQuantity(unit.conversionToBase)}')))
                                                     .toList(),
                                                 onChanged: (value) {
                                                   final matches = units
@@ -2431,7 +2467,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                                     title:
                                                         Text(item.productName),
                                                     subtitle: Text(
-                                                        '${unitConversionSummary(item)} • ${formatCurrency(item.originalUnitCost ?? item.unitCost, currency: item.unitCostCurrency)} • ${formatUsdReferenceAmount(item.lineTotal, widget.store.storeProfile)}'),
+                                                        '${unitConversionSummary(item)} â€¢ ${formatCurrency(item.originalUnitCost ?? item.unitCost, currency: item.unitCostCurrency)} â€¢ ${formatUsdReferenceAmount(item.lineTotal, widget.store.storeProfile)}'),
                                                     trailing: lineActions(item),
                                                   ),
                                                 ))
@@ -2771,7 +2807,7 @@ class _PurchaseTile extends StatelessWidget {
         ? '-'
         : purchase.supplierName.trim();
     final summary =
-        '${purchase.items.length} ${tr.text('items')} • ${_formatQuantity(purchase.totalUnits)} ${tr.text('units')} • ${formatDate(purchase.date)}';
+        '${purchase.items.length} ${tr.text('items')} â€¢ ${_formatQuantity(purchase.totalUnits)} ${tr.text('units')} â€¢ ${formatDate(purchase.date)}';
 
     final actionsMenu = PopupMenuButton<String>(
       tooltip: tr.text('actions'),

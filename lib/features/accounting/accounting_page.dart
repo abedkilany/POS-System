@@ -19,6 +19,7 @@ import '../accounts/account_ledger_widgets.dart';
 
 const ScrollCacheExtent _kAccountingListCacheExtent =
     ScrollCacheExtent.pixels(2000);
+const int _kCashFlowDetailRowLimit = 200;
 
 class AccountingPage extends StatefulWidget {
   const AccountingPage({super.key, required this.store});
@@ -2014,6 +2015,17 @@ class _CashFlowStatementTab extends StatelessWidget {
                       .titleMedium
                       ?.copyWith(fontWeight: FontWeight.w800)),
               const SizedBox(height: 8),
+              if (report.lines.length > _kCashFlowDetailRowLimit)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    tr.format('cash_flow_details_limit_notice', {
+                      'count': _kCashFlowDetailRowLimit,
+                    }),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  ),
+                ),
               if (report.lines.isEmpty)
                 _EmptyAccountingState(
                     message: tr.text('no_cash_flow_movements_found'))
@@ -2031,7 +2043,8 @@ class _CashFlowStatementTab extends StatelessWidget {
                       DataColumn(label: Text(tr.text('net')), numeric: true),
                     ],
                     rows: [
-                      for (final line in report.lines)
+                      for (final line
+                          in report.lines.take(_kCashFlowDetailRowLimit))
                         DataRow(cells: [
                           DataCell(Text(_dateText(line.entryDate))),
                           DataCell(Text(_joinParts(

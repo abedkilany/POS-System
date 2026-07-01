@@ -6528,20 +6528,6 @@ class AppStore extends ChangeNotifier {
     bool purchaseCounter = false,
     bool sync = false,
   }) async {
-    _touchDataRevisions(
-      products: products,
-      customers: customers,
-      sales: sales,
-      suppliers: suppliers,
-      supplierProductPrices: supplierProductPrices,
-      expenses: expenses,
-      purchases: purchases,
-      stockMovements: stockMovements,
-      inventoryCounts: inventoryCounts,
-      warehouses: warehouses,
-      accountTransactions: accountTransactions,
-      storeProfile: storeProfile,
-    );
     final writes = <Future<void>>[];
 
     Future<void> persistRows(String key) async {

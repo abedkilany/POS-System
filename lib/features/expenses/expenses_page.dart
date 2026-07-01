@@ -38,6 +38,8 @@ class _ExpensesPageState extends State<ExpensesPage> {
   Timer? _expenseRevealTimer;
   int _visibleExpenseCount = 100;
   int _expenseRevealTargetCount = 0;
+  Future<_ExpenseQueryResult?>? _expenseQueryFuture;
+  String _expenseQueryFutureKey = '';
   final RevisionKeyCache<List<Expense>> _filteredExpensesCache =
       RevisionKeyCache<List<Expense>>();
   final RevisionKeyCache<double> _filteredTotalCache =
@@ -53,6 +55,8 @@ class _ExpensesPageState extends State<ExpensesPage> {
   void didUpdateWidget(covariant ExpensesPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.store != widget.store) {
+      _expenseQueryFuture = null;
+      _expenseQueryFutureKey = '';
       _filteredExpensesCache.invalidate();
       _filteredTotalCache.invalidate();
       _resetExpenseReveal();
@@ -114,9 +118,65 @@ class _ExpensesPageState extends State<ExpensesPage> {
       return const Center(child: CircularProgressIndicator.adaptive());
     }
     final normalizedQuery = query.trim().toLowerCase();
+    final overview = widget.store.expensesOverview;
+    if (LocalDatabaseService.canQueryBusinessSqlite) {
+      return FutureBuilder<_ExpenseQueryResult?>(
+        future: _queryExpensesFromSqlite(normalizedQuery),
+        builder: (context, snapshot) {
+          final result = snapshot.data;
+          if (result != null && !snapshot.hasError) {
+            return _buildExpensesView(
+              context,
+              tr,
+              overview: overview,
+              expenses: result.items,
+              totalCount: result.totalCount,
+              filteredTotal: result.filteredPostedTotal,
+              normalizedQuery: normalizedQuery,
+              loading: snapshot.connectionState == ConnectionState.waiting &&
+                  result.items.isEmpty,
+              onLoadMore: result.hasMore
+                  ? () => _loadMoreExpenses(result.totalCount)
+                  : null,
+            );
+          }
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return _buildExpensesView(
+              context,
+              tr,
+              overview: overview,
+              expenses: const <Expense>[],
+              totalCount: 0,
+              filteredTotal: 0,
+              normalizedQuery: normalizedQuery,
+              loading: true,
+            );
+          }
+          return _buildExpensesFromMemory(
+            context,
+            tr,
+            overview,
+            normalizedQuery,
+          );
+        },
+      );
+    }
+    return _buildExpensesFromMemory(
+      context,
+      tr,
+      overview,
+      normalizedQuery,
+    );
+  }
+
+  Widget _buildExpensesFromMemory(
+    BuildContext context,
+    AppLocalizations tr,
+    ExpensesOverview overview,
+    String normalizedQuery,
+  ) {
     final cacheKey = '$statusFilter|$normalizedQuery';
     final allExpenses = widget.store.expenses;
-    final overview = widget.store.expensesOverview;
     final useDefaultView = statusFilter == 'all' && normalizedQuery.isEmpty;
     final expenses = useDefaultView
         ? allExpenses
@@ -147,7 +207,69 @@ class _ExpensesPageState extends State<ExpensesPage> {
         expenses.take(math.min(_visibleExpenseCount, expenses.length)).toList(
               growable: false,
             );
+    return _buildExpensesView(
+      context,
+      tr,
+      overview: overview,
+      expenses: visibleExpenses,
+      totalCount: expenses.length,
+      filteredTotal: filteredTotal,
+      normalizedQuery: normalizedQuery,
+    );
+  }
 
+  Future<_ExpenseQueryResult?> _queryExpensesFromSqlite(
+    String normalizedQuery,
+  ) {
+    final limit = math.max(1, _visibleExpenseCount);
+    final key =
+        '${widget.store.expensesRevision}|$statusFilter|$normalizedQuery|$limit';
+    if (_expenseQueryFuture == null || _expenseQueryFutureKey != key) {
+      _expenseQueryFutureKey = key;
+      _expenseQueryFuture = () async {
+        final page = await LocalDatabaseService.queryExpensesFromSqlite(
+          query: normalizedQuery,
+          status: statusFilter,
+          limit: limit,
+        );
+        if (page == null) return null;
+        final filteredPostedTotal = normalizedQuery.isEmpty
+            ? widget.store.expensesOverview.totalExpensesAmount
+            : await LocalDatabaseService.sumPostedExpensesFromSqlite(
+                  query: normalizedQuery,
+                  status: statusFilter,
+                ) ??
+                0;
+        return _ExpenseQueryResult(
+          items: page.items,
+          totalCount: page.totalCount,
+          filteredPostedTotal: filteredPostedTotal,
+        );
+      }();
+    }
+    return _expenseQueryFuture!;
+  }
+
+  void _loadMoreExpenses(int totalCount) {
+    setState(() {
+      _expenseRevealTimer?.cancel();
+      _expenseRevealTimer = null;
+      _visibleExpenseCount = math.min(totalCount, _visibleExpenseCount + 100);
+    });
+  }
+
+  Widget _buildExpensesView(
+    BuildContext context,
+    AppLocalizations tr, {
+    required ExpensesOverview overview,
+    required List<Expense> expenses,
+    required int totalCount,
+    required double filteredTotal,
+    required String normalizedQuery,
+    bool loading = false,
+    VoidCallback? onLoadMore,
+  }) {
+    final hasLoadMore = onLoadMore != null;
     return Padding(
       padding: VentioResponsive.pageInsets(context),
       child: Column(
@@ -162,8 +284,8 @@ class _ExpensesPageState extends State<ExpensesPage> {
               alignment: WrapAlignment.end,
               children: [
                 PageDataLoadIndicator(
-                  loadedCount: visibleExpenses.length,
-                  totalCount: expenses.length,
+                  loadedCount: expenses.length,
+                  totalCount: totalCount,
                 ),
                 FilledButton.icon(
                   onPressed: widget.store.canManageExpenses
@@ -279,60 +401,78 @@ class _ExpensesPageState extends State<ExpensesPage> {
           ],
           const SizedBox(height: 16),
           Expanded(
-            child: expenses.isEmpty
-                ? EmptyStateCard(
-                    icon: Icons.payments_outlined,
-                    title: tr.text('no_expenses'),
-                    subtitle: tr.text('no_expenses_desc'))
-                : LayoutBuilder(
-                    builder: (context, constraints) {
-                      final rowExtent =
-                          constraints.maxWidth < 620 ? 188.0 : 168.0;
-                      return ListView.builder(
-                        scrollCacheExtent: const ScrollCacheExtent.pixels(2000),
-                        keyboardDismissBehavior:
-                            ScrollViewKeyboardDismissBehavior.onDrag,
-                        itemExtent: rowExtent,
-                        itemCount: visibleExpenses.length,
-                        itemBuilder: (context, index) => _ExpenseCard(
-                          expense: visibleExpenses[index],
-                          storeProfile: widget.store.storeProfile,
-                          onEdit: expenses[index].isDraft &&
-                                  widget.store.canManageExpenses
-                              ? () => _openExpenseForm(context,
-                                  expense: expenses[index])
-                              : null,
-                          onPost: expenses[index].isDraft &&
-                                  widget.store.hasAnyPermission(<String>{
-                                    AppPermission.expensesApprove,
-                                    AppPermission.expensesManage
-                                  })
-                              ? () => _postExpense(context, expenses[index])
-                              : null,
-                          onCancel: expenses[index].isPosted &&
-                                  widget.store.hasAnyPermission(<String>{
-                                    AppPermission.expensesCancel,
-                                    AppPermission.expensesManage
-                                  })
-                              ? () => _cancelExpense(context, expenses[index])
-                              : null,
-                          onDeleteDraft: expenses[index].isDraft &&
-                                  widget.store.hasAnyPermission(<String>{
-                                    AppPermission.expensesDelete,
-                                    AppPermission.expensesManage
-                                  })
-                              ? () => _deleteExpense(context, expenses[index])
-                              : null,
-                          onPermanentDelete: expenses[index].isCancelled &&
-                                  widget.store.hasPermission(
-                                      AppPermission.databaseManage)
-                              ? () => _permanentlyDeleteExpense(
-                                  context, expenses[index])
-                              : null,
-                        ),
-                      );
-                    },
-                  ),
+            child: loading
+                ? const Center(child: CircularProgressIndicator.adaptive())
+                : totalCount == 0
+                    ? EmptyStateCard(
+                        icon: Icons.payments_outlined,
+                        title: tr.text('no_expenses'),
+                        subtitle: tr.text('no_expenses_desc'))
+                    : LayoutBuilder(
+                        builder: (context, constraints) {
+                          final rowExtent =
+                              constraints.maxWidth < 620 ? 188.0 : 168.0;
+                          return ListView.builder(
+                            scrollCacheExtent:
+                                const ScrollCacheExtent.pixels(2000),
+                            keyboardDismissBehavior:
+                                ScrollViewKeyboardDismissBehavior.onDrag,
+                            itemExtent: rowExtent,
+                            itemCount: expenses.length + (hasLoadMore ? 1 : 0),
+                            itemBuilder: (context, index) {
+                              if (index >= expenses.length) {
+                                return Center(
+                                  child: TextButton.icon(
+                                    onPressed: onLoadMore,
+                                    icon: const Icon(Icons.expand_more),
+                                    label: Text(
+                                      '${tr.text('more')} '
+                                      '(${expenses.length}/$totalCount)',
+                                    ),
+                                  ),
+                                );
+                              }
+                              final expense = expenses[index];
+                              return _ExpenseCard(
+                                expense: expense,
+                                storeProfile: widget.store.storeProfile,
+                                onEdit: expense.isDraft &&
+                                        widget.store.canManageExpenses
+                                    ? () => _openExpenseForm(context,
+                                        expense: expense)
+                                    : null,
+                                onPost: expense.isDraft &&
+                                        widget.store.hasAnyPermission(<String>{
+                                          AppPermission.expensesApprove,
+                                          AppPermission.expensesManage
+                                        })
+                                    ? () => _postExpense(context, expense)
+                                    : null,
+                                onCancel: expense.isPosted &&
+                                        widget.store.hasAnyPermission(<String>{
+                                          AppPermission.expensesCancel,
+                                          AppPermission.expensesManage
+                                        })
+                                    ? () => _cancelExpense(context, expense)
+                                    : null,
+                                onDeleteDraft: expense.isDraft &&
+                                        widget.store.hasAnyPermission(<String>{
+                                          AppPermission.expensesDelete,
+                                          AppPermission.expensesManage
+                                        })
+                                    ? () => _deleteExpense(context, expense)
+                                    : null,
+                                onPermanentDelete: expense.isCancelled &&
+                                        widget.store.hasPermission(
+                                            AppPermission.databaseManage)
+                                    ? () => _permanentlyDeleteExpense(
+                                        context, expense)
+                                    : null,
+                              );
+                            },
+                          );
+                        },
+                      ),
           ),
         ],
       ),
@@ -548,6 +688,20 @@ class _ExpensesPageState extends State<ExpensesPage> {
       }
     }
   }
+}
+
+class _ExpenseQueryResult {
+  const _ExpenseQueryResult({
+    required this.items,
+    required this.totalCount,
+    required this.filteredPostedTotal,
+  });
+
+  final List<Expense> items;
+  final int totalCount;
+  final double filteredPostedTotal;
+
+  bool get hasMore => items.length < totalCount;
 }
 
 class _AccessDeniedScaffold extends StatelessWidget {

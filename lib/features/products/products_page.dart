@@ -48,6 +48,8 @@ class _ProductsPageState extends State<ProductsPage> {
   String _cachedCategoryFilter = 'All';
   List<Product> _cachedFilteredProducts = const <Product>[];
   List<String> _cachedCategories = const <String>[];
+  Future<_ProductsQueryResult?>? _productsQueryFuture;
+  String _productsQueryFutureKey = '';
   final Map<String, _RowCacheEntry> _rowCache = <String, _RowCacheEntry>{};
   final Map<String, String> _searchIndexCache = <String, String>{};
 
@@ -69,6 +71,8 @@ class _ProductsPageState extends State<ProductsPage> {
       _cachedCategoryFilter = 'All';
       _cachedFilteredProducts = const <Product>[];
       _cachedCategories = const <String>[];
+      _productsQueryFuture = null;
+      _productsQueryFutureKey = '';
       _rowCache.clear();
       _searchIndexCache.clear();
       _resetProductReveal();
@@ -148,10 +152,135 @@ class _ProductsPageState extends State<ProductsPage> {
     if (!widget.store.isCoreDataLoaded) {
       return const Center(child: CircularProgressIndicator.adaptive());
     }
+    final localeTag = Localizations.localeOf(context).toLanguageTag();
+    final value = query.trim().toLowerCase();
+    if (LocalDatabaseService.canQueryBusinessSqlite) {
+      return FutureBuilder<_ProductsQueryResult?>(
+        future: _queryProductsFromSqlite(value),
+        builder: (context, snapshot) {
+          final result = snapshot.data;
+          if (result != null && !snapshot.hasError) {
+            return _buildProductsView(
+              context,
+              tr,
+              localeTag: localeTag,
+              products: result.items,
+              totalCount: result.totalCount,
+              categories: result.categories,
+              loading: snapshot.connectionState == ConnectionState.waiting &&
+                  result.items.isEmpty,
+              onLoadMore: result.hasMore
+                  ? () => _loadMoreProducts(result.totalCount)
+                  : null,
+            );
+          }
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return _buildProductsView(
+              context,
+              tr,
+              localeTag: localeTag,
+              products: const <Product>[],
+              totalCount: 0,
+              categories: const <String>['All'],
+              loading: true,
+            );
+          }
+          return _buildProductsFromMemory(context, tr, localeTag);
+        },
+      );
+    }
+    return _buildProductsFromMemory(context, tr, localeTag);
+  }
+
+  Widget _buildProductsFromMemory(
+    BuildContext context,
+    AppLocalizations tr,
+    String localeTag,
+  ) {
     final allProducts = widget.store.products;
     final products = _filteredProducts(allProducts);
     final categories = _categoriesFor(allProducts);
-    final localeTag = Localizations.localeOf(context).toLanguageTag();
+    _syncProductReveal(products.length);
+    final visibleProducts = products
+        .take(math.min(_visibleProductCount, products.length))
+        .toList(growable: false);
+    return _buildProductsView(
+      context,
+      tr,
+      localeTag: localeTag,
+      products: visibleProducts,
+      totalCount: products.length,
+      categories: categories,
+    );
+  }
+
+  Future<_ProductsQueryResult?> _queryProductsFromSqlite(String value) {
+    final limit = math.max(1, _visibleProductCount);
+    final key =
+        '${widget.store.productsPageRevision}|$value|$categoryFilter|$limit';
+    if (_productsQueryFuture == null || _productsQueryFutureKey != key) {
+      _productsQueryFutureKey = key;
+      _productsQueryFuture = () async {
+        final page = await LocalDatabaseService.queryProductsFromSqlite(
+          query: value,
+          category: categoryFilter,
+          limit: limit,
+        );
+        if (page == null) return null;
+        final categories =
+            await LocalDatabaseService.queryProductCategoriesFromSqlite() ??
+                const <String>[];
+        return _ProductsQueryResult(
+          items: page.items,
+          totalCount: page.totalCount,
+          categories: _categoryItemsForSql(categories),
+        );
+      }();
+    }
+    return _productsQueryFuture!;
+  }
+
+  List<String> _categoryItemsForSql(List<String> categories) {
+    final tail = categories
+        .where((item) => item.trim().isNotEmpty && item != 'All')
+        .toSet()
+        .toList()
+      ..sort();
+    if (categoryFilter != 'All' && !tail.contains(categoryFilter)) {
+      tail.add(categoryFilter);
+      tail.sort();
+    }
+    return <String>['All', ...tail];
+  }
+
+  void _loadMoreProducts(int totalCount) {
+    setState(() {
+      _productRevealTimer?.cancel();
+      _productRevealTimer = null;
+      _visibleProductCount = math.min(totalCount, _visibleProductCount + 100);
+    });
+  }
+
+  Widget _buildProductsView(
+    BuildContext context,
+    AppLocalizations tr, {
+    required String localeTag,
+    required List<Product> products,
+    required int totalCount,
+    required List<String> categories,
+    bool loading = false,
+    VoidCallback? onLoadMore,
+  }) {
+    final categoryItems = categories.contains(categoryFilter)
+        ? categories
+        : <String>[
+            'All',
+            ...categories.where((item) => item != 'All'),
+            if (categoryFilter != 'All') categoryFilter,
+          ];
+    final selectedCategory =
+        categoryItems.contains(categoryFilter) ? categoryFilter : 'All';
+    final hasLoadMore = onLoadMore != null;
 
     return Padding(
       padding: VentioResponsive.pageInsets(context),
@@ -166,8 +295,8 @@ class _ProductsPageState extends State<ProductsPage> {
               alignment: WrapAlignment.end,
               children: [
                 PageDataLoadIndicator(
-                  loadedCount: math.min(_visibleProductCount, products.length),
-                  totalCount: products.length,
+                  loadedCount: products.length,
+                  totalCount: totalCount,
                 ),
                 OutlinedButton.icon(
                   onPressed: widget.store.canManageProducts
@@ -213,9 +342,9 @@ class _ProductsPageState extends State<ProductsPage> {
                 }),
               );
               final categoryField = DropdownButtonFormField<String>(
-                initialValue: categoryFilter,
+                initialValue: selectedCategory,
                 decoration: InputDecoration(labelText: tr.text('category')),
-                items: categories
+                items: categoryItems
                     .map((item) => DropdownMenuItem(
                         value: item,
                         child: Text(item == 'All' ? tr.text('all') : item)))
@@ -246,50 +375,62 @@ class _ProductsPageState extends State<ProductsPage> {
           ),
           const SizedBox(height: 16),
           Expanded(
-            child: products.isEmpty
-                ? EmptyStateCard(
-                    icon: Icons.inventory_2_outlined,
-                    title: tr.text('no_products'),
-                    subtitle: tr.text('no_products_desc'))
-                : LayoutBuilder(
-                    builder: (context, constraints) {
-                      final rowExtent =
-                          constraints.maxWidth < 620 ? 158.0 : 94.0;
-                      _syncProductReveal(products.length);
-                      final visibleProducts = products
-                          .take(math.min(_visibleProductCount, products.length))
-                          .toList(growable: false);
-                      return ListView.builder(
-                        itemExtent: rowExtent,
-                        itemCount: visibleProducts.length,
-                        itemBuilder: (context, index) {
-                          final product = visibleProducts[index];
-                          final row = _rowDataFor(
-                            product,
-                            tr,
-                            localeTag,
-                          );
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 10),
-                            child: _ProductTile(
-                              row: row,
-                              compact: constraints.maxWidth < 620,
-                              onEdit: widget.store.canManageProducts
-                                  ? () => _openProductForm(context,
-                                      product: row.product)
-                                  : null,
-                              onDelete: widget.store.hasAnyPermission(<String>{
-                                AppPermission.productsDelete,
-                                AppPermission.productsManage,
-                              })
-                                  ? () => _deleteProduct(context, row.product)
-                                  : null,
-                            ),
+            child: loading
+                ? const Center(child: CircularProgressIndicator.adaptive())
+                : totalCount == 0
+                    ? EmptyStateCard(
+                        icon: Icons.inventory_2_outlined,
+                        title: tr.text('no_products'),
+                        subtitle: tr.text('no_products_desc'))
+                    : LayoutBuilder(
+                        builder: (context, constraints) {
+                          final rowExtent =
+                              constraints.maxWidth < 620 ? 158.0 : 94.0;
+                          return ListView.builder(
+                            itemExtent: rowExtent,
+                            itemCount: products.length + (hasLoadMore ? 1 : 0),
+                            itemBuilder: (context, index) {
+                              if (index >= products.length) {
+                                return Center(
+                                  child: TextButton.icon(
+                                    onPressed: onLoadMore,
+                                    icon: const Icon(Icons.expand_more),
+                                    label: Text(
+                                      '${tr.text('more')} '
+                                      '(${products.length}/$totalCount)',
+                                    ),
+                                  ),
+                                );
+                              }
+                              final product = products[index];
+                              final row = _rowDataFor(
+                                product,
+                                tr,
+                                localeTag,
+                              );
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 10),
+                                child: _ProductTile(
+                                  row: row,
+                                  compact: constraints.maxWidth < 620,
+                                  onEdit: widget.store.canManageProducts
+                                      ? () => _openProductForm(context,
+                                          product: row.product)
+                                      : null,
+                                  onDelete: widget.store
+                                          .hasAnyPermission(<String>{
+                                    AppPermission.productsDelete,
+                                    AppPermission.productsManage,
+                                  })
+                                      ? () =>
+                                          _deleteProduct(context, row.product)
+                                      : null,
+                                ),
+                              );
+                            },
                           );
                         },
-                      );
-                    },
-                  ),
+                      ),
           ),
         ],
       ),
@@ -581,6 +722,20 @@ class _ProductsPageState extends State<ProductsPage> {
     }
     await LocalDatabaseService.setString(storageKey, jsonEncode(pages));
   }
+}
+
+class _ProductsQueryResult {
+  const _ProductsQueryResult({
+    required this.items,
+    required this.totalCount,
+    required this.categories,
+  });
+
+  final List<Product> items;
+  final int totalCount;
+  final List<String> categories;
+
+  bool get hasMore => items.length < totalCount;
 }
 
 class _PermissionDeniedScaffold extends StatelessWidget {

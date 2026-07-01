@@ -56,6 +56,9 @@ class LocalDatabaseService {
   static bool get isSqliteAuthoritative =>
       _sqliteReady && SqliteMigrationManager.database != null;
 
+  static bool get canQueryBusinessSqlite =>
+      _memoryStore == null && _webStore == null && isSqliteAuthoritative;
+
   @visibleForTesting
   static void useInMemoryStoreForTesting([Map<String, String>? seed]) {
     _memoryStoreForTesting =
@@ -594,6 +597,137 @@ class LocalDatabaseService {
     final db = SqliteMigrationManager.database;
     if (db == null) return null;
     return BusinessSqliteStore.readInventoryCostLayers(db);
+  }
+
+  static Future<BusinessQueryPage<Customer>?> queryCustomersFromSqlite({
+    String query = '',
+    int limit = 50,
+    int offset = 0,
+    bool includeWalkIn = false,
+  }) async {
+    if (!canQueryBusinessSqlite) return null;
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    return BusinessSqliteStore.queryCustomers(
+      db,
+      query: query,
+      limit: limit,
+      offset: offset,
+      includeWalkIn: includeWalkIn,
+    );
+  }
+
+  static Future<BusinessQueryPage<Supplier>?> querySuppliersFromSqlite({
+    String query = '',
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    if (!canQueryBusinessSqlite) return null;
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    return BusinessSqliteStore.querySuppliers(
+      db,
+      query: query,
+      limit: limit,
+      offset: offset,
+    );
+  }
+
+  static Future<BusinessQueryPage<Expense>?> queryExpensesFromSqlite({
+    String query = '',
+    String status = 'all',
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    if (!canQueryBusinessSqlite) return null;
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    return BusinessSqliteStore.queryExpenses(
+      db,
+      query: query,
+      status: status,
+      limit: limit,
+      offset: offset,
+    );
+  }
+
+  static Future<double?> sumPostedExpensesFromSqlite({
+    String query = '',
+    String status = 'all',
+  }) async {
+    if (!canQueryBusinessSqlite) return null;
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    return BusinessSqliteStore.sumPostedExpenses(
+      db,
+      query: query,
+      status: status,
+    );
+  }
+
+  static Future<BusinessQueryPage<Product>?> queryProductsFromSqlite({
+    String query = '',
+    String category = '',
+    int limit = 50,
+    int offset = 0,
+    bool activeOnly = false,
+    bool stockTrackedOnly = false,
+  }) async {
+    if (!canQueryBusinessSqlite) return null;
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    return BusinessSqliteStore.queryProducts(
+      db,
+      query: query,
+      category: category,
+      limit: limit,
+      offset: offset,
+      activeOnly: activeOnly,
+      stockTrackedOnly: stockTrackedOnly,
+    );
+  }
+
+  static Future<List<String>?> queryProductCategoriesFromSqlite() async {
+    if (!canQueryBusinessSqlite) return null;
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    return BusinessSqliteStore.queryProductCategories(db);
+  }
+
+  static Future<Map<String, Object?>?> buildDashboardSummaryFromSqlite({
+    required DateTime reference,
+  }) async {
+    if (!canQueryBusinessSqlite) return null;
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    return BusinessSqliteStore.buildDashboardSummary(
+      db,
+      reference: reference,
+    );
+  }
+
+  static Future<Map<String, Object?>?> buildReportsSummaryFromSqlite({
+    required DateTime reference,
+  }) async {
+    if (!canQueryBusinessSqlite) return null;
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    return BusinessSqliteStore.buildReportsSummary(
+      db,
+      reference: reference,
+    );
+  }
+
+  static Future<Map<String, Object?>?> buildAccountingMetricsFromSqlite({
+    required DateTime reference,
+  }) async {
+    if (!canQueryBusinessSqlite) return null;
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    return BusinessSqliteStore.buildAccountingMetrics(
+      db,
+      reference: reference,
+    );
   }
 
   static Future<void> upsertBusinessEntityJson(

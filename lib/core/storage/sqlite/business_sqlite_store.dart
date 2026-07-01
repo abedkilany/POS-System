@@ -168,6 +168,1086 @@ class BusinessSqliteStore {
   static List<String> get adminEntityKeys =>
       List<String>.unmodifiable(_entityListKeys);
 
+  static int _safeLimit(int limit) => limit.clamp(1, 500).toInt();
+
+  static int _safeOffset(int offset) => offset < 0 ? 0 : offset;
+
+  static String _likePattern(String query) => '%${query.trim().toLowerCase()}%';
+
+  static Future<BusinessQueryPage<Customer>> queryCustomers(
+    VentioDriftDatabase db, {
+    String query = '',
+    int limit = 50,
+    int offset = 0,
+    bool includeWalkIn = false,
+  }) async {
+    final conditions = <String>["deleted_at = ''"];
+    final variables = <Variable<Object>>[];
+    if (!includeWalkIn) {
+      conditions.add("id <> 'walk_in'");
+      conditions.add("lower(name) <> 'walk-in customer'");
+    }
+    final normalized = query.trim().toLowerCase();
+    if (normalized.isNotEmpty) {
+      conditions.add('(lower(name) LIKE ? OR lower(phone) LIKE ?)');
+      final pattern = _likePattern(normalized);
+      variables
+        ..add(Variable<String>(pattern))
+        ..add(Variable<String>(pattern));
+    }
+    final whereSql = conditions.join(' AND ');
+    final total = await _countWhere(db, 'customers', whereSql, variables);
+    final safeLimit = _safeLimit(limit);
+    final safeOffset = _safeOffset(offset);
+    final rows = await db.customSelect('''
+      SELECT id, name, phone, address, created_at AS createdAt,
+             updated_at AS updatedAt, deleted_at AS deletedAt,
+             device_id AS deviceId, sync_status AS syncStatus,
+             store_id AS storeId, branch_id AS branchId, version,
+             last_modified_by_device_id AS lastModifiedByDeviceId
+      FROM customers
+      WHERE $whereSql
+      ORDER BY lower(name) ASC, updated_at DESC, id ASC
+      LIMIT ? OFFSET ?
+    ''', variables: <Variable<Object>>[
+      ...variables,
+      Variable<int>(safeLimit),
+      Variable<int>(safeOffset),
+    ]).get();
+    return BusinessQueryPage<Customer>(
+      items: rows
+          .map((row) => Customer.fromJson(Map<String, dynamic>.from(row.data)))
+          .toList(growable: false),
+      totalCount: total,
+      limit: safeLimit,
+      offset: safeOffset,
+    );
+  }
+
+  static Future<BusinessQueryPage<Supplier>> querySuppliers(
+    VentioDriftDatabase db, {
+    String query = '',
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    final conditions = <String>["deleted_at = ''"];
+    final variables = <Variable<Object>>[];
+    final normalized = query.trim().toLowerCase();
+    if (normalized.isNotEmpty) {
+      conditions.add(
+        '(lower(name) LIKE ? OR lower(name_en) LIKE ? OR lower(name_ar) LIKE ? OR lower(phone) LIKE ?)',
+      );
+      final pattern = _likePattern(normalized);
+      variables
+        ..add(Variable<String>(pattern))
+        ..add(Variable<String>(pattern))
+        ..add(Variable<String>(pattern))
+        ..add(Variable<String>(pattern));
+    }
+    final whereSql = conditions.join(' AND ');
+    final total = await _countWhere(db, 'suppliers', whereSql, variables);
+    final safeLimit = _safeLimit(limit);
+    final safeOffset = _safeOffset(offset);
+    final rows = await db.customSelect('''
+      SELECT id, name, name_en AS nameEn, name_ar AS nameAr, phone, address,
+             notes, created_at AS createdAt, updated_at AS updatedAt,
+             deleted_at AS deletedAt, device_id AS deviceId,
+             sync_status AS syncStatus, store_id AS storeId,
+             branch_id AS branchId, version,
+             last_modified_by_device_id AS lastModifiedByDeviceId
+      FROM suppliers
+      WHERE $whereSql
+      ORDER BY lower(name) ASC, updated_at DESC, id ASC
+      LIMIT ? OFFSET ?
+    ''', variables: <Variable<Object>>[
+      ...variables,
+      Variable<int>(safeLimit),
+      Variable<int>(safeOffset),
+    ]).get();
+    return BusinessQueryPage<Supplier>(
+      items: rows
+          .map((row) => Supplier.fromJson(Map<String, dynamic>.from(row.data)))
+          .toList(growable: false),
+      totalCount: total,
+      limit: safeLimit,
+      offset: safeOffset,
+    );
+  }
+
+  static _SqlFilter _expenseFilter({
+    String query = '',
+    String status = 'all',
+    bool postedOnly = false,
+  }) {
+    final conditions = <String>["deleted_at = ''"];
+    final variables = <Variable<Object>>[];
+    final normalizedStatus = status.trim().toLowerCase();
+    if (normalizedStatus.isNotEmpty && normalizedStatus != 'all') {
+      conditions.add('lower(expense_status) = ?');
+      variables.add(Variable<String>(normalizedStatus));
+    }
+    if (postedOnly && normalizedStatus != 'posted') {
+      conditions.add('lower(expense_status) = ?');
+      variables.add(const Variable<String>('posted'));
+    }
+    final normalized = query.trim().toLowerCase();
+    if (normalized.isNotEmpty) {
+      conditions.add(
+        '(lower(title) LIKE ? OR lower(category) LIKE ? OR lower(notes) LIKE ? OR lower(expense_status) LIKE ? OR lower(cancel_reason) LIKE ?)',
+      );
+      final pattern = _likePattern(normalized);
+      variables
+        ..add(Variable<String>(pattern))
+        ..add(Variable<String>(pattern))
+        ..add(Variable<String>(pattern))
+        ..add(Variable<String>(pattern))
+        ..add(Variable<String>(pattern));
+    }
+    return _SqlFilter(
+      whereSql: conditions.join(' AND '),
+      variables: variables,
+    );
+  }
+
+  static Future<BusinessQueryPage<Expense>> queryExpenses(
+    VentioDriftDatabase db, {
+    String query = '',
+    String status = 'all',
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    final filter = _expenseFilter(query: query, status: status);
+    final whereSql = filter.whereSql;
+    final variables = filter.variables;
+    final total = await _countWhere(db, 'expenses', whereSql, variables);
+    final safeLimit = _safeLimit(limit);
+    final safeOffset = _safeOffset(offset);
+    final rows = await db.customSelect('''
+      SELECT id, title, category, amount, original_amount AS originalAmount,
+             original_currency AS originalCurrency,
+             exchange_rate_at_entry AS exchangeRateAtEntry,
+             expense_date AS date, notes, expense_status AS status,
+             cancel_reason AS cancelReason,
+             cancelled_by_device_id AS cancelledByDeviceId,
+             cancelled_at AS cancelledAt, created_at AS createdAt,
+             updated_at AS updatedAt, deleted_at AS deletedAt,
+             device_id AS deviceId, sync_status AS syncStatus,
+             store_id AS storeId, branch_id AS branchId, version,
+             last_modified_by_device_id AS lastModifiedByDeviceId
+      FROM expenses
+      WHERE $whereSql
+      ORDER BY expense_date DESC, updated_at DESC, id ASC
+      LIMIT ? OFFSET ?
+    ''', variables: <Variable<Object>>[
+      ...variables,
+      Variable<int>(safeLimit),
+      Variable<int>(safeOffset),
+    ]).get();
+    return BusinessQueryPage<Expense>(
+      items: rows
+          .map((row) => Expense.fromJson(Map<String, dynamic>.from(row.data)))
+          .toList(growable: false),
+      totalCount: total,
+      limit: safeLimit,
+      offset: safeOffset,
+    );
+  }
+
+  static Future<double> sumPostedExpenses(
+    VentioDriftDatabase db, {
+    String query = '',
+    String status = 'all',
+  }) async {
+    final filter = _expenseFilter(
+      query: query,
+      status: status,
+      postedOnly: true,
+    );
+    final row = await db.customSelect('''
+      SELECT COALESCE(SUM(amount), 0) AS total
+      FROM expenses
+      WHERE ${filter.whereSql}
+    ''', variables: filter.variables).getSingle();
+    return (row.data['total'] as num?)?.toDouble() ?? 0;
+  }
+
+  static Future<BusinessQueryPage<Product>> queryProducts(
+    VentioDriftDatabase db, {
+    String query = '',
+    String category = '',
+    int limit = 50,
+    int offset = 0,
+    bool activeOnly = false,
+    bool stockTrackedOnly = false,
+  }) async {
+    final conditions = <String>["deleted_at = ''"];
+    final variables = <Variable<Object>>[];
+    if (activeOnly) conditions.add('is_active = 1');
+    if (stockTrackedOnly) conditions.add('track_stock = 1');
+    final normalizedCategory = category.trim();
+    if (normalizedCategory.isNotEmpty && normalizedCategory != 'All') {
+      conditions.add('category = ?');
+      variables.add(Variable<String>(normalizedCategory));
+    }
+    final normalized = query.trim().toLowerCase();
+    if (normalized.isNotEmpty) {
+      conditions.add(
+        '''(lower(name) LIKE ? OR lower(name_en) LIKE ? OR lower(name_ar) LIKE ?
+           OR lower(code) LIKE ? OR lower(barcode) LIKE ?
+           OR lower(category) LIKE ? OR lower(brand) LIKE ?
+           OR lower(supplier) LIKE ? OR lower(unit) LIKE ?
+           OR EXISTS (
+             SELECT 1 FROM product_sale_units sale_units
+             WHERE sale_units.product_id = products.id
+               AND (lower(sale_units.name) LIKE ? OR lower(sale_units.barcode) LIKE ?)
+           )
+           OR EXISTS (
+             SELECT 1 FROM product_purchase_units purchase_units
+             WHERE purchase_units.product_id = products.id
+               AND (lower(purchase_units.name) LIKE ? OR lower(purchase_units.barcode) LIKE ?)
+           ))''',
+      );
+      final pattern = _likePattern(normalized);
+      for (var i = 0; i < 13; i += 1) {
+        variables.add(Variable<String>(pattern));
+      }
+    }
+    final whereSql = conditions.join(' AND ');
+    final total = await _countWhere(db, 'products', whereSql, variables);
+    final safeLimit = _safeLimit(limit);
+    final safeOffset = _safeOffset(offset);
+    final rows = await db.customSelect('''
+      SELECT id, name, code, name_en AS nameEn, name_ar AS nameAr,
+             price, cost, original_cost AS originalCost,
+             cost_currency AS costCurrency, usd_cost AS usdCost,
+             cost_exchange_rate_at_entry AS costExchangeRateAtEntry,
+             original_price AS originalPrice,
+             original_currency AS originalCurrency,
+             usd_price AS usdPrice,
+             exchange_rate_at_entry AS exchangeRateAtEntry,
+             stock, category, barcode, brand, supplier, description, unit,
+             quantity_type AS quantityType,
+             low_stock_threshold AS lowStockThreshold,
+             CASE WHEN track_stock = 1 THEN 1 ELSE 0 END AS trackStock,
+             CASE WHEN is_active = 1 THEN 1 ELSE 0 END AS isActive,
+             image_path AS imagePath, created_at AS createdAt,
+             updated_at AS updatedAt, deleted_at AS deletedAt,
+             device_id AS deviceId, sync_status AS syncStatus,
+             store_id AS storeId, branch_id AS branchId, version,
+             last_modified_by_device_id AS lastModifiedByDeviceId
+      FROM products
+      WHERE $whereSql
+      ORDER BY lower(name) ASC, updated_at DESC, id ASC
+      LIMIT ? OFFSET ?
+    ''', variables: <Variable<Object>>[
+      ...variables,
+      Variable<int>(safeLimit),
+      Variable<int>(safeOffset),
+    ]).get();
+    final productIds =
+        rows.map((row) => row.read<String>('id')).toList(growable: false);
+    final saleUnitsByProduct = await _readProductUnitRowsByProduct(
+      db,
+      'product_sale_units',
+      productIds,
+    );
+    final purchaseUnitsByProduct = await _readProductUnitRowsByProduct(
+      db,
+      'product_purchase_units',
+      productIds,
+    );
+    return BusinessQueryPage<Product>(
+      items: rows
+          .map((row) => _productFromQueryRow(
+                row,
+                saleUnitsByProduct: saleUnitsByProduct,
+                purchaseUnitsByProduct: purchaseUnitsByProduct,
+              ))
+          .toList(growable: false),
+      totalCount: total,
+      limit: safeLimit,
+      offset: safeOffset,
+    );
+  }
+
+  static Future<List<String>> queryProductCategories(
+    VentioDriftDatabase db,
+  ) async {
+    final rows = await db.customSelect('''
+      SELECT DISTINCT category
+      FROM products
+      WHERE deleted_at = '' AND trim(category) <> ''
+      ORDER BY category ASC
+    ''').get();
+    return rows
+        .map((row) => row.read<String>('category'))
+        .where((value) => value.trim().isNotEmpty)
+        .toList(growable: false);
+  }
+
+  static Future<Map<String, Object?>> buildDashboardSummary(
+    VentioDriftDatabase db, {
+    required DateTime reference,
+  }) async {
+    final today = DateTime(reference.year, reference.month, reference.day);
+    final tomorrow = today.add(const Duration(days: 1));
+    final start7 = today.subtract(const Duration(days: 6));
+    final start30 = today.subtract(const Duration(days: 29));
+    final sales7 = _dateValueMap(start7, 7);
+    final sales30 = _dateValueMap(start30, 30);
+    final expenseDailyTotals = <String, double>{};
+
+    var todaySalesTotal = 0.0;
+    var todayProfitTotal = 0.0;
+    var todayInvoiceCount = 0;
+    var salesSince30Days = 0.0;
+    var profitSince30Days = 0.0;
+
+    final salesByDay = await db.customSelect('''
+      $_saleTotalsCte
+      SELECT substr(document_date, 1, 10) AS day,
+             SUM($_dashboardSaleAmountSql) AS sales,
+             SUM($_saleProfitSql) AS profit,
+             COUNT(*) AS invoiceCount
+      FROM sale_totals
+      WHERE document_date >= ? AND document_date < ?
+      GROUP BY substr(document_date, 1, 10)
+    ''', variables: <Variable<Object>>[
+      Variable<String>(_iso(start30)),
+      Variable<String>(_iso(tomorrow)),
+    ]).get();
+    final todayKey = _dateKey(today);
+    for (final row in salesByDay) {
+      final day = _rowText(row, 'day');
+      final sales = _rowDouble(row, 'sales');
+      final profit = _rowDouble(row, 'profit');
+      if (sales7.containsKey(day)) sales7[day] = sales;
+      if (sales30.containsKey(day)) sales30[day] = sales;
+      salesSince30Days += sales;
+      profitSince30Days += profit;
+      if (day == todayKey) {
+        todaySalesTotal = sales;
+        todayProfitTotal = profit;
+        todayInvoiceCount = _rowInt(row, 'invoiceCount', fallback: 0);
+      }
+    }
+
+    final totalPurchasesAmount = await _doubleScalar(db, '''
+      $_purchaseTotalsCte
+      SELECT SUM(subtotal) AS value FROM purchase_totals
+    ''');
+    final expenseRows = await db.customSelect('''
+      SELECT category, amount, expense_date
+      FROM expenses
+      WHERE deleted_at = ''
+        AND lower(expense_status) = 'posted'
+    ''').get();
+    final expenseCategories = <String, double>{};
+    var totalExpensesAmount = 0.0;
+    var todayExpenseTotal = 0.0;
+    for (final row in expenseRows) {
+      final amount = _rowDouble(row, 'amount');
+      final dateText = _rowText(row, 'expense_date');
+      final day = dateText.length >= 10 ? dateText.substring(0, 10) : '';
+      final categoryText =
+          _rowText(row, 'category', fallback: 'Unspecified').trim();
+      final category = categoryText.isEmpty ? 'Unspecified' : categoryText;
+      totalExpensesAmount += amount;
+      expenseCategories[category] = (expenseCategories[category] ?? 0) + amount;
+      if (day.isNotEmpty) {
+        expenseDailyTotals[day] = (expenseDailyTotals[day] ?? 0) + amount;
+      }
+      if (day == todayKey) todayExpenseTotal += amount;
+    }
+
+    final inventoryRow = await db.customSelect('''
+      SELECT COALESCE(SUM(usd_cost * stock), 0) AS inventoryCostValue,
+             SUM(CASE WHEN stock <= low_stock_threshold THEN 1 ELSE 0 END)
+               AS lowStockCount
+      FROM products
+      WHERE deleted_at = '' AND track_stock = 1
+    ''').getSingle();
+    final lowStockRows = await db.customSelect('''
+      SELECT name
+      FROM products
+      WHERE deleted_at = ''
+        AND track_stock = 1
+        AND stock <= low_stock_threshold
+      ORDER BY lower(name) ASC
+      LIMIT 20
+    ''').get();
+    final duplicateCodeCount = await _intScalar(db, '''
+      SELECT COUNT(*) AS value
+      FROM (
+        SELECT lower(code) AS code
+        FROM products
+        WHERE deleted_at = '' AND trim(code) <> ''
+        GROUP BY lower(code)
+        HAVING COUNT(*) > 1
+      )
+    ''');
+    final duplicateBarcodeCount = await _intScalar(db, '''
+      SELECT COUNT(*) AS value
+      FROM (
+        SELECT lower(barcode) AS barcode
+        FROM products
+        WHERE deleted_at = '' AND trim(barcode) <> ''
+        GROUP BY lower(barcode)
+        HAVING COUNT(*) > 1
+      )
+    ''');
+
+    return <String, Object?>{
+      'todaySalesTotal': todaySalesTotal,
+      'todayProfitTotal': todayProfitTotal,
+      'todayInvoiceCount': todayInvoiceCount,
+      'salesSince30Days': salesSince30Days,
+      'profitSince30Days': profitSince30Days,
+      'salesLast7Days': _seriesFromDateMap(sales7),
+      'salesLast30Days': _seriesFromDateMap(sales30),
+      'expenseCategories': _sortedSeries(expenseCategories),
+      'topProducts': await _dashboardTopProducts(db),
+      'topCustomers': await _dashboardTopCustomers(db),
+      'recentOperations': await _dashboardRecentOperations(db),
+      'recentStockMovements': await _recentStockMovements(db, limit: 8),
+      'totalPurchasesAmount': totalPurchasesAmount,
+      'totalExpensesAmount': totalExpensesAmount,
+      'inventoryCostValue': _rowDouble(inventoryRow, 'inventoryCostValue'),
+      'lowStockCount': _rowInt(inventoryRow, 'lowStockCount', fallback: 0),
+      'lowStockNames': lowStockRows
+          .map((row) => _rowText(row, 'name', fallback: 'Product'))
+          .toList(growable: false),
+      'todayExpenseTotal': todayExpenseTotal,
+      'last7ExpenseAverage': _averageForWindow(expenseDailyTotals, start7, 7),
+      'pendingSyncCount': await _pendingSyncCount(db, reference),
+      'blockingConflictCount': duplicateCodeCount + duplicateBarcodeCount,
+    };
+  }
+
+  static Future<Map<String, Object?>> buildReportsSummary(
+    VentioDriftDatabase db, {
+    required DateTime reference,
+  }) async {
+    final today = DateTime(reference.year, reference.month, reference.day);
+    final tomorrow = today.add(const Duration(days: 1));
+    final monthStart = DateTime(reference.year, reference.month);
+    final nextMonth = DateTime(reference.year, reference.month + 1);
+    final totals = await db.customSelect('''
+      $_saleTotalsCte
+      SELECT
+        SUM(CASE WHEN document_date >= ? AND document_date < ?
+          THEN $_reportSaleAmountSql ELSE 0 END) AS todaySales,
+        SUM(CASE WHEN document_date >= ? AND document_date < ?
+          THEN $_reportSaleAmountSql ELSE 0 END) AS monthSales,
+        SUM($_saleProfitSql) AS grossProfit
+      FROM sale_totals
+    ''', variables: <Variable<Object>>[
+      Variable<String>(_iso(today)),
+      Variable<String>(_iso(tomorrow)),
+      Variable<String>(_iso(monthStart)),
+      Variable<String>(_iso(nextMonth)),
+    ]).getSingle();
+    final totalExpenses = await _doubleScalar(db, '''
+      SELECT SUM(amount) AS value
+      FROM expenses
+      WHERE deleted_at = '' AND lower(expense_status) = 'posted'
+    ''');
+    final monthPurchases = await _doubleScalar(db, '''
+      $_purchaseTotalsCte
+      SELECT SUM(subtotal) AS value
+      FROM purchase_totals
+      WHERE document_date >= ? AND document_date < ?
+    ''', variables: <Variable<Object>>[
+      Variable<String>(_iso(monthStart)),
+      Variable<String>(_iso(nextMonth)),
+    ]);
+    final movementTotals = await db.customSelect('''
+      SELECT
+        SUM(CASE WHEN quantity > 0 THEN quantity ELSE 0 END) AS movementIn,
+        SUM(CASE WHEN quantity < 0 THEN abs(quantity) ELSE 0 END) AS movementOut
+      FROM stock_movements
+      WHERE deleted_at = ''
+    ''').getSingle();
+    final inventory = await db.customSelect('''
+      SELECT COALESCE(SUM(usd_price * stock), 0) AS inventoryRetailValue,
+             SUM(CASE WHEN stock <= low_stock_threshold THEN 1 ELSE 0 END)
+               AS lowStockCount
+      FROM products
+      WHERE deleted_at = '' AND track_stock = 1
+    ''').getSingle();
+    final balances = await _accountBalanceSummary(db, today, tomorrow);
+
+    return <String, Object?>{
+      'reference': reference.toIso8601String(),
+      'totalExpenses': totalExpenses,
+      'estimatedProfit': _rowDouble(totals, 'grossProfit') - totalExpenses,
+      'todaySales': _rowDouble(totals, 'todaySales'),
+      'monthSales': _rowDouble(totals, 'monthSales'),
+      'monthPurchases': monthPurchases,
+      'movementIn': _rowDouble(movementTotals, 'movementIn'),
+      'movementOut': _rowDouble(movementTotals, 'movementOut'),
+      'autoCorrections': await _recentStockMovements(
+        db,
+        limit: 100,
+        movementType: 'auto_correction',
+      ),
+      'lowStock': await _lowStockRows(db),
+      'stockMovements': await _recentStockMovements(db, limit: 100),
+      'customerReceivables': balances.customerReceivables,
+      'supplierPayables': balances.supplierPayables,
+      'inventoryRetailValue': _rowDouble(inventory, 'inventoryRetailValue'),
+      'lowStockCount': _rowInt(inventory, 'lowStockCount', fallback: 0),
+      'todayCashIn': balances.todayCashIn,
+      'todayCashOut': balances.todayCashOut,
+      'todayCashInByMethod': balances.todayCashInByMethod,
+      'todayCashOutByMethod': balances.todayCashOutByMethod,
+      'topProductLines': await _reportsTopProductLines(db),
+      'topCustomerDebts': balances.topCustomerDebts,
+      'topSupplierDebts': balances.topSupplierDebts,
+    };
+  }
+
+  static Future<Map<String, Object?>> buildAccountingMetrics(
+    VentioDriftDatabase db, {
+    required DateTime reference,
+  }) async {
+    final today = DateTime(reference.year, reference.month, reference.day);
+    final tomorrow = today.add(const Duration(days: 1));
+    final balances = await _accountBalanceSummary(db, today, tomorrow);
+    return <String, Object?>{
+      'reference': reference.toIso8601String(),
+      'customerReceivables': balances.customerReceivables,
+      'customerCredits': balances.customerCredits,
+      'supplierPayables': balances.supplierPayables,
+      'supplierAdvances': balances.supplierAdvances,
+      'todayCashIn': balances.todayCashIn,
+      'todayCashOut': balances.todayCashOut,
+    };
+  }
+
+  static const String _saleTotalsCte = '''
+      WITH sale_totals AS (
+        SELECT s.id, s.invoice_no, s.customer_name, s.document_date,
+               s.discount, s.transaction_amount,
+               COALESCE(SUM(si.unit_price * si.quantity), 0) AS line_total,
+               COALESCE(SUM((si.unit_price - si.unit_cost) * si.quantity), 0)
+                 AS line_profit
+        FROM sales s
+        LEFT JOIN sale_items si ON si.sale_id = s.id
+        WHERE s.deleted_at = ''
+          AND lower(s.status) NOT IN ('cancelled', 'returned')
+        GROUP BY s.id
+      )
+    ''';
+
+  static const String _purchaseTotalsCte = '''
+      WITH purchase_totals AS (
+        SELECT p.id, p.purchase_no, p.supplier_name, p.document_date,
+               COALESCE(SUM(pi.quantity * pi.unit_cost), 0) AS subtotal
+        FROM purchases p
+        LEFT JOIN purchase_items pi ON pi.purchase_id = p.id
+        WHERE p.deleted_at = ''
+          AND lower(p.status) NOT IN ('cancelled', 'returned')
+        GROUP BY p.id
+      )
+    ''';
+
+  static const String _dashboardSaleAmountSql =
+      "CASE WHEN transaction_amount > 0 THEN transaction_amount ELSE max(line_total - discount, 0) END";
+  static const String _reportSaleAmountSql = 'max(line_total - discount, 0)';
+  static const String _saleProfitSql = '(line_profit - discount)';
+
+  static Future<List<Map<String, Object?>>> _dashboardTopProducts(
+    VentioDriftDatabase db,
+  ) async {
+    final rows = await db.customSelect('''
+      SELECT si.product_name AS label, SUM(si.quantity) AS value
+      FROM sale_items si
+      INNER JOIN sales s ON s.id = si.sale_id
+      WHERE s.deleted_at = ''
+        AND lower(s.status) NOT IN ('cancelled', 'returned')
+        AND trim(si.product_name) <> ''
+      GROUP BY si.product_name
+      ORDER BY value DESC
+      LIMIT 10
+    ''').get();
+    return _labelValueRows(rows, labelKey: 'label', valueKey: 'value');
+  }
+
+  static Future<List<Map<String, Object?>>> _dashboardTopCustomers(
+    VentioDriftDatabase db,
+  ) async {
+    final rows = await db.customSelect('''
+      $_saleTotalsCte
+      SELECT CASE
+               WHEN trim(customer_name) = '' THEN 'Walk-in customer'
+               ELSE customer_name
+             END AS label,
+             SUM($_dashboardSaleAmountSql) AS value
+      FROM sale_totals
+      GROUP BY label
+      ORDER BY value DESC
+      LIMIT 10
+    ''').get();
+    return _labelValueRows(rows, labelKey: 'label', valueKey: 'value');
+  }
+
+  static Future<List<Map<String, Object?>>> _dashboardRecentOperations(
+    VentioDriftDatabase db,
+  ) async {
+    final rows = await db.customSelect('''
+      WITH
+      sale_totals AS (
+        SELECT s.id, s.invoice_no, s.customer_name, s.document_date,
+               s.discount, s.transaction_amount,
+               COALESCE(SUM(si.unit_price * si.quantity), 0) AS line_total
+        FROM sales s
+        LEFT JOIN sale_items si ON si.sale_id = s.id
+        WHERE s.deleted_at = ''
+          AND lower(s.status) NOT IN ('cancelled', 'returned')
+        GROUP BY s.id
+      ),
+      purchase_totals AS (
+        SELECT p.id, p.purchase_no, p.supplier_name, p.document_date,
+               COALESCE(SUM(pi.quantity * pi.unit_cost), 0) AS subtotal
+        FROM purchases p
+        LEFT JOIN purchase_items pi ON pi.purchase_id = p.id
+        WHERE p.deleted_at = ''
+          AND lower(p.status) NOT IN ('cancelled', 'returned')
+        GROUP BY p.id
+      )
+      SELECT type, title, subtitle, amount, at
+      FROM (
+        SELECT 'sale' AS type, invoice_no AS title,
+               CASE WHEN trim(customer_name) = '' THEN 'Walk-in customer'
+                    ELSE customer_name END AS subtitle,
+               $_dashboardSaleAmountSql AS amount,
+               document_date AS at
+        FROM sale_totals
+        UNION ALL
+        SELECT 'purchase' AS type, purchase_no AS title,
+               CASE WHEN trim(supplier_name) = '' THEN 'Purchase'
+                    ELSE supplier_name END AS subtitle,
+               subtotal AS amount,
+               document_date AS at
+        FROM purchase_totals
+        UNION ALL
+        SELECT 'expense' AS type, title,
+               CASE WHEN trim(category) = '' THEN 'Unspecified'
+                    ELSE category END AS subtitle,
+               amount, expense_date AS at
+        FROM expenses
+        WHERE deleted_at = '' AND lower(expense_status) = 'posted'
+        UNION ALL
+        SELECT 'stockMovement' AS type,
+               CASE WHEN trim(movement_type) = '' THEN 'Movement'
+                    ELSE movement_type END AS title,
+               product_name AS subtitle,
+               abs(quantity) AS amount,
+               movement_date AS at
+        FROM stock_movements
+        WHERE deleted_at = ''
+        UNION ALL
+        SELECT 'payment' AS type,
+               CASE WHEN trim(reference_no) = '' THEN transaction_type
+                    ELSE reference_no END AS title,
+               account_name AS subtitle,
+               abs(debit - credit) AS amount,
+               transaction_date AS at
+        FROM account_transactions
+        WHERE deleted_at = ''
+      )
+      WHERE trim(at) <> ''
+      ORDER BY at DESC
+      LIMIT 5
+    ''').get();
+    return rows
+        .map((row) => <String, Object?>{
+              'type': _rowText(row, 'type'),
+              'title': _rowText(row, 'title'),
+              'subtitle': _rowText(row, 'subtitle'),
+              'amount': _rowDouble(row, 'amount'),
+              'at': _rowText(row, 'at'),
+            })
+        .toList(growable: false);
+  }
+
+  static Future<List<Map<String, Object?>>> _recentStockMovements(
+    VentioDriftDatabase db, {
+    required int limit,
+    String movementType = '',
+  }) async {
+    final conditions = <String>["deleted_at = ''"];
+    final variables = <Variable<Object>>[];
+    if (movementType.trim().isNotEmpty) {
+      conditions.add('movement_type = ?');
+      variables.add(Variable<String>(movementType));
+    }
+    variables.add(Variable<int>(limit.clamp(1, 500).toInt()));
+    final rows = await db.customSelect('''
+      SELECT movement_type AS type, product_name AS productName,
+             reference_no AS referenceNo, quantity, movement_date AS date
+      FROM stock_movements
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY movement_date DESC, updated_at DESC, id ASC
+      LIMIT ?
+    ''', variables: variables).get();
+    return rows
+        .map((row) => <String, Object?>{
+              'type': _rowText(row, 'type'),
+              'productName': _rowText(row, 'productName'),
+              'referenceNo': _rowText(row, 'referenceNo'),
+              'quantity': _rowDouble(row, 'quantity'),
+              'date': _rowText(row, 'date'),
+            })
+        .toList(growable: false);
+  }
+
+  static Future<List<Map<String, Object?>>> _lowStockRows(
+    VentioDriftDatabase db,
+  ) async {
+    final rows = await db.customSelect('''
+      SELECT name, code, stock
+      FROM products
+      WHERE deleted_at = ''
+        AND track_stock = 1
+        AND stock <= low_stock_threshold
+      ORDER BY stock ASC, lower(name) ASC
+      LIMIT 100
+    ''').get();
+    return rows
+        .map((row) => <String, Object?>{
+              'name': _rowText(row, 'name'),
+              'code': _rowText(row, 'code'),
+              'stock': _rowDouble(row, 'stock'),
+            })
+        .toList(growable: false);
+  }
+
+  static Future<List<Map<String, Object?>>> _reportsTopProductLines(
+    VentioDriftDatabase db,
+  ) async {
+    final rows = await db.customSelect('''
+      SELECT si.product_name AS key, SUM(si.quantity) AS value
+      FROM sale_items si
+      INNER JOIN sales s ON s.id = si.sale_id
+      WHERE s.deleted_at = ''
+        AND lower(s.status) NOT IN ('cancelled', 'returned')
+        AND trim(si.product_name) <> ''
+      GROUP BY si.product_name
+      ORDER BY value DESC
+      LIMIT 20
+    ''').get();
+    return _keyValueRows(rows);
+  }
+
+  static Future<_AccountBalanceSummary> _accountBalanceSummary(
+    VentioDriftDatabase db,
+    DateTime today,
+    DateTime tomorrow,
+  ) async {
+    final receivableRows = await db.customSelect('''
+      WITH balances AS (
+        SELECT lower(account_type) AS accountType, account_id AS accountId,
+               SUM(debit - credit) AS balance
+        FROM account_transactions
+        WHERE deleted_at = ''
+          AND lower(account_type) IN ('customer', 'supplier')
+          AND trim(account_id) <> ''
+        GROUP BY lower(account_type), account_id
+      )
+      SELECT accountType, accountId, balance
+      FROM balances
+    ''').get();
+    var customerReceivables = 0.0;
+    var customerCredits = 0.0;
+    var supplierPayables = 0.0;
+    var supplierAdvances = 0.0;
+    final customerBalances = <String, double>{};
+    final supplierBalances = <String, double>{};
+    for (final row in receivableRows) {
+      final type = _rowText(row, 'accountType');
+      final accountId = _rowText(row, 'accountId');
+      final balance = _rowDouble(row, 'balance');
+      if (type == 'customer' && balance > 0) {
+        customerReceivables += balance;
+        customerBalances[accountId] = balance;
+      } else if (type == 'customer' && balance < 0) {
+        customerCredits += balance.abs();
+        customerBalances[accountId] = balance;
+      }
+      if (type == 'supplier' && balance < 0) {
+        supplierPayables += balance.abs();
+        supplierBalances[accountId] = balance;
+      } else if (type == 'supplier' && balance > 0) {
+        supplierAdvances += balance;
+        supplierBalances[accountId] = balance;
+      }
+    }
+
+    final todayCashRows = await db.customSelect('''
+      SELECT payment_method AS method, transaction_type AS type,
+             account_type AS accountType,
+             SUM(CASE WHEN debit > 0 THEN debit ELSE credit END) AS amount
+      FROM account_transactions
+      WHERE deleted_at = ''
+        AND transaction_date >= ?
+        AND transaction_date < ?
+      GROUP BY payment_method, transaction_type, account_type
+    ''', variables: <Variable<Object>>[
+      Variable<String>(_iso(today)),
+      Variable<String>(_iso(tomorrow)),
+    ]).get();
+    final todayCashInByMethod = <String, double>{};
+    final todayCashOutByMethod = <String, double>{};
+    var todayCashIn = 0.0;
+    var todayCashOut = 0.0;
+    for (final row in todayCashRows) {
+      final methodText =
+          _rowText(row, 'method', fallback: 'not_specified').trim();
+      final method = methodText.isEmpty ? 'not_specified' : methodText;
+      final type = _rowText(row, 'type');
+      final accountType = _rowText(row, 'accountType');
+      final amount = _rowDouble(row, 'amount');
+      final isCashIn = type == 'paymentReceived' ||
+          (type == 'paymentReversal' && accountType == 'supplier');
+      final isCashOut = type == 'paymentPaid' ||
+          (type == 'paymentReversal' && accountType == 'customer');
+      if (isCashIn) {
+        todayCashIn += amount;
+        todayCashInByMethod[method] =
+            (todayCashInByMethod[method] ?? 0) + amount;
+      }
+      if (isCashOut) {
+        todayCashOut += amount;
+        todayCashOutByMethod[method] =
+            (todayCashOutByMethod[method] ?? 0) + amount;
+      }
+    }
+
+    final topCustomerDebts = await _namedBalanceRows(
+      db,
+      table: 'customers',
+      balances: customerBalances,
+      descending: true,
+    );
+    final topSupplierDebts = await _namedBalanceRows(
+      db,
+      table: 'suppliers',
+      balances: supplierBalances,
+      descending: false,
+    );
+    return _AccountBalanceSummary(
+      customerReceivables: customerReceivables,
+      customerCredits: customerCredits,
+      supplierPayables: supplierPayables,
+      supplierAdvances: supplierAdvances,
+      todayCashIn: todayCashIn,
+      todayCashOut: todayCashOut,
+      todayCashInByMethod: todayCashInByMethod,
+      todayCashOutByMethod: todayCashOutByMethod,
+      topCustomerDebts: topCustomerDebts,
+      topSupplierDebts: topSupplierDebts,
+    );
+  }
+
+  static Future<List<Map<String, Object?>>> _namedBalanceRows(
+    VentioDriftDatabase db, {
+    required String table,
+    required Map<String, double> balances,
+    required bool descending,
+  }) async {
+    if (balances.isEmpty) return const <Map<String, Object?>>[];
+    final ids = balances.keys.toList(growable: false);
+    final placeholders = List<String>.filled(ids.length, '?').join(', ');
+    final rows = await db.customSelect('''
+      SELECT id, name
+      FROM $table
+      WHERE id IN ($placeholders)
+    ''',
+        variables: ids
+            .map((id) => Variable<String>(id))
+            .toList(growable: false)).get();
+    final namesById = <String, String>{
+      for (final row in rows)
+        _rowText(row, 'id'):
+            _rowText(row, 'name', fallback: _rowText(row, 'id')),
+    };
+    final entries = balances.entries.toList()
+      ..sort((a, b) =>
+          descending ? b.value.compareTo(a.value) : a.value.compareTo(b.value));
+    return entries
+        .take(20)
+        .map((entry) => <String, Object?>{
+              'key': namesById[entry.key] ?? entry.key,
+              'value': entry.value,
+            })
+        .toList(growable: false);
+  }
+
+  static Future<int> _pendingSyncCount(
+    VentioDriftDatabase db,
+    DateTime reference,
+  ) async {
+    final staleInProgress =
+        reference.subtract(const Duration(seconds: 30)).toIso8601String();
+    return _intScalar(db, '''
+      SELECT COUNT(*) AS value
+      FROM sync_queue
+      WHERE status IN ('pending', 'failed')
+         OR (status = 'inProgress' AND updated_at < ?)
+    ''', variables: <Variable<Object>>[
+      Variable<String>(staleInProgress),
+    ]);
+  }
+
+  static Future<double> _doubleScalar(
+    VentioDriftDatabase db,
+    String sql, {
+    List<Variable<Object>> variables = const <Variable<Object>>[],
+  }) async {
+    final row = await db.customSelect(sql, variables: variables).getSingle();
+    return (row.data['value'] as num?)?.toDouble() ?? 0;
+  }
+
+  static Future<int> _intScalar(
+    VentioDriftDatabase db,
+    String sql, {
+    List<Variable<Object>> variables = const <Variable<Object>>[],
+  }) async {
+    final row = await db.customSelect(sql, variables: variables).getSingle();
+    return (row.data['value'] as num?)?.toInt() ?? 0;
+  }
+
+  static Map<String, double> _dateValueMap(DateTime start, int days) {
+    return <String, double>{
+      for (var i = 0; i < days; i += 1)
+        _dateKey(start.add(Duration(days: i))): 0,
+    };
+  }
+
+  static List<Map<String, Object?>> _seriesFromDateMap(
+    Map<String, double> values,
+  ) {
+    return values.entries
+        .map((entry) => <String, Object?>{
+              'label': _shortDateLabel(entry.key),
+              'value': entry.value,
+            })
+        .toList(growable: false);
+  }
+
+  static List<Map<String, Object?>> _sortedSeries(Map<String, double> values) {
+    final entries = values.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    return entries
+        .map((entry) => <String, Object?>{
+              'label': entry.key,
+              'value': entry.value,
+            })
+        .toList(growable: false);
+  }
+
+  static List<Map<String, Object?>> _labelValueRows(
+    List<QueryRow> rows, {
+    required String labelKey,
+    required String valueKey,
+  }) {
+    return rows
+        .map((row) => <String, Object?>{
+              'label': _rowText(row, labelKey),
+              'value': _rowDouble(row, valueKey),
+            })
+        .where((item) => item['label']?.toString().trim().isNotEmpty ?? false)
+        .toList(growable: false);
+  }
+
+  static List<Map<String, Object?>> _keyValueRows(List<QueryRow> rows) {
+    return rows
+        .map((row) => <String, Object?>{
+              'key': _rowText(row, 'key'),
+              'value': _rowDouble(row, 'value'),
+            })
+        .where((item) => item['key']?.toString().trim().isNotEmpty ?? false)
+        .toList(growable: false);
+  }
+
+  static double _averageForWindow(
+    Map<String, double> totals,
+    DateTime start,
+    int days,
+  ) {
+    if (days <= 0) return 0;
+    var total = 0.0;
+    for (var i = 0; i < days; i += 1) {
+      total += totals[_dateKey(start.add(Duration(days: i)))] ?? 0;
+    }
+    return total / days;
+  }
+
+  static String _iso(DateTime value) => value.toIso8601String();
+
+  static String _dateKey(DateTime value) {
+    return '${value.year.toString().padLeft(4, '0')}-'
+        '${value.month.toString().padLeft(2, '0')}-'
+        '${value.day.toString().padLeft(2, '0')}';
+  }
+
+  static String _shortDateLabel(String dateKey) {
+    final parts = dateKey.split('-');
+    if (parts.length != 3) return dateKey;
+    return '${parts[1]}/${parts[2]}';
+  }
+
+  static Future<Map<String, List<Map<String, dynamic>>>>
+      _readProductUnitRowsByProduct(
+    VentioDriftDatabase db,
+    String table,
+    List<String> productIds,
+  ) async {
+    if (productIds.isEmpty) return const <String, List<Map<String, dynamic>>>{};
+    final placeholders = List<String>.filled(productIds.length, '?').join(', ');
+    final rows = await db.customSelect('''
+      SELECT product_id AS productId, line_no AS lineNo, unit_id AS id,
+             name, conversion_to_base AS conversionToBase,
+             price, original_price AS originalPrice,
+             original_currency AS originalCurrency, barcode,
+             CASE WHEN is_default = 1 THEN 1 ELSE 0 END AS isDefault
+      FROM $table
+      WHERE product_id IN ($placeholders)
+      ORDER BY product_id ASC, line_no ASC
+    ''',
+        variables: productIds
+            .map((productId) => Variable<String>(productId))
+            .toList(growable: false)).get();
+    final unitsByProduct = <String, List<Map<String, dynamic>>>{};
+    for (final row in rows) {
+      final data = Map<String, dynamic>.from(row.data);
+      final productId = data['productId']?.toString() ?? '';
+      if (productId.isEmpty) continue;
+      data['isDefault'] = data['isDefault'] == 1 || data['isDefault'] == true;
+      unitsByProduct
+          .putIfAbsent(productId, () => <Map<String, dynamic>>[])
+          .add(data);
+    }
+    return unitsByProduct;
+  }
+
+  static Future<int> _countWhere(
+    VentioDriftDatabase db,
+    String table,
+    String whereSql,
+    List<Variable<Object>> variables,
+  ) async {
+    final rows = await db
+        .customSelect(
+          'SELECT COUNT(*) AS c FROM $table WHERE $whereSql',
+          variables: variables,
+        )
+        .get();
+    return rows.first.read<int>('c');
+  }
+
   static Future<void> migrateFromLegacyJsonIfNeeded(
     VentioDriftDatabase db, {
     required Map<String, String> legacyEntries,
@@ -194,7 +1274,7 @@ class BusinessSqliteStore {
   ) async {
     if (await _metaValue(db, phase3ComplexTablesMetaKey) == 'true') return;
     final needsMigration = await _tableHasColumn(
-          db, _tableByKey[productsKey]!, 'payload_json') ||
+            db, _tableByKey[productsKey]!, 'payload_json') ||
         await _tableHasColumn(db, _tableByKey[salesKey]!, 'payload_json') ||
         await _tableHasColumn(
           db,
@@ -314,9 +1394,8 @@ class BusinessSqliteStore {
     final payloads = await _readEntityListPayloadsByKey(db, key);
     final batches = <String>[];
     for (var index = 0; index < payloads.length; index += size) {
-      final end = (index + size < payloads.length)
-          ? index + size
-          : payloads.length;
+      final end =
+          (index + size < payloads.length) ? index + size : payloads.length;
       batches.add(jsonEncode(payloads.sublist(index, end)));
     }
     return batches;
@@ -559,7 +1638,8 @@ class BusinessSqliteStore {
     ''').get();
     return rows.map((row) {
       final data = Map<String, dynamic>.from(row.data);
-      final permissionsJson = (data['permissionsJson']?.toString() ?? '').trim();
+      final permissionsJson =
+          (data['permissionsJson']?.toString() ?? '').trim();
       data['permissions'] = permissionsJson.isEmpty
           ? const <String>[]
           : (jsonDecode(permissionsJson) as List<dynamic>)
@@ -786,10 +1866,12 @@ class BusinessSqliteStore {
       final productId = data['productId']?.toString() ?? '';
       if (productId.isEmpty) continue;
       data['isDefault'] = data['isDefault'] == 1 || data['isDefault'] == true;
-      saleUnitsByProduct.putIfAbsent(
-        productId,
-        () => <Map<String, dynamic>>[],
-      ).add(data);
+      saleUnitsByProduct
+          .putIfAbsent(
+            productId,
+            () => <Map<String, dynamic>>[],
+          )
+          .add(data);
     }
 
     final purchaseUnitsByProduct = <String, List<Map<String, dynamic>>>{};
@@ -798,15 +1880,18 @@ class BusinessSqliteStore {
       final productId = data['productId']?.toString() ?? '';
       if (productId.isEmpty) continue;
       data['isDefault'] = data['isDefault'] == 1 || data['isDefault'] == true;
-      purchaseUnitsByProduct.putIfAbsent(
-        productId,
-        () => <Map<String, dynamic>>[],
-      ).add(data);
+      purchaseUnitsByProduct
+          .putIfAbsent(
+            productId,
+            () => <Map<String, dynamic>>[],
+          )
+          .add(data);
     }
 
     return productRows.map((row) {
       final data = Map<String, dynamic>.from(row.data);
-      data['trackStock'] = data['trackStock'] == 1 || data['trackStock'] == true;
+      data['trackStock'] =
+          data['trackStock'] == 1 || data['trackStock'] == true;
       data['isActive'] = data['isActive'] == 1 || data['isActive'] == true;
       data['saleUnits'] = saleUnitsByProduct[data['id']?.toString() ?? ''] ??
           const <Map<String, dynamic>>[];
@@ -874,10 +1959,12 @@ class BusinessSqliteStore {
       final data = Map<String, dynamic>.from(row.data);
       final saleItemId = data['saleItemId']?.toString() ?? '';
       if (saleItemId.isEmpty) continue;
-      consumptionsByItem.putIfAbsent(
-        saleItemId,
-        () => <Map<String, dynamic>>[],
-      ).add(data);
+      consumptionsByItem
+          .putIfAbsent(
+            saleItemId,
+            () => <Map<String, dynamic>>[],
+          )
+          .add(data);
     }
 
     final itemsBySale = <String, List<Map<String, dynamic>>>{};
@@ -935,10 +2022,12 @@ class BusinessSqliteStore {
       final data = Map<String, dynamic>.from(row.data);
       final quotationId = data['saleQuotationId']?.toString() ?? '';
       if (quotationId.isEmpty) continue;
-      itemsByQuotation.putIfAbsent(
-        quotationId,
-        () => <Map<String, dynamic>>[],
-      ).add(data);
+      itemsByQuotation
+          .putIfAbsent(
+            quotationId,
+            () => <Map<String, dynamic>>[],
+          )
+          .add(data);
     }
 
     return quotationRows.map((row) {
@@ -985,10 +2074,12 @@ class BusinessSqliteStore {
       final data = Map<String, dynamic>.from(row.data);
       final deliveryId = data['deliveryNoteId']?.toString() ?? '';
       if (deliveryId.isEmpty) continue;
-      itemsByDelivery.putIfAbsent(
-        deliveryId,
-        () => <Map<String, dynamic>>[],
-      ).add(data);
+      itemsByDelivery
+          .putIfAbsent(
+            deliveryId,
+            () => <Map<String, dynamic>>[],
+          )
+          .add(data);
     }
 
     return deliveryRows.map((row) {
@@ -1038,10 +2129,12 @@ class BusinessSqliteStore {
       final data = Map<String, dynamic>.from(row.data);
       final purchaseId = data['purchaseId']?.toString() ?? '';
       if (purchaseId.isEmpty) continue;
-      itemsByPurchase.putIfAbsent(
-        purchaseId,
-        () => <Map<String, dynamic>>[],
-      ).add(data);
+      itemsByPurchase
+          .putIfAbsent(
+            purchaseId,
+            () => <Map<String, dynamic>>[],
+          )
+          .add(data);
     }
 
     return purchaseRows.map((row) {
@@ -1079,7 +2172,9 @@ class BusinessSqliteStore {
       final data = Map<String, dynamic>.from(row.data);
       final countId = data['inventoryCountId']?.toString() ?? '';
       if (countId.isEmpty) continue;
-      linesByCount.putIfAbsent(countId, () => <Map<String, dynamic>>[]).add(data);
+      linesByCount
+          .putIfAbsent(countId, () => <Map<String, dynamic>>[])
+          .add(data);
     }
 
     return sessionRows.map((row) {
@@ -1966,8 +3061,7 @@ class BusinessSqliteStore {
         'original_currency':
             _textValue(payload['originalCurrency'], fallback: 'USD'),
         'usd_price': _doubleValue(payload['usdPrice'] ?? payload['price']),
-        'exchange_rate_at_entry':
-            _doubleValue(payload['exchangeRateAtEntry']),
+        'exchange_rate_at_entry': _doubleValue(payload['exchangeRateAtEntry']),
         'stock': _doubleValue(payload['stock']),
         'category': _textValue(payload['category'], fallback: 'General'),
         'barcode': _textValue(payload['barcode']),
@@ -1979,8 +3073,8 @@ class BusinessSqliteStore {
           payload['quantityType'],
           fallback: ProductQuantityType.countable.code,
         ),
-        'low_stock_threshold': _intValue(payload['lowStockThreshold'],
-            fallback: 5),
+        'low_stock_threshold':
+            _intValue(payload['lowStockThreshold'], fallback: 5),
         'track_stock': _boolValue(payload['trackStock'], fallback: true),
         'is_active': _boolValue(payload['isActive'], fallback: true),
         'image_path': _textValue(payload['imagePath']),
@@ -2036,7 +3130,8 @@ class BusinessSqliteStore {
           Variable<double>(_doubleValue(unit['conversionToBase'], fallback: 1)),
           Variable<double>(_doubleValue(unit['price'])),
           Variable<double>(
-            _doubleValue(unit['originalPrice'], fallback: _doubleValue(unit['price'])),
+            _doubleValue(unit['originalPrice'],
+                fallback: _doubleValue(unit['price'])),
           ),
           Variable<String>(
             _textValue(unit['originalCurrency'], fallback: 'USD'),
@@ -2271,8 +3366,7 @@ class BusinessSqliteStore {
             _textValue(payload['paymentMethod'], fallback: 'Cash'),
         'paid_amount': _doubleValue(payload['paidAmount']),
         'cancel_reason': _textValue(payload['cancelReason']),
-        'cancelled_by_device_id':
-            _textValue(payload['cancelledByDeviceId']),
+        'cancelled_by_device_id': _textValue(payload['cancelledByDeviceId']),
         'reversal_applied': _boolValue(payload['reversalApplied']),
         'cancelled_at': _dateString(payload['cancelledAt']) ?? '',
       },
@@ -2536,8 +3630,7 @@ class BusinessSqliteStore {
       );
 
       if (!includeConsumptions || consumptionTable == null) continue;
-      final consumptions =
-          _payloadMapList(item['costLayerConsumptions']);
+      final consumptions = _payloadMapList(item['costLayerConsumptions']);
       final parentColumnName = consumptionParentColumn ?? 'sale_item_id';
       for (var consumptionIndex = 0;
           consumptionIndex < consumptions.length;
@@ -2589,7 +3682,8 @@ class BusinessSqliteStore {
           Variable<String>(_textValue(item['productName'])),
           Variable<double>(_doubleValue(item['quantity'])),
           Variable<double>(_doubleValue(item['unitCost'])),
-          Variable<String>(_textValue(item['purchaseUnitId'], fallback: 'base')),
+          Variable<String>(
+              _textValue(item['purchaseUnitId'], fallback: 'base')),
           Variable<String>(_textValue(item['purchaseUnitName'])),
           Variable<double>(_doubleValue(item['conversionToBase'], fallback: 1)),
           Variable<double>(_doubleValue(
@@ -2675,7 +3769,8 @@ class BusinessSqliteStore {
   }
 
   static Future<void> _migrateComplexTables(VentioDriftDatabase db) async {
-    final tables = <String, Future<void> Function(Map<String, dynamic> payload, int sortIndex)>{
+    final tables = <String,
+        Future<void> Function(Map<String, dynamic> payload, int sortIndex)>{
       productsKey: (payload, sortIndex) async {
         await _upsertProductPayload(
           db,
@@ -2962,6 +4057,24 @@ class BusinessSqliteStore {
     );
   }
 
+  static Product _productFromQueryRow(
+    QueryRow row, {
+    Map<String, List<Map<String, dynamic>>> saleUnitsByProduct =
+        const <String, List<Map<String, dynamic>>>{},
+    Map<String, List<Map<String, dynamic>>> purchaseUnitsByProduct =
+        const <String, List<Map<String, dynamic>>>{},
+  }) {
+    final data = Map<String, dynamic>.from(row.data);
+    final productId = data['id']?.toString() ?? '';
+    data['trackStock'] = data['trackStock'] == 1 || data['trackStock'] == true;
+    data['isActive'] = data['isActive'] == 1 || data['isActive'] == true;
+    data['saleUnits'] =
+        saleUnitsByProduct[productId] ?? const <Map<String, dynamic>>[];
+    data['purchaseUnits'] =
+        purchaseUnitsByProduct[productId] ?? const <Map<String, dynamic>>[];
+    return Product.fromJson(data);
+  }
+
   static String _rowText(
     QueryRow row,
     String column, {
@@ -3152,4 +4265,56 @@ class BusinessSqliteValidationResult {
       {required this.ok, required this.message});
   final bool ok;
   final String message;
+}
+
+class BusinessQueryPage<T> {
+  const BusinessQueryPage({
+    required this.items,
+    required this.totalCount,
+    required this.limit,
+    required this.offset,
+  });
+
+  final List<T> items;
+  final int totalCount;
+  final int limit;
+  final int offset;
+
+  bool get hasMore => offset + items.length < totalCount;
+}
+
+class _SqlFilter {
+  const _SqlFilter({
+    required this.whereSql,
+    required this.variables,
+  });
+
+  final String whereSql;
+  final List<Variable<Object>> variables;
+}
+
+class _AccountBalanceSummary {
+  const _AccountBalanceSummary({
+    required this.customerReceivables,
+    required this.customerCredits,
+    required this.supplierPayables,
+    required this.supplierAdvances,
+    required this.todayCashIn,
+    required this.todayCashOut,
+    required this.todayCashInByMethod,
+    required this.todayCashOutByMethod,
+    required this.topCustomerDebts,
+    required this.topSupplierDebts,
+  });
+
+  final double customerReceivables;
+  final double customerCredits;
+  final double supplierPayables;
+  final double supplierAdvances;
+  final double todayCashIn;
+  final double todayCashOut;
+  final Map<String, double> todayCashInByMethod;
+  final Map<String, double> todayCashOutByMethod;
+  final List<Map<String, Object?>> topCustomerDebts;
+  final List<Map<String, Object?>> topSupplierDebts;
 }

@@ -291,6 +291,7 @@
   "cash_drawer_sessions": "ورديات أدراج النقد",
   "cash_drawer_variance_report": "تقرير عجز وزيادة الأدراج",
   "cash_flow_details": "تفاصيل التدفقات النقدية",
+  "cash_flow_details_limit_notice": "يتم عرض أول {count} حركة من التدفقات النقدية فقط للحفاظ على سرعة الصفحة.",
   "cash_flow_statement": "قائمة التدفقات النقدية",
   "cash_in": "داخل",
   "cash_inflows": "التدفقات الداخلة",

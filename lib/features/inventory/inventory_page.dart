@@ -1,6 +1,9 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
+import '../../core/services/local_database_service.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../core/utils/revision_cache.dart';
@@ -10,6 +13,7 @@ import '../../models/inventory_count.dart';
 import '../../models/product.dart';
 import '../../models/stock_movement.dart';
 import '../../models/user_role.dart';
+import '../../widgets/page_data_load_indicator.dart';
 import '../../widgets/summary_card.dart';
 import '../barcode/barcode_scanner_page.dart';
 
@@ -104,6 +108,9 @@ class _InventoryPageState extends State<InventoryPage>
   final TextEditingController _searchController = TextEditingController();
   late final TabController _tabController =
       TabController(length: 6, vsync: this);
+  Future<_InventoryProductsResult?>? _inventoryProductsFuture;
+  String _inventoryProductsFutureKey = '';
+  int _visibleInventoryProductCount = 100;
   final RevisionKeyCache<List<Product>> _filteredProductsCache =
       RevisionKeyCache<List<Product>>();
   final RevisionValueCache<_InventoryOverviewMetrics> _overviewCache =
@@ -120,6 +127,9 @@ class _InventoryPageState extends State<InventoryPage>
   void didUpdateWidget(covariant InventoryPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.store != widget.store) {
+      _inventoryProductsFuture = null;
+      _inventoryProductsFutureKey = '';
+      _visibleInventoryProductCount = 100;
       _filteredProductsCache.invalidate();
       _overviewCache.invalidate();
     }
@@ -139,6 +149,7 @@ class _InventoryPageState extends State<InventoryPage>
     setState(() {
       query = code.trim();
       _searchController.text = query;
+      _visibleInventoryProductCount = 100;
     });
   }
 
@@ -154,11 +165,7 @@ class _InventoryPageState extends State<InventoryPage>
     if (!widget.store.isCoreDataLoaded) {
       return const Center(child: CircularProgressIndicator.adaptive());
     }
-    final products = _filteredProductsCache.getOrCompute(
-      widget.store.inventoryRevision,
-      query.trim().toLowerCase(),
-      () => _filterProducts(widget.store.stockTrackedProducts, query),
-    );
+    final normalizedQuery = query.trim().toLowerCase();
     final overview = _overviewCache.getOrCompute(
       widget.store.inventoryRevision,
       () => _InventoryOverviewMetrics.fromStore(widget.store),
@@ -205,6 +212,126 @@ class _InventoryPageState extends State<InventoryPage>
       );
     }
 
+    if (LocalDatabaseService.canQueryBusinessSqlite) {
+      return FutureBuilder<_InventoryProductsResult?>(
+        future: _queryInventoryProductsFromSqlite(normalizedQuery),
+        builder: (context, snapshot) {
+          final result = snapshot.data;
+          if (result != null && !snapshot.hasError) {
+            return _buildInventoryShell(
+              tr,
+              products: result.items,
+              productsTotalCount: result.totalCount,
+              overview: overview,
+              canManageWarehouses: canManageWarehouses,
+              canViewMovements: canViewMovements,
+              canViewCorrections: canViewCorrections,
+              canManageCounts: canManageCounts,
+              canViewWasteLoss: canViewWasteLoss,
+              loadingProducts:
+                  snapshot.connectionState == ConnectionState.waiting &&
+                      result.items.isEmpty,
+              onLoadMoreProducts: result.hasMore
+                  ? () => _loadMoreInventoryProducts(result.totalCount)
+                  : null,
+            );
+          }
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return _buildInventoryShell(
+              tr,
+              products: const <Product>[],
+              productsTotalCount: 0,
+              overview: overview,
+              canManageWarehouses: canManageWarehouses,
+              canViewMovements: canViewMovements,
+              canViewCorrections: canViewCorrections,
+              canManageCounts: canManageCounts,
+              canViewWasteLoss: canViewWasteLoss,
+              loadingProducts: true,
+            );
+          }
+          final fallbackProducts = _productsFromMemory(normalizedQuery);
+          return _buildInventoryShell(
+            tr,
+            products: fallbackProducts,
+            productsTotalCount: fallbackProducts.length,
+            overview: overview,
+            canManageWarehouses: canManageWarehouses,
+            canViewMovements: canViewMovements,
+            canViewCorrections: canViewCorrections,
+            canManageCounts: canManageCounts,
+            canViewWasteLoss: canViewWasteLoss,
+          );
+        },
+      );
+    }
+
+    final products = _productsFromMemory(normalizedQuery);
+    return _buildInventoryShell(
+      tr,
+      products: products,
+      productsTotalCount: products.length,
+      overview: overview,
+      canManageWarehouses: canManageWarehouses,
+      canViewMovements: canViewMovements,
+      canViewCorrections: canViewCorrections,
+      canManageCounts: canManageCounts,
+      canViewWasteLoss: canViewWasteLoss,
+    );
+  }
+
+  List<Product> _productsFromMemory(String normalizedQuery) {
+    return _filteredProductsCache.getOrCompute(
+      widget.store.inventoryRevision,
+      normalizedQuery,
+      () => _filterProducts(widget.store.stockTrackedProducts, normalizedQuery),
+    );
+  }
+
+  Future<_InventoryProductsResult?> _queryInventoryProductsFromSqlite(
+    String normalizedQuery,
+  ) {
+    final limit = _visibleInventoryProductCount.clamp(1, 500).toInt();
+    final key = '${widget.store.inventoryRevision}|$normalizedQuery|$limit';
+    if (_inventoryProductsFuture == null ||
+        _inventoryProductsFutureKey != key) {
+      _inventoryProductsFutureKey = key;
+      _inventoryProductsFuture = () async {
+        final page = await LocalDatabaseService.queryProductsFromSqlite(
+          query: normalizedQuery,
+          limit: limit,
+          stockTrackedOnly: true,
+        );
+        if (page == null) return null;
+        return _InventoryProductsResult(
+          items: page.items,
+          totalCount: page.totalCount,
+        );
+      }();
+    }
+    return _inventoryProductsFuture!;
+  }
+
+  void _loadMoreInventoryProducts(int totalCount) {
+    setState(() {
+      _visibleInventoryProductCount =
+          math.min(totalCount, _visibleInventoryProductCount + 100);
+    });
+  }
+
+  Widget _buildInventoryShell(
+    AppLocalizations tr, {
+    required List<Product> products,
+    required int productsTotalCount,
+    required _InventoryOverviewMetrics overview,
+    required bool canManageWarehouses,
+    required bool canViewMovements,
+    required bool canViewCorrections,
+    required bool canManageCounts,
+    required bool canViewWasteLoss,
+    bool loadingProducts = false,
+    VoidCallback? onLoadMoreProducts,
+  }) {
     return Column(
       children: [
         Material(
@@ -228,13 +355,19 @@ class _InventoryPageState extends State<InventoryPage>
               _InventoryOverview(
                 store: widget.store,
                 products: products,
+                totalCount: productsTotalCount,
                 overview: overview,
                 query: query,
                 searchController: _searchController,
                 onScanBarcode: _scanInventorySearchBarcode,
-                onQuery: (value) => setState(() => query = value),
+                onQuery: (value) => setState(() {
+                  query = value;
+                  _visibleInventoryProductCount = 100;
+                }),
                 onAdjust: canManageCounts ? _openAdjustmentDialog : null,
                 canAdjust: canManageCounts,
+                loading: loadingProducts,
+                onLoadMore: onLoadMoreProducts,
               ),
               _WarehousesTab(store: widget.store),
               _MovementsList(store: widget.store),
@@ -346,20 +479,36 @@ class _InventoryPageState extends State<InventoryPage>
   }
 }
 
+class _InventoryProductsResult {
+  const _InventoryProductsResult({
+    required this.items,
+    required this.totalCount,
+  });
+
+  final List<Product> items;
+  final int totalCount;
+
+  bool get hasMore => items.length < totalCount;
+}
+
 class _InventoryOverview extends StatelessWidget {
   const _InventoryOverview(
       {required this.store,
       required this.products,
+      required this.totalCount,
       required this.overview,
       required this.query,
       required this.searchController,
       required this.onScanBarcode,
       required this.onQuery,
       required this.onAdjust,
-      required this.canAdjust});
+      required this.canAdjust,
+      required this.loading,
+      required this.onLoadMore});
 
   final AppStore store;
   final List<Product> products;
+  final int totalCount;
   final _InventoryOverviewMetrics overview;
   final String query;
   final TextEditingController searchController;
@@ -367,6 +516,8 @@ class _InventoryOverview extends StatelessWidget {
   final ValueChanged<String> onQuery;
   final ValueChanged<String>? onAdjust;
   final bool canAdjust;
+  final bool loading;
+  final VoidCallback? onLoadMore;
 
   @override
   Widget build(BuildContext context) {
@@ -428,9 +579,20 @@ class _InventoryOverview extends StatelessWidget {
                       title: Text(tr.text('inventory_overview'),
                           style: Theme.of(context).textTheme.titleMedium),
                       subtitle: Text(tr.text('inventory_page_desc')),
+                      trailing: PageDataLoadIndicator(
+                        loadedCount: products.length,
+                        totalCount: totalCount,
+                      ),
                     ),
                     const Divider(height: 1),
-                    if (products.isEmpty)
+                    if (loading)
+                      const Padding(
+                        padding: EdgeInsets.all(24),
+                        child: Center(
+                          child: CircularProgressIndicator.adaptive(),
+                        ),
+                      )
+                    else if (products.isEmpty)
                       Padding(
                           padding: VentioResponsive.pageInsets(context),
                           child: Text(tr.text('no_inventory_items'))),
@@ -475,6 +637,25 @@ class _InventoryOverview extends StatelessWidget {
                   ),
                 );
               },
+            ),
+          ),
+        if (onLoadMore != null)
+          SliverPadding(
+            padding: EdgeInsetsDirectional.only(
+              start: pageInsets.left,
+              end: pageInsets.right,
+              bottom: pageInsets.bottom,
+            ),
+            sliver: SliverToBoxAdapter(
+              child: Center(
+                child: TextButton.icon(
+                  onPressed: onLoadMore,
+                  icon: const Icon(Icons.expand_more),
+                  label: Text(
+                    '${tr.text('more')} (${products.length}/$totalCount)',
+                  ),
+                ),
+              ),
             ),
           ),
       ],

@@ -657,6 +657,28 @@ class DashboardSnapshotService {
     AppStore store,
     DateTime reference,
   ) async {
+    if (LocalDatabaseService.canQueryBusinessSqlite) {
+      try {
+        final sqliteSummary = await StartupTimingService.measure(
+          'dashboard.snapshot_sql_summary',
+          () => LocalDatabaseService.buildDashboardSummaryFromSqlite(
+            reference: reference,
+          ),
+          category: 'dashboard',
+        );
+        if (sqliteSummary != null) {
+          await _saveCachedSummary(
+            sqliteSummary,
+            storeId: store.appIdentity.storeId,
+            dashboardRevision: store.dashboardRevision,
+            reference: reference,
+          );
+          return sqliteSummary;
+        }
+      } catch (_) {
+        // Fall back to the legacy snapshot path if SQLite summary generation fails.
+      }
+    }
     final raw = await StartupTimingService.measure(
       'dashboard.snapshot_raw_load',
       _loadRawData,

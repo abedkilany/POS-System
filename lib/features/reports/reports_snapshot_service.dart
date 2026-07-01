@@ -59,6 +59,23 @@ class ReportsSnapshotService {
     AppStore store,
     DateTime reference,
   ) async {
+    if (LocalDatabaseService.canQueryBusinessSqlite) {
+      try {
+        final sqliteSummary = await StartupTimingService.measure(
+          'reports.snapshot_sql_summary',
+          () => LocalDatabaseService.buildReportsSummaryFromSqlite(
+            reference: reference,
+          ),
+          category: 'reports',
+        );
+        if (sqliteSummary != null) {
+          _summaryCache[_cacheKey(store, reference)] = sqliteSummary;
+          return sqliteSummary;
+        }
+      } catch (_) {
+        // Fall back to the legacy snapshot path if SQLite summary generation fails.
+      }
+    }
     final raw = await StartupTimingService.measure(
       'reports.snapshot_raw_load',
       _loadRawData,
