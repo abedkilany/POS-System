@@ -53,8 +53,20 @@ class _ProductsPageState extends State<ProductsPage> {
   final Map<String, _RowCacheEntry> _rowCache = <String, _RowCacheEntry>{};
   final Map<String, String> _searchIndexCache = <String, String>{};
 
+  void _handleStoreChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    widget.store.addListener(_handleStoreChanged);
+  }
+
   @override
   void dispose() {
+    widget.store.removeListener(_handleStoreChanged);
     _productRevealTimer?.cancel();
     _searchController.dispose();
     super.dispose();
@@ -64,6 +76,8 @@ class _ProductsPageState extends State<ProductsPage> {
   void didUpdateWidget(covariant ProductsPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.store != widget.store) {
+      oldWidget.store.removeListener(_handleStoreChanged);
+      widget.store.addListener(_handleStoreChanged);
       _cachedRevision = -1;
       _cachedProductSource = null;
       _cachedCategorySource = null;

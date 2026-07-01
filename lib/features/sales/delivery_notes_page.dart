@@ -15,6 +15,34 @@ class DeliveryNotesPage extends StatefulWidget {
 }
 
 class _DeliveryNotesPageState extends State<DeliveryNotesPage> {
+  void _handleStoreChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    widget.store.addListener(_handleStoreChanged);
+    widget.store.ensureDeliveryNotesPageDataLoaded();
+  }
+
+  @override
+  void didUpdateWidget(covariant DeliveryNotesPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != widget.store) {
+      oldWidget.store.removeListener(_handleStoreChanged);
+      widget.store.addListener(_handleStoreChanged);
+      widget.store.ensureDeliveryNotesPageDataLoaded();
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.store.removeListener(_handleStoreChanged);
+    super.dispose();
+  }
+
   String _statusLabel(AppLocalizations tr, String status) {
     switch (status.toLowerCase()) {
       case 'delivered':

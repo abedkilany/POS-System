@@ -23,6 +23,7 @@ import '../../models/customer.dart';
 import '../../models/product.dart';
 import '../../models/sale.dart';
 import '../../models/sale_item.dart';
+import '../../models/sale_summary.dart';
 import '../../models/user_role.dart';
 import '../../widgets/app_section_header.dart';
 import '../../widgets/empty_state_card.dart';
@@ -54,6 +55,8 @@ class _SalesPageState extends State<SalesPage> {
   final TextEditingController _discountController = TextEditingController();
   final TextEditingController _paidAmountController = TextEditingController();
   final TextEditingController _paymentExchangeRateController =
+      TextEditingController();
+  final TextEditingController _invoiceSearchController =
       TextEditingController();
   final FocusNode _barcodeFocusNode = FocusNode();
   final FocusNode _shortcutFocusNode = FocusNode(debugLabel: 'sale_shortcuts');
@@ -88,6 +91,12 @@ class _SalesPageState extends State<SalesPage> {
   bool _quickGridEditMode = false;
   List<_QuickProductPage>? _quickPagesEditSnapshot;
   int _selectedQuickPageIndex = 0;
+  int _visibleInvoiceCount = 50;
+  Future<_SalesQueryResult?>? _salesQueryFuture;
+  String _salesQueryFutureKey = '';
+  final Map<String, Future<Sale?>> _invoiceDetailsFutureById =
+      <String, Future<Sale?>>{};
+  final Set<String> _expandedInvoiceIds = <String>{};
   String? _lastScannedCode;
   DateTime? _lastScannedAt;
   int _cashShiftRefreshKey = 0;
@@ -102,10 +111,17 @@ class _SalesPageState extends State<SalesPage> {
   final RevisionKeyCache<Map<String, String>> _productSearchIndexCache =
       RevisionKeyCache<Map<String, String>>();
   Timer? _productSearchRevealTimer;
+  late Future<void> _dataFuture;
+
+  void _handleStoreChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
 
   @override
   void initState() {
     super.initState();
+    widget.store.addListener(_handleStoreChanged);
     _selectedCustomerId = AppStore.walkInCustomerId;
     _invoiceCurrency = widget.store.storeProfile.defaultSaleInvoiceCurrency;
     _paymentCurrency = widget.store.storeProfile.defaultSalePaymentCurrency;
@@ -114,6 +130,7 @@ class _SalesPageState extends State<SalesPage> {
         widget.store.storeProfile.usdToLbpRate.toStringAsFixed(0);
     _loadQuickProductPages();
     _loadHeldSaleCarts();
+    _dataFuture = widget.store.ensureSalesPageDataLoaded();
     HardwareKeyboard.instance.addHandler(_handleSaleHardwareShortcutKey);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _manualBarcodeInput) return;
@@ -126,16 +143,26 @@ class _SalesPageState extends State<SalesPage> {
   void didUpdateWidget(covariant SalesPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.store != widget.store) {
+      oldWidget.store.removeListener(_handleStoreChanged);
+      widget.store.addListener(_handleStoreChanged);
       _visibleProductsCache.invalidate();
       _activeProductsCache.invalidate();
       _nonDeletedProductsCache.invalidate();
       _productSearchIndexCache.invalidate();
+      _salesQueryFuture = null;
+      _salesQueryFutureKey = '';
+      _visibleInvoiceCount = 50;
+      _invoiceSearchController.clear();
+      _invoiceDetailsFutureById.clear();
+      _expandedInvoiceIds.clear();
       _resetProductSearchReveal();
+      _dataFuture = widget.store.ensureSalesPageDataLoaded();
     }
   }
 
   @override
   void dispose() {
+    widget.store.removeListener(_handleStoreChanged);
     HardwareKeyboard.instance.removeHandler(_handleSaleHardwareShortcutKey);
     _productSearchRevealTimer?.cancel();
     _searchController.dispose();
@@ -143,6 +170,7 @@ class _SalesPageState extends State<SalesPage> {
     _discountController.dispose();
     _paidAmountController.dispose();
     _paymentExchangeRateController.dispose();
+    _invoiceSearchController.dispose();
     _barcodeFocusNode.dispose();
     _shortcutFocusNode.dispose();
     _paymentShortcutFocusNode.dispose();
@@ -634,28 +662,33 @@ class _SalesPageState extends State<SalesPage> {
         message: 'You do not have access to sales data.',
       );
     }
-    if (!widget.store.isCoreDataLoaded) {
-      return const Center(child: CircularProgressIndicator.adaptive());
-    }
-    final sales = widget.store.sales;
-    final products = _visibleProducts();
+    return FutureBuilder<void>(
+      future: _dataFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Center(child: CircularProgressIndicator.adaptive());
+        }
+        final products = _visibleProducts();
 
-    return Focus(
-      focusNode: _shortcutFocusNode,
-      autofocus: true,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final isWide = constraints.maxWidth > 980;
-          final pagePadding = VentioResponsive.pagePadding(context);
+        return Focus(
+          focusNode: _shortcutFocusNode,
+          autofocus: true,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final isWide = constraints.maxWidth > 980;
+              final pagePadding = VentioResponsive.pagePadding(context);
 
-          if (!isWide) {
-            return _buildMobileSalesLayout(context, tr, products, pagePadding);
-          }
+              if (!isWide) {
+                return _buildMobileSalesLayout(
+                    context, tr, products, pagePadding);
+              }
 
-          return _buildDesktopSalesLayout(
-              context, tr, products, sales, pagePadding);
-        },
-      ),
+              return _buildDesktopSalesLayout(
+                  context, tr, products, pagePadding);
+            },
+          ),
+        );
+      },
     );
   }
 
@@ -1511,7 +1544,7 @@ class _SalesPageState extends State<SalesPage> {
   }
 
   Widget _buildDesktopSalesLayout(BuildContext context, AppLocalizations tr,
-      List<Product> products, List<Sale> sales, double pagePadding) {
+      List<Product> products, double pagePadding) {
     return Padding(
       padding: EdgeInsets.all(pagePadding),
       child: Column(
@@ -3268,22 +3301,119 @@ class _SalesPageState extends State<SalesPage> {
 
   Future<void> _showInvoicesSheet() async {
     final tr = AppLocalizations.of(context);
-    final sales = widget.store.sales;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       builder: (sheetContext) {
-        return SizedBox(
-          height: MediaQuery.sizeOf(sheetContext).height * 0.85,
-          child: _buildInvoicesPanel(sheetContext, tr, sales),
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            void resetSearchState() {
+              setModalState(() {
+                _visibleInvoiceCount = 50;
+                _salesQueryFuture = null;
+                _invoiceDetailsFutureById.clear();
+                _expandedInvoiceIds.clear();
+              });
+            }
+
+            if (!LocalDatabaseService.canQueryBusinessSqlite) {
+              return SizedBox(
+                height: MediaQuery.sizeOf(sheetContext).height * 0.85,
+                child: _buildInvoicesPanelFromSales(
+                  sheetContext,
+                  tr,
+                  widget.store.sales,
+                  onSearchChanged: resetSearchState,
+                ),
+              );
+            }
+            return FutureBuilder<_SalesQueryResult?>(
+              future: _queryInvoicesFromSqlite(),
+              builder: (context, snapshot) {
+                final result = snapshot.data;
+                if (result != null && !snapshot.hasError) {
+                  return SizedBox(
+                    height: MediaQuery.sizeOf(sheetContext).height * 0.85,
+                    child: _buildInvoicesPanelFromSummaries(
+                      sheetContext,
+                      tr,
+                      result.items,
+                      setSheetState: setModalState,
+                      totalCount: result.totalCount,
+                      onSearchChanged: resetSearchState,
+                      onLoadMore: result.hasMore
+                          ? () {
+                              setModalState(() {
+                                _visibleInvoiceCount = math.min(
+                                  result.totalCount,
+                                  _visibleInvoiceCount + 50,
+                                );
+                                _salesQueryFuture = null;
+                              });
+                            }
+                          : null,
+                    ),
+                  );
+                }
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return SizedBox(
+                    height: MediaQuery.sizeOf(sheetContext).height * 0.85,
+                    child: const Center(
+                        child: CircularProgressIndicator.adaptive()),
+                  );
+                }
+                return SizedBox(
+                  height: MediaQuery.sizeOf(sheetContext).height * 0.85,
+                  child: _buildInvoicesPanelFromSales(
+                    sheetContext,
+                    tr,
+                    widget.store.sales,
+                    onSearchChanged: resetSearchState,
+                  ),
+                );
+              },
+            );
+          },
         );
       },
     );
   }
 
-  Widget _buildInvoicesPanel(
-      BuildContext context, AppLocalizations tr, List<Sale> sales) {
+  Future<_SalesQueryResult?> _queryInvoicesFromSqlite() async {
+    final query = _invoiceSearchController.text.trim().toLowerCase();
+    final key = '${widget.store.salesRevision}|$_visibleInvoiceCount|$query';
+    if (_salesQueryFuture == null || _salesQueryFutureKey != key) {
+      _salesQueryFutureKey = key;
+      _salesQueryFuture = () async {
+        final page = await LocalDatabaseService.querySaleSummariesFromSqlite(
+          query: query,
+          limit: _visibleInvoiceCount,
+        );
+        if (page == null) return null;
+        return _SalesQueryResult(
+          items: page.items,
+          totalCount: page.totalCount,
+        );
+      }();
+    }
+    return _salesQueryFuture!;
+  }
+
+  Widget _buildInvoicesPanelFromSales(
+      BuildContext context, AppLocalizations tr, List<Sale> sales,
+      {int totalCount = 0,
+      VoidCallback? onLoadMore,
+      VoidCallback? onSearchChanged}) {
+    final query = _invoiceSearchController.text.trim().toLowerCase();
+    final filteredSales = query.isEmpty
+        ? sales
+        : sales
+            .where((sale) => _invoiceMatchesSearch(sale, query))
+            .toList(growable: false);
+    final displaySales = onLoadMore == null && filteredSales.length > 50
+        ? filteredSales.take(50).toList()
+        : filteredSales;
     return Card(
       child: Padding(
         padding: VentioResponsive.pageInsets(context),
@@ -3293,17 +3423,37 @@ class _SalesPageState extends State<SalesPage> {
             Text(tr.text('recent_invoices'),
                 style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 12),
+            TextField(
+              controller: _invoiceSearchController,
+              onChanged: (_) => onSearchChanged?.call(),
+              decoration: InputDecoration(
+                prefixIcon: const Icon(Icons.search),
+                hintText: tr.text('search'),
+                border: const OutlineInputBorder(),
+                suffixIcon: query.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: tr.text('clear_search'),
+                        icon: const Icon(Icons.close),
+                        onPressed: () {
+                          _invoiceSearchController.clear();
+                          onSearchChanged?.call();
+                        },
+                      ),
+              ),
+            ),
+            const SizedBox(height: 12),
             Expanded(
-              child: sales.isEmpty
+              child: displaySales.isEmpty
                   ? EmptyStateCard(
                       icon: Icons.receipt_long_outlined,
                       title: tr.text('no_sales'),
                       subtitle: tr.text('no_sales_desc'))
                   : ListView.separated(
-                      itemCount: sales.length > 50 ? 50 : sales.length,
+                      itemCount: displaySales.length,
                       separatorBuilder: (_, __) => const Divider(height: 1),
                       itemBuilder: (context, index) {
-                        final sale = sales[index];
+                        final sale = displaySales[index];
                         return ExpansionTile(
                           leading: Icon(sale.isCancelled
                               ? Icons.cancel_outlined
@@ -3395,10 +3545,254 @@ class _SalesPageState extends State<SalesPage> {
                       },
                     ),
             ),
+            if (onLoadMore != null && displaySales.length < totalCount) ...[
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.center,
+                child: OutlinedButton.icon(
+                  onPressed: onLoadMore,
+                  icon: const Icon(Icons.expand_more),
+                  label: const Text('Load more'),
+                ),
+              ),
+            ],
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildInvoicesPanelFromSummaries(
+    BuildContext context,
+    AppLocalizations tr,
+    List<SaleSummary> sales, {
+    required void Function(VoidCallback fn) setSheetState,
+    int totalCount = 0,
+    VoidCallback? onLoadMore,
+    VoidCallback? onSearchChanged,
+  }) {
+    final query = _invoiceSearchController.text.trim().toLowerCase();
+    final displaySales = sales;
+    return Card(
+      child: Padding(
+        padding: VentioResponsive.pageInsets(context),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(tr.text('recent_invoices'),
+                style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _invoiceSearchController,
+              onChanged: (_) => onSearchChanged?.call(),
+              decoration: InputDecoration(
+                prefixIcon: const Icon(Icons.search),
+                hintText: tr.text('search'),
+                border: const OutlineInputBorder(),
+                suffixIcon: query.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: tr.text('clear_search'),
+                        icon: const Icon(Icons.close),
+                        onPressed: () {
+                          _invoiceSearchController.clear();
+                          onSearchChanged?.call();
+                        },
+                      ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: displaySales.isEmpty
+                  ? EmptyStateCard(
+                      icon: Icons.receipt_long_outlined,
+                      title: tr.text('no_sales'),
+                      subtitle: tr.text('no_sales_desc'))
+                  : ListView.separated(
+                      itemCount: displaySales.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (context, index) {
+                        final summary = displaySales[index];
+                        final expanded =
+                            _expandedInvoiceIds.contains(summary.id);
+                        return ExpansionTile(
+                          key: PageStorageKey<String>(
+                            'invoice_summary_${summary.id}',
+                          ),
+                          initiallyExpanded: expanded,
+                          onExpansionChanged: (isExpanded) {
+                            setSheetState(() {
+                              if (isExpanded) {
+                                _expandedInvoiceIds.add(summary.id);
+                                _invoiceDetailsFutureById.putIfAbsent(
+                                  summary.id,
+                                  () => LocalDatabaseService
+                                      .getSaleFromSqliteById(summary.id),
+                                );
+                              } else {
+                                _expandedInvoiceIds.remove(summary.id);
+                              }
+                            });
+                          },
+                          leading: Icon(summary.isCancelled
+                              ? Icons.cancel_outlined
+                              : Icons.check_circle),
+                          title: Text(summary.invoiceNo),
+                          subtitle: Text(
+                            '${summary.customerName} • ${summary.date.toLocal().toString().split('.').first} • ${summary.productCount} items',
+                          ),
+                          trailing: Text(summary.isCancelled
+                              ? summary.status
+                              : formatUsdReferenceAmount(
+                                  summary.total, widget.store.storeProfile)),
+                          children: [
+                            if (!expanded)
+                              const Padding(
+                                padding: EdgeInsets.fromLTRB(16, 0, 16, 12),
+                                child: Text('Tap to load details'),
+                              )
+                            else
+                              FutureBuilder<Sale?>(
+                                future: _invoiceDetailsFutureById[summary.id] ??
+                                    LocalDatabaseService.getSaleFromSqliteById(
+                                        summary.id),
+                                builder: (context, snapshot) {
+                                  final sale = snapshot.data;
+                                  if (snapshot.connectionState ==
+                                      ConnectionState.waiting) {
+                                    return const Padding(
+                                      padding:
+                                          EdgeInsets.fromLTRB(16, 0, 16, 12),
+                                      child: Center(
+                                        child: Padding(
+                                          padding: EdgeInsets.symmetric(
+                                            vertical: 16,
+                                          ),
+                                          child: CircularProgressIndicator
+                                              .adaptive(),
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                  if (sale == null) {
+                                    return const Padding(
+                                      padding:
+                                          EdgeInsets.fromLTRB(16, 0, 16, 12),
+                                      child: Text('No sale details found'),
+                                    );
+                                  }
+                                  return _buildInvoiceDetailsContent(
+                                    context,
+                                    tr,
+                                    sale,
+                                  );
+                                },
+                              ),
+                          ],
+                        );
+                      },
+                    ),
+            ),
+            if (onLoadMore != null && displaySales.length < totalCount) ...[
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.center,
+                child: OutlinedButton.icon(
+                  onPressed: onLoadMore,
+                  icon: const Icon(Icons.expand_more),
+                  label: const Text('Load more'),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInvoiceDetailsContent(
+    BuildContext context,
+    AppLocalizations tr,
+    Sale sale,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ...sale.items.map(
+          (item) => ListTile(
+            dense: true,
+            title: Text(item.productName),
+            subtitle: Text(
+              '${tr.text('quantity')}: ${_formatQuantity(item.quantity)} ${item.unitName} × ${formatUsdReferenceAmount(item.unitPrice, widget.store.storeProfile)}',
+            ),
+            trailing: Text(formatUsdReferenceAmount(
+                item.lineTotal, widget.store.storeProfile)),
+          ),
+        ),
+        const Divider(height: 1),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              OutlinedButton.icon(
+                onPressed: widget.store.hasPermission(AppPermission.salesPrint)
+                    ? () => _handleInvoiceAction(() =>
+                        InvoicePdfService.printInvoice(
+                            sale: sale,
+                            profile: widget.store.storeProfile,
+                            locale: AppLocalizations.of(context).locale))
+                    : null,
+                icon: const Icon(Icons.print_outlined),
+                label: Text(tr.text('print_invoice')),
+              ),
+              OutlinedButton.icon(
+                onPressed: widget.store.hasPermission(AppPermission.salesExport)
+                    ? () => _handleInvoiceAction(() =>
+                        InvoicePdfService.shareInvoice(
+                            sale: sale,
+                            profile: widget.store.storeProfile,
+                            locale: AppLocalizations.of(context).locale))
+                    : null,
+                icon: const Icon(Icons.share_outlined),
+                label: Text(tr.text('share_pdf')),
+              ),
+              OutlinedButton.icon(
+                onPressed: (!sale.isCancelled &&
+                        widget.store.deliveryNoteForSale(sale.id) == null &&
+                        widget.store.canManageDeliveryNotes)
+                    ? () => _createDeliveryNote(context, sale)
+                    : null,
+                icon: const Icon(Icons.local_shipping_outlined),
+                label: Text(tr.text('delivery_note')),
+              ),
+              OutlinedButton.icon(
+                onPressed: (!sale.isCancelled && widget.store.canDeleteOrCancel)
+                    ? () => _returnSale(context, sale)
+                    : null,
+                icon: const Icon(Icons.assignment_return_outlined),
+                label: Text(tr.text('return_sale')),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  bool _invoiceMatchesSearch(Sale sale, String query) {
+    final normalized = query.trim().toLowerCase();
+    if (normalized.isEmpty) return true;
+    if (sale.invoiceNo.toLowerCase().contains(normalized) ||
+        sale.customerName.toLowerCase().contains(normalized) ||
+        sale.note.toLowerCase().contains(normalized) ||
+        sale.status.toLowerCase().contains(normalized)) {
+      return true;
+    }
+    return sale.items.any((item) =>
+        item.productName.toLowerCase().contains(normalized) ||
+        item.unitName.toLowerCase().contains(normalized));
   }
 
   void _changeCartQuantity(int index, double quantity) {
@@ -4689,6 +5083,18 @@ class _SaleShiftStatus {
   final List<AdvancedAccountingItem> drawers;
   final List<AdvancedAccountingItem> cashLocations;
   final String branchId;
+}
+
+class _SalesQueryResult {
+  const _SalesQueryResult({
+    required this.items,
+    required this.totalCount,
+  });
+
+  final List<SaleSummary> items;
+  final int totalCount;
+
+  bool get hasMore => items.length < totalCount;
 }
 
 class _MobileSaleAction extends StatelessWidget {

@@ -42,15 +42,32 @@ class _PurchasesPageState extends State<PurchasesPage> {
   Timer? _purchaseRevealTimer;
   int _visiblePurchaseCount = 100;
   int _purchaseRevealTargetCount = 0;
+  Future<_PurchaseQueryResult?>? _purchaseQueryFuture;
+  String _purchaseQueryFutureKey = '';
+  Future<Map<String, Object?>?>? _purchaseOverviewFuture;
+  String _purchaseOverviewFutureKey = '';
   final RevisionKeyCache<List<Purchase>> _filteredPurchasesCache =
       RevisionKeyCache<List<Purchase>>();
+  late Future<void> _dataFuture;
+
+  void _handleStoreChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
 
   @override
   void didUpdateWidget(covariant PurchasesPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.store != widget.store) {
+      oldWidget.store.removeListener(_handleStoreChanged);
+      widget.store.addListener(_handleStoreChanged);
+      _purchaseQueryFuture = null;
+      _purchaseQueryFutureKey = '';
+      _purchaseOverviewFuture = null;
+      _purchaseOverviewFutureKey = '';
       _filteredPurchasesCache.invalidate();
       _resetPurchaseReveal();
+      _dataFuture = widget.store.ensurePurchasesPageDataLoaded();
     }
   }
 
@@ -64,6 +81,8 @@ class _PurchasesPageState extends State<PurchasesPage> {
   @override
   void initState() {
     super.initState();
+    widget.store.addListener(_handleStoreChanged);
+    _dataFuture = widget.store.ensurePurchasesPageDataLoaded();
     HardwareKeyboard.instance.addHandler(_handlePurchasesHardwareShortcutKey);
   }
 
@@ -170,6 +189,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
   @override
   void dispose() {
     _purchaseRevealTimer?.cancel();
+    widget.store.removeListener(_handleStoreChanged);
     HardwareKeyboard.instance
         .removeHandler(_handlePurchasesHardwareShortcutKey);
     _searchController.dispose();
@@ -289,322 +309,686 @@ class _PurchasesPageState extends State<PurchasesPage> {
         message: 'You do not have access to purchase records.',
       );
     }
-    if (!widget.store.isCoreDataLoaded) {
-      return const Center(child: CircularProgressIndicator.adaptive());
+    final normalizedQuery = _searchController.text.trim().toLowerCase();
+    if (LocalDatabaseService.canQueryBusinessSqlite) {
+      return FutureBuilder<_PurchaseQueryResult?>(
+        future: _queryPurchasesFromSqlite(normalizedQuery),
+        builder: (context, snapshot) {
+          final result = snapshot.data;
+          if (result != null && !snapshot.hasError) {
+            return _buildPurchasesSqliteView(
+              context,
+              tr,
+              result,
+              normalizedQuery,
+            );
+          }
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator.adaptive());
+          }
+          return Center(child: Text(tr.text('no_purchases_yet')));
+        },
+      );
     }
-    final allPurchases = widget.store.purchases;
-    final overview = widget.store.purchasesOverview;
-    final monthlyTotal = overview.monthlyTotal;
-    final monthlyCount = overview.monthlyCount;
-    final draftTotal = overview.draftTotal;
-    final query = _searchController.text.trim().toLowerCase();
-    final useDefaultView =
-        query.isEmpty && _statusFilter == 'all' && _sortMode == 'newest';
-    final purchases = useDefaultView
-        ? allPurchases
-        : _filteredPurchasesCache.getOrCompute(
-            widget.store.purchasesRevision,
-            '$_statusFilter|$_sortMode|$query',
-            () {
-              final filtered = allPurchases.where((p) {
-                final matchesSearch =
-                    query.isEmpty || p.searchText.contains(query);
-                final matchesStatus = _statusFilter == 'all' ||
-                    (_statusFilter == 'draft' &&
-                        !p.isReceived &&
-                        !p.isCancelled) ||
-                    (_statusFilter == 'received' &&
-                        p.isReceived &&
-                        !p.isReturned) ||
-                    (_statusFilter == 'returned' && p.isReturned) ||
-                    (_statusFilter == 'cancelled' &&
-                        p.status.toLowerCase() == 'cancelled');
-                return matchesSearch && matchesStatus;
-              }).toList(growable: false);
-              filtered.sort((a, b) {
-                switch (_sortMode) {
-                  case 'oldest':
-                    return a.date.compareTo(b.date);
-                  case 'highest':
-                    return b.subtotal.compareTo(a.subtotal);
-                  case 'lowest':
-                    return a.subtotal.compareTo(b.subtotal);
-                  case 'supplier':
-                    return a.supplierName
-                        .toLowerCase()
-                        .compareTo(b.supplierName.toLowerCase());
-                  case 'newest':
-                  default:
-                    return b.date.compareTo(a.date);
-                }
-              });
-              return filtered;
-            },
-          );
-    _syncPurchaseReveal(purchases.length);
-    final averagePurchase =
-        monthlyCount == 0 ? 0.0 : monthlyTotal / monthlyCount;
-    final visiblePurchaseCount =
-        math.min(_visiblePurchaseCount, purchases.length);
-    final pageInsets = VentioResponsive.pageInsets(context);
-    return Focus(
-      focusNode: _pageShortcutFocusNode,
-      autofocus: true,
-      onKeyEvent: _handlePurchasesShortcutKey,
-      child: CustomScrollView(
-        slivers: [
-          SliverPadding(
-            padding: pageInsets,
-            sliver: SliverList(
-              delegate: SliverChildListDelegate(
-                [
-                  LayoutBuilder(builder: (context, constraints) {
-                    final compact = constraints.maxWidth < 650;
-                    final indicator = PageDataLoadIndicator(
-                      loadedCount: visiblePurchaseCount,
-                      totalCount: purchases.length,
-                    );
-                    final title = Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(tr.text('purchases'),
-                            style: Theme.of(context).textTheme.headlineSmall),
-                        const SizedBox(height: 4),
-                        Text(tr.text('purchases_desc')),
-                      ],
-                    );
-                    final button = FilledButton.icon(
-                      onPressed: widget.store.canManagePurchases
-                          ? () => _openPurchaseDialog(context)
-                          : null,
-                      icon: const Icon(Icons.add_shopping_cart),
-                      label: Text(tr.text('new_purchase')),
-                    );
-                    return compact
-                        ? Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                                Row(
-                                  children: [
-                                    Expanded(child: title),
-                                    const SizedBox(width: 12),
-                                    indicator,
-                                  ],
-                                ),
-                                const SizedBox(height: 12),
+    return FutureBuilder<void>(
+      future: _dataFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Center(child: CircularProgressIndicator.adaptive());
+        }
+        final allPurchases = widget.store.purchases;
+        final overview = widget.store.purchasesOverview;
+        final monthlyTotal = overview.monthlyTotal;
+        final monthlyCount = overview.monthlyCount;
+        final draftTotal = overview.draftTotal;
+        final query = _searchController.text.trim().toLowerCase();
+        final useDefaultView =
+            query.isEmpty && _statusFilter == 'all' && _sortMode == 'newest';
+        final purchases = useDefaultView
+            ? allPurchases
+            : _filteredPurchasesCache.getOrCompute(
+                widget.store.purchasesRevision,
+                '$_statusFilter|$_sortMode|$query',
+                () {
+                  final filtered = allPurchases.where((p) {
+                    final matchesSearch =
+                        query.isEmpty || p.searchText.contains(query);
+                    final matchesStatus = _statusFilter == 'all' ||
+                        (_statusFilter == 'draft' &&
+                            !p.isReceived &&
+                            !p.isCancelled) ||
+                        (_statusFilter == 'received' &&
+                            p.isReceived &&
+                            !p.isReturned) ||
+                        (_statusFilter == 'returned' && p.isReturned) ||
+                        (_statusFilter == 'cancelled' &&
+                            p.status.toLowerCase() == 'cancelled');
+                    return matchesSearch && matchesStatus;
+                  }).toList(growable: false);
+                  filtered.sort((a, b) {
+                    switch (_sortMode) {
+                      case 'oldest':
+                        return a.date.compareTo(b.date);
+                      case 'highest':
+                        return b.subtotal.compareTo(a.subtotal);
+                      case 'lowest':
+                        return a.subtotal.compareTo(b.subtotal);
+                      case 'supplier':
+                        return a.supplierName
+                            .toLowerCase()
+                            .compareTo(b.supplierName.toLowerCase());
+                      case 'newest':
+                      default:
+                        return b.date.compareTo(a.date);
+                    }
+                  });
+                  return filtered;
+                },
+              );
+        _syncPurchaseReveal(purchases.length);
+        final averagePurchase =
+            monthlyCount == 0 ? 0.0 : monthlyTotal / monthlyCount;
+        final visiblePurchaseCount =
+            math.min(_visiblePurchaseCount, purchases.length);
+        final pageInsets = VentioResponsive.pageInsets(context);
+        return Focus(
+          focusNode: _pageShortcutFocusNode,
+          autofocus: true,
+          onKeyEvent: _handlePurchasesShortcutKey,
+          child: CustomScrollView(
+            slivers: [
+              SliverPadding(
+                padding: pageInsets,
+                sliver: SliverList(
+                  delegate: SliverChildListDelegate(
+                    [
+                      LayoutBuilder(builder: (context, constraints) {
+                        final compact = constraints.maxWidth < 650;
+                        final indicator = PageDataLoadIndicator(
+                          loadedCount: visiblePurchaseCount,
+                          totalCount: purchases.length,
+                        );
+                        final title = Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(tr.text('purchases'),
+                                style:
+                                    Theme.of(context).textTheme.headlineSmall),
+                            const SizedBox(height: 4),
+                            Text(tr.text('purchases_desc')),
+                          ],
+                        );
+                        final button = FilledButton.icon(
+                          onPressed: widget.store.canManagePurchases
+                              ? () => _openPurchaseDialog(context)
+                              : null,
+                          icon: const Icon(Icons.add_shopping_cart),
+                          label: Text(tr.text('new_purchase')),
+                        );
+                        return compact
+                            ? Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                    Row(
+                                      children: [
+                                        Expanded(child: title),
+                                        const SizedBox(width: 12),
+                                        indicator,
+                                      ],
+                                    ),
+                                    const SizedBox(height: 12),
+                                    button
+                                  ])
+                            : Row(children: [
+                                Expanded(child: title),
+                                const SizedBox(width: 12),
+                                indicator,
+                                const SizedBox(width: 12),
                                 button
-                              ])
-                        : Row(children: [
+                              ]);
+                      }),
+                      const SizedBox(height: 8),
+                      _buildPurchasesShortcutGuide(context, tr),
+                      const SizedBox(height: 16),
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 12,
+                        children: [
+                          _MetricCard(
+                              label: tr.text('purchase_total'),
+                              value: formatUsdReferenceAmount(
+                                  overview.totalPurchasesAmount,
+                                  widget.store.storeProfile),
+                              icon: Icons.shopping_cart_checkout),
+                          _MetricCard(
+                              label: tr.text('purchases_this_month'),
+                              value: formatUsdReferenceAmount(
+                                  monthlyTotal, widget.store.storeProfile),
+                              icon: Icons.calendar_month_outlined),
+                          _MetricCard(
+                              label: tr.text('draft_purchases'),
+                              value: formatUsdReferenceAmount(
+                                  draftTotal, widget.store.storeProfile),
+                              icon: Icons.pending_actions),
+                          _MetricCard(
+                              label: tr.text('avg_purchase'),
+                              value: formatUsdReferenceAmount(
+                                  averagePurchase, widget.store.storeProfile),
+                              icon: Icons.insights_outlined),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: _searchController,
+                        focusNode: _searchFocusNode,
+                        onChanged: (_) => setState(_resetPurchaseReveal),
+                        decoration: InputDecoration(
+                          prefixIcon: const Icon(Icons.search),
+                          hintText: tr.text('search_purchase_supplier_product'),
+                          border: const OutlineInputBorder(),
+                          suffixIcon: query.isEmpty
+                              ? null
+                              : IconButton(
+                                  tooltip: tr.text('clear_search'),
+                                  icon: const Icon(Icons.close),
+                                  onPressed: () {
+                                    _searchController.clear();
+                                    setState(_resetPurchaseReveal);
+                                  },
+                                ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final compact = constraints.maxWidth < 620;
+                          final filters = Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              ChoiceChip(
+                                  label: Text(
+                                      '${tr.text('all')} (${allPurchases.length})'),
+                                  selected: _statusFilter == 'all',
+                                  onSelected: (_) => setState(() {
+                                        _statusFilter = 'all';
+                                        _resetPurchaseReveal();
+                                      })),
+                              ChoiceChip(
+                                  label: Text(
+                                      '${tr.text('draft')} (${overview.draftCount})'),
+                                  selected: _statusFilter == 'draft',
+                                  onSelected: (_) => setState(() {
+                                        _statusFilter = 'draft';
+                                        _resetPurchaseReveal();
+                                      })),
+                              ChoiceChip(
+                                  label: Text(
+                                      '${tr.text('received')} (${overview.receivedCount})'),
+                                  selected: _statusFilter == 'received',
+                                  onSelected: (_) => setState(() {
+                                        _statusFilter = 'received';
+                                        _resetPurchaseReveal();
+                                      })),
+                              ChoiceChip(
+                                  label: Text(
+                                      '${tr.text('returned')} (${overview.returnedCount})'),
+                                  selected: _statusFilter == 'returned',
+                                  onSelected: (_) => setState(() {
+                                        _statusFilter = 'returned';
+                                        _resetPurchaseReveal();
+                                      })),
+                              ChoiceChip(
+                                  label: Text(
+                                      '${tr.text('cancelled')} (${overview.cancelledCount})'),
+                                  selected: _statusFilter == 'cancelled',
+                                  onSelected: (_) => setState(() {
+                                        _statusFilter = 'cancelled';
+                                        _resetPurchaseReveal();
+                                      })),
+                            ],
+                          );
+                          final sorter = DropdownButtonFormField<String>(
+                            initialValue: _sortMode,
+                            decoration: InputDecoration(
+                                labelText: tr.text('sort_by'),
+                                border: const OutlineInputBorder()),
+                            items: [
+                              DropdownMenuItem(
+                                  value: 'newest',
+                                  child: Text(tr.text('newest_first'))),
+                              DropdownMenuItem(
+                                  value: 'oldest',
+                                  child: Text(tr.text('oldest_first'))),
+                              DropdownMenuItem(
+                                  value: 'highest',
+                                  child: Text(tr.text('highest_amount'))),
+                              DropdownMenuItem(
+                                  value: 'lowest',
+                                  child: Text(tr.text('lowest_amount'))),
+                              DropdownMenuItem(
+                                  value: 'supplier',
+                                  child: Text(tr.text('supplier_name_sort'))),
+                            ],
+                            onChanged: (value) => setState(() {
+                              _sortMode = value ?? 'newest';
+                              _resetPurchaseReveal();
+                            }),
+                          );
+                          if (compact) {
+                            return Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  filters,
+                                  const SizedBox(height: 12),
+                                  sorter
+                                ]);
+                          }
+                          return Row(children: [
+                            Expanded(child: filters),
+                            SizedBox(width: 220, child: sorter)
+                          ]);
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                    ],
+                  ),
+                ),
+              ),
+              if (purchases.isEmpty)
+                SliverPadding(
+                  padding: EdgeInsets.fromLTRB(
+                      pageInsets.left, 0, pageInsets.right, pageInsets.bottom),
+                  sliver: SliverToBoxAdapter(
+                    child: Text(tr.text('no_purchases_yet')),
+                  ),
+                )
+              else
+                SliverPadding(
+                  padding: EdgeInsets.fromLTRB(
+                      pageInsets.left, 0, pageInsets.right, pageInsets.bottom),
+                  sliver: SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) {
+                        final purchase = purchases[index];
+                        return _PurchaseTile(
+                          purchase: purchase,
+                          storeProfile: widget.store.storeProfile,
+                          onTap: () => _showPurchaseDetails(context, purchase),
+                          onReceive: purchase.status == 'Draft'
+                              ? (widget.store.canManagePurchases
+                                  ? () => _receivePurchase(context, purchase.id)
+                                  : null)
+                              : null,
+                          onCancel: purchase.isReceived && !purchase.isReturned
+                              ? (widget.store.hasPermission(
+                                          AppPermission.purchasesCancel) ||
+                                      widget.store.canManagePurchases
+                                  ? () => _returnPurchase(context, purchase.id)
+                                  : null)
+                              : null,
+                          onDeleteDraft: !purchase.isReceived &&
+                                  !purchase.isCancelled &&
+                                  widget.store.canManagePurchases
+                              ? () => _deleteDraftPurchase(context, purchase.id)
+                              : null,
+                          onPermanentDelete:
+                              purchase.status.toLowerCase() == 'cancelled' &&
+                                      widget.store.hasPermission(
+                                          AppPermission.databaseManage)
+                                  ? () => _permanentlyDeletePurchase(
+                                      context, purchase.id)
+                                  : null,
+                          onDuplicate: widget.store.canManagePurchases
+                              ? () => _openPurchaseDialog(context,
+                                  template: purchase)
+                              : null,
+                          formatDate: _formatShortDate,
+                        );
+                      },
+                      childCount: visiblePurchaseCount,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<Map<String, Object?>?> _queryPurchasesOverviewMapFromSqlite() async {
+    final key = '${widget.store.purchasesRevision}';
+    if (_purchaseOverviewFuture == null || _purchaseOverviewFutureKey != key) {
+      _purchaseOverviewFutureKey = key;
+      _purchaseOverviewFuture =
+          LocalDatabaseService.buildPurchasesOverviewFromSqlite(
+        reference: DateTime.now(),
+      );
+    }
+    return _purchaseOverviewFuture!;
+  }
+
+  PurchasesOverview _overviewFromMap(Map<String, Object?>? data) {
+    int readInt(String key) => (data?[key] as num?)?.toInt() ?? 0;
+    double readDouble(String key) => (data?[key] as num?)?.toDouble() ?? 0.0;
+    if (data == null) {
+      return const PurchasesOverview(
+        totalCount: 0,
+        totalPurchasesAmount: 0,
+        monthlyTotal: 0,
+        monthlyCount: 0,
+        draftTotal: 0,
+        draftCount: 0,
+        receivedCount: 0,
+        returnedCount: 0,
+        cancelledCount: 0,
+        pendingPurchaseCount: 0,
+      );
+    }
+    return PurchasesOverview(
+      totalCount: readInt('totalCount'),
+      totalPurchasesAmount: readDouble('totalPurchasesAmount'),
+      monthlyTotal: readDouble('monthlyTotal'),
+      monthlyCount: readInt('monthlyCount'),
+      draftTotal: readDouble('draftTotal'),
+      draftCount: readInt('draftCount'),
+      receivedCount: readInt('receivedCount'),
+      returnedCount: readInt('returnedCount'),
+      cancelledCount: readInt('cancelledCount'),
+      pendingPurchaseCount: readInt('pendingPurchaseCount'),
+    );
+  }
+
+  Future<_PurchaseQueryResult?> _queryPurchasesFromSqlite(
+    String normalizedQuery,
+  ) async {
+    final limit = math.max(1, _visiblePurchaseCount);
+    final key =
+        '${widget.store.purchasesRevision}|$_statusFilter|$_sortMode|$normalizedQuery|$limit';
+    if (_purchaseQueryFuture == null || _purchaseQueryFutureKey != key) {
+      _purchaseQueryFutureKey = key;
+      _purchaseQueryFuture = () async {
+        final page = await LocalDatabaseService.queryPurchasesFromSqlite(
+          query: normalizedQuery,
+          status: _statusFilter,
+          limit: limit,
+          sortMode: _sortMode,
+        );
+        if (page == null) return null;
+        final overview =
+            _overviewFromMap(await _queryPurchasesOverviewMapFromSqlite());
+        return _PurchaseQueryResult(
+          items: page.items,
+          totalCount: page.totalCount,
+          overview: overview,
+        );
+      }();
+    }
+    return _purchaseQueryFuture!;
+  }
+
+  void _loadMorePurchases(int totalCount) {
+    setState(() {
+      _purchaseRevealTimer?.cancel();
+      _purchaseRevealTimer = null;
+      _visiblePurchaseCount = math.min(totalCount, _visiblePurchaseCount + 100);
+    });
+  }
+
+  Widget _buildPurchasesSqliteView(
+    BuildContext context,
+    AppLocalizations tr,
+    _PurchaseQueryResult result,
+    String normalizedQuery,
+  ) {
+    final overview = result.overview;
+    final purchases = result.items;
+    final totalCount = result.totalCount;
+    final averagePurchase = overview.monthlyCount == 0
+        ? 0.0
+        : overview.monthlyTotal / overview.monthlyCount;
+    _syncPurchaseReveal(totalCount);
+
+    return Padding(
+      padding: VentioResponsive.pageInsets(context),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          LayoutBuilder(builder: (context, constraints) {
+            final compact = constraints.maxWidth < 650;
+            final indicator = PageDataLoadIndicator(
+              loadedCount: purchases.length,
+              totalCount: totalCount,
+            );
+            final title = Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(tr.text('purchases'),
+                    style: Theme.of(context).textTheme.headlineSmall),
+                const SizedBox(height: 4),
+                Text(tr.text('purchases_desc')),
+              ],
+            );
+            final button = FilledButton.icon(
+              onPressed: widget.store.canManagePurchases
+                  ? () => _openPurchaseDialog(context)
+                  : null,
+              icon: const Icon(Icons.add_shopping_cart),
+              label: Text(tr.text('new_purchase')),
+            );
+            return compact
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                        Row(
+                          children: [
                             Expanded(child: title),
                             const SizedBox(width: 12),
                             indicator,
-                            const SizedBox(width: 12),
-                            button
-                          ]);
-                  }),
-                  const SizedBox(height: 8),
-                  _buildPurchasesShortcutGuide(context, tr),
-                  const SizedBox(height: 16),
-                  Wrap(
-                    spacing: 12,
-                    runSpacing: 12,
-                    children: [
-                      _MetricCard(
-                          label: tr.text('purchase_total'),
-                          value: formatUsdReferenceAmount(
-                              overview.totalPurchasesAmount,
-                              widget.store.storeProfile),
-                          icon: Icons.shopping_cart_checkout),
-                      _MetricCard(
-                          label: tr.text('purchases_this_month'),
-                          value: formatUsdReferenceAmount(
-                              monthlyTotal, widget.store.storeProfile),
-                          icon: Icons.calendar_month_outlined),
-                      _MetricCard(
-                          label: tr.text('draft_purchases'),
-                          value: formatUsdReferenceAmount(
-                              draftTotal, widget.store.storeProfile),
-                          icon: Icons.pending_actions),
-                      _MetricCard(
-                          label: tr.text('avg_purchase'),
-                          value: formatUsdReferenceAmount(
-                              averagePurchase, widget.store.storeProfile),
-                          icon: Icons.insights_outlined),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: _searchController,
-                    focusNode: _searchFocusNode,
-                    onChanged: (_) => setState(_resetPurchaseReveal),
-                    decoration: InputDecoration(
-                      prefixIcon: const Icon(Icons.search),
-                      hintText: tr.text('search_purchase_supplier_product'),
-                      border: const OutlineInputBorder(),
-                      suffixIcon: query.isEmpty
-                          ? null
-                          : IconButton(
-                              tooltip: tr.text('clear_search'),
-                              icon: const Icon(Icons.close),
-                              onPressed: () {
-                                _searchController.clear();
-                                setState(_resetPurchaseReveal);
-                              },
-                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        button
+                      ])
+                : Row(children: [
+                    Expanded(child: title),
+                    const SizedBox(width: 12),
+                    indicator,
+                    const SizedBox(width: 12),
+                    button
+                  ]);
+          }),
+          const SizedBox(height: 8),
+          _buildPurchasesShortcutGuide(context, tr),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              _MetricCard(
+                  label: tr.text('purchase_total'),
+                  value: formatUsdReferenceAmount(
+                      overview.totalPurchasesAmount, widget.store.storeProfile),
+                  icon: Icons.shopping_cart_checkout),
+              _MetricCard(
+                  label: tr.text('purchases_this_month'),
+                  value: formatUsdReferenceAmount(
+                      overview.monthlyTotal, widget.store.storeProfile),
+                  icon: Icons.calendar_month_outlined),
+              _MetricCard(
+                  label: tr.text('draft_purchases'),
+                  value: formatUsdReferenceAmount(
+                      overview.draftTotal, widget.store.storeProfile),
+                  icon: Icons.pending_actions),
+              _MetricCard(
+                  label: tr.text('avg_purchase'),
+                  value: formatUsdReferenceAmount(
+                      averagePurchase, widget.store.storeProfile),
+                  icon: Icons.insights_outlined),
+            ],
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _searchController,
+            focusNode: _searchFocusNode,
+            onChanged: (_) => setState(_resetPurchaseReveal),
+            decoration: InputDecoration(
+              prefixIcon: const Icon(Icons.search),
+              hintText: tr.text('search_purchase_supplier_product'),
+              border: const OutlineInputBorder(),
+              suffixIcon: normalizedQuery.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: tr.text('clear_search'),
+                      icon: const Icon(Icons.close),
+                      onPressed: () {
+                        _searchController.clear();
+                        setState(_resetPurchaseReveal);
+                      },
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      final compact = constraints.maxWidth < 620;
-                      final filters = Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          ChoiceChip(
-                              label: Text(
-                                  '${tr.text('all')} (${allPurchases.length})'),
-                              selected: _statusFilter == 'all',
-                              onSelected: (_) => setState(() {
-                                    _statusFilter = 'all';
-                                    _resetPurchaseReveal();
-                                  })),
-                          ChoiceChip(
-                              label: Text(
-                                  '${tr.text('draft')} (${overview.draftCount})'),
-                              selected: _statusFilter == 'draft',
-                              onSelected: (_) => setState(() {
-                                    _statusFilter = 'draft';
-                                    _resetPurchaseReveal();
-                                  })),
-                          ChoiceChip(
-                              label: Text(
-                                  '${tr.text('received')} (${overview.receivedCount})'),
-                              selected: _statusFilter == 'received',
-                              onSelected: (_) => setState(() {
-                                    _statusFilter = 'received';
-                                    _resetPurchaseReveal();
-                                  })),
-                          ChoiceChip(
-                              label: Text(
-                                  '${tr.text('returned')} (${overview.returnedCount})'),
-                              selected: _statusFilter == 'returned',
-                              onSelected: (_) => setState(() {
-                                    _statusFilter = 'returned';
-                                    _resetPurchaseReveal();
-                                  })),
-                          ChoiceChip(
-                              label: Text(
-                                  '${tr.text('cancelled')} (${overview.cancelledCount})'),
-                              selected: _statusFilter == 'cancelled',
-                              onSelected: (_) => setState(() {
-                                    _statusFilter = 'cancelled';
-                                    _resetPurchaseReveal();
-                                  })),
-                        ],
-                      );
-                      final sorter = DropdownButtonFormField<String>(
-                        initialValue: _sortMode,
-                        decoration: InputDecoration(
-                            labelText: tr.text('sort_by'),
-                            border: const OutlineInputBorder()),
-                        items: [
-                          DropdownMenuItem(
-                              value: 'newest',
-                              child: Text(tr.text('newest_first'))),
-                          DropdownMenuItem(
-                              value: 'oldest',
-                              child: Text(tr.text('oldest_first'))),
-                          DropdownMenuItem(
-                              value: 'highest',
-                              child: Text(tr.text('highest_amount'))),
-                          DropdownMenuItem(
-                              value: 'lowest',
-                              child: Text(tr.text('lowest_amount'))),
-                          DropdownMenuItem(
-                              value: 'supplier',
-                              child: Text(tr.text('supplier_name_sort'))),
-                        ],
-                        onChanged: (value) => setState(() {
-                          _sortMode = value ?? 'newest';
-                          _resetPurchaseReveal();
-                        }),
-                      );
-                      if (compact) {
-                        return Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              filters,
-                              const SizedBox(height: 12),
-                              sorter
-                            ]);
-                      }
-                      return Row(children: [
-                        Expanded(child: filters),
-                        SizedBox(width: 220, child: sorter)
-                      ]);
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                ],
-              ),
             ),
           ),
-          if (purchases.isEmpty)
-            SliverPadding(
-              padding: EdgeInsets.fromLTRB(
-                  pageInsets.left, 0, pageInsets.right, pageInsets.bottom),
-              sliver: SliverToBoxAdapter(
-                child: Text(tr.text('no_purchases_yet')),
-              ),
-            )
-          else
-            SliverPadding(
-              padding: EdgeInsets.fromLTRB(
-                  pageInsets.left, 0, pageInsets.right, pageInsets.bottom),
-              sliver: SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) {
-                    final purchase = purchases[index];
-                    return _PurchaseTile(
-                      purchase: purchase,
-                      storeProfile: widget.store.storeProfile,
-                      onTap: () => _showPurchaseDetails(context, purchase),
-                      onReceive: purchase.status == 'Draft'
-                          ? (widget.store.canManagePurchases
-                              ? () => _receivePurchase(context, purchase.id)
-                              : null)
-                          : null,
-                      onCancel: purchase.isReceived && !purchase.isReturned
-                          ? (widget.store.hasPermission(
-                                      AppPermission.purchasesCancel) ||
-                                  widget.store.canManagePurchases
-                              ? () => _returnPurchase(context, purchase.id)
-                              : null)
-                          : null,
-                      onDeleteDraft: !purchase.isReceived &&
-                              !purchase.isCancelled &&
-                              widget.store.canManagePurchases
-                          ? () => _deleteDraftPurchase(context, purchase.id)
-                          : null,
-                      onPermanentDelete: purchase.status.toLowerCase() ==
-                                  'cancelled' &&
-                              widget.store
-                                  .hasPermission(AppPermission.databaseManage)
-                          ? () =>
-                              _permanentlyDeletePurchase(context, purchase.id)
-                          : null,
-                      onDuplicate: widget.store.canManagePurchases
-                          ? () =>
-                              _openPurchaseDialog(context, template: purchase)
-                          : null,
-                      formatDate: _formatShortDate,
-                    );
-                  },
-                  childCount: visiblePurchaseCount,
-                ),
+          const SizedBox(height: 12),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxWidth < 620;
+              final filters = Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ChoiceChip(
+                      label: Text('${tr.text('all')} (${overview.totalCount})'),
+                      selected: _statusFilter == 'all',
+                      onSelected: (_) => setState(() {
+                            _statusFilter = 'all';
+                            _resetPurchaseReveal();
+                          })),
+                  ChoiceChip(
+                      label:
+                          Text('${tr.text('draft')} (${overview.draftCount})'),
+                      selected: _statusFilter == 'draft',
+                      onSelected: (_) => setState(() {
+                            _statusFilter = 'draft';
+                            _resetPurchaseReveal();
+                          })),
+                  ChoiceChip(
+                      label: Text(
+                          '${tr.text('received')} (${overview.receivedCount})'),
+                      selected: _statusFilter == 'received',
+                      onSelected: (_) => setState(() {
+                            _statusFilter = 'received';
+                            _resetPurchaseReveal();
+                          })),
+                  ChoiceChip(
+                      label: Text(
+                          '${tr.text('returned')} (${overview.returnedCount})'),
+                      selected: _statusFilter == 'returned',
+                      onSelected: (_) => setState(() {
+                            _statusFilter = 'returned';
+                            _resetPurchaseReveal();
+                          })),
+                  ChoiceChip(
+                      label: Text(
+                          '${tr.text('cancelled')} (${overview.cancelledCount})'),
+                      selected: _statusFilter == 'cancelled',
+                      onSelected: (_) => setState(() {
+                            _statusFilter = 'cancelled';
+                            _resetPurchaseReveal();
+                          })),
+                ],
+              );
+              final sorter = DropdownButtonFormField<String>(
+                initialValue: _sortMode,
+                decoration: InputDecoration(
+                    labelText: tr.text('sort_by'),
+                    border: const OutlineInputBorder()),
+                items: [
+                  DropdownMenuItem(
+                      value: 'newest', child: Text(tr.text('newest_first'))),
+                  DropdownMenuItem(
+                      value: 'oldest', child: Text(tr.text('oldest_first'))),
+                  DropdownMenuItem(
+                      value: 'highest', child: Text(tr.text('highest_amount'))),
+                  DropdownMenuItem(
+                      value: 'lowest', child: Text(tr.text('lowest_amount'))),
+                  DropdownMenuItem(
+                      value: 'supplier',
+                      child: Text(tr.text('supplier_name_sort'))),
+                ],
+                onChanged: (value) => setState(() {
+                  _sortMode = value ?? 'newest';
+                  _resetPurchaseReveal();
+                }),
+              );
+              if (compact) {
+                return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [filters, const SizedBox(height: 12), sorter]);
+              }
+              return Row(children: [
+                Expanded(child: filters),
+                SizedBox(width: 220, child: sorter)
+              ]);
+            },
+          ),
+          const SizedBox(height: 16),
+          Expanded(
+            child: purchases.isEmpty
+                ? Center(child: Text(tr.text('no_purchases_yet')))
+                : ListView.separated(
+                    itemCount: purchases.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 0),
+                    itemBuilder: (context, index) {
+                      final purchase = purchases[index];
+                      return _PurchaseTile(
+                        purchase: purchase,
+                        storeProfile: widget.store.storeProfile,
+                        onTap: () => _showPurchaseDetails(context, purchase),
+                        onReceive: purchase.status == 'Draft'
+                            ? (widget.store.canManagePurchases
+                                ? () => _receivePurchase(context, purchase.id)
+                                : null)
+                            : null,
+                        onCancel: purchase.isReceived && !purchase.isReturned
+                            ? (widget.store.hasPermission(
+                                        AppPermission.purchasesCancel) ||
+                                    widget.store.canManagePurchases
+                                ? () => _returnPurchase(context, purchase.id)
+                                : null)
+                            : null,
+                        onDeleteDraft: !purchase.isReceived &&
+                                !purchase.isCancelled &&
+                                widget.store.canManagePurchases
+                            ? () => _deleteDraftPurchase(context, purchase.id)
+                            : null,
+                        onPermanentDelete: purchase.status.toLowerCase() ==
+                                    'cancelled' &&
+                                widget.store
+                                    .hasPermission(AppPermission.databaseManage)
+                            ? () =>
+                                _permanentlyDeletePurchase(context, purchase.id)
+                            : null,
+                        onDuplicate: widget.store.canManagePurchases
+                            ? () =>
+                                _openPurchaseDialog(context, template: purchase)
+                            : null,
+                        formatDate: _formatShortDate,
+                      );
+                    },
+                  ),
+          ),
+          if (result.hasMore) ...[
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.center,
+              child: OutlinedButton.icon(
+                onPressed: () => _loadMorePurchases(totalCount),
+                icon: const Icon(Icons.expand_more),
+                label: Text(tr.isArabic ? 'عرض المزيد' : 'Load more'),
               ),
             ),
+          ],
         ],
       ),
     );
@@ -2745,6 +3129,20 @@ class _DetailRow extends StatelessWidget {
       ),
     );
   }
+}
+
+class _PurchaseQueryResult {
+  const _PurchaseQueryResult({
+    required this.items,
+    required this.totalCount,
+    required this.overview,
+  });
+
+  final List<Purchase> items;
+  final int totalCount;
+  final PurchasesOverview overview;
+
+  bool get hasMore => items.length < totalCount;
 }
 
 class _PurchaseTile extends StatelessWidget {

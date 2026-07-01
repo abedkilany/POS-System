@@ -64,8 +64,8 @@ class _DashboardPageState extends State<DashboardPage> {
   void _handleStoreChanged() {
     if (!mounted) return;
     final hasHydratedState = _state?.isHydrated ?? false;
-    if (hasHydratedState && !widget.store.isHeavyDataLoaded) return;
-    if (widget.store.isHeavyDataLoaded && _suppressStartupRefresh) {
+    if (hasHydratedState && !widget.store.isReady) return;
+    if (widget.store.isReady && _suppressStartupRefresh) {
       _suppressStartupRefresh = false;
       if (hasHydratedState) return;
     }
@@ -108,7 +108,7 @@ class _DashboardPageState extends State<DashboardPage> {
   void _scheduleRefresh({bool immediate = false}) {
     if (!mounted) return;
     if (_refreshInProgress) return;
-    if ((_state?.isHydrated ?? false) && !widget.store.isHeavyDataLoaded) {
+    if ((_state?.isHydrated ?? false) && !widget.store.isReady) {
       return;
     }
     _refreshDebounce?.cancel();

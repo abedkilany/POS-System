@@ -38,16 +38,32 @@ class _AccountingPageState extends State<AccountingPage>
   static const AccountingSnapshotService _snapshotService =
       AccountingSnapshotService();
 
+  void _handleStoreChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
+    widget.store.addListener(_handleStoreChanged);
     _searchController.addListener(() =>
         setState(() => _query = _searchController.text.trim().toLowerCase()));
   }
 
   @override
+  void didUpdateWidget(covariant AccountingPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != widget.store) {
+      oldWidget.store.removeListener(_handleStoreChanged);
+      widget.store.addListener(_handleStoreChanged);
+    }
+  }
+
+  @override
   void dispose() {
+    widget.store.removeListener(_handleStoreChanged);
     _tabController.dispose();
     _searchController.dispose();
     super.dispose();

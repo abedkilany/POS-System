@@ -367,12 +367,13 @@ class _StressLabPageState extends State<StressLabPage> {
   String _roleLabel() {
     final identity = store.appIdentity;
     final transport = _effectiveSyncTransport();
-    if (identity.isHost)
+    if (identity.isHost) {
       return transport == 'cloud'
           ? 'HOST_CLOUD'
           : transport == 'lan'
               ? 'HOST_LAN'
               : 'HOST_LOCAL';
+    }
     if (identity.isClient && transport == 'cloud') return 'CLIENT_CLOUD';
     if (identity.isClient && transport == 'lan') return 'CLIENT_LAN';
     return 'LOCAL_${identity.deviceRole.name.toUpperCase()}';
@@ -656,7 +657,7 @@ class _StressLabPageState extends State<StressLabPage> {
         {
           'id': 'stress_cashier',
           'name': 'Stress Cashier',
-          'username': 'stress.cashier.${_currentBatchId}',
+          'username': 'stress.cashier.$_currentBatchId',
           'fullName': 'Stress Cashier',
           'password': 'cashier1234',
           'permissions': <String>{
@@ -673,7 +674,7 @@ class _StressLabPageState extends State<StressLabPage> {
         {
           'id': 'stress_warehouse',
           'name': 'Stress Warehouse',
-          'username': 'stress.warehouse.${_currentBatchId}',
+          'username': 'stress.warehouse.$_currentBatchId',
           'fullName': 'Stress Warehouse',
           'password': 'warehouse1234',
           'permissions': <String>{
@@ -694,7 +695,7 @@ class _StressLabPageState extends State<StressLabPage> {
         {
           'id': 'stress_manager',
           'name': 'Stress Manager',
-          'username': 'stress.manager.${_currentBatchId}',
+          'username': 'stress.manager.$_currentBatchId',
           'fullName': 'Stress Manager',
           'password': 'manager1234',
           'permissions': <String>{
@@ -853,8 +854,9 @@ class _StressLabPageState extends State<StressLabPage> {
         while (selected.length < itemCount) {
           final product =
               stressProducts[_random.nextInt(stressProducts.length)];
-          if (!selected.any((item) => item.id == product.id))
+          if (!selected.any((item) => item.id == product.id)) {
             selected.add(product);
+          }
         }
         final items = selected.map((product) {
           final qty = 1 + _random.nextInt(3);
@@ -1044,8 +1046,9 @@ class _StressLabPageState extends State<StressLabPage> {
     final stressSuppliers = store.suppliers
         .where((item) => item.name.contains('[STRESS]') && !item.isDeleted)
         .toList();
-    if (stressProducts.isEmpty)
+    if (stressProducts.isEmpty) {
       throw StateError('No stress products available for daily operations.');
+    }
 
     final salesToCreate = max(1, (baseSales * 0.60).round());
     final productUpdates =
@@ -1083,8 +1086,9 @@ class _StressLabPageState extends State<StressLabPage> {
         while (selected.length < itemCount) {
           final product =
               stressProducts[_random.nextInt(stressProducts.length)];
-          if (!selected.any((item) => item.id == product.id))
+          if (!selected.any((item) => item.id == product.id)) {
             selected.add(product);
+          }
         }
         final items = selected.map((product) {
           final qty = 1 + _random.nextInt(3);
@@ -1670,8 +1674,9 @@ class _StressLabPageState extends State<StressLabPage> {
       final saleItemMissingProducts = <String>[];
       for (final sale in store.sales) {
         for (final item in sale.items) {
-          if (!productIds.contains(item.productId))
+          if (!productIds.contains(item.productId)) {
             saleItemMissingProducts.add('${sale.id}:${item.productId}');
+          }
           if (saleItemMissingProducts.length >= 30) break;
         }
         if (saleItemMissingProducts.length >= 30) break;
@@ -1679,8 +1684,9 @@ class _StressLabPageState extends State<StressLabPage> {
       final purchaseItemMissingProducts = <String>[];
       for (final purchase in store.purchases) {
         for (final item in purchase.items) {
-          if (!productIds.contains(item.productId))
+          if (!productIds.contains(item.productId)) {
             purchaseItemMissingProducts.add('${purchase.id}:${item.productId}');
+          }
           if (purchaseItemMissingProducts.length >= 30) break;
         }
         if (purchaseItemMissingProducts.length >= 30) break;
@@ -1698,8 +1704,9 @@ class _StressLabPageState extends State<StressLabPage> {
             if (reference.isEmpty) return false;
             final type = movement.type.toLowerCase();
             if (type.contains('sale')) return !saleIds.contains(reference);
-            if (type.contains('purchase'))
+            if (type.contains('purchase')) {
               return !purchaseIds.contains(reference);
+            }
             return false;
           })
           .take(30)
@@ -1712,18 +1719,22 @@ class _StressLabPageState extends State<StressLabPage> {
           stockMissingReferences.isEmpty;
       _addLog(
           'INTEGRITY_CHECK result=${pass ? 'PASS' : 'WARN'} saleItemMissingProducts=${saleItemMissingProducts.length} purchaseItemMissingProducts=${purchaseItemMissingProducts.length} stockMissingProducts=${stockMissingProducts.length} stockMissingReferences=${stockMissingReferences.length}');
-      if (saleItemMissingProducts.isNotEmpty)
+      if (saleItemMissingProducts.isNotEmpty) {
         _addLog(
             'INTEGRITY_SALE_ITEM_MISSING_PRODUCTS sample=${saleItemMissingProducts.join(',')}');
-      if (purchaseItemMissingProducts.isNotEmpty)
+      }
+      if (purchaseItemMissingProducts.isNotEmpty) {
         _addLog(
             'INTEGRITY_PURCHASE_ITEM_MISSING_PRODUCTS sample=${purchaseItemMissingProducts.join(',')}');
-      if (stockMissingProducts.isNotEmpty)
+      }
+      if (stockMissingProducts.isNotEmpty) {
         _addLog(
             'INTEGRITY_STOCK_MISSING_PRODUCTS sample=${stockMissingProducts.join(',')}');
-      if (stockMissingReferences.isNotEmpty)
+      }
+      if (stockMissingReferences.isNotEmpty) {
         _addLog(
             'INTEGRITY_STOCK_MISSING_REFERENCES sample=${stockMissingReferences.join(',')}');
+      }
       _setStatus('Integrity check logged', progress: 1);
     } finally {
       if (mounted) setState(() => _running = false);
@@ -2663,15 +2674,17 @@ class _StressLabPageState extends State<StressLabPage> {
     final saleMissing = <String>[];
     for (final sale in store.sales) {
       for (final item in sale.items) {
-        if (!productIds.contains(item.productId))
+        if (!productIds.contains(item.productId)) {
           saleMissing.add('${sale.id}:${item.productId}');
+        }
       }
     }
     final purchaseMissing = <String>[];
     for (final purchase in store.purchases) {
       for (final item in purchase.items) {
-        if (!productIds.contains(item.productId))
+        if (!productIds.contains(item.productId)) {
           purchaseMissing.add('${purchase.id}:${item.productId}');
+        }
       }
     }
     final stockMissingReferences = store.stockMovements
@@ -2680,8 +2693,9 @@ class _StressLabPageState extends State<StressLabPage> {
           if (reference.isEmpty) return false;
           final type = movement.type.toLowerCase();
           if (type.contains('sale')) return !saleIds.contains(reference);
-          if (type.contains('purchase'))
+          if (type.contains('purchase')) {
             return !purchaseIds.contains(reference);
+          }
           return false;
         })
         .take(5)
@@ -3027,7 +3041,9 @@ class _StressLabPageState extends State<StressLabPage> {
       if (ref.trim().isEmpty) continue;
       if (tx.referenceId == ref ||
           tx.referenceNo == ref ||
-          tx.note.contains(ref)) return true;
+          tx.note.contains(ref)) {
+        return true;
+      }
     }
     return false;
   }
@@ -3597,10 +3613,11 @@ class _StressLabPageState extends State<StressLabPage> {
               '[CRITICAL] تأكد أن Stress Lab يفتح الوردية النقدية قبل أي شراء أو مصروف نقدي، وليس بعدهما.',
               '[CRITICAL] Make sure Stress Lab opens the cash drawer before any cash purchase or expense, not after.'));
     }
-    if (suggestions.isEmpty)
+    if (suggestions.isEmpty) {
       suggestions.add(_dual(
           '[OK] لا توجد أسباب جذرية واضحة؛ استمر بمراقبة الأداء والنسخ الاحتياطي والمزامنة.',
           '[OK] No clear root cause was found; keep monitoring performance, backup, and sync.'));
+    }
     return 'NEXT_ACTIONS ${suggestions.join(' | ')}';
   }
 
@@ -3625,8 +3642,9 @@ class _StressLabPageState extends State<StressLabPage> {
       final type = movement.type.toLowerCase();
       if (movement.referenceId.isEmpty) return false;
       if (type.contains('sale')) return !saleIds.contains(movement.referenceId);
-      if (type.contains('purchase'))
+      if (type.contains('purchase')) {
         return !purchaseIds.contains(movement.referenceId);
+      }
       return false;
     }).length;
     _auditCheck(
@@ -3754,8 +3772,9 @@ class _StressLabPageState extends State<StressLabPage> {
       _addLog('HEALTH_SCORE_COMPARISON previous=none current=$total/100');
     }
     _healthHistory.add(Map<String, int>.from(scores));
-    if (_healthHistory.length > 10)
+    if (_healthHistory.length > 10) {
       _healthHistory.removeRange(0, _healthHistory.length - 10);
+    }
     _addLog('=========================================');
   }
 

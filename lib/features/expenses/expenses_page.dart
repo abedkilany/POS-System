@@ -45,8 +45,20 @@ class _ExpensesPageState extends State<ExpensesPage> {
   final RevisionKeyCache<double> _filteredTotalCache =
       RevisionKeyCache<double>();
 
+  void _handleStoreChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    widget.store.addListener(_handleStoreChanged);
+  }
+
   @override
   void dispose() {
+    widget.store.removeListener(_handleStoreChanged);
     _expenseRevealTimer?.cancel();
     super.dispose();
   }
@@ -55,6 +67,8 @@ class _ExpensesPageState extends State<ExpensesPage> {
   void didUpdateWidget(covariant ExpensesPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.store != widget.store) {
+      oldWidget.store.removeListener(_handleStoreChanged);
+      widget.store.addListener(_handleStoreChanged);
       _expenseQueryFuture = null;
       _expenseQueryFutureKey = '';
       _filteredExpensesCache.invalidate();

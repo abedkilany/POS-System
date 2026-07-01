@@ -283,7 +283,8 @@ class VentioDriftDatabase extends GeneratedDatabase {
       for (final row in rows) {
         final payload = _decodePayloadJson(row.read<String>('payload_json'));
         if (payload == null) continue;
-        final updates = buildUpdates(payload, Map<String, Object?>.from(row.data));
+        final updates =
+            buildUpdates(payload, Map<String, Object?>.from(row.data));
         if (updates.isEmpty) continue;
         await _updateRowColumns(tableName, row.read<String>('id'), updates);
       }
@@ -542,14 +543,15 @@ class VentioDriftDatabase extends GeneratedDatabase {
     await _ensureColumn(
         'products', 'cost_currency', "TEXT NOT NULL DEFAULT 'USD'");
     await _ensureColumn('products', 'usd_cost', 'REAL NOT NULL DEFAULT 0');
-    await _ensureColumn('products', 'cost_exchange_rate_at_entry',
-        'REAL NOT NULL DEFAULT 0');
-    await _ensureColumn('products', 'original_price', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'products', 'cost_exchange_rate_at_entry', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'products', 'original_price', 'REAL NOT NULL DEFAULT 0');
     await _ensureColumn(
         'products', 'original_currency', "TEXT NOT NULL DEFAULT 'USD'");
     await _ensureColumn('products', 'usd_price', 'REAL NOT NULL DEFAULT 0');
-    await _ensureColumn('products', 'exchange_rate_at_entry',
-        'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'products', 'exchange_rate_at_entry', 'REAL NOT NULL DEFAULT 0');
     await _ensureColumn('products', 'stock', 'REAL NOT NULL DEFAULT 0');
     await _ensureColumn(
         'products', 'category', "TEXT NOT NULL DEFAULT 'General'");
@@ -564,9 +566,12 @@ class VentioDriftDatabase extends GeneratedDatabase {
         'products', 'low_stock_threshold', 'INTEGER NOT NULL DEFAULT 5');
     await _ensureColumn(
         'products', 'track_stock', 'INTEGER NOT NULL DEFAULT 1');
-    await _ensureColumn(
-        'products', 'is_active', 'INTEGER NOT NULL DEFAULT 1');
+    await _ensureColumn('products', 'is_active', 'INTEGER NOT NULL DEFAULT 1');
     await _ensureColumn('products', 'image_path', "TEXT NOT NULL DEFAULT ''");
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode);');
   }
 
   Future<void> _ensureProductUnitTables() async {
@@ -622,8 +627,8 @@ class VentioDriftDatabase extends GeneratedDatabase {
         'sales', 'original_discount', 'REAL NOT NULL DEFAULT 0');
     await _ensureColumn(
         'sales', 'discount_currency', "TEXT NOT NULL DEFAULT 'USD'");
-    await _ensureColumn('sales', 'discount_exchange_rate_at_entry',
-        'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'sales', 'discount_exchange_rate_at_entry', 'REAL NOT NULL DEFAULT 0');
     await _ensureColumn(
         'sales', 'payment_method', "TEXT NOT NULL DEFAULT 'Cash'");
     await _ensureColumn(
@@ -634,22 +639,28 @@ class VentioDriftDatabase extends GeneratedDatabase {
         'sales', 'payment_currency', "TEXT NOT NULL DEFAULT 'USD'");
     await _ensureColumn(
         'sales', 'exchange_rate_at_payment', 'REAL NOT NULL DEFAULT 0');
-    await _ensureColumn('sales', 'base_currency', "TEXT NOT NULL DEFAULT 'USD'");
+    await _ensureColumn(
+        'sales', 'base_currency', "TEXT NOT NULL DEFAULT 'USD'");
     await _ensureColumn(
         'sales', 'exchange_rate_at_invoice', 'REAL NOT NULL DEFAULT 1');
-    await _ensureColumn('sales', 'transaction_amount', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'sales', 'transaction_amount', 'REAL NOT NULL DEFAULT 0');
     await _ensureColumn('sales', 'base_amount', 'REAL NOT NULL DEFAULT 0');
     await _ensureColumn('sales', 'paid_base_amount', 'REAL NOT NULL DEFAULT 0');
-    await _ensureColumn('sales', 'exchange_difference_amount',
-        'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'sales', 'exchange_difference_amount', 'REAL NOT NULL DEFAULT 0');
     await _ensureColumn('sales', 'paid_amount', 'REAL NOT NULL DEFAULT 0');
-    await _ensureColumn('sales', 'cash_received_amount',
-        'REAL NOT NULL DEFAULT 0');
-    await _ensureColumn('sales', 'paid_amount_in_payment_currency',
-        'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'sales', 'cash_received_amount', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'sales', 'paid_amount_in_payment_currency', 'REAL NOT NULL DEFAULT 0');
     await _ensureColumn('sales', 'cash_received_amount_in_payment_currency',
         'REAL NOT NULL DEFAULT 0');
     await _ensureColumn('sales', 'note', "TEXT NOT NULL DEFAULT ''");
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sales_date ON sales(document_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sales_customer ON sales(customer_id, document_date);');
   }
 
   Future<void> _ensureSaleItemTables() async {
@@ -698,16 +709,16 @@ class VentioDriftDatabase extends GeneratedDatabase {
         'sale_quotations', 'customer_id', "TEXT NOT NULL DEFAULT ''");
     await _ensureColumn(
         'sale_quotations', 'customer_name', "TEXT NOT NULL DEFAULT ''");
-    await _ensureColumn('sale_quotations', 'document_date',
-        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'sale_quotations', 'document_date', "TEXT NOT NULL DEFAULT ''");
     await _ensureColumn(
         'sale_quotations', 'valid_until', "TEXT NOT NULL DEFAULT ''");
     await _ensureColumn(
         'sale_quotations', 'status', "TEXT NOT NULL DEFAULT 'Draft'");
     await _ensureColumn(
         'sale_quotations', 'discount', 'REAL NOT NULL DEFAULT 0');
-    await _ensureColumn('sale_quotations', 'invoice_currency',
-        "TEXT NOT NULL DEFAULT 'USD'");
+    await _ensureColumn(
+        'sale_quotations', 'invoice_currency', "TEXT NOT NULL DEFAULT 'USD'");
     await _ensureColumn('sale_quotations', 'note', "TEXT NOT NULL DEFAULT ''");
     await _ensureColumn(
         'sale_quotations', 'converted_sale_id', "TEXT NOT NULL DEFAULT ''");
@@ -740,7 +751,8 @@ class VentioDriftDatabase extends GeneratedDatabase {
   Future<void> _ensureDeliveryNoteColumns() async {
     await _ensureColumn(
         'delivery_notes', 'delivery_no', "TEXT NOT NULL DEFAULT ''");
-    await _ensureColumn('delivery_notes', 'sale_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'delivery_notes', 'sale_id', "TEXT NOT NULL DEFAULT ''");
     await _ensureColumn(
         'delivery_notes', 'invoice_no', "TEXT NOT NULL DEFAULT ''");
     await _ensureColumn(
@@ -781,10 +793,8 @@ class VentioDriftDatabase extends GeneratedDatabase {
   }
 
   Future<void> _ensurePurchaseColumns() async {
-    await _ensureColumn(
-        'purchases', 'purchase_no', "TEXT NOT NULL DEFAULT ''");
-    await _ensureColumn(
-        'purchases', 'supplier_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('purchases', 'purchase_no', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('purchases', 'supplier_id', "TEXT NOT NULL DEFAULT ''");
     await _ensureColumn(
         'purchases', 'supplier_name', "TEXT NOT NULL DEFAULT ''");
     await _ensureColumn(
@@ -798,12 +808,14 @@ class VentioDriftDatabase extends GeneratedDatabase {
     await _ensureColumn('purchases', 'paid_amount', 'REAL NOT NULL DEFAULT 0');
     await _ensureColumn(
         'purchases', 'cancel_reason', "TEXT NOT NULL DEFAULT ''");
-    await _ensureColumn('purchases', 'cancelled_by_device_id',
-        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'purchases', 'cancelled_by_device_id', "TEXT NOT NULL DEFAULT ''");
     await _ensureColumn(
         'purchases', 'reversal_applied', 'INTEGER NOT NULL DEFAULT 0');
     await _ensureColumn(
         'purchases', 'cancelled_at', "TEXT NOT NULL DEFAULT ''");
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchases_date ON purchases(document_date);');
   }
 
   Future<void> _ensurePurchaseItemTable() async {
@@ -830,16 +842,22 @@ class VentioDriftDatabase extends GeneratedDatabase {
   }
 
   Future<void> _ensureInventoryCountColumns() async {
-    await _ensureColumn('inventory_counts', 'count_no', "TEXT NOT NULL DEFAULT ''");
-    await _ensureColumn('inventory_counts', 'created_by', "TEXT NOT NULL DEFAULT ''");
-    await _ensureColumn('inventory_counts', 'warehouse_id',
-        "TEXT NOT NULL DEFAULT 'main'");
+    await _ensureColumn(
+        'inventory_counts', 'count_no', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'inventory_counts', 'created_by', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'inventory_counts', 'warehouse_id', "TEXT NOT NULL DEFAULT 'main'");
     await _ensureColumn('inventory_counts', 'warehouse_name',
         "TEXT NOT NULL DEFAULT 'Main warehouse'");
-    await _ensureColumn('inventory_counts', 'status', "TEXT NOT NULL DEFAULT 'open'");
-    await _ensureColumn('inventory_counts', 'notes', "TEXT NOT NULL DEFAULT ''");
-    await _ensureColumn('inventory_counts', 'approved_at', "TEXT NOT NULL DEFAULT ''");
-    await _ensureColumn('inventory_counts', 'approved_by', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'inventory_counts', 'status', "TEXT NOT NULL DEFAULT 'open'");
+    await _ensureColumn(
+        'inventory_counts', 'notes', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'inventory_counts', 'approved_at', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'inventory_counts', 'approved_by', "TEXT NOT NULL DEFAULT ''");
   }
 
   Future<void> _ensureInventoryCountLineTable() async {
@@ -864,16 +882,18 @@ class VentioDriftDatabase extends GeneratedDatabase {
   }
 
   Future<void> _ensureBillOfMaterialsColumns() async {
-    await _ensureColumn('bill_of_materials', 'name', "TEXT NOT NULL DEFAULT ''");
-    await _ensureColumn('bill_of_materials', 'output_product_id',
-        "TEXT NOT NULL DEFAULT ''");
-    await _ensureColumn('bill_of_materials', 'output_product_name',
-        "TEXT NOT NULL DEFAULT ''");
-    await _ensureColumn('bill_of_materials', 'output_quantity',
-        'REAL NOT NULL DEFAULT 1');
-    await _ensureColumn('bill_of_materials', 'notes', "TEXT NOT NULL DEFAULT ''");
-    await _ensureColumn('bill_of_materials', 'is_active',
-        'INTEGER NOT NULL DEFAULT 1');
+    await _ensureColumn(
+        'bill_of_materials', 'name', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'bill_of_materials', 'output_product_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'bill_of_materials', 'output_product_name', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'bill_of_materials', 'output_quantity', 'REAL NOT NULL DEFAULT 1');
+    await _ensureColumn(
+        'bill_of_materials', 'notes', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'bill_of_materials', 'is_active', 'INTEGER NOT NULL DEFAULT 1');
   }
 
   Future<void> _ensureBillOfMaterialsLineTable() async {
@@ -894,22 +914,24 @@ class VentioDriftDatabase extends GeneratedDatabase {
   }
 
   Future<void> _ensureManufacturingOrderColumns() async {
-    await _ensureColumn('manufacturing_orders', 'order_no',
-        "TEXT NOT NULL DEFAULT ''");
-    await _ensureColumn('manufacturing_orders', 'bom_id', "TEXT NOT NULL DEFAULT ''");
-    await _ensureColumn('manufacturing_orders', 'bom_name',
-        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'manufacturing_orders', 'order_no', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'manufacturing_orders', 'bom_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'manufacturing_orders', 'bom_name', "TEXT NOT NULL DEFAULT ''");
     await _ensureColumn('manufacturing_orders', 'output_product_id',
         "TEXT NOT NULL DEFAULT ''");
     await _ensureColumn('manufacturing_orders', 'output_product_name',
         "TEXT NOT NULL DEFAULT ''");
-    await _ensureColumn('manufacturing_orders', 'quantity',
-        'REAL NOT NULL DEFAULT 0');
-    await _ensureColumn('manufacturing_orders', 'status',
-        "TEXT NOT NULL DEFAULT 'completed'");
-    await _ensureColumn('manufacturing_orders', 'notes', "TEXT NOT NULL DEFAULT ''");
-    await _ensureColumn('manufacturing_orders', 'document_date',
-        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'manufacturing_orders', 'quantity', 'REAL NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'manufacturing_orders', 'status', "TEXT NOT NULL DEFAULT 'completed'");
+    await _ensureColumn(
+        'manufacturing_orders', 'notes', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'manufacturing_orders', 'document_date', "TEXT NOT NULL DEFAULT ''");
   }
 
   Future<void> _ensureStockMovementColumns() async {
@@ -951,6 +973,8 @@ class VentioDriftDatabase extends GeneratedDatabase {
 
     await customStatement(
         'CREATE INDEX IF NOT EXISTS idx_stock_movements_product_date ON stock_movements(product_id, movement_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_inventory_product ON stock_movements(product_id);');
     await customStatement(
         'CREATE INDEX IF NOT EXISTS idx_stock_movements_type_date ON stock_movements(movement_type, movement_date);');
     await customStatement(
@@ -1026,6 +1050,8 @@ class VentioDriftDatabase extends GeneratedDatabase {
     await _ensureColumn(
         'expenses', 'cancelled_by_device_id', "TEXT NOT NULL DEFAULT ''");
     await _ensureColumn('expenses', 'cancelled_at', "TEXT NOT NULL DEFAULT ''");
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(expense_date);');
   }
 
   Future<void> _ensureWarehouseColumns() async {
@@ -1177,13 +1203,14 @@ class VentioDriftDatabase extends GeneratedDatabase {
     await _ensureColumn(
         'app_users', 'password_hash', "TEXT NOT NULL DEFAULT ''");
     await _ensureColumn('app_users', 'role_id', "TEXT NOT NULL DEFAULT ''");
-    await _ensureColumn('app_users', 'extra_permissions_json',
-        "TEXT NOT NULL DEFAULT '[]'");
-    await _ensureColumn('app_users', 'denied_permissions_json',
-        "TEXT NOT NULL DEFAULT '[]'");
+    await _ensureColumn(
+        'app_users', 'extra_permissions_json', "TEXT NOT NULL DEFAULT '[]'");
+    await _ensureColumn(
+        'app_users', 'denied_permissions_json', "TEXT NOT NULL DEFAULT '[]'");
     await _ensureColumn('app_users', 'is_active', 'INTEGER NOT NULL DEFAULT 1');
     await _ensureColumn('app_users', 'is_system', 'INTEGER NOT NULL DEFAULT 0');
-    await _ensureColumn('app_users', 'last_login_at', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'app_users', 'last_login_at', "TEXT NOT NULL DEFAULT ''");
     await _migratePayloadJsonRows('app_users', (payload, row) {
       return <String, Object?>{
         'full_name': _stringOrNull(payload['fullName']) ??
@@ -1230,10 +1257,10 @@ class VentioDriftDatabase extends GeneratedDatabase {
             _stringValue(row['product_id']),
         'product_name': _stringOrNull(payload['productName']) ??
             _stringValue(row['product_name']),
-        'movement_type':
-            _stringOrNull(payload['type']) ?? _stringValue(row['movement_type']),
-        'quantity': _doubleOrNull(payload['quantity']) ??
-            _doubleValue(row['quantity']),
+        'movement_type': _stringOrNull(payload['type']) ??
+            _stringValue(row['movement_type']),
+        'quantity':
+            _doubleOrNull(payload['quantity']) ?? _doubleValue(row['quantity']),
         'movement_date': _stringOrNull(payload['date']) ??
             _stringOrNull(payload['createdAt']) ??
             _stringValue(row['movement_date'],
@@ -1281,8 +1308,8 @@ class VentioDriftDatabase extends GeneratedDatabase {
       return <String, Object?>{
         'account_type': _stringOrNull(payload['accountType']) ??
             _stringValue(row['account_type']),
-        'account_id':
-            _stringOrNull(payload['accountId']) ?? _stringValue(row['account_id']),
+        'account_id': _stringOrNull(payload['accountId']) ??
+            _stringValue(row['account_id']),
         'account_name': _stringOrNull(payload['accountName']) ??
             _stringValue(row['account_name']),
         'transaction_date': _stringOrNull(payload['date']) ??
@@ -1295,8 +1322,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
             _stringValue(row['reference_id']),
         'reference_no': _stringOrNull(payload['referenceNo']) ??
             _stringValue(row['reference_no']),
-        'debit':
-            _doubleOrNull(payload['debit']) ?? _doubleValue(row['debit']),
+        'debit': _doubleOrNull(payload['debit']) ?? _doubleValue(row['debit']),
         'credit':
             _doubleOrNull(payload['credit']) ?? _doubleValue(row['credit']),
         'currency': _stringOrNull(payload['currency']) ??
@@ -1356,8 +1382,9 @@ class VentioDriftDatabase extends GeneratedDatabase {
             _doubleValue(row['original_amount']),
         'original_currency': _stringOrNull(payload['originalCurrency']) ??
             _stringValue(row['original_currency'], fallback: 'USD'),
-        'exchange_rate_at_entry': _doubleOrNull(payload['exchangeRateAtEntry']) ??
-            _doubleValue(row['exchange_rate_at_entry']),
+        'exchange_rate_at_entry':
+            _doubleOrNull(payload['exchangeRateAtEntry']) ??
+                _doubleValue(row['exchange_rate_at_entry']),
         'expense_date': _stringOrNull(payload['date']) ??
             _stringValue(row['expense_date'],
                 fallback: _stringValue(row['created_at'])),
@@ -1366,8 +1393,9 @@ class VentioDriftDatabase extends GeneratedDatabase {
             _stringValue(row['expense_status']),
         'cancel_reason': _stringOrNull(payload['cancelReason']) ??
             _stringValue(row['cancel_reason']),
-        'cancelled_by_device_id': _stringOrNull(payload['cancelledByDeviceId']) ??
-            _stringValue(row['cancelled_by_device_id']),
+        'cancelled_by_device_id':
+            _stringOrNull(payload['cancelledByDeviceId']) ??
+                _stringValue(row['cancelled_by_device_id']),
         'cancelled_at': _stringOrNull(payload['cancelledAt']) ??
             _stringValue(row['cancelled_at']),
       };
@@ -1395,10 +1423,10 @@ class VentioDriftDatabase extends GeneratedDatabase {
     }) {
       await _migratePayloadJsonRows(table, (payload, row) {
         return <String, Object?>{
-          'name_en': _stringOrNull(payload['nameEn']) ??
-              _stringValue(row['name_en']),
-          'name_ar': _stringOrNull(payload['nameAr']) ??
-              _stringValue(row['name_ar']),
+          'name_en':
+              _stringOrNull(payload['nameEn']) ?? _stringValue(row['name_en']),
+          'name_ar':
+              _stringOrNull(payload['nameAr']) ?? _stringValue(row['name_ar']),
           'code': _stringOrNull(payload['code']) ?? _stringValue(row['code']),
         };
       });
@@ -1457,8 +1485,8 @@ class VentioDriftDatabase extends GeneratedDatabase {
             _stringValue(row['product_id']),
         'average_cost': _doubleOrNull(payload['averageCost']) ??
             _doubleValue(row['average_cost']),
-        'last_cost':
-            _doubleOrNull(payload['lastCost']) ?? _doubleValue(row['last_cost']),
+        'last_cost': _doubleOrNull(payload['lastCost']) ??
+            _doubleValue(row['last_cost']),
         'currency_code': _stringOrNull(payload['currencyCode']) ??
             _stringValue(row['currency_code'], fallback: 'USD'),
       };
@@ -1487,8 +1515,8 @@ class VentioDriftDatabase extends GeneratedDatabase {
             _doubleValue(row['quantity_received']),
         'quantity_remaining': _doubleOrNull(payload['quantityRemaining']) ??
             _doubleValue(row['quantity_remaining']),
-        'unit_cost':
-            _doubleOrNull(payload['unitCost']) ?? _doubleValue(row['unit_cost']),
+        'unit_cost': _doubleOrNull(payload['unitCost']) ??
+            _doubleValue(row['unit_cost']),
         'currency_code': _stringOrNull(payload['currencyCode']) ??
             _stringValue(row['currency_code'], fallback: 'USD'),
         'exchange_rate': _doubleOrNull(payload['exchangeRate']) ??
@@ -1499,8 +1527,8 @@ class VentioDriftDatabase extends GeneratedDatabase {
             _stringValue(row['purchase_item_id']),
         'source_type': _stringOrNull(payload['sourceType']) ??
             _stringValue(row['source_type'], fallback: 'purchase'),
-        'source_id':
-            _stringOrNull(payload['sourceId']) ?? _stringValue(row['source_id']),
+        'source_id': _stringOrNull(payload['sourceId']) ??
+            _stringValue(row['source_id']),
         'is_closed': _boolTrueOrNull(payload['isClosed']) == true
             ? 1
             : _intValue(row['is_closed'], fallback: 0),
@@ -1630,6 +1658,8 @@ class VentioDriftDatabase extends GeneratedDatabase {
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_journal_entries_entry_no_active ON journal_entries(entry_no) WHERE deleted_at = '';");
     await customStatement(
         'CREATE INDEX IF NOT EXISTS idx_journal_entries_date ON journal_entries(entry_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_accounting_entries_date ON journal_entries(entry_date);');
     await customStatement(
         'CREATE INDEX IF NOT EXISTS idx_journal_entries_reference ON journal_entries(reference_type, reference_id);');
     await customStatement(

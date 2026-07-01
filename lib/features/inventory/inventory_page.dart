@@ -116,8 +116,20 @@ class _InventoryPageState extends State<InventoryPage>
   final RevisionValueCache<_InventoryOverviewMetrics> _overviewCache =
       RevisionValueCache<_InventoryOverviewMetrics>();
 
+  void _handleStoreChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    widget.store.addListener(_handleStoreChanged);
+  }
+
   @override
   void dispose() {
+    widget.store.removeListener(_handleStoreChanged);
     _searchController.dispose();
     _tabController.dispose();
     super.dispose();
@@ -127,6 +139,8 @@ class _InventoryPageState extends State<InventoryPage>
   void didUpdateWidget(covariant InventoryPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.store != widget.store) {
+      oldWidget.store.removeListener(_handleStoreChanged);
+      widget.store.addListener(_handleStoreChanged);
       _inventoryProductsFuture = null;
       _inventoryProductsFutureKey = '';
       _visibleInventoryProductCount = 100;

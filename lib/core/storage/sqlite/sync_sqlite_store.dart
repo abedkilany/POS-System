@@ -190,8 +190,9 @@ class SyncSqliteStore {
         const Variable<String>('sqlite_phase2_sync_migrated')
       ],
     ).get();
-    if (metaRows.isNotEmpty && metaRows.first.read<String>('value') == 'true')
+    if (metaRows.isNotEmpty && metaRows.first.read<String>('value') == 'true') {
       return;
+    }
 
     if (syncChangesJson != null && syncChangesJson.trim().isNotEmpty) {
       await saveKeyJson(db, syncChangesKey, syncChangesJson);

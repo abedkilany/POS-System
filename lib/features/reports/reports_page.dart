@@ -56,41 +56,46 @@ class ReportsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final tr = AppLocalizations.of(context);
-    if (!store.canViewReports) {
-      return const _AccessDeniedScaffold(
-        title: 'Reports',
-        message: 'You do not have access to reports.',
-      );
-    }
-    if (!store.isCoreDataLoaded || !store.isLedgerDataLoaded) {
-      return const Center(child: CircularProgressIndicator.adaptive());
-    }
-    final reference = DateTime.now().toLocal();
-    final cachedSummary = _service.peekSummary(store, now: reference);
-    if (cachedSummary != null) {
-      return _buildContent(
-          context, tr, _ReportsPageData.fromSummary(cachedSummary));
-    }
+    return AnimatedBuilder(
+      animation: store,
+      builder: (context, _) {
+        final tr = AppLocalizations.of(context);
+        if (!store.canViewReports) {
+          return const _AccessDeniedScaffold(
+            title: 'Reports',
+            message: 'You do not have access to reports.',
+          );
+        }
+        if (!store.isCoreDataLoaded || !store.isLedgerDataLoaded) {
+          return const Center(child: CircularProgressIndicator.adaptive());
+        }
+        final reference = DateTime.now().toLocal();
+        final cachedSummary = _service.peekSummary(store, now: reference);
+        if (cachedSummary != null) {
+          return _buildContent(
+              context, tr, _ReportsPageData.fromSummary(cachedSummary));
+        }
 
-    return FutureBuilder<Map<String, Object?>>(
-      future: _service.summaryFor(store, now: reference),
-      builder: (context, snapshot) {
-        final summary = snapshot.data;
-        if (summary == null) {
-          if (snapshot.hasError) {
+        return FutureBuilder<Map<String, Object?>>(
+          future: _service.summaryFor(store, now: reference),
+          builder: (context, snapshot) {
+            final summary = snapshot.data;
+            if (summary == null) {
+              if (snapshot.hasError) {
+                return _buildContent(
+                  context,
+                  tr,
+                  _ReportsPageData.fromStore(store, reference),
+                );
+              }
+              return const Center(child: CircularProgressIndicator.adaptive());
+            }
             return _buildContent(
               context,
               tr,
-              _ReportsPageData.fromStore(store, reference),
+              _ReportsPageData.fromSummary(summary),
             );
-          }
-          return const Center(child: CircularProgressIndicator.adaptive());
-        }
-        return _buildContent(
-          context,
-          tr,
-          _ReportsPageData.fromSummary(summary),
+          },
         );
       },
     );

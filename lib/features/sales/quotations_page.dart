@@ -18,6 +18,36 @@ class QuotationsPage extends StatefulWidget {
 }
 
 class _QuotationsPageState extends State<QuotationsPage> {
+  late Future<void> _dataFuture;
+
+  void _handleStoreChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    widget.store.addListener(_handleStoreChanged);
+    _dataFuture = widget.store.ensureQuotationsPageDataLoaded();
+  }
+
+  @override
+  void didUpdateWidget(covariant QuotationsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != widget.store) {
+      oldWidget.store.removeListener(_handleStoreChanged);
+      widget.store.addListener(_handleStoreChanged);
+      _dataFuture = widget.store.ensureQuotationsPageDataLoaded();
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.store.removeListener(_handleStoreChanged);
+    super.dispose();
+  }
+
   Future<void> _createQuotation() async {
     if (!widget.store.canManageQuotations) return;
     final tr = AppLocalizations.of(context);
@@ -95,8 +125,14 @@ class _QuotationsPageState extends State<QuotationsPage> {
         message: 'You do not have access to quotation records.',
       );
     }
-    final quotations = widget.store.saleQuotations;
-    return Scaffold(
+    return FutureBuilder<void>(
+      future: _dataFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Center(child: CircularProgressIndicator.adaptive());
+        }
+        final quotations = widget.store.saleQuotations;
+        return Scaffold(
       appBar: AppBar(
         title: Text(tr.text('quotations')),
         actions: [
@@ -144,6 +180,8 @@ class _QuotationsPageState extends State<QuotationsPage> {
                 );
               },
             ),
+    );
+      },
     );
   }
 }

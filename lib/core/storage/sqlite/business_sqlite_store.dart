@@ -16,6 +16,7 @@ import '../../../models/product_pricing.dart';
 import '../../../models/purchase.dart';
 import '../../../models/sale.dart';
 import '../../../models/sale_quotation.dart';
+import '../../../models/sale_summary.dart';
 import '../../../models/user_role.dart';
 import '../../../models/supplier.dart';
 import '../../../models/supplier_product_price.dart';
@@ -173,6 +174,9 @@ class BusinessSqliteStore {
   static int _safeOffset(int offset) => offset < 0 ? 0 : offset;
 
   static String _likePattern(String query) => '%${query.trim().toLowerCase()}%';
+
+  static String _inPlaceholders(int count) =>
+      List<String>.filled(count, '?').join(', ');
 
   static Future<BusinessQueryPage<Customer>> queryCustomers(
     VentioDriftDatabase db, {
@@ -1986,6 +1990,245 @@ class BusinessSqliteStore {
     }).toList(growable: false);
   }
 
+  static Future<List<Sale>> readSalesByIds(
+    VentioDriftDatabase db,
+    List<String> ids,
+  ) {
+    if (ids.isEmpty) return Future.value(const <Sale>[]);
+    return _readSalesByIds(db, ids);
+  }
+
+  static Future<List<Sale>> _readSalesByIds(
+    VentioDriftDatabase db,
+    List<String> ids,
+  ) async {
+    final placeholders = _inPlaceholders(ids.length);
+    final variables = ids.map((id) => Variable<String>(id)).toList();
+    final saleRows = await db.customSelect('''
+      SELECT id, invoice_no AS invoiceNo, customer_name AS customerName,
+             customer_id AS customerId, document_date AS date,
+             status, discount, original_discount AS originalDiscount,
+             discount_currency AS discountCurrency,
+             discount_exchange_rate_at_entry AS discountExchangeRateAtEntry,
+             payment_method AS paymentMethod,
+             payment_status AS paymentStatus,
+             invoice_currency AS invoiceCurrency,
+             payment_currency AS paymentCurrency,
+             exchange_rate_at_payment AS exchangeRateAtPayment,
+             base_currency AS baseCurrency,
+             exchange_rate_at_invoice AS exchangeRateAtInvoice,
+             transaction_amount AS transactionAmount,
+             base_amount AS baseAmount,
+             paid_base_amount AS paidBaseAmount,
+             exchange_difference_amount AS exchangeDifferenceAmount,
+             paid_amount AS paidAmount,
+             cash_received_amount AS cashReceivedAmount,
+             paid_amount_in_payment_currency
+               AS paidAmountInPaymentCurrency,
+             cash_received_amount_in_payment_currency
+               AS cashReceivedAmountInPaymentCurrency,
+             note, created_at AS createdAt, updated_at AS updatedAt,
+             deleted_at AS deletedAt, device_id AS deviceId,
+             sync_status AS syncStatus, store_id AS storeId,
+             branch_id AS branchId, version,
+             last_modified_by_device_id AS lastModifiedByDeviceId
+      FROM sales
+      WHERE id IN ($placeholders)
+      ORDER BY sort_index ASC, updated_at ASC, id ASC
+    ''', variables: variables).get();
+    final itemRows = await db.customSelect('''
+      SELECT id, sale_id AS saleId, line_no AS lineNo,
+             product_id AS productId, product_name AS productName,
+             unit_price AS unitPrice, quantity, unit_name AS unitName,
+             base_quantity AS baseQuantity,
+             conversion_to_base AS conversionToBase,
+             unit_cost AS unitCost,
+             costing_method_at_sale AS costingMethodAtSale,
+             cost_currency AS costCurrency,
+             cost_exchange_rate AS costExchangeRate
+      FROM sale_items
+      WHERE sale_id IN ($placeholders)
+      ORDER BY sale_id ASC, line_no ASC
+    ''', variables: variables).get();
+    final consumptionRows = await db.customSelect('''
+      SELECT id, sale_item_id AS saleItemId, line_no AS lineNo,
+             layer_id AS layerId, quantity, unit_cost AS unitCost,
+             currency_code AS currencyCode
+      FROM sale_item_cost_layer_consumptions
+      WHERE sale_item_id IN (
+        SELECT id FROM sale_items WHERE sale_id IN ($placeholders)
+      )
+      ORDER BY sale_item_id ASC, line_no ASC
+    ''', variables: variables).get();
+
+    final consumptionsByItem = <String, List<Map<String, dynamic>>>{};
+    for (final row in consumptionRows) {
+      final data = Map<String, dynamic>.from(row.data);
+      final saleItemId = data['saleItemId']?.toString() ?? '';
+      if (saleItemId.isEmpty) continue;
+      consumptionsByItem
+          .putIfAbsent(saleItemId, () => <Map<String, dynamic>>[])
+          .add(data);
+    }
+
+    final itemsBySale = <String, List<Map<String, dynamic>>>{};
+    for (final row in itemRows) {
+      final data = Map<String, dynamic>.from(row.data);
+      final saleId = data['saleId']?.toString() ?? '';
+      if (saleId.isEmpty) continue;
+      final itemId = data['id']?.toString() ?? '';
+      data['costLayerConsumptions'] =
+          consumptionsByItem[itemId] ?? const <Map<String, dynamic>>[];
+      itemsBySale.putIfAbsent(saleId, () => <Map<String, dynamic>>[]).add(data);
+    }
+
+    final salesById = <String, Sale>{};
+    for (final row in saleRows) {
+      final data = Map<String, dynamic>.from(row.data);
+      data['items'] = itemsBySale[data['id']?.toString() ?? ''] ??
+          const <Map<String, dynamic>>[];
+      final sale = Sale.fromJson(data);
+      salesById[sale.id] = sale;
+    }
+    return [
+      for (final id in ids)
+        if (salesById[id] != null) salesById[id]!,
+    ];
+  }
+
+  static _SqlFilter _saleFilter({
+    String query = '',
+    String status = 'all',
+    String customerId = '',
+    DateTime? from,
+    DateTime? to,
+  }) {
+    final conditions = <String>["deleted_at = ''"];
+    final variables = <Variable<Object>>[];
+    final normalizedStatus = status.trim().toLowerCase();
+    if (normalizedStatus.isNotEmpty && normalizedStatus != 'all') {
+      conditions.add('lower(status) = ?');
+      variables.add(Variable<String>(normalizedStatus));
+    }
+    final normalizedCustomerId = customerId.trim();
+    if (normalizedCustomerId.isNotEmpty) {
+      conditions.add('customer_id = ?');
+      variables.add(Variable<String>(normalizedCustomerId));
+    }
+    if (from != null) {
+      conditions.add('document_date >= ?');
+      variables.add(Variable<String>(_iso(from.toLocal())));
+    }
+    if (to != null) {
+      conditions.add('document_date < ?');
+      variables.add(
+        Variable<String>(_iso(to.toLocal().add(const Duration(days: 1)))),
+      );
+    }
+    final normalized = query.trim().toLowerCase();
+    if (normalized.isNotEmpty) {
+      conditions.add(
+        '''(
+          lower(invoice_no) LIKE ? OR lower(customer_name) LIKE ? OR
+          lower(payment_method) LIKE ? OR lower(payment_status) LIKE ? OR
+          lower(status) LIKE ? OR lower(note) LIKE ? OR
+          EXISTS (
+            SELECT 1 FROM sale_items
+            WHERE sale_items.sale_id = sales.id
+              AND (lower(product_name) LIKE ? OR lower(unit_name) LIKE ?)
+          )
+        )''',
+      );
+      final pattern = _likePattern(normalized);
+      for (var i = 0; i < 8; i += 1) {
+        variables.add(Variable<String>(pattern));
+      }
+    }
+    return _SqlFilter(
+      whereSql: conditions.join(' AND '),
+      variables: variables,
+    );
+  }
+
+  static String _saleOrderBy(String sortMode) {
+    switch (sortMode.trim().toLowerCase()) {
+      case 'oldest':
+        return 'document_date ASC, updated_at ASC, id ASC';
+      case 'highest':
+        return 'CASE WHEN lower(status) IN (\'cancelled\', \'returned\') THEN 0 ELSE transaction_amount END DESC, document_date DESC, updated_at DESC, id DESC';
+      case 'lowest':
+        return 'CASE WHEN lower(status) IN (\'cancelled\', \'returned\') THEN 0 ELSE transaction_amount END ASC, document_date DESC, updated_at DESC, id DESC';
+      case 'customer':
+        return 'lower(customer_name) ASC, document_date DESC, updated_at DESC, id DESC';
+      case 'newest':
+      default:
+        return 'document_date DESC, updated_at DESC, id DESC';
+    }
+  }
+
+  static String _saleSummaryOrderBy(String sortMode) {
+    switch (sortMode.trim().toLowerCase()) {
+      case 'oldest':
+        return 'date ASC, id ASC';
+      case 'highest':
+        return 'total DESC, date DESC, id DESC';
+      case 'lowest':
+        return 'total ASC, date DESC, id DESC';
+      case 'customer':
+        return 'lower(customerName) ASC, date DESC, id DESC';
+      case 'newest':
+      default:
+        return 'date DESC, id DESC';
+    }
+  }
+
+  static Future<BusinessQueryPage<Sale>> querySales(
+    VentioDriftDatabase db, {
+    String query = '',
+    String status = 'all',
+    String customerId = '',
+    DateTime? from,
+    DateTime? to,
+    int limit = 50,
+    int offset = 0,
+    String sortMode = 'newest',
+  }) async {
+    final filter = _saleFilter(
+      query: query,
+      status: status,
+      customerId: customerId,
+      from: from,
+      to: to,
+    );
+    final total =
+        await _countWhere(db, 'sales', filter.whereSql, filter.variables);
+    final safeLimit = _safeLimit(limit);
+    final safeOffset = _safeOffset(offset);
+    final orderBy = _saleOrderBy(sortMode);
+    final rows = await db.customSelect('''
+      SELECT id
+      FROM sales
+      WHERE ${filter.whereSql}
+      ORDER BY $orderBy
+      LIMIT ? OFFSET ?
+    ''', variables: <Variable<Object>>[
+      ...filter.variables,
+      Variable<int>(safeLimit),
+      Variable<int>(safeOffset),
+    ]).get();
+    final ids = rows
+        .map((row) => row.read<String>('id'))
+        .where((value) => value.trim().isNotEmpty)
+        .toList(growable: false);
+    final items = await readSalesByIds(db, ids);
+    return BusinessQueryPage<Sale>(
+      items: items,
+      totalCount: total,
+      limit: safeLimit,
+      offset: safeOffset,
+    );
+  }
+
   static Future<List<SaleQuotation>> readSaleQuotations(
       VentioDriftDatabase db) async {
     final quotationRows = await db.customSelect('''
@@ -2145,6 +2388,326 @@ class BusinessSqliteStore {
           const <Map<String, dynamic>>[];
       return Purchase.fromJson(data);
     }).toList(growable: false);
+  }
+
+  static Future<List<Purchase>> readPurchasesByIds(
+    VentioDriftDatabase db,
+    List<String> ids,
+  ) {
+    if (ids.isEmpty) return Future.value(const <Purchase>[]);
+    return _readPurchasesByIds(db, ids);
+  }
+
+  static Future<List<Purchase>> _readPurchasesByIds(
+    VentioDriftDatabase db,
+    List<String> ids,
+  ) async {
+    final placeholders = _inPlaceholders(ids.length);
+    final variables = ids.map((id) => Variable<String>(id)).toList();
+    final purchaseRows = await db.customSelect('''
+      SELECT id, purchase_no AS purchaseNo,
+             supplier_id AS supplierId,
+             supplier_name AS supplierName,
+             document_date AS date,
+             status, note, payment_status AS paymentStatus,
+             payment_method AS paymentMethod,
+             paid_amount AS paidAmount,
+             cancel_reason AS cancelReason,
+             cancelled_by_device_id AS cancelledByDeviceId,
+             CASE WHEN reversal_applied = 1 THEN 1 ELSE 0 END AS reversalApplied,
+             cancelled_at AS cancelledAt,
+             created_at AS createdAt, updated_at AS updatedAt,
+             deleted_at AS deletedAt, device_id AS deviceId,
+             sync_status AS syncStatus, store_id AS storeId,
+             branch_id AS branchId, version,
+             last_modified_by_device_id AS lastModifiedByDeviceId
+      FROM purchases
+      WHERE id IN ($placeholders)
+      ORDER BY sort_index ASC, updated_at ASC, id ASC
+    ''', variables: variables).get();
+    final itemRows = await db.customSelect('''
+      SELECT id, purchase_id AS purchaseId, line_no AS lineNo,
+             product_id AS productId, product_name AS productName,
+             quantity, unit_cost AS unitCost,
+             purchase_unit_id AS purchaseUnitId,
+             purchase_unit_name AS purchaseUnitName,
+             conversion_to_base AS conversionToBase,
+             original_unit_cost AS originalUnitCost,
+             unit_cost_currency AS unitCostCurrency,
+             exchange_rate_at_entry AS exchangeRateAtEntry
+      FROM purchase_items
+      WHERE purchase_id IN ($placeholders)
+      ORDER BY purchase_id ASC, line_no ASC
+    ''', variables: variables).get();
+    final itemsByPurchase = <String, List<Map<String, dynamic>>>{};
+    for (final row in itemRows) {
+      final data = Map<String, dynamic>.from(row.data);
+      final purchaseId = data['purchaseId']?.toString() ?? '';
+      if (purchaseId.isEmpty) continue;
+      itemsByPurchase
+          .putIfAbsent(purchaseId, () => <Map<String, dynamic>>[])
+          .add(data);
+    }
+
+    final purchasesById = <String, Purchase>{};
+    for (final row in purchaseRows) {
+      final data = Map<String, dynamic>.from(row.data);
+      data['reversalApplied'] =
+          data['reversalApplied'] == 1 || data['reversalApplied'] == true;
+      data['items'] = itemsByPurchase[data['id']?.toString() ?? ''] ??
+          const <Map<String, dynamic>>[];
+      final purchase = Purchase.fromJson(data);
+      purchasesById[purchase.id] = purchase;
+    }
+    return [
+      for (final id in ids)
+        if (purchasesById[id] != null) purchasesById[id]!,
+    ];
+  }
+
+  static _SqlFilter _purchaseFilter({
+    String query = '',
+    String status = 'all',
+    String supplierId = '',
+    DateTime? from,
+    DateTime? to,
+  }) {
+    final conditions = <String>["deleted_at = ''"];
+    final variables = <Variable<Object>>[];
+    final normalizedStatus = status.trim().toLowerCase();
+    if (normalizedStatus.isNotEmpty && normalizedStatus != 'all') {
+      conditions.add('lower(status) = ?');
+      variables.add(Variable<String>(normalizedStatus));
+    }
+    final normalizedSupplierId = supplierId.trim();
+    if (normalizedSupplierId.isNotEmpty) {
+      conditions.add('supplier_id = ?');
+      variables.add(Variable<String>(normalizedSupplierId));
+    }
+    if (from != null) {
+      conditions.add('document_date >= ?');
+      variables.add(Variable<String>(_iso(from.toLocal())));
+    }
+    if (to != null) {
+      conditions.add('document_date < ?');
+      variables.add(
+        Variable<String>(_iso(to.toLocal().add(const Duration(days: 1)))),
+      );
+    }
+    final normalized = query.trim().toLowerCase();
+    if (normalized.isNotEmpty) {
+      conditions.add(
+        '''(
+          lower(purchase_no) LIKE ? OR lower(supplier_name) LIKE ? OR
+          lower(payment_method) LIKE ? OR lower(payment_status) LIKE ? OR
+          lower(status) LIKE ? OR lower(note) LIKE ? OR
+          lower(cancel_reason) LIKE ? OR
+          EXISTS (
+            SELECT 1 FROM purchase_items
+            WHERE purchase_items.purchase_id = purchases.id
+              AND (lower(product_name) LIKE ? OR lower(purchase_unit_name) LIKE ?)
+          )
+        )''',
+      );
+      final pattern = _likePattern(normalized);
+      for (var i = 0; i < 9; i += 1) {
+        variables.add(Variable<String>(pattern));
+      }
+    }
+    return _SqlFilter(
+      whereSql: conditions.join(' AND '),
+      variables: variables,
+    );
+  }
+
+  static String _purchaseOrderBy(String sortMode) {
+    switch (sortMode.trim().toLowerCase()) {
+      case 'oldest':
+        return 'document_date ASC, updated_at ASC, id ASC';
+      case 'highest':
+        return 'CASE WHEN lower(status) IN (\'cancelled\', \'returned\') THEN 0 ELSE (SELECT COALESCE(SUM(quantity * unit_cost), 0) FROM purchase_items WHERE purchase_items.purchase_id = purchases.id) END DESC, document_date DESC, updated_at DESC, id DESC';
+      case 'lowest':
+        return 'CASE WHEN lower(status) IN (\'cancelled\', \'returned\') THEN 0 ELSE (SELECT COALESCE(SUM(quantity * unit_cost), 0) FROM purchase_items WHERE purchase_items.purchase_id = purchases.id) END ASC, document_date DESC, updated_at DESC, id DESC';
+      case 'supplier':
+        return 'lower(supplier_name) ASC, document_date DESC, updated_at DESC, id DESC';
+      case 'newest':
+      default:
+        return 'document_date DESC, updated_at DESC, id DESC';
+    }
+  }
+
+  static Future<BusinessQueryPage<Purchase>> queryPurchases(
+    VentioDriftDatabase db, {
+    String query = '',
+    String status = 'all',
+    String supplierId = '',
+    DateTime? from,
+    DateTime? to,
+    int limit = 50,
+    int offset = 0,
+    String sortMode = 'newest',
+  }) async {
+    final filter = _purchaseFilter(
+      query: query,
+      status: status,
+      supplierId: supplierId,
+      from: from,
+      to: to,
+    );
+    final total =
+        await _countWhere(db, 'purchases', filter.whereSql, filter.variables);
+    final safeLimit = _safeLimit(limit);
+    final safeOffset = _safeOffset(offset);
+    final orderBy = _purchaseOrderBy(sortMode);
+    final rows = await db.customSelect('''
+      SELECT id
+      FROM purchases
+      WHERE ${filter.whereSql}
+      ORDER BY $orderBy
+      LIMIT ? OFFSET ?
+    ''', variables: <Variable<Object>>[
+      ...filter.variables,
+      Variable<int>(safeLimit),
+      Variable<int>(safeOffset),
+    ]).get();
+    final ids = rows
+        .map((row) => row.read<String>('id'))
+        .where((value) => value.trim().isNotEmpty)
+        .toList(growable: false);
+    final items = await readPurchasesByIds(db, ids);
+    return BusinessQueryPage<Purchase>(
+      items: items,
+      totalCount: total,
+      limit: safeLimit,
+      offset: safeOffset,
+    );
+  }
+
+  static Future<BusinessQueryPage<SaleSummary>> querySaleSummaries(
+    VentioDriftDatabase db, {
+    String query = '',
+    String status = 'all',
+    String customerId = '',
+    DateTime? from,
+    DateTime? to,
+    int limit = 50,
+    int offset = 0,
+    String sortMode = 'newest',
+  }) async {
+    final filter = _saleFilter(
+      query: query,
+      status: status,
+      customerId: customerId,
+      from: from,
+      to: to,
+    );
+    final total =
+        await _countWhere(db, 'sales', filter.whereSql, filter.variables);
+    final safeLimit = _safeLimit(limit);
+    final safeOffset = _safeOffset(offset);
+    final orderBy = _saleSummaryOrderBy(sortMode);
+    final rows = await db.customSelect('''
+      SELECT sales.id AS id,
+             invoice_no AS invoiceNo,
+             customer_name AS customerName,
+             customer_id AS customerId,
+             document_date AS date,
+             status,
+             payment_status AS paymentStatus,
+             CASE
+               WHEN lower(status) IN ('cancelled', 'returned') THEN 0
+               ELSE max(COALESCE(SUM(si.unit_price * si.quantity), 0) - discount, 0)
+             END AS total,
+             COUNT(DISTINCT CASE
+               WHEN trim(si.product_id) <> '' THEN si.product_id
+             END) AS productCount
+      FROM sales
+      LEFT JOIN sale_items si ON si.sale_id = sales.id
+      WHERE ${filter.whereSql}
+      GROUP BY sales.id
+      ORDER BY $orderBy
+      LIMIT ? OFFSET ?
+    ''', variables: <Variable<Object>>[
+      ...filter.variables,
+      Variable<int>(safeLimit),
+      Variable<int>(safeOffset),
+    ]).get();
+    return BusinessQueryPage<SaleSummary>(
+      items: rows
+          .map((row) =>
+              SaleSummary.fromJson(Map<String, dynamic>.from(row.data)))
+          .toList(growable: false),
+      totalCount: total,
+      limit: safeLimit,
+      offset: safeOffset,
+    );
+  }
+
+  static Future<Map<String, Object?>> buildPurchasesOverview(
+    VentioDriftDatabase db, {
+    required DateTime reference,
+  }) async {
+    final monthStart = DateTime(reference.year, reference.month);
+    final nextMonth = DateTime(reference.year, reference.month + 1);
+    final row = await db.customSelect('''
+      $_purchaseTotalsCte
+      SELECT
+        (SELECT COUNT(*) FROM purchases WHERE deleted_at = '') AS totalCount,
+        COALESCE(SUM(subtotal), 0) AS totalPurchasesAmount,
+        COALESCE(
+          SUM(
+            CASE
+              WHEN document_date >= ? AND document_date < ? THEN subtotal
+              ELSE 0
+            END
+          ),
+          0
+        ) AS monthlyTotal,
+        COALESCE(
+          SUM(
+            CASE
+              WHEN document_date >= ? AND document_date < ? THEN 1
+              ELSE 0
+            END
+          ),
+          0
+        ) AS monthlyCount,
+        COALESCE(
+          SUM(
+            CASE
+              WHEN lower(status) = 'draft' THEN subtotal
+              ELSE 0
+            END
+          ),
+          0
+        ) AS draftTotal,
+        (SELECT COUNT(*) FROM purchases WHERE deleted_at = '' AND lower(status) = 'draft')
+          AS draftCount,
+        (SELECT COUNT(*) FROM purchases WHERE deleted_at = '' AND lower(status) = 'received')
+          AS receivedCount,
+        (SELECT COUNT(*) FROM purchases WHERE deleted_at = '' AND lower(status) = 'returned')
+          AS returnedCount,
+        (SELECT COUNT(*) FROM purchases WHERE deleted_at = '' AND lower(status) = 'cancelled')
+          AS cancelledCount
+      FROM purchase_totals
+    ''', variables: <Variable<Object>>[
+      Variable<String>(_iso(monthStart)),
+      Variable<String>(_iso(nextMonth)),
+      Variable<String>(_iso(monthStart)),
+      Variable<String>(_iso(nextMonth)),
+    ]).getSingle();
+    return <String, Object?>{
+      'totalCount': _rowInt(row, 'totalCount', fallback: 0),
+      'totalPurchasesAmount': _rowDouble(row, 'totalPurchasesAmount'),
+      'monthlyTotal': _rowDouble(row, 'monthlyTotal'),
+      'monthlyCount': _rowInt(row, 'monthlyCount', fallback: 0),
+      'draftTotal': _rowDouble(row, 'draftTotal'),
+      'draftCount': _rowInt(row, 'draftCount', fallback: 0),
+      'receivedCount': _rowInt(row, 'receivedCount', fallback: 0),
+      'returnedCount': _rowInt(row, 'returnedCount', fallback: 0),
+      'cancelledCount': _rowInt(row, 'cancelledCount', fallback: 0),
+      'pendingPurchaseCount': _rowInt(row, 'draftCount', fallback: 0),
+    };
   }
 
   static Future<List<InventoryCountSession>> readInventoryCounts(

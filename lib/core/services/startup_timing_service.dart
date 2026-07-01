@@ -1,6 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
-import 'dart:collection';
 
 import 'package:flutter/foundation.dart';
 
@@ -74,7 +72,7 @@ class StartupTimingService {
   static final DateTime _sessionStartedAtUtc = DateTime.now().toUtc();
   static final List<StartupTimingRecord> _records = <StartupTimingRecord>[];
   static final Map<String, PageTimingRecord> _pageRecords =
-      LinkedHashMap<String, PageTimingRecord>();
+      <String, PageTimingRecord>{};
 
   static DateTime get sessionStartedAtUtc => _sessionStartedAtUtc;
 

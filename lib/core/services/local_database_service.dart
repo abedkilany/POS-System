@@ -26,7 +26,9 @@ import '../../models/supplier.dart';
 import '../../models/supplier_product_price.dart';
 import '../../models/warehouse.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import '../repositories/business_repositories.dart';
 import 'startup_timing_service.dart';
+import '../../models/sale_summary.dart';
 
 class LocalDatabaseService {
   LocalDatabaseService._();
@@ -383,9 +385,7 @@ class LocalDatabaseService {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
       return null;
     }
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    return BusinessSqliteStore.readStockMovements(db);
+    return InventoryRepository.getStockMovements();
   }
 
   static Future<List<AccountTransaction>?>
@@ -393,90 +393,158 @@ class LocalDatabaseService {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
       return null;
     }
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    return BusinessSqliteStore.readAccountTransactions(db);
+    return AccountingRepository.getAccountTransactions();
   }
 
   static Future<List<Customer>?> getCustomersFromSqlite() async {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
       return null;
     }
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    return BusinessSqliteStore.readCustomers(db);
+    return CustomerRepository.getAll();
   }
 
   static Future<List<Product>?> getProductsFromSqlite() async {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
       return null;
     }
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    return BusinessSqliteStore.readProducts(db);
+    return ProductRepository.getAll();
   }
 
   static Future<List<Sale>?> getSalesFromSqlite() async {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
       return null;
     }
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    return BusinessSqliteStore.readSales(db);
+    return SaleRepository.getAll();
+  }
+
+  static Future<BusinessQueryPage<Sale>?> querySalesFromSqlite({
+    String query = '',
+    String status = 'all',
+    String customerId = '',
+    DateTime? from,
+    DateTime? to,
+    int limit = 50,
+    int offset = 0,
+    String sortMode = 'newest',
+  }) async {
+    if (!canQueryBusinessSqlite) return null;
+    return SaleRepository.queryPage(
+      query: query,
+      status: status,
+      customerId: customerId,
+      from: from,
+      to: to,
+      limit: limit,
+      offset: offset,
+      sortMode: sortMode,
+    );
+  }
+
+  static Future<BusinessQueryPage<SaleSummary>?> querySaleSummariesFromSqlite({
+    String query = '',
+    String status = 'all',
+    String customerId = '',
+    DateTime? from,
+    DateTime? to,
+    int limit = 50,
+    int offset = 0,
+    String sortMode = 'newest',
+  }) async {
+    if (!canQueryBusinessSqlite) return null;
+    return SaleRepository.querySummaryPage(
+      query: query,
+      status: status,
+      customerId: customerId,
+      from: from,
+      to: to,
+      limit: limit,
+      offset: offset,
+      sortMode: sortMode,
+    );
+  }
+
+  static Future<Sale?> getSaleFromSqliteById(String id) async {
+    if (!canQueryBusinessSqlite) return null;
+    return SaleRepository.getById(id);
   }
 
   static Future<List<SaleQuotation>?> getSaleQuotationsFromSqlite() async {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
       return null;
     }
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    return BusinessSqliteStore.readSaleQuotations(db);
+    return SaleRepository.getQuotations();
   }
 
   static Future<List<DeliveryNote>?> getDeliveryNotesFromSqlite() async {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
       return null;
     }
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    return BusinessSqliteStore.readDeliveryNotes(db);
+    return SaleRepository.getDeliveryNotes();
   }
 
   static Future<List<Supplier>?> getSuppliersFromSqlite() async {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
       return null;
     }
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    return BusinessSqliteStore.readSuppliers(db);
+    return SupplierRepository.getAll();
   }
 
   static Future<List<Expense>?> getExpensesFromSqlite() async {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
       return null;
     }
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    return BusinessSqliteStore.readExpenses(db);
+    return ExpenseRepository.getAll();
   }
 
   static Future<List<Warehouse>?> getWarehousesFromSqlite() async {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
       return null;
     }
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    return BusinessSqliteStore.readWarehouses(db);
+    return InventoryRepository.getWarehouses();
   }
 
   static Future<List<Purchase>?> getPurchasesFromSqlite() async {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
       return null;
     }
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    return BusinessSqliteStore.readPurchases(db);
+    return PurchaseRepository.getAll();
+  }
+
+  static Future<BusinessQueryPage<Purchase>?> queryPurchasesFromSqlite({
+    String query = '',
+    String status = 'all',
+    String supplierId = '',
+    DateTime? from,
+    DateTime? to,
+    int limit = 50,
+    int offset = 0,
+    String sortMode = 'newest',
+  }) async {
+    if (!canQueryBusinessSqlite) return null;
+    return PurchaseRepository.queryPage(
+      query: query,
+      status: status,
+      supplierId: supplierId,
+      from: from,
+      to: to,
+      limit: limit,
+      offset: offset,
+      sortMode: sortMode,
+    );
+  }
+
+  static Future<Map<String, Object?>?> buildPurchasesOverviewFromSqlite({
+    DateTime? reference,
+  }) async {
+    if (!canQueryBusinessSqlite) return null;
+    return PurchaseRepository.buildOverview(
+      reference: reference ?? DateTime.now(),
+    );
+  }
+
+  static Future<Purchase?> getPurchaseFromSqliteById(String id) async {
+    if (!canQueryBusinessSqlite) return null;
+    return PurchaseRepository.getById(id);
   }
 
   static Future<List<InventoryCountSession>?>
@@ -484,18 +552,14 @@ class LocalDatabaseService {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
       return null;
     }
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    return BusinessSqliteStore.readInventoryCounts(db);
+    return InventoryRepository.getInventoryCounts();
   }
 
   static Future<List<BillOfMaterials>?> getBillOfMaterialsFromSqlite() async {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
       return null;
     }
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    return BusinessSqliteStore.readBillOfMaterials(db);
+    return InventoryRepository.getBillOfMaterials();
   }
 
   static Future<List<ManufacturingOrder>?>
@@ -503,9 +567,7 @@ class LocalDatabaseService {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
       return null;
     }
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    return BusinessSqliteStore.readManufacturingOrders(db);
+    return InventoryRepository.getManufacturingOrders();
   }
 
   static Future<List<CatalogItem>?> getCatalogItemsFromSqlite(
@@ -513,23 +575,7 @@ class LocalDatabaseService {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
       return null;
     }
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    if (!BusinessSqliteStore.isTypedEntityKey(key)) return null;
-    if (key != BusinessSqliteStore.categoriesKey &&
-        key != BusinessSqliteStore.brandsKey &&
-        key != BusinessSqliteStore.unitsKey) {
-      return null;
-    }
-    final table = BusinessSqliteStore.adminEntityKeys.contains(key)
-        ? (key == BusinessSqliteStore.categoriesKey
-            ? 'catalog_categories'
-            : key == BusinessSqliteStore.brandsKey
-                ? 'catalog_brands'
-                : 'catalog_units')
-        : null;
-    if (table == null) return null;
-    return BusinessSqliteStore.readCatalogItems(db, table);
+    return InventoryRepository.getCatalogItems(key);
   }
 
   static Future<List<SupplierProductPrice>?>
@@ -537,27 +583,21 @@ class LocalDatabaseService {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
       return null;
     }
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    return BusinessSqliteStore.readSupplierProductPrices(db);
+    return InventoryRepository.getSupplierProductPrices();
   }
 
   static Future<List<PriceList>?> getPriceListsFromSqlite() async {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
       return null;
     }
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    return BusinessSqliteStore.readPriceLists(db);
+    return InventoryRepository.getPriceLists();
   }
 
   static Future<List<ProductPrice>?> getProductPricesFromSqlite() async {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
       return null;
     }
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    return BusinessSqliteStore.readProductPrices(db);
+    return InventoryRepository.getProductPrices();
   }
 
   static Future<List<ProductPriceOverride>?>
@@ -565,18 +605,14 @@ class LocalDatabaseService {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
       return null;
     }
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    return BusinessSqliteStore.readProductPriceOverrides(db);
+    return InventoryRepository.getProductPriceOverrides();
   }
 
   static Future<List<ProductCost>?> getProductCostsFromSqlite() async {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
       return null;
     }
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    return BusinessSqliteStore.readProductCosts(db);
+    return InventoryRepository.getProductCosts();
   }
 
   static Future<List<CostingMethodHistory>?>
@@ -584,9 +620,7 @@ class LocalDatabaseService {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
       return null;
     }
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    return BusinessSqliteStore.readCostingMethodHistory(db);
+    return InventoryRepository.getCostingMethodHistory();
   }
 
   static Future<List<InventoryCostLayer>?>
@@ -594,9 +628,7 @@ class LocalDatabaseService {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
       return null;
     }
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    return BusinessSqliteStore.readInventoryCostLayers(db);
+    return InventoryRepository.getInventoryCostLayers();
   }
 
   static Future<BusinessQueryPage<Customer>?> queryCustomersFromSqlite({
@@ -606,10 +638,7 @@ class LocalDatabaseService {
     bool includeWalkIn = false,
   }) async {
     if (!canQueryBusinessSqlite) return null;
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    return BusinessSqliteStore.queryCustomers(
-      db,
+    return CustomerRepository.queryPage(
       query: query,
       limit: limit,
       offset: offset,
@@ -623,10 +652,7 @@ class LocalDatabaseService {
     int offset = 0,
   }) async {
     if (!canQueryBusinessSqlite) return null;
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    return BusinessSqliteStore.querySuppliers(
-      db,
+    return SupplierRepository.queryPage(
       query: query,
       limit: limit,
       offset: offset,
@@ -640,10 +666,7 @@ class LocalDatabaseService {
     int offset = 0,
   }) async {
     if (!canQueryBusinessSqlite) return null;
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    return BusinessSqliteStore.queryExpenses(
-      db,
+    return ExpenseRepository.queryPage(
       query: query,
       status: status,
       limit: limit,
@@ -656,10 +679,7 @@ class LocalDatabaseService {
     String status = 'all',
   }) async {
     if (!canQueryBusinessSqlite) return null;
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    return BusinessSqliteStore.sumPostedExpenses(
-      db,
+    return ExpenseRepository.sumPosted(
       query: query,
       status: status,
     );
@@ -674,10 +694,7 @@ class LocalDatabaseService {
     bool stockTrackedOnly = false,
   }) async {
     if (!canQueryBusinessSqlite) return null;
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    return BusinessSqliteStore.queryProducts(
-      db,
+    return ProductRepository.queryPage(
       query: query,
       category: category,
       limit: limit,
@@ -689,19 +706,14 @@ class LocalDatabaseService {
 
   static Future<List<String>?> queryProductCategoriesFromSqlite() async {
     if (!canQueryBusinessSqlite) return null;
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    return BusinessSqliteStore.queryProductCategories(db);
+    return ProductRepository.getCategories();
   }
 
   static Future<Map<String, Object?>?> buildDashboardSummaryFromSqlite({
     required DateTime reference,
   }) async {
     if (!canQueryBusinessSqlite) return null;
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    return BusinessSqliteStore.buildDashboardSummary(
-      db,
+    return AccountingRepository.buildDashboardSummary(
       reference: reference,
     );
   }
@@ -710,10 +722,7 @@ class LocalDatabaseService {
     required DateTime reference,
   }) async {
     if (!canQueryBusinessSqlite) return null;
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    return BusinessSqliteStore.buildReportsSummary(
-      db,
+    return AccountingRepository.buildReportsSummary(
       reference: reference,
     );
   }
@@ -722,10 +731,7 @@ class LocalDatabaseService {
     required DateTime reference,
   }) async {
     if (!canQueryBusinessSqlite) return null;
-    final db = SqliteMigrationManager.database;
-    if (db == null) return null;
-    return BusinessSqliteStore.buildAccountingMetrics(
-      db,
+    return AccountingRepository.buildMetrics(
       reference: reference,
     );
   }
