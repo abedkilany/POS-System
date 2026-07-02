@@ -228,8 +228,12 @@ export default async function handler(req, res) {
       `;
       const earliestSequence = Number(sequenceWindowRows[0]?.earliest_sequence || 0);
       const latestSequence = Number(sequenceWindowRows[0]?.latest_sequence || 0);
+      // A client cursor that is ahead of the server cannot be served
+      // incrementally. This can happen when a client-local sequence leaked into
+      // the Cloud cursor state, so force a snapshot rebuild instead of
+      // returning an empty page that leaves the client stuck forever.
       if ((earliestSequence > 0 && sinceSequence < earliestSequence - 1) ||
-          (hostSnapshotGeneration && latestSequence > 0 && sinceSequence > latestSequence)) {
+          sinceSequence > latestSequence) {
         await markDevicePullSeen(req, { storeId, branchId });
         return res.status(200).json({
           ok: true,
