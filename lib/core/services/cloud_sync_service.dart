@@ -2227,10 +2227,18 @@ class CloudSyncService {
                   ? transport
                   : deviceState.lastSyncTransport,
               'lastAppliedCursor':
-                  deviceState.lastAppliedHostCursor?.toIso8601String(),
-              'lastAckCursor': deviceState.lastAckCursor?.toIso8601String(),
-              'lastAppliedSequence': deviceState.lastAppliedSequence,
-              'lastAckSequence': deviceState.lastAckSequence,
+                  SyncDeviceStateStore.lastAppliedCursorForTransport(
+                          identity, transport)
+                      ?.toIso8601String(),
+              'lastAckCursor': SyncDeviceStateStore.lastAckCursorForTransport(
+                      identity, transport)
+                  ?.toIso8601String(),
+              'lastAppliedSequence':
+                  SyncDeviceStateStore.lastAppliedSequenceForTransport(
+                      identity, transport),
+              'lastAckSequence':
+                  SyncDeviceStateStore.lastAckSequenceForTransport(
+                      identity, transport),
               'deviceToken': identity.deviceToken,
               'hostDeviceId': identity.hostDeviceId,
               'appVersion': AppBrand.cloudAppVersion,
@@ -2878,6 +2886,7 @@ class CloudSyncService {
   Future<int> _pushPendingToEndpoint(
       CloudSyncSettings settings, String target, String path) async {
     final identity = store.appIdentity;
+    const transport = 'cloud';
     var totalPushed = 0;
     var batchNumber = 0;
 
@@ -2910,9 +2919,11 @@ class CloudSyncService {
                 'storeId': identity.storeId,
                 'branchId': identity.branchId,
                 'sequence':
-                    SyncDeviceStateStore.load(identity).lastAppliedSequence,
+                    SyncDeviceStateStore.lastAppliedSequenceForTransport(
+                        identity, transport),
                 'lastAppliedSequence':
-                    SyncDeviceStateStore.load(identity).lastAppliedSequence,
+                    SyncDeviceStateStore.lastAppliedSequenceForTransport(
+                        identity, transport),
                 'batchNumber': batchNumber,
                 'batchSize': pending.length,
                 'changes': pending.map((item) => item.toJson()).toList(),
@@ -3135,9 +3146,9 @@ class CloudSyncService {
   ) async {
     if (!store.appIdentity.isClient) return false;
     try {
-      final state = SyncDeviceStateStore.load(store.appIdentity);
-      final localCursor =
-          state.lastAppliedHostCursor ?? settings.lastPullCursor;
+      final localCursor = SyncDeviceStateStore.lastAppliedCursorForTransport(
+              store.appIdentity, 'cloud') ??
+          settings.lastPullCursor;
       final manifest = await _CloudSnapshotPullTransport(
         settings: settings,
         headers: _headers(settings),
@@ -3146,7 +3157,10 @@ class CloudSyncService {
         branchId: store.appIdentity.branchId,
       ).requestManifest();
       final remoteSequence = manifest.syncGeneratedSequence ?? 0;
-      if (remoteSequence > 0 && state.lastAppliedSequence >= remoteSequence) {
+      final lastAppliedSequence =
+          SyncDeviceStateStore.lastAppliedSequenceForTransport(
+              store.appIdentity, 'cloud');
+      if (remoteSequence > 0 && lastAppliedSequence >= remoteSequence) {
         return false;
       }
       final commandId =
@@ -3215,7 +3229,8 @@ class CloudSyncService {
       // also passing the old page cursor. That combination can silently miss
       // events, which showed up as product count differences across devices.
       final baseLastAppliedSequence =
-          SyncDeviceStateStore.load(store.appIdentity).lastAppliedSequence;
+          SyncDeviceStateStore.lastAppliedSequenceForTransport(
+              store.appIdentity, 'cloud');
       // If a Client only has a legacy timestamp cursor but no authoritative
       // sequence, the timestamp can be ahead of Cloud received_at because older
       // records were written with local-time values. Treat that as first pull
@@ -3528,7 +3543,8 @@ class CloudSyncService {
       // also passing the old page cursor. That combination can silently miss
       // events, which showed up as product count differences across devices.
       final baseLastAppliedSequence =
-          SyncDeviceStateStore.load(store.appIdentity).lastAppliedSequence;
+          SyncDeviceStateStore.lastAppliedSequenceForTransport(
+              store.appIdentity, 'cloud');
       final initialCursor =
           baseLastAppliedSequence > 0 ? settings.lastPullCursor : null;
       final shouldUseSnapshotBootstrap = baseLastAppliedSequence <= 0;

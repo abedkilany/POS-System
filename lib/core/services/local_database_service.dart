@@ -58,8 +58,18 @@ class LocalDatabaseService {
   static bool get isSqliteAuthoritative =>
       _sqliteReady && SqliteMigrationManager.database != null;
 
+  static bool get hasPendingBusinessEntityWrites =>
+      _pendingBusinessEntityWrites.isNotEmpty;
+
   static bool get canQueryBusinessSqlite =>
-      _memoryStore == null && _webStore == null && isSqliteAuthoritative;
+      // While entity writes are still queued or flushing, SQLite can lag
+      // behind the live in-memory store. Use the live store instead so the
+      // current page reflects edits immediately.
+      _memoryStore == null &&
+      _webStore == null &&
+      isSqliteAuthoritative &&
+      _pendingBusinessEntityWrites.isEmpty &&
+      _flushInProgress == null;
 
   @visibleForTesting
   static void useInMemoryStoreForTesting([Map<String, String>? seed]) {

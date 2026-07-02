@@ -37,8 +37,20 @@ class _SuppliersPageState extends State<SuppliersPage> {
   final RevisionKeyCache<List<Supplier>> _filteredSuppliersCache =
       RevisionKeyCache<List<Supplier>>();
 
+  void _handleStoreChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    widget.store.addListener(_handleStoreChanged);
+  }
+
   @override
   void dispose() {
+    widget.store.removeListener(_handleStoreChanged);
     _supplierRevealTimer?.cancel();
     super.dispose();
   }
@@ -47,6 +59,8 @@ class _SuppliersPageState extends State<SuppliersPage> {
   void didUpdateWidget(covariant SuppliersPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.store != widget.store) {
+      oldWidget.store.removeListener(_handleStoreChanged);
+      widget.store.addListener(_handleStoreChanged);
       _supplierQueryFuture = null;
       _supplierQueryFutureKey = '';
       _filteredSuppliersCache.invalidate();

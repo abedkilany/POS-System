@@ -37,8 +37,20 @@ class _CustomersPageState extends State<CustomersPage> {
   final RevisionKeyCache<List<Customer>> _filteredCustomersCache =
       RevisionKeyCache<List<Customer>>();
 
+  void _handleStoreChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    widget.store.addListener(_handleStoreChanged);
+  }
+
   @override
   void dispose() {
+    widget.store.removeListener(_handleStoreChanged);
     _customerRevealTimer?.cancel();
     super.dispose();
   }
@@ -47,6 +59,8 @@ class _CustomersPageState extends State<CustomersPage> {
   void didUpdateWidget(covariant CustomersPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.store != widget.store) {
+      oldWidget.store.removeListener(_handleStoreChanged);
+      widget.store.addListener(_handleStoreChanged);
       _customerQueryFuture = null;
       _customerQueryFutureKey = '';
       _filteredCustomersCache.invalidate();

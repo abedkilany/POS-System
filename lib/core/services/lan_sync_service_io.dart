@@ -1661,8 +1661,8 @@ class LanSyncService {
         'branchId': store.appIdentity.branchId,
         'deviceName': store.appIdentity.deviceName,
         'cursor': LanSyncSettings.load().lastPullCursor?.toIso8601String(),
-        'sequence':
-            SyncDeviceStateStore.load(store.appIdentity).lastAppliedSequence,
+        'sequence': SyncDeviceStateStore.lastAppliedSequenceForTransport(
+            store.appIdentity, 'lan'),
         'changes': pending.map((item) => item.toJson()).toList(),
       }));
       final pushResponse = await pushRequest.close();
@@ -1701,8 +1701,8 @@ class LanSyncService {
     try {
       final settings = LanSyncSettings.load();
       final client = _client();
-      final lastSequence =
-          SyncDeviceStateStore.load(store.appIdentity).lastAppliedSequence;
+      final lastSequence = SyncDeviceStateStore.lastAppliedSequenceForTransport(
+          store.appIdentity, 'lan');
       final query = <String, String>{
         'wait_seconds': wait.inSeconds.clamp(1, 25).toString(),
         'since_sequence': lastSequence.toString(),
@@ -1736,8 +1736,8 @@ class LanSyncService {
     try {
       final client = _client();
       final ackCursor = settings.lastPullCursor?.toIso8601String() ?? '';
-      final lastSequence =
-          SyncDeviceStateStore.load(store.appIdentity).lastAppliedSequence;
+      final lastSequence = SyncDeviceStateStore.lastAppliedSequenceForTransport(
+          store.appIdentity, 'lan');
       final seqParam = '&since_sequence=$lastSequence';
       final path = settings.lastPullCursor == null
           ? '/changes/pull?device_id=${Uri.encodeQueryComponent(store.deviceId)}&ack_cursor=${Uri.encodeQueryComponent(ackCursor)}$seqParam'
@@ -1900,8 +1900,8 @@ class LanSyncService {
       }
 
       final ackCursor = settings.lastPullCursor?.toIso8601String() ?? '';
-      final lastSequence =
-          SyncDeviceStateStore.load(store.appIdentity).lastAppliedSequence;
+      final lastSequence = SyncDeviceStateStore.lastAppliedSequenceForTransport(
+          store.appIdentity, 'lan');
       final seqParam = '&since_sequence=$lastSequence';
       final path = settings.lastPullCursor == null
           ? '/changes/pull?device_id=${Uri.encodeQueryComponent(store.deviceId)}&ack_cursor=${Uri.encodeQueryComponent(ackCursor)}$seqParam'
