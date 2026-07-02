@@ -461,6 +461,31 @@ class LanSyncService {
   static int? _sharedPort;
   static final Set<String> _activeSnapshotGenerationRebuilds = <String>{};
 
+  bool _isNetworkFailure(Object error) {
+    if (error is SocketException ||
+        error is TimeoutException ||
+        error is HttpException) {
+      return true;
+    }
+    final lower = error.toString().toLowerCase();
+    return lower.contains('connection refused') ||
+        lower.contains('failed host lookup') ||
+        lower.contains('network is unreachable') ||
+        lower.contains('no route to host') ||
+        lower.contains('connection reset by peer') ||
+        lower.contains('broken pipe') ||
+        lower.contains('econnrefused') ||
+        lower.contains('connection closed');
+  }
+
+  String _failureMessage(String prefix, Object error) {
+    final text = error.toString().trim();
+    if (_isNetworkFailure(error)) {
+      return '$prefix: Host Offline. $text';
+    }
+    return '$prefix: $text';
+  }
+
   String _snapshotGenerationKey(String transport) =>
       'applied_host_snapshot_generation_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}';
 
@@ -1461,7 +1486,8 @@ class LanSyncService {
       return const LanSyncResult(
           ok: true, message: 'Pull completed from LAN snapshot chunks.');
     } catch (error) {
-      return LanSyncResult(ok: false, message: 'Pull failed: $error');
+      return LanSyncResult(
+          ok: false, message: _failureMessage('Pull failed', error));
     }
   }
 
@@ -1690,7 +1716,8 @@ class LanSyncService {
           message: 'LAN push completed. Pushed ${pending.length} change(s).');
     } catch (error) {
       await _syncCore.markPushFailed(pendingIds, error.toString());
-      return LanSyncResult(ok: false, message: 'LAN push failed: $error');
+      return LanSyncResult(
+          ok: false, message: _failureMessage('LAN push failed', error));
     }
   }
 
@@ -1830,7 +1857,8 @@ class LanSyncService {
           ok: true,
           message: 'LAN pull completed. Pulled ${changes.length} change(s).');
     } catch (error) {
-      return LanSyncResult(ok: false, message: 'LAN pull failed: $error');
+      return LanSyncResult(
+          ok: false, message: _failureMessage('LAN pull failed', error));
     }
   }
 
@@ -1919,20 +1947,10 @@ class LanSyncService {
         if (access != null) return access;
         final message =
             'Pull changes failed: ${pullResponse.statusCode} $pullBody';
-        final repair = pushCompleted
-            ? await repairFromHostSnapshot(host,
-                port: port, token: token, onProgress: onProgress)
-            : null;
-        if (repair?.ok == true) {
-          return LanSyncResult(
-              ok: true, message: '$message. ${repair!.message}');
-        }
         if (pendingIds.isNotEmpty && !pushCompleted) {
           await _syncCore.markPushFailed(pendingIds, message);
         }
-        return LanSyncResult(
-            ok: false,
-            message: repair == null ? message : '$message. ${repair.message}');
+        return LanSyncResult(ok: false, message: message);
       }
       final decodedPull = jsonDecode(pullBody) as Map<String, dynamic>;
       final generationRebuild = await _rebuildIfHostSnapshotGenerationChanged(
@@ -2012,19 +2030,11 @@ class LanSyncService {
             'Sync completed. Pushed ${pending.length} change(s), pulled ${changes.length} change(s).',
       );
     } catch (error) {
-      if (pushCompleted) {
-        final repair = await repairFromHostSnapshot(host,
-            port: port, token: token, onProgress: onProgress);
-        if (repair.ok) {
-          return LanSyncResult(
-              ok: true,
-              message: 'Incremental sync failed: $error. ${repair.message}');
-        }
-      }
       if (pendingIds.isNotEmpty && !pushCompleted) {
         await _syncCore.markPushFailed(pendingIds, error.toString());
       }
-      return LanSyncResult(ok: false, message: 'Sync failed: $error');
+      return LanSyncResult(
+          ok: false, message: _failureMessage('Sync failed', error));
     }
   }
 }

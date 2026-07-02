@@ -21,17 +21,29 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
   UnifiedSyncError _errorFor(bool ok, String message) {
     if (ok) return UnifiedSyncError.none;
     final lower = message.toLowerCase();
-    final code = lower.contains('expired') || lower.contains('already used')
-        ? UnifiedSyncErrorCode.expiredPairingCode
-        : lower.contains('snapshot')
-            ? UnifiedSyncErrorCode.snapshotUnavailable
-            : lower.contains('host devices cannot') ||
-                    lower.contains('already a cloud client')
-                ? UnifiedSyncErrorCode.forbiddenRole
-                : lower.contains('not supported') ||
-                        lower.contains('handled by the existing')
-                    ? UnifiedSyncErrorCode.unsupported
-                    : UnifiedSyncErrorCode.unknown;
+    final code = lower.contains('socketexception') ||
+            lower.contains('timeoutexception') ||
+            lower.contains('connection refused') ||
+            lower.contains('failed host lookup') ||
+            lower.contains('network is unreachable') ||
+            lower.contains('no route to host') ||
+            lower.contains('connection reset by peer') ||
+            lower.contains('broken pipe') ||
+            lower.contains('econnrefused') ||
+            lower.contains('connection closed') ||
+            lower.contains('host offline')
+        ? UnifiedSyncErrorCode.networkUnavailable
+        : lower.contains('expired') || lower.contains('already used')
+            ? UnifiedSyncErrorCode.expiredPairingCode
+            : lower.contains('snapshot')
+                ? UnifiedSyncErrorCode.snapshotUnavailable
+                : lower.contains('host devices cannot') ||
+                        lower.contains('already a cloud client')
+                    ? UnifiedSyncErrorCode.forbiddenRole
+                    : lower.contains('not supported') ||
+                            lower.contains('handled by the existing')
+                        ? UnifiedSyncErrorCode.unsupported
+                        : UnifiedSyncErrorCode.unknown;
     return UnifiedSyncError(
         code: code, userMessage: message, debugMessage: message);
   }
@@ -388,25 +400,13 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
       );
     }
 
-    onProgress?.call(0.78, 'LAN pull failed. Trying snapshot repair...');
-    final repair = await rebuildFromHostSnapshot(onProgress: onProgress);
-    if (repair.ok) {
-      await compactAfterSuccessfulSync();
-      return UnifiedSyncResult(
-        ok: true,
-        message: '${pull.message}. ${repair.message}',
-        pushed: push.pushed,
-        pulled: repair.pulled,
-        restoredSnapshot: true,
-        cursor: repair.cursor,
-      );
-    }
+    onProgress?.call(1.0, 'LAN pull failed. Host may be offline.');
     return UnifiedSyncResult(
       ok: false,
-      message: '${pull.message}. ${repair.message}',
+      message: pull.message,
       pushed: push.pushed,
       pulled: pull.pulled,
-      error: pull.error.hasError ? pull.error : repair.error,
+      error: pull.error,
       cursor: pull.cursor,
     );
   }

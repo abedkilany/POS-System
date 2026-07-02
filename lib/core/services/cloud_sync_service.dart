@@ -2893,9 +2893,9 @@ class CloudSyncService {
     // Safety-critical fix for large Host -> Cloud publishes:
     // Do not upload tens of thousands of changes in one HTTP request. A single
     // timeout could leave the Host appearing idle while Cloud clients are still
-    // missing data. Push in small acknowledged batches and mark only the batch
+    // missing data. Push in acknowledged batches and mark only the batch
     // currently being sent as in-progress.
-    const batchSize = 20;
+    const batchSize = 500;
 
     while (true) {
       await store.recoverStaleInProgressSyncQueue(target: target);
