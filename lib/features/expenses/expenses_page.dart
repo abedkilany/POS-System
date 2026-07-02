@@ -1476,6 +1476,7 @@ class _ExpenseDialogState extends State<_ExpenseDialog> {
   bool _nameExists(List<_ExpenseCatalogItem> items, String name,
           {String? except}) =>
       items.any((item) =>
+          !item.archived &&
           item.en.toLowerCase() == name.toLowerCase() &&
           item.en.toLowerCase() != (except ?? '').toLowerCase());
 

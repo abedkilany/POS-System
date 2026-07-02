@@ -6352,7 +6352,10 @@ class AppStore extends ChangeNotifier {
       return walkInCustomerName;
     }
     final index = _customerIndexById[customerId];
-    if (index == null || index < 0 || index >= _customers.length) {
+    if (index == null ||
+        index < 0 ||
+        index >= _customers.length ||
+        _customers[index].isDeleted) {
       return walkInCustomerName;
     }
     return _customers[index].name;
@@ -6361,8 +6364,11 @@ class AppStore extends ChangeNotifier {
   String sanitizeSelectedCustomerId(String? customerId) {
     final normalized = customerId?.trim();
     if (normalized == null || normalized.isEmpty) return walkInCustomerId;
-    final exists = _customerIndexById.containsKey(normalized);
-    return exists ? normalized : walkInCustomerId;
+    final index = _customerIndexById[normalized];
+    if (index == null || index < 0 || index >= _customers.length) {
+      return walkInCustomerId;
+    }
+    return _customers[index].isDeleted ? walkInCustomerId : normalized;
   }
 
   static const int _syncMaintenanceKeepRecentChanges = 200;
@@ -9687,21 +9693,28 @@ class AppStore extends ChangeNotifier {
     requirePermission(AppPermission.customersManage);
     final index = _customerIndexById[id];
     if (index == null) return;
-    final customer = _customers[index];
+    final previousCustomer = _customers[index];
+    final customer = previousCustomer;
     final isWalkIn = customer.id == walkInCustomerId ||
         customer.name.trim().toLowerCase() == walkInCustomerName.toLowerCase();
     if (isWalkIn) return;
     final now = DateTime.now();
-    _customers[index] = _withSyncMeta<Customer>(
-      _customers[index].copyWith(deletedAt: now),
+    final deletedCustomer = _withSyncMeta<Customer>(
+      previousCustomer.copyWith(deletedAt: now),
       now,
       clearDeletedAt: false,
     );
+    _customers[index] = deletedCustomer;
     _recordSyncChange(
       entityType: 'customer',
       entityId: id,
       operation: 'delete',
-      payload: _customers[index].toJson(),
+      payload: deletedCustomer.toJson(),
+    );
+    _indexCustomerAt(
+      index,
+      deletedCustomer,
+      previousCustomer: previousCustomer,
     );
     await _saveDirty(customers: true, sync: true);
     unawaited(
@@ -9927,7 +9940,7 @@ class AppStore extends ChangeNotifier {
     final normalizedEn = item.nameEn.trim().toLowerCase();
     final normalizedAr = item.nameAr.trim().toLowerCase();
     final duplicate = list.any((existing) {
-      if (existing.id == item.id) return false;
+      if (existing.id == item.id || existing.isDeleted) return false;
       return (normalizedEn.isNotEmpty &&
               existing.nameEn.trim().toLowerCase() == normalizedEn) ||
           (normalizedAr.isNotEmpty &&
@@ -10023,9 +10036,10 @@ class AppStore extends ChangeNotifier {
       }
     }
 
-    final deletedItem = _markCatalogItemForSync(
+    final deletedItem = _withSyncMeta<CatalogItem>(
       list[index].copyWith(deletedAt: now),
       now,
+      clearDeletedAt: false,
     );
     list[index] = deletedItem;
     _recordSyncChange(

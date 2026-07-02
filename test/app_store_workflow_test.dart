@@ -282,6 +282,12 @@ void main() {
           throwsArgumentError);
       await store.deleteCustomer('c1');
       expect(store.customers.map((c) => c.id), isNot(contains('c1')));
+      expect(store.resolveCustomerName('c1'), AppStore.walkInCustomerName);
+      expect(store.sanitizeSelectedCustomerId('c1'),
+          AppStore.walkInCustomerId);
+      await store.addOrUpdateCustomer(
+          Customer(id: 'c3', name: ' alice ', phone: '', address: ''));
+      expect(store.customers.map((c) => c.id), contains('c3'));
 
       await store.addOrUpdateSupplier(Supplier(
           id: 's1', name: ' Supplier ', phone: '222', address: 'B', notes: ''));
@@ -306,6 +312,18 @@ void main() {
           store.addOrUpdateCategory(
               CatalogItem(id: 'dup', nameEn: 'Snacks', nameAr: '')),
           throwsArgumentError);
+      final reusableCategory =
+          CatalogItem(id: 'cat_delete', nameEn: 'Reusable Category', nameAr: '');
+      await store.addOrUpdateCategory(reusableCategory);
+      await store.replaceAndDeleteCatalogItem(
+        type: 'category',
+        item: reusableCategory,
+        replacement: null,
+      );
+      await store.addOrUpdateCategory(
+        CatalogItem(id: 'cat_restore', nameEn: 'Reusable Category', nameAr: ''),
+      );
+      expect(store.categories.map((e) => e.id), contains('cat_restore'));
 
       await store.addOrUpdateExpense(Expense(
           id: 'e1',
