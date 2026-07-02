@@ -233,6 +233,16 @@ class CloudRealtimeSignal {
   final int pendingRequests;
 }
 
+class _RealtimeChannelSession {
+  _RealtimeChannelSession({
+    required this.channel,
+    required this.uri,
+  });
+
+  final WebSocketChannel channel;
+  final Uri uri;
+}
+
 class CloudDeviceStatus {
   const CloudDeviceStatus({
     required this.deviceId,
@@ -547,6 +557,7 @@ class CloudSyncService {
   final http.Client _client;
   late final UnifiedSyncCoreService _syncCore = UnifiedSyncCoreService(store);
   static final Set<String> _activeSnapshotGenerationRebuilds = <String>{};
+  static int _relayRequestCounter = 0;
 
   Future<void> _restorePreviousSyncMode(AppIdentity previousIdentity) async {
     final current = store.appIdentity;
@@ -2163,6 +2174,264 @@ class CloudSyncService {
     };
   }
 
+  String _newRelayRequestId() {
+    _relayRequestCounter += 1;
+    return '${store.deviceId}-${DateTime.now().microsecondsSinceEpoch}-${_relayRequestCounter.toRadixString(36)}';
+  }
+
+  Future<_RealtimeChannelSession> _openRealtimeChannel(
+    CloudSyncSettings settings, {
+    bool includeSequenceHint = true,
+  }) async {
+    final identity = store.appIdentity;
+    final state = SyncDeviceStateStore.load(identity);
+    final ticketQuery = <String, String>{
+      'store_id': identity.storeId,
+      'branch_id': identity.branchId,
+      'role': identity.isHost ? 'host' : 'client',
+    };
+    final ticketResponse = await _client
+        .get(settings.endpoint('/api/sync/realtime-ticket', ticketQuery),
+            headers: _headers(settings))
+        .timeout(const Duration(seconds: 8));
+    if (ticketResponse.statusCode < 200 || ticketResponse.statusCode >= 300) {
+      throw StateError(
+          'Realtime ticket failed: ${ticketResponse.statusCode} ${ticketResponse.body}');
+    }
+    final ticketPayload = jsonDecode(ticketResponse.body);
+    final ticket = ticketPayload is Map ? (ticketPayload['ticket'] ?? '') : '';
+    if (ticket.toString().trim().isEmpty) {
+      throw StateError('Realtime ticket response is missing ticket.');
+    }
+    final query = <String, String>{
+      'ticket': ticket.toString(),
+    };
+    if (includeSequenceHint &&
+        identity.isClient &&
+        state.lastAppliedSequence > 0) {
+      query['since_sequence'] = state.lastAppliedSequence.toString();
+    }
+    final uri = settings.realtimeEndpoint('/api/sync/realtime', query);
+    SyncDiagnosticsLog.add(
+      '[SYNC_TRACE] cloudRealtime:connect role=${identity.deviceRole.name} '
+      'device=${identity.deviceId} url=${uri.replace(queryParameters: {
+            ...uri.queryParameters,
+            'ticket': '***',
+          })}',
+    );
+    return _RealtimeChannelSession(
+      channel: WebSocketChannel.connect(uri),
+      uri: uri,
+    );
+  }
+
+  Future<Map<String, dynamic>> _sendRealtimeRequest(
+    CloudSyncSettings settings, {
+    required String requestKind,
+    required Map<String, dynamic> payload,
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    final session = await _openRealtimeChannel(
+      settings,
+      includeSequenceHint: false,
+    );
+    final channel = session.channel;
+    final requestId = _newRelayRequestId();
+    final completer = Completer<Map<String, dynamic>>();
+    late final StreamSubscription<dynamic> subscription;
+    subscription = channel.stream.listen(
+      (raw) {
+        final decoded = jsonDecode(raw.toString());
+        if (decoded is! Map) return;
+        final packet = Map<String, dynamic>.from(decoded);
+        final type = (packet['type'] ?? '').toString();
+        if (type == 'realtime_welcome') return;
+        if (type != 'relay_response') return;
+        if ((packet['requestId'] ?? packet['request_id'] ?? '').toString() !=
+            requestId) {
+          return;
+        }
+        if (!completer.isCompleted) {
+          completer.complete(packet);
+        }
+      },
+      onError: (error, stackTrace) {
+        if (!completer.isCompleted) {
+          completer.completeError(error, stackTrace);
+        }
+      },
+      onDone: () {
+        if (!completer.isCompleted) {
+          completer.completeError(
+            StateError('Realtime request closed before the Host replied.'),
+          );
+        }
+      },
+      cancelOnError: false,
+    );
+
+    try {
+      channel.sink.add(jsonEncode({
+        'type': 'relay_request',
+        'requestId': requestId,
+        'requestKind': requestKind,
+        ...payload,
+      }));
+      final response = await completer.future.timeout(timeout);
+      return response;
+    } finally {
+      await subscription.cancel();
+      await channel.sink.close();
+    }
+  }
+
+  Future<bool> _sendRealtimeBroadcast(
+    CloudSyncSettings settings, {
+    required String type,
+    required Map<String, dynamic> payload,
+  }) async {
+    final session = await _openRealtimeChannel(
+      settings,
+      includeSequenceHint: false,
+    );
+    try {
+      session.channel.sink.add(jsonEncode({
+        'type': type,
+        ...payload,
+      }));
+      return true;
+    } finally {
+      await session.channel.sink.close();
+    }
+  }
+
+  Future<CloudRealtimeSignal?> _handleRealtimePacket(
+    CloudSyncSettings settings,
+    WebSocketChannel channel,
+    Map<String, dynamic> decoded,
+  ) async {
+    final identity = store.appIdentity;
+    final type = (decoded['type'] ?? '').toString();
+    if (type == 'realtime_welcome') return null;
+
+    if (identity.isHost && type == 'relay_request') {
+      final requestId = (decoded['requestId'] ?? decoded['request_id'] ?? '')
+          .toString()
+          .trim();
+      final requestKind = (decoded['requestKind'] ??
+              decoded['request_kind'] ??
+              decoded['kind'] ??
+              '')
+          .toString()
+          .trim();
+      if (requestId.isEmpty) return null;
+
+      if (requestKind == 'cloud_client_push') {
+        final rawChanges =
+            decoded['changes'] as List<dynamic>? ?? const <dynamic>[];
+        final changes = _syncCore.filterOutLocalEchoes(
+          _syncCore.decodeRemoteChanges(rawChanges),
+        );
+        final accepted = await _syncCore.acceptClientChangesOnHost(
+          changes,
+          mirrorToCloud: false,
+          verifyApplied: true,
+        );
+        final response = <String, dynamic>{
+          'type': 'relay_response',
+          'requestId': requestId,
+          'ok': true,
+          'ackIds': accepted.ackIds,
+          'rejected': accepted.rejected.entries
+              .map((entry) => {'id': entry.key, 'reason': entry.value})
+              .toList(),
+          'latestSequence': store.latestStoredAuthoritativeSequence,
+          'serverTime': DateTime.now().toIso8601String(),
+        };
+        channel.sink.add(jsonEncode(response));
+        channel.sink.add(jsonEncode({
+          'type': 'sync_changed',
+          'changed': true,
+          'latestSequence': store.latestStoredAuthoritativeSequence,
+          'pendingRequests': 0,
+          'relayKind': 'cloud_client_push',
+        }));
+        return null;
+      }
+
+      if (requestKind == 'cloud_client_pull') {
+        final sinceSequence = int.tryParse(
+                (decoded['sinceSequence'] ?? decoded['since_sequence'] ?? 0)
+                    .toString()) ??
+            0;
+        final since = DateTime.tryParse(
+            (decoded['since'] ?? decoded['sinceAt'] ?? '').toString());
+        final minSnapshotUpdatedAt = DateTime.tryParse(
+            (decoded['minSnapshotUpdatedAt'] ??
+                    decoded['min_snapshot_updated_at'] ??
+                    '')
+                .toString());
+        if (sinceSequence <= 0 && since == null) {
+          channel.sink.add(jsonEncode({
+            'type': 'relay_response',
+            'requestId': requestId,
+            'ok': false,
+            'error':
+                'A relay pull requires a cloud sequence baseline. Use the snapshot path first.',
+            'serverTime': DateTime.now().toIso8601String(),
+          }));
+          return null;
+        }
+        final response = Map<String, dynamic>.from(
+          jsonDecode(
+            store.exportSyncChangesJson(
+              since: since,
+              sinceSequence: sinceSequence,
+            ),
+          ) as Map,
+        );
+        response['type'] = 'relay_response';
+        response['requestId'] = requestId;
+        response['ok'] = true;
+        response['source'] = 'relay';
+        response['hasMore'] = false;
+        response['nextCursor'] = null;
+        response['serverTime'] = DateTime.now().toIso8601String();
+        if (minSnapshotUpdatedAt != null) {
+          response['minSnapshotUpdatedAt'] =
+              minSnapshotUpdatedAt.toIso8601String();
+        }
+        channel.sink.add(jsonEncode(response));
+        return null;
+      }
+
+      channel.sink.add(jsonEncode({
+        'type': 'relay_response',
+        'requestId': requestId,
+        'ok': false,
+        'error': 'Unknown relay request kind: $requestKind',
+        'serverTime': DateTime.now().toIso8601String(),
+      }));
+      return null;
+    }
+
+    final changed = decoded['changed'] == true;
+    if (!changed) return null;
+    final latestSequence =
+        int.tryParse((decoded['latestSequence'] ?? '0').toString()) ?? 0;
+    final pendingRequests =
+        int.tryParse((decoded['pendingRequests'] ?? '0').toString()) ?? 0;
+    SyncDiagnosticsLog.add(
+      '[SYNC_TRACE] cloudRealtime:event type=$type '
+      'latestSequence=$latestSequence pendingRequests=$pendingRequests',
+    );
+    return CloudRealtimeSignal(
+      type: type,
+      latestSequence: latestSequence,
+      pendingRequests: pendingRequests,
+    );
+  }
+
   Future<void> _confirmCloudWipe(
     CloudSyncSettings settings, {
     required String storeId,
@@ -2611,25 +2880,47 @@ class CloudSyncService {
     if (!_cloudAllowedForIdentity(identity) || !settings.isConfigured) {
       return false;
     }
-    final state = SyncDeviceStateStore.load(identity);
-    final query = <String, String>{
-      'store_id': identity.storeId,
-      'branch_id': identity.branchId,
-      'role': identity.isHost ? 'host' : 'client',
-      'wait_seconds': wait.inSeconds.clamp(1, 25).toString(),
-    };
-    if (identity.isClient && state.lastAppliedSequence > 0) {
-      query['since_sequence'] = state.lastAppliedSequence.toString();
-    }
-    final response = await _client
-        .get(settings.endpoint('/api/sync/signal', query),
-            headers: _headers(settings))
-        .timeout(wait + const Duration(seconds: 8));
-    if (response.statusCode < 200 || response.statusCode >= 300) {
+    try {
+      final session = await _openRealtimeChannel(settings);
+      final channel = session.channel;
+      final completer = Completer<bool>();
+      late final StreamSubscription<dynamic> subscription;
+      subscription = channel.stream.listen(
+        (raw) async {
+          if (completer.isCompleted) return;
+          final decoded = jsonDecode(raw.toString());
+          if (decoded is! Map) return;
+          final signal = await _handleRealtimePacket(
+            settings,
+            channel,
+            Map<String, dynamic>.from(decoded),
+          );
+          if (signal != null && !completer.isCompleted) {
+            completer.complete(true);
+          }
+        },
+        onError: (error, stackTrace) {
+          if (!completer.isCompleted) {
+            completer.completeError(error, stackTrace);
+          }
+        },
+        onDone: () {
+          if (!completer.isCompleted) completer.complete(false);
+        },
+        cancelOnError: false,
+      );
+      try {
+        return await completer.future.timeout(
+          wait + const Duration(seconds: 8),
+          onTimeout: () => false,
+        );
+      } finally {
+        await subscription.cancel();
+        await channel.sink.close();
+      }
+    } catch (_) {
       return false;
     }
-    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-    return decoded['changed'] == true;
   }
 
   Stream<CloudRealtimeSignal> watchRealtimeSignals(
@@ -2639,67 +2930,27 @@ class CloudSyncService {
     if (!_cloudAllowedForIdentity(identity) || !settings.isConfigured) {
       return;
     }
-    final state = SyncDeviceStateStore.load(identity);
-    final ticketQuery = <String, String>{
-      'store_id': identity.storeId,
-      'branch_id': identity.branchId,
-      'role': identity.isHost ? 'host' : 'client',
-    };
-    final ticketResponse = await _client
-        .get(settings.endpoint('/api/sync/realtime-ticket', ticketQuery),
-            headers: _headers(settings))
-        .timeout(const Duration(seconds: 8));
-    if (ticketResponse.statusCode < 200 || ticketResponse.statusCode >= 300) {
-      throw StateError(
-          'Realtime ticket failed: ${ticketResponse.statusCode} ${ticketResponse.body}');
-    }
-    final ticketPayload = jsonDecode(ticketResponse.body);
-    final ticket = ticketPayload is Map ? (ticketPayload['ticket'] ?? '') : '';
-    if (ticket.toString().trim().isEmpty) {
-      throw StateError('Realtime ticket response is missing ticket.');
-    }
-    final query = <String, String>{
-      'ticket': ticket.toString(),
-    };
-    if (identity.isClient && state.lastAppliedSequence > 0) {
-      query['since_sequence'] = state.lastAppliedSequence.toString();
-    }
-    final uri = settings.realtimeEndpoint('/api/sync/realtime', query);
-    SyncDiagnosticsLog.add(
-      '[SYNC_TRACE] cloudRealtime:connect role=${identity.deviceRole.name} '
-      'device=${identity.deviceId} url=${uri.replace(queryParameters: {
-            ...uri.queryParameters,
-            'ticket': '***',
-          })}',
-    );
-    final channel = WebSocketChannel.connect(uri);
+    final session = await _openRealtimeChannel(settings);
+    final channel = session.channel;
     try {
       await for (final raw in channel.stream) {
         final decoded = jsonDecode(raw.toString());
         if (decoded is! Map) continue;
-        final type = (decoded['type'] ?? '').toString();
+        final packet = Map<String, dynamic>.from(decoded);
+        final type = (packet['type'] ?? '').toString();
         if (type == 'realtime_welcome') {
           SyncDiagnosticsLog.add(
             '[SYNC_TRACE] cloudRealtime:connected role=${identity.deviceRole.name} '
-            'device=${identity.deviceId}',
+            'device=${identity.deviceId} url=${session.uri.replace(queryParameters: {
+                  ...session.uri.queryParameters,
+                  'ticket': '***',
+                })}',
           );
           continue;
         }
-        final changed = decoded['changed'] == true;
-        if (!changed) continue;
-        final latestSequence =
-            int.tryParse((decoded['latestSequence'] ?? '0').toString()) ?? 0;
-        final pendingRequests =
-            int.tryParse((decoded['pendingRequests'] ?? '0').toString()) ?? 0;
-        SyncDiagnosticsLog.add(
-          '[SYNC_TRACE] cloudRealtime:event type=$type '
-          'latestSequence=$latestSequence pendingRequests=$pendingRequests',
-        );
-        yield CloudRealtimeSignal(
-          type: type,
-          latestSequence: latestSequence,
-          pendingRequests: pendingRequests,
-        );
+        final signal = await _handleRealtimePacket(settings, channel, packet);
+        if (signal == null) continue;
+        yield signal;
       }
     } finally {
       SyncDiagnosticsLog.add(
@@ -2977,6 +3228,262 @@ class CloudSyncService {
     return output;
   }
 
+  Future<int> _pushPendingViaRelay(
+    CloudSyncSettings settings, {
+    required String target,
+  }) async {
+    final identity = store.appIdentity;
+    const transport = 'cloud';
+    var totalPushed = 0;
+    var batchNumber = 0;
+    const batchSize = 500;
+
+    while (true) {
+      await store.recoverStaleInProgressSyncQueue(target: target);
+      await store.retryFailedSyncQueue(target: target);
+      final pending = _syncCore
+          .pendingChangesForTarget(target)
+          .take(batchSize)
+          .toList(growable: false);
+      final pendingIds = _syncCore.changeIds(pending);
+      if (pending.isEmpty) break;
+      batchNumber += 1;
+
+      await _syncCore.markPushInProgress(pendingIds);
+      try {
+        final response = await _sendRealtimeRequest(
+          settings,
+          requestKind: 'cloud_client_push',
+          payload: {
+            'deviceId': store.deviceId,
+            'storeId': identity.storeId,
+            'branchId': identity.branchId,
+            'sequence': SyncDeviceStateStore.lastAppliedSequenceForTransport(
+                identity, transport),
+            'lastAppliedSequence':
+                SyncDeviceStateStore.lastAppliedSequenceForTransport(
+                    identity, transport),
+            'batchNumber': batchNumber,
+            'batchSize': pending.length,
+            'changes': pending.map((item) => item.toJson()).toList(),
+          },
+        );
+        if (response['ok'] != true) {
+          final message = 'Cloud relay push failed in batch $batchNumber: '
+              '${response['error'] ?? response['message'] ?? 'unknown error'}';
+          await _syncCore.markPushFailed(pendingIds, message);
+          throw StateError(message);
+        }
+        final ackIds = (response['ackIds'] as List<dynamic>? ?? [])
+            .map((item) => '$item')
+            .where((item) => item.trim().isNotEmpty)
+            .toList();
+        final rejected = _decodeRejectedSyncRequests(response['rejected']);
+        if (rejected.isNotEmpty) await _syncCore.markPushRejected(rejected);
+        if (target == 'cloud_host') {
+          await _syncCore.markPushSubmitted(ackIds, fallbackIds: pendingIds);
+        } else {
+          await _syncCore.markPushAcknowledged(ackIds, fallbackIds: pendingIds);
+        }
+        totalPushed += pending.length;
+      } catch (error) {
+        await _syncCore.markPushFailed(
+          pendingIds,
+          'Cloud relay push failed in batch $batchNumber: $error',
+        );
+        rethrow;
+      }
+    }
+
+    return totalPushed;
+  }
+
+  Future<bool> _broadcastHostAuthorityViaRelay(
+    CloudSyncSettings settings,
+  ) async {
+    final identity = store.appIdentity;
+    final pending = _syncCore.pendingChangesForTarget('cloud');
+    if (pending.isEmpty) return true;
+    final pendingIds = _syncCore.changeIds(pending);
+    final latestSequence = store.latestStoredAuthoritativeSequence;
+    try {
+      await _sendRealtimeBroadcast(
+        settings,
+        type: 'sync_changed',
+        payload: {
+          'changed': true,
+          'latestSequence': latestSequence,
+          'pendingRequests': pending.length,
+          'deviceId': store.deviceId,
+          'storeId': identity.storeId,
+          'branchId': identity.branchId,
+          'relayKind': 'cloud_host_publish',
+        },
+      );
+      await _syncCore.markPushAcknowledged(pendingIds, fallbackIds: pendingIds);
+      return true;
+    } catch (error) {
+      SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] cloudRelay:hostBroadcastFailed error=$error',
+      );
+      return false;
+    }
+  }
+
+  Future<CloudSyncResult?> _pullAuthoritativeChangesViaRelay(
+    CloudSyncSettings settings, {
+    DateTime? minSnapshotUpdatedAt,
+    CloudSyncProgressCallback? onProgress,
+  }) async {
+    final identity = store.appIdentity;
+    if (identity.isHost) {
+      return const CloudSyncResult(
+          ok: true,
+          message: 'Host devices do not pull authoritative Cloud changes.',
+          pulled: 0);
+    }
+
+    final baseLastAppliedSequence =
+        SyncDeviceStateStore.lastAppliedSequenceForTransport(
+            store.appIdentity, 'cloud');
+    if (baseLastAppliedSequence <= 0) return null;
+
+    final initialCursor = settings.lastPullCursor;
+    try {
+      onProgress?.call(0.35, 'Pulling Cloud changes through the relay...');
+      final response = await _sendRealtimeRequest(
+        settings,
+        requestKind: 'cloud_client_pull',
+        payload: {
+          'deviceId': store.deviceId,
+          'storeId': identity.storeId,
+          'branchId': identity.branchId,
+          'sinceSequence': baseLastAppliedSequence,
+          if (initialCursor != null) 'since': initialCursor.toIso8601String(),
+          if (minSnapshotUpdatedAt != null)
+            'minSnapshotUpdatedAt': minSnapshotUpdatedAt.toIso8601String(),
+          'limit': 1000,
+        },
+      );
+      if (response['ok'] != true) {
+        SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] cloudRelayPull:serverRejected error=${response['error'] ?? response['message'] ?? 'unknown error'}',
+        );
+        return null;
+      }
+
+      if (response['needsSnapshot'] == true) {
+        final generation = _remoteHostSnapshotGeneration(response);
+        final commandId = _remoteHostRestoreCommandId(response);
+        if (_restoreCommandAlreadyExecuted('cloud', commandId)) {
+          final generatedAt =
+              DateTime.tryParse(response['generatedAt']?.toString() ?? '') ??
+                  DateTime.now();
+          final generatedSequence =
+              int.tryParse(response['generatedSequence']?.toString() ?? '') ??
+                  0;
+          await settings.copyWith(lastPullCursor: generatedAt).save();
+          await _recordDeviceSyncState('cloud', generatedAt,
+              sequence: generatedSequence, settings: settings);
+          return CloudSyncResult(
+            ok: true,
+            message:
+                'A previously executed rebuild command was ignored and the sync cursor was updated.',
+            pulled: 0,
+          );
+        }
+        return rebuildFromCloudHostSnapshot(
+          settings.copyWith(clearLastPullCursor: true),
+          onProgress: onProgress,
+          requestFreshSnapshot: false,
+          expectedSnapshotGeneration: generation,
+          expectedRestoreCommandId: commandId,
+        );
+      }
+
+      final rawChanges =
+          response['changes'] as List<dynamic>? ?? const <dynamic>[];
+      SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] cloudRelayPull:decoded source=${response['source']} '
+        'changes=${rawChanges.length} '
+        'generatedAt=${response['generatedAt']} '
+        'generatedSequence=${response['generatedSequence']}',
+      );
+      for (final raw in rawChanges.take(40)) {
+        final change =
+            SyncChange.fromJson(Map<String, dynamic>.from(raw as Map));
+        SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] cloudRelayPull:rawChange ${SyncDiagnosticsLog.summarizeChange(change)}',
+        );
+      }
+
+      final decodedChanges = _syncCore.decodeRemoteChanges(rawChanges);
+      final changes = _syncCore.filterOutLocalEchoes(decodedChanges);
+      final restoreMarker = changes.any((item) =>
+          item.entityType == 'system' &&
+          item.operation == 'cloud_restore_snapshot_ready');
+      if (restoreMarker && store.appIdentity.isClient) {
+        final commandId = _restoreCommandIdFromChanges(changes);
+        if (!_restoreCommandAlreadyExecuted('cloud', commandId)) {
+          onProgress?.call(0.50,
+              'A new Host restore was found. Rebuilding device data from a full snapshot...');
+          await CloudSyncSettings.clearSavedPullCursor();
+          await SyncDeviceStateStore.resetClientProgress(store.appIdentity,
+              transport: 'cloud');
+          return rebuildFromCloudHostSnapshot(
+            settings.copyWith(clearLastPullCursor: true),
+            onProgress: onProgress,
+            requestFreshSnapshot: false,
+            expectedRestoreCommandId: commandId,
+          );
+        }
+      }
+
+      final source = (response['source'] ?? '').toString();
+      final restoredSnapshot =
+          changes.any((item) => item.operation == 'restore_snapshot') ||
+              (initialCursor == null &&
+                  source == 'entity_snapshots' &&
+                  changes.isNotEmpty);
+
+      onProgress?.call(
+          0.72, 'Applying ${changes.length} Cloud change(s) from relay...');
+      final applied = await _syncCore.applyAuthoritativeChanges(changes);
+
+      final finalPullCursor =
+          DateTime.tryParse((response['generatedAt'] ?? '').toString()) ??
+              DateTime.now().toUtc();
+      final finalPullSequence =
+          int.tryParse((response['generatedSequence'] ?? '0').toString()) ?? 0;
+      await settings.copyWith(lastPullCursor: finalPullCursor).save();
+      await _recordDeviceSyncState('cloud', finalPullCursor,
+          sequence: finalPullSequence, settings: settings);
+
+      if (applied > 0) {
+        onProgress?.call(0.92, 'Cleaning up after Cloud sync...');
+        await store.cleanupSoftDeletedRecords();
+      }
+      if (store.appIdentity.isClient &&
+          (restoredSnapshot || applied > 0) &&
+          !store.needsInitialAdminSetup) {
+        await CloudProvisioningStatus.markComplete(
+            message: 'Initial Store data downloaded.');
+      }
+      return CloudSyncResult(
+        ok: true,
+        pulled: applied,
+        restoredSnapshot: restoredSnapshot,
+        message:
+            'Cloud relay pull completed. Pulled $applied authoritative change(s).',
+      );
+    } catch (error) {
+      SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] cloudRelayPull:error $error',
+      );
+      return null;
+    }
+  }
+
   Future<void> _pollSubmittedClientRequests(CloudSyncSettings settings) async {
     final identity = store.appIdentity;
     if (!identity.isClient) return;
@@ -3109,6 +3616,22 @@ class CloudSyncService {
         await sendHostHeartbeat(settings);
         onProgress?.call(0.40, 'Registering Host device...');
         await registerCurrentDevice(settings, transport: 'cloud');
+        final hostPendingCount =
+            _syncCore.pendingChangesForTarget('cloud').length;
+        onProgress?.call(
+            0.55, 'Publishing Host changes through Cloud relay...');
+        final relayPublished = await _broadcastHostAuthorityViaRelay(settings);
+        if (relayPublished) {
+          pushed = hostPendingCount;
+          await runCloudMaintenance(settings);
+          return CloudSyncResult(
+            ok: true,
+            pushed: pushed,
+            message:
+                'Host cloud relay completed. Broadcast $pushed authoritative change(s).',
+          );
+        }
+
         onProgress?.call(0.55, 'Checking Client requests...');
         acceptedRemoteRequests = await _hostPullRemoteRequests(settings);
         onProgress?.call(0.75, 'Uploading authoritative Host changes...');
@@ -3126,16 +3649,26 @@ class CloudSyncService {
 
       onProgress?.call(0.12, 'Registering Client device...');
       await registerCurrentDevice(settings, transport: 'cloud');
-      onProgress?.call(0.22, 'Checking sent Client requests...');
-      await _pollSubmittedClientRequests(settings);
-      onProgress?.call(0.28, 'Sending Client requests to Host relay...');
-      pushed += await _pushPendingToEndpoint(
-          settings, 'cloud_host', '/api/sync/requests/push');
-      return CloudSyncResult(
-          ok: true,
-          pushed: pushed,
-          message:
-              'Client cloud push completed. Sent $pushed request(s) to Host relay.');
+      onProgress?.call(0.22, 'Sending Client requests to Host relay...');
+      try {
+        pushed += await _pushPendingViaRelay(settings, target: 'cloud_host');
+        return CloudSyncResult(
+            ok: true,
+            pushed: pushed,
+            message:
+                'Client cloud push completed. Sent $pushed request(s) to Host relay.');
+      } catch (_) {
+        onProgress?.call(
+            0.22, 'Falling back to the legacy Cloud request queue...');
+        await _pollSubmittedClientRequests(settings);
+        pushed += await _pushPendingToEndpoint(
+            settings, 'cloud_host', '/api/sync/requests/push');
+        return CloudSyncResult(
+            ok: true,
+            pushed: pushed,
+            message:
+                'Client cloud push completed. Sent $pushed request(s) to Host relay.');
+      }
     } catch (error) {
       return CloudSyncResult(ok: false, message: 'Cloud push failed: $error');
     }
@@ -3221,8 +3754,6 @@ class CloudSyncService {
     }
 
     try {
-      await _pollSubmittedClientRequests(settings);
-      var pulled = 0;
       // Freeze the sequence watermark for the whole paginated pull. Reading
       // lastAppliedSequence after every page can skip pages: page 1 advances the
       // local state, then page 2 asks Cloud for sequence > the new value while
@@ -3231,6 +3762,16 @@ class CloudSyncService {
       final baseLastAppliedSequence =
           SyncDeviceStateStore.lastAppliedSequenceForTransport(
               store.appIdentity, 'cloud');
+      final relayResult = baseLastAppliedSequence > 0
+          ? await _pullAuthoritativeChangesViaRelay(
+              settings,
+              minSnapshotUpdatedAt: minSnapshotUpdatedAt,
+              onProgress: onProgress,
+            )
+          : null;
+      if (relayResult != null) return relayResult;
+      await _pollSubmittedClientRequests(settings);
+      var pulled = 0;
       // Sequence is the authoritative Cloud watermark. Never combine it
       // with the legacy timestamp cursor: a newer local timestamp can filter out
       // older-but-unapplied Host events and leave the Client stuck behind the
