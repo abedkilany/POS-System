@@ -15,6 +15,7 @@ class _FakeCloudSyncService extends CloudSyncService {
 
   static final DateTime _appliedAt = DateTime.utc(2026, 1, 1, 12);
   static const int _appliedSequence = 42;
+  DateTime? lastPullCursorSeen;
 
   Future<CloudSyncResult> _writeCloudBaseline(CloudSyncSettings settings,
       {bool restoredSnapshot = false}) async {
@@ -41,6 +42,7 @@ class _FakeCloudSyncService extends CloudSyncService {
     DateTime? minSnapshotUpdatedAt,
     CloudSyncProgressCallback? onProgress,
   }) {
+    lastPullCursorSeen = settings.lastPullCursor;
     return _writeCloudBaseline(settings);
   }
 
@@ -142,6 +144,31 @@ void main() {
         ),
         42,
       );
+    });
+
+    test(
+        'clears legacy cloud cursor before pulling when the client has no sequence baseline',
+        () async {
+      final legacyCursor = DateTime.utc(2026, 1, 1, 9);
+      final fakeService = _FakeCloudSyncService(store);
+      final legacyAdapter = CloudSyncTransportAdapter(
+        service: fakeService,
+        settings: CloudSyncSettings(
+          enabled: true,
+          apiBaseUrl: 'https://sync.test',
+          lastPullCursor: legacyCursor,
+        ),
+      );
+
+      final result = await legacyAdapter.pullChanges(
+        UnifiedSyncPullRequest(
+          deviceId: store.deviceId,
+          deviceToken: store.appIdentity.deviceToken,
+        ),
+      );
+
+      expect(result.ok, isTrue);
+      expect(fakeService.lastPullCursorSeen, isNull);
     });
   });
 }
