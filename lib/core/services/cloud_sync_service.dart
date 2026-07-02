@@ -603,12 +603,14 @@ class CloudSyncResult {
       required this.message,
       this.pushed = 0,
       this.pulled = 0,
-      this.restoredSnapshot = false});
+      this.restoredSnapshot = false,
+      this.syncDeferred = false});
   final bool ok;
   final String message;
   final int pushed;
   final int pulled;
   final bool restoredSnapshot;
+  final bool syncDeferred;
 }
 
 class CloudPairingCodeResult {
@@ -690,6 +692,28 @@ class CloudSyncService {
   static final Map<String, _CloudSnapshotRelayJob> _relaySnapshotJobs =
       <String, _CloudSnapshotRelayJob>{};
   static const Duration _relaySnapshotJobTtl = Duration(minutes: 10);
+  static const String _clientCloudDrainMessage =
+      'Client cloud sync paused until Host confirms pending local changes. Pull and snapshot rebuild are deferred.';
+  static const String _clientCloudRebuildBlockedMessage =
+      'Cloud rebuild is paused until the Client finishes sending its pending changes to the Host.';
+
+  Future<bool> _clientCloudHostWorkNeedsDrain(
+    CloudSyncSettings settings, {
+    bool refreshSubmittedRequests = true,
+  }) async {
+    if (!store.appIdentity.isClient) return false;
+    try {
+      if (refreshSubmittedRequests) {
+        await _pollSubmittedClientRequests(settings);
+      }
+    } catch (error) {
+      SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] cloudClientDrainGuard:statusPollFailed error=$error',
+      );
+      return true;
+    }
+    return store.hasOutstandingSyncWorkForTarget('cloud_host');
+  }
 
   Future<void> _restorePreviousSyncMode(AppIdentity previousIdentity) async {
     final current = store.appIdentity;
@@ -1905,6 +1929,14 @@ class CloudSyncService {
       return const CloudSyncResult(
           ok: false,
           message: 'Cloud API URL and paired device token are required.');
+    }
+
+    if (await _clientCloudHostWorkNeedsDrain(settings)) {
+      return const CloudSyncResult(
+        ok: false,
+        message: _clientCloudRebuildBlockedMessage,
+        syncDeferred: true,
+      );
     }
 
     CloudSyncResult? freshSnapshotRequest;
@@ -3841,6 +3873,14 @@ class CloudSyncService {
           ok: false, message: 'Cloud API URL and token are required.');
     }
 
+    if (await _clientCloudHostWorkNeedsDrain(settings)) {
+      return const CloudSyncResult(
+        ok: true,
+        message: _clientCloudDrainMessage,
+        syncDeferred: true,
+      );
+    }
+
     try {
       var pushed = 0;
       var acceptedRemoteRequests = 0;
@@ -4003,6 +4043,14 @@ class CloudSyncService {
           ok: false, message: 'Cloud API URL and token are required.');
     }
 
+    if (await _clientCloudHostWorkNeedsDrain(settings)) {
+      return const CloudSyncResult(
+        ok: true,
+        message: _clientCloudDrainMessage,
+        syncDeferred: true,
+      );
+    }
+
     try {
       // Freeze the sequence watermark for the whole paginated pull. Reading
       // lastAppliedSequence after every page can skip pages: page 1 advances the
@@ -4020,7 +4068,6 @@ class CloudSyncService {
             )
           : null;
       if (relayResult != null) return relayResult;
-      await _pollSubmittedClientRequests(settings);
       var pulled = 0;
       // Sequence is the authoritative Cloud watermark. Never combine it
       // with the legacy timestamp cursor: a newer local timestamp can filter out
@@ -4327,6 +4374,17 @@ class CloudSyncService {
         onProgress?.call(0.28, 'Sending Client requests to Host relay...');
         pushed += await _pushPendingToEndpoint(
             settings, 'cloud_host', '/api/sync/requests/push');
+
+        if (await _clientCloudHostWorkNeedsDrain(settings)) {
+          onProgress?.call(1.0, _clientCloudDrainMessage);
+          return CloudSyncResult(
+            ok: true,
+            pushed: pushed,
+            pulled: 0,
+            message: _clientCloudDrainMessage,
+            syncDeferred: true,
+          );
+        }
       }
 
       // Freeze the sequence watermark for the whole paginated pull. Reading

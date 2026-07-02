@@ -1829,6 +1829,16 @@ class AppStore extends ChangeNotifier {
     );
   }
 
+  int outstandingSyncQueueCountForTarget(String target) {
+    _requestSyncDataLoad();
+    return _syncQueue
+        .where((item) => item.target == target && item.status != 'synced')
+        .length;
+  }
+
+  bool hasOutstandingSyncWorkForTarget(String target) =>
+      outstandingSyncQueueCountForTarget(target) > 0;
+
   String get deviceId => _deviceId;
   int get pendingSyncCount => pendingSyncQueue.length;
   int get pendingSyncQueueCount => pendingSyncQueue.length;

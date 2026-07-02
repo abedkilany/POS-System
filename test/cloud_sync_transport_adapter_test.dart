@@ -9,6 +9,8 @@ import 'package:ventio/core/sync_unified/sync_device_state.dart';
 import 'package:ventio/core/sync_unified/sync_transport_adapter.dart';
 import 'package:ventio/data/app_store.dart';
 import 'package:ventio/models/app_identity.dart';
+import 'package:ventio/models/sync_change.dart';
+import 'package:ventio/models/sync_queue_item.dart';
 
 class _FakeCloudSyncService extends CloudSyncService {
   _FakeCloudSyncService(super.store);
@@ -64,6 +66,105 @@ class _FakeCloudSyncService extends CloudSyncService {
   }) async {
     return const CloudSyncResult(ok: true, message: 'ok', pushed: 0);
   }
+}
+
+class _SpyCloudSyncService extends CloudSyncService {
+  _SpyCloudSyncService(super.store);
+
+  int pushCallCount = 0;
+  int pullCallCount = 0;
+  int rebuildCallCount = 0;
+
+  @override
+  Future<CloudSyncResult> pushPendingForUnifiedEngine(
+    CloudSyncSettings settings, {
+    CloudSyncProgressCallback? onProgress,
+  }) async {
+    pushCallCount += 1;
+    return const CloudSyncResult(ok: true, message: 'ok', pushed: 1);
+  }
+
+  @override
+  Future<CloudSyncResult> pullAuthoritativeChangesForUnifiedEngine(
+    CloudSyncSettings settings, {
+    DateTime? minSnapshotUpdatedAt,
+    CloudSyncProgressCallback? onProgress,
+  }) async {
+    pullCallCount += 1;
+    return super.pullAuthoritativeChangesForUnifiedEngine(
+      settings,
+      minSnapshotUpdatedAt: minSnapshotUpdatedAt,
+      onProgress: onProgress,
+    );
+  }
+
+  @override
+  Future<CloudSyncResult> rebuildFromCloudHostSnapshot(
+    CloudSyncSettings settings, {
+    CloudSyncProgressCallback? onProgress,
+    bool requestFreshSnapshot = true,
+    String expectedSnapshotGeneration = '',
+    String expectedRestoreCommandId = '',
+  }) async {
+    rebuildCallCount += 1;
+    return super.rebuildFromCloudHostSnapshot(
+      settings,
+      onProgress: onProgress,
+      requestFreshSnapshot: requestFreshSnapshot,
+      expectedSnapshotGeneration: expectedSnapshotGeneration,
+      expectedRestoreCommandId: expectedRestoreCommandId,
+    );
+  }
+}
+
+Future<AppStore> _buildClientStoreWithPendingCloudHostWork() async {
+  SharedPreferences.setMockInitialValues(const <String, Object>{});
+  final identity = AppIdentity.defaults(
+    deviceId: 'DV-TEST',
+    platform: AppPlatformType.web,
+  ).copyWith(
+    deviceRole: DeviceRole.client,
+    syncMode: SyncMode.cloudConnected,
+    hostDeviceId: 'HOST-TEST',
+    activeSyncTransport: 'cloud',
+  );
+  final now = DateTime.utc(2026, 1, 1, 12);
+  final queueItem = SyncQueueItem(
+    id: 'cmd-1-cloud_host',
+    changeId: 'cmd-1',
+    target: 'cloud_host',
+    status: 'pending',
+    attempts: 0,
+    createdAt: now,
+    updatedAt: now,
+  );
+  final change = SyncChange(
+    id: 'cmd-1',
+    entityType: 'product',
+    entityId: 'p1',
+    operation: 'create',
+    deviceId: identity.deviceId,
+    createdAt: now,
+    payload: const <String, dynamic>{
+      'id': 'p1',
+      'code': 'P-1',
+    },
+  );
+  LocalDatabaseService.useInMemoryStoreForTesting(<String, String>{
+    'app_identity_v1': jsonEncode(identity.toJson()),
+    'sync_changes_v1': jsonEncode(<Map<String, dynamic>>[change.toJson()]),
+    'sync_queue_v1': '[]',
+    'sync_sequence_v1': '0',
+  });
+
+  final store = AppStore();
+  await store.initialize();
+  await LocalDatabaseService.setString(
+    'sync_queue_v1',
+    jsonEncode(<Map<String, dynamic>>[queueItem.toJson()]),
+  );
+  await store.refreshAfterDatabaseChange('sync_queue_v1');
+  return store;
 }
 
 void main() {
@@ -144,6 +245,54 @@ void main() {
         ),
         42,
       );
+    });
+
+    test('blocks rebuild while the client still has cloud_host work queued',
+        () async {
+      final pendingStore = await _buildClientStoreWithPendingCloudHostWork();
+      final service = CloudSyncService(pendingStore);
+
+      final result = await service.rebuildFromCloudHostSnapshot(
+        const CloudSyncSettings(
+          enabled: true,
+          apiBaseUrl: 'https://sync.test',
+        ),
+      );
+
+      expect(result.ok, isFalse);
+      expect(result.syncDeferred, isTrue);
+      expect(result.message, contains('paused'));
+      expect(
+        pendingStore.hasOutstandingSyncWorkForTarget('cloud_host'),
+        isTrue,
+      );
+      expect(pendingStore.syncQueue.single.status, 'pending');
+    });
+
+    test(
+        'defers cloud sync before pull or rebuild while the client still has cloud_host work queued',
+        () async {
+      final pendingStore = await _buildClientStoreWithPendingCloudHostWork();
+      final service = _SpyCloudSyncService(pendingStore);
+      final pendingAdapter = CloudSyncTransportAdapter(
+        service: service,
+        settings: const CloudSyncSettings(
+          enabled: true,
+          apiBaseUrl: 'https://sync.test',
+        ),
+      );
+
+      final result = await pendingAdapter.syncNow();
+
+      expect(result.ok, isTrue);
+      expect(result.data['syncDeferred'], isTrue);
+      expect(result.message, contains('paused'));
+      expect(service.pushCallCount, 1);
+      expect(service.pullCallCount, 1);
+      expect(service.rebuildCallCount, 0);
+      expect(pendingStore.hasOutstandingSyncWorkForTarget('cloud_host'),
+          isTrue);
+      expect(pendingStore.syncQueue.single.status, 'pending');
     });
 
     test(

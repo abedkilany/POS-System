@@ -259,6 +259,9 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
       pushed: result.pushed,
       pulled: result.pulled,
       restoredSnapshot: result.restoredSnapshot,
+      data: result.syncDeferred
+          ? const {'syncDeferred': true}
+          : const <String, dynamic>{},
       error: _errorFor(result.ok, result.message),
       cursor: UnifiedCursorEnvelope(
         value: current.lastPullCursor?.toIso8601String() ?? '',
@@ -285,6 +288,9 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
     return UnifiedSyncResult(
       ok: result.ok,
       message: result.message,
+      data: result.syncDeferred
+          ? const {'syncDeferred': true}
+          : const <String, dynamic>{},
       pushed: result.pushed,
       pulled: result.pulled,
       restoredSnapshot: result.restoredSnapshot,
@@ -331,6 +337,18 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
         ),
       ),
     );
+    if (pull.data['syncDeferred'] == true) {
+      onProgress?.call(1.0, pull.message);
+      return UnifiedSyncResult(
+        ok: true,
+        message: pull.message,
+        pushed: push.pushed,
+        pulled: 0,
+        restoredSnapshot: false,
+        data: const {'syncDeferred': true},
+        cursor: pull.cursor,
+      );
+    }
     if (pull.ok) {
       await compactAfterSuccessfulSync();
       onProgress?.call(1.0, 'Cloud sync completed.');
