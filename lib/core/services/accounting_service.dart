@@ -18,10 +18,19 @@ class AccountingService {
 
   static final Random _random = Random.secure();
   static bool get isAvailable => SqliteMigrationManager.database != null;
+  static void Function()? _mutationListener;
   static StoreProfile _moneyProfile = StoreProfile.defaults;
   static int? _entryNoCacheDbIdentity;
   static final Map<int, int> _entryNoSequenceByYear = <int, int>{};
   static Future<void> _entryNoQueue = Future<void>.value();
+
+  static void setMutationListener(void Function()? listener) {
+    _mutationListener = listener;
+  }
+
+  static void _notifyMutation() {
+    _mutationListener?.call();
+  }
 
   static void configureMoneyPolicy(StoreProfile profile) {
     _moneyProfile = profile;
@@ -74,6 +83,7 @@ class AccountingService {
         Variable<String>(now),
       ],
     );
+    _notifyMutation();
     await _writeAuditLog(
       action: 'update_setting',
       entityType: 'accounting_setting',
@@ -128,6 +138,7 @@ class AccountingService {
         Variable<String>(now),
       ],
     );
+    _notifyMutation();
     await _writeAuditLog(
       action: 'update_setting',
       entityType: 'accounting_setting',
@@ -1642,6 +1653,7 @@ class AccountingService {
       ],
     ));
 
+    _notifyMutation();
     await _writeAuditLog(
       action: 'create_fixed_asset',
       entityType: 'fixed_asset',
@@ -1671,7 +1683,10 @@ class AccountingService {
       variables: <Variable<Object>>[Variable<String>(assetId)],
     ).getSingleOrNull();
     if (row == null) throw ArgumentError('الأصل الثابت غير موجود: $assetId');
-    return _runDepreciationForAssetRow(row.data, throughDate: throughDate, createdBy: createdBy);
+    final posted =
+        await _runDepreciationForAssetRow(row.data, throughDate: throughDate, createdBy: createdBy);
+    if (posted > 0) _notifyMutation();
+    return posted;
   }
 
   static Future<int> runDepreciationForAllAssets({
@@ -1691,6 +1706,7 @@ class AccountingService {
     for (final row in rows) {
       posted += await _runDepreciationForAssetRow(row.data, throughDate: throughDate, createdBy: createdBy);
     }
+    if (posted > 0) _notifyMutation();
     return posted;
   }
 
@@ -1819,6 +1835,7 @@ class AccountingService {
       branchId: branchId,
       lines: lines,
     ));
+    _notifyMutation();
   }
 
   static Future<void> openCashDrawer({
@@ -1882,11 +1899,13 @@ class AccountingService {
           createdBy: openedBy,
           storeId: storeId,
           branchId: branchId,
+          notifyChange: false,
         );
       } else {
         await _setCashLocationBalance(resolvedLocationId, cleanOpening, now);
       }
     }
+    _notifyMutation();
     await _writeAuditLog(action: 'open_cash_drawer', entityType: 'cash_drawer', entityId: sessionId, details: drawerNo, createdBy: openedBy, storeId: storeId, branchId: branchId);
   }
 
@@ -1968,10 +1987,12 @@ class AccountingService {
         createdBy: closedBy,
         storeId: storeId,
         branchId: branchId,
+        notifyChange: false,
       );
     }
 
     final type = difference < 0 ? 'shortage' : difference > 0 ? 'overage' : 'balanced';
+    _notifyMutation();
     await _writeAuditLog(
       action: 'close_cash_drawer',
       entityType: 'cash_drawer',
@@ -2082,6 +2103,7 @@ class AccountingService {
         Variable<String>(branchId),
       ],
     );
+    _notifyMutation();
     await _writeAuditLog(action: 'create_period', entityType: 'accounting_period', details: name, createdBy: createdBy, storeId: storeId, branchId: branchId);
   }
 
@@ -2112,6 +2134,7 @@ class AccountingService {
         Variable<String>(periodId),
       ],
     );
+    _notifyMutation();
     await _writeAuditLog(action: 'close_period', entityType: 'accounting_period', entityId: periodId, details: 'تم إغلاق فترة محاسبية متوازنة', createdBy: closedBy, storeId: row.data['store_id']?.toString() ?? '', branchId: row.data['branch_id']?.toString() ?? '');
   }
 
@@ -2184,6 +2207,7 @@ class AccountingService {
         ],
       );
     });
+    _notifyMutation();
     await _writeAuditLog(
       action: 'create_cash_location',
       entityType: 'cash_location',
@@ -2255,6 +2279,7 @@ class AccountingService {
         ],
       );
     });
+    _notifyMutation();
   }
 
   static Future<void> unlinkCashDrawerFromDevice({required String deviceId}) async {
@@ -2268,6 +2293,7 @@ class AccountingService {
         Variable<String>(cleanDeviceId),
       ],
     );
+    _notifyMutation();
   }
 
   static Future<void> createCashTransfer({
@@ -2279,6 +2305,7 @@ class AccountingService {
     String createdBy = '',
     String storeId = '',
     String branchId = '',
+    bool notifyChange = true,
   }) async {
     if (!isAvailable) return;
     final cleanAmount = _roundMoney(amount);
@@ -2340,6 +2367,7 @@ class AccountingService {
         variables: <Variable<Object>>[Variable<double>(cleanAmount), Variable<String>(now), Variable<String>(toLocation.id)],
       );
     });
+    if (notifyChange) _notifyMutation();
     await _writeAuditLog(
       action: 'create_cash_transfer',
       entityType: 'cash_transfer',
@@ -2390,6 +2418,7 @@ class AccountingService {
         ],
       );
     });
+    _notifyMutation();
     await _writeAuditLog(action: 'create_payment_account', entityType: 'payment_account', details: name, storeId: storeId, branchId: branchId);
   }
 
@@ -2433,6 +2462,7 @@ class AccountingService {
         Variable<String>(branchId),
       ],
     );
+    _notifyMutation();
     await _writeAuditLog(action: 'create_cheque', entityType: 'cheque', details: chequeNo, storeId: storeId, branchId: branchId);
   }
 
@@ -2449,6 +2479,7 @@ class AccountingService {
       "UPDATE cheques SET status = 'cleared', updated_at = ? WHERE id = ?",
       variables: <Variable<Object>>[Variable<String>(now), Variable<String>(chequeId)],
     );
+    _notifyMutation();
     await _writeAuditLog(action: 'clear_cheque', entityType: 'cheque', entityId: chequeId, details: data['cheque_no']?.toString() ?? '', createdBy: settledBy, storeId: data['store_id']?.toString() ?? '', branchId: data['branch_id']?.toString() ?? '');
   }
 
@@ -2464,6 +2495,7 @@ class AccountingService {
       "UPDATE cheques SET status = 'bounced', notes = notes || ?, updated_at = ? WHERE id = ?",
       variables: <Variable<Object>>[Variable<String>('\nBounced: $reason'), Variable<String>(now), Variable<String>(chequeId)],
     );
+    _notifyMutation();
     await _writeAuditLog(action: 'bounce_cheque', entityType: 'cheque', entityId: chequeId, details: reason, createdBy: actor, storeId: row.data['store_id']?.toString() ?? '', branchId: row.data['branch_id']?.toString() ?? '');
   }
 
@@ -2490,6 +2522,7 @@ class AccountingService {
         Variable<String>(now),
       ],
     );
+    _notifyMutation();
     await _writeAuditLog(action: 'create_master_data', entityType: table, details: '$code - $name');
   }
 

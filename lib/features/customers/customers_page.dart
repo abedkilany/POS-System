@@ -9,6 +9,7 @@ import 'package:flutter/rendering.dart';
 import '../../core/localization/app_localizations.dart';
 import '../../core/services/local_database_service.dart';
 import '../../core/utils/responsive.dart';
+import '../../core/utils/revision_cache.dart';
 import '../../data/app_store.dart';
 import '../../models/customer.dart';
 import '../../models/user_role.dart';
@@ -33,6 +34,8 @@ class _CustomersPageState extends State<CustomersPage> {
   int _customerRevealTargetCount = 0;
   Future<_CustomerQueryResult?>? _customerQueryFuture;
   String _customerQueryFutureKey = '';
+  final RevisionKeyCache<List<Customer>> _filteredCustomersCache =
+      RevisionKeyCache<List<Customer>>();
 
   @override
   void dispose() {
@@ -46,6 +49,7 @@ class _CustomersPageState extends State<CustomersPage> {
     if (oldWidget.store != widget.store) {
       _customerQueryFuture = null;
       _customerQueryFutureKey = '';
+      _filteredCustomersCache.invalidate();
       _resetCustomerReveal();
     }
   }
@@ -141,14 +145,18 @@ class _CustomersPageState extends State<CustomersPage> {
     AppLocalizations tr,
     String value,
   ) {
-    final customers = widget.store.customers.where((customer) {
-      final isWalkIn = customer.id == AppStore.walkInCustomerId ||
-          customer.name.trim().toLowerCase() ==
-              AppStore.walkInCustomerName.toLowerCase();
-      if (isWalkIn) return false;
-      return customer.name.toLowerCase().contains(value) ||
-          customer.phone.toLowerCase().contains(value);
-    }).toList();
+    final customers = _filteredCustomersCache.getOrCompute(
+      widget.store.customersRevision,
+      value,
+      () => widget.store.customers.where((customer) {
+        final isWalkIn = customer.id == AppStore.walkInCustomerId ||
+            customer.name.trim().toLowerCase() ==
+                AppStore.walkInCustomerName.toLowerCase();
+        if (isWalkIn) return false;
+        return customer.name.toLowerCase().contains(value) ||
+            customer.phone.toLowerCase().contains(value);
+      }).toList(growable: false),
+    );
     _syncCustomerReveal(customers.length);
     final visibleCustomers = customers
         .take(math.min(_visibleCustomerCount, customers.length))

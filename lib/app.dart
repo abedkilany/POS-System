@@ -13,6 +13,7 @@ import 'core/sync_unified/sync_unified.dart';
 import 'core/sync_unified/sync_device_state.dart';
 import 'core/snapshot/unified_snapshot_progress.dart';
 import 'core/services/cloud_sync_service.dart';
+import 'core/services/accounting_service.dart';
 import 'core/services/google_drive_backup_service.dart';
 import 'core/services/lan_sync_service.dart';
 import 'core/services/local_auto_backup_service.dart';
@@ -92,6 +93,7 @@ class _VentioAppState extends State<VentioApp> {
   void initState() {
     super.initState();
     _registerPageTimings();
+    AccountingService.setMutationListener(() => _store.notifyListeners());
     _initializeApp();
   }
 
@@ -263,6 +265,7 @@ class _VentioAppState extends State<VentioApp> {
     unawaited(_autoSyncController.stop());
     _autoCloudSyncController.stop();
     _autoSnapshotProgress.dispose();
+    AccountingService.setMutationListener(null);
     _store.dispose();
     super.dispose();
   }

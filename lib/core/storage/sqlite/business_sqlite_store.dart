@@ -746,8 +746,8 @@ class BusinessSqliteStore {
 
   static const String _purchaseTotalsCte = '''
       WITH purchase_totals AS (
-        SELECT p.id, p.purchase_no, p.supplier_name, p.document_date,
-               COALESCE(SUM(pi.quantity * pi.unit_cost), 0) AS subtotal
+        SELECT p.id, p.purchase_no, p.supplier_name, p.document_date, p.status,
+                COALESCE(SUM(pi.quantity * pi.unit_cost), 0) AS subtotal
         FROM purchases p
         LEFT JOIN purchase_items pi ON pi.purchase_id = p.id
         WHERE p.deleted_at = ''

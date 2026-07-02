@@ -106,16 +106,36 @@ class _SalesPageState extends State<SalesPage> {
       RevisionKeyCache<List<Product>>();
   final RevisionKeyCache<List<Product>> _activeProductsCache =
       RevisionKeyCache<List<Product>>();
-  final RevisionKeyCache<List<Product>> _nonDeletedProductsCache =
-      RevisionKeyCache<List<Product>>();
   final RevisionKeyCache<Map<String, String>> _productSearchIndexCache =
       RevisionKeyCache<Map<String, String>>();
+  final RevisionValueCache<Map<String, _BarcodeProductMatch>>
+      _barcodeLookupCache =
+      RevisionValueCache<Map<String, _BarcodeProductMatch>>();
+  final RevisionKeyCache<Map<String, String>> _invoiceSearchIndexCache =
+      RevisionKeyCache<Map<String, String>>();
   Timer? _productSearchRevealTimer;
+  int _storeUiRevision = 0;
   late Future<void> _dataFuture;
 
   void _handleStoreChanged() {
     if (!mounted) return;
-    setState(() {});
+    final nextRevision = _currentStoreUiRevision();
+    if (nextRevision == _storeUiRevision) return;
+    setState(() {
+      _storeUiRevision = nextRevision;
+    });
+  }
+
+  int _currentStoreUiRevision() {
+    return Object.hashAll(<Object?>[
+      widget.store.salesPageRevision,
+      widget.store.canViewSales,
+      widget.store.canSell,
+      widget.store.canManageDeliveryNotes,
+      widget.store.canDeleteOrCancel,
+      widget.store.hasPermission(AppPermission.salesPrint),
+      widget.store.hasPermission(AppPermission.salesExport),
+    ]);
   }
 
   @override
@@ -128,6 +148,7 @@ class _SalesPageState extends State<SalesPage> {
     _discountCurrency = widget.store.storeProfile.defaultSaleInvoiceCurrency;
     _paymentExchangeRateController.text =
         widget.store.storeProfile.usdToLbpRate.toStringAsFixed(0);
+    _storeUiRevision = _currentStoreUiRevision();
     _loadQuickProductPages();
     _loadHeldSaleCarts();
     _dataFuture = widget.store.ensureSalesPageDataLoaded();
@@ -147,8 +168,9 @@ class _SalesPageState extends State<SalesPage> {
       widget.store.addListener(_handleStoreChanged);
       _visibleProductsCache.invalidate();
       _activeProductsCache.invalidate();
-      _nonDeletedProductsCache.invalidate();
       _productSearchIndexCache.invalidate();
+      _barcodeLookupCache.invalidate();
+      _invoiceSearchIndexCache.invalidate();
       _salesQueryFuture = null;
       _salesQueryFutureKey = '';
       _visibleInvoiceCount = 50;
@@ -157,6 +179,7 @@ class _SalesPageState extends State<SalesPage> {
       _expandedInvoiceIds.clear();
       _resetProductSearchReveal();
       _dataFuture = widget.store.ensureSalesPageDataLoaded();
+      _storeUiRevision = _currentStoreUiRevision();
     }
   }
 
@@ -331,6 +354,34 @@ class _SalesPageState extends State<SalesPage> {
         return index;
       },
     );
+  }
+
+  Map<String, _BarcodeProductMatch> _barcodeLookup() {
+    return _barcodeLookupCache.getOrCompute(widget.store.productsRevision, () {
+      final lookup = <String, _BarcodeProductMatch>{};
+      for (final product in widget.store.products) {
+        if (!product.isActive || product.isDeleted) continue;
+        final saleUnits = product.effectiveSaleUnits;
+        final defaultUnit = saleUnits.first;
+        final code = product.code.trim().toLowerCase();
+        if (code.isNotEmpty) {
+          lookup[code] =
+              _BarcodeProductMatch(product: product, unit: defaultUnit);
+        }
+        final barcode = product.barcode.trim().toLowerCase();
+        if (barcode.isNotEmpty) {
+          lookup[barcode] =
+              _BarcodeProductMatch(product: product, unit: defaultUnit);
+        }
+        for (final unit in saleUnits) {
+          final unitBarcode = unit.barcode.trim().toLowerCase();
+          if (unitBarcode.isEmpty) continue;
+          lookup[unitBarcode] =
+              _BarcodeProductMatch(product: product, unit: unit);
+        }
+      }
+      return lookup;
+    });
   }
 
   Future<List<Product>> _resolveSearchProducts(
@@ -1090,19 +1141,19 @@ class _SalesPageState extends State<SalesPage> {
         final isLoading = snapshot.connectionState != ConnectionState.done;
         final colorScheme = Theme.of(context).colorScheme;
         final title = openSession == null
-            ? 'Ù„Ø§ ØªÙˆØ¬Ø¯ ÙˆØ±Ø¯ÙŠØ© Ù†Ù‚Ø¯ÙŠØ© Ù…ÙØªÙˆØ­Ø©'
-            : 'Ø§Ù„ÙˆØ±Ø¯ÙŠØ© Ø§Ù„Ù†Ù‚Ø¯ÙŠØ© Ù…ÙØªÙˆØ­Ø©';
+            ? 'لا توجد وردية نقدية مفتوحة'
+            : 'الوردية النقدية مفتوحة';
         final subtitle = openSession == null
             ? (drawer == null
                 ? (tr.isArabic
-                    ? 'Ù„Ø§ ÙŠÙˆØ¬Ø¯ Ø¯Ø±Ø¬ Ù†Ù‚Ø¯ÙŠØ© Ù…Ø±Ø¨ÙˆØ· Ø£Ùˆ Ù…Ø¹Ø±Ù Ù„Ù‡Ø°Ø§ Ø§Ù„Ø¬Ù‡Ø§Ø².'
+                    ? 'لا يوجد درج نقدية مربوط أو معرف لهذا الجهاز.'
                     : 'No cash drawer is linked or defined for this device.')
                 : (tr.isArabic
-                    ? 'Ø§Ù„Ø¯Ø±Ø¬: ${drawer.name} â€¢ Ø§ÙØªØ­ ÙˆØ±Ø¯ÙŠØ© Ù‚Ø¨Ù„ Ø§Ù„Ø¨ÙŠØ¹ Ø§Ù„Ù†Ù‚Ø¯ÙŠ.'
-                    : 'Drawer: ${drawer.name} â€¢ Open a shift before cash sales.'))
+                    ? 'الدرج: ${drawer.name} • افتح وردية قبل البيع النقدي.'
+                    : 'Drawer: ${drawer.name} • Open a shift before cash sales.'))
             : (tr.isArabic
-                ? '${openSession.name} â€¢ ${openSession.accountName.isEmpty ? 'Ø¯Ø±Ø¬ Ù†Ù‚Ø¯ÙŠØ©' : openSession.accountName} â€¢ Ø§Ù„Ù…ØªÙˆÙ‚Ø¹: ${formatUsdReferenceAmount(openSession.credit, widget.store.storeProfile)}'
-                : '${openSession.name} â€¢ ${openSession.accountName.isEmpty ? 'Cash drawer' : openSession.accountName} â€¢ Expected: ${formatUsdReferenceAmount(openSession.credit, widget.store.storeProfile)}');
+                ? '${openSession.name} • ${openSession.accountName.isEmpty ? 'درج نقدية' : openSession.accountName} • المتوقع: ${formatUsdReferenceAmount(openSession.credit, widget.store.storeProfile)}'
+                : '${openSession.name} • ${openSession.accountName.isEmpty ? 'Cash drawer' : openSession.accountName} • Expected: ${formatUsdReferenceAmount(openSession.credit, widget.store.storeProfile)}');
         return Card(
           elevation: 0,
           color: openSession == null
@@ -1151,7 +1202,7 @@ class _SalesPageState extends State<SalesPage> {
                         : () => _openSaleDrawerDialog(status),
                     icon: const Icon(Icons.lock_open_outlined),
                     label:
-                        Text(tr.isArabic ? 'ÙØªØ­ ÙˆØ±Ø¯ÙŠØ©' : 'Open shift'),
+                        Text(tr.isArabic ? 'فتح وردية' : 'Open shift'),
                   )
                 else
                   Wrap(
@@ -1163,7 +1214,7 @@ class _SalesPageState extends State<SalesPage> {
                             : () => _closeSaleDrawerDialog(openSession, status),
                         icon: const Icon(Icons.lock_outline),
                         label: Text(tr.isArabic
-                            ? 'Ø¥ØºÙ„Ø§Ù‚ / ØªØ³Ù„ÙŠÙ…'
+                            ? 'إغلاق / تسليم'
                             : 'Close / Handover'),
                       ),
                     ],
@@ -1188,7 +1239,7 @@ class _SalesPageState extends State<SalesPage> {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text(
-                  'Ù„Ø§ ÙŠÙˆØ¬Ø¯ Ø¯Ø±Ø¬ Ù†Ù‚Ø¯ÙŠØ© Ù…Ø¹Ø±Ù. Ø£Ø¶Ù Ø¯Ø±Ø¬ Ù†Ù‚Ø¯ÙŠØ© Ø£ÙˆÙ„Ø§Ù‹ Ù…Ù† Ø§Ù„Ø¥Ø¹Ø¯Ø§Ø¯Ø§Øª Ø§Ù„Ù…Ø§Ù„ÙŠØ©.'),
+                  'لا يوجد درج نقدية معرف. أضف درج نقدية أولاً من الإعدادات المالية.'),
             ),
           );
           return;
@@ -1222,7 +1273,7 @@ class _SalesPageState extends State<SalesPage> {
       builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, setDialogState) => AlertDialog(
           title: Text(
-              tr.isArabic ? 'ÙØªØ­ ÙˆØ±Ø¯ÙŠØ© Ù†Ù‚Ø¯ÙŠØ©' : 'Open cash shift'),
+              tr.isArabic ? 'فتح وردية نقدية' : 'Open cash shift'),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -1232,7 +1283,7 @@ class _SalesPageState extends State<SalesPage> {
                       selectedDrawerId.isEmpty ? null : selectedDrawerId,
                   decoration: InputDecoration(
                       labelText: tr.isArabic
-                          ? 'Ø¯Ø±Ø¬ Ø§Ù„Ù†Ù‚Ø¯ÙŠØ©'
+                          ? 'درج النقدية'
                           : 'Cash drawer'),
                   items: drawers
                       .map((item) => DropdownMenuItem(
@@ -1250,7 +1301,7 @@ class _SalesPageState extends State<SalesPage> {
                       const TextInputType.numberWithOptions(decimal: true),
                   decoration: InputDecoration(
                       labelText: tr.isArabic
-                          ? 'Ù…Ø¨Ù„Øº Ø§Ù„Ø§ÙØªØªØ§Ø­'
+                          ? 'مبلغ الافتتاح'
                           : 'Opening amount'),
                 ),
                 if (sources.isNotEmpty) ...[
@@ -1258,7 +1309,7 @@ class _SalesPageState extends State<SalesPage> {
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     title: Text(tr.isArabic
-                        ? 'ØªØ­ÙˆÙŠÙ„ Ù…Ø¨Ù„Øº Ø§Ù„Ø§ÙØªØªØ§Ø­ Ù…Ù† ØµÙ†Ø¯ÙˆÙ‚ Ø¢Ø®Ø±'
+                        ? 'تحويل مبلغ الافتتاح من صندوق آخر'
                         : 'Transfer opening amount from another drawer'),
                     value: useFundingSource,
                     onChanged: (value) =>
@@ -1270,7 +1321,7 @@ class _SalesPageState extends State<SalesPage> {
                           selectedFundingId.isEmpty ? null : selectedFundingId,
                       decoration: InputDecoration(
                           labelText: tr.isArabic
-                              ? 'Ù…ØµØ¯Ø± Ø§Ù„Ù…Ø¨Ù„Øº'
+                              ? 'مصدر المبلغ'
                               : 'Funding source'),
                       items: sources
                           .map((item) => DropdownMenuItem(
@@ -1294,7 +1345,7 @@ class _SalesPageState extends State<SalesPage> {
               onPressed: selectedDrawerId.isEmpty
                   ? null
                   : () => Navigator.pop(dialogContext, true),
-              child: Text(tr.isArabic ? 'ÙØªØ­' : 'Open'),
+              child: Text(tr.isArabic ? 'فتح' : 'Open'),
             ),
           ],
         ),
@@ -1321,7 +1372,7 @@ class _SalesPageState extends State<SalesPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
               content: Text(tr.isArabic
-                  ? 'ØªÙ… ÙØªØ­ Ø§Ù„ÙˆØ±Ø¯ÙŠØ© Ø§Ù„Ù†Ù‚Ø¯ÙŠØ©'
+                  ? 'تم فتح الوردية النقدية'
                   : 'Cash shift opened')),
         );
       }
@@ -1359,7 +1410,7 @@ class _SalesPageState extends State<SalesPage> {
       builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, setDialogState) => AlertDialog(
           title: Text(tr.isArabic
-              ? 'Ø¥ØºÙ„Ø§Ù‚ / ØªØ³Ù„ÙŠÙ… Ø§Ù„ÙˆØ±Ø¯ÙŠØ©'
+              ? 'إغلاق / تسليم الوردية'
               : 'Close / handover shift'),
           content: SingleChildScrollView(
             child: Column(
@@ -1367,7 +1418,7 @@ class _SalesPageState extends State<SalesPage> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(
-                    '${tr.isArabic ? 'Ø§Ù„Ù…ØªÙˆÙ‚Ø¹' : 'Expected'}: ${formatUsdReferenceAmount(expected, widget.store.storeProfile)}'),
+                    '${tr.isArabic ? 'المتوقع' : 'Expected'}: ${formatUsdReferenceAmount(expected, widget.store.storeProfile)}'),
                 const SizedBox(height: 12),
                 TextField(
                   controller: counted,
@@ -1375,7 +1426,7 @@ class _SalesPageState extends State<SalesPage> {
                       const TextInputType.numberWithOptions(decimal: true),
                   decoration: InputDecoration(
                       labelText: tr.isArabic
-                          ? 'Ø§Ù„Ù…Ø¨Ù„Øº Ø§Ù„Ù…Ø¹Ø¯ÙˆØ¯'
+                          ? 'المبلغ المعدود'
                           : 'Counted amount'),
                 ),
                 const SizedBox(height: 12),
@@ -1383,25 +1434,25 @@ class _SalesPageState extends State<SalesPage> {
                   initialValue: closeMode,
                   decoration: InputDecoration(
                       labelText: tr.isArabic
-                          ? 'Ø·Ø±ÙŠÙ‚Ø© Ø§Ù„Ø¥ØºÙ„Ø§Ù‚'
+                          ? 'طريقة الإغلاق'
                           : 'Close action'),
                   items: [
                     DropdownMenuItem(
                       value: 'keep_drawer',
                       child: Text(tr.isArabic
-                          ? 'Ø¥ØºÙ„Ø§Ù‚ ÙÙ‚Ø· ÙˆØªØ±Ùƒ Ø§Ù„Ù†Ù‚Ø¯ Ø¨Ù†ÙØ³ Ø§Ù„Ø¯Ø±Ø¬'
+                          ? 'إغلاق فقط وترك النقد بنفس الدرج'
                           : 'Close only and keep cash in the same drawer'),
                     ),
                     DropdownMenuItem(
                       value: 'transfer_location',
                       child: Text(tr.isArabic
-                          ? 'Ø¥ØºÙ„Ø§Ù‚ ÙˆØªØ­ÙˆÙŠÙ„ Ø§Ù„Ù†Ù‚Ø¯ Ø¥Ù„Ù‰ Ø¯Ø±Ø¬/ØµÙ†Ø¯ÙˆÙ‚ Ø¢Ø®Ø±'
+                          ? 'إغلاق وتحويل النقد إلى درج/صندوق آخر'
                           : 'Close and transfer cash to another drawer / vault'),
                     ),
                     DropdownMenuItem(
                       value: 'handover_user',
                       child: Text(tr.isArabic
-                          ? 'ØªØ³Ù„ÙŠÙ… Ù„Ù…ÙˆØ¸Ù Ø¬Ø¯ÙŠØ¯ ÙˆÙØªØ­ ÙˆØ±Ø¯ÙŠØ© Ø¬Ø¯ÙŠØ¯Ø©'
+                          ? 'تسليم لموظف جديد وفتح وردية جديدة'
                           : 'Handover to a new employee and open a new shift'),
                     ),
                   ],
@@ -1414,7 +1465,7 @@ class _SalesPageState extends State<SalesPage> {
                     initialValue: transferToId.isEmpty ? null : transferToId,
                     decoration: InputDecoration(
                         labelText: tr.isArabic
-                            ? 'Ø§Ù„Ø¯Ø±Ø¬ / Ø§Ù„ØµÙ†Ø¯ÙˆÙ‚ Ø§Ù„Ù…Ø³ØªÙ„Ù…'
+                            ? 'الدرج / الصندوق المستلم'
                             : 'Receiving drawer / vault'),
                     items: transferTargets
                         .map((item) => DropdownMenuItem(
@@ -1432,7 +1483,7 @@ class _SalesPageState extends State<SalesPage> {
                     initialValue: nextUserId.isEmpty ? null : nextUserId,
                     decoration: InputDecoration(
                         labelText: tr.isArabic
-                            ? 'Ø§Ù„Ù…ÙˆØ¸Ù Ø§Ù„Ù…Ø³ØªÙ„Ù…'
+                            ? 'الموظف المستلم'
                             : 'Receiving employee'),
                     items: handoverUsers
                         .map((user) => DropdownMenuItem(
@@ -1446,7 +1497,7 @@ class _SalesPageState extends State<SalesPage> {
                   const SizedBox(height: 6),
                   Text(
                     tr.isArabic
-                        ? 'Ø³ÙŠØªÙ… Ø¥ØºÙ„Ø§Ù‚ Ø§Ù„ÙˆØ±Ø¯ÙŠØ© Ø§Ù„Ø­Ø§Ù„ÙŠØ© ÙˆÙØªØ­ ÙˆØ±Ø¯ÙŠØ© Ø¬Ø¯ÙŠØ¯Ø© Ù„Ù„Ù…ÙˆØ¸Ù Ø§Ù„Ù…Ø³ØªÙ„Ù… Ø¨Ù†ÙØ³ Ø§Ù„Ù…Ø¨Ù„Øº Ø§Ù„Ù…Ø¹Ø¯ÙˆØ¯.'
+                        ? 'سيتم إغلاق الوردية الحالية وفتح وردية جديدة للموظف المستلم بنفس المبلغ المعدود.'
                         : 'The current shift will be closed and a new shift will be opened for the receiving employee with the same counted amount.',
                     style: Theme.of(dialogContext).textTheme.bodySmall,
                   ),
@@ -1496,10 +1547,10 @@ class _SalesPageState extends State<SalesPage> {
         final effectiveNotes = [
           notes.text.trim(),
           if (closeMode == 'transfer_location')
-            'ØªØ­ÙˆÙŠÙ„ Ø§Ù„Ù†Ù‚Ø¯ Ø¨Ø¹Ø¯ Ø§Ù„Ø¥ØºÙ„Ø§Ù‚ Ø¥Ù„Ù‰ $transferTargetName',
+            'تحويل النقد بعد الإغلاق إلى $transferTargetName',
           if (closeMode == 'handover_user')
-            'ØªØ³Ù„ÙŠÙ… Ø§Ù„ÙˆØ±Ø¯ÙŠØ© Ø¥Ù„Ù‰ $nextUserName',
-        ].where((part) => part.trim().isNotEmpty).join(' â€¢ ');
+            'تسليم الوردية إلى $nextUserName',
+        ].where((part) => part.trim().isNotEmpty).join(' • ');
         await AccountingService.closeCashDrawer(
           sessionId: session.id,
           countedCash: countedAmount,
@@ -1528,7 +1579,7 @@ class _SalesPageState extends State<SalesPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
               content: Text(tr.isArabic
-                  ? 'ØªÙ… ØªØ­Ø¯ÙŠØ« Ø§Ù„ÙˆØ±Ø¯ÙŠØ© Ø§Ù„Ù†Ù‚Ø¯ÙŠØ©'
+                  ? 'تم تحديث الوردية النقدية'
                   : 'Cash shift updated')),
         );
       }
@@ -1561,7 +1612,7 @@ class _SalesPageState extends State<SalesPage> {
                       widget.store.canSell ? _showSaleShiftQuickAction : null,
                   icon: const Icon(Icons.point_of_sale_outlined),
                   label: Text(tr.isArabic
-                      ? 'Ø¥Ø¯Ø§Ø±Ø© Ø§Ù„ÙˆØ±Ø¯ÙŠØ©'
+                      ? 'إدارة الوردية'
                       : 'Manage shift'),
                 ),
                 OutlinedButton.icon(
@@ -2070,12 +2121,9 @@ class _SalesPageState extends State<SalesPage> {
   }
 
   Product? _productById(String id) {
-    for (final product in widget.store.products) {
-      if (product.id == id && product.isActive && !product.isDeleted) {
-        return product;
-      }
-    }
-    return null;
+    final product = widget.store.productById(id);
+    if (product == null || !product.isActive) return null;
+    return product;
   }
 
   void _addQuickPage() {
@@ -2439,7 +2487,7 @@ class _SalesPageState extends State<SalesPage> {
                     onTap: () => _showQuickProductsSheet(products)),
                 _MobileSaleAction(
                     icon: Icons.point_of_sale_outlined,
-                    label: 'Ø§Ù„ÙˆØ±Ø¯ÙŠØ©',
+                    label: 'الوردية',
                     onTap: _showSaleShiftQuickAction),
                 _MobileSaleAction(
                     icon: Icons.receipt_long_outlined,
@@ -2648,16 +2696,8 @@ class _SalesPageState extends State<SalesPage> {
     final restored = <_DraftSaleItem>[];
     final missingNames = <String>[];
     for (final item in heldCart.items) {
-      Product? product;
-      for (final candidate in widget.store.products) {
-        if (candidate.id == item.productId &&
-            candidate.isActive &&
-            !candidate.isDeleted) {
-          product = candidate;
-          break;
-        }
-      }
-      if (product == null) {
+      final product = widget.store.productById(item.productId);
+      if (product == null || !product.isActive) {
         missingNames.add(item.productName);
         continue;
       }
@@ -2730,7 +2770,7 @@ class _SalesPageState extends State<SalesPage> {
                         leading: const Icon(Icons.pause_circle_outline),
                         title: Text(cart.name),
                         subtitle: Text(
-                            '${cart.items.length} ${tr.text('items')} â€¢ ${_formatHeldCartTime(cart.createdAt)}'),
+                            '${cart.items.length} ${tr.text('items')} • ${_formatHeldCartTime(cart.createdAt)}'),
                         trailing: IconButton(
                           tooltip: tr.text('delete'),
                           icon: const Icon(Icons.delete_outline),
@@ -3119,7 +3159,7 @@ class _SalesPageState extends State<SalesPage> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                            '${item.product.code} â€¢ ${formatUsdReferenceAmount(item.unitPrice, widget.store.storeProfile)} â€¢ ${_formatQuantity(item.quantity)} ${item.unitName} â€¢ ${_stockAvailabilityLabel(item.product, tr, includeUnit: true)}'),
+                            '${item.product.code} • ${formatUsdReferenceAmount(item.unitPrice, widget.store.storeProfile)} • ${_formatQuantity(item.quantity)} ${item.unitName} • ${_stockAvailabilityLabel(item.product, tr, includeUnit: true)}'),
                         Align(
                             alignment: AlignmentDirectional.centerEnd,
                             child: actions),
@@ -3143,7 +3183,7 @@ class _SalesPageState extends State<SalesPage> {
                     : null,
                 title: Text(item.product.name),
                 subtitle: Text(
-                    '${item.product.code} â€¢ ${formatUsdReferenceAmount(item.unitPrice, widget.store.storeProfile)} â€¢ ${_formatQuantity(item.quantity)} ${item.unitName} â€¢ ${_stockAvailabilityLabel(item.product, tr, includeUnit: true)}'),
+                    '${item.product.code} • ${formatUsdReferenceAmount(item.unitPrice, widget.store.storeProfile)} • ${_formatQuantity(item.quantity)} ${item.unitName} • ${_stockAvailabilityLabel(item.product, tr, includeUnit: true)}'),
                 onTap: () {
                   _selectCartIndex(index);
                   _showQuantitySheet(index);
@@ -3406,10 +3446,11 @@ class _SalesPageState extends State<SalesPage> {
       VoidCallback? onLoadMore,
       VoidCallback? onSearchChanged}) {
     final query = _invoiceSearchController.text.trim().toLowerCase();
+    final searchIndex = _invoiceSearchIndex(sales);
     final filteredSales = query.isEmpty
         ? sales
         : sales
-            .where((sale) => _invoiceMatchesSearch(sale, query))
+            .where((sale) => searchIndex[sale.id]?.contains(query) ?? false)
             .toList(growable: false);
     final displaySales = onLoadMore == null && filteredSales.length > 50
         ? filteredSales.take(50).toList()
@@ -3460,7 +3501,7 @@ class _SalesPageState extends State<SalesPage> {
                               : Icons.check_circle),
                           title: Text(sale.invoiceNo),
                           subtitle: Text(
-                              '${sale.customerName} â€¢ ${sale.date.toLocal()}'
+                              '${sale.customerName} • ${sale.date.toLocal()}'
                                   .split('.')
                                   .first),
                           trailing: Text(sale.isCancelled
@@ -3473,7 +3514,7 @@ class _SalesPageState extends State<SalesPage> {
                                 dense: true,
                                 title: Text(item.productName),
                                 subtitle: Text(
-                                    '${tr.text('quantity')}: ${_formatQuantity(item.quantity)} ${item.unitName} Ã— ${formatUsdReferenceAmount(item.unitPrice, widget.store.storeProfile)}'),
+                                    '${tr.text('quantity')}: ${_formatQuantity(item.quantity)} ${item.unitName} × ${formatUsdReferenceAmount(item.unitPrice, widget.store.storeProfile)}'),
                                 trailing: Text(formatUsdReferenceAmount(
                                     item.lineTotal, widget.store.storeProfile)),
                               ),
@@ -3781,18 +3822,35 @@ class _SalesPageState extends State<SalesPage> {
     );
   }
 
-  bool _invoiceMatchesSearch(Sale sale, String query) {
-    final normalized = query.trim().toLowerCase();
-    if (normalized.isEmpty) return true;
-    if (sale.invoiceNo.toLowerCase().contains(normalized) ||
-        sale.customerName.toLowerCase().contains(normalized) ||
-        sale.note.toLowerCase().contains(normalized) ||
-        sale.status.toLowerCase().contains(normalized)) {
-      return true;
-    }
-    return sale.items.any((item) =>
-        item.productName.toLowerCase().contains(normalized) ||
-        item.unitName.toLowerCase().contains(normalized));
+  Map<String, String> _invoiceSearchIndex(List<Sale> sales) {
+    return _invoiceSearchIndexCache.getOrCompute(
+      widget.store.salesRevision,
+      'recent_invoices_search_index',
+      () {
+        final index = <String, String>{};
+        for (final sale in sales) {
+          final buffer = StringBuffer()
+            ..write(sale.invoiceNo)
+            ..write(' ')
+            ..write(sale.customerName)
+            ..write(' ')
+            ..write(sale.note)
+            ..write(' ')
+            ..write(sale.status)
+            ..write(' ')
+            ..write(sale.id);
+          for (final item in sale.items) {
+            buffer
+              ..write(' ')
+              ..write(item.productName)
+              ..write(' ')
+              ..write(item.unitName);
+          }
+          index[sale.id] = buffer.toString().toLowerCase();
+        }
+        return index;
+      },
+    );
   }
 
   void _changeCartQuantity(int index, double quantity) {
@@ -4318,7 +4376,7 @@ class _SalesPageState extends State<SalesPage> {
                           loadedCount: visibleProducts.length,
                           totalCount: filteredProducts.length,
                           label: tr.isArabic
-                              ? 'Ø¬Ø§Ø±Ù ØªØ¬Ù‡ÙŠØ² Ù†ØªØ§Ø¦Ø¬ Ø§Ù„Ø¨Ø­Ø«'
+                              ? 'جارٍ تجهيز نتائج البحث'
                               : 'Preparing search results',
                         ),
                       ],
@@ -4361,7 +4419,7 @@ class _SalesPageState extends State<SalesPage> {
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis),
                                   subtitle: Text(
-                                      '${product.code} â€¢ ${_stockAvailabilityLabel(product, tr)}',
+                                      '${product.code} • ${_stockAvailabilityLabel(product, tr)}',
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis),
                                   trailing: Text(formatUsdReferenceAmount(
@@ -4406,8 +4464,8 @@ class _SalesPageState extends State<SalesPage> {
     if (error is ArgumentError) {
       final raw = (error.message ?? '').toString().trim();
       if (raw.isNotEmpty &&
-          (raw.contains('ÙˆØ±Ø¯ÙŠØ©') ||
-              raw.contains('Ø¯Ø±Ø¬') ||
+          (raw.contains('وردية') ||
+              raw.contains('درج') ||
               raw.toLowerCase().contains('cash drawer') ||
               raw.toLowerCase().contains('device'))) {
         return localizeRuntimeMessage(raw, tr);
@@ -4421,8 +4479,8 @@ class _SalesPageState extends State<SalesPage> {
         .replaceFirst(RegExp(r'^Invalid argument\(s\):\s*'), '')
         .trim();
     if (normalized.isNotEmpty &&
-        (normalized.contains('ÙˆØ±Ø¯ÙŠØ©') ||
-            normalized.contains('Ø¯Ø±Ø¬') ||
+        (normalized.contains('وردية') ||
+            normalized.contains('درج') ||
             normalized.toLowerCase().contains('cash drawer') ||
             normalized.toLowerCase().contains('device'))) {
       return localizeRuntimeMessage(normalized, tr);
@@ -4491,7 +4549,7 @@ class _SalesPageState extends State<SalesPage> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: Text(tr.isArabic
-            ? 'ØªÙØ§ØµÙŠÙ„ Ø®Ø·Ø£ Ø­ÙØ¸ Ø§Ù„ÙØ§ØªÙˆØ±Ø©'
+            ? 'تفاصيل خطأ حفظ الفاتورة'
             : 'Invoice save error details'),
         content: SizedBox(
           width: 680,
@@ -4507,7 +4565,7 @@ class _SalesPageState extends State<SalesPage> {
                 const SizedBox(height: 12),
                 Text(
                   tr.isArabic
-                      ? 'Ù‡Ø°Ù‡ Ø±Ø³Ø§Ù„Ø© ØªØªØ¨Ø¹ Ù…Ø¤Ù‚ØªØ©. Ø§Ù†Ø³Ø®Ù‡Ø§ ÙˆØ£Ø±Ø³Ù„Ù‡Ø§ Ù„Ù„Ù…Ø±Ø§Ø¬Ø¹Ø© Ù„Ù…Ø¹Ø±ÙØ© Ø£ÙŠÙ† ÙŠÙØ´Ù„ Ø§Ù„Ø­ÙØ¸ Ø¨Ø§Ù„Ø¶Ø¨Ø·.'
+                      ? 'هذه رسالة تتبع مؤقتة. انسخها وأرسلها للمراجعة لمعرفة أين يفشل الحفظ بالضبط.'
                       : 'This is a temporary trace message. Copy it and send it for review to find exactly where saving fails.',
                 ),
                 const SizedBox(height: 12),
@@ -4544,12 +4602,12 @@ class _SalesPageState extends State<SalesPage> {
               ScaffoldMessenger.of(dialogContext).showSnackBar(
                 SnackBar(
                     content: Text(tr.isArabic
-                        ? 'ØªÙ… Ù†Ø³Ø® ØªÙØ§ØµÙŠÙ„ Ø§Ù„Ø®Ø·Ø£'
+                        ? 'تم نسخ تفاصيل الخطأ'
                         : 'Error details copied')),
               );
             },
             icon: const Icon(Icons.copy),
-            label: Text(tr.isArabic ? 'Ù†Ø³Ø®' : 'Copy'),
+            label: Text(tr.isArabic ? 'نسخ' : 'Copy'),
           ),
         ],
       ),
@@ -4664,25 +4722,8 @@ class _SalesPageState extends State<SalesPage> {
       return _BarcodeAddResult.empty;
     }
 
-    Product? product;
-    ProductSaleUnit? saleUnit;
-    final candidates = _nonDeletedProductsCache.getOrCompute(
-      widget.store.productsRevision,
-      'non_deleted_products',
-      () => widget.store.products
-          .where((item) => !item.isDeleted)
-          .toList(growable: false),
-    );
-    for (final candidate in candidates) {
-      final matchedUnit = candidate.unitForBarcode(cleanCode);
-      if (candidate.code.trim().toLowerCase() == cleanCode.toLowerCase() ||
-          matchedUnit != null) {
-        product = candidate;
-        saleUnit = matchedUnit ?? candidate.effectiveSaleUnits.first;
-        break;
-      }
-    }
-    if (product == null) {
+    final match = _barcodeLookup()[cleanCode.toLowerCase()];
+    if (match == null) {
       _barcodeController.clear();
       _showBarcodeAddFeedback(_BarcodeAddResult.notFound);
       _restoreScannerMode();
@@ -4690,7 +4731,8 @@ class _SalesPageState extends State<SalesPage> {
     }
 
     _barcodeController.clear();
-    return _addProduct(product, saleUnit: saleUnit, showBarcodeFeedback: true);
+    return _addProduct(match.product,
+        saleUnit: match.unit, showBarcodeFeedback: true);
   }
 
   void _showBarcodeAddFeedback(_BarcodeAddResult result) {
@@ -5083,6 +5125,16 @@ class _SaleShiftStatus {
   final List<AdvancedAccountingItem> drawers;
   final List<AdvancedAccountingItem> cashLocations;
   final String branchId;
+}
+
+class _BarcodeProductMatch {
+  const _BarcodeProductMatch({
+    required this.product,
+    required this.unit,
+  });
+
+  final Product product;
+  final ProductSaleUnit? unit;
 }
 
 class _SalesQueryResult {

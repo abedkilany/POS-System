@@ -1245,7 +1245,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                       child: ListTile(
                         title: Text(item.productName),
                         subtitle: Text(
-                            '${_formatQuantity(item.quantity)} ${item.purchaseUnitName.isEmpty ? tr.text('unit') : item.purchaseUnitName} â€¢ ${formatCurrency(item.originalUnitCost ?? item.unitCost, currency: item.unitCostCurrency)}'),
+                            '${_formatQuantity(item.quantity)} ${item.purchaseUnitName.isEmpty ? tr.text('unit') : item.purchaseUnitName} • ${formatCurrency(item.originalUnitCost ?? item.unitCost, currency: item.unitCostCurrency)}'),
                         trailing: Text(formatUsdReferenceAmount(
                             item.lineTotal, widget.store.storeProfile)),
                       ),
@@ -1446,7 +1446,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
         parts.add(
             '$supplierCount ${tr.text(supplierCount == 1 ? 'supplier' : 'suppliers')}');
       }
-      return parts.join(' â€¢ ');
+      return parts.join(' • ');
     }
 
     String unitConversionSummary(PurchaseItem item) {
@@ -1705,7 +1705,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                 .map((unit) => DropdownMenuItem(
                                     value: unit.id,
                                     child: Text(
-                                        '${unit.name} Ã— ${_formatQuantity(unit.conversionToBase)}')))
+                                        '${unit.name} × ${_formatQuantity(unit.conversionToBase)}')))
                                 .toList(),
                             onChanged: (value) {
                               final matches = product.effectivePurchaseUnits
@@ -2543,7 +2543,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                                     selectedProduct!.barcode
                                                         .trim(),
                                                   '${tr.text('stock')}: ${_formatQuantity(selectedProduct!.stock)}',
-                                                ].join(' â€¢ ');
+                                                ].join(' • ');
                                       return sectionCard(
                                         title: tr.text('add_product'),
                                         icon: Icons.add_box_outlined,
@@ -2628,7 +2628,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                                     .map((unit) => DropdownMenuItem(
                                                         value: unit.id,
                                                         child: Text(
-                                                            '${unit.name} Ã— ${_formatQuantity(unit.conversionToBase)}')))
+                                                            '${unit.name} × ${_formatQuantity(unit.conversionToBase)}')))
                                                     .toList(),
                                                 onChanged: (value) {
                                                   final matches = units
@@ -2851,7 +2851,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                                     title:
                                                         Text(item.productName),
                                                     subtitle: Text(
-                                                        '${unitConversionSummary(item)} â€¢ ${formatCurrency(item.originalUnitCost ?? item.unitCost, currency: item.unitCostCurrency)} â€¢ ${formatUsdReferenceAmount(item.lineTotal, widget.store.storeProfile)}'),
+                                                        '${unitConversionSummary(item)} • ${formatCurrency(item.originalUnitCost ?? item.unitCost, currency: item.unitCostCurrency)} • ${formatUsdReferenceAmount(item.lineTotal, widget.store.storeProfile)}'),
                                                     trailing: lineActions(item),
                                                   ),
                                                 ))
@@ -3205,7 +3205,7 @@ class _PurchaseTile extends StatelessWidget {
         ? '-'
         : purchase.supplierName.trim();
     final summary =
-        '${purchase.items.length} ${tr.text('items')} â€¢ ${_formatQuantity(purchase.totalUnits)} ${tr.text('units')} â€¢ ${formatDate(purchase.date)}';
+        '${purchase.items.length} ${tr.text('items')} • ${_formatQuantity(purchase.totalUnits)} ${tr.text('units')} • ${formatDate(purchase.date)}';
 
     final actionsMenu = PopupMenuButton<String>(
       tooltip: tr.text('actions'),

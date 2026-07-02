@@ -9,6 +9,7 @@ import 'package:flutter/rendering.dart';
 import '../../core/localization/app_localizations.dart';
 import '../../core/services/local_database_service.dart';
 import '../../core/utils/responsive.dart';
+import '../../core/utils/revision_cache.dart';
 import '../../data/app_store.dart';
 import '../../models/supplier.dart';
 import '../../models/user_role.dart';
@@ -33,6 +34,8 @@ class _SuppliersPageState extends State<SuppliersPage> {
   int _supplierRevealTargetCount = 0;
   Future<_SupplierQueryResult?>? _supplierQueryFuture;
   String _supplierQueryFutureKey = '';
+  final RevisionKeyCache<List<Supplier>> _filteredSuppliersCache =
+      RevisionKeyCache<List<Supplier>>();
 
   @override
   void dispose() {
@@ -46,6 +49,7 @@ class _SuppliersPageState extends State<SuppliersPage> {
     if (oldWidget.store != widget.store) {
       _supplierQueryFuture = null;
       _supplierQueryFutureKey = '';
+      _filteredSuppliersCache.invalidate();
       _resetSupplierReveal();
     }
   }
@@ -141,10 +145,14 @@ class _SuppliersPageState extends State<SuppliersPage> {
     AppLocalizations tr,
     String value,
   ) {
-    final suppliers = widget.store.suppliers.where((supplier) {
-      return supplier.name.toLowerCase().contains(value) ||
-          supplier.phone.toLowerCase().contains(value);
-    }).toList();
+    final suppliers = _filteredSuppliersCache.getOrCompute(
+      widget.store.suppliersRevision,
+      value,
+      () => widget.store.suppliers.where((supplier) {
+        return supplier.name.toLowerCase().contains(value) ||
+            supplier.phone.toLowerCase().contains(value);
+      }).toList(growable: false),
+    );
     _syncSupplierReveal(suppliers.length);
     final visibleSuppliers = suppliers
         .take(math.min(_visibleSupplierCount, suppliers.length))

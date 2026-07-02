@@ -359,6 +359,8 @@ class AppStore extends ChangeNotifier {
       <String, ProductPrice>{};
   final Map<String, ProductCost> _productCostByProductId =
       <String, ProductCost>{};
+  final Map<String, int> _productCostIndexByProductId = <String, int>{};
+  final Map<String, int> _inventoryCostLayerIndexById = <String, int>{};
   final Map<String, double> _accountBalanceCache = <String, double>{};
   final Map<String, List<AccountTransaction>>
       _accountTransactionsByAccountCache = <String, List<AccountTransaction>>{};
@@ -371,6 +373,12 @@ class AppStore extends ChangeNotifier {
   final Map<String, _ProductPurchaseMetrics> _purchaseMetricsByProductCache =
       <String, _ProductPurchaseMetrics>{};
   bool _purchaseInsightsCacheDirty = true;
+  List<Product>? _cachedProducts;
+  int _cachedProductsGeneration = -1;
+  List<Product>? _cachedStockTrackedProducts;
+  int _cachedStockTrackedProductsGeneration = -1;
+  UnmodifiableListView<Sale>? _cachedSales;
+  int _cachedSalesGeneration = -1;
   final List<SyncChange> _syncChanges = [];
   final List<SyncQueueItem> _syncQueue = [];
   final List<SyncChange> _sqliteDirtySyncChanges = [];
@@ -378,6 +386,7 @@ class AppStore extends ChangeNotifier {
   int _productsRevision = 0;
   int _customersRevision = 0;
   int _salesRevision = 0;
+  int _deliveryNotesRevision = 0;
   int _suppliersRevision = 0;
   int _supplierProductPricesRevision = 0;
   int _purchasesRevision = 0;
@@ -406,8 +415,15 @@ class AppStore extends ChangeNotifier {
   bool _productDerivedDataDirty = false;
   Timer? _productDerivedDataFlushTimer;
   Future<void>? _productDerivedDataFlushInFlight;
+  final Map<String, Future<void>> _pendingSaleAccountingTasks =
+      <String, Future<void>>{};
+  final Map<String, Future<void>> _pendingPurchaseAccountingTasks =
+      <String, Future<void>>{};
+  final Map<String, Future<void>> _pendingExpenseAccountingTasks =
+      <String, Future<void>>{};
   UnmodifiableListView<SaleQuotation>? _cachedSaleQuotations;
   UnmodifiableListView<DeliveryNote>? _cachedDeliveryNotes;
+  Map<String, DeliveryNote>? _cachedDeliveryNoteBySaleId;
   UnmodifiableListView<BillOfMaterials>? _cachedBillsOfMaterials;
   UnmodifiableListView<ManufacturingOrder>? _cachedManufacturingOrders;
   UnmodifiableListView<Supplier>? _cachedSuppliers;
@@ -426,6 +442,7 @@ class AppStore extends ChangeNotifier {
   int _derivedListCacheGeneration = 0;
   int _cachedSaleQuotationsGeneration = -1;
   int _cachedDeliveryNotesGeneration = -1;
+  int _cachedDeliveryNoteBySaleIdGeneration = -1;
   int _cachedBillsOfMaterialsGeneration = -1;
   int _cachedManufacturingOrdersGeneration = -1;
   int _cachedSuppliersGeneration = -1;
@@ -458,6 +475,7 @@ class AppStore extends ChangeNotifier {
   int get productsRevision => _productsRevision;
   int get customersRevision => _customersRevision;
   int get salesRevision => _salesRevision;
+  int get deliveryNotesRevision => _deliveryNotesRevision;
   int get suppliersRevision => _suppliersRevision;
   int get supplierProductPricesRevision => _supplierProductPricesRevision;
   int get purchasesRevision => _purchasesRevision;
@@ -509,6 +527,8 @@ class AppStore extends ChangeNotifier {
         _productsRevision,
         _customersRevision,
         _salesRevision,
+        _deliveryNotesRevision,
+        _storeProfileRevision,
       ]);
   int get productsPageRevision => Object.hashAll(<Object?>[
         _productsRevision,
@@ -640,6 +660,10 @@ class AppStore extends ChangeNotifier {
         key: _deliveryNotesKey,
         loader: _loadDeliveryNotesForStartup,
         target: _deliveryNotes,
+        afterLoad: () {
+          _touchDataRevisions(deliveryNotes: true);
+          _invalidateDerivedDataCaches();
+        },
       );
 
   Future<void> ensureBillsOfMaterialsLoaded() =>
@@ -802,6 +826,10 @@ class AppStore extends ChangeNotifier {
     await ensurePriceListsLoaded();
     await ensureProductPricesLoaded();
     await ensureProductPriceOverridesLoaded();
+  }
+
+  Future<void> ensureProductCostingDataLoaded() async {
+    await ensureProductsLoaded();
     await ensureProductCostsLoaded();
     await ensureCostingMethodHistoryLoaded();
     await ensureInventoryCostLayersLoaded();
@@ -810,9 +838,11 @@ class AppStore extends ChangeNotifier {
 
   Future<void> ensureSalesPageDataLoaded() async {
     await ensureProductsLoaded();
-    await ensureCustomersLoaded();
-    await ensureDeliveryNotesLoaded();
-    await ensureProductPricingLoaded();
+    await Future.wait([
+      ensureCustomersLoaded(),
+      ensureDeliveryNotesLoaded(),
+      ensureProductPricingLoaded(),
+    ]);
   }
 
   Future<void> ensurePurchasesPageDataLoaded() async {
@@ -877,11 +907,29 @@ class AppStore extends ChangeNotifier {
 
   List<Product> get products {
     unawaited(ensureProductsLoaded());
-    return List.unmodifiable(
-      _sortedProducts(
-        _products.where((item) => !item.isDeleted).toList(growable: false),
-      ),
+    _ensureProductsCache();
+    return _cachedProducts!;
+  }
+
+  Product? productById(String id) {
+    final index = _productIndexById[id.trim()];
+    if (index == null || index < 0 || index >= _products.length) return null;
+    final product = _products[index];
+    return product.isDeleted ? null : product;
+  }
+
+  void _ensureSalesCache() {
+    if (_cachedSalesGeneration == _salesRevision && _cachedSales != null) {
+      return;
+    }
+    _cachedSales = UnmodifiableListView(
+      _sales
+          .where((item) => !item.isDeleted)
+          .toList(growable: false)
+          .reversed
+          .toList(growable: false),
     );
+    _cachedSalesGeneration = _salesRevision;
   }
 
   List<Product> get allProductsForDiagnostics => List.unmodifiable(_products);
@@ -898,13 +946,8 @@ class AppStore extends ChangeNotifier {
 
   List<Sale> get sales {
     unawaited(ensureSalesLoaded());
-    return List.unmodifiable(
-      _sales
-          .where((item) => !item.isDeleted)
-          .toList(growable: false)
-          .reversed
-          .toList(growable: false),
-    );
+    _ensureSalesCache();
+    return _cachedSales!;
   }
 
   List<SaleQuotation> get saleQuotations {
@@ -1240,6 +1283,22 @@ class AppStore extends ChangeNotifier {
     _cachedDeliveryNotesGeneration = _derivedListCacheGeneration;
   }
 
+  void _ensureDeliveryNoteLookupCache() {
+    if (_isDerivedCacheCurrent(_cachedDeliveryNoteBySaleIdGeneration) &&
+        _cachedDeliveryNoteBySaleId != null) {
+      return;
+    }
+    final bySaleId = <String, DeliveryNote>{};
+    for (final note in _deliveryNotes) {
+      if (note.isDeleted) continue;
+      final saleId = note.saleId.trim();
+      if (saleId.isEmpty) continue;
+      bySaleId[saleId] = note;
+    }
+    _cachedDeliveryNoteBySaleId = bySaleId;
+    _cachedDeliveryNoteBySaleIdGeneration = _derivedListCacheGeneration;
+  }
+
   void _ensureBillsOfMaterialsCache() {
     if (_isDerivedCacheCurrent(_cachedBillsOfMaterialsGeneration) &&
         _cachedBillsOfMaterials != null) {
@@ -1363,6 +1422,15 @@ class AppStore extends ChangeNotifier {
         ..sort((a, b) => a.createdAt.compareTo(b.createdAt)),
     );
     _cachedInventoryCostLayersGeneration = _productsRevision;
+  }
+
+  void _rebuildInventoryCostLayerLookupCache() {
+    _inventoryCostLayerIndexById.clear();
+    for (var i = 0; i < _inventoryCostLayers.length; i += 1) {
+      final id = _inventoryCostLayers[i].id.trim();
+      if (id.isEmpty) continue;
+      _inventoryCostLayerIndexById[id] = i;
+    }
   }
 
   void _ensureWarehouseStockCache() {
@@ -2808,13 +2876,9 @@ class AppStore extends ChangeNotifier {
       .where((product) => product.trackStock && product.isLowStock)
       .length;
   List<Product> get stockTrackedProducts {
-    return List.unmodifiable(
-      _sortedProducts(
-        _products
-            .where((item) => !item.isDeleted && item.trackStock)
-            .toList(growable: false),
-      ),
-    );
+    unawaited(ensureProductsLoaded());
+    _ensureStockTrackedProductsCache();
+    return _cachedStockTrackedProducts!;
   }
 
   double get totalUnitsInStock =>
@@ -3340,6 +3404,7 @@ class AppStore extends ChangeNotifier {
           _inventoryCostLayers
             ..clear()
             ..addAll(inventoryCostLayers);
+          _rebuildInventoryCostLayerLookupCache();
           _inventoryCostingMethod = InventoryCostingMethodJson.fromCode(
             LocalDatabaseService.getString(_inventoryCostingMethodKey),
           );
@@ -3508,6 +3573,7 @@ class AppStore extends ChangeNotifier {
           _deliveryNotes
             ..clear()
             ..addAll(await _loadDeliveryNotesForStartup());
+          _touchDataRevisions(deliveryNotes: true);
           break;
 
         case _billsOfMaterialsKey:
@@ -3542,6 +3608,7 @@ class AppStore extends ChangeNotifier {
             ..addAll(await _loadPriceListsForStartup());
           _ensureDefaultPriceLists();
           _rebuildProductPricingLookupCaches();
+          _touchDataRevisions(products: true);
           break;
 
         case _productPricesKey:
@@ -3550,6 +3617,7 @@ class AppStore extends ChangeNotifier {
             ..addAll(await _loadProductPricesForStartup());
           _ensureDefaultProductPriceEntries();
           _rebuildProductPricingLookupCaches();
+          _touchDataRevisions(products: true);
           break;
 
         case _productPriceOverridesKey:
@@ -3557,6 +3625,7 @@ class AppStore extends ChangeNotifier {
             ..clear()
             ..addAll(await _loadProductPriceOverridesForStartup());
           _rebuildProductPricingLookupCaches();
+          _touchDataRevisions(products: true);
           break;
 
         case _productCostsKey:
@@ -3564,18 +3633,22 @@ class AppStore extends ChangeNotifier {
             ..clear()
             ..addAll(await _loadProductCostsForStartup());
           _rebuildProductPricingLookupCaches();
+          _touchDataRevisions(products: true);
           break;
 
         case _costingMethodHistoryKey:
           _costingMethodHistory
             ..clear()
             ..addAll(await _loadCostingMethodHistoryForStartup());
+          _touchDataRevisions(products: true);
           break;
 
         case _inventoryCostLayersKey:
           _inventoryCostLayers
             ..clear()
             ..addAll(await _loadInventoryCostLayersForStartup());
+          _rebuildInventoryCostLayerLookupCache();
+          _touchDataRevisions(products: true);
           break;
 
         case _expensesKey:
@@ -3772,6 +3845,7 @@ class AppStore extends ChangeNotifier {
     _inventoryCostLayers
       ..clear()
       ..addAll(await _loadInventoryCostLayersForStartup());
+    _rebuildInventoryCostLayerLookupCache();
     _accountTransactions
       ..clear()
       ..addAll(await _loadAccountTransactionsForStartup());
@@ -3813,6 +3887,7 @@ class AppStore extends ChangeNotifier {
       products: true,
       customers: true,
       sales: true,
+      deliveryNotes: true,
       suppliers: true,
       supplierProductPrices: true,
       expenses: true,
@@ -5812,6 +5887,161 @@ class AppStore extends ChangeNotifier {
     }
   }
 
+  void _scheduleSaleAccounting(Sale sale) {
+    if (!AccountingService.isAvailable) return;
+    final saleId = sale.id.trim();
+    if (saleId.isEmpty) return;
+    final future = _postSaleAccounting(sale);
+    _pendingSaleAccountingTasks[saleId] = future;
+    unawaited(
+      future.whenComplete(() {
+        if (identical(_pendingSaleAccountingTasks[saleId], future)) {
+          _pendingSaleAccountingTasks.remove(saleId);
+        }
+      }),
+    );
+  }
+
+  Future<void> _postSaleAccounting(Sale sale) async {
+    try {
+      await AccountingService.recordSale(sale);
+    } catch (error, stackTrace) {
+      unawaited(
+        AppLogger.error(
+          area: 'sales',
+          action: 'record_sale_accounting',
+          message: 'Sale accounting posting failed.',
+          details: 'saleId=${sale.id} invoiceNo=${sale.invoiceNo} error=$error',
+          stackTrace: stackTrace.toString(),
+          userId: _activeUser?.id ?? '',
+          storeId: appIdentity.storeId,
+          branchId: appIdentity.branchId,
+          sessionId: _deviceId,
+          traceId: _deviceId,
+          devicePlatform: appIdentity.platform.name,
+          deviceModel: appIdentity.deviceName.isNotEmpty
+              ? appIdentity.deviceName
+              : _deviceId,
+          isImportant: true,
+        ),
+      );
+    }
+  }
+
+  Future<void> _waitForPendingSaleAccounting(String saleId) async {
+    final pending = _pendingSaleAccountingTasks[saleId.trim()];
+    if (pending == null) return;
+    try {
+      await pending;
+    } catch (_) {
+      // The background poster already logged the failure.
+    }
+  }
+
+  void _schedulePurchaseAccounting(Purchase purchase) {
+    if (!AccountingService.isAvailable) return;
+    final purchaseId = purchase.id.trim();
+    if (purchaseId.isEmpty) return;
+    final future = _postPurchaseAccounting(purchase);
+    _pendingPurchaseAccountingTasks[purchaseId] = future;
+    unawaited(
+      future.whenComplete(() {
+        if (identical(_pendingPurchaseAccountingTasks[purchaseId], future)) {
+          _pendingPurchaseAccountingTasks.remove(purchaseId);
+        }
+      }),
+    );
+  }
+
+  Future<void> _postPurchaseAccounting(Purchase purchase) async {
+    try {
+      await AccountingService.recordPurchase(purchase);
+    } catch (error, stackTrace) {
+      unawaited(
+        AppLogger.error(
+          area: 'purchases',
+          action: 'record_purchase_accounting',
+          message: 'Purchase accounting posting failed.',
+          details:
+              'purchaseId=${purchase.id} purchaseNo=${purchase.purchaseNo} error=$error',
+          stackTrace: stackTrace.toString(),
+          userId: _activeUser?.id ?? '',
+          storeId: appIdentity.storeId,
+          branchId: appIdentity.branchId,
+          sessionId: _deviceId,
+          traceId: _deviceId,
+          devicePlatform: appIdentity.platform.name,
+          deviceModel: appIdentity.deviceName.isNotEmpty
+              ? appIdentity.deviceName
+              : _deviceId,
+          isImportant: true,
+        ),
+      );
+    }
+  }
+
+  Future<void> _waitForPendingPurchaseAccounting(String purchaseId) async {
+    final pending = _pendingPurchaseAccountingTasks[purchaseId.trim()];
+    if (pending == null) return;
+    try {
+      await pending;
+    } catch (_) {
+      // The background poster already logged the failure.
+    }
+  }
+
+  void _scheduleExpenseAccounting(Expense expense) {
+    if (!AccountingService.isAvailable) return;
+    final expenseId = expense.id.trim();
+    if (expenseId.isEmpty) return;
+    final future = _postExpenseAccounting(expense);
+    _pendingExpenseAccountingTasks[expenseId] = future;
+    unawaited(
+      future.whenComplete(() {
+        if (identical(_pendingExpenseAccountingTasks[expenseId], future)) {
+          _pendingExpenseAccountingTasks.remove(expenseId);
+        }
+      }),
+    );
+  }
+
+  Future<void> _postExpenseAccounting(Expense expense) async {
+    try {
+      await AccountingService.recordExpense(expense);
+    } catch (error, stackTrace) {
+      unawaited(
+        AppLogger.error(
+          area: 'expenses',
+          action: 'record_expense_accounting',
+          message: 'Expense accounting posting failed.',
+          details:
+              'expenseId=${expense.id} title=${expense.title} error=$error',
+          stackTrace: stackTrace.toString(),
+          userId: _activeUser?.id ?? '',
+          storeId: appIdentity.storeId,
+          branchId: appIdentity.branchId,
+          sessionId: _deviceId,
+          traceId: _deviceId,
+          devicePlatform: appIdentity.platform.name,
+          deviceModel: appIdentity.deviceName.isNotEmpty
+              ? appIdentity.deviceName
+              : _deviceId,
+          isImportant: true,
+        ),
+      );
+    }
+  }
+
+  Future<void> _waitForPendingExpenseAccounting(String expenseId) async {
+    final pending = _pendingExpenseAccountingTasks[expenseId.trim()];
+    if (pending == null) return;
+    try {
+      await pending;
+    } catch (_) {
+      // The background poster already logged the failure.
+    }
+  }
+
   void _rebuildProductIndexes() {
     _productIndexById.clear();
     _productIdByNormalizedCode.clear();
@@ -5827,6 +6057,33 @@ class AppStore extends ChangeNotifier {
         _productIdByNormalizedBarcode[barcode] = product.id;
       }
     }
+    _cachedProducts = null;
+    _cachedProductsGeneration = -1;
+  }
+
+  void _ensureProductsCache() {
+    if (_cachedProductsGeneration == _productsRevision &&
+        _cachedProducts != null) {
+      return;
+    }
+    _cachedProducts = List.unmodifiable(
+      _sortedProducts(
+        _products.where((item) => !item.isDeleted).toList(growable: false),
+      ),
+    );
+    _cachedProductsGeneration = _productsRevision;
+  }
+
+  void _ensureStockTrackedProductsCache() {
+    if (_cachedStockTrackedProductsGeneration == _productsRevision &&
+        _cachedStockTrackedProducts != null) {
+      return;
+    }
+    _ensureProductsCache();
+    _cachedStockTrackedProducts = List.unmodifiable(
+      _cachedProducts!.where((item) => item.trackStock).toList(growable: false),
+    );
+    _cachedStockTrackedProductsGeneration = _productsRevision;
   }
 
   void _rebuildCustomerIndexes() {
@@ -5937,6 +6194,7 @@ class AppStore extends ChangeNotifier {
     bool products = false,
     bool customers = false,
     bool sales = false,
+    bool deliveryNotes = false,
     bool suppliers = false,
     bool supplierProductPrices = false,
     bool expenses = false,
@@ -5950,9 +6208,24 @@ class AppStore extends ChangeNotifier {
     if (products) {
       _productsRevision += 1;
       _warehouseStockCacheDirty = true;
+      _cachedProducts = null;
+      _cachedProductsGeneration = -1;
+      _cachedStockTrackedProducts = null;
+      _cachedStockTrackedProductsGeneration = -1;
     }
     if (customers) _customersRevision += 1;
-    if (sales) _salesRevision += 1;
+    if (sales) {
+      _salesRevision += 1;
+      _cachedSales = null;
+      _cachedSalesGeneration = -1;
+    }
+    if (deliveryNotes) {
+      _deliveryNotesRevision += 1;
+      _cachedDeliveryNotes = null;
+      _cachedDeliveryNotesGeneration = -1;
+      _cachedDeliveryNoteBySaleId = null;
+      _cachedDeliveryNoteBySaleIdGeneration = -1;
+    }
     if (suppliers) _suppliersRevision += 1;
     if (supplierProductPrices) _supplierProductPricesRevision += 1;
     if (expenses) {
@@ -6303,6 +6576,7 @@ class AppStore extends ChangeNotifier {
 
   Future<void> _saveDirty({
     bool products = false,
+    bool productDerivedData = true,
     bool customers = false,
     bool sales = false,
     bool saleQuotations = false,
@@ -6345,6 +6619,7 @@ class AppStore extends ChangeNotifier {
         'sqlite_hot_path',
         () => _saveDirtySqliteHotPath(
           products: products,
+          productDerivedData: productDerivedData,
           customers: customers,
           sales: sales,
           saleQuotations: saleQuotations,
@@ -6369,6 +6644,7 @@ class AppStore extends ChangeNotifier {
         ),
         metadata: <String, Object?>{
           'products': products,
+          'productDerivedData': productDerivedData,
           'customers': customers,
           'sales': sales,
           'suppliers': suppliers,
@@ -6396,6 +6672,8 @@ class AppStore extends ChangeNotifier {
           ),
         ),
       );
+    }
+    if (productDerivedData) {
       writes.add(
         _traceAsync(
           'saveDirty',
@@ -6406,47 +6684,71 @@ class AppStore extends ChangeNotifier {
           ),
         ),
       );
-      writes.add(_traceAsync(
+      writes.add(
+        _traceAsync(
           'saveDirty',
           'write_price_lists',
-          () => LocalDatabaseService.setString(_priceListsKey,
-              jsonEncode(_priceLists.map((item) => item.toJson()).toList()))));
-      writes.add(_traceAsync(
+          () => LocalDatabaseService.setString(
+            _priceListsKey,
+            jsonEncode(_priceLists.map((item) => item.toJson()).toList()),
+          ),
+        ),
+      );
+      writes.add(
+        _traceAsync(
           'saveDirty',
           'write_product_prices',
           () => LocalDatabaseService.setString(
-              _productPricesKey,
-              jsonEncode(
-                  _productPrices.map((item) => item.toJson()).toList()))));
-      writes.add(_traceAsync(
+            _productPricesKey,
+            jsonEncode(_productPrices.map((item) => item.toJson()).toList()),
+          ),
+        ),
+      );
+      writes.add(
+        _traceAsync(
           'saveDirty',
           'write_product_price_overrides',
           () => LocalDatabaseService.setString(
-              _productPriceOverridesKey,
-              jsonEncode(_productPriceOverrides
-                  .map((item) => item.toJson())
-                  .toList()))));
-      writes.add(_traceAsync(
+            _productPriceOverridesKey,
+            jsonEncode(
+              _productPriceOverrides.map((item) => item.toJson()).toList(),
+            ),
+          ),
+        ),
+      );
+      writes.add(
+        _traceAsync(
           'saveDirty',
           'write_inventory_costing_method',
           () => LocalDatabaseService.setString(
-              _inventoryCostingMethodKey, _inventoryCostingMethod.code)));
-      writes.add(_traceAsync(
+            _inventoryCostingMethodKey,
+            _inventoryCostingMethod.code,
+          ),
+        ),
+      );
+      writes.add(
+        _traceAsync(
           'saveDirty',
           'write_costing_history',
           () => LocalDatabaseService.setString(
-              _costingMethodHistoryKey,
-              jsonEncode(_costingMethodHistory
-                  .map((item) => item.toJson())
-                  .toList()))));
-      writes.add(_traceAsync(
+            _costingMethodHistoryKey,
+            jsonEncode(
+              _costingMethodHistory.map((item) => item.toJson()).toList(),
+            ),
+          ),
+        ),
+      );
+      writes.add(
+        _traceAsync(
           'saveDirty',
           'write_inventory_layers',
           () => LocalDatabaseService.setString(
-              _inventoryCostLayersKey,
-              jsonEncode(_inventoryCostLayers
-                  .map((item) => item.toJson())
-                  .toList()))));
+            _inventoryCostLayersKey,
+            jsonEncode(
+                _inventoryCostLayers.map((item) => item.toJson()).toList()),
+          ),
+        ),
+      );
     }
     if (customers) {
       writes.add(_traceAsync(
@@ -6639,6 +6941,7 @@ class AppStore extends ChangeNotifier {
 
   Future<void> _saveDirtySqliteHotPath({
     bool products = false,
+    bool productDerivedData = true,
     bool customers = false,
     bool sales = false,
     bool saleQuotations = false,
@@ -6673,8 +6976,8 @@ class AppStore extends ChangeNotifier {
 
     if (products) {
       writes.add(persistRows(_productsKey));
-      _markProductDerivedDataDirty();
     }
+    if (productDerivedData) _markProductDerivedDataDirty();
     if (customers) writes.add(persistRows(_customersKey));
     if (sales) writes.add(persistRows(_salesKey));
     if (saleQuotations) {
@@ -6798,6 +7101,8 @@ class AppStore extends ChangeNotifier {
     _inventoryCostLayers.clear();
     _productPriceByLookupKey.clear();
     _productCostByProductId.clear();
+    _productCostIndexByProductId.clear();
+    _inventoryCostLayerIndexById.clear();
     _sales.clear();
     _suppliers.clear();
     _supplierProductPrices.clear();
@@ -6826,6 +7131,7 @@ class AppStore extends ChangeNotifier {
       accountTransactions: true,
       storeProfile: !keepStoreProfile,
     );
+    _invalidateDerivedDataCaches();
     if (!keepStoreProfile) {
       _storeProfile = StoreProfile.defaults;
       AccountingService.configureMoneyPolicy(_storeProfile);
@@ -6980,6 +7286,19 @@ class AppStore extends ChangeNotifier {
       await LocalDatabaseService.deleteString('cloud_last_pull_cursor');
     }
     await LocalDatabaseService.deleteString('lan_sync_settings_v2');
+    _touchDataRevisions(
+      products: true,
+      customers: true,
+      sales: true,
+      suppliers: true,
+      supplierProductPrices: true,
+      expenses: true,
+      purchases: true,
+      stockMovements: true,
+      accountTransactions: true,
+      storeProfile: true,
+    );
+    _invalidateDerivedDataCaches();
     await _saveAll();
     notifyListeners();
   }
@@ -8459,9 +8778,12 @@ class AppStore extends ChangeNotifier {
 
   void _rebuildProductCostLookupCache() {
     _productCostByProductId.clear();
-    for (final item in _productCosts) {
+    _productCostIndexByProductId.clear();
+    for (var i = 0; i < _productCosts.length; i += 1) {
+      final item = _productCosts[i];
       if (item.productId.trim().isEmpty) continue;
       _productCostByProductId[item.productId] = item;
+      _productCostIndexByProductId[item.productId] = i;
     }
   }
 
@@ -8656,6 +8978,7 @@ class AppStore extends ChangeNotifier {
         createdAt: current.createdAt,
         updatedAt: now,
       );
+      _productCostIndexByProductId[current.id] = _productCosts.length;
       _productCosts.add(cost);
       _productCostByProductId[current.id] = cost;
     }
@@ -8737,10 +9060,17 @@ class AppStore extends ChangeNotifier {
       currencyCode: 'USD',
       updatedAt: now,
     );
-    final index =
-        _productCosts.indexWhere((item) => item.productId == product.id);
-    if (index == -1) {
-      _productCosts.add(updated);
+    final index = _productCostIndexByProductId[product.id];
+    if (index == null || index < 0 || index >= _productCosts.length) {
+      final fallbackIndex =
+          _productCosts.indexWhere((item) => item.productId == product.id);
+      if (fallbackIndex == -1) {
+        _productCostIndexByProductId[product.id] = _productCosts.length;
+        _productCosts.add(updated);
+      } else {
+        _productCosts[fallbackIndex] = updated;
+        _productCostIndexByProductId[product.id] = fallbackIndex;
+      }
     } else {
       _productCosts[index] = updated;
     }
@@ -8758,7 +9088,8 @@ class AppStore extends ChangeNotifier {
   }) {
     if (quantity <= 0) return;
     final id = '${purchase.id}-$lineIndex-${item.productId}-cost-layer';
-    if (_inventoryCostLayers.any((layer) => layer.id == id)) return;
+    if (_inventoryCostLayerIndexById.containsKey(id)) return;
+    _inventoryCostLayerIndexById[id] = _inventoryCostLayers.length;
     _inventoryCostLayers.add(InventoryCostLayer(
       id: id,
       productId: item.productId,
@@ -8787,7 +9118,8 @@ class AppStore extends ChangeNotifier {
     required DateTime now,
   }) {
     if (quantity <= 0 || !product.trackStock) return;
-    if (_inventoryCostLayers.any((layer) => layer.id == id)) return;
+    if (_inventoryCostLayerIndexById.containsKey(id)) return;
+    _inventoryCostLayerIndexById[id] = _inventoryCostLayers.length;
     _inventoryCostLayers.add(InventoryCostLayer(
       id: id,
       productId: product.id,
@@ -9152,6 +9484,7 @@ class AppStore extends ChangeNotifier {
     );
     await _saveDirty(
       products: true,
+      productDerivedData: false,
       supplierProductPrices: affectedPrices > 0,
       sync: true,
     );
@@ -9799,7 +10132,6 @@ class AppStore extends ChangeNotifier {
       expense.copyWith(status: 'Posted'),
       now,
     );
-    await AccountingService.recordExpense(posted);
     _expenses[index] = posted;
     _recordExpenseLedger(posted, now);
     _recordSyncChange(
@@ -9809,6 +10141,7 @@ class AppStore extends ChangeNotifier {
       payload: posted.toJson(),
     );
     await _saveDirty(expenses: true, accountTransactions: true, sync: true);
+    _scheduleExpenseAccounting(posted);
     _touchExpensesData();
     notifyListeners();
   }
@@ -9865,12 +10198,6 @@ class AppStore extends ChangeNotifier {
       ),
       now,
     );
-    await AccountingService.reverseEntryForReference(
-      referenceType: 'expense',
-      referenceId: expense.id,
-      reason: reason.trim().isEmpty ? 'Expense cancelled' : reason.trim(),
-      createdBy: _deviceId,
-    );
     _putExpenseAtIndex(cancelled, index);
     _reverseExpenseLedger(
       cancelled,
@@ -9882,6 +10209,13 @@ class AppStore extends ChangeNotifier {
       entityId: id,
       operation: 'cancel',
       payload: cancelled.toJson(),
+    );
+    await _waitForPendingExpenseAccounting(expense.id);
+    await AccountingService.reverseEntryForReference(
+      referenceType: 'expense',
+      referenceId: expense.id,
+      reason: reason.trim().isEmpty ? 'Expense cancelled' : reason.trim(),
+      createdBy: _deviceId,
     );
     await _saveDirty(expenses: true, accountTransactions: true, sync: true);
     _touchExpensesData();
@@ -10181,7 +10515,7 @@ class AppStore extends ChangeNotifier {
             ? 0.0
             : (paidAmount ?? 0).clamp(0, purchaseTotal).toDouble();
     final purchase = Purchase(
-      id: now.microsecondsSinceEpoch.toString(),
+      id: 'purchase_${_purchaseDevicePrefix}_${_purchaseCounter.toString().padLeft(6, '0')}',
       purchaseNo:
           'PO-$_purchaseDevicePrefix-${_purchaseCounter.toString().padLeft(6, '0')}',
       supplierId: supplierId,
@@ -10217,13 +10551,14 @@ class AppStore extends ChangeNotifier {
     await _saveDirty(
       purchases: true,
       products: receiveNow,
+      productDerivedData: receiveNow,
       stockMovements: receiveNow,
       accountTransactions: receiveNow,
       purchaseCounter: true,
       sync: true,
     );
     if (receiveNow) {
-      await AccountingService.recordPurchase(purchase);
+      _schedulePurchaseAccounting(purchase);
     }
     unawaited(
       AppLogger.info(
@@ -10291,11 +10626,12 @@ class AppStore extends ChangeNotifier {
     await _saveDirty(
       purchases: true,
       products: true,
+      productDerivedData: true,
       stockMovements: true,
       accountTransactions: true,
       sync: true,
     );
-    await AccountingService.recordPurchase(received);
+    _schedulePurchaseAccounting(received);
     unawaited(
       AppLogger.info(
         area: 'purchases',
@@ -10681,6 +11017,7 @@ class AppStore extends ChangeNotifier {
       payload: cancelled.toJson(),
     );
     _recordPurchaseCancelLedger(purchase, now, reason: reason);
+    await _waitForPendingPurchaseAccounting(purchase.id);
     await AccountingService.reverseEntryForReference(
       referenceType: 'purchase',
       referenceId: purchase.id,
@@ -10862,6 +11199,7 @@ class AppStore extends ChangeNotifier {
       throw StateError('No counted products to approve.');
     }
     final now = DateTime.now();
+    var productDerivedData = false;
     for (final line in countedLines) {
       final productIndex = _productIndexById[line.productId];
       if (productIndex == null) continue;
@@ -10890,6 +11228,7 @@ class AppStore extends ChangeNotifier {
           sourceId: session.id,
           now: now,
         );
+        productDerivedData = true;
       }
       _addStockMovement(
         StockMovement(
@@ -10929,6 +11268,7 @@ class AppStore extends ChangeNotifier {
     );
     await _saveDirty(
       products: true,
+      productDerivedData: productDerivedData,
       stockMovements: true,
       inventoryCounts: true,
       sync: true,
@@ -11044,7 +11384,12 @@ class AppStore extends ChangeNotifier {
       ),
       recordSync: true,
     );
-    await _saveDirty(products: true, stockMovements: true, sync: true);
+    await _saveDirty(
+      products: true,
+      productDerivedData: false,
+      stockMovements: true,
+      sync: true,
+    );
     notifyListeners();
   }
 
@@ -11275,6 +11620,7 @@ class AppStore extends ChangeNotifier {
       );
     }
 
+    var productDerivedData = false;
     final outputIndex = _productIndexById[output.id];
     if (outputIndex != null && output.trackStock) {
       final producedCost = bom.unitCost;
@@ -11321,6 +11667,7 @@ class AppStore extends ChangeNotifier {
         ),
         recordSync: true,
       );
+      productDerivedData = true;
     }
 
     _manufacturingOrders.add(order);
@@ -11332,6 +11679,7 @@ class AppStore extends ChangeNotifier {
     );
     await _saveDirty(
       products: true,
+      productDerivedData: productDerivedData,
       stockMovements: true,
       manufacturingOrders: true,
       sync: true,
@@ -11471,10 +11819,8 @@ class AppStore extends ChangeNotifier {
   }
 
   DeliveryNote? deliveryNoteForSale(String saleId) {
-    for (final note in _deliveryNotes) {
-      if (!note.isDeleted && note.saleId == saleId) return note;
-    }
-    return null;
+    _ensureDeliveryNoteLookupCache();
+    return _cachedDeliveryNoteBySaleId?[saleId];
   }
 
   Future<DeliveryNote> createDeliveryNoteFromSale(
@@ -11524,6 +11870,8 @@ class AppStore extends ChangeNotifier {
       payload: deliveryNote.toJson(),
     );
     await _saveDirty(deliveryNotes: true, sync: true);
+    _touchDataRevisions(deliveryNotes: true);
+    _invalidateDerivedDataCaches();
     notifyListeners();
     return deliveryNote;
   }
@@ -11547,6 +11895,8 @@ class AppStore extends ChangeNotifier {
       payload: updated.toJson(),
     );
     await _saveDirty(deliveryNotes: true, sync: true);
+    _touchDataRevisions(deliveryNotes: true);
+    _invalidateDerivedDataCaches();
     notifyListeners();
   }
 
@@ -11567,6 +11917,8 @@ class AppStore extends ChangeNotifier {
       payload: deleted.toJson(),
     );
     await _saveDirty(deliveryNotes: true, sync: true);
+    _touchDataRevisions(deliveryNotes: true);
+    _invalidateDerivedDataCaches();
     notifyListeners();
   }
 
@@ -11748,7 +12100,7 @@ class AppStore extends ChangeNotifier {
     }
     _invoiceCounter += 1;
     final sale = Sale(
-      id: now.microsecondsSinceEpoch.toString(),
+      id: 'sale_${_invoiceDevicePrefix}_${_invoiceCounter.toString().padLeft(6, '0')}',
       invoiceNo:
           'INV-$_invoiceDevicePrefix-${_invoiceCounter.toString().padLeft(6, '0')}',
       customerName: normalizedCustomerName,
@@ -11875,15 +12227,19 @@ class AppStore extends ChangeNotifier {
     }
 
     _recordSaleLedger(sale, now);
+    final productDerivedData = saleItems.any(
+      (item) => item.costLayerConsumptions.isNotEmpty,
+    );
     await _saveDirty(
       products: true,
+      productDerivedData: productDerivedData,
       sales: true,
       stockMovements: true,
       accountTransactions: true,
       invoiceCounter: true,
       sync: true,
     );
-    await AccountingService.recordSale(sale);
+    _scheduleSaleAccounting(sale);
     unawaited(
       AppLogger.info(
         area: 'sales',
@@ -11994,8 +12350,11 @@ class AppStore extends ChangeNotifier {
       payload: returnedSale.toJson(),
     );
     _recordSaleCancelLedger(sale, now, isReturn: true);
+    final productDerivedData = restoreStock &&
+        sale.items.any((item) => item.costLayerConsumptions.isNotEmpty);
     await _saveDirty(
       products: restoreStock,
+      productDerivedData: productDerivedData,
       sales: true,
       stockMovements: restoreStock,
       accountTransactions: true,
@@ -12078,6 +12437,7 @@ class AppStore extends ChangeNotifier {
       payload: cancelledSale.toJson(),
     );
     _recordSaleCancelLedger(sale, now);
+    await _waitForPendingSaleAccounting(sale.id);
     await AccountingService.reverseEntryForReference(
       referenceType: 'sale',
       referenceId: sale.id,
@@ -12086,6 +12446,7 @@ class AppStore extends ChangeNotifier {
     );
     await _saveDirty(
       products: restoreStock,
+      productDerivedData: false,
       sales: true,
       stockMovements: restoreStock,
       accountTransactions: true,
@@ -13276,6 +13637,7 @@ class AppStore extends ChangeNotifier {
       _productCosts
         ..clear()
         ..addAll(productCosts);
+      _rebuildProductCostLookupCache();
     }
     if (wants('costingMethodHistory')) {
       _costingMethodHistory
@@ -13289,6 +13651,7 @@ class AppStore extends ChangeNotifier {
       _inventoryCostLayers
         ..clear()
         ..addAll(inventoryCostLayers);
+      _rebuildInventoryCostLayerLookupCache();
     }
     if (wants('categories')) {
       _categories
@@ -13879,6 +14242,8 @@ class AppStore extends ChangeNotifier {
     _inventoryCostingMethod = inventoryCostingMethod;
     _mergeByUpdatedAt<InventoryCostLayer>(
         _inventoryCostLayers, inventoryCostLayers, (item) => item.id);
+    _rebuildProductCostLookupCache();
+    _rebuildInventoryCostLayerLookupCache();
     _mergeByUpdatedAt<CatalogItem>(_categories, categories, (item) => item.id);
     _mergeByUpdatedAt<CatalogItem>(_brands, brands, (item) => item.id);
     _mergeByUpdatedAt<CatalogItem>(_units, units, (item) => item.id);
@@ -15097,6 +15462,13 @@ class AppStore extends ChangeNotifier {
           ),
         ]);
       }
+      _touchDataRevisions(
+        products: productsChanged,
+        customers: customersChanged,
+        sales: salesChanged,
+        deliveryNotes: deliveryNotesChanged,
+        storeProfile: storeProfileChanged,
+      );
       SyncDiagnosticsLog.add(
         '[SYNC_TRACE] applyRemote:notify changed=true customers=${_customers.length} '
         'visibleCustomers=${customers.length} '

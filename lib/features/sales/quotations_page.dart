@@ -55,7 +55,9 @@ class _QuotationsPageState extends State<QuotationsPage> {
       context: context,
       builder: (context) => _QuotationDialog(store: widget.store),
     );
-    if (result == null) return;
+    if (result == null) {
+      return;
+    }
     try {
       await widget.store.createSaleQuotation(
         customerName: result.customerName,
@@ -66,9 +68,15 @@ class _QuotationsPageState extends State<QuotationsPage> {
         note: result.note,
         validUntil: null,
       );
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr.text('quotation_saved'))));
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(tr.text('quotation_saved'))));
+      }
     } catch (error) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
     }
   }
 
@@ -79,23 +87,35 @@ class _QuotationsPageState extends State<QuotationsPage> {
       context: context,
       builder: (context) => AlertDialog(
         title: Text(tr.text('convert_quotation')),
-        content: Text(tr.format('convert_quotation_question', {'quotationNo': quotation.quotationNo})),
+        content: Text(tr.format('convert_quotation_question',
+            {'quotationNo': quotation.quotationNo})),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('cancel'))),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(tr.text('convert'))),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(tr.text('cancel'))),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(tr.text('convert'))),
         ],
       ),
     );
-    if (confirm != true) return;
+    if (confirm != true) {
+      return;
+    }
     try {
       final sale = await widget.store.convertSaleQuotationToSale(quotation.id);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(tr.format('quotation_invoice_created', {'invoiceNo': sale.invoiceNo}))),
+          SnackBar(
+              content: Text(tr.format(
+                  'quotation_invoice_created', {'invoiceNo': sale.invoiceNo}))),
         );
       }
     } catch (error) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
     }
   }
 
@@ -106,10 +126,15 @@ class _QuotationsPageState extends State<QuotationsPage> {
       context: context,
       builder: (context) => AlertDialog(
         title: Text(tr.text('delete_quotation')),
-        content: Text(tr.format('delete_quotation_question', {'quotationNo': quotation.quotationNo})),
+        content: Text(tr.format('delete_quotation_question',
+            {'quotationNo': quotation.quotationNo})),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr.text('cancel'))),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(tr.text('delete'))),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(tr.text('cancel'))),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(tr.text('delete'))),
         ],
       ),
     );
@@ -133,54 +158,69 @@ class _QuotationsPageState extends State<QuotationsPage> {
         }
         final quotations = widget.store.saleQuotations;
         return Scaffold(
-      appBar: AppBar(
-        title: Text(tr.text('quotations')),
-        actions: [
-          IconButton(
-            onPressed: widget.store.canManageQuotations ? _createQuotation : null,
+          appBar: AppBar(
+            title: Text(tr.text('quotations')),
+            actions: [
+              IconButton(
+                onPressed:
+                    widget.store.canManageQuotations ? _createQuotation : null,
+                icon: const Icon(Icons.add),
+                tooltip: tr.text('new_quotation'),
+              )
+            ],
+          ),
+          floatingActionButton: FloatingActionButton.extended(
+            onPressed:
+                widget.store.canManageQuotations ? _createQuotation : null,
             icon: const Icon(Icons.add),
-            tooltip: tr.text('new_quotation'),
-          )
-        ],
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: widget.store.canManageQuotations ? _createQuotation : null,
-        icon: const Icon(Icons.add),
-        label: Text(tr.text('new_quotation')),
-      ),
-      body: quotations.isEmpty
-          ? EmptyStateCard(icon: Icons.request_quote_outlined, title: tr.text('no_quotations'), subtitle: tr.text('no_quotations_desc'))
-          : ListView.separated(
-              padding: const EdgeInsets.all(16),
-              itemCount: quotations.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 12),
-              itemBuilder: (context, index) {
-                final quotation = quotations[index];
-                return Card(
-                  child: ListTile(
-                    leading: Icon(quotation.isConverted ? Icons.check_circle_outline : Icons.request_quote_outlined),
-                    title: Text('${quotation.quotationNo} • ${quotation.customerName}'),
-                    subtitle: Text('${_localizedStatus(tr, quotation.status)} • ${quotation.items.length} ${tr.text('items')} • ${quotation.total.toStringAsFixed(2)} ${quotation.invoiceCurrency}'),
-                    trailing: Wrap(
-                      spacing: 8,
-                      children: [
-                        IconButton(
-                          tooltip: tr.text('convert_to_sale'),
-                          onPressed: quotation.isConverted || !widget.store.canManageQuotations ? null : () => _convertQuotation(quotation),
-                          icon: const Icon(Icons.receipt_long),
+            label: Text(tr.text('new_quotation')),
+          ),
+          body: quotations.isEmpty
+              ? EmptyStateCard(
+                  icon: Icons.request_quote_outlined,
+                  title: tr.text('no_quotations'),
+                  subtitle: tr.text('no_quotations_desc'))
+              : ListView.separated(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: quotations.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 12),
+                  itemBuilder: (context, index) {
+                    final quotation = quotations[index];
+                    return Card(
+                      child: ListTile(
+                        leading: Icon(quotation.isConverted
+                            ? Icons.check_circle_outline
+                            : Icons.request_quote_outlined),
+                        title: Text(
+                            '${quotation.quotationNo} • ${quotation.customerName}'),
+                        subtitle: Text(
+                            '${_localizedStatus(tr, quotation.status)} • ${quotation.items.length} ${tr.text('items')} • ${quotation.total.toStringAsFixed(2)} ${quotation.invoiceCurrency}'),
+                        trailing: Wrap(
+                          spacing: 8,
+                          children: [
+                            IconButton(
+                              tooltip: tr.text('convert_to_sale'),
+                              onPressed: quotation.isConverted ||
+                                      !widget.store.canManageQuotations
+                                  ? null
+                                  : () => _convertQuotation(quotation),
+                              icon: const Icon(Icons.receipt_long),
+                            ),
+                            IconButton(
+                              tooltip: tr.text('delete'),
+                              onPressed: quotation.isConverted ||
+                                      !widget.store.canManageQuotations
+                                  ? null
+                                  : () => _deleteQuotation(quotation),
+                              icon: const Icon(Icons.delete_outline),
+                            ),
+                          ],
                         ),
-                        IconButton(
-                          tooltip: tr.text('delete'),
-                          onPressed: quotation.isConverted || !widget.store.canManageQuotations ? null : () => _deleteQuotation(quotation),
-                          icon: const Icon(Icons.delete_outline),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-    );
+                      ),
+                    );
+                  },
+                ),
+        );
       },
     );
   }
@@ -238,7 +278,13 @@ String _localizedStatus(AppLocalizations tr, String status) {
 }
 
 class _QuotationDraft {
-  const _QuotationDraft({required this.customerName, required this.customerId, required this.items, required this.discount, required this.invoiceCurrency, required this.note});
+  const _QuotationDraft(
+      {required this.customerName,
+      required this.customerId,
+      required this.items,
+      required this.discount,
+      required this.invoiceCurrency,
+      required this.note});
   final String customerName, customerId, invoiceCurrency, note;
   final List<SaleItem> items;
   final double discount;
@@ -258,6 +304,38 @@ class _QuotationDialogState extends State<_QuotationDialog> {
   final TextEditingController _discountController = TextEditingController();
   final TextEditingController _noteController = TextEditingController();
   final List<SaleItem> _items = [];
+  late final List<Customer> _customers;
+  late final Map<String, Customer> _customerById;
+  late final List<DropdownMenuItem<String>> _customerItems;
+  late final List<Product> _products;
+  late final Map<String, Product> _productById;
+  late final List<DropdownMenuItem<String>> _productItems;
+
+  @override
+  void initState() {
+    super.initState();
+    _customers = <Customer>[
+      widget.store.walkInCustomer,
+      ...widget.store.customers
+    ];
+    _customerById = {for (final customer in _customers) customer.id: customer};
+    _customerItems = [
+      for (final customer in _customers)
+        DropdownMenuItem(
+          value: customer.id,
+          child: Text(customer.name),
+        ),
+    ];
+    _products = widget.store.products;
+    _productById = {for (final product in _products) product.id: product};
+    _productItems = [
+      for (final product in _products)
+        DropdownMenuItem(
+          value: product.id,
+          child: Text(product.name),
+        ),
+    ];
+  }
 
   @override
   void dispose() {
@@ -267,7 +345,8 @@ class _QuotationDialogState extends State<_QuotationDialog> {
   }
 
   void _addProduct(Product product) {
-    final existingIndex = _items.indexWhere((item) => item.productId == product.id);
+    final existingIndex =
+        _items.indexWhere((item) => item.productId == product.id);
     setState(() {
       if (existingIndex >= 0) {
         final existing = _items[existingIndex];
@@ -282,19 +361,28 @@ class _QuotationDialogState extends State<_QuotationDialog> {
           conversionToBase: existing.conversionToBase,
         );
       } else {
-        _items.add(SaleItem(productId: product.id, productName: product.name, unitPrice: widget.store.defaultProductUsdPrice(product), quantity: 1, unitCost: product.usdCost, unitName: product.unit, baseQuantity: 1, conversionToBase: 1));
+        _items.add(SaleItem(
+            productId: product.id,
+            productName: product.name,
+            unitPrice: widget.store.defaultProductUsdPrice(product),
+            quantity: 1,
+            unitCost: product.usdCost,
+            unitName: product.unit,
+            baseQuantity: 1,
+            conversionToBase: 1));
       }
     });
   }
 
-  double get _subtotal => _items.fold<double>(0, (sum, item) => sum + item.lineTotal);
+  double get _subtotal =>
+      _items.fold<double>(0, (sum, item) => sum + item.lineTotal);
   double get _discount => double.tryParse(_discountController.text.trim()) ?? 0;
-  double get _total => (_subtotal - _discount).clamp(0, double.infinity).toDouble();
+  double get _total =>
+      (_subtotal - _discount).clamp(0, double.infinity).toDouble();
 
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final customers = <Customer>[widget.store.walkInCustomer, ...widget.store.customers];
     return AlertDialog(
       title: Text(tr.text('new_quotation')),
       content: SizedBox(
@@ -307,28 +395,27 @@ class _QuotationDialogState extends State<_QuotationDialog> {
               DropdownButtonFormField<String>(
                 initialValue: _customerId,
                 decoration: InputDecoration(labelText: tr.text('customer')),
-                items: customers.map((customer) => DropdownMenuItem(value: customer.id, child: Text(customer.name))).toList(),
-                onChanged: (value) => setState(() => _customerId = value ?? AppStore.walkInCustomerId),
+                items: _customerItems,
+                onChanged: (value) => setState(
+                    () => _customerId = value ?? AppStore.walkInCustomerId),
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
                 initialValue: _invoiceCurrency,
                 decoration: InputDecoration(labelText: tr.text('currency')),
-                items: const [DropdownMenuItem(value: 'USD', child: Text('USD')), DropdownMenuItem(value: 'LBP', child: Text('LBP'))],
-                onChanged: (value) => setState(() => _invoiceCurrency = value ?? 'USD'),
+                items: const [
+                  DropdownMenuItem(value: 'USD', child: Text('USD')),
+                  DropdownMenuItem(value: 'LBP', child: Text('LBP'))
+                ],
+                onChanged: (value) =>
+                    setState(() => _invoiceCurrency = value ?? 'USD'),
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
                 decoration: InputDecoration(labelText: tr.text('add_product')),
-                items: widget.store.products.map((product) => DropdownMenuItem(value: product.id, child: Text(product.name))).toList(),
+                items: _productItems,
                 onChanged: (value) {
-                  Product? product;
-                  for (final item in widget.store.products) {
-                    if (item.id == value) {
-                      product = item;
-                      break;
-                    }
-                  }
+                  final product = value == null ? null : _productById[value];
                   if (product != null) _addProduct(product);
                 },
               ),
@@ -336,28 +423,48 @@ class _QuotationDialogState extends State<_QuotationDialog> {
               ..._items.map((item) => ListTile(
                     dense: true,
                     title: Text(item.productName),
-                    subtitle: Text('${item.quantity.toStringAsFixed(0)} x ${item.unitPrice.toStringAsFixed(2)}'),
+                    subtitle: Text(
+                        '${item.quantity.toStringAsFixed(0)} x ${item.unitPrice.toStringAsFixed(2)}'),
                     trailing: IconButton(
                       icon: const Icon(Icons.remove_circle_outline),
                       onPressed: () => setState(() => _items.remove(item)),
                     ),
                   )),
-              TextField(controller: _discountController, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: tr.text('discount')), onChanged: (_) => setState(() {})),
-              TextField(controller: _noteController, decoration: InputDecoration(labelText: tr.text('notes'))),
+              TextField(
+                  controller: _discountController,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(labelText: tr.text('discount')),
+                  onChanged: (_) => setState(() {})),
+              TextField(
+                  controller: _noteController,
+                  decoration: InputDecoration(labelText: tr.text('notes'))),
               const SizedBox(height: 12),
-              Text('${tr.text('total')}: ${_total.toStringAsFixed(2)} $_invoiceCurrency', style: Theme.of(context).textTheme.titleMedium),
+              Text(
+                  '${tr.text('total')}: ${_total.toStringAsFixed(2)} $_invoiceCurrency',
+                  style: Theme.of(context).textTheme.titleMedium),
             ],
           ),
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: Text(tr.text('cancel'))),
+        TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(tr.text('cancel'))),
         FilledButton(
           onPressed: _items.isEmpty
               ? null
               : () {
-                  final customer = customers.firstWhere((item) => item.id == _customerId, orElse: () => widget.store.walkInCustomer);
-                  Navigator.pop(context, _QuotationDraft(customerName: customer.name, customerId: customer.id, items: List<SaleItem>.from(_items), discount: _discount, invoiceCurrency: _invoiceCurrency, note: _noteController.text));
+                  final customer =
+                      _customerById[_customerId] ?? widget.store.walkInCustomer;
+                  Navigator.pop(
+                      context,
+                      _QuotationDraft(
+                          customerName: customer.name,
+                          customerId: customer.id,
+                          items: List<SaleItem>.from(_items),
+                          discount: _discount,
+                          invoiceCurrency: _invoiceCurrency,
+                          note: _noteController.text));
                 },
           child: Text(tr.text('save')),
         ),

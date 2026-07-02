@@ -191,6 +191,81 @@ void main() {
           isNotEmpty);
     });
 
+    test('reuses cached product snapshots and delivery note lookups', () async {
+      final store = await readyStore();
+      await store.addOrUpdateProduct(product(id: 'p-cache', code: 'P-CACHE'));
+
+      expect(identical(store.products, store.products), isTrue);
+      expect(store.productById('p-cache')?.code, 'P-CACHE');
+
+      final sale = await store.createSale(customerName: 'Bob', items: [
+        SaleItem(
+          productId: 'p-cache',
+          productName: 'Coffee',
+          unitPrice: 12,
+          quantity: 1,
+        ),
+      ]);
+      final note = await store.createDeliveryNoteFromSale(sale.id);
+
+      expect(store.deliveryNoteForSale(sale.id)?.id, note.id);
+    });
+
+    test('reuses cached stock-tracked products and refreshes after edits',
+        () async {
+      final store = await readyStore();
+      await store.addOrUpdateProduct(product(id: 'p-track', code: 'P-TRACK'));
+      await store.addOrUpdateProduct(
+        product(id: 'p-skip', code: 'P-SKIP').copyWith(trackStock: false),
+      );
+
+      expect(store.stockTrackedProducts.map((p) => p.id), contains('p-track'));
+      expect(store.stockTrackedProducts.map((p) => p.id),
+          isNot(contains('p-skip')));
+      expect(identical(store.stockTrackedProducts, store.stockTrackedProducts),
+          isTrue);
+
+      await store.addOrUpdateProduct(
+        product(id: 'p-track', code: 'P-TRACK').copyWith(trackStock: false),
+      );
+
+      expect(store.stockTrackedProducts, isEmpty);
+    });
+
+    test(
+        'sale saves skip heavy product derived payloads when no FIFO layers are touched',
+        () async {
+      const derivedKeys = <String>[
+        'product_costs_v1',
+        'price_lists_v1',
+        'product_prices_v1',
+        'product_price_overrides_v1',
+        'inventory_costing_method_v1',
+        'costing_method_history_v1',
+        'inventory_cost_layers_v1',
+      ];
+
+      final store = await readyStore();
+      await store.addOrUpdateProduct(product(id: 'p-fast', code: 'P-FAST'));
+      for (final key in derivedKeys) {
+        await LocalDatabaseService.setString(key, 'sentinel-$key');
+      }
+
+      final sale = await store.createSale(customerName: 'Bob', items: [
+        SaleItem(
+          productId: 'p-fast',
+          productName: 'Coffee',
+          unitPrice: 12,
+          quantity: 1,
+        ),
+      ]);
+
+      expect(sale.total, 12);
+      for (final key in derivedKeys) {
+        expect(LocalDatabaseService.getString(key), 'sentinel-$key');
+      }
+    });
+
     test(
         'manages customers, suppliers, catalog lists, and expenses with duplicate protection',
         () async {

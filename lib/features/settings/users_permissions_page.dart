@@ -106,8 +106,8 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                   ),
                   title: Text('${user.fullName} (${user.username})'),
                   subtitle: Text(user.isSystem && user.roleId == 'admin'
-                      ? '${store.roleById(user.roleId)?.name ?? user.roleId} â€¢ Store Owner â€¢ Full Access locked'
-                      : '${store.roleById(user.roleId)?.name ?? user.roleId} â€¢ ${user.isActive ? tr.text('active') : tr.text('disabled')}'),
+                      ? '${store.roleById(user.roleId)?.name ?? user.roleId} • Store Owner • Full Access locked'
+                      : '${store.roleById(user.roleId)?.name ?? user.roleId} • ${user.isActive ? tr.text('active') : tr.text('disabled')}'),
                   trailing: Wrap(
                     spacing: 8,
                     children: [
@@ -151,19 +151,19 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
     if (message.contains('Cloud owner re-authentication required') ||
         message.contains('Connect to the cloud account before editing') ||
         message.contains('Online account session is missing')) {
-      return 'ÙŠØ¬Ø¨ ØªØ£ÙƒÙŠØ¯ Ø§Ù„Ø­Ø³Ø§Ø¨ Ø§Ù„Ø³Ø­Ø§Ø¨ÙŠ Ù‚Ø¨Ù„ ØªØ¹Ø¯ÙŠÙ„ Ø§Ù„Ù…Ø¯ÙŠØ± Ø§Ù„Ø£Ø³Ø§Ø³ÙŠ.';
+      return 'يجب تأكيد الحساب السحابي قبل تعديل المدير الأساسي.';
     }
     if (message.contains('Cloud rejected the Store Owner update')) {
-      return 'ÙØ´Ù„ ØªØ­Ø¯ÙŠØ« Ø§Ù„Ù…Ø¯ÙŠØ± Ø§Ù„Ø£Ø³Ø§Ø³ÙŠ Ø¹Ù„Ù‰ Ø§Ù„Ø³Ø­Ø§Ø¨Ø©. Ù„Ù… ÙŠØªÙ… Ø­ÙØ¸ Ø£ÙŠ ØªØ¹Ø¯ÙŠÙ„ Ù…Ø­Ù„ÙŠ.';
+      return 'فشل تحديث المدير الأساسي على السحابة. لم يتم حفظ أي تعديل محلي.';
     }
     if (message.contains('Store Owner must always keep Full Access')) {
-      return 'Ø§Ù„Ù…Ø¯ÙŠØ± Ø§Ù„Ø£Ø³Ø§Ø³ÙŠ ÙŠØ¬Ø¨ Ø£Ù† ÙŠØ¨Ù‚Ù‰ Ø¨ØµÙ„Ø§Ø­ÙŠØ§Øª ÙƒØ§Ù…Ù„Ø© ÙˆÙ„Ø§ ÙŠÙ…ÙƒÙ† ØªØ¹Ø·ÙŠÙ„Ù‡.';
+      return 'المدير الأساسي يجب أن يبقى بصلاحيات كاملة ولا يمكن تعطيله.';
     }
     if (message.contains('Store Owner permissions are locked')) {
-      return 'ØµÙ„Ø§Ø­ÙŠØ§Øª Ø§Ù„Ù…Ø¯ÙŠØ± Ø§Ù„Ø£Ø³Ø§Ø³ÙŠ Ù…Ù‚ÙÙ„Ø© ÙˆÙ„Ø§ ÙŠÙ…ÙƒÙ† ØªØ¹Ø¯ÙŠÙ„Ù‡Ø§.';
+      return 'صلاحيات المدير الأساسي مقفلة ولا يمكن تعديلها.';
     }
     return message.isEmpty
-        ? 'Ø­Ø¯Ø« Ø®Ø·Ø£ Ø£Ø«Ù†Ø§Ø¡ Ø­ÙØ¸ Ø§Ù„Ù…Ø³ØªØ®Ø¯Ù….'
+        ? 'حدث خطأ أثناء حفظ المستخدم.'
         : message;
   }
 
@@ -516,8 +516,8 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(isStoreOwner
-                ? 'ØªÙ… ØªØ­Ø¯ÙŠØ« Ø§Ù„Ù…Ø¯ÙŠØ± Ø§Ù„Ø£Ø³Ø§Ø³ÙŠ Ø¹Ù„Ù‰ Ø§Ù„Ø³Ø­Ø§Ø¨Ø© ÙˆØ§Ù„Ù…Ø­Ù„ÙŠ Ø¨Ù†Ø¬Ø§Ø­.'
-                : 'ØªÙ… Ø­ÙØ¸ Ø§Ù„Ù…Ø³ØªØ®Ø¯Ù… Ø¨Ù†Ø¬Ø§Ø­.'),
+                ? 'تم تحديث المدير الأساسي على السحابة والمحلي بنجاح.'
+                : 'تم حفظ المستخدم بنجاح.'),
           ),
         );
       }
@@ -587,7 +587,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           title: Text(tr.isArabic
-              ? 'ØªØ£ÙƒÙŠØ¯ Ø§Ù„Ø­Ø³Ø§Ø¨ Ø§Ù„Ø³Ø­Ø§Ø¨ÙŠ'
+              ? 'تأكيد الحساب السحابي'
               : 'Confirm cloud account'),
           content: SizedBox(
             width: VentioResponsive.modalMaxWidth(context, 420),
@@ -596,7 +596,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
               children: [
                 Text(
                   tr.isArabic
-                      ? 'Ø¬Ù„Ø³Ø© Ø§Ù„Ø³Ø­Ø§Ø¨Ø© ØºÙŠØ± Ù…ØªØ§Ø­Ø© Ø£Ùˆ Ù…Ù†ØªÙ‡ÙŠØ©. Ø£Ø¯Ø®Ù„ Ø­Ø³Ø§Ø¨ Ø§Ù„Ù…Ø¯ÙŠØ± Ø§Ù„Ø£Ø³Ø§Ø³ÙŠ Ø§Ù„Ø³Ø­Ø§Ø¨ÙŠ Ù„Ù„Ù…ØªØ§Ø¨Ø¹Ø© Ø¯ÙˆÙ† Ù…ØºØ§Ø¯Ø±Ø© Ø§Ù„ØµÙØ­Ø©.'
+                      ? 'جلسة السحابة غير متاحة أو منتهية. أدخل حساب المدير الأساسي السحابي للمتابعة دون مغادرة الصفحة.'
                       : 'The cloud session is unavailable or expired. Enter the primary cloud admin account to continue without leaving this page.',
                 ),
                 const SizedBox(height: 16),
@@ -604,7 +604,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                   controller: loginController,
                   decoration: InputDecoration(
                       labelText: tr.isArabic
-                          ? 'Ø§Ù„Ø­Ø³Ø§Ø¨ Ø§Ù„Ø³Ø­Ø§Ø¨ÙŠ'
+                          ? 'الحساب السحابي'
                           : 'Cloud account'),
                   enabled: !isSubmitting,
                 ),
@@ -614,7 +614,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                   obscureText: true,
                   decoration: InputDecoration(
                       labelText: tr.isArabic
-                          ? 'ÙƒÙ„Ù…Ø© Ø§Ù„Ù…Ø±ÙˆØ± Ø§Ù„Ø­Ø§Ù„ÙŠØ©'
+                          ? 'كلمة المرور الحالية'
                           : 'Current password'),
                   enabled: !isSubmitting,
                 ),
@@ -634,7 +634,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
               onPressed: isSubmitting
                   ? null
                   : () => Navigator.pop(dialogContext, false),
-              child: Text(tr.isArabic ? 'Ø¥Ù„ØºØ§Ø¡' : 'Cancel'),
+              child: Text(tr.isArabic ? 'إلغاء' : 'Cancel'),
             ),
             FilledButton(
               onPressed: isSubmitting
@@ -645,7 +645,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                       final password = passwordController.text;
                       if (loginName.isEmpty || password.trim().isEmpty) {
                         setDialogState(() => errorMessage = tr.isArabic
-                            ? 'Ø£Ø¯Ø®Ù„ Ø§Ù„Ø­Ø³Ø§Ø¨ ÙˆÙƒÙ„Ù…Ø© Ø§Ù„Ù…Ø±ÙˆØ±.'
+                            ? 'أدخل الحساب وكلمة المرور.'
                             : 'Enter the account and password.');
                         return;
                       }
@@ -663,7 +663,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                             isSubmitting = false;
                             errorMessage = result.message.isEmpty
                                 ? (tr.isArabic
-                                    ? 'ÙØ´Ù„ ØªØ³Ø¬ÙŠÙ„ Ø§Ù„Ø¯Ø®ÙˆÙ„ Ø¥Ù„Ù‰ Ø§Ù„Ø³Ø­Ø§Ø¨Ø©.'
+                                    ? 'فشل تسجيل الدخول إلى السحابة.'
                                     : 'Cloud login failed.')
                                 : result.message;
                           });
@@ -689,7 +689,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                       height: 18,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : Text(tr.isArabic ? 'ØªØ£ÙƒÙŠØ¯' : 'Confirm'),
+                  : Text(tr.isArabic ? 'تأكيد' : 'Confirm'),
             ),
           ],
         ),
