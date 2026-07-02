@@ -48,21 +48,26 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
     );
   }
 
-  CloudSyncSettings _settingsWithUnifiedCursor() {
+  Future<CloudSyncSettings> _settingsForPull() async {
     final identity = _service.store.appIdentity;
     final baseSequence = SyncDeviceStateStore.lastAppliedSequenceForTransport(
       identity,
       'cloud',
     );
-    // Clients that have not established a Cloud sequence baseline yet should
-    // not reuse a saved pull cursor. That legacy cursor can point past
-    // snapshot-published Host data and would otherwise force the incremental
-    // path to skip records that the Host already made authoritative.
-    if (identity.isClient &&
-        baseSequence <= 0 &&
-        _settings.lastPullCursor != null) {
+    if (identity.isClient && baseSequence <= 0) {
+      await CloudSyncSettings.clearSavedPullCursor();
+      await SyncDeviceStateStore.resetClientProgress(
+        identity,
+        transport: 'cloud',
+      );
       return _settings.copyWith(clearLastPullCursor: true);
     }
+    final cursor = _unifiedCursor;
+    if (cursor == null || cursor == _settings.lastPullCursor) return _settings;
+    return _settings.copyWith(lastPullCursor: cursor);
+  }
+
+  CloudSyncSettings _settingsWithUnifiedCursor() {
     final cursor = _unifiedCursor;
     if (cursor == null || cursor == _settings.lastPullCursor) return _settings;
     return _settings.copyWith(lastPullCursor: cursor);
@@ -231,7 +236,7 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<UnifiedSyncResult> pullChanges(UnifiedSyncPullRequest request) async {
-    final effectiveSettings = _settingsWithUnifiedCursor();
+    final effectiveSettings = await _settingsForPull();
     final result = await _service
         .pullAuthoritativeChangesForUnifiedEngine(effectiveSettings);
     final current = CloudSyncSettings.load();
