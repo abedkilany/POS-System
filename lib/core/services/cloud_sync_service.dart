@@ -3231,12 +3231,13 @@ class CloudSyncService {
       final baseLastAppliedSequence =
           SyncDeviceStateStore.lastAppliedSequenceForTransport(
               store.appIdentity, 'cloud');
-      // If a Client only has a legacy timestamp cursor but no authoritative
-      // sequence, the timestamp can be ahead of Cloud received_at because older
-      // records were written with local-time values. Treat that as first pull
-      // and let Cloud return the materialized snapshot plus a sequence marker.
+      // Sequence is the authoritative Cloud watermark. Never combine it
+      // with the legacy timestamp cursor: a newer local timestamp can filter out
+      // older-but-unapplied Host events and leave the Client stuck behind the
+      // Host (for example Host latest=32206 while Client ACK=32187). Only use
+      // the legacy cursor for pre-sequence clients.
       final initialCursor =
-          baseLastAppliedSequence > 0 ? settings.lastPullCursor : null;
+          baseLastAppliedSequence > 0 ? null : settings.lastPullCursor;
       final shouldUseSnapshotBootstrap = baseLastAppliedSequence <= 0;
       if (shouldUseSnapshotBootstrap &&
           await _cloudSnapshotIsNewerThanLocal(settings)) {
@@ -3545,8 +3546,12 @@ class CloudSyncService {
       final baseLastAppliedSequence =
           SyncDeviceStateStore.lastAppliedSequenceForTransport(
               store.appIdentity, 'cloud');
+      // Sequence is the authoritative Cloud watermark. Never combine it
+      // with the legacy timestamp cursor: a newer local timestamp can filter out
+      // older-but-unapplied Host events and leave the Client stuck behind the
+      // Host. Only use the legacy cursor for pre-sequence clients.
       final initialCursor =
-          baseLastAppliedSequence > 0 ? settings.lastPullCursor : null;
+          baseLastAppliedSequence > 0 ? null : settings.lastPullCursor;
       final shouldUseSnapshotBootstrap = baseLastAppliedSequence <= 0;
       if (shouldUseSnapshotBootstrap &&
           await _cloudSnapshotIsNewerThanLocal(settings)) {
