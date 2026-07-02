@@ -260,6 +260,118 @@ class _RealtimeChannelSession {
   final Uri uri;
 }
 
+class _RealtimeRelaySession {
+  _RealtimeRelaySession._(this._service, this._channelSession) {
+    _subscription = _channelSession.channel.stream.listen(
+      _handlePacket,
+      onError: _handleError,
+      onDone: _handleDone,
+      cancelOnError: false,
+    );
+  }
+
+  final CloudSyncService _service;
+  final _RealtimeChannelSession _channelSession;
+  final Map<String, Completer<Map<String, dynamic>>> _pendingRequests =
+      <String, Completer<Map<String, dynamic>>>{};
+  StreamSubscription<dynamic>? _subscription;
+  bool _closed = false;
+
+  static Future<_RealtimeRelaySession> open(
+    CloudSyncService service,
+    CloudSyncSettings settings, {
+    bool includeSequenceHint = false,
+  }) async {
+    final channelSession = await service._openRealtimeChannel(
+      settings,
+      includeSequenceHint: includeSequenceHint,
+    );
+    return _RealtimeRelaySession._(service, channelSession);
+  }
+
+  void _completePendingError(Object error, StackTrace stackTrace) {
+    for (final completer in _pendingRequests.values) {
+      if (!completer.isCompleted) {
+        completer.completeError(error, stackTrace);
+      }
+    }
+    _pendingRequests.clear();
+  }
+
+  void _handlePacket(dynamic raw) {
+    if (_closed) return;
+    try {
+      final decoded = jsonDecode(raw.toString());
+      if (decoded is! Map) return;
+      final packet = Map<String, dynamic>.from(decoded);
+      final type = (packet['type'] ?? '').toString();
+      if (type == 'realtime_welcome') return;
+      if (type != 'relay_response') return;
+      final requestId =
+          (packet['requestId'] ?? packet['request_id'] ?? '').toString().trim();
+      if (requestId.isEmpty) return;
+      final completer = _pendingRequests.remove(requestId);
+      if (completer != null && !completer.isCompleted) {
+        completer.complete(packet);
+      }
+    } catch (error, stackTrace) {
+      _completePendingError(error, stackTrace);
+    }
+  }
+
+  void _handleError(Object error, StackTrace stackTrace) {
+    if (_closed) return;
+    _completePendingError(error, stackTrace);
+  }
+
+  void _handleDone() {
+    if (_closed) return;
+    _completePendingError(
+      StateError('Realtime relay closed before the Host replied.'),
+      StackTrace.current,
+    );
+  }
+
+  Future<Map<String, dynamic>> sendRequest(
+    String requestKind,
+    Map<String, dynamic> payload, {
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    if (_closed) {
+      throw StateError('Realtime relay session is closed.');
+    }
+    final requestId = _service._newRelayRequestId();
+    final completer = Completer<Map<String, dynamic>>();
+    _pendingRequests[requestId] = completer;
+    try {
+      _channelSession.channel.sink.add(jsonEncode({
+        'type': 'relay_request',
+        'requestId': requestId,
+        'requestKind': requestKind,
+        ...payload,
+      }));
+      return await completer.future.timeout(timeout);
+    } finally {
+      _pendingRequests.remove(requestId);
+    }
+  }
+
+  Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
+    final subscription = _subscription;
+    _subscription = null;
+    _completePendingError(
+      StateError('Realtime relay session was closed.'),
+      StackTrace.current,
+    );
+    if (subscription != null) {
+      await subscription.cancel();
+    }
+    await _channelSession.channel.sink.close();
+  }
+}
+
 class CloudDeviceStatus {
   const CloudDeviceStatus({
     required this.deviceId,
@@ -1769,44 +1881,12 @@ class CloudSyncService {
           message:
               'A snapshot for this generation was already requested or applied, so no duplicate request will be sent.');
     }
-    final now = requestedAt ?? DateTime.now().toUtc();
-    try {
-      final response = await _sendRealtimeRequest(
-        settings,
-        requestKind: 'cloud_snapshot_manifest',
-        payload: {
-          'deviceId': store.deviceId,
-          'storeId': identity.storeId,
-          'branchId': identity.branchId,
-          'snapshotKind': 'full_store',
-          'force': true,
-          'requestedAt': now.toIso8601String(),
-          'reason': 'cloud_rebuild_from_host',
-          if (cleanGeneration.isNotEmpty) 'snapshotGeneration': cleanGeneration,
-          if (cleanGeneration.isNotEmpty)
-            'hostSnapshotGeneration': cleanGeneration,
-        },
-        timeout: const Duration(seconds: 45),
-      );
-      if (response['ok'] != true) {
-        return CloudSyncResult(
-          ok: false,
-          message:
-              'Fresh Host snapshot request through the relay failed: ${response['error'] ?? response['message'] ?? 'unknown error'}',
-        );
-      }
-      await _markFreshSnapshotRequestedForGeneration('cloud', cleanGeneration);
-      return const CloudSyncResult(
-        ok: true,
-        message:
-            'Fresh Host snapshot requested through the relay. The Host will prepare a full snapshot in memory.',
-      );
-    } catch (error) {
-      return CloudSyncResult(
-          ok: false,
-          message:
-              'Fresh Host snapshot request through the relay failed: $error');
-    }
+    await _markFreshSnapshotRequestedForGeneration('cloud', cleanGeneration);
+    return const CloudSyncResult(
+      ok: true,
+      message:
+          'Fresh Host snapshot will be fetched directly through the relay on the next attempt.',
+    );
   }
 
   Future<CloudSyncResult> rebuildFromCloudHostSnapshot(
@@ -1833,7 +1913,7 @@ class CloudSyncService {
         0.08, 'Checking for a fresh Host snapshot through the relay...');
     for (var attempt = 0; attempt < 4; attempt += 1) {
       if (attempt > 0) {
-        await Future<void>.delayed(const Duration(seconds: 2));
+        await Future<void>.delayed(const Duration(milliseconds: 750));
       }
       try {
         final envelope = await _downloadCloudSnapshotEnvelopeViaRelay(
@@ -1881,7 +1961,7 @@ class CloudSyncService {
     // Keep retrying the same unified manifest -> chunks -> envelope -> importer
     // pipeline. Cloud and LAN now share the same flow, only the transport differs.
     for (var attempt = 0; attempt < 6; attempt += 1) {
-      if (attempt > 0) await Future<void>.delayed(const Duration(seconds: 3));
+      if (attempt > 0) await Future<void>.delayed(const Duration(seconds: 1));
       try {
         final envelope = await _downloadCloudSnapshotEnvelopeViaRelay(
           settings.copyWith(clearLastPullCursor: true),
@@ -2213,57 +2293,19 @@ class CloudSyncService {
     required Map<String, dynamic> payload,
     Duration timeout = const Duration(seconds: 30),
   }) async {
-    final session = await _openRealtimeChannel(
+    final session = await _RealtimeRelaySession.open(
+      this,
       settings,
       includeSequenceHint: false,
     );
-    final channel = session.channel;
-    final requestId = _newRelayRequestId();
-    final completer = Completer<Map<String, dynamic>>();
-    late final StreamSubscription<dynamic> subscription;
-    subscription = channel.stream.listen(
-      (raw) {
-        final decoded = jsonDecode(raw.toString());
-        if (decoded is! Map) return;
-        final packet = Map<String, dynamic>.from(decoded);
-        final type = (packet['type'] ?? '').toString();
-        if (type == 'realtime_welcome') return;
-        if (type != 'relay_response') return;
-        if ((packet['requestId'] ?? packet['request_id'] ?? '').toString() !=
-            requestId) {
-          return;
-        }
-        if (!completer.isCompleted) {
-          completer.complete(packet);
-        }
-      },
-      onError: (error, stackTrace) {
-        if (!completer.isCompleted) {
-          completer.completeError(error, stackTrace);
-        }
-      },
-      onDone: () {
-        if (!completer.isCompleted) {
-          completer.completeError(
-            StateError('Realtime request closed before the Host replied.'),
-          );
-        }
-      },
-      cancelOnError: false,
-    );
-
     try {
-      channel.sink.add(jsonEncode({
-        'type': 'relay_request',
-        'requestId': requestId,
-        'requestKind': requestKind,
-        ...payload,
-      }));
-      final response = await completer.future.timeout(timeout);
-      return response;
+      return await session.sendRequest(
+        requestKind,
+        payload,
+        timeout: timeout,
+      );
     } finally {
-      await subscription.cancel();
-      await channel.sink.close();
+      await session.close();
     }
   }
 
@@ -3428,62 +3470,71 @@ class CloudSyncService {
     var totalPushed = 0;
     var batchNumber = 0;
     const batchSize = 500;
+    final relaySession = await _RealtimeRelaySession.open(
+      this,
+      settings,
+      includeSequenceHint: false,
+    );
 
-    while (true) {
-      await store.recoverStaleInProgressSyncQueue(target: target);
-      await store.retryFailedSyncQueue(target: target);
-      final pending = _syncCore
-          .pendingChangesForTarget(target)
-          .take(batchSize)
-          .toList(growable: false);
-      final pendingIds = _syncCore.changeIds(pending);
-      if (pending.isEmpty) break;
-      batchNumber += 1;
+    try {
+      while (true) {
+        await store.recoverStaleInProgressSyncQueue(target: target);
+        await store.retryFailedSyncQueue(target: target);
+        final pending = _syncCore
+            .pendingChangesForTarget(target)
+            .take(batchSize)
+            .toList(growable: false);
+        final pendingIds = _syncCore.changeIds(pending);
+        if (pending.isEmpty) break;
+        batchNumber += 1;
 
-      await _syncCore.markPushInProgress(pendingIds);
-      try {
-        final response = await _sendRealtimeRequest(
-          settings,
-          requestKind: 'cloud_client_push',
-          payload: {
-            'deviceId': store.deviceId,
-            'storeId': identity.storeId,
-            'branchId': identity.branchId,
-            'sequence': SyncDeviceStateStore.lastAppliedSequenceForTransport(
-                identity, transport),
-            'lastAppliedSequence':
-                SyncDeviceStateStore.lastAppliedSequenceForTransport(
-                    identity, transport),
-            'batchNumber': batchNumber,
-            'batchSize': pending.length,
-            'changes': pending.map((item) => item.toJson()).toList(),
-          },
-        );
-        if (response['ok'] != true) {
-          final message = 'Cloud relay push failed in batch $batchNumber: '
-              '${response['error'] ?? response['message'] ?? 'unknown error'}';
-          await _syncCore.markPushFailed(pendingIds, message);
-          throw StateError(message);
+        await _syncCore.markPushInProgress(pendingIds);
+        try {
+          final response = await relaySession.sendRequest(
+            'cloud_client_push',
+            {
+              'deviceId': store.deviceId,
+              'storeId': identity.storeId,
+              'branchId': identity.branchId,
+              'sequence': SyncDeviceStateStore.lastAppliedSequenceForTransport(
+                  identity, transport),
+              'lastAppliedSequence':
+                  SyncDeviceStateStore.lastAppliedSequenceForTransport(
+                      identity, transport),
+              'batchNumber': batchNumber,
+              'batchSize': pending.length,
+              'changes': pending.map((item) => item.toJson()).toList(),
+            },
+          );
+          if (response['ok'] != true) {
+            final message = 'Cloud relay push failed in batch $batchNumber: '
+                '${response['error'] ?? response['message'] ?? 'unknown error'}';
+            await _syncCore.markPushFailed(pendingIds, message);
+            throw StateError(message);
+          }
+          final ackIds = (response['ackIds'] as List<dynamic>? ?? [])
+              .map((item) => '$item')
+              .where((item) => item.trim().isNotEmpty)
+              .toList();
+          final rejected = _decodeRejectedSyncRequests(response['rejected']);
+          if (rejected.isNotEmpty) await _syncCore.markPushRejected(rejected);
+          if (target == 'cloud_host') {
+            await _syncCore.markPushSubmitted(ackIds, fallbackIds: pendingIds);
+          } else {
+            await _syncCore.markPushAcknowledged(ackIds,
+                fallbackIds: pendingIds);
+          }
+          totalPushed += pending.length;
+        } catch (error) {
+          await _syncCore.markPushFailed(
+            pendingIds,
+            'Cloud relay push failed in batch $batchNumber: $error',
+          );
+          rethrow;
         }
-        final ackIds = (response['ackIds'] as List<dynamic>? ?? [])
-            .map((item) => '$item')
-            .where((item) => item.trim().isNotEmpty)
-            .toList();
-        final rejected = _decodeRejectedSyncRequests(response['rejected']);
-        if (rejected.isNotEmpty) await _syncCore.markPushRejected(rejected);
-        if (target == 'cloud_host') {
-          await _syncCore.markPushSubmitted(ackIds, fallbackIds: pendingIds);
-        } else {
-          await _syncCore.markPushAcknowledged(ackIds, fallbackIds: pendingIds);
-        }
-        totalPushed += pending.length;
-      } catch (error) {
-        await _syncCore.markPushFailed(
-          pendingIds,
-          'Cloud relay push failed in batch $batchNumber: $error',
-        );
-        rethrow;
       }
+    } finally {
+      await relaySession.close();
     }
 
     return totalPushed;
@@ -4633,15 +4684,33 @@ class _CloudRelaySnapshotPullTransport
   final CloudSyncSettings settings;
   final String _snapshotKind;
   String _jobId = '';
+  _RealtimeRelaySession? _relaySession;
+  Future<_RealtimeRelaySession>? _relaySessionFuture;
+
+  Future<_RealtimeRelaySession> _session() async {
+    final existing = _relaySession;
+    if (existing != null) return existing;
+    _relaySessionFuture ??= _RealtimeRelaySession.open(
+      _service,
+      settings,
+      includeSequenceHint: false,
+    );
+    try {
+      _relaySession = await _relaySessionFuture!;
+      return _relaySession!;
+    } catch (_) {
+      _relaySessionFuture = null;
+      rethrow;
+    }
+  }
 
   Future<Map<String, dynamic>> _request(
     String requestKind,
     Map<String, dynamic> payload,
   ) async {
-    final response = await _service._sendRealtimeRequest(
-      settings,
-      requestKind: requestKind,
-      payload: payload,
+    final response = await (await _session()).sendRequest(
+      requestKind,
+      payload,
       timeout: const Duration(seconds: 45),
     );
     if (response['ok'] != true) {
@@ -4653,11 +4722,19 @@ class _CloudRelaySnapshotPullTransport
   }
 
   Future<void> dispose() async {
-    if (_jobId.trim().isEmpty) return;
     try {
-      await _request('cloud_snapshot_release', {'jobId': _jobId});
+      if (_jobId.trim().isNotEmpty) {
+        await _request('cloud_snapshot_release', {'jobId': _jobId});
+      }
     } catch (_) {
       // Best-effort cleanup only.
+    } finally {
+      final session = _relaySession;
+      _relaySession = null;
+      _relaySessionFuture = null;
+      if (session != null) {
+        await session.close();
+      }
     }
   }
 
