@@ -54,7 +54,13 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
       identity,
       'cloud',
     );
-    if (identity.isClient && baseSequence <= 0) {
+    final appliedCursor =
+        SyncDeviceStateStore.lastAppliedCursorForTransport(identity, 'cloud');
+    // Only scrub the legacy cursor when this client has never established a
+    // Cloud baseline yet. Once a rebuild/import has already stored a cursor,
+    // keep it even if the sequence is still 0 so the next pull does not loop
+    // back into bootstrap again.
+    if (identity.isClient && baseSequence <= 0 && appliedCursor == null) {
       await CloudSyncSettings.clearSavedPullCursor();
       await SyncDeviceStateStore.resetClientProgress(
         identity,

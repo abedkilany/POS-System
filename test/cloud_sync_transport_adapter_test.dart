@@ -170,5 +170,36 @@ void main() {
       expect(result.ok, isTrue);
       expect(fakeService.lastPullCursorSeen, isNull);
     });
+
+    test(
+        'keeps an already-established cloud cursor even when the sequence baseline is still zero',
+        () async {
+      final baselineCursor = DateTime.utc(2026, 1, 2, 12);
+      await SyncDeviceStateStore.recordSyncResult(
+        store.appIdentity,
+        transport: 'cloud',
+        appliedCursor: baselineCursor,
+        ackCursor: baselineCursor,
+        appliedSequence: 0,
+        ackSequence: 0,
+      );
+
+      final fakeService = _FakeCloudSyncService(store);
+      final result = await CloudSyncTransportAdapter(
+        service: fakeService,
+        settings: const CloudSyncSettings(
+          enabled: true,
+          apiBaseUrl: 'https://sync.test',
+        ),
+      ).pullChanges(
+        UnifiedSyncPullRequest(
+          deviceId: store.deviceId,
+          deviceToken: store.appIdentity.deviceToken,
+        ),
+      );
+
+      expect(result.ok, isTrue);
+      expect(fakeService.lastPullCursorSeen, baselineCursor);
+    });
   });
 }
