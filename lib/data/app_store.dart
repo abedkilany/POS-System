@@ -1772,6 +1772,8 @@ class AppStore extends ChangeNotifier {
   }
 
   int get currentSyncSequence => _syncSequence;
+  int get latestStoredAuthoritativeSequence =>
+      _latestStoredAuthoritativeSequence();
   List<SyncQueueItem> get syncQueue {
     _requestSyncDataLoad();
     return List.unmodifiable(_syncQueue);

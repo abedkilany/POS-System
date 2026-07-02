@@ -907,13 +907,15 @@ class CloudSyncService {
     int sequence = 0,
     CloudSyncSettings? settings,
   }) async {
+    final effectiveSequence =
+        sequence > 0 ? sequence : store.latestStoredAuthoritativeSequence;
     await SyncDeviceStateStore.recordSyncResult(
       store.appIdentity,
       transport: transport,
       appliedCursor: cursor,
       ackCursor: cursor,
-      appliedSequence: sequence,
-      ackSequence: sequence,
+      appliedSequence: effectiveSequence,
+      ackSequence: effectiveSequence,
     );
 
     // Authoritative ACK: update the Host-visible device state only after the

@@ -5,9 +5,9 @@
                          "url":  "/releases/windows/VentioSetup-1.0.15-build15.exe",
                          "version":  "1.0.15",
                          "build":  15,
-                         "size":  17755040,
-                         "sha256":  "e9469e359cbb26bd42a73f3dae8a52b95911020a3186c26924d053d20359f5f9",
-                         "publishedAt":  "2026-07-02T00:22:03Z"
+                         "size":  17750521,
+                         "sha256":  "5dc5875f713d4d6114546c88839efb2ae699937f6e73230f4205bef221ed605f",
+                         "publishedAt":  "2026-07-02T01:18:05Z"
                      },
                      {
                          "name":  "VentioSetup-1.0.14-build14.exe",

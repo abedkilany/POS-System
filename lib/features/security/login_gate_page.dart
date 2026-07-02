@@ -50,6 +50,12 @@ class _LoginGatePageState extends State<LoginGatePage> {
   bool _firstBuildMarked = false;
   bool _firstReadyMarked = false;
   String _onlineSessionPassword = '';
+  late final VoidCallback _storeListener;
+
+  void _handleStoreChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
 
   @override
   void initState() {
@@ -58,6 +64,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
       'LoginGatePage',
       pageLabel: 'Login gate',
     );
+    _storeListener = _handleStoreChanged;
+    widget.store.addListener(_storeListener);
     _authCache = AccountAuthCache.load();
     _rememberLogin = widget.store.rememberLogin;
     _storeNameController.text = widget.store.storeProfile.name.trim().isEmpty
@@ -66,11 +74,21 @@ class _LoginGatePageState extends State<LoginGatePage> {
   }
 
   @override
+  void didUpdateWidget(covariant LoginGatePage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != widget.store) {
+      oldWidget.store.removeListener(_storeListener);
+      widget.store.addListener(_storeListener);
+    }
+  }
+
+  @override
   void dispose() {
     StartupTimingService.markPageExited(
       'LoginGatePage',
       pageLabel: 'Login gate',
     );
+    widget.store.removeListener(_storeListener);
     _usernameController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
@@ -195,8 +213,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
         '[RECOVER_IDENTITY] blocked reason=missing_online_session',
       );
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text(tr.text('online_account_session_required'))),
+        SnackBar(content: Text(tr.text('online_account_session_required'))),
       );
       return;
     }
@@ -206,8 +223,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
       );
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content:
-                Text(tr.text('local_store_identity_recovery_locked'))),
+            content: Text(tr.text('local_store_identity_recovery_locked'))),
       );
       return;
     }
@@ -227,8 +243,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
         '[RECOVER_IDENTITY] blocked reason=invalid_store_id storeId=$storeId',
       );
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text(tr.text('store_id_not_found_for_account'))),
+        SnackBar(content: Text(tr.text('store_id_not_found_for_account'))),
       );
       return;
     }
@@ -335,7 +350,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
             // rebuild the identity, but the subscription gate must still be
             // decided by the live plan check, not by the recovery response.
             cloudSyncEnabled: recoveryCache.cloudSyncEnabled,
-            devicesLimit: result.deviceLimit?.allowed ?? recoveryCache.devicesLimit,
+            devicesLimit:
+                result.deviceLimit?.allowed ?? recoveryCache.devicesLimit,
             lastVerifiedAt: DateTime.now(),
           );
           await AccountAuthCache.save(updatedCache);
@@ -379,8 +395,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
         '[RECOVER_DATA] blocked reason=missing_online_session',
       );
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text(tr.text('online_account_session_required'))),
+        SnackBar(content: Text(tr.text('online_account_session_required'))),
       );
       return;
     }
@@ -426,8 +441,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
         .toUpperCase();
     if (!storeId.startsWith('ST-')) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text(tr.text('store_id_not_found_for_account'))),
+        SnackBar(content: Text(tr.text('store_id_not_found_for_account'))),
       );
       return;
     }
@@ -439,8 +453,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
       );
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content:
-                Text(tr.text('subscription_not_enrolled_cloud_sync'))),
+            content: Text(tr.text('subscription_not_enrolled_cloud_sync'))),
       );
       return;
     }
@@ -706,7 +719,6 @@ class _LoginGatePageState extends State<LoginGatePage> {
     }
   }
 
-
   String _formatBytes(int bytes) {
     if (bytes <= 0) return '0 B';
     const units = ['B', 'KB', 'MB', 'GB'];
@@ -783,7 +795,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
                     itemBuilder: (context, index) {
                       final item = releases[index];
                       return ListTile(
-                        leading: const Icon(Icons.download_for_offline_outlined),
+                        leading:
+                            const Icon(Icons.download_for_offline_outlined),
                         title: Text(item.name),
                         subtitle: Text(_releaseSubtitle(tr, item)),
                         trailing: FilledButton.icon(
@@ -1083,7 +1096,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
                                         await Navigator.of(context).push(
                                           MaterialPageRoute<void>(
                                             builder: (_) => PageTimingScope(
-                                              key: const ValueKey('SyncSetupPage'),
+                                              key: const ValueKey(
+                                                  'SyncSetupPage'),
                                               pageKey: 'SyncSetupPage',
                                               pageLabel: 'Sync setup',
                                               child: SyncSetupPage(
@@ -1315,7 +1329,9 @@ class PlatformAdminDashboardPage extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 8),
             child: Center(
               child: Text(
-                cache.loginName.isEmpty ? tr.text('platform_admin') : cache.loginName,
+                cache.loginName.isEmpty
+                    ? tr.text('platform_admin')
+                    : cache.loginName,
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
             ),

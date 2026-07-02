@@ -628,6 +628,7 @@ class _MainShellState extends State<MainShell> {
   bool _firstBuildMarked = false;
   late final AppUpdateService _updateService = getAppUpdateService();
   late final VoidCallback _updateStatusListener;
+  late final VoidCallback _storeListener;
   VoidCallback? _cancelDownloadUpdate;
   AppUpdateInfo? _availableUpdate;
   bool _checkingForUpdate = false;
@@ -637,9 +638,16 @@ class _MainShellState extends State<MainShell> {
   String? _downloadedInstallerPath;
   late final AccountAuthCache? _authCache = AccountAuthCache.load();
 
+  void _handleStoreChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
   @override
   void initState() {
     super.initState();
+    _storeListener = _handleStoreChanged;
+    widget.store.addListener(_storeListener);
     _updateStatusListener = () {
       if (!mounted) return;
       final state = AppUpdateService.status.value;
@@ -658,7 +666,17 @@ class _MainShellState extends State<MainShell> {
   }
 
   @override
+  void didUpdateWidget(covariant MainShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != widget.store) {
+      oldWidget.store.removeListener(_storeListener);
+      widget.store.addListener(_storeListener);
+    }
+  }
+
+  @override
   void dispose() {
+    widget.store.removeListener(_storeListener);
     AppUpdateService.status.removeListener(_updateStatusListener);
     super.dispose();
   }
