@@ -1279,8 +1279,15 @@ class CloudSyncService {
             await _markHostSnapshotGenerationApplied('cloud', envelope);
             onProgress?.call(0.88, 'Verifying local store data...');
             final verified = await store.verifyLocalBusinessDataIntegrity();
-            if (!verified.ok || store.needsInitialAdminSetup) {
+            if (store.needsInitialAdminSetup) {
               throw StateError(verified.message);
+            }
+            // Verification warnings should not restart pairing after a
+            // successful import; retrying would just ask for the same snapshot
+            // again and can loop forever.
+            if (!verified.ok) {
+              debugPrint(
+                  'Cloud pairing completed with verification warnings: ${verified.message}');
             }
             final cursor =
                 store.syncSnapshotGeneratedAtFromJson(jsonEncode(envelope));
@@ -1298,10 +1305,12 @@ class CloudSyncService {
               message: 'Full Store data downloaded.',
             );
             onProgress?.call(1.0, 'Cloud snapshot is ready.');
+            final successMessage = verified.ok
+                ? 'Device paired successfully. Full Store data downloaded. You can sign in now.'
+                : 'Device paired successfully. Full Store data downloaded. You can sign in now. Verification warnings: ${verified.message}';
             return CloudPairingClaimResult(
               ok: true,
-              message:
-                  'Device paired successfully. Full Store data downloaded. You can sign in now.',
+              message: successMessage,
               identity: store.appIdentity,
             );
           } catch (_) {
@@ -1856,6 +1865,13 @@ class CloudSyncService {
             markRestoreCommandExecuted: true);
         onProgress?.call(0.90, 'Verifying rebuilt local data...');
         final repaired = await store.verifyLocalBusinessDataIntegrity();
+        // Keep the rebuild as successful even when the verification step
+        // reports warnings. The snapshot was already imported and retrying the
+        // same rebuild would create a loop.
+        if (!repaired.ok) {
+          debugPrint(
+              'Cloud rebuild completed with verification warnings: ${repaired.message}');
+        }
         onProgress?.call(0.96, 'Cleaning up local records...');
         await store.cleanupSoftDeletedRecords();
         // The snapshot was imported successfully. Do not repeat the same rebuild
@@ -1880,7 +1896,7 @@ class CloudSyncService {
         );
         onProgress?.call(1.0, 'Cloud rebuild completed.');
         return CloudSyncResult(
-          ok: repaired.ok,
+          ok: true,
           pulled: (envelope['totalChunks'] as num?)?.toInt() ?? 0,
           restoredSnapshot: true,
           message: repaired.ok
@@ -1928,13 +1944,19 @@ class CloudSyncService {
       if (lastResult.restoredSnapshot) {
         onProgress?.call(0.88, 'Verifying rebuilt local data...');
         final repaired = await store.verifyLocalBusinessDataIntegrity();
+        // Keep the rebuild successful even if verification warns. The snapshot
+        // is already applied, so failing here would just trigger another retry.
+        if (!repaired.ok) {
+          debugPrint(
+              'Cloud rebuild completed with verification warnings: ${repaired.message}');
+        }
         onProgress?.call(0.94, 'Cleaning up local records...');
         await store.cleanupSoftDeletedRecords();
         await CloudProvisioningStatus.markComplete(
             message: 'Initial Store data downloaded.');
         onProgress?.call(1.0, 'Cloud rebuild completed.');
         return CloudSyncResult(
-          ok: repaired.ok,
+          ok: true,
           pushed: lastResult.pushed,
           pulled: totalPulled,
           restoredSnapshot: true,
