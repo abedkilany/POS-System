@@ -29,7 +29,8 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
                 : lower.contains('required') || lower.contains('invalid')
                     ? UnifiedSyncErrorCode.validationFailed
                     : UnifiedSyncErrorCode.unknown;
-    return UnifiedSyncError(code: code, userMessage: message, debugMessage: message);
+    return UnifiedSyncError(
+        code: code, userMessage: message, debugMessage: message);
   }
 
   DateTime? get _unifiedCursor => SyncDeviceStateStore.cursorForTransport(
@@ -53,11 +54,17 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
     return _settings.copyWith(lastPullCursor: cursor);
   }
 
-  Future<void> _recordCloudResult(DateTime? cursor) => SyncDeviceStateStore.recordSyncResult(
+  Future<void> _recordCloudResult(
+    DateTime? cursor, {
+    int? sequence,
+  }) =>
+      SyncDeviceStateStore.recordSyncResult(
         _service.store.appIdentity,
         transport: 'cloud',
         appliedCursor: cursor,
         ackCursor: cursor,
+        appliedSequence: sequence,
+        ackSequence: sequence,
       );
 
   @override
@@ -75,7 +82,11 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
   @override
   Future<UnifiedSyncResult> testConnection() async {
     final result = await _service.testConnection(_settings);
-    return UnifiedSyncResult(ok: result.ok, message: result.message, error: _errorFor(result.ok, result.message), cursor: _cursor());
+    return UnifiedSyncResult(
+        ok: result.ok,
+        message: result.message,
+        error: _errorFor(result.ok, result.message),
+        cursor: _cursor());
   }
 
   @override
@@ -91,7 +102,8 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<UnifiedSyncResult> registerCurrentHost({String transport = ''}) async {
-    final result = await _service.registerCurrentDevice(_settings, transport: transport.trim().isEmpty ? 'cloud' : transport);
+    final result = await _service.registerCurrentDevice(_settings,
+        transport: transport.trim().isEmpty ? 'cloud' : transport);
     return UnifiedSyncResult(
       ok: result.ok,
       message: result.message,
@@ -108,7 +120,8 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
     DateTime? minSnapshotUpdatedAt,
     void Function(double value, String label)? onProgress,
   }) async {
-    await _service.publishBootstrapSnapshotToCloud(_settings, force: true, onProgress: onProgress);
+    await _service.publishBootstrapSnapshotToCloud(_settings,
+        force: true, onProgress: onProgress);
     final effectiveSettings = _settingsWithUnifiedCursor();
     final result = await _service.syncNow(
       effectiveSettings,
@@ -127,9 +140,11 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
   }
 
   @override
-  Future<UnifiedPairingCodeResult> createPairingCode({int ttlMinutes = 5}) async {
+  Future<UnifiedPairingCodeResult> createPairingCode(
+      {int ttlMinutes = 5}) async {
     if (!_settings.enabled) {
-      const message = 'Enable Cloud Sync and save settings before generating a pairing code.';
+      const message =
+          'Enable Cloud Sync and save settings before generating a pairing code.';
       return const UnifiedPairingCodeResult(
         ok: false,
         message: message,
@@ -140,7 +155,8 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
         ),
       );
     }
-    final result = await _service.createPairingCode(_settings, ttlMinutes: ttlMinutes);
+    final result =
+        await _service.createPairingCode(_settings, ttlMinutes: ttlMinutes);
     return UnifiedPairingCodeResult(
       ok: result.ok,
       message: result.message,
@@ -159,8 +175,10 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
   }
 
   @override
-  Future<UnifiedPairingClaimResult> claimPairingCode(String code, {void Function(double value, String label)? onProgress}) async {
-    final result = await _service.claimPairingCode(_settings, code, onProgress: onProgress);
+  Future<UnifiedPairingClaimResult> claimPairingCode(String code,
+      {void Function(double value, String label)? onProgress}) async {
+    final result = await _service.claimPairingCode(_settings, code,
+        onProgress: onProgress);
     return UnifiedPairingClaimResult(
       ok: result.ok,
       message: result.message,
@@ -180,8 +198,12 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
   @override
   Future<UnifiedSyncResult> pushPending(UnifiedSyncPushRequest request) async {
     final effectiveSettings = _settingsWithUnifiedCursor();
-    final result = await _service.pushPendingForUnifiedEngine(effectiveSettings);
-    await _recordCloudResult(_unifiedCursor);
+    final result =
+        await _service.pushPendingForUnifiedEngine(effectiveSettings);
+    await _recordCloudResult(
+      _unifiedCursor,
+      sequence: _service.store.latestStoredAuthoritativeSequence,
+    );
     return UnifiedSyncResult(
       ok: result.ok,
       message: result.message,
@@ -196,9 +218,16 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
   @override
   Future<UnifiedSyncResult> pullChanges(UnifiedSyncPullRequest request) async {
     final effectiveSettings = _settingsWithUnifiedCursor();
-    final result = await _service.pullAuthoritativeChangesForUnifiedEngine(effectiveSettings);
+    final result = await _service
+        .pullAuthoritativeChangesForUnifiedEngine(effectiveSettings);
     final current = CloudSyncSettings.load();
-    await _recordCloudResult(current.lastPullCursor);
+    await _recordCloudResult(
+      current.lastPullCursor,
+      sequence: SyncDeviceStateStore.lastAppliedSequenceForTransport(
+        _service.store.appIdentity,
+        'cloud',
+      ),
+    );
     return UnifiedSyncResult(
       ok: result.ok,
       message: result.message,
@@ -215,10 +244,19 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
   }
 
   @override
-  Future<UnifiedSyncResult> rebuildFromHostSnapshot({void Function(double value, String label)? onProgress}) async {
+  Future<UnifiedSyncResult> rebuildFromHostSnapshot(
+      {void Function(double value, String label)? onProgress}) async {
     final effectiveSettings = _settingsWithUnifiedCursor();
-    final result = await _service.rebuildFromCloudHostSnapshot(effectiveSettings, onProgress: onProgress);
-    await _recordCloudResult(_unifiedCursor);
+    final result = await _service.rebuildFromCloudHostSnapshot(
+        effectiveSettings,
+        onProgress: onProgress);
+    await _recordCloudResult(
+      _unifiedCursor,
+      sequence: SyncDeviceStateStore.lastAppliedSequenceForTransport(
+        _service.store.appIdentity,
+        'cloud',
+      ),
+    );
     return UnifiedSyncResult(
       ok: result.ok,
       message: result.message,
@@ -229,7 +267,6 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
       cursor: _cursor(),
     );
   }
-
 
   @override
   Future<void> compactAfterSuccessfulSync() async {
@@ -247,9 +284,11 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
   }
 
   @override
-  Future<UnifiedSyncResult> syncNow({void Function(double value, String label)? onProgress}) async {
+  Future<UnifiedSyncResult> syncNow(
+      {void Function(double value, String label)? onProgress}) async {
     onProgress?.call(0.08, 'Preparing Cloud sync...');
-    final push = await pushPending(UnifiedSyncPushRequest(deviceId: deviceId, deviceToken: deviceToken));
+    final push = await pushPending(
+        UnifiedSyncPushRequest(deviceId: deviceId, deviceToken: deviceToken));
     if (!push.ok) {
       onProgress?.call(1.0, 'Cloud sync failed while sending local changes.');
       return push;
@@ -272,7 +311,8 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
       onProgress?.call(1.0, 'Cloud sync completed.');
       return UnifiedSyncResult(
         ok: true,
-        message: 'Cloud sync completed. Pushed ${push.pushed} change(s), pulled ${pull.pulled} change(s).',
+        message:
+            'Cloud sync completed. Pushed ${push.pushed} change(s), pulled ${pull.pulled} change(s).',
         pushed: push.pushed,
         pulled: pull.pulled,
         restoredSnapshot: pull.restoredSnapshot,
