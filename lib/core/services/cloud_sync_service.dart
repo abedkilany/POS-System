@@ -233,6 +233,23 @@ class CloudRealtimeSignal {
   final int pendingRequests;
 }
 
+class _CloudSnapshotRelayJob {
+  _CloudSnapshotRelayJob({
+    required this.jobId,
+    required this.kind,
+    required this.createdAt,
+    required this.chunks,
+    required this.envelope,
+  }) : expiresAt = createdAt.add(const Duration(minutes: 10));
+
+  final String jobId;
+  final String kind;
+  final DateTime createdAt;
+  final DateTime expiresAt;
+  final List<Map<String, dynamic>> chunks;
+  final Map<String, dynamic> envelope;
+}
+
 class _RealtimeChannelSession {
   _RealtimeChannelSession({
     required this.channel,
@@ -558,6 +575,9 @@ class CloudSyncService {
   late final UnifiedSyncCoreService _syncCore = UnifiedSyncCoreService(store);
   static final Set<String> _activeSnapshotGenerationRebuilds = <String>{};
   static int _relayRequestCounter = 0;
+  static final Map<String, _CloudSnapshotRelayJob> _relaySnapshotJobs =
+      <String, _CloudSnapshotRelayJob>{};
+  static const Duration _relaySnapshotJobTtl = Duration(minutes: 10);
 
   Future<void> _restorePreviousSyncMode(AppIdentity previousIdentity) async {
     final current = store.appIdentity;
@@ -1017,9 +1037,11 @@ class CloudSyncService {
   Future<void> _publishPairingBootstrapInBackground(
       CloudSyncSettings settings) async {
     try {
-      await publishLoginBootstrapSnapshotToCloud(settings, force: true);
-      await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
-      await publishBootstrapSnapshotToCloud(settings, force: true);
+      // The relay snapshot is generated on demand, so the background step only
+      // keeps the Host visible and warms the direct Cloud relay path.
+      await sendHostHeartbeat(settings);
+      await registerCurrentDevice(settings, transport: 'cloud');
+      await _broadcastHostAuthorityViaRelay(settings);
     } catch (error) {
       debugPrint(
           'Background Cloud pairing provisioning publish failed: $error');
@@ -1748,62 +1770,42 @@ class CloudSyncService {
               'A snapshot for this generation was already requested or applied, so no duplicate request will be sent.');
     }
     final now = requestedAt ?? DateTime.now().toUtc();
-    final request = SyncChange(
-      id: '${now.microsecondsSinceEpoch}-${store.deviceId}-snapshot-request',
-      entityType: 'system',
-      entityId: 'store',
-      operation: 'request_snapshot',
-      deviceId: store.deviceId,
-      createdAt: now,
-      payload: <String, dynamic>{
-        '_syncV2': <String, dynamic>{
-          'kind': 'draftCommand',
-          'transport': 'cloud',
-          'recordedAt': now.toIso8601String(),
-          'sourceRole': 'client',
-          'sourceDeviceId': store.deviceId,
-          'clientMutationId':
-              '${store.deviceId}_${now.microsecondsSinceEpoch}_system_store_request_snapshot',
-        },
-        'reason': 'cloud_rebuild_from_host',
-        'requestedAt': now.toIso8601String(),
-        if (cleanGeneration.isNotEmpty) 'snapshotGeneration': cleanGeneration,
-        if (cleanGeneration.isNotEmpty)
-          'hostSnapshotGeneration': cleanGeneration,
-        'storeId': identity.storeId,
-        'branchId': identity.branchId,
-      },
-      storeId: identity.storeId,
-      branchId: identity.branchId,
-      storeEpoch: identity.storeEpoch,
-    );
     try {
-      final response = await _client
-          .post(
-            settings.endpoint('/api/sync/requests/push'),
-            headers: _headers(settings),
-            body: jsonEncode({
-              'storeId': identity.storeId,
-              'branchId': identity.branchId,
-              'deviceId': store.deviceId,
-              'changes': [request.toJson()],
-            }),
-          )
-          .timeout(const Duration(seconds: 20));
-      if (response.statusCode < 200 || response.statusCode >= 300) {
+      final response = await _sendRealtimeRequest(
+        settings,
+        requestKind: 'cloud_snapshot_manifest',
+        payload: {
+          'deviceId': store.deviceId,
+          'storeId': identity.storeId,
+          'branchId': identity.branchId,
+          'snapshotKind': 'full_store',
+          'force': true,
+          'requestedAt': now.toIso8601String(),
+          'reason': 'cloud_rebuild_from_host',
+          if (cleanGeneration.isNotEmpty) 'snapshotGeneration': cleanGeneration,
+          if (cleanGeneration.isNotEmpty)
+            'hostSnapshotGeneration': cleanGeneration,
+        },
+        timeout: const Duration(seconds: 45),
+      );
+      if (response['ok'] != true) {
         return CloudSyncResult(
-            ok: false,
-            message:
-                'Fresh Host snapshot request failed: ${response.statusCode} ${response.body}');
+          ok: false,
+          message:
+              'Fresh Host snapshot request through the relay failed: ${response['error'] ?? response['message'] ?? 'unknown error'}',
+        );
       }
       await _markFreshSnapshotRequestedForGeneration('cloud', cleanGeneration);
       return const CloudSyncResult(
-          ok: true,
-          message:
-              'Fresh Host snapshot requested. The Host will publish a full snapshot on the next Cloud sync.');
+        ok: true,
+        message:
+            'Fresh Host snapshot requested through the relay. The Host will prepare a full snapshot in memory.',
+      );
     } catch (error) {
       return CloudSyncResult(
-          ok: false, message: 'Fresh Host snapshot request failed: $error');
+          ok: false,
+          message:
+              'Fresh Host snapshot request through the relay failed: $error');
     }
   }
 
@@ -1825,29 +1827,63 @@ class CloudSyncService {
           message: 'Cloud API URL and paired device token are required.');
     }
 
+    CloudSyncResult? freshSnapshotRequest;
     final snapshotRequestedAt = DateTime.now().toUtc();
+    onProgress?.call(
+        0.08, 'Checking for a fresh Host snapshot through the relay...');
+    for (var attempt = 0; attempt < 4; attempt += 1) {
+      if (attempt > 0) {
+        await Future<void>.delayed(const Duration(seconds: 2));
+      }
+      try {
+        final envelope = await _downloadCloudSnapshotEnvelopeViaRelay(
+          settings.copyWith(clearLastPullCursor: true),
+          force: false,
+          onProgress: (value, label) {
+            final scaled = (0.18 + value * 0.60).clamp(0.0, 0.82).toDouble();
+            onProgress?.call(scaled, label);
+          },
+        );
+        final result = await _applyCloudSnapshotEnvelope(
+          envelope,
+          settings: settings,
+          onProgress: onProgress,
+          expectedSnapshotGeneration: expectedSnapshotGeneration,
+          expectedRestoreCommandId: expectedRestoreCommandId,
+        );
+        return result;
+      } catch (_) {
+        onProgress?.call(
+          (0.12 + attempt * 0.07).clamp(0.12, 0.34).toDouble(),
+          'Waiting for Cloud snapshot relay (attempt ${attempt + 1}/4)...',
+        );
+      }
+    }
+
     if (requestFreshSnapshot) {
-      onProgress?.call(0.08, 'Requesting a fresh Host snapshot...');
-      final request = await requestFreshHostSnapshot(
+      onProgress?.call(
+          0.08, 'Requesting a fresh Host snapshot through the relay...');
+      freshSnapshotRequest = await requestFreshHostSnapshot(
         settings,
         requestedAt: snapshotRequestedAt,
         snapshotGeneration: expectedSnapshotGeneration,
       );
-      if (!request.ok) return request;
+      if (!freshSnapshotRequest!.ok) {
+        onProgress?.call(0.12, freshSnapshotRequest.message);
+      }
     } else {
       onProgress?.call(0.08,
           'A previously published snapshot was found. No new Host request will be sent...');
     }
 
-    onProgress?.call(0.18,
-        'Checking for a fresh Host snapshot before changing local data...');
-    // Phase 2: first try the transport-neutral chunk downloader. Cloud and LAN
-    // now share the same manifest -> chunks -> envelope -> importer pipeline;
-    // only the requestManifest/requestChunk transport is different.
+    onProgress?.call(
+        0.18, 'Checking for a fresh Host snapshot through the relay...');
+    // Keep retrying the same unified manifest -> chunks -> envelope -> importer
+    // pipeline. Cloud and LAN now share the same flow, only the transport differs.
     for (var attempt = 0; attempt < 6; attempt += 1) {
       if (attempt > 0) await Future<void>.delayed(const Duration(seconds: 3));
       try {
-        final envelope = await _downloadCloudSnapshotEnvelope(
+        final envelope = await _downloadCloudSnapshotEnvelopeViaRelay(
           settings.copyWith(clearLastPullCursor: true),
           force: false,
           onProgress: (value, label) {
@@ -1855,71 +1891,17 @@ class CloudSyncService {
             onProgress?.call(scaled, label);
           },
         );
-        if ((envelope['hostSnapshotGeneration'] ?? '')
-                .toString()
-                .trim()
-                .isEmpty &&
-            expectedSnapshotGeneration.trim().isNotEmpty) {
-          envelope['hostSnapshotGeneration'] =
-              expectedSnapshotGeneration.trim();
-          envelope['snapshotGeneration'] = expectedSnapshotGeneration.trim();
-        }
-        if ((envelope['hostRestoreCommandId'] ?? '')
-                .toString()
-                .trim()
-                .isEmpty &&
-            expectedRestoreCommandId.trim().isNotEmpty) {
-          envelope['hostRestoreCommandId'] = expectedRestoreCommandId.trim();
-          envelope['restoreCommandId'] = expectedRestoreCommandId.trim();
-        }
-        onProgress?.call(0.84, 'Applying Cloud snapshot chunks locally...');
-        await store.importSyncSnapshotJson(jsonEncode(envelope));
-        await _markHostSnapshotGenerationApplied('cloud', envelope,
-            markRestoreCommandExecuted: true);
-        onProgress?.call(0.90, 'Verifying rebuilt local data...');
-        final repaired = await store.verifyLocalBusinessDataIntegrity();
-        // Keep the rebuild as successful even when the verification step
-        // reports warnings. The snapshot was already imported and retrying the
-        // same rebuild would create a loop.
-        if (!repaired.ok) {
-          debugPrint(
-              'Cloud rebuild completed with verification warnings: ${repaired.message}');
-        }
-        onProgress?.call(0.96, 'Cleaning up local records...');
-        await store.cleanupSoftDeletedRecords();
-        // The snapshot was imported successfully. Do not repeat the same rebuild
-        // just because the post-import integrity check reports warnings.
-        await CloudProvisioningStatus.markComplete(
-            message: 'Initial Store data downloaded.');
-        final cursor =
-            store.syncSnapshotGeneratedAtFromJson(jsonEncode(envelope));
-        final sequence =
-            store.syncSnapshotGeneratedSequenceFromJson(jsonEncode(envelope));
-        // A successful Cloud rebuild establishes the Client baseline. Persist
-        // the pull cursor and publish the device progress to the server;
-        // otherwise the server keeps seeing this Client at sequence 0 and the
-        // next Cloud cycle may re-enter provisioning/rebuild instead of pulling
-        // incremental sync_events.
-        await settings.copyWith(lastPullCursor: cursor).save();
-        await _recordDeviceSyncState(
-          'cloud',
-          cursor,
-          sequence: sequence,
-          settings: settings.copyWith(lastPullCursor: cursor),
-        );
-        onProgress?.call(1.0, 'Cloud rebuild completed.');
-        return CloudSyncResult(
-          ok: true,
-          pulled: (envelope['totalChunks'] as num?)?.toInt() ?? 0,
-          restoredSnapshot: true,
-          message: repaired.ok
-              ? 'Cloud rebuild completed from unified snapshot chunks.'
-              : 'Unified snapshot chunks downloaded, but local verification found problems: ${repaired.message}',
+        return _applyCloudSnapshotEnvelope(
+          envelope,
+          settings: settings,
+          onProgress: onProgress,
+          expectedSnapshotGeneration: expectedSnapshotGeneration,
+          expectedRestoreCommandId: expectedRestoreCommandId,
         );
       } catch (_) {
         onProgress?.call(
           (0.24 + attempt * 0.08).clamp(0.24, 0.68).toDouble(),
-          'Waiting for Cloud snapshot chunks (attempt ${attempt + 1}/6)...',
+          'Waiting for Cloud snapshot relay (attempt ${attempt + 1}/6)...',
         );
       }
     }
@@ -1985,7 +1967,7 @@ class CloudSyncService {
       pushed: lastResult?.pushed ?? 0,
       pulled: totalPulled,
       message:
-          'Cloud rebuild requested a fresh Host snapshot, but no snapshot was pulled yet. Keep the Host online and retry. ${lastResult?.message ?? ''}',
+          'Cloud rebuild requested a fresh Host snapshot through the relay, but no snapshot was pulled yet. Keep the Host online and retry. ${freshSnapshotRequest?.message ?? lastResult?.message ?? ''}',
     );
   }
 
@@ -2305,6 +2287,58 @@ class CloudSyncService {
     }
   }
 
+  void _pruneExpiredRelaySnapshotJobs() {
+    final now = DateTime.now().toUtc();
+    final expired = _relaySnapshotJobs.entries
+        .where((entry) => entry.value.expiresAt.isBefore(now))
+        .map((entry) => entry.key)
+        .toList(growable: false);
+    for (final jobId in expired) {
+      _relaySnapshotJobs.remove(jobId);
+    }
+  }
+
+  _CloudSnapshotRelayJob? _buildRelaySnapshotJob(String snapshotKind) {
+    final kind =
+        snapshotKind.trim().isEmpty ? 'full_store' : snapshotKind.trim();
+    final chunks = kind == 'login_bootstrap'
+        ? store.exportCloudLoginBootstrapSnapshotChunks()
+        : store.exportCloudBootstrapSnapshotChunks(maxItemsPerChunk: 300);
+    if (chunks.isEmpty) return null;
+    final envelope = store.unifiedSnapshotPayloadFromChunks(chunks);
+    final jobId = (chunks.first['jobId'] ?? '').toString().trim();
+    if (jobId.isEmpty) return null;
+    final job = _CloudSnapshotRelayJob(
+      jobId: jobId,
+      kind: kind,
+      createdAt: DateTime.now().toUtc(),
+      chunks: chunks,
+      envelope: envelope,
+    );
+    _pruneExpiredRelaySnapshotJobs();
+    _relaySnapshotJobs[jobId] = job;
+    return job;
+  }
+
+  _CloudSnapshotRelayJob? _relaySnapshotJob(String jobId) {
+    final cleanJobId = jobId.trim();
+    if (cleanJobId.isEmpty) return null;
+    _pruneExpiredRelaySnapshotJobs();
+    final job = _relaySnapshotJobs[cleanJobId];
+    if (job == null) return null;
+    if (job.expiresAt.isBefore(DateTime.now().toUtc())) {
+      _relaySnapshotJobs.remove(cleanJobId);
+      return null;
+    }
+    return job;
+  }
+
+  void _releaseRelaySnapshotJob(String jobId) {
+    final cleanJobId = jobId.trim();
+    if (cleanJobId.isEmpty) return;
+    _relaySnapshotJobs.remove(cleanJobId);
+  }
+
   Future<CloudRealtimeSignal?> _handleRealtimePacket(
     CloudSyncSettings settings,
     WebSocketChannel channel,
@@ -2325,6 +2359,88 @@ class CloudSyncService {
           .toString()
           .trim();
       if (requestId.isEmpty) return null;
+
+      if (requestKind == 'cloud_snapshot_manifest') {
+        final snapshotKind =
+            (decoded['snapshotKind'] ?? decoded['snapshot_kind'] ?? '')
+                .toString()
+                .trim();
+        final job = _buildRelaySnapshotJob(snapshotKind);
+        if (job == null) {
+          channel.sink.add(jsonEncode({
+            'type': 'relay_response',
+            'requestId': requestId,
+            'ok': false,
+            'error': 'Host snapshot could not be prepared.',
+            'serverTime': DateTime.now().toIso8601String(),
+          }));
+          return null;
+        }
+        channel.sink.add(jsonEncode({
+          'type': 'relay_response',
+          'requestId': requestId,
+          'ok': true,
+          'jobId': job.jobId,
+          'snapshotFormat': job.envelope['snapshotFormat'],
+          'snapshotVersion': job.envelope['snapshotVersion'],
+          'snapshotKind': job.envelope['snapshotKind'],
+          'snapshotManifest': job.envelope['snapshotManifest'],
+          'totalChunks': job.chunks.length,
+          'syncGeneratedAt': job.envelope['syncGeneratedAt'],
+          'syncGeneratedSequence': job.envelope['syncGeneratedSequence'],
+          'hostSnapshotGeneration': job.envelope['hostSnapshotGeneration'],
+          'snapshotGeneration': job.envelope['snapshotGeneration'],
+          'hostRestoreCommandId': job.envelope['hostRestoreCommandId'],
+          'restoreCommandId': job.envelope['restoreCommandId'],
+          'serverTime': DateTime.now().toIso8601String(),
+        }));
+        return null;
+      }
+
+      if (requestKind == 'cloud_snapshot_chunk') {
+        final jobId =
+            (decoded['jobId'] ?? decoded['job_id'] ?? '').toString().trim();
+        final ordinal = int.tryParse(
+                (decoded['ordinal'] ?? decoded['chunkOrdinal'] ?? 0)
+                    .toString()) ??
+            0;
+        final job = _relaySnapshotJob(jobId);
+        if (job == null || ordinal < 0 || ordinal >= job.chunks.length) {
+          channel.sink.add(jsonEncode({
+            'type': 'relay_response',
+            'requestId': requestId,
+            'ok': false,
+            'error': 'Snapshot chunk is unavailable.',
+            'serverTime': DateTime.now().toIso8601String(),
+          }));
+          return null;
+        }
+        channel.sink.add(jsonEncode({
+          'type': 'relay_response',
+          'requestId': requestId,
+          'ok': true,
+          'jobId': job.jobId,
+          'ordinal': ordinal,
+          'totalChunks': job.chunks.length,
+          'chunk': job.chunks[ordinal],
+          'serverTime': DateTime.now().toIso8601String(),
+        }));
+        return null;
+      }
+
+      if (requestKind == 'cloud_snapshot_release') {
+        final jobId =
+            (decoded['jobId'] ?? decoded['job_id'] ?? '').toString().trim();
+        _releaseRelaySnapshotJob(jobId);
+        channel.sink.add(jsonEncode({
+          'type': 'relay_response',
+          'requestId': requestId,
+          'ok': true,
+          'released': true,
+          'serverTime': DateTime.now().toIso8601String(),
+        }));
+        return null;
+      }
 
       if (requestKind == 'cloud_client_push') {
         final rawChanges =
@@ -3077,6 +3193,81 @@ class CloudSyncService {
     );
   }
 
+  Future<Map<String, dynamic>> _downloadCloudSnapshotEnvelopeViaRelay(
+    CloudSyncSettings settings, {
+    bool force = false,
+    CloudSyncProgressCallback? onProgress,
+    String snapshotKind = 'full_store',
+  }) async {
+    final transport = _CloudRelaySnapshotPullTransport(
+      service: this,
+      settings: settings,
+      snapshotKind: snapshotKind,
+    );
+    try {
+      return await const UnifiedSnapshotTransferService().downloadEnvelope(
+        transport,
+        force: force,
+        labelPrefix: 'Cloud snapshot',
+        onProgress: onProgress,
+      );
+    } finally {
+      await transport.dispose();
+    }
+  }
+
+  Future<CloudSyncResult> _applyCloudSnapshotEnvelope(
+    Map<String, dynamic> envelope, {
+    required CloudSyncSettings settings,
+    required CloudSyncProgressCallback? onProgress,
+    required String expectedSnapshotGeneration,
+    required String expectedRestoreCommandId,
+  }) async {
+    if ((envelope['hostSnapshotGeneration'] ?? '').toString().trim().isEmpty &&
+        expectedSnapshotGeneration.trim().isNotEmpty) {
+      envelope['hostSnapshotGeneration'] = expectedSnapshotGeneration.trim();
+      envelope['snapshotGeneration'] = expectedSnapshotGeneration.trim();
+    }
+    if ((envelope['hostRestoreCommandId'] ?? '').toString().trim().isEmpty &&
+        expectedRestoreCommandId.trim().isNotEmpty) {
+      envelope['hostRestoreCommandId'] = expectedRestoreCommandId.trim();
+      envelope['restoreCommandId'] = expectedRestoreCommandId.trim();
+    }
+    onProgress?.call(0.84, 'Applying Cloud snapshot chunks locally...');
+    await store.importSyncSnapshotJson(jsonEncode(envelope));
+    await _markHostSnapshotGenerationApplied('cloud', envelope,
+        markRestoreCommandExecuted: true);
+    onProgress?.call(0.90, 'Verifying rebuilt local data...');
+    final repaired = await store.verifyLocalBusinessDataIntegrity();
+    if (!repaired.ok) {
+      debugPrint(
+          'Cloud rebuild completed with verification warnings: ${repaired.message}');
+    }
+    onProgress?.call(0.96, 'Cleaning up local records...');
+    await store.cleanupSoftDeletedRecords();
+    await CloudProvisioningStatus.markComplete(
+        message: 'Initial Store data downloaded.');
+    final cursor = store.syncSnapshotGeneratedAtFromJson(jsonEncode(envelope));
+    final sequence =
+        store.syncSnapshotGeneratedSequenceFromJson(jsonEncode(envelope));
+    await settings.copyWith(lastPullCursor: cursor).save();
+    await _recordDeviceSyncState(
+      'cloud',
+      cursor,
+      sequence: sequence,
+      settings: settings.copyWith(lastPullCursor: cursor),
+    );
+    onProgress?.call(1.0, 'Cloud rebuild completed.');
+    return CloudSyncResult(
+      ok: true,
+      pulled: (envelope['totalChunks'] as num?)?.toInt() ?? 0,
+      restoredSnapshot: true,
+      message: repaired.ok
+          ? 'Cloud rebuild completed from unified snapshot chunks.'
+          : 'Unified snapshot chunks downloaded, but local verification found problems: ${repaired.message}',
+    );
+  }
+
   Future<int> publishLoginBootstrapSnapshotToCloud(
     CloudSyncSettings settings, {
     bool force = false,
@@ -3682,13 +3873,21 @@ class CloudSyncService {
       final localCursor = SyncDeviceStateStore.lastAppliedCursorForTransport(
               store.appIdentity, 'cloud') ??
           settings.lastPullCursor;
-      final manifest = await _CloudSnapshotPullTransport(
-        settings: settings,
-        headers: _headers(settings),
-        client: _client,
-        storeId: store.appIdentity.storeId,
-        branchId: store.appIdentity.branchId,
-      ).requestManifest();
+      UnifiedSnapshotManifestResponse? manifest;
+      try {
+        manifest = await _CloudRelaySnapshotPullTransport(
+          service: this,
+          settings: settings,
+        ).requestManifest();
+      } catch (_) {
+        manifest = await _CloudSnapshotPullTransport(
+          settings: settings,
+          headers: _headers(settings),
+          client: _client,
+          storeId: store.appIdentity.storeId,
+          branchId: store.appIdentity.branchId,
+        ).requestManifest();
+      }
       final remoteSequence = manifest.syncGeneratedSequence ?? 0;
       final lastAppliedSequence =
           SyncDeviceStateStore.lastAppliedSequenceForTransport(
@@ -4418,6 +4617,104 @@ class _CloudSnapshotPullTransport implements UnifiedSnapshotChunkPullTransport {
   Future<void> ackChunk(int ordinal) async {
     // Cloud snapshot chunk ACK is currently client-local; the unified transfer
     // engine still calls this hook so Cloud and LAN share the same pipeline.
+  }
+}
+
+class _CloudRelaySnapshotPullTransport
+    implements UnifiedSnapshotChunkPullTransport {
+  _CloudRelaySnapshotPullTransport({
+    required CloudSyncService service,
+    required this.settings,
+    String snapshotKind = 'full_store',
+  })  : _service = service,
+        _snapshotKind = snapshotKind;
+
+  final CloudSyncService _service;
+  final CloudSyncSettings settings;
+  final String _snapshotKind;
+  String _jobId = '';
+
+  Future<Map<String, dynamic>> _request(
+    String requestKind,
+    Map<String, dynamic> payload,
+  ) async {
+    final response = await _service._sendRealtimeRequest(
+      settings,
+      requestKind: requestKind,
+      payload: payload,
+      timeout: const Duration(seconds: 45),
+    );
+    if (response['ok'] != true) {
+      throw StateError(response['error']?.toString() ??
+          response['message']?.toString() ??
+          'Cloud relay request failed.');
+    }
+    return response;
+  }
+
+  Future<void> dispose() async {
+    if (_jobId.trim().isEmpty) return;
+    try {
+      await _request('cloud_snapshot_release', {'jobId': _jobId});
+    } catch (_) {
+      // Best-effort cleanup only.
+    }
+  }
+
+  @override
+  Future<UnifiedSnapshotManifestResponse> requestManifest(
+      {bool force = false}) async {
+    final identity = _service.store.appIdentity;
+    final response = await _request('cloud_snapshot_manifest', {
+      'storeId': identity.storeId,
+      'branchId': identity.branchId,
+      'deviceId': _service.store.deviceId,
+      'snapshotKind': _snapshotKind,
+      'force': force,
+    });
+    _jobId = (response['jobId'] ?? '').toString().trim();
+    return UnifiedSnapshotManifestResponse(
+      manifest: Map<String, dynamic>.from(
+          (response['snapshotManifest'] as Map?) ?? const <String, dynamic>{}),
+      totalChunks: (response['totalChunks'] as num?)?.toInt() ?? 0,
+      snapshotFormat: response['snapshotFormat']?.toString(),
+      snapshotVersion: response['snapshotVersion'],
+      snapshotKind: response['snapshotKind']?.toString(),
+      syncGeneratedAt: response['syncGeneratedAt']?.toString(),
+      syncGeneratedSequence:
+          (response['syncGeneratedSequence'] as num?)?.toInt(),
+      hostSnapshotGeneration: response['hostSnapshotGeneration']?.toString(),
+      snapshotGeneration: response['snapshotGeneration']?.toString(),
+      hostRestoreCommandId: response['hostRestoreCommandId']?.toString(),
+      restoreCommandId: response['restoreCommandId']?.toString(),
+    );
+  }
+
+  @override
+  Future<UnifiedSnapshotChunkResponse> requestChunk(int ordinal) async {
+    if (_jobId.trim().isEmpty) {
+      throw StateError('Cloud relay snapshot job has not been created yet.');
+    }
+    final response = await _request('cloud_snapshot_chunk', {
+      'jobId': _jobId,
+      'ordinal': ordinal,
+    });
+    final chunk = response['chunk'];
+    if (chunk is! Map) {
+      throw StateError('Cloud relay snapshot chunk ${ordinal + 1} is invalid.');
+    }
+    return UnifiedSnapshotChunkResponse(
+      chunk: Map<String, dynamic>.from(chunk),
+      ordinal: (response['ordinal'] as num?)?.toInt() ?? ordinal,
+      totalChunks: (response['totalChunks'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  @override
+  Future<void> ackChunk(int ordinal) async {
+    // Relay snapshot chunks are retrieved directly from the Host memory cache.
+    // The transfer service keeps this hook so the relay transport still fits
+    // the same shared pipeline as LAN and HTTP.
   }
 }
 
