@@ -570,9 +570,18 @@ class UnifiedAutoCloudSyncController {
         await store.recoverStaleInProgressSyncQueue(target: 'cloud_host');
         await store.retryFailedSyncQueue(target: 'cloud');
         await store.retryFailedSyncQueue(target: 'cloud_host');
+        final engine =
+            UnifiedSyncFactory.cloudEngine(store, settings: settings);
         if (staleClient && !hasOutgoingWork) {
-          // Automatic rebuild is disabled. The Client may require a manual
-          // rebuild from Settings if normal sync cannot catch up.
+          final repair = await engine.rebuildFromHostSnapshot(
+            onProgress: _snapshotOnlyProgress('Cloud'),
+          );
+          if (!repair.ok) {
+            await CloudSyncSettings.clearSavedPullCursor();
+            settings = settings.copyWith(clearLastPullCursor: true);
+          } else {
+            settings = CloudSyncSettings.load();
+          }
         }
         final result =
             await UnifiedSyncFactory.cloudEngine(store, settings: settings)
