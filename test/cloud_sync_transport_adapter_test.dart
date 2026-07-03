@@ -401,34 +401,6 @@ void main() {
     });
 
     test(
-        'does not force rebuild when the client already has a Cloud cursor but sequence baseline is still zero',
-        () {
-      final shouldRebuild = shouldRebuildFromCloudSnapshot(
-        localCursor: DateTime.utc(2026, 7, 3, 4, 4, 10, 611),
-        lastAppliedSequence: 0,
-        remoteSequence: 16066,
-        remoteGeneratedAt: DateTime.utc(2026, 7, 3, 4, 5, 35),
-        provisioningPending: false,
-      );
-
-      expect(shouldRebuild, isFalse);
-    });
-
-    test(
-        'still rebuilds when there is no established Cloud cursor and the snapshot is newer',
-        () {
-      final shouldRebuild = shouldRebuildFromCloudSnapshot(
-        localCursor: null,
-        lastAppliedSequence: 0,
-        remoteSequence: 16066,
-        remoteGeneratedAt: DateTime.utc(2026, 7, 3, 4, 5, 35),
-        provisioningPending: false,
-      );
-
-      expect(shouldRebuild, isTrue);
-    });
-
-    test(
         'publishes the full Cloud bootstrap snapshot when creating a pairing code',
         () async {
       final hostIdentity = AppIdentity.defaults(

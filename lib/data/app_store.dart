@@ -577,6 +577,13 @@ class AppStore extends ChangeNotifier {
     return _syncDataLoadFuture!;
   }
 
+  /// Loads sync history/queue before any automatic push/pull reads them.
+  ///
+  /// These tables are deferred during startup for performance, but sync cannot
+  /// treat an unloaded queue as an empty queue. Doing so makes Host changes look
+  /// invisible to Clients and can skip pending Client/Host work after rebuilds.
+  Future<void> ensureSyncDataLoaded() => _requestSyncDataLoad();
+
   Future<void> _loadDeferredGroup<T>({
     required String key,
     required Future<List<T>> Function() loader,

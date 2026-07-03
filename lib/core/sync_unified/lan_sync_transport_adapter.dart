@@ -272,6 +272,7 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<UnifiedSyncResult> pushPending(UnifiedSyncPushRequest request) async {
+    await _service.store.ensureSyncDataLoaded();
     final effectiveSettings = _settingsWithUnifiedCursor();
     final pendingCount =
         _service.store.pendingSyncChangesForTarget('host').length;
@@ -291,6 +292,7 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<UnifiedSyncResult> pullChanges(UnifiedSyncPullRequest request) async {
+    await _service.store.ensureSyncDataLoaded();
     final effectiveSettings = _settingsWithUnifiedCursor();
     final before = effectiveSettings.lastPullCursor;
     final result = await _service.pullChangesOnly(

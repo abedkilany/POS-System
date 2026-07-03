@@ -270,6 +270,7 @@ class UnifiedAutoLanSyncController {
 
     _running = true;
     try {
+      await store.ensureSyncDataLoaded();
       SyncDiagnosticsLog.add(
         '[SYNC_TRACE] autoLan:runClientSync start device=${store.deviceId} '
         'queue=${store.pendingSyncQueueForTarget('host', readyOnly: false).length}',
@@ -351,6 +352,7 @@ class UnifiedAutoCloudSyncController {
       'transport=${store.appIdentity.activeSyncTransportNormalized}',
     );
 
+    await store.ensureSyncDataLoaded();
     _lastCloudQueueCount =
         store.pendingSyncQueueForTarget('cloud', readyOnly: false).length;
     _lastRelayQueueCount =
@@ -518,6 +520,7 @@ class UnifiedAutoCloudSyncController {
     }
     _running = true;
     try {
+      await store.ensureSyncDataLoaded();
       var settings = CloudSyncSettings.load();
       SyncDiagnosticsLog.add(
         '[SYNC_TRACE] autoCloud:tick start device=${store.deviceId} '
