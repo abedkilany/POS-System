@@ -595,6 +595,28 @@ class CloudProvisioningStatus {
   }
 }
 
+bool shouldRebuildFromCloudSnapshot({
+  required DateTime? localCursor,
+  required int lastAppliedSequence,
+  required int remoteSequence,
+  required DateTime? remoteGeneratedAt,
+  required bool provisioningPending,
+}) {
+  if (remoteSequence > 0 && lastAppliedSequence >= remoteSequence) {
+    return false;
+  }
+  if (localCursor != null && lastAppliedSequence <= 0 && !provisioningPending) {
+    return false;
+  }
+  if (remoteGeneratedAt == null) return false;
+  if (localCursor == null) return true;
+  // Add a tiny tolerance so a cursor saved a few milliseconds after the
+  // snapshot generation does not trigger a needless rebuild loop.
+  return remoteGeneratedAt.toUtc().isAfter(
+        localCursor.toUtc().add(const Duration(seconds: 2)),
+      );
+}
+
 typedef CloudSyncProgressCallback = void Function(double value, String label);
 
 class CloudSyncResult {
@@ -4008,13 +4030,13 @@ class CloudSyncService {
       }
       final remoteGeneratedAt =
           DateTime.tryParse(manifest.syncGeneratedAt ?? '');
-      if (remoteGeneratedAt == null) return false;
-      if (localCursor == null) return true;
-      // Add a small tolerance so re-reading the same materialized snapshot does
-      // not trigger repeated rebuilds due to clock precision differences.
-      return remoteGeneratedAt.toUtc().isAfter(
-            localCursor.toUtc().add(const Duration(seconds: 2)),
-          );
+      return shouldRebuildFromCloudSnapshot(
+        localCursor: localCursor,
+        lastAppliedSequence: lastAppliedSequence,
+        remoteSequence: remoteSequence,
+        remoteGeneratedAt: remoteGeneratedAt,
+        provisioningPending: CloudProvisioningStatus.isPending,
+      );
     } catch (_) {
       // Snapshot freshness is a safety net. If the manifest is temporarily not
       // reachable, keep the normal incremental pull path alive.
