@@ -20,15 +20,27 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
   UnifiedSyncError _errorFor(bool ok, String message) {
     if (ok) return UnifiedSyncError.none;
     final lower = message.toLowerCase();
-    final code = lower.contains('expired') || lower.contains('already used')
-        ? UnifiedSyncErrorCode.expiredPairingCode
-        : lower.contains('host snapshot') || lower.contains('snapshot')
-            ? UnifiedSyncErrorCode.snapshotUnavailable
-            : lower.contains('forbidden') || lower.contains('cannot')
-                ? UnifiedSyncErrorCode.forbiddenRole
-                : lower.contains('required') || lower.contains('invalid')
-                    ? UnifiedSyncErrorCode.validationFailed
-                    : UnifiedSyncErrorCode.unknown;
+    final code = lower.contains('socketexception') ||
+            lower.contains('timeoutexception') ||
+            lower.contains('connection refused') ||
+            lower.contains('failed host lookup') ||
+            lower.contains('network is unreachable') ||
+            lower.contains('no route to host') ||
+            lower.contains('connection reset by peer') ||
+            lower.contains('broken pipe') ||
+            lower.contains('econnrefused') ||
+            lower.contains('connection closed') ||
+            lower.contains('host offline')
+        ? UnifiedSyncErrorCode.networkUnavailable
+        : lower.contains('expired') || lower.contains('already used')
+            ? UnifiedSyncErrorCode.expiredPairingCode
+            : lower.contains('host snapshot') || lower.contains('snapshot')
+                ? UnifiedSyncErrorCode.snapshotUnavailable
+                : lower.contains('forbidden') || lower.contains('cannot')
+                    ? UnifiedSyncErrorCode.forbiddenRole
+                    : lower.contains('required') || lower.contains('invalid')
+                        ? UnifiedSyncErrorCode.validationFailed
+                        : UnifiedSyncErrorCode.unknown;
     return UnifiedSyncError(
         code: code, userMessage: message, debugMessage: message);
   }
@@ -359,6 +371,18 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
         pushed: push.pushed,
         pulled: pull.pulled,
         restoredSnapshot: pull.restoredSnapshot,
+        cursor: pull.cursor,
+      );
+    }
+
+    if (!pull.shouldAttemptSnapshotRepair) {
+      onProgress?.call(1.0, 'Cloud pull failed.');
+      return UnifiedSyncResult(
+        ok: false,
+        message: pull.message,
+        pushed: push.pushed,
+        pulled: pull.pulled,
+        error: pull.error,
         cursor: pull.cursor,
       );
     }

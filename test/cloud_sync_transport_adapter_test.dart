@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ventio/core/services/cloud_sync_service.dart';
 import 'package:ventio/core/services/local_database_service.dart';
 import 'package:ventio/core/sync_unified/cloud_sync_transport_adapter.dart';
+import 'package:ventio/core/sync_unified/sync_contracts.dart';
 import 'package:ventio/core/sync_unified/sync_device_state.dart';
 import 'package:ventio/core/sync_unified/sync_transport_adapter.dart';
 import 'package:ventio/data/app_store.dart';
@@ -113,6 +114,52 @@ class _SpyCloudSyncService extends CloudSyncService {
       requestFreshSnapshot: requestFreshSnapshot,
       expectedSnapshotGeneration: expectedSnapshotGeneration,
       expectedRestoreCommandId: expectedRestoreCommandId,
+    );
+  }
+}
+
+class _OfflineCloudSyncService extends CloudSyncService {
+  _OfflineCloudSyncService(super.store);
+
+  int pushCallCount = 0;
+  int pullCallCount = 0;
+  int rebuildCallCount = 0;
+
+  @override
+  Future<CloudSyncResult> pushPendingForUnifiedEngine(
+    CloudSyncSettings settings, {
+    CloudSyncProgressCallback? onProgress,
+  }) async {
+    pushCallCount += 1;
+    return const CloudSyncResult(ok: true, message: 'ok', pushed: 1);
+  }
+
+  @override
+  Future<CloudSyncResult> pullAuthoritativeChangesForUnifiedEngine(
+    CloudSyncSettings settings, {
+    DateTime? minSnapshotUpdatedAt,
+    CloudSyncProgressCallback? onProgress,
+  }) async {
+    pullCallCount += 1;
+    return const CloudSyncResult(
+      ok: false,
+      message: 'Cloud pull failed: Host Offline. SocketException: offline',
+    );
+  }
+
+  @override
+  Future<CloudSyncResult> rebuildFromCloudHostSnapshot(
+    CloudSyncSettings settings, {
+    CloudSyncProgressCallback? onProgress,
+    bool requestFreshSnapshot = true,
+    String expectedSnapshotGeneration = '',
+    String expectedRestoreCommandId = '',
+  }) async {
+    rebuildCallCount += 1;
+    return const CloudSyncResult(
+      ok: true,
+      message: 'rebuild should not have been called',
+      restoredSnapshot: true,
     );
   }
 }
@@ -290,9 +337,29 @@ void main() {
       expect(service.pushCallCount, 1);
       expect(service.pullCallCount, 1);
       expect(service.rebuildCallCount, 0);
-      expect(pendingStore.hasOutstandingSyncWorkForTarget('cloud_host'),
-          isTrue);
+      expect(
+          pendingStore.hasOutstandingSyncWorkForTarget('cloud_host'), isTrue);
       expect(pendingStore.syncQueue.single.status, 'pending');
+    });
+
+    test('does not rebuild when Cloud Host is offline', () async {
+      final offlineService = _OfflineCloudSyncService(store);
+      final offlineAdapter = CloudSyncTransportAdapter(
+        service: offlineService,
+        settings: const CloudSyncSettings(
+          enabled: true,
+          apiBaseUrl: 'https://sync.test',
+        ),
+      );
+
+      final result = await offlineAdapter.syncNow();
+
+      expect(result.ok, isFalse);
+      expect(result.message, contains('Host Offline'));
+      expect(result.error.code, UnifiedSyncErrorCode.networkUnavailable);
+      expect(offlineService.pushCallCount, 1);
+      expect(offlineService.pullCallCount, 1);
+      expect(offlineService.rebuildCallCount, 0);
     });
 
     test(

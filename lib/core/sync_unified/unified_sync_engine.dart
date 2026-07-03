@@ -37,7 +37,8 @@ class UnifiedSyncEngine {
   Future<UnifiedPairingCodeResult> createPairingCode({int ttlMinutes = 5}) =>
       transport.createPairingCode(ttlMinutes: ttlMinutes);
 
-  Future<UnifiedPairingClaimResult> claimPairingCode(String code, {void Function(double value, String label)? onProgress}) =>
+  Future<UnifiedPairingClaimResult> claimPairingCode(String code,
+          {void Function(double value, String label)? onProgress}) =>
       transport.claimPairingCode(code, onProgress: onProgress);
 
   Future<UnifiedSyncResult> pushPending(UnifiedSyncPushRequest request) =>
@@ -54,7 +55,8 @@ class UnifiedSyncEngine {
   Future<UnifiedSyncResult> syncNow({
     void Function(double value, String label)? onProgress,
   }) async {
-    final request = UnifiedSyncPushRequest(deviceId: transport.deviceId, deviceToken: transport.deviceToken);
+    final request = UnifiedSyncPushRequest(
+        deviceId: transport.deviceId, deviceToken: transport.deviceToken);
 
     onProgress?.call(0.08, 'Preparing $label sync...');
     final push = await transport.pushPending(request);
@@ -77,8 +79,20 @@ class UnifiedSyncEngine {
     );
 
     if (!pull.ok) {
+      if (!pull.shouldAttemptSnapshotRepair) {
+        onProgress?.call(1.0, '$label pull failed.');
+        return UnifiedSyncResult(
+          ok: false,
+          message: pull.message,
+          pushed: push.pushed,
+          pulled: pull.pulled,
+          error: pull.error,
+          cursor: pull.cursor,
+        );
+      }
       onProgress?.call(0.78, '$label pull failed. Trying snapshot repair...');
-      final repair = await transport.rebuildFromHostSnapshot(onProgress: onProgress);
+      final repair =
+          await transport.rebuildFromHostSnapshot(onProgress: onProgress);
       if (repair.ok) {
         await transport.compactAfterSuccessfulSync();
         return UnifiedSyncResult(
@@ -104,7 +118,8 @@ class UnifiedSyncEngine {
     onProgress?.call(1.0, '$label sync completed.');
     return UnifiedSyncResult(
       ok: true,
-      message: '$label sync completed. Pushed ${push.pushed} change(s), pulled ${pull.pulled} change(s).',
+      message:
+          '$label sync completed. Pushed ${push.pushed} change(s), pulled ${pull.pulled} change(s).',
       pushed: push.pushed,
       pulled: pull.pulled,
       restoredSnapshot: pull.restoredSnapshot,

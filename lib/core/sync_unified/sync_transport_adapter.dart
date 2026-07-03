@@ -30,7 +30,8 @@ class UnifiedSyncResult {
   final UnifiedSyncError error;
   final UnifiedCursorEnvelope cursor;
 
-  UnifiedSyncEnvelope<UnifiedSyncBatchContract> toEnvelope({String transport = ''}) =>
+  UnifiedSyncEnvelope<UnifiedSyncBatchContract> toEnvelope(
+          {String transport = ''}) =>
       UnifiedSyncEnvelope<UnifiedSyncBatchContract>(
         ok: ok,
         message: message,
@@ -80,6 +81,14 @@ class UnifiedPairingClaimResult extends UnifiedSyncResult {
   final UnifiedPairingClaimContract? contract;
 }
 
+/// Only explicit snapshot gaps should trigger a rebuild.
+///
+/// Network, auth, and other transport errors must surface as failures instead
+/// of entering a repair flow that depends on the Host being online.
+extension UnifiedSyncResultRepairPolicy on UnifiedSyncResult {
+  bool get shouldAttemptSnapshotRepair =>
+      error.code == UnifiedSyncErrorCode.snapshotUnavailable;
+}
 
 class UnifiedHostStatus {
   const UnifiedHostStatus({
@@ -96,7 +105,8 @@ class UnifiedHostStatus {
 }
 
 class UnifiedSyncCursor extends UnifiedCursorEnvelope {
-  const UnifiedSyncCursor({super.value = '', super.generatedAt, super.source = ''});
+  const UnifiedSyncCursor(
+      {super.value = '', super.generatedAt, super.source = ''});
 }
 
 class UnifiedSyncPushRequest {
@@ -147,10 +157,10 @@ abstract class SyncTransportAdapter {
     void Function(double value, String label)? onProgress,
   });
 
-
   Future<UnifiedPairingCodeResult> createPairingCode({int ttlMinutes = 5});
 
-  Future<UnifiedPairingClaimResult> claimPairingCode(String code, {void Function(double value, String label)? onProgress});
+  Future<UnifiedPairingClaimResult> claimPairingCode(String code,
+      {void Function(double value, String label)? onProgress});
 
   Future<UnifiedSyncResult> pushPending(UnifiedSyncPushRequest request);
 
