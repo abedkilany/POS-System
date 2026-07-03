@@ -1,6 +1,8 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ventio/core/services/cloud_sync_service.dart';
 import 'package:ventio/core/services/local_database_service.dart';
@@ -161,6 +163,42 @@ class _OfflineCloudSyncService extends CloudSyncService {
       message: 'rebuild should not have been called',
       restoredSnapshot: true,
     );
+  }
+}
+
+class _PairingBootstrapSpyService extends CloudSyncService {
+  _PairingBootstrapSpyService(
+    super.store, {
+    required http.Client client,
+  }) : super(client: client);
+
+  int publishCalls = 0;
+  bool? lastPublishForce;
+  int heartbeatCalls = 0;
+  int registerCalls = 0;
+
+  @override
+  Future<int> publishBootstrapSnapshotToCloud(
+    CloudSyncSettings settings, {
+    bool force = false,
+    void Function(double value, String label)? onProgress,
+  }) async {
+    publishCalls += 1;
+    lastPublishForce = force;
+    return 1;
+  }
+
+  @override
+  Future<CloudSyncResult> sendHostHeartbeat(CloudSyncSettings settings) async {
+    heartbeatCalls += 1;
+    return const CloudSyncResult(ok: true, message: 'ok');
+  }
+
+  @override
+  Future<CloudSyncResult> registerCurrentDevice(CloudSyncSettings settings,
+      {String transport = 'cloud'}) async {
+    registerCalls += 1;
+    return const CloudSyncResult(ok: true, message: 'ok');
   }
 }
 
@@ -360,6 +398,66 @@ void main() {
       expect(offlineService.pushCallCount, 1);
       expect(offlineService.pullCallCount, 1);
       expect(offlineService.rebuildCallCount, 0);
+    });
+
+    test(
+        'publishes the full Cloud bootstrap snapshot when creating a pairing code',
+        () async {
+      final hostIdentity = AppIdentity.defaults(
+        deviceId: 'DV-HOST',
+        platform: AppPlatformType.web,
+      ).copyWith(
+        storeId: 'ST-PAIR',
+        branchId: 'BR-MAIN1',
+        deviceName: 'Host PC',
+        deviceRole: DeviceRole.host,
+        syncMode: SyncMode.cloudConnected,
+        activeSyncTransport: 'cloud',
+      );
+
+      SharedPreferences.setMockInitialValues(const <String, Object>{});
+      LocalDatabaseService.useInMemoryStoreForTesting(<String, String>{
+        'app_identity_v1': jsonEncode(hostIdentity.toJson()),
+        'sync_changes_v1': '[]',
+        'sync_queue_v1': '[]',
+        'sync_sequence_v1': '0',
+      });
+
+      final hostStore = AppStore();
+      await hostStore.initialize();
+      final service = _PairingBootstrapSpyService(
+        hostStore,
+        client: MockClient((request) async {
+          expect(request.url.path, '/api/sync/pairing/create');
+          return http.Response(
+            jsonEncode({
+              'ok': true,
+              'code': 'ABCD-EFGH-IJKL-MN',
+              'storeId': hostIdentity.storeId,
+              'branchId': hostIdentity.branchId,
+              'hostDeviceId': hostIdentity.deviceId,
+              'transport': 'cloud',
+              'expiresAt': DateTime.utc(2026, 1, 1, 12, 5).toIso8601String(),
+            }),
+            200,
+          );
+        }),
+      );
+
+      final result = await service.createPairingCode(
+        const CloudSyncSettings(
+          enabled: true,
+          apiBaseUrl: 'https://sync.test',
+        ),
+      );
+
+      await Future<void>.delayed(Duration.zero);
+
+      expect(result.ok, isTrue);
+      expect(service.publishCalls, 1);
+      expect(service.lastPublishForce, isTrue);
+      expect(service.heartbeatCalls, 1);
+      expect(service.registerCalls, 1);
     });
 
     test(

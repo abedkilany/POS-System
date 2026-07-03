@@ -1173,8 +1173,10 @@ class CloudSyncService {
   Future<void> _publishPairingBootstrapInBackground(
       CloudSyncSettings settings) async {
     try {
-      // The relay snapshot is generated on demand, so the background step only
-      // keeps the Host visible and warms the direct Cloud relay path.
+      // Pairing must make the full Cloud bootstrap snapshot available before a
+      // Client can finish Connect to Store. Start that publish in the
+      // background so the Host UI still returns immediately.
+      await publishBootstrapSnapshotToCloud(settings, force: true);
       await sendHostHeartbeat(settings);
       await registerCurrentDevice(settings, transport: 'cloud');
       await _broadcastHostAuthorityViaRelay(settings);
