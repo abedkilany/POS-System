@@ -712,7 +712,19 @@ class CloudSyncService {
       );
       return true;
     }
-    return store.hasOutstandingSyncWorkForTarget('cloud_host');
+    // Only Host-accepted-but-not-yet-confirmed Client requests should pause
+    // the Cloud pull path. Previously this used
+    // hasOutstandingSyncWorkForTarget('cloud_host'), which also counts fresh
+    // local pending/failed/rejected rows. That created a deadlock on
+    // Client-Cloud devices: a new local change made the drain guard true before
+    // the push ran, so the Client returned "sync deferred" without sending the
+    // pending change and without pulling Host data.
+    //
+    // Fresh pending/failed rows must be allowed to go through the push step.
+    // Rejected rows are final and must not block pulling authoritative Host data.
+    return store.syncQueue.any(
+      (item) => item.target == 'cloud_host' && item.status == 'submitted',
+    );
   }
 
   Future<void> _restorePreviousSyncMode(AppIdentity previousIdentity) async {
@@ -3863,7 +3875,6 @@ class CloudSyncService {
   Future<CloudSyncResult> pushPendingForUnifiedEngine(
       CloudSyncSettings settings,
       {CloudSyncProgressCallback? onProgress}) async {
-    await store.ensureSyncDataLoaded();
     final identity = store.appIdentity;
     if (!_cloudAllowedForIdentity(identity)) {
       return const CloudSyncResult(
@@ -4028,7 +4039,6 @@ class CloudSyncService {
     DateTime? minSnapshotUpdatedAt,
     CloudSyncProgressCallback? onProgress,
   }) async {
-    await store.ensureSyncDataLoaded();
     final identity = store.appIdentity;
     if (identity.isHost) {
       return const CloudSyncResult(
