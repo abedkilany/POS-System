@@ -3565,7 +3565,14 @@ class CloudSyncService {
           final rejected = _decodeRejectedSyncRequests(response['rejected']);
           if (rejected.isNotEmpty) await _syncCore.markPushRejected(rejected);
           if (target == 'cloud_host') {
-            await _syncCore.markPushSubmitted(ackIds, fallbackIds: pendingIds);
+            // Realtime relay responses come directly from the Host. Unlike the
+            // legacy /api/sync/requests/push endpoint, this ACK is the final
+            // Host decision, not just Cloud inbox delivery. Keeping these rows
+            // as `submitted` leaves the Client waiting for /requests/status,
+            // but no cloud_change_requests row exists for direct relay ACKs;
+            // the Client then intermittently stays pending and skips pull.
+            await _syncCore.markPushAcknowledged(ackIds,
+                fallbackIds: pendingIds);
           } else {
             await _syncCore.markPushAcknowledged(ackIds,
                 fallbackIds: pendingIds);
