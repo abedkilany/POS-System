@@ -3128,7 +3128,7 @@ class CloudSyncService {
   }
 
   Future<Map<String, dynamic>?> runCloudMaintenance(CloudSyncSettings settings,
-      {int keepRecentEvents = 200}) async {
+      {int eventRetentionDays = 7}) async {
     final identity = store.appIdentity;
     if (!identity.isHost ||
         !identity.isCloudEnabled ||
@@ -3145,7 +3145,7 @@ class CloudSyncService {
               'branchId': identity.branchId,
               'hostDeviceId': store.deviceId,
               'deviceId': store.deviceId,
-              'keepRecentEvents': keepRecentEvents,
+              'eventRetentionDays': eventRetentionDays,
               'activeDeviceDays': 14,
               'processedRequestRetentionDays': 3,
               'deletedSnapshotRetentionDays': 7,

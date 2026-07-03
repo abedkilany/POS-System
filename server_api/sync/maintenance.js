@@ -57,7 +57,7 @@ export default async function handler(req, res) {
     await assertAccountOrDevice(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['cloud'] });
     await assertHostDevice({ storeId, branchId, hostDeviceId });
 
-    const keepRecentEvents = toInt(body.keepRecentEvents || body.keep_recent_events, 200, 50, 5000);
+    const eventRetentionDays = toInt(body.eventRetentionDays || body.event_retention_days, 7, 1, 365);
     const activeDeviceDays = toInt(body.activeDeviceDays || body.active_device_days, 14, 1, 365);
     const processedRequestRetentionDays = toInt(body.processedRequestRetentionDays || body.processed_request_retention_days, 3, 0, 365);
     const deletedSnapshotRetentionDays = toInt(body.deletedSnapshotRetentionDays || body.deleted_snapshot_retention_days, 7, 0, 365);
@@ -87,17 +87,18 @@ export default async function handler(req, res) {
         and last_seen_at >= now() - (${activeDeviceDays}::text || ' days')::interval
     `;
     const safeFloorSequence = Number(ackRows[0]?.safe_floor_sequence || 0);
-    const retainFloorSequence = latestSequence > 0 ? Math.max(latestSequence - keepRecentEvents + 1, 1) : 0;
+    const retentionCutoffSql = sql`now() - (${eventRetentionDays}::text || ' days')::interval`;
+    const retainFloorSequence = safeFloorSequence;
 
     let removedEvents = 0;
-    if (latestSequence > keepRecentEvents && safeFloorSequence > 0 && retainFloorSequence > 0) {
+    if (safeFloorSequence > 0) {
       const deletedRows = await sql`
         delete from sync_events
         where store_id = ${storeId}
           and branch_id = ${branchId}
           and sequence > 0
-          and sequence < ${retainFloorSequence}
           and sequence <= ${safeFloorSequence}
+          and created_at < ${retentionCutoffSql}
         returning id
       `;
       removedEvents = deletedRows.length;
@@ -140,7 +141,7 @@ export default async function handler(req, res) {
       storeId,
       branchId,
       hostDeviceId,
-      keepRecentEvents,
+      eventRetentionDays,
       safeFloorSequence,
       latestSequence,
       earliestSequence,
@@ -160,7 +161,7 @@ export default async function handler(req, res) {
         earliestSequence: Number(afterSequenceRows[0]?.earliest_sequence || 0),
         latestSequence: Number(afterSequenceRows[0]?.latest_sequence || 0),
       },
-      skippedEventCleanup: removedEvents === 0 && latestSequence > keepRecentEvents ? 'waiting_for_safe_floor_or_not_enough_acknowledged_devices' : '',
+      skippedEventCleanup: removedEvents === 0 && safeFloorSequence <= 0 ? 'waiting_for_safe_floor_or_not_enough_acknowledged_devices' : '',
       serverTime: new Date().toISOString(),
     });
   } catch (error) {

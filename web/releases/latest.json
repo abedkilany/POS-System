@@ -1,11 +1,11 @@
 {
-    "version":  "1.0.10",
-    "build":  10,
+    "version":  "1.0.11",
+    "build":  11,
     "channel":  "stable",
     "windows":  {
-                    "url":  "https://ventioapp.com/releases/windows/VentioSetup-1.0.10-build10.exe",
-                    "sha256":  "9188d22bf60c42f27fea471a9872e793d8ee86c151650651ebd6fa1d4529a61e",
-                    "size":  17768097
+                    "url":  "https://ventioapp.com/releases/windows/VentioSetup-1.0.11-build11.exe",
+                    "sha256":  "9a41e3e3ad536dc70da184effbc4855c20043664fb7285a6b343b9c5dd6a312c",
+                    "size":  17767654
                 },
     "android":  {
                     "source":  "play_store"

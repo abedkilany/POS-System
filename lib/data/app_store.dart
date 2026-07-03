@@ -6381,7 +6381,7 @@ class AppStore extends ChangeNotifier {
     return _customers[index].isDeleted ? walkInCustomerId : normalized;
   }
 
-  static const int _syncMaintenanceKeepRecentChanges = 200;
+  static const int _syncMaintenanceRetentionDays = 7;
   static const int _syncMaintenanceMinChangesBeforeCompact = 1000;
 
   /// Automatic event-log compaction is intentionally not run from normal save
@@ -14890,22 +14890,22 @@ class AppStore extends ChangeNotifier {
 
   /// Cursor-aware sync log compaction.
   ///
-  /// Keeps the latest [keepRecentSyncedChanges] synced authoritative changes and
+  /// Keeps synced authoritative changes for the latest [retentionDays] days and
   /// removes older synced queue rows only when they are at/below the active peer
   /// ACK floor. If a Client later asks for a sequence older than the earliest
   /// retained event, [exportSyncChangesJson] returns needsSnapshot=true so the
   /// Client rebuilds from a full Host snapshot instead of applying a partial log.
   Future<Map<String, int>> compactSyncedSyncHistoryForDiagnostics({
-    int keepRecentSyncedChanges = _syncMaintenanceKeepRecentChanges,
+    int retentionDays = _syncMaintenanceRetentionDays,
   }) async {
     return _compactSyncedSyncHistory(
-      keepRecentSyncedChanges: keepRecentSyncedChanges,
+      retentionDays: retentionDays,
       requireSafeFloorSequence: true,
     );
   }
 
   Future<Map<String, int>> compactSyncedSyncHistoryForMaintenance({
-    int keepRecentSyncedChanges = _syncMaintenanceKeepRecentChanges,
+    int retentionDays = _syncMaintenanceRetentionDays,
     int minChangesBeforeCompact = _syncMaintenanceMinChangesBeforeCompact,
   }) async {
     final safeFloorSequence = _minimumActivePeerAckSequence();
@@ -14932,7 +14932,7 @@ class AppStore extends ChangeNotifier {
       _syncHistoryCompactionLogLine('BEFORE_AUTO_COMPACT_SYNC_HISTORY', before),
     );
     final result = await _compactSyncedSyncHistory(
-      keepRecentSyncedChanges: keepRecentSyncedChanges,
+      retentionDays: retentionDays,
       requireSafeFloorSequence: true,
       knownSafeFloorSequence: safeFloorSequence,
     );
@@ -14947,7 +14947,7 @@ class AppStore extends ChangeNotifier {
   /// to the latest authoritative sequence they have applied. The Host remains
   /// responsible for serving old events or returning needsSnapshot=true.
   Future<Map<String, int>> compactClientSyncedSyncHistoryForMaintenance({
-    int keepRecentSyncedChanges = _syncMaintenanceKeepRecentChanges,
+    int retentionDays = _syncMaintenanceRetentionDays,
   }) async {
     final latestAppliedSequence = _latestStoredAuthoritativeSequence();
     final before = _syncHistoryCompactionResult(
@@ -14994,22 +14994,17 @@ class AppStore extends ChangeNotifier {
       }
       return Map<String, int>.from(before)..['skipped'] = 1;
     }
-    // Client compaction must still run when authoritative history is above the
-    // retention window, even if it is below the Host maintenance threshold.
-    // Example: Cloud Client can have 353 authoritative synced changes, queue=0,
-    // and keepRecentSyncedChanges=200. The old minChangesBeforeCompact=1000
-    // guard skipped compaction forever, leaving DB_BLOAT=FAIL although there
-    // was no pending work. Skip only when there is nothing to trim.
+    // Client compaction must still run when authoritative history is older than
+    // the time retention window, even if it is below the Host maintenance
+    // threshold. Skip only when there is nothing old enough to trim.
+    final retentionCutoff = DateTime.now().subtract(Duration(days: retentionDays));
     final hasAuthoritativeHistoryOverRetention = _syncChanges.any(
-          (item) =>
-              item.isSynced &&
-              item.sequence > 0 &&
-              item.sequence <= latestAppliedSequence,
-        ) &&
-        _syncChanges
-                .where((item) => item.isSynced && item.sequence > 0)
-                .length >
-            keepRecentSyncedChanges;
+      (item) =>
+          item.isSynced &&
+          item.sequence > 0 &&
+          item.sequence <= latestAppliedSequence &&
+          item.createdAt.isBefore(retentionCutoff),
+    );
     final hasSyncedLocalDrafts = _syncChanges.any(
       (item) => item.isSynced && item.sequence <= 0,
     );
@@ -15037,7 +15032,7 @@ class AppStore extends ChangeNotifier {
       ),
     );
     final rawResult = await _compactSyncedSyncHistory(
-      keepRecentSyncedChanges: keepRecentSyncedChanges,
+      retentionDays: retentionDays,
       requireSafeFloorSequence: false,
       knownSafeFloorSequence: latestAppliedSequence,
     );
@@ -15078,7 +15073,7 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<Map<String, int>> _compactSyncedSyncHistory({
-    required int keepRecentSyncedChanges,
+    required int retentionDays,
     required bool requireSafeFloorSequence,
     int? knownSafeFloorSequence,
   }) async {
@@ -15117,6 +15112,7 @@ class AppStore extends ChangeNotifier {
     }
 
     final isClientLocalCompaction = !requireSafeFloorSequence;
+    final retentionCutoff = DateTime.now().subtract(Duration(days: retentionDays));
 
     _syncQueue.removeWhere((item) {
       if (item.status != 'synced') return false;
@@ -15135,20 +15131,9 @@ class AppStore extends ChangeNotifier {
       }
       if (change == null) return true;
       if (change.sequence <= 0) return false;
-      return change.sequence <= safeFloorSequence;
+      return change.sequence <= safeFloorSequence &&
+          change.createdAt.isBefore(retentionCutoff);
     });
-
-    final syncedChanges = _syncChanges.where((item) {
-      if (!item.isSynced) return false;
-      if (pendingChangeIds.contains(item.id)) return false;
-      if (item.sequence <= 0) return false;
-      return item.sequence <= safeFloorSequence;
-    }).toList()
-      ..sort((a, b) => b.sequence.compareTo(a.sequence));
-    final keepSyncedIds = syncedChanges
-        .take(keepRecentSyncedChanges)
-        .map((item) => item.id)
-        .toSet();
 
     _syncChanges.removeWhere((item) {
       if (!item.isSynced) return false;
@@ -15159,7 +15144,7 @@ class AppStore extends ChangeNotifier {
       // bookkeeping and must be removed on Clients.
       if (item.sequence <= 0) return isClientLocalCompaction;
       if (item.sequence > safeFloorSequence) return false;
-      return !keepSyncedIds.contains(item.id);
+      return item.createdAt.isBefore(retentionCutoff);
     });
 
     final result = _syncHistoryCompactionResult(
