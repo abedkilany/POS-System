@@ -7895,19 +7895,16 @@ class AppStore extends ChangeNotifier {
     // - Web/remote desktop clients cannot reach LAN directly, so they send drafts
     //   to a Cloud relay inbox. The Host later pulls that inbox, applies the
     //   changes, and republishes them as authoritative sync_events.
-    final isLanHost = _isLanHostConfigured;
     final target = identity.isHost && identity.isCloudEnabled
         ? 'cloud'
-        : isLanHost
+        : isLanClient
             ? 'host'
-            : isLanClient
-                ? 'host'
-                : (identity.isClient && activeTransport == 'cloud')
+            : (identity.isClient && activeTransport == 'cloud')
+                ? 'cloud_host'
+                : (identity.platform == AppPlatformType.web &&
+                        activeTransport == 'cloud')
                     ? 'cloud_host'
-                    : (identity.platform == AppPlatformType.web &&
-                            activeTransport == 'cloud')
-                        ? 'cloud_host'
-                        : 'local';
+                    : 'local';
     if (target == 'local') return null;
     final item = SyncQueueItem(
       id: '$changeId-$target',
@@ -15205,6 +15202,91 @@ class AppStore extends ChangeNotifier {
     _sqliteDirtySyncQueue.add(item);
   }
 
+
+  Future<void> _ensureBusinessDataLoadedForIncomingSync(
+    Iterable<SyncChange> incoming,
+  ) async {
+    var products = false;
+    var customers = false;
+    var sales = false;
+    var saleQuotations = false;
+    var deliveryNotes = false;
+    var billsOfMaterials = false;
+    var manufacturingOrders = false;
+    var suppliers = false;
+    var supplierProductPrices = false;
+    var expenses = false;
+    var purchases = false;
+    var stockMovements = false;
+    var warehouses = false;
+    var accountTransactions = false;
+
+    for (final change in incoming) {
+      switch (change.entityType) {
+        case 'product':
+          products = true;
+          break;
+        case 'customer':
+          customers = true;
+          break;
+        case 'supplier':
+          suppliers = true;
+          break;
+        case 'supplier_product_price':
+          supplierProductPrices = true;
+          break;
+        case 'expense':
+          expenses = true;
+          break;
+        case 'purchase':
+          purchases = true;
+          break;
+        case 'sale':
+          sales = true;
+          break;
+        case 'sale_quotation':
+          saleQuotations = true;
+          break;
+        case 'delivery_note':
+          deliveryNotes = true;
+          break;
+        case 'bill_of_materials':
+          billsOfMaterials = true;
+          break;
+        case 'manufacturing_order':
+          manufacturingOrders = true;
+          break;
+        case 'stock_movement':
+          stockMovements = true;
+          products = true;
+          break;
+        case 'warehouse':
+          warehouses = true;
+          break;
+        case 'account_transaction':
+          accountTransactions = true;
+          break;
+      }
+    }
+
+    await Future.wait([
+      if (products) ensureProductsLoaded(),
+      if (customers) ensureCustomersLoaded(),
+      if (sales) ensureSalesLoaded(),
+      if (saleQuotations) ensureSaleQuotationsLoaded(),
+      if (deliveryNotes) ensureDeliveryNotesLoaded(),
+      if (billsOfMaterials) ensureBillsOfMaterialsLoaded(),
+      if (manufacturingOrders) ensureManufacturingOrdersLoaded(),
+      if (suppliers) ensureSuppliersLoaded(),
+      if (supplierProductPrices) ensureSupplierProductPricesLoaded(),
+      if (expenses) ensureExpensesLoaded(),
+      if (purchases) ensurePurchasesLoaded(),
+      if (stockMovements) ensureStockMovementsLoaded(),
+      if (warehouses) ensureWarehousesLoaded(),
+      if (accountTransactions) ensureAccountTransactionsLoaded(),
+    ]);
+  }
+
   Future<void> applyRemoteSyncChanges(
     List<SyncChange> incoming, {
     bool markAppliedAsSynced = false,
@@ -15341,6 +15423,8 @@ class AppStore extends ChangeNotifier {
           break;
       }
     }
+
+    await _ensureBusinessDataLoadedForIncomingSync(sorted);
 
     for (final change in sorted) {
       if (_isReplayOrDuplicateSyncEvent(
