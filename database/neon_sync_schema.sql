@@ -156,6 +156,9 @@ create table if not exists cloud_sync_sequences (
 create index if not exists idx_sync_events_store_branch_sequence
   on sync_events (store_id, branch_id, sequence);
 
+create index if not exists idx_sync_events_store_branch_received_at
+  on sync_events (store_id, branch_id, received_at, created_at);
+
 create index if not exists idx_cloud_change_requests_store_status
   on cloud_change_requests (store_id, branch_id, status, accepted_at, received_at);
 

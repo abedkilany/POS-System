@@ -691,7 +691,6 @@ class CloudSyncService {
   static int _relayRequestCounter = 0;
   static final Map<String, _CloudSnapshotRelayJob> _relaySnapshotJobs =
       <String, _CloudSnapshotRelayJob>{};
-  static const Duration _relaySnapshotJobTtl = Duration(minutes: 10);
   static const String _clientCloudDrainMessage =
       'Client cloud sync paused until Host confirms pending local changes. Pull and snapshot rebuild are deferred.';
   static const String _clientCloudRebuildBlockedMessage =
@@ -1994,7 +1993,7 @@ class CloudSyncService {
         requestedAt: snapshotRequestedAt,
         snapshotGeneration: expectedSnapshotGeneration,
       );
-      if (!freshSnapshotRequest!.ok) {
+      if (!freshSnapshotRequest.ok) {
         onProgress?.call(0.12, freshSnapshotRequest.message);
       }
     } else {
@@ -3225,7 +3224,7 @@ class CloudSyncService {
   }
 
   Future<Map<String, dynamic>?> runCloudMaintenance(CloudSyncSettings settings,
-      {int keepRecentEvents = 200}) async {
+      {int eventRetentionDays = 30}) async {
     final identity = store.appIdentity;
     if (!identity.isHost ||
         !identity.isCloudEnabled ||
@@ -3242,8 +3241,7 @@ class CloudSyncService {
               'branchId': identity.branchId,
               'hostDeviceId': store.deviceId,
               'deviceId': store.deviceId,
-              'keepRecentEvents': keepRecentEvents,
-              'activeDeviceDays': 14,
+              'eventRetentionDays': eventRetentionDays,
               'processedRequestRetentionDays': 3,
               'deletedSnapshotRetentionDays': 7,
             }),

@@ -17,6 +17,7 @@ async function ensureMaintenanceIndexes() {
   await sql`alter table cloud_change_requests add column if not exists status text not null default 'pending'`;
   await sql`alter table entity_snapshots add column if not exists branch_id text not null default 'main'`;
   await sql`create index if not exists idx_sync_events_store_branch_sequence on sync_events (store_id, branch_id, sequence)`;
+  await sql`create index if not exists idx_sync_events_store_branch_received_at on sync_events (store_id, branch_id, received_at, created_at)`;
   await sql`create index if not exists idx_cloud_change_requests_store_status on cloud_change_requests (store_id, branch_id, status, accepted_at, received_at)`;
   await sql`create index if not exists idx_entity_snapshots_store_type_updated on entity_snapshots (store_id, branch_id, entity_type, updated_at)`;
   await ensureDeviceAuthColumns();
@@ -57,8 +58,7 @@ export default async function handler(req, res) {
     await assertAccountOrDevice(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['cloud'] });
     await assertHostDevice({ storeId, branchId, hostDeviceId });
 
-    const keepRecentEvents = toInt(body.keepRecentEvents || body.keep_recent_events, 200, 50, 5000);
-    const activeDeviceDays = toInt(body.activeDeviceDays || body.active_device_days, 14, 1, 365);
+    const eventRetentionDays = toInt(body.eventRetentionDays || body.event_retention_days, 30, 1, 365);
     const processedRequestRetentionDays = toInt(body.processedRequestRetentionDays || body.processed_request_retention_days, 3, 0, 365);
     const deletedSnapshotRetentionDays = toInt(body.deletedSnapshotRetentionDays || body.deleted_snapshot_retention_days, 7, 0, 365);
 
@@ -76,32 +76,22 @@ export default async function handler(req, res) {
     const latestSequence = Number(sequenceRows[0]?.latest_sequence || 0);
     const earliestSequence = Number(sequenceRows[0]?.earliest_sequence || 0);
 
-    const ackRows = await sql`
-      select min(last_ack_sequence)::bigint as safe_floor_sequence
-      from store_devices
+    const eventCutoffRows = await sql`
+      select (now() - (${eventRetentionDays}::text || ' days')::interval) as cutoff
+    `;
+    const eventRetentionCutoff = eventCutoffRows[0]?.cutoff
+      ? new Date(eventCutoffRows[0].cutoff).toISOString()
+      : null;
+
+    const deletedRows = await sql`
+      delete from sync_events
       where store_id = ${storeId}
         and branch_id = ${branchId}
-        and revoked = false
-        and suspended = false
-        and last_ack_sequence > 0
-        and last_seen_at >= now() - (${activeDeviceDays}::text || ' days')::interval
+        and sequence > 0
+        and coalesce(received_at, created_at) < now() - (${eventRetentionDays}::text || ' days')::interval
+      returning id
     `;
-    const safeFloorSequence = Number(ackRows[0]?.safe_floor_sequence || 0);
-    const retainFloorSequence = latestSequence > 0 ? Math.max(latestSequence - keepRecentEvents + 1, 1) : 0;
-
-    let removedEvents = 0;
-    if (latestSequence > keepRecentEvents && safeFloorSequence > 0 && retainFloorSequence > 0) {
-      const deletedRows = await sql`
-        delete from sync_events
-        where store_id = ${storeId}
-          and branch_id = ${branchId}
-          and sequence > 0
-          and sequence < ${retainFloorSequence}
-          and sequence <= ${safeFloorSequence}
-        returning id
-      `;
-      removedEvents = deletedRows.length;
-    }
+    const removedEvents = deletedRows.length;
 
     const requestRows = await sql`
       delete from cloud_change_requests
@@ -140,11 +130,10 @@ export default async function handler(req, res) {
       storeId,
       branchId,
       hostDeviceId,
-      keepRecentEvents,
-      safeFloorSequence,
+      eventRetentionDays,
+      eventRetentionCutoff,
       latestSequence,
       earliestSequence,
-      retainFloorSequence,
       removedEvents,
       removedRequests: requestRows.length,
       removedSnapshots: snapshotRows.length,
@@ -160,7 +149,7 @@ export default async function handler(req, res) {
         earliestSequence: Number(afterSequenceRows[0]?.earliest_sequence || 0),
         latestSequence: Number(afterSequenceRows[0]?.latest_sequence || 0),
       },
-      skippedEventCleanup: removedEvents === 0 && latestSequence > keepRecentEvents ? 'waiting_for_safe_floor_or_not_enough_acknowledged_devices' : '',
+      skippedEventCleanup: '',
       serverTime: new Date().toISOString(),
     });
   } catch (error) {
