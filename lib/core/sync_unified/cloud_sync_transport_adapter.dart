@@ -375,37 +375,15 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
       );
     }
 
-    if (!pull.shouldAttemptSnapshotRepair) {
-      onProgress?.call(1.0, 'Cloud pull failed.');
-      return UnifiedSyncResult(
-        ok: false,
-        message: pull.message,
-        pushed: push.pushed,
-        pulled: pull.pulled,
-        error: pull.error,
-        cursor: pull.cursor,
-      );
-    }
-
-    onProgress?.call(0.78, 'Cloud pull failed. Trying snapshot repair...');
-    final repair = await rebuildFromHostSnapshot(onProgress: onProgress);
-    if (repair.ok) {
-      await compactAfterSuccessfulSync();
-      return UnifiedSyncResult(
-        ok: true,
-        message: '${pull.message}. ${repair.message}',
-        pushed: push.pushed,
-        pulled: repair.pulled,
-        restoredSnapshot: true,
-        cursor: repair.cursor,
-      );
-    }
+    onProgress?.call(1.0, 'Cloud pull failed. Manual rebuild may be required.');
     return UnifiedSyncResult(
       ok: false,
-      message: '${pull.message}. ${repair.message}',
+      message: pull.shouldAttemptSnapshotRepair
+          ? '${pull.message}. Automatic rebuild is disabled. Use Settings > Rebuild from Host if needed.'
+          : pull.message,
       pushed: push.pushed,
       pulled: pull.pulled,
-      error: pull.error.hasError ? pull.error : repair.error,
+      error: pull.error,
       cursor: pull.cursor,
     );
   }

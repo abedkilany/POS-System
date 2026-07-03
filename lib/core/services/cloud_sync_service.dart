@@ -691,7 +691,6 @@ class CloudSyncService {
   static int _relayRequestCounter = 0;
   static final Map<String, _CloudSnapshotRelayJob> _relaySnapshotJobs =
       <String, _CloudSnapshotRelayJob>{};
-  static const Duration _relaySnapshotJobTtl = Duration(minutes: 10);
   static const String _clientCloudDrainMessage =
       'Client cloud sync paused until Host confirms pending local changes. Pull and snapshot rebuild are deferred.';
   static const String _clientCloudRebuildBlockedMessage =
@@ -959,119 +958,23 @@ class CloudSyncService {
         _snapshotGenerationFailedAtKey(transport));
   }
 
-  Future<bool> _beginHostSnapshotGenerationRebuild(
-    String transport,
-    String generation, {
-    String commandId = '',
-  }) async {
-    if (generation.isEmpty) return false;
-    final applied =
-        LocalDatabaseService.getString(_snapshotGenerationKey(transport)) ?? '';
-    if (applied.trim() == generation && commandId.trim().isEmpty) {
-      return false;
-    }
-    final lockId = _snapshotGenerationLockId(transport, generation);
-    if (!_activeSnapshotGenerationRebuilds.add(lockId)) return false;
-    await LocalDatabaseService.setString(
-        _snapshotGenerationInProgressKey(transport), generation);
-    final effectiveCommandId =
-        commandId.trim().isEmpty ? generation : commandId.trim();
-    if (effectiveCommandId.isNotEmpty) {
-      await LocalDatabaseService.setString(
-          _restoreCommandInProgressKey(transport), effectiveCommandId);
-    }
-    await LocalDatabaseService.setString(
-        _snapshotGenerationInProgressAtKey(transport),
-        DateTime.now().toIso8601String());
-    return true;
-  }
-
-  Future<void> _finishHostSnapshotGenerationRebuild(
-    String transport,
-    String generation, {
-    required bool success,
-  }) async {
-    if (generation.isEmpty) return;
-    final lockId = _snapshotGenerationLockId(transport, generation);
-    _activeSnapshotGenerationRebuilds.remove(lockId);
-    if (success) {
-      await LocalDatabaseService.setString(
-          _snapshotGenerationKey(transport), generation);
-      final inProgressCommand = LocalDatabaseService.getString(
-              _restoreCommandInProgressKey(transport)) ??
-          '';
-      if (inProgressCommand.trim().isNotEmpty) {
-        await LocalDatabaseService.setString(
-            _restoreCommandExecutedKey(transport), inProgressCommand.trim());
-        await LocalDatabaseService.deleteString(
-            _restoreCommandInProgressKey(transport));
-      }
-      await LocalDatabaseService.deleteString(
-          _snapshotGenerationInProgressKey(transport));
-      await LocalDatabaseService.deleteString(
-          _snapshotGenerationInProgressAtKey(transport));
-      await LocalDatabaseService.deleteString(
-          _snapshotGenerationFailedKey(transport));
-      await LocalDatabaseService.deleteString(
-          _snapshotGenerationFailedAtKey(transport));
-    } else {
-      await LocalDatabaseService.deleteString(
-          _snapshotGenerationInProgressKey(transport));
-      await LocalDatabaseService.deleteString(
-          _snapshotGenerationInProgressAtKey(transport));
-      await LocalDatabaseService.setString(
-          _snapshotGenerationFailedKey(transport), generation);
-      await LocalDatabaseService.setString(
-          _snapshotGenerationFailedAtKey(transport),
-          DateTime.now().toIso8601String());
-      await LocalDatabaseService.deleteString(
-          _restoreCommandInProgressKey(transport));
-    }
-  }
-
   Future<CloudSyncResult?> _rebuildIfHostSnapshotGenerationChanged(
     CloudSyncSettings settings,
     Map<String, dynamic> decodedPull, {
     CloudSyncProgressCallback? onProgress,
   }) async {
     if (!_needsHostSnapshotGenerationRebuild('cloud', decodedPull)) return null;
-    final generation = _remoteHostSnapshotGeneration(decodedPull);
-    final commandId = _remoteHostRestoreCommandId(decodedPull);
-    if (!await _beginHostSnapshotGenerationRebuild(
-      'cloud',
-      generation,
-      commandId: commandId,
-    )) {
-      return null;
-    }
-    CloudSyncResult result;
-    try {
-      onProgress?.call(0.50,
-          'A newer Host restore was detected. Rebuilding this device data...');
-      await CloudSyncSettings.clearSavedPullCursor();
-      await SyncDeviceStateStore.resetClientProgress(store.appIdentity,
-          transport: 'cloud');
-      result = await rebuildFromCloudHostSnapshot(
-        settings.copyWith(clearLastPullCursor: true),
-        onProgress: onProgress,
-        requestFreshSnapshot: false,
-        expectedSnapshotGeneration: generation,
-        expectedRestoreCommandId: commandId,
-      );
-      await _finishHostSnapshotGenerationRebuild(
-        'cloud',
-        generation,
-        success: result.ok,
-      );
-    } catch (_) {
-      await _finishHostSnapshotGenerationRebuild(
-        'cloud',
-        generation,
-        success: false,
-      );
-      rethrow;
-    }
-    return result;
+    onProgress?.call(1.0,
+        'Host snapshot changed. Automatic rebuild is disabled; use Settings > Rebuild from Host.');
+    return _automaticCloudRebuildDisabledResult();
+  }
+
+  CloudSyncResult _automaticCloudRebuildDisabledResult() {
+    return const CloudSyncResult(
+      ok: false,
+      message:
+          'Automatic Cloud rebuild is disabled. Please use Settings > Rebuild from Host if this device needs a full rebuild.',
+    );
   }
 
   bool _cloudAllowedForIdentity(AppIdentity identity) {
@@ -1994,7 +1897,7 @@ class CloudSyncService {
         requestedAt: snapshotRequestedAt,
         snapshotGeneration: expectedSnapshotGeneration,
       );
-      if (!freshSnapshotRequest!.ok) {
+      if (!freshSnapshotRequest.ok) {
         onProgress?.call(0.12, freshSnapshotRequest.message);
       }
     } else {
@@ -3668,7 +3571,6 @@ class CloudSyncService {
       }
 
       if (response['needsSnapshot'] == true) {
-        final generation = _remoteHostSnapshotGeneration(response);
         final commandId = _remoteHostRestoreCommandId(response);
         if (_restoreCommandAlreadyExecuted('cloud', commandId)) {
           final generatedAt =
@@ -3687,13 +3589,7 @@ class CloudSyncService {
             pulled: 0,
           );
         }
-        return rebuildFromCloudHostSnapshot(
-          settings.copyWith(clearLastPullCursor: true),
-          onProgress: onProgress,
-          requestFreshSnapshot: false,
-          expectedSnapshotGeneration: generation,
-          expectedRestoreCommandId: commandId,
-        );
+        return _automaticCloudRebuildDisabledResult();
       }
 
       final rawChanges =
@@ -3721,16 +3617,8 @@ class CloudSyncService {
         final commandId = _restoreCommandIdFromChanges(changes);
         if (!_restoreCommandAlreadyExecuted('cloud', commandId)) {
           onProgress?.call(0.50,
-              'A new Host restore was found. Rebuilding device data from a full snapshot...');
-          await CloudSyncSettings.clearSavedPullCursor();
-          await SyncDeviceStateStore.resetClientProgress(store.appIdentity,
-              transport: 'cloud');
-          return rebuildFromCloudHostSnapshot(
-            settings.copyWith(clearLastPullCursor: true),
-            onProgress: onProgress,
-            requestFreshSnapshot: false,
-            expectedRestoreCommandId: commandId,
-          );
+              'A new Host restore was found. Automatic rebuild is disabled; use Settings > Rebuild from Host.');
+          return _automaticCloudRebuildDisabledResult();
         }
       }
 
@@ -4101,15 +3989,8 @@ class CloudSyncService {
       if (shouldUseSnapshotBootstrap &&
           await _cloudSnapshotIsNewerThanLocal(settings)) {
         onProgress?.call(0.32,
-            'A newer Host snapshot was found. Rebuilding this device data...');
-        await CloudSyncSettings.clearSavedPullCursor();
-        await SyncDeviceStateStore.resetClientProgress(store.appIdentity,
-            transport: 'cloud');
-        return rebuildFromCloudHostSnapshot(
-          settings.copyWith(clearLastPullCursor: true),
-          onProgress: onProgress,
-          requestFreshSnapshot: false,
-        );
+            'A newer Host snapshot was found. Automatic rebuild is disabled; use Settings > Rebuild from Host.');
+        return _automaticCloudRebuildDisabledResult();
       }
       var pageCursor = '';
       DateTime? finalPullCursor;
@@ -4196,8 +4077,6 @@ class CloudSyncService {
           );
         }
         if (decodedPull['needsSnapshot'] == true) {
-          await CloudSyncSettings.clearSavedPullCursor();
-          final generation = _remoteHostSnapshotGeneration(decodedPull);
           final commandId = _remoteHostRestoreCommandId(decodedPull);
           if (_restoreCommandAlreadyExecuted('cloud', commandId)) {
             final generatedAt = DateTime.tryParse(
@@ -4216,13 +4095,7 @@ class CloudSyncService {
               pulled: pulled,
             );
           }
-          return rebuildFromCloudHostSnapshot(
-            settings.copyWith(clearLastPullCursor: true),
-            onProgress: onProgress,
-            requestFreshSnapshot: false,
-            expectedSnapshotGeneration: generation,
-            expectedRestoreCommandId: commandId,
-          );
+          return _automaticCloudRebuildDisabledResult();
         }
         final decodedChanges = _syncCore.decodeRemoteChanges(rawChanges);
         final changes = _syncCore.filterOutLocalEchoes(decodedChanges);
@@ -4241,21 +4114,8 @@ class CloudSyncService {
             restoredSnapshot = false;
           } else {
             onProgress?.call(0.50,
-                'A new Host restore was found. Rebuilding device data from a full snapshot...');
-            await CloudSyncSettings.clearSavedPullCursor();
-            await SyncDeviceStateStore.resetClientProgress(store.appIdentity,
-                transport: 'cloud');
-            // A Host Restore is a full replacement, not an incremental change.
-            // Do not depend on timestamp filters here: old backup rows can carry
-            // historical updatedAt values, and the marker time may be newer than
-            // some rows. Force the unified snapshot downloader/importer to rebuild
-            // the Client from the currently published Host snapshot.
-            return rebuildFromCloudHostSnapshot(
-              settings.copyWith(clearLastPullCursor: true),
-              onProgress: onProgress,
-              requestFreshSnapshot: false,
-              expectedRestoreCommandId: commandId,
-            );
+                'A new Host restore was found. Automatic rebuild is disabled; use Settings > Rebuild from Host.');
+            return _automaticCloudRebuildDisabledResult();
           }
         }
         restoredSnapshot = restoredSnapshot ||
@@ -4426,15 +4286,8 @@ class CloudSyncService {
       if (shouldUseSnapshotBootstrap &&
           await _cloudSnapshotIsNewerThanLocal(settings)) {
         onProgress?.call(0.32,
-            'A newer Host snapshot was found. Rebuilding this device data...');
-        await CloudSyncSettings.clearSavedPullCursor();
-        await SyncDeviceStateStore.resetClientProgress(store.appIdentity,
-            transport: 'cloud');
-        return rebuildFromCloudHostSnapshot(
-          settings.copyWith(clearLastPullCursor: true),
-          onProgress: onProgress,
-          requestFreshSnapshot: false,
-        );
+            'A newer Host snapshot was found. Automatic rebuild is disabled; use Settings > Rebuild from Host.');
+        return _automaticCloudRebuildDisabledResult();
       }
       var pageCursor = '';
       DateTime? finalPullCursor;
@@ -4520,8 +4373,6 @@ class CloudSyncService {
           );
         }
         if (decodedPull['needsSnapshot'] == true) {
-          await CloudSyncSettings.clearSavedPullCursor();
-          final generation = _remoteHostSnapshotGeneration(decodedPull);
           final commandId = _remoteHostRestoreCommandId(decodedPull);
           if (_restoreCommandAlreadyExecuted('cloud', commandId)) {
             final generatedAt = DateTime.tryParse(
@@ -4541,13 +4392,7 @@ class CloudSyncService {
               pulled: pulled,
             );
           }
-          return rebuildFromCloudHostSnapshot(
-            settings.copyWith(clearLastPullCursor: true),
-            onProgress: onProgress,
-            requestFreshSnapshot: false,
-            expectedSnapshotGeneration: generation,
-            expectedRestoreCommandId: commandId,
-          );
+          return _automaticCloudRebuildDisabledResult();
         }
         final decodedChanges = _syncCore.decodeRemoteChanges(rawChanges);
         final changes = _syncCore.filterOutLocalEchoes(decodedChanges);
@@ -4566,21 +4411,8 @@ class CloudSyncService {
             restoredSnapshot = false;
           } else {
             onProgress?.call(0.50,
-                'A new Host restore was found. Rebuilding device data from a full snapshot...');
-            await CloudSyncSettings.clearSavedPullCursor();
-            await SyncDeviceStateStore.resetClientProgress(store.appIdentity,
-                transport: 'cloud');
-            // A Host Restore is a full replacement, not an incremental change.
-            // Do not depend on timestamp filters here: old backup rows can carry
-            // historical updatedAt values, and the marker time may be newer than
-            // some rows. Force the unified snapshot downloader/importer to rebuild
-            // the Client from the currently published Host snapshot.
-            return rebuildFromCloudHostSnapshot(
-              settings.copyWith(clearLastPullCursor: true),
-              onProgress: onProgress,
-              requestFreshSnapshot: false,
-              expectedRestoreCommandId: commandId,
-            );
+                'A new Host restore was found. Automatic rebuild is disabled; use Settings > Rebuild from Host.');
+            return _automaticCloudRebuildDisabledResult();
           }
         }
         restoredSnapshot = restoredSnapshot ||

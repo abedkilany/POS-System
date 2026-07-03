@@ -622,76 +622,6 @@ class LanSyncService {
         _snapshotGenerationFailedAtKey(transport));
   }
 
-  Future<bool> _beginHostSnapshotGenerationRebuild(
-    String transport,
-    String generation, {
-    String commandId = '',
-  }) async {
-    if (generation.isEmpty) return false;
-    final applied =
-        LocalDatabaseService.getString(_snapshotGenerationKey(transport)) ?? '';
-    if (applied.trim() == generation && commandId.trim().isEmpty) {
-      return false;
-    }
-    final lockId = _snapshotGenerationLockId(transport, generation);
-    if (!_activeSnapshotGenerationRebuilds.add(lockId)) return false;
-    await LocalDatabaseService.setString(
-        _snapshotGenerationInProgressKey(transport), generation);
-    final effectiveCommandId =
-        commandId.trim().isEmpty ? generation : commandId.trim();
-    if (effectiveCommandId.isNotEmpty) {
-      await LocalDatabaseService.setString(
-          _restoreCommandInProgressKey(transport), effectiveCommandId);
-    }
-    await LocalDatabaseService.setString(
-        _snapshotGenerationInProgressAtKey(transport),
-        DateTime.now().toIso8601String());
-    return true;
-  }
-
-  Future<void> _finishHostSnapshotGenerationRebuild(
-    String transport,
-    String generation, {
-    required bool success,
-  }) async {
-    if (generation.isEmpty) return;
-    final lockId = _snapshotGenerationLockId(transport, generation);
-    _activeSnapshotGenerationRebuilds.remove(lockId);
-    if (success) {
-      await LocalDatabaseService.setString(
-          _snapshotGenerationKey(transport), generation);
-      final inProgressCommand = LocalDatabaseService.getString(
-              _restoreCommandInProgressKey(transport)) ??
-          '';
-      if (inProgressCommand.trim().isNotEmpty) {
-        await LocalDatabaseService.setString(
-            _restoreCommandExecutedKey(transport), inProgressCommand.trim());
-        await LocalDatabaseService.deleteString(
-            _restoreCommandInProgressKey(transport));
-      }
-      await LocalDatabaseService.deleteString(
-          _snapshotGenerationInProgressKey(transport));
-      await LocalDatabaseService.deleteString(
-          _snapshotGenerationInProgressAtKey(transport));
-      await LocalDatabaseService.deleteString(
-          _snapshotGenerationFailedKey(transport));
-      await LocalDatabaseService.deleteString(
-          _snapshotGenerationFailedAtKey(transport));
-    } else {
-      await LocalDatabaseService.deleteString(
-          _snapshotGenerationInProgressKey(transport));
-      await LocalDatabaseService.deleteString(
-          _snapshotGenerationInProgressAtKey(transport));
-      await LocalDatabaseService.setString(
-          _snapshotGenerationFailedKey(transport), generation);
-      await LocalDatabaseService.setString(
-          _snapshotGenerationFailedAtKey(transport),
-          DateTime.now().toIso8601String());
-      await LocalDatabaseService.deleteString(
-          _restoreCommandInProgressKey(transport));
-    }
-  }
-
   Future<LanSyncResult?> _rebuildIfHostSnapshotGenerationChanged(
     String host,
     int port,
@@ -700,43 +630,17 @@ class LanSyncService {
     LanSyncProgressCallback? onProgress,
   }) async {
     if (!_needsHostSnapshotGenerationRebuild('lan', decodedPull)) return null;
-    final generation = _remoteHostSnapshotGeneration(decodedPull);
-    final commandId = _remoteHostRestoreCommandId(decodedPull);
-    if (!await _beginHostSnapshotGenerationRebuild(
-      'lan',
-      generation,
-      commandId: commandId,
-    )) {
-      return null;
-    }
-    LanSyncResult result;
-    try {
-      onProgress?.call(
-          0.72, 'Host restore detected. Rebuilding from LAN Host snapshot...');
-      final settings = LanSyncSettings.load();
-      await settings.copyWith(clearLastPullCursor: true).save();
-      await SyncDeviceStateStore.resetClientProgress(store.appIdentity,
-          transport: 'lan');
-      result = await repairFromHostSnapshot(
-        host,
-        port: port,
-        token: token,
-        onProgress: onProgress,
-      );
-      await _finishHostSnapshotGenerationRebuild(
-        'lan',
-        generation,
-        success: result.ok,
-      );
-    } catch (_) {
-      await _finishHostSnapshotGenerationRebuild(
-        'lan',
-        generation,
-        success: false,
-      );
-      rethrow;
-    }
-    return result;
+    onProgress?.call(1.0,
+        'Host snapshot changed. Automatic rebuild is disabled; use Settings > Rebuild from Host.');
+    return _automaticLanRebuildDisabledResult();
+  }
+
+  LanSyncResult _automaticLanRebuildDisabledResult() {
+    return const LanSyncResult(
+      ok: false,
+      message:
+          'Automatic LAN rebuild is disabled. Please use Settings > Rebuild from Host if this device needs a full rebuild.',
+    );
   }
 
   bool get isHosting => _sharedServer != null;
@@ -1795,16 +1699,7 @@ class LanSyncService {
       );
       if (generationRebuild != null) return generationRebuild;
       if (decodedPull['needsSnapshot'] == true) {
-        final repair = await repairFromHostSnapshot(host,
-            port: port, token: token, onProgress: onProgress);
-        return repair.ok
-            ? LanSyncResult(
-                ok: true,
-                message: 'LAN event log gap detected. ${repair.message}')
-            : LanSyncResult(
-                ok: false,
-                message:
-                    'LAN event log gap detected and repair failed. ${repair.message}');
+        return _automaticLanRebuildDisabledResult();
       }
       final changes = _syncCore.filterOutLocalEchoes(
         _syncCore.decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
@@ -1819,12 +1714,8 @@ class LanSyncService {
               'Host restore command already applied. Continuing LAN sync...');
         } else {
           onProgress?.call(0.72,
-              'Host restore detected. Rebuilding from LAN Host snapshot...');
-          await settings.copyWith(clearLastPullCursor: true).save();
-          await SyncDeviceStateStore.resetClientProgress(store.appIdentity,
-              transport: 'lan');
-          return repairFromHostSnapshot(host,
-              port: port, token: token, onProgress: onProgress);
+              'Host restore detected. Automatic rebuild is disabled; use Settings > Rebuild from Host.');
+          return _automaticLanRebuildDisabledResult();
         }
       }
       onProgress?.call(
@@ -1962,16 +1853,7 @@ class LanSyncService {
       );
       if (generationRebuild != null) return generationRebuild;
       if (decodedPull['needsSnapshot'] == true) {
-        final repair = await repairFromHostSnapshot(host,
-            port: port, token: token, onProgress: onProgress);
-        return repair.ok
-            ? LanSyncResult(
-                ok: true,
-                message: 'LAN event log gap detected. ${repair.message}')
-            : LanSyncResult(
-                ok: false,
-                message:
-                    'LAN event log gap detected and repair failed. ${repair.message}');
+        return _automaticLanRebuildDisabledResult();
       }
       final changes = _syncCore.filterOutLocalEchoes(
         _syncCore.decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
@@ -1986,12 +1868,8 @@ class LanSyncService {
               'Host restore command already applied. Continuing LAN sync...');
         } else {
           onProgress?.call(0.72,
-              'Host restore detected. Rebuilding from LAN Host snapshot...');
-          await settings.copyWith(clearLastPullCursor: true).save();
-          await SyncDeviceStateStore.resetClientProgress(store.appIdentity,
-              transport: 'lan');
-          return repairFromHostSnapshot(host,
-              port: port, token: token, onProgress: onProgress);
+              'Host restore detected. Automatic rebuild is disabled; use Settings > Rebuild from Host.');
+          return _automaticLanRebuildDisabledResult();
         }
       }
       onProgress?.call(
