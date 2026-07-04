@@ -73,11 +73,10 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
     // keep it even if the sequence is still 0 so the next pull does not loop
     // back into bootstrap again.
     if (identity.isClient && baseSequence <= 0 && appliedCursor == null) {
+      // Do not reset ACK/sequence while merely preparing pull settings. A real
+      // reset is safe only inside the snapshot apply path, after a valid Host
+      // snapshot has been downloaded.
       await CloudSyncSettings.clearSavedPullCursor();
-      await SyncDeviceStateStore.resetClientProgress(
-        identity,
-        transport: 'cloud',
-      );
       return _settings.copyWith(clearLastPullCursor: true);
     }
     final cursor = _unifiedCursor;

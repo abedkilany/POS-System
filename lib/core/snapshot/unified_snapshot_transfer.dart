@@ -31,6 +31,8 @@ class UnifiedSnapshotManifestResponse {
     this.snapshotGeneration,
     this.hostRestoreCommandId,
     this.restoreCommandId,
+    this.rebuildRequestId,
+    this.requiredMinSequence,
   });
 
   final Map<String, dynamic> manifest;
@@ -44,6 +46,8 @@ class UnifiedSnapshotManifestResponse {
   final String? snapshotGeneration;
   final String? hostRestoreCommandId;
   final String? restoreCommandId;
+  final String? rebuildRequestId;
+  final int? requiredMinSequence;
 }
 
 /// Transport adapter implemented by LAN and Cloud only for IO.
@@ -130,6 +134,8 @@ class UnifiedSnapshotTransferService {
           manifest.hostRestoreCommandId ?? manifest.restoreCommandId ?? '',
       'restoreCommandId':
           manifest.restoreCommandId ?? manifest.hostRestoreCommandId ?? '',
+      'rebuildRequestId': manifest.rebuildRequestId ?? '',
+      'requiredMinSequence': manifest.requiredMinSequence ?? 0,
     };
   }
 }
