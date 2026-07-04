@@ -781,17 +781,28 @@ class CloudSyncService {
     Map<String, dynamic> envelope, {
     required int minimumSequence,
     required String rebuildRequestId,
+    required DateTime requestedAt,
   }) {
     final raw = jsonEncode(envelope);
     final generatedSequence = store.syncSnapshotGeneratedSequenceFromJson(raw);
+    final generatedAt = store.syncSnapshotGeneratedAtFromJson(raw);
     final envelopeRequestId =
         (envelope['rebuildRequestId'] ?? envelope['snapshotRequestId'] ?? '')
             .toString()
             .trim();
-    if (rebuildRequestId.trim().isEmpty || envelopeRequestId != rebuildRequestId.trim()) {
+    if (rebuildRequestId.trim().isEmpty ||
+        envelopeRequestId != rebuildRequestId.trim()) {
       return false;
     }
     if (minimumSequence > 0 && generatedSequence < minimumSequence) {
+      return false;
+    }
+    // A manual/safe rebuild must never apply a cached snapshot that existed
+    // before the rebuild request. Use a small tolerance for device clock and
+    // serialization precision differences, but require the Host to generate the
+    // envelope during this rebuild session.
+    final lowerBound = requestedAt.toUtc().subtract(const Duration(seconds: 2));
+    if (generatedAt.toUtc().isBefore(lowerBound)) {
       return false;
     }
     return true;
@@ -2079,6 +2090,7 @@ class CloudSyncService {
           envelope,
           minimumSequence: minimumSnapshotSequence,
           rebuildRequestId: rebuildRequestId,
+          requestedAt: snapshotRequestedAt,
         )) {
           onProgress?.call(
             (0.34 + attempt * 0.05).clamp(0.34, 0.74).toDouble(),
