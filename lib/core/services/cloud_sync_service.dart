@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:archive/archive.dart';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -3418,12 +3419,11 @@ class CloudSyncService {
     var totalPushed = 0;
     var batchNumber = 0;
 
-    // Safety-critical fix for large Host -> Cloud publishes:
-    // Do not upload tens of thousands of changes in one HTTP request. A single
-    // timeout could leave the Host appearing idle while Cloud clients are still
-    // missing data. Push in acknowledged batches and mark only the batch
-    // currently being sent as in-progress.
-    const batchSize = 500;
+    // Keep pending pushes closer to snapshot transport: send larger compressed
+    // chunks so network overhead and server round trips stay low even when the
+    // queue contains tens of thousands of rows. The server still ACKs each
+    // compressed chunk, so a timeout never marks unsent data as synced.
+    const batchSize = 1500;
 
     while (true) {
       await store.recoverStaleInProgressSyncQueue(target: target);
@@ -3442,22 +3442,14 @@ class CloudSyncService {
             .post(
               settings.endpoint(path),
               headers: _headers(settings),
-              body: jsonEncode({
-                'deviceId': store.deviceId,
-                'storeId': identity.storeId,
-                'branchId': identity.branchId,
-                'sequence':
-                    SyncDeviceStateStore.lastAppliedSequenceForTransport(
-                        identity, transport),
-                'lastAppliedSequence':
-                    SyncDeviceStateStore.lastAppliedSequenceForTransport(
-                        identity, transport),
-                'batchNumber': batchNumber,
-                'batchSize': pending.length,
-                'changes': pending.map((item) => item.toJson()).toList(),
-              }),
+              body: jsonEncode(_buildCompressedPendingPushBody(
+                identity: identity,
+                transport: transport,
+                batchNumber: batchNumber,
+                pending: pending,
+              )),
             )
-            .timeout(const Duration(seconds: 30));
+            .timeout(const Duration(seconds: 60));
         if (push.statusCode < 200 || push.statusCode >= 300) {
           final message =
               'Cloud push failed in batch $batchNumber: ${push.statusCode} ${push.body}';
@@ -3488,6 +3480,31 @@ class CloudSyncService {
     }
 
     return totalPushed;
+  }
+
+  Map<String, dynamic> _buildCompressedPendingPushBody({
+    required AppIdentity identity,
+    required String transport,
+    required int batchNumber,
+    required List<SyncChange> pending,
+  }) {
+    final changesJson = pending.map((item) => item.toJson()).toList();
+    final rawJson = jsonEncode(changesJson);
+    final compressed = GZipEncoder().encode(utf8.encode(rawJson));
+    final encodedPayload = base64Encode(compressed);
+    return {
+      'deviceId': store.deviceId,
+      'storeId': identity.storeId,
+      'branchId': identity.branchId,
+      'sequence': SyncDeviceStateStore.lastAppliedSequenceForTransport(
+          identity, transport),
+      'lastAppliedSequence': SyncDeviceStateStore.lastAppliedSequenceForTransport(
+          identity, transport),
+      'batchNumber': batchNumber,
+      'batchSize': pending.length,
+      'changesEncoding': 'gzip+base64+json',
+      'changesPayload': encodedPayload,
+    };
   }
 
   Map<String, String> _decodeRejectedSyncRequests(dynamic raw) {

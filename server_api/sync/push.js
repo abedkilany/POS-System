@@ -1,5 +1,6 @@
 import { sql, assertAccountOrDevice, assertStoreAllowed, ensureDeviceAuthColumns, sendError } from '../_db.js';
 import { notifySyncChanged } from './realtime.js';
+import { gunzipSync } from 'zlib';
 
 function safeDate(value) {
   if (!value) return null;
@@ -57,6 +58,94 @@ async function allocateServerSequence(storeId, branchId) {
     returning last_sequence
   `;
   return Number(rows[0]?.last_sequence || 0);
+}
+
+async function allocateServerSequenceRange(storeId, branchId, count) {
+  const safeCount = Math.max(0, Number(count || 0));
+  if (safeCount <= 0) return { first: 0, last: 0 };
+  const rows = await sql`
+    insert into cloud_sync_sequences (store_id, branch_id, last_sequence, updated_at)
+    values (${storeId}, ${branchId || 'main'}, ${safeCount}, now())
+    on conflict (store_id, branch_id) do update set
+      last_sequence = cloud_sync_sequences.last_sequence + ${safeCount},
+      updated_at = now()
+    returning last_sequence
+  `;
+  const last = Number(rows[0]?.last_sequence || 0);
+  return { first: Math.max(1, last - safeCount + 1), last };
+}
+
+function decodeIncomingChanges(body) {
+  if (Array.isArray(body.changes)) return body.changes;
+  const encoding = String(body.changesEncoding || body.encoding || '').trim().toLowerCase();
+  const payload = String(body.changesPayload || body.payload || '').trim();
+  if (!payload) return [];
+  const bytes = Buffer.from(payload, 'base64');
+  const jsonText = encoding.includes('gzip')
+    ? gunzipSync(bytes).toString('utf8')
+    : bytes.toString('utf8');
+  const decoded = JSON.parse(jsonText);
+  if (!Array.isArray(decoded)) throw new Error('Compressed pending changes payload must decode to an array.');
+  return decoded;
+}
+
+function isSimpleMaterializationChange(change) {
+  if (!change || change.entityType === 'system') return false;
+  if (change.operation === 'reset_store_data') return false;
+  if (change.entityType === 'stock_movement') return false;
+  return change.operation === 'delete' || change.operation === 'upsert' || change.operation === 'create' || change.operation === 'update';
+}
+
+function latestSimpleMaterializationRows(changes) {
+  const byKey = new Map();
+  for (const change of changes) {
+    if (!isSimpleMaterializationChange(change)) continue;
+    const key = [change.storeId, change.branchId || 'main', change.entityType, change.entityId].join('|');
+    byKey.set(key, {
+      store_id: change.storeId,
+      branch_id: change.branchId || 'main',
+      entity_type: change.entityType,
+      entity_id: change.entityId,
+      operation: change.operation === 'delete' ? 'delete' : 'upsert',
+      payload: change.payload || {},
+      updated_at: change.createdAt || new Date().toISOString(),
+    });
+  }
+  return Array.from(byKey.values());
+}
+
+async function materializeSimpleChangesBulk(changes) {
+  const rows = latestSimpleMaterializationRows(changes);
+  if (!rows.length) return;
+  await sql`
+    with incoming as (
+      select *
+      from jsonb_to_recordset(${JSON.stringify(rows)}::jsonb) as x(
+        store_id text,
+        branch_id text,
+        entity_type text,
+        entity_id text,
+        operation text,
+        payload jsonb,
+        updated_at timestamptz
+      )
+    )
+    insert into entity_snapshots (store_id, branch_id, entity_type, entity_id, payload, operation, updated_at)
+    select store_id, branch_id, entity_type, entity_id, payload, operation, updated_at
+    from incoming
+    on conflict (store_id, branch_id, entity_type, entity_id) do update set
+      payload = excluded.payload,
+      operation = excluded.operation,
+      updated_at = excluded.updated_at
+    where
+      (case when coalesce(excluded.payload->>'version', '') ~ '^[0-9]+(\\.[0-9]+)?$' then (excluded.payload->>'version')::numeric else 1 end) >
+      (case when coalesce(entity_snapshots.payload->>'version', '') ~ '^[0-9]+(\\.[0-9]+)?$' then (entity_snapshots.payload->>'version')::numeric else 1 end)
+      or (
+        (case when coalesce(excluded.payload->>'version', '') ~ '^[0-9]+(\\.[0-9]+)?$' then (excluded.payload->>'version')::numeric else 1 end) =
+        (case when coalesce(entity_snapshots.payload->>'version', '') ~ '^[0-9]+(\\.[0-9]+)?$' then (entity_snapshots.payload->>'version')::numeric else 1 end)
+        and excluded.updated_at >= entity_snapshots.updated_at
+      )
+  `;
 }
 
 const snapshotCollections = {
@@ -291,7 +380,7 @@ export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Method not allowed' });
 
     const body = req.body || {};
-    const changes = Array.isArray(body.changes) ? body.changes : [];
+    const changes = decodeIncomingChanges(body);
     const fallback = {
       storeId: body.storeId,
       branchId: body.branchId,
@@ -305,9 +394,7 @@ export default async function handler(req, res) {
       await assertAccountOrDevice(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['cloud'] });
     }
 
-    const ackIds = [];
-    let latestAcceptedAt = null;
-    let latestAcceptedSequence = 0;
+    const normalizedChanges = [];
     for (const raw of changes) {
       const change = normalizeChange(raw, fallback);
       assertStoreAllowed(change.storeId);
@@ -315,46 +402,133 @@ export default async function handler(req, res) {
       if (syncV2Kind === 'draftCommand') {
         return res.status(403).json({ ok: false, error: 'Draft commands must be sent to the Host relay, not the authoritative event stream.' });
       }
-      const duplicateRows = await sql`
-        select id, sequence
-        from sync_events
-        where store_id = ${change.storeId}
-          and branch_id = ${change.branchId}
-          and (
-            id = ${change.id}
-            or (${change.eventId} <> '' and event_id = ${change.eventId})
-            or (${change.sourceCommandId} <> '' and source_command_id = ${change.sourceCommandId})
+      normalizedChanges.push(change);
+    }
+
+    const ackIds = [];
+    let latestAcceptedAt = null;
+    let latestAcceptedSequence = 0;
+    const duplicateIds = new Set();
+    if (normalizedChanges.length) {
+      const lookupRows = normalizedChanges.map((change) => ({
+        id: change.id,
+        store_id: change.storeId,
+        branch_id: change.branchId || 'main',
+        event_id: change.eventId || '',
+        source_command_id: change.sourceCommandId || '',
+      }));
+      const duplicates = await sql`
+        with incoming as (
+          select *
+          from jsonb_to_recordset(${JSON.stringify(lookupRows)}::jsonb) as x(
+            id text,
+            store_id text,
+            branch_id text,
+            event_id text,
+            source_command_id text
           )
-        limit 1
+        )
+        select distinct incoming.id as incoming_id, sync_events.sequence
+        from incoming
+        join sync_events on sync_events.store_id = incoming.store_id
+          and sync_events.branch_id = incoming.branch_id
+          and (
+            sync_events.id = incoming.id
+            or (incoming.event_id <> '' and sync_events.event_id = incoming.event_id)
+            or (incoming.source_command_id <> '' and sync_events.source_command_id = incoming.source_command_id)
+          )
       `;
-      if (duplicateRows.length > 0) {
-        latestAcceptedSequence = Math.max(latestAcceptedSequence, Number(duplicateRows[0].sequence || 0));
-        ackIds.push(change.id);
-        continue;
+      for (const row of duplicates) {
+        duplicateIds.add(String(row.incoming_id));
+        latestAcceptedSequence = Math.max(latestAcceptedSequence, Number(row.sequence || 0));
       }
+    }
 
-      // Cloud sequence must be authoritative and monotonic per store/branch.
-      // Device-local sequence values can overlap or move backwards after a
-      // restore/snapshot, so never use the incoming change.sequence as the
-      // server cursor stored in sync_events.
-      change.sequence = await allocateServerSequence(change.storeId, change.branchId);
+    const freshChanges = normalizedChanges.filter((change) => !duplicateIds.has(change.id));
+    const groupedFresh = new Map();
+    for (const change of freshChanges) {
+      const key = [change.storeId, change.branchId || 'main'].join('|');
+      if (!groupedFresh.has(key)) groupedFresh.set(key, []);
+      groupedFresh.get(key).push(change);
+    }
+    for (const group of groupedFresh.values()) {
+      const range = await allocateServerSequenceRange(group[0].storeId, group[0].branchId, group.length);
+      for (let i = 0; i < group.length; i += 1) {
+        group[i].sequence = range.first + i;
+      }
+    }
 
+    const insertedChanges = [];
+    if (freshChanges.length) {
+      const eventRows = freshChanges.map((change) => ({
+        id: change.id,
+        store_id: change.storeId,
+        branch_id: change.branchId || 'main',
+        device_id: change.deviceId,
+        entity_type: change.entityType,
+        entity_id: change.entityId,
+        operation: change.operation,
+        payload: change.payload || {},
+        created_at: change.createdAt,
+        store_epoch: change.storeEpoch,
+        sequence: change.sequence,
+        event_id: change.eventId || '',
+        request_id: change.requestId || '',
+        source_command_id: change.sourceCommandId || '',
+      }));
       const inserted = await sql`
+        with incoming as (
+          select *
+          from jsonb_to_recordset(${JSON.stringify(eventRows)}::jsonb) as x(
+            id text,
+            store_id text,
+            branch_id text,
+            device_id text,
+            entity_type text,
+            entity_id text,
+            operation text,
+            payload jsonb,
+            created_at timestamptz,
+            store_epoch integer,
+            sequence bigint,
+            event_id text,
+            request_id text,
+            source_command_id text
+          )
+        )
         insert into sync_events (
           id, store_id, branch_id, device_id, entity_type, entity_id, operation, payload, created_at, store_epoch, sequence, event_id, request_id, source_command_id
-        ) values (
-          ${change.id}, ${change.storeId}, ${change.branchId}, ${change.deviceId}, ${change.entityType}, ${change.entityId}, ${change.operation}, ${JSON.stringify(change.payload)}, ${change.createdAt}, ${change.storeEpoch}, ${change.sequence}, ${change.eventId}, ${change.requestId}, ${change.sourceCommandId}
         )
-        on conflict (id) do nothing
+        select id, store_id, branch_id, device_id, entity_type, entity_id, operation, payload, created_at, store_epoch, sequence, event_id, request_id, source_command_id
+        from incoming
+        on conflict do nothing
         returning id, sequence
       `;
-      if (inserted.length > 0) {
-        await materializeChange(change);
-        await cleanupExpiredSoftDeletes(change.storeId, change.branchId);
-        latestAcceptedSequence = Math.max(latestAcceptedSequence, Number(inserted[0].sequence || change.sequence || 0));
+      const insertedById = new Map(inserted.map((row) => [String(row.id), Number(row.sequence || 0)]));
+      for (const change of freshChanges) {
+        if (!insertedById.has(change.id)) continue;
+        latestAcceptedSequence = Math.max(latestAcceptedSequence, insertedById.get(change.id) || change.sequence || 0);
+        insertedChanges.push(change);
       }
-      latestAcceptedAt = change.createdAt;
+      await materializeSimpleChangesBulk(insertedChanges);
+      for (const change of insertedChanges) {
+        if (isSimpleMaterializationChange(change)) continue;
+        await materializeChange(change);
+      }
+    }
+
+    const cleanupKeys = new Set();
+    for (const change of insertedChanges) {
+      cleanupKeys.add([change.storeId, change.branchId || 'main'].join('|'));
+    }
+    for (const key of cleanupKeys) {
+      const [cleanupStoreId, cleanupBranchId] = key.split('|');
+      await cleanupExpiredSoftDeletes(cleanupStoreId, cleanupBranchId);
+    }
+
+    for (const change of normalizedChanges) {
       ackIds.push(change.id);
+      latestAcceptedAt = change.createdAt;
     }
 
     const deviceId = String(body.deviceId || body.device_id || req.headers['x-device-id'] || fallback.deviceId || '').trim();

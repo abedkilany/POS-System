@@ -3854,8 +3854,13 @@ class _StressLabPageState extends State<StressLabPage> {
             : warn > 0
                 ? tr.text('stress_lab_passed_with_warnings')
                 : tr.text('stress_lab_passed');
-    return Scaffold(
-      body: Padding(
+    return PopScope(
+      canPop: !_running,
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(tr.text('stress_lab')),
+        ),
+        body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3973,6 +3978,7 @@ class _StressLabPageState extends State<StressLabPage> {
             ),
           ],
         ),
+      ),
       ),
     );
   }
