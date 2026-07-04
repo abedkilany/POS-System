@@ -2419,17 +2419,24 @@ class CloudSyncService {
     }
   }
 
-  _CloudSnapshotRelayJob? _buildRelaySnapshotJob(
+  Future<_CloudSnapshotRelayJob?> _buildRelaySnapshotJob(
     String snapshotKind, {
     String rebuildRequestId = '',
     int requiredMinSequence = 0,
-  }) {
+  }) async {
     final kind =
         snapshotKind.trim().isEmpty ? 'full_store' : snapshotKind.trim();
+    if (kind != 'login_bootstrap') {
+      await store.ensureHeavyDataLoaded();
+    }
     final chunks = kind == 'login_bootstrap'
         ? store.exportCloudLoginBootstrapSnapshotChunks()
         : store.exportCloudBootstrapSnapshotChunks(maxItemsPerChunk: 300);
     if (chunks.isEmpty) return null;
+    if (kind != 'login_bootstrap' &&
+        !_relaySnapshotHasBusinessCollections(chunks)) {
+      return null;
+    }
     final envelope = store.unifiedSnapshotPayloadFromChunks(chunks);
     final cleanRebuildRequestId = rebuildRequestId.trim();
     if (cleanRebuildRequestId.isNotEmpty) {
@@ -2456,6 +2463,17 @@ class CloudSyncService {
     _pruneExpiredRelaySnapshotJobs();
     _relaySnapshotJobs[jobId] = job;
     return job;
+  }
+
+  bool _relaySnapshotHasBusinessCollections(
+    List<Map<String, dynamic>> chunks,
+  ) {
+    for (final chunk in chunks) {
+      final collection = (chunk['collection'] ?? '').toString().trim();
+      if (collection.isEmpty || collection == '_meta') continue;
+      return true;
+    }
+    return false;
   }
 
   _CloudSnapshotRelayJob? _relaySnapshotJob(String jobId) {
@@ -2516,7 +2534,7 @@ class CloudSyncService {
                         0)
                     .toString()) ??
             0;
-        final job = _buildRelaySnapshotJob(
+        final job = await _buildRelaySnapshotJob(
           snapshotKind,
           rebuildRequestId: rebuildRequestId,
           requiredMinSequence: requiredMinSequence,
@@ -3509,9 +3527,12 @@ class CloudSyncService {
       return 0;
     }
     await store.removeLegacyCloudBootstrapSnapshotQueue();
+    await store.ensureHeavyDataLoaded();
     final chunks =
         store.exportCloudBootstrapSnapshotChunks(maxItemsPerChunk: 300);
-    if (chunks.isEmpty) return 0;
+    if (chunks.isEmpty || !_relaySnapshotHasBusinessCollections(chunks)) {
+      return 0;
+    }
     return const UnifiedSnapshotTransferService().uploadChunks(
       _CloudSnapshotPushTransport(
         settings: settings,
