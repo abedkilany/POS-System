@@ -4160,9 +4160,17 @@ class AppStore extends ChangeNotifier {
     final eventId = (meta['eventId'] ?? '').toString();
     if (eventId.isNotEmpty && existingEventIds.contains(eventId)) return true;
 
+    // Client drafts can arrive more than once when the ACK is lost or the
+    // request times out.  Older Host events stored the original draft id in
+    // `sourceCommandId`, while newer envelopes also carry a stable `requestId`.
+    // Treat both as idempotency keys so a retry is ACKed/skipped instead of
+    // being re-applied as a fresh authoritative Host event.
     final sourceCommandId = (meta['sourceCommandId'] ?? '').toString();
-    if (sourceCommandId.isNotEmpty &&
-        acceptedSourceCommandIds.contains(sourceCommandId)) {
+    final requestId = (meta['requestId'] ?? '').toString();
+    if ((sourceCommandId.isNotEmpty &&
+            acceptedSourceCommandIds.contains(sourceCommandId)) ||
+        (requestId.isNotEmpty && acceptedSourceCommandIds.contains(requestId)) ||
+        acceptedSourceCommandIds.contains(change.id)) {
       return true;
     }
 
@@ -15208,10 +15216,14 @@ class AppStore extends ChangeNotifier {
         .map((item) => _syncMetaString(item, 'eventId'))
         .where((item) => item.isNotEmpty)
         .toSet();
-    final acceptedSourceCommandIds = _syncChanges
-        .map((item) => _syncMetaString(item, 'sourceCommandId'))
-        .where((item) => item.isNotEmpty)
-        .toSet();
+    final acceptedSourceCommandIds = <String>{
+      ..._syncChanges
+          .map((item) => _syncMetaString(item, 'sourceCommandId'))
+          .where((item) => item.isNotEmpty),
+      ..._syncChanges
+          .map((item) => _syncMetaString(item, 'requestId'))
+          .where((item) => item.isNotEmpty),
+    };
     final lastAppliedSequence = SyncDeviceStateStore.load(
       appIdentity,
     ).lastAppliedSequence;
@@ -15411,7 +15423,7 @@ class AppStore extends ChangeNotifier {
                 'eventId': authoritativeEventId,
                 'acceptedByHostDeviceId': _deviceId,
                 'acceptedAt': acceptedAt.toIso8601String(),
-                'sourceCommandId': change.id,
+                'sourceCommandId': requestId,
                 'sourceCommandDeviceId': change.deviceId,
               },
             }
@@ -15447,6 +15459,8 @@ class AppStore extends ChangeNotifier {
       if (storedSourceCommandId.isNotEmpty) {
         acceptedSourceCommandIds.add(storedSourceCommandId);
       }
+      final storedRequestId = _syncMetaString(storedChange, 'requestId');
+      if (storedRequestId.isNotEmpty) acceptedSourceCommandIds.add(storedRequestId);
       changed = true;
     }
     if (changed) {
@@ -16573,7 +16587,8 @@ class AppStore extends ChangeNotifier {
     for (var i = 0; i < _syncQueue.length; i++) {
       final item = _syncQueue[i];
       if (item.status == 'failed' &&
-          (target == null || item.target == target)) {
+          (target == null || item.target == target) &&
+          (item.nextRetryAt == null || !item.nextRetryAt!.isAfter(now))) {
         _syncQueue[i] = item.copyWith(
           status: 'pending',
           updatedAt: now,
