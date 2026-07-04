@@ -16629,6 +16629,28 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> recoverSubmittedSyncQueue({String? target}) async {
+    final now = DateTime.now();
+    var changed = false;
+    for (var i = 0; i < _syncQueue.length; i++) {
+      final item = _syncQueue[i];
+      if (item.status == 'submitted' &&
+          (target == null || item.target == target)) {
+        _syncQueue[i] = item.copyWith(
+          status: 'pending',
+          lastError:
+              'Recovered legacy submitted sync item for direct Host relay confirmation.',
+          updatedAt: now,
+          clearNextRetryAt: true,
+        );
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    await _saveSyncStateOnly();
+    notifyListeners();
+  }
+
   Future<void> markSyncQueueItemFailed(String queueItemId, String error) async {
     final index = _syncQueue.indexWhere((item) => item.id == queueItemId);
     if (index == -1) return;

@@ -697,34 +697,21 @@ class CloudSyncService {
   static const String _clientCloudRebuildBlockedMessage =
       'Cloud rebuild is paused until the Client finishes sending its pending changes to the Host.';
 
-  Future<bool> _clientCloudHostWorkNeedsDrain(
-    CloudSyncSettings settings, {
-    bool refreshSubmittedRequests = true,
-  }) async {
+  Future<bool> _clientCloudHostWorkNeedsDrain() async {
     if (!store.appIdentity.isClient) return false;
-    try {
-      if (refreshSubmittedRequests) {
-        await _pollSubmittedClientRequests(settings);
-      }
-    } catch (error) {
-      SyncDiagnosticsLog.add(
-        '[SYNC_TRACE] cloudClientDrainGuard:statusPollFailed error=$error',
-      );
-      return true;
-    }
-    // Only Host-accepted-but-not-yet-confirmed Client requests should pause
-    // the Cloud pull path. Previously this used
-    // hasOutstandingSyncWorkForTarget('cloud_host'), which also counts fresh
-    // local pending/failed/rejected rows. That created a deadlock on
-    // Client-Cloud devices: a new local change made the drain guard true before
-    // the push ran, so the Client returned "sync deferred" without sending the
-    // pending change and without pulling Host data.
+
+    // Cloud Client now uses the LAN-style direct Host relay contract:
+    // Client -> Cloud relay -> Host -> final Host ACK in the same request.
+    // The legacy Cloud inbox contract left rows in `submitted` and then waited
+    // for /api/sync/requests/status. That is intentionally disabled for the
+    // direct relay mode because it can block pull/rebuild forever when no
+    // legacy cloud_change_requests row exists.
     //
-    // Fresh pending/failed rows must be allowed to go through the push step.
-    // Rejected rows are final and must not block pulling authoritative Host data.
-    return store.syncQueue.any(
-      (item) => item.target == 'cloud_host' && item.status == 'submitted',
-    );
+    // If an older build left cloud_host rows as submitted, recover them to
+    // pending so the next relay push sends them again and only marks them
+    // synced after the Host ACKs them.
+    await store.recoverSubmittedSyncQueue(target: 'cloud_host');
+    return false;
   }
 
 
@@ -739,12 +726,7 @@ class CloudSyncService {
     await registerCurrentDevice(settings, transport: 'cloud');
     var pushed = 0;
     try {
-      try {
-        pushed += await _pushPendingViaRelay(settings, target: 'cloud_host');
-      } catch (_) {
-        pushed += await _pushPendingToEndpoint(
-            settings, 'cloud_host', '/api/sync/requests/push');
-      }
+      pushed += await _pushPendingViaRelay(settings, target: 'cloud_host');
     } catch (error) {
       return CloudSyncResult(
         ok: false,
@@ -760,7 +742,7 @@ class CloudSyncService {
         (0.08 + attempt * 0.015).clamp(0.08, 0.22).toDouble(),
         'Waiting for Host to confirm pending Client changes (${attempt + 1}/10)...',
       );
-      if (!await _clientCloudHostWorkNeedsDrain(settings)) {
+      if (!await _clientCloudHostWorkNeedsDrain()) {
         return CloudSyncResult(
           ok: true,
           pushed: pushed,
@@ -3597,13 +3579,7 @@ class CloudSyncService {
             .toList();
         final rejected = _decodeRejectedSyncRequests(decoded['rejected']);
         if (rejected.isNotEmpty) await _syncCore.markPushRejected(rejected);
-        if (target == 'cloud_host') {
-          // Relay ACK only means the draft reached the Cloud inbox. It is not a
-          // Host confirmation and must not turn the local draft into confirmed data.
-          await _syncCore.markPushSubmitted(ackIds, fallbackIds: pendingIds);
-        } else {
-          await _syncCore.markPushAcknowledged(ackIds, fallbackIds: pendingIds);
-        }
+        await _syncCore.markPushAcknowledged(ackIds, fallbackIds: pendingIds);
         totalPushed += pending.length;
       } catch (error) {
         // Keep the affected batch retryable. Already acknowledged previous
@@ -3674,6 +3650,7 @@ class CloudSyncService {
 
     try {
       while (true) {
+        await store.recoverSubmittedSyncQueue(target: target);
         await store.recoverStaleInProgressSyncQueue(target: target);
         await store.retryFailedSyncQueue(target: target);
         final pending = _syncCore
@@ -3926,106 +3903,6 @@ class CloudSyncService {
     }
   }
 
-  Future<void> _pollSubmittedClientRequests(CloudSyncSettings settings) async {
-    final identity = store.appIdentity;
-    if (!identity.isClient) return;
-    final submitted = _syncCore.submittedChangesForTarget('cloud_host');
-    if (submitted.isEmpty) return;
-    final requestIds = submitted.map((item) => item.id).toList();
-    final response = await _client
-        .post(
-          settings.endpoint('/api/sync/requests/status'),
-          headers: _headers(settings),
-          body: jsonEncode({
-            'deviceId': store.deviceId,
-            'storeId': identity.storeId,
-            'branchId': identity.branchId,
-            'requestIds': requestIds,
-          }),
-        )
-        .timeout(const Duration(seconds: 20));
-    if (response.statusCode < 200 || response.statusCode >= 300) return;
-    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-    final acceptedRaw = decoded['acceptedIds'] ?? decoded['accepted_ids'];
-    final acceptedIds = (acceptedRaw is List ? acceptedRaw : const <dynamic>[])
-        .map((item) => '$item')
-        .where((item) => item.trim().isNotEmpty)
-        .toList();
-    final rejected = _decodeRejectedSyncRequests(decoded['rejected']);
-
-    // A relay ACK only means the Cloud server received the request. The final
-    // decision comes later from the Host. Once the Host reports accepted, mark
-    // the draft as acknowledged so the Client no longer counts it as pending.
-    if (acceptedIds.isNotEmpty) {
-      await _syncCore.markPushAcknowledged(acceptedIds);
-    }
-
-    // Rejected drafts must not remain as normal local data. AppStore will mark
-    // the queue row as rejected and quarantine local creates that the Host did
-    // not accept, e.g. duplicate product code/barcode.
-    if (rejected.isNotEmpty) await _syncCore.markPushRejected(rejected);
-  }
-
-  Future<int> _hostPullRemoteRequests(CloudSyncSettings settings) async {
-    final identity = store.appIdentity;
-    if (!identity.isHost) return 0;
-    final pull = await _client
-        .get(
-          settings.endpoint('/api/sync/requests/pull', {
-            'store_id': identity.storeId,
-            'branch_id': identity.branchId,
-            'host_device_id': store.deviceId,
-          }),
-          headers: _headers(settings),
-        )
-        .timeout(const Duration(seconds: 20));
-    if (pull.statusCode < 200 || pull.statusCode >= 300) {
-      throw StateError(
-          'Cloud request pull failed: ${pull.statusCode} ${pull.body}');
-    }
-    final decoded = jsonDecode(pull.body) as Map<String, dynamic>;
-    final changes = _syncCore.filterOutLocalEchoes(
-      _syncCore.decodeRemoteChanges(decoded['changes'] as List<dynamic>?),
-    );
-    if (changes.isEmpty) return 0;
-
-    // Accept Client drafts on the Host first. Once local Host persistence is
-    // verified, ACK the relay request immediately; the Client must not stay
-    // pending just because the Host -> Cloud publish later times out.
-    final accepted = await _syncCore.acceptClientChangesOnHost(
-      changes,
-      mirrorToCloud: true,
-      verifyApplied: true,
-    );
-
-    final ackIds = accepted.ackIds;
-    final ack = await _client
-        .post(
-          settings.endpoint('/api/sync/requests/ack'),
-          headers: _headers(settings),
-          body: jsonEncode({
-            'storeId': identity.storeId,
-            'branchId': identity.branchId,
-            'hostDeviceId': store.deviceId,
-            'ackIds': ackIds,
-            'rejected': accepted.rejected.entries
-                .map((entry) => {'id': entry.key, 'reason': entry.value})
-                .toList(),
-          }),
-        )
-        .timeout(const Duration(seconds: 20));
-    if (ack.statusCode < 200 || ack.statusCode >= 300) {
-      throw StateError(
-          'Cloud request acknowledgement failed: ${ack.statusCode} ${ack.body}');
-    }
-
-    // Publish the newly authoritative Host events after ACK. If this upload
-    // fails, the Host keeps those cloud queue rows retryable without trapping
-    // the already-accepted Client request in submitted/pending state.
-    await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
-    return changes.length;
-  }
-
   Future<CloudSyncResult> pushPendingForUnifiedEngine(
       CloudSyncSettings settings,
       {CloudSyncProgressCallback? onProgress}) async {
@@ -4041,7 +3918,7 @@ class CloudSyncService {
           ok: false, message: 'Cloud API URL and token are required.');
     }
 
-    if (await _clientCloudHostWorkNeedsDrain(settings)) {
+    if (await _clientCloudHostWorkNeedsDrain()) {
       return const CloudSyncResult(
         ok: true,
         message: _clientCloudDrainMessage,
@@ -4051,7 +3928,6 @@ class CloudSyncService {
 
     try {
       var pushed = 0;
-      var acceptedRemoteRequests = 0;
 
       if (identity.isHost) {
         onProgress?.call(0.10, 'Preparing Host cloud snapshot queue...');
@@ -4071,54 +3947,32 @@ class CloudSyncService {
         onProgress?.call(
             0.55, 'Publishing Host changes through Cloud relay...');
         final relayPublished = await _broadcastHostAuthorityViaRelay(settings);
-        if (relayPublished) {
-          pushed = hostPendingCount;
-          await runCloudMaintenance(settings);
-          return CloudSyncResult(
-            ok: true,
-            pushed: pushed,
+        if (!relayPublished) {
+          return const CloudSyncResult(
+            ok: false,
             message:
-                'Host cloud relay completed. Broadcast $pushed authoritative change(s).',
+                'Host cloud relay failed. Legacy Cloud fallback is disabled; retry when the relay is available.',
           );
         }
-
-        onProgress?.call(0.55, 'Checking Client requests...');
-        acceptedRemoteRequests = await _hostPullRemoteRequests(settings);
-        onProgress?.call(0.75, 'Uploading authoritative Host changes...');
-        await store.repairMissingHostCloudQueueForPendingChanges();
-        pushed +=
-            await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
+        pushed = hostPendingCount;
         await runCloudMaintenance(settings);
         return CloudSyncResult(
           ok: true,
           pushed: pushed,
           message:
-              'Host cloud push completed. Accepted $acceptedRemoteRequests remote request(s), pushed $pushed authoritative change(s).',
+              'Host cloud relay completed. Broadcast $pushed authoritative change(s).',
         );
       }
 
       onProgress?.call(0.12, 'Registering Client device...');
       await registerCurrentDevice(settings, transport: 'cloud');
       onProgress?.call(0.22, 'Sending Client requests to Host relay...');
-      try {
-        pushed += await _pushPendingViaRelay(settings, target: 'cloud_host');
-        return CloudSyncResult(
-            ok: true,
-            pushed: pushed,
-            message:
-                'Client cloud push completed. Sent $pushed request(s) to Host relay.');
-      } catch (_) {
-        onProgress?.call(
-            0.22, 'Falling back to the legacy Cloud request queue...');
-        await _pollSubmittedClientRequests(settings);
-        pushed += await _pushPendingToEndpoint(
-            settings, 'cloud_host', '/api/sync/requests/push');
-        return CloudSyncResult(
-            ok: true,
-            pushed: pushed,
-            message:
-                'Client cloud push completed. Sent $pushed request(s) to Host relay.');
-      }
+      pushed += await _pushPendingViaRelay(settings, target: 'cloud_host');
+      return CloudSyncResult(
+          ok: true,
+          pushed: pushed,
+          message:
+              'Client cloud push completed. Sent $pushed request(s) to Host relay and received Host ACK.');
     } catch (error) {
       return CloudSyncResult(ok: false, message: 'Cloud push failed: $error');
     }
@@ -4211,7 +4065,7 @@ class CloudSyncService {
           ok: false, message: 'Cloud API URL and token are required.');
     }
 
-    if (await _clientCloudHostWorkNeedsDrain(settings)) {
+    if (await _clientCloudHostWorkNeedsDrain()) {
       return const CloudSyncResult(
         ok: true,
         message: _clientCloudDrainMessage,
@@ -4492,7 +4346,6 @@ class CloudSyncService {
     try {
       var pushed = 0;
       var pulled = 0;
-      var acceptedRemoteRequests = 0;
 
       if (identity.isHost) {
         onProgress?.call(0.10, 'Preparing Host cloud snapshot queue...');
@@ -4507,12 +4360,18 @@ class CloudSyncService {
         await sendHostHeartbeat(settings);
         onProgress?.call(0.40, 'Registering Host device...');
         await registerCurrentDevice(settings, transport: 'cloud');
-        onProgress?.call(0.55, 'Checking Client requests...');
-        acceptedRemoteRequests = await _hostPullRemoteRequests(settings);
-        onProgress?.call(0.75, 'Uploading authoritative Host changes...');
-        await store.repairMissingHostCloudQueueForPendingChanges();
-        pushed +=
-            await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
+        final hostPendingCount =
+            _syncCore.pendingChangesForTarget('cloud').length;
+        onProgress?.call(0.55, 'Publishing Host changes through Cloud relay...');
+        final relayPublished = await _broadcastHostAuthorityViaRelay(settings);
+        if (!relayPublished) {
+          return const CloudSyncResult(
+            ok: false,
+            message:
+                'Host cloud relay failed. Legacy Cloud fallback is disabled; retry when the relay is available.',
+          );
+        }
+        pushed = hostPendingCount;
         onProgress?.call(
             0.90, 'Running safe local sync history maintenance...');
         await store.compactSyncedSyncHistoryForMaintenance();
@@ -4524,7 +4383,7 @@ class CloudSyncService {
           pushed: pushed,
           pulled: 0,
           message:
-              'Host Cloud sync completed. Accepted $acceptedRemoteRequests remote request(s), pushed $pushed authoritative change(s).',
+              'Host Cloud sync completed through relay. Broadcast $pushed authoritative change(s).',
         );
       } else {
         // Any cloud-enabled Client that has local draft changes should send
@@ -4534,19 +4393,7 @@ class CloudSyncService {
         onProgress?.call(0.12, 'Registering Client device...');
         await registerCurrentDevice(settings, transport: 'cloud');
         onProgress?.call(0.28, 'Sending Client requests to Host relay...');
-        pushed += await _pushPendingToEndpoint(
-            settings, 'cloud_host', '/api/sync/requests/push');
-
-        if (await _clientCloudHostWorkNeedsDrain(settings)) {
-          onProgress?.call(1.0, _clientCloudDrainMessage);
-          return CloudSyncResult(
-            ok: true,
-            pushed: pushed,
-            pulled: 0,
-            message: _clientCloudDrainMessage,
-            syncDeferred: true,
-          );
-        }
+        pushed += await _pushPendingViaRelay(settings, target: 'cloud_host');
       }
 
       // Freeze the sequence watermark for the whole paginated pull. Reading

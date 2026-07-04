@@ -1709,7 +1709,7 @@ class LanSyncService {
           .toList();
       final rejected = _decodeRejectedSyncRequests(decoded['rejected']);
       if (rejected.isNotEmpty) await _syncCore.markPushRejected(rejected);
-      await _syncCore.markPushSubmitted(ackIds, fallbackIds: pendingIds);
+      await _syncCore.markPushAcknowledged(ackIds, fallbackIds: pendingIds);
       await store.clearSuspendedByHost();
       return LanSyncResult(
           ok: true,
@@ -1923,7 +1923,7 @@ class LanSyncService {
         if (rejected.isNotEmpty) await _syncCore.markPushRejected(rejected);
         onProgress?.call(
             0.48, 'Host accepted ${ackIds.length} pushed change(s)...');
-        await _syncCore.markPushSubmitted(ackIds);
+        await _syncCore.markPushAcknowledged(ackIds);
         pushCompleted = true;
       }
 
