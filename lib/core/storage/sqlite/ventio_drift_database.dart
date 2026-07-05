@@ -15,7 +15,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
       : super(executor ?? openVentioSqliteConnection());
 
   @override
-  int get schemaVersion => 14;
+  int get schemaVersion => 15;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -132,6 +132,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
     await _ensureLastModifiedByDeviceIdColumns();
 
     await _createAccountingFoundation();
+    await _createSummaryFoundation();
 
     await customStatement('''
       CREATE TABLE IF NOT EXISTS sync_events (
@@ -1587,6 +1588,78 @@ class VentioDriftDatabase extends GeneratedDatabase {
         Variable<String>(DateTime.now().toUtc().toIso8601String()),
       ],
     );
+  }
+
+
+  Future<void> _createSummaryFoundation() async {
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS dashboard_daily_summary (
+        day TEXT PRIMARY KEY NOT NULL,
+        sales_total REAL NOT NULL DEFAULT 0,
+        profit_total REAL NOT NULL DEFAULT 0,
+        invoice_count INTEGER NOT NULL DEFAULT 0,
+        expenses_total REAL NOT NULL DEFAULT 0,
+        purchases_total REAL NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_dashboard_daily_summary_updated ON dashboard_daily_summary(updated_at);');
+
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS dashboard_expense_category_summary (
+        category TEXT PRIMARY KEY NOT NULL,
+        amount REAL NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_dashboard_expense_category_amount ON dashboard_expense_category_summary(amount);');
+
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS stock_summary (
+        product_id TEXT PRIMARY KEY NOT NULL,
+        product_name TEXT NOT NULL DEFAULT '',
+        stock REAL NOT NULL DEFAULT 0,
+        low_stock_threshold REAL NOT NULL DEFAULT 0,
+        cost_value REAL NOT NULL DEFAULT 0,
+        retail_value REAL NOT NULL DEFAULT 0,
+        is_low_stock INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_summary_low ON stock_summary(is_low_stock, product_name);');
+
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS customer_balance_summary (
+        customer_id TEXT PRIMARY KEY NOT NULL,
+        customer_name TEXT NOT NULL DEFAULT '',
+        balance REAL NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_customer_balance_summary_balance ON customer_balance_summary(balance);');
+
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS supplier_balance_summary (
+        supplier_id TEXT PRIMARY KEY NOT NULL,
+        supplier_name TEXT NOT NULL DEFAULT '',
+        balance REAL NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_supplier_balance_summary_balance ON supplier_balance_summary(balance);');
+
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS dashboard_kv_summary (
+        key TEXT PRIMARY KEY NOT NULL,
+        value_json TEXT NOT NULL DEFAULT '{}',
+        updated_at TEXT NOT NULL
+      );
+    ''');
   }
 
   Future<void> _createAccountingFoundation() async {

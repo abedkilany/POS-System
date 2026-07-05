@@ -22,6 +22,7 @@ import '../../core/services/local_auto_backup_service.dart';
 import '../../core/services/app_update_service.dart';
 import '../../core/services/sync_diagnostics_log.dart';
 import '../../core/services/page_timing_scope.dart';
+import '../../core/repositories/business_repositories.dart';
 import '../../core/shortcuts/app_shortcuts.dart';
 import '../../core/sync_unified/sync_device_state.dart';
 import '../../core/sync_unified/sync_unified.dart';
@@ -40,6 +41,28 @@ import 'users_permissions_page.dart';
 
 part 'settings_page_backup.dart';
 part 'settings_page_sync_shared.dart';
+
+Future<BackupSummary> _loadBackupSummary(AppStore store) async {
+  final counts = await Future.wait<int>([
+    ProductRepository.countAll(),
+    CustomerRepository.countAll(),
+    SaleRepository.countAll(),
+    SupplierRepository.countAll(),
+    ExpenseRepository.countAll(),
+  ]);
+  return BackupSummary(
+    version: 11,
+    generatedAt: DateTime.now(),
+    productsCount: counts[0],
+    customersCount: counts[1],
+    salesCount: counts[2],
+    suppliersCount: counts[3],
+    expensesCount: counts[4],
+    storeName: store.storeProfile.name.trim().isEmpty
+        ? 'My Store'
+        : store.storeProfile.name,
+  );
+}
 
 class SettingsPage extends StatelessWidget {
   const SettingsPage(
@@ -688,7 +711,8 @@ class SettingsPage extends StatelessWidget {
             onSelectionChanged: (selection) async {
               final next = selection.first;
               if (next == method) return;
-              await store.setInventoryCostingMethod(
+              await InventoryRepository.setInventoryCostingMethod(
+                store,
                 next,
                 reason: tr.text('changed_from_settings'),
               );
@@ -701,18 +725,7 @@ class SettingsPage extends StatelessWidget {
             tr.text('inventory_costing_method_note'),
             style: Theme.of(context).textTheme.bodySmall,
           ),
-          if (store.costingMethodHistory.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Text(tr.text('history'), style: Theme.of(context).textTheme.titleSmall),
-            for (final row in store.costingMethodHistory.reversed.take(5))
-              ListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.timeline_outlined),
-                title: Text(_costingMethodTitle(tr, row.method)),
-                subtitle: Text('${DateFormat.yMd().add_Hm().format(row.effectiveFrom)}${row.effectiveTo == null ? ' → ${tr.text('active')}' : ' → ${DateFormat.yMd().add_Hm().format(row.effectiveTo!)}'}${row.reason.isEmpty ? '' : ' · ${row.reason}'}'),
-              ),
-          ],
+          _costingMethodHistoryCard(context),
         ],
       ),
     );
@@ -885,6 +898,44 @@ class SettingsPage extends StatelessWidget {
     ];
   }
 
+  Widget _costingMethodHistoryCard(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    final historyFuture = ProductRepository.listCostingMethodHistory();
+    return FutureBuilder<List<CostingMethodHistory>>(
+      future: historyFuture,
+      builder: (context, snapshot) {
+        final history = snapshot.data ?? const <CostingMethodHistory>[];
+        if (snapshot.connectionState != ConnectionState.done &&
+            history.isEmpty) {
+          return const SizedBox.shrink();
+        }
+        if (history.isEmpty) {
+          return const SizedBox.shrink();
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 12),
+            Text(
+              tr.text('history'),
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            for (final row in history.reversed.take(5))
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.timeline_outlined),
+                title: Text(_costingMethodTitle(tr, row.method)),
+                subtitle: Text(
+                  '${DateFormat.yMd().add_Hm().format(row.effectiveFrom)}${row.effectiveTo == null ? ' -> ${tr.text('active')}' : ' -> ${DateFormat.yMd().add_Hm().format(row.effectiveTo!)}'}${row.reason.isEmpty ? '' : ' - ${row.reason}'}',
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
 
   List<Widget> _shortcutCards(BuildContext context) => [
         const _KeyboardShortcutsSettingsCard(),
@@ -918,7 +969,21 @@ class SettingsPage extends StatelessWidget {
                       child: Chip(
                           avatar: const Icon(Icons.storage_outlined, size: 18),
                           label: Text(tr.text('local_db_sqlite'))))),
-              _BackupSummaryCard(summary: store.currentBackupSummary),
+              FutureBuilder<BackupSummary>(
+                future: _loadBackupSummary(store),
+                builder: (context, snapshot) {
+                  final summary = snapshot.data;
+                  if (summary == null) {
+                    return const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 24),
+                      child: Center(
+                        child: CircularProgressIndicator.adaptive(),
+                      ),
+                    );
+                  }
+                  return _BackupSummaryCard(summary: summary);
+                },
+              ),
               if (!isClient) ...[
                 const SizedBox(height: 16),
                 _AutoLocalBackupSettingsCard(store: store),

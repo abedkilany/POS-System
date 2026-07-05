@@ -11,10 +11,11 @@ import 'package:flutter/rendering.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/localization/app_localizations.dart';
+import '../../core/services/business_revision_service.dart';
+import '../../core/repositories/business_repositories.dart';
 import '../../core/services/local_database_service.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/utils/currency_utils.dart';
-import '../../core/utils/revision_cache.dart';
 import '../../data/app_store.dart';
 import '../../models/expense.dart';
 import '../../models/store_profile.dart';
@@ -37,28 +38,16 @@ class _ExpensesPageState extends State<ExpensesPage> {
   String statusFilter = 'all';
   Timer? _expenseRevealTimer;
   int _visibleExpenseCount = 100;
-  int _expenseRevealTargetCount = 0;
   Future<_ExpenseQueryResult?>? _expenseQueryFuture;
   String _expenseQueryFutureKey = '';
-  final RevisionKeyCache<List<Expense>> _filteredExpensesCache =
-      RevisionKeyCache<List<Expense>>();
-  final RevisionKeyCache<double> _filteredTotalCache =
-      RevisionKeyCache<double>();
-
-  void _handleStoreChanged() {
-    if (!mounted) return;
-    setState(() {});
-  }
 
   @override
   void initState() {
     super.initState();
-    widget.store.addListener(_handleStoreChanged);
   }
 
   @override
   void dispose() {
-    widget.store.removeListener(_handleStoreChanged);
     _expenseRevealTimer?.cancel();
     super.dispose();
   }
@@ -67,12 +56,8 @@ class _ExpensesPageState extends State<ExpensesPage> {
   void didUpdateWidget(covariant ExpensesPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.store != widget.store) {
-      oldWidget.store.removeListener(_handleStoreChanged);
-      widget.store.addListener(_handleStoreChanged);
       _expenseQueryFuture = null;
       _expenseQueryFutureKey = '';
-      _filteredExpensesCache.invalidate();
-      _filteredTotalCache.invalidate();
       _resetExpenseReveal();
     }
   }
@@ -81,42 +66,6 @@ class _ExpensesPageState extends State<ExpensesPage> {
     _expenseRevealTimer?.cancel();
     _expenseRevealTimer = null;
     _visibleExpenseCount = 100;
-    _expenseRevealTargetCount = 0;
-  }
-
-  void _syncExpenseReveal(int totalCount) {
-    _expenseRevealTargetCount = totalCount;
-    if (_visibleExpenseCount > totalCount) {
-      _visibleExpenseCount = totalCount;
-    }
-    if (_visibleExpenseCount >= totalCount) {
-      _expenseRevealTimer?.cancel();
-      _expenseRevealTimer = null;
-      return;
-    }
-    _expenseRevealTimer ??=
-        Timer.periodic(const Duration(milliseconds: 20), (timer) {
-      if (!mounted) {
-        timer.cancel();
-        _expenseRevealTimer = null;
-        return;
-      }
-      if (_visibleExpenseCount >= _expenseRevealTargetCount) {
-        timer.cancel();
-        _expenseRevealTimer = null;
-        return;
-      }
-      setState(() {
-        _visibleExpenseCount = math.min(
-          _expenseRevealTargetCount,
-          _visibleExpenseCount + 100,
-        );
-      });
-      if (_visibleExpenseCount >= _expenseRevealTargetCount) {
-        timer.cancel();
-        _expenseRevealTimer = null;
-      }
-    });
   }
 
   @override
@@ -132,7 +81,6 @@ class _ExpensesPageState extends State<ExpensesPage> {
       return const Center(child: CircularProgressIndicator.adaptive());
     }
     final normalizedQuery = query.trim().toLowerCase();
-    final overview = widget.store.expensesOverview;
     if (LocalDatabaseService.canQueryBusinessSqlite) {
       return FutureBuilder<_ExpenseQueryResult?>(
         future: _queryExpensesFromSqlite(normalizedQuery),
@@ -142,7 +90,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
             return _buildExpensesView(
               context,
               tr,
-              overview: overview,
+              overview: result.overview,
               expenses: result.items,
               totalCount: result.totalCount,
               filteredTotal: result.filteredPostedTotal,
@@ -158,7 +106,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
             return _buildExpensesView(
               context,
               tr,
-              overview: overview,
+              overview: _emptyExpensesOverview(),
               expenses: const <Expense>[],
               totalCount: 0,
               filteredTotal: 0,
@@ -166,69 +114,28 @@ class _ExpensesPageState extends State<ExpensesPage> {
               loading: true,
             );
           }
-          return _buildExpensesFromMemory(
+          return _buildExpensesView(
             context,
             tr,
-            overview,
-            normalizedQuery,
+            overview: _emptyExpensesOverview(),
+            expenses: const <Expense>[],
+            totalCount: 0,
+            filteredTotal: 0,
+            normalizedQuery: normalizedQuery,
+            loading: false,
           );
         },
       );
     }
-    return _buildExpensesFromMemory(
-      context,
-      tr,
-      overview,
-      normalizedQuery,
-    );
-  }
-
-  Widget _buildExpensesFromMemory(
-    BuildContext context,
-    AppLocalizations tr,
-    ExpensesOverview overview,
-    String normalizedQuery,
-  ) {
-    final cacheKey = '$statusFilter|$normalizedQuery';
-    final allExpenses = widget.store.expenses;
-    final useDefaultView = statusFilter == 'all' && normalizedQuery.isEmpty;
-    final expenses = useDefaultView
-        ? allExpenses
-        : _filteredExpensesCache.getOrCompute(
-            widget.store.expensesRevision,
-            cacheKey,
-            () => allExpenses.where((expense) {
-              final matchesStatus = statusFilter == 'all' ||
-                  (statusFilter == 'draft' && expense.isDraft) ||
-                  (statusFilter == 'posted' && expense.isPosted) ||
-                  (statusFilter == 'cancelled' && expense.isCancelled);
-              if (!matchesStatus) return false;
-              if (normalizedQuery.isEmpty) return true;
-              return expense.searchText.contains(normalizedQuery);
-            }).toList(growable: false),
-          );
-    final filteredTotal = useDefaultView
-        ? overview.totalExpensesAmount
-        : _filteredTotalCache.getOrCompute(
-            widget.store.expensesRevision,
-            cacheKey,
-            () => expenses
-                .where((expense) => expense.isPosted)
-                .fold<double>(0, (sum, expense) => sum + expense.amount),
-          );
-    _syncExpenseReveal(expenses.length);
-    final visibleExpenses =
-        expenses.take(math.min(_visibleExpenseCount, expenses.length)).toList(
-              growable: false,
-            );
     return _buildExpensesView(
       context,
       tr,
-      overview: overview,
-      expenses: visibleExpenses,
-      totalCount: expenses.length,
-      filteredTotal: filteredTotal,
+      overview: _emptyExpensesOverview(),
+      expenses: const <Expense>[],
+      totalCount: 0,
+      filteredTotal: 0,
       normalizedQuery: normalizedQuery,
+      loading: false,
     );
   }
 
@@ -237,19 +144,23 @@ class _ExpensesPageState extends State<ExpensesPage> {
   ) {
     final limit = math.max(1, _visibleExpenseCount);
     final key =
-        '${widget.store.expensesRevision}|$statusFilter|$normalizedQuery|$limit';
+        '${BusinessRevisionService.instance.expensesRevision}|$statusFilter|$normalizedQuery|$limit';
     if (_expenseQueryFuture == null || _expenseQueryFutureKey != key) {
       _expenseQueryFutureKey = key;
       _expenseQueryFuture = () async {
-        final page = await LocalDatabaseService.queryExpensesFromSqlite(
+        final page = await ExpenseRepository.queryPage(
           query: normalizedQuery,
           status: statusFilter,
           limit: limit,
         );
         if (page == null) return null;
+        final overview = await ExpenseRepository.buildOverview(
+          query: normalizedQuery,
+          status: statusFilter,
+        );
         final filteredPostedTotal = normalizedQuery.isEmpty
-            ? widget.store.expensesOverview.totalExpensesAmount
-            : await LocalDatabaseService.sumPostedExpensesFromSqlite(
+            ? _overviewFromMap(overview).totalExpensesAmount
+            : await ExpenseRepository.sumPosted(
                   query: normalizedQuery,
                   status: statusFilter,
                 ) ??
@@ -257,6 +168,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
         return _ExpenseQueryResult(
           items: page.items,
           totalCount: page.totalCount,
+          overview: _overviewFromMap(overview),
           filteredPostedTotal: filteredPostedTotal,
         );
       }();
@@ -520,7 +432,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
       return;
     }
     try {
-      await widget.store.deleteDraftExpense(expense.id);
+      await ExpenseRepository.deleteDraftExpense(widget.store, expense.id);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -564,7 +476,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
       return;
     }
     try {
-      await widget.store.postExpense(expense.id);
+      await ExpenseRepository.postExpense(widget.store, expense.id);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(tr.text('expense_posted'))),
@@ -620,7 +532,11 @@ class _ExpensesPageState extends State<ExpensesPage> {
     final reason = reasonController.text.trim();
     reasonController.dispose();
     try {
-      await widget.store.cancelExpense(expense.id, reason: reason);
+      await ExpenseRepository.cancelExpense(
+        widget.store,
+        expense.id,
+        reason: reason,
+      );
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(tr.text('expense_cancelled'))),
@@ -658,7 +574,10 @@ class _ExpensesPageState extends State<ExpensesPage> {
       return;
     }
     try {
-      await widget.store.permanentlyDeleteCancelledExpense(expense.id);
+      await ExpenseRepository.permanentlyDeleteCancelledExpense(
+        widget.store,
+        expense.id,
+      );
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(tr.text('expense_permanently_deleted'))),
@@ -676,17 +595,19 @@ class _ExpensesPageState extends State<ExpensesPage> {
   Future<void> _openExpenseForm(BuildContext context,
       {Expense? expense}) async {
     if (!widget.store.canManageExpenses) return;
+    final catalogUsage = await ExpenseRepository.readCatalogUsage();
+    if (!context.mounted) return;
     final result = await showDialog<Expense>(
       context: context,
       builder: (_) => _ExpenseDialog(
         expense: expense,
         storeProfile: widget.store.storeProfile,
-        existingExpenses: widget.store.expenses,
+        existingCatalogUsage: _catalogUsageFromMap(catalogUsage),
       ),
     );
     if (result != null) {
       try {
-        await widget.store.addOrUpdateExpense(result);
+        await ExpenseRepository.addOrUpdateExpense(widget.store, result);
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
               content: Text(AppLocalizations.of(context).text(expense == null
@@ -707,15 +628,83 @@ class _ExpensesPageState extends State<ExpensesPage> {
 class _ExpenseQueryResult {
   const _ExpenseQueryResult({
     required this.items,
+    required this.overview,
     required this.totalCount,
     required this.filteredPostedTotal,
   });
 
   final List<Expense> items;
+  final ExpensesOverview overview;
   final int totalCount;
   final double filteredPostedTotal;
 
   bool get hasMore => items.length < totalCount;
+}
+
+ExpensesOverview _emptyExpensesOverview() => const ExpensesOverview(
+      totalCount: 0,
+      totalExpensesAmount: 0,
+      draftCount: 0,
+      postedCount: 0,
+      cancelledCount: 0,
+      categoryCount: 0,
+    );
+
+ExpensesOverview _overviewFromMap(Map<String, Object?>? data) {
+  int readInt(String key) => (data?[key] as num?)?.toInt() ?? 0;
+  double readDouble(String key) => (data?[key] as num?)?.toDouble() ?? 0.0;
+  if (data == null) return _emptyExpensesOverview();
+  return ExpensesOverview(
+    totalCount: readInt('totalCount'),
+    totalExpensesAmount: readDouble('totalExpensesAmount'),
+    draftCount: readInt('draftCount'),
+    postedCount: readInt('postedCount'),
+    cancelledCount: readInt('cancelledCount'),
+    categoryCount: readInt('categoryCount'),
+  );
+}
+
+_ExpenseCatalogUsage _catalogUsageFromMap(Map<String, Object?>? data) {
+  final categories = <String>{};
+  final typesByCategory = <String, Set<String>>{};
+  final rawCategories = data?['categories'];
+  if (rawCategories is List) {
+    for (final item in rawCategories.whereType<String>()) {
+      final normalized = item.trim();
+      if (normalized.isNotEmpty) categories.add(normalized);
+    }
+  }
+  final rawTypes = data?['typesByCategory'];
+  if (rawTypes is Map) {
+    for (final entry in rawTypes.entries) {
+      final category = entry.key.toString().trim();
+      if (category.isEmpty) continue;
+      final values = <String>{};
+      if (entry.value is List) {
+        for (final item in (entry.value as List).whereType<String>()) {
+          final normalized = item.trim();
+          if (normalized.isNotEmpty) values.add(normalized);
+        }
+      }
+      if (values.isNotEmpty) {
+        typesByCategory[category] = values;
+      }
+    }
+  }
+  return _ExpenseCatalogUsage(
+    categories: categories,
+    typesByCategory: typesByCategory,
+  );
+}
+
+class _ExpenseCatalogUsage {
+  const _ExpenseCatalogUsage({
+    required this.categories,
+    required this.typesByCategory,
+  });
+
+  final Set<String> categories;
+  final Map<String, Set<String>> typesByCategory;
 }
 
 class _AccessDeniedScaffold extends StatelessWidget {
@@ -933,12 +922,12 @@ class _ExpenseDialog extends StatefulWidget {
   const _ExpenseDialog({
     this.expense,
     required this.storeProfile,
-    required this.existingExpenses,
+    required this.existingCatalogUsage,
   });
 
   final Expense? expense;
   final StoreProfile storeProfile;
-  final List<Expense> existingExpenses;
+  final _ExpenseCatalogUsage existingCatalogUsage;
 
   @override
   State<_ExpenseDialog> createState() => _ExpenseDialogState();
@@ -1097,19 +1086,23 @@ class _ExpenseDialogState extends State<_ExpenseDialog> {
 
   void _mergeLegacyExpensesIntoCatalog() {
     var changed = false;
-    for (final expense in widget.existingExpenses) {
-      final category = expense.category.trim();
-      final type = expense.title.trim();
-      if (category.isEmpty) continue;
+    for (final category in widget.existingCatalogUsage.categories) {
       if (!_categories
           .any((item) => item.en.toLowerCase() == category.toLowerCase())) {
         _categories.add(_ExpenseCatalogItem(en: category, ar: ''));
         changed = true;
       }
+    }
+    for (final entry in widget.existingCatalogUsage.typesByCategory.entries) {
+      final category = entry.key.trim();
+      if (category.isEmpty) continue;
       final types =
           _typesByCategory.putIfAbsent(category, () => <_ExpenseCatalogItem>[]);
-      if (type.isNotEmpty &&
-          !types.any((item) => item.en.toLowerCase() == type.toLowerCase())) {
+      for (final type in entry.value) {
+        if (type.isEmpty ||
+            types.any((item) => item.en.toLowerCase() == type.toLowerCase())) {
+          continue;
+        }
         types.add(_ExpenseCatalogItem(en: type, ar: ''));
         changed = true;
       }
@@ -1337,8 +1330,8 @@ class _ExpenseDialogState extends State<_ExpenseDialog> {
       context: context,
       title: AppLocalizations.of(context).text('manage_expense_categories'),
       items: _categories,
-      isUsed: (name) => widget.existingExpenses.any((expense) =>
-          expense.category.trim().toLowerCase() == name.toLowerCase()),
+      isUsed: (name) => widget.existingCatalogUsage.categories
+          .any((category) => category.toLowerCase() == name.toLowerCase()),
       onRenamed: (oldName, newName) {
         final existingTypes =
             _typesByCategory.remove(oldName) ?? <_ExpenseCatalogItem>[];
@@ -1362,9 +1355,10 @@ class _ExpenseDialogState extends State<_ExpenseDialog> {
       title:
           '${AppLocalizations.of(context).text('manage_expense_types')} - $category',
       items: items,
-      isUsed: (name) => widget.existingExpenses.any((expense) =>
-          expense.category.trim().toLowerCase() == category.toLowerCase() &&
-          expense.title.trim().toLowerCase() == name.toLowerCase()),
+      isUsed: (name) =>
+          widget.existingCatalogUsage.typesByCategory[category]
+              ?.any((type) => type.toLowerCase() == name.toLowerCase()) ??
+          false,
       onRenamed: (oldName, newName) {
         if (selectedExpenseType == oldName) selectedExpenseType = newName;
       },

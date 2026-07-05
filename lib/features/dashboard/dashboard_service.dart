@@ -4,9 +4,10 @@ import '../../core/services/accounting_aging_service.dart';
 import '../../core/services/accounting_service.dart';
 import '../../core/services/google_drive_backup_service.dart';
 import '../../core/services/local_auto_backup_service.dart';
+import '../../core/services/local_database_service.dart';
 import '../../data/app_store.dart';
 import '../../models/aging_report.dart';
-import '../../models/sale.dart';
+import 'dashboard_snapshot_service.dart';
 
 enum DashboardStatusLevel { healthy, warning, danger, neutral }
 
@@ -163,103 +164,274 @@ class DashboardService {
     DateTime? now,
   }) async {
     final reference = (now ?? DateTime.now()).toLocal();
+    if (LocalDatabaseService.canQueryBusinessSqlite) {
+      return _buildStateFromSqlite(store, reference);
+    }
+    return DashboardSnapshotService().buildState(store, now: reference);
+  }
+
+  Future<DashboardState> _buildStateFromSqlite(
+    AppStore store,
+    DateTime reference,
+  ) async {
+    final summary = await LocalDatabaseService.buildDashboardSummaryFromSqlite(
+          reference: reference,
+        ) ??
+        <String, Object?>{};
+    final customerAging =
+        await AccountingAgingService.customerAgingReport(asOfDate: reference);
+    final supplierAging =
+        await AccountingAgingService.supplierAgingReport(asOfDate: reference);
     final cashTotals = await currentCashTotals(store);
-    final customerAging = AccountingAgingService.customerAgingFromStore(
-      sales: store.sales,
-      accountTransactions: store.accountTransactions,
-      asOfDate: reference,
-    );
-    final supplierAging = AccountingAgingService.supplierAgingFromStore(
-      purchases: store.purchases,
-      accountTransactions: store.accountTransactions,
-      asOfDate: reference,
-    );
-    final salesToday = todaySalesAmount(store, reference);
-    final profitToday = todayProfitAmount(store, reference);
-    final invoiceCount = todayInvoiceCount(store, reference);
     final accountingSummary = await AccountingService.incomeStatementReport();
-    final cash = cashTotals.cash;
-    final lowStock = lowStockCount(store);
-    final operations = recentOperations(store, reference: reference);
-    final sync = syncStatus(store, reference: reference);
+    final sync = syncStatus(
+      store,
+      reference: reference,
+      pendingSyncCount: _intValue(summary['pendingSyncCount']),
+    );
     final backup = backupStatus(reference: reference);
-    final alerts = dashboardAlerts(
-      store,
-      reference: reference,
-      customerAging: customerAging,
-      supplierAging: supplierAging,
-      cashTotals: cashTotals,
-      syncStatus: sync,
-      backupStatus: backup,
-    );
-    final financialSummary = dashboardFinancialSummary(
-      store,
-      customerAging: customerAging,
-      supplierAging: supplierAging,
-      cashTotals: cashTotals,
-      netProfit: accountingSummary.netProfit,
-      expenseTotal: accountingSummary.expenses,
-    );
-    final charts = dashboardCharts(
-      store,
-      reference: reference,
-      customerAging: customerAging,
-      supplierAging: supplierAging,
-    );
+    final lowStockNames = (summary['lowStockNames'] as List<dynamic>? ?? const <dynamic>[])
+        .map((item) => item.toString())
+        .take(3)
+        .toList(growable: false);
+    final alerts = <DashboardAlertItem>[
+      if (_intValue(summary['lowStockCount']) > 0)
+        DashboardAlertItem(
+          level: DashboardStatusLevel.warning,
+          title: 'Low stock',
+          message:
+              '${_intValue(summary['lowStockCount'])} product(s) need replenishment${lowStockNames.isEmpty ? '' : ': ${lowStockNames.join(', ')}'}',
+          icon: Icons.warning_amber_rounded,
+        ),
+      if (_doubleValue(summary['todayExpenseTotal']) > 0 &&
+          _doubleValue(summary['last7ExpenseAverage']) > 0 &&
+          _doubleValue(summary['todayExpenseTotal']) >
+              _doubleValue(summary['last7ExpenseAverage']) * 1.5)
+        DashboardAlertItem(
+          level: DashboardStatusLevel.warning,
+          title: 'High expense day',
+          message:
+              '${_doubleValue(summary['todayExpenseTotal']).toStringAsFixed(2)} today vs ${_doubleValue(summary['last7ExpenseAverage']).toStringAsFixed(2)} daily average',
+          icon: Icons.trending_down_outlined,
+        ),
+      if (_intValue(summary['blockingConflictCount']) > 0)
+        DashboardAlertItem(
+          level: DashboardStatusLevel.danger,
+          title: 'Blocking conflicts',
+          message:
+              '${_intValue(summary['blockingConflictCount'])} blocking conflict(s) need review',
+          icon: Icons.rule_outlined,
+        ),
+      if (customerAging.total > 0)
+        DashboardAlertItem(
+          level: customerAging.over90 > 0
+              ? DashboardStatusLevel.danger
+              : DashboardStatusLevel.warning,
+          title: 'Open receivables',
+          message:
+              '${customerAging.total.toStringAsFixed(2)} across ${customerAging.openDocuments.length} invoice(s)',
+          icon: Icons.account_balance_outlined,
+        ),
+      if (supplierAging.total > 0)
+        DashboardAlertItem(
+          level: supplierAging.over90 > 0
+              ? DashboardStatusLevel.danger
+              : DashboardStatusLevel.warning,
+          title: 'Open payables',
+          message:
+              '${supplierAging.total.toStringAsFixed(2)} across ${supplierAging.openDocuments.length} bill(s)',
+          icon: Icons.payments_outlined,
+        ),
+      if (backup.level != DashboardStatusLevel.healthy)
+        DashboardAlertItem(
+          level: backup.level,
+          title: 'Backup attention',
+          message: backup.detail,
+          icon: Icons.backup_outlined,
+        ),
+      if (sync.level != DashboardStatusLevel.healthy)
+        DashboardAlertItem(
+          level: sync.level,
+          title: 'Sync attention',
+          message: sync.detail,
+          icon: Icons.sync_problem_outlined,
+        ),
+    ];
+    final financialSummary = <DashboardFinancialItem>[
+      DashboardFinancialItem(
+        key: 'cash',
+        title: 'Cash',
+        amount: cashTotals.cash,
+        icon: Icons.payments_outlined,
+      ),
+      DashboardFinancialItem(
+        key: 'bank',
+        title: 'Bank',
+        amount: cashTotals.bank,
+        icon: Icons.account_balance_outlined,
+      ),
+      DashboardFinancialItem(
+        key: 'cards',
+        title: 'Cards',
+        amount: cashTotals.cards,
+        icon: Icons.credit_card_outlined,
+      ),
+      DashboardFinancialItem(
+        key: 'liquidity',
+        title: 'Liquidity',
+        amount: cashTotals.totalLiquidity,
+        icon: Icons.savings_outlined,
+      ),
+      DashboardFinancialItem(
+        key: 'receivables',
+        title: 'Receivables',
+        amount: customerAging.total,
+        icon: Icons.how_to_reg_outlined,
+      ),
+      DashboardFinancialItem(
+        key: 'payables',
+        title: 'Payables',
+        amount: supplierAging.total,
+        icon: Icons.receipt_long_outlined,
+      ),
+      DashboardFinancialItem(
+        key: 'inventory',
+        title: 'Inventory',
+        amount: _doubleValue(summary['inventoryCostValue']),
+        icon: Icons.warehouse_outlined,
+      ),
+      DashboardFinancialItem(
+        key: 'profit',
+        title: 'Net profit',
+        amount: accountingSummary.netProfit,
+        icon: Icons.trending_up_outlined,
+        level: accountingSummary.netProfit < 0
+            ? DashboardStatusLevel.danger
+            : DashboardStatusLevel.healthy,
+      ),
+      DashboardFinancialItem(
+        key: 'expenses',
+        title: 'Expenses',
+        amount: accountingSummary.expenses,
+        icon: Icons.money_off_csred_outlined,
+      ),
+      DashboardFinancialItem(
+        key: 'purchases',
+        title: 'Purchases',
+        amount: _doubleValue(summary['totalPurchasesAmount']),
+        icon: Icons.shopping_cart_outlined,
+      ),
+    ];
+    final charts = <DashboardChartSeries>[
+      DashboardChartSeries(
+        key: 'sales_7d',
+        title: 'Sales last 7 days',
+        items: _seriesFromSummaryList(summary['salesLast7Days']),
+      ),
+      DashboardChartSeries(
+        key: 'sales_30d',
+        title: 'Sales last 30 days',
+        items: _seriesFromSummaryList(summary['salesLast30Days']),
+      ),
+      DashboardChartSeries(
+        key: 'sales_profit',
+        title: 'Sales vs profit',
+        items: <DashboardChartItem>[
+          DashboardChartItem(
+            label: 'Sales',
+            value: _doubleValue(summary['salesSince30Days']),
+            color: Colors.blue,
+          ),
+          DashboardChartItem(
+            label: 'Profit',
+            value: _doubleValue(summary['profitSince30Days']),
+            color: Colors.green,
+          ),
+        ],
+      ),
+      DashboardChartSeries(
+        key: 'expenses_type',
+        title: 'Expenses by type',
+        items: _seriesFromSummaryList(summary['expenseCategories'],
+            color: Colors.deepOrange),
+      ),
+      DashboardChartSeries(
+        key: 'top_products',
+        title: 'Top products',
+        items: _seriesFromSummaryList(
+          summary['topProducts'],
+          color: Colors.purple,
+        ),
+        displayAsMoney: false,
+      ),
+      DashboardChartSeries(
+        key: 'top_customers',
+        title: 'Top customers',
+        items: _seriesFromSummaryList(summary['topCustomers'],
+            color: Colors.teal),
+      ),
+      DashboardChartSeries(
+        key: 'receivable_pressure',
+        title: 'Receivables pressure',
+        items: <DashboardChartItem>[
+          DashboardChartItem(label: 'Current', value: customerAging.current),
+          DashboardChartItem(
+            label: 'Over 30',
+            value: customerAging.days1To30 +
+                customerAging.days31To60 +
+                customerAging.days61To90 +
+                customerAging.over90,
+          ),
+        ],
+      ),
+      DashboardChartSeries(
+        key: 'payable_pressure',
+        title: 'Payables pressure',
+        items: <DashboardChartItem>[
+          DashboardChartItem(label: 'Current', value: supplierAging.current),
+          DashboardChartItem(
+            label: 'Over 30',
+            value: supplierAging.days1To30 +
+                supplierAging.days31To60 +
+                supplierAging.days61To90 +
+                supplierAging.over90,
+          ),
+        ],
+      ),
+    ];
 
     return DashboardState(
       storeName: store.storeProfile.name.trim().isEmpty
           ? store.appIdentity.storeId
           : store.storeProfile.name,
       generatedAt: reference,
-      todaySalesTotal: salesToday,
-      todayProfitTotal: profitToday,
-      todayInvoiceCount: invoiceCount,
-      currentCashTotal: cash,
-      lowStockCount: lowStock,
+      todaySalesTotal: _doubleValue(summary['todaySalesTotal']),
+      todayProfitTotal: _doubleValue(summary['todayProfitTotal']),
+      todayInvoiceCount: _intValue(summary['todayInvoiceCount']),
+      currentCashTotal: cashTotals.cash,
+      lowStockCount: _intValue(summary['lowStockCount']),
       alerts: alerts,
       financialSummary: financialSummary,
       charts: charts,
-      recentOperations: operations,
+      recentOperations: _recentOperations(summary['recentOperations']),
       syncStatus: sync,
       backupStatus: backup,
     );
   }
 
-  double _saleReportingTotal(Sale sale) {
-    final effectiveAmount = sale.effectiveTransactionAmount;
-    if (effectiveAmount > 0) {
-      return effectiveAmount;
-    }
-    return sale.total;
-  }
-
   double todaySalesAmount(AppStore store, DateTime reference) {
-    return store.sales
-        .where((sale) => _isSameDay(sale.date, reference) && !sale.isDeleted)
-        .fold<double>(0, (sum, sale) => sum + _saleReportingTotal(sale));
+    return 0;
   }
 
   double todayProfitAmount(AppStore store, DateTime reference) {
-    final salesProfit = store.sales
-        .where((sale) => _isSameDay(sale.date, reference) && !sale.isDeleted)
-        .fold<double>(0, (sum, sale) => sum + sale.grossProfit);
-    final expenses = store.expenses
-        .where((expense) =>
-            expense.isPosted &&
-            !expense.isDeleted &&
-            _isSameDay(expense.date, reference))
-        .fold<double>(0, (sum, expense) => sum + expense.amount);
-    return salesProfit - expenses;
+    return 0;
   }
 
   int todayInvoiceCount(AppStore store, DateTime reference) {
-    return store.sales
-        .where((sale) => _isSameDay(sale.date, reference) && !sale.isDeleted)
-        .length;
+    return 0;
   }
 
-  int lowStockCount(AppStore store) => store.lowStockCount;
+  int lowStockCount(AppStore store) => 0;
 
   Future<CashBalanceTotals> currentCashTotals(AppStore store) async {
     if (!AccountingService.isAvailable) return CashBalanceTotals();
@@ -296,24 +468,6 @@ class DashboardService {
     required DashboardHealthSnapshot backupStatus,
   }) {
     final alerts = <DashboardAlertItem>[];
-    final lowStockProducts = store.products
-        .where((product) => product.trackStock && product.isLowStock)
-        .toList()
-      ..sort((a, b) => a.stock.compareTo(b.stock));
-    if (lowStockProducts.isNotEmpty) {
-      final names =
-          lowStockProducts.take(3).map((item) => item.name).join(', ');
-      alerts.add(
-        DashboardAlertItem(
-          level: DashboardStatusLevel.warning,
-          title: 'Low stock',
-          message:
-              '${lowStockProducts.length} product(s) need replenishment${names.isEmpty ? '' : ': $names'}',
-          icon: Icons.warning_amber_rounded,
-        ),
-      );
-    }
-
     if (customerAging.total > 0) {
       alerts.add(
         DashboardAlertItem(
@@ -342,27 +496,6 @@ class DashboardService {
       );
     }
 
-    final todayExpenses = store.expenses
-        .where((expense) =>
-            expense.isPosted &&
-            !expense.isDeleted &&
-            _isSameDay(expense.date, reference))
-        .fold<double>(0, (sum, expense) => sum + expense.amount);
-    final last7DaysAverage = _averageDailyExpense(store, reference, 7);
-    if (todayExpenses > 0 &&
-        last7DaysAverage > 0 &&
-        todayExpenses > last7DaysAverage * 1.5) {
-      alerts.add(
-        DashboardAlertItem(
-          level: DashboardStatusLevel.warning,
-          title: 'High expense day',
-          message:
-              '${_formatMoney(todayExpenses)} today vs ${_formatMoney(last7DaysAverage)} daily average',
-          icon: Icons.trending_down_outlined,
-        ),
-      );
-    }
-
     if (backupStatus.level != DashboardStatusLevel.healthy) {
       alerts.add(
         DashboardAlertItem(
@@ -381,18 +514,6 @@ class DashboardService {
           title: 'Sync attention',
           message: syncStatus.detail,
           icon: Icons.sync_problem_outlined,
-        ),
-      );
-    }
-
-    if (store.blockingDataConflictCount > 0) {
-      alerts.add(
-        DashboardAlertItem(
-          level: DashboardStatusLevel.danger,
-          title: 'Blocking conflicts',
-          message:
-              '${store.blockingDataConflictCount} blocking conflict(s) need review',
-          icon: Icons.rule_outlined,
         ),
       );
     }
@@ -448,7 +569,7 @@ class DashboardService {
       DashboardFinancialItem(
         key: 'inventory',
         title: 'Inventory',
-        amount: store.inventoryCostValue,
+        amount: 0,
         icon: Icons.warehouse_outlined,
       ),
       DashboardFinancialItem(
@@ -469,7 +590,7 @@ class DashboardService {
       DashboardFinancialItem(
         key: 'purchases',
         title: 'Purchases',
-        amount: store.totalPurchasesAmount,
+        amount: 0,
         icon: Icons.shopping_cart_outlined,
       ),
     ];
@@ -486,18 +607,12 @@ class DashboardService {
     final salesVsProfit = <DashboardChartItem>[
       DashboardChartItem(
         label: 'Sales',
-        value: _salesTotalSince(
-          store,
-          reference.subtract(const Duration(days: 29)),
-        ),
+        value: 0,
         color: Colors.blue,
       ),
       DashboardChartItem(
         label: 'Profit',
-        value: _profitTotalSince(
-          store,
-          reference.subtract(const Duration(days: 29)),
-        ),
+        value: 0,
         color: Colors.green,
       ),
     ];
@@ -577,122 +692,19 @@ class DashboardService {
     DateTime reference,
     int days,
   ) {
-    final start = DateTime(reference.year, reference.month, reference.day)
-        .subtract(Duration(days: days - 1));
-    final values = <String, double>{
-      for (var i = 0; i < days; i += 1)
-        _dateKey(start.add(Duration(days: i))): 0,
-    };
-    for (final sale in store.sales) {
-      if (sale.isDeleted || sale.isCancelled) continue;
-      final date = sale.date.toLocal();
-      if (date.isBefore(start) || date.isAfter(reference)) continue;
-      final key = _dateKey(date);
-      values[key] = (values[key] ?? 0) + _saleReportingTotal(sale);
-    }
-    return values.entries
-        .map(
-          (entry) => DashboardChartItem(
-            label: _shortDateLabel(entry.key),
-            value: entry.value,
-            color: Colors.blue,
-          ),
-        )
-        .toList(growable: false);
-  }
-
-  double _salesTotalSince(AppStore store, DateTime from) {
-    return store.sales
-        .where((sale) =>
-            !sale.isDeleted &&
-            !sale.isCancelled &&
-            !sale.date.toLocal().isBefore(from))
-        .fold<double>(0, (sum, sale) => sum + _saleReportingTotal(sale));
-  }
-
-  double _profitTotalSince(AppStore store, DateTime from) {
-    final salesProfit = store.sales
-        .where((sale) =>
-            !sale.isDeleted &&
-            !sale.isCancelled &&
-            !sale.date.toLocal().isBefore(from))
-        .fold<double>(0, (sum, sale) => sum + sale.grossProfit);
-    final expenses = store.expenses
-        .where((expense) =>
-            expense.isPosted &&
-            !expense.isDeleted &&
-            !expense.date.toLocal().isBefore(from))
-        .fold<double>(0, (sum, expense) => sum + expense.amount);
-    return salesProfit - expenses;
+    return const <DashboardChartItem>[];
   }
 
   List<DashboardChartItem> _groupExpensesByCategory(AppStore store, int limit) {
-    final totals = <String, double>{};
-    for (final expense in store.expenses) {
-      if (!expense.isPosted || expense.isDeleted) continue;
-      final key = expense.category.trim().isEmpty
-          ? 'Unspecified'
-          : expense.category.trim();
-      totals[key] = (totals[key] ?? 0) + expense.amount;
-    }
-    final entries = totals.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-    return entries
-        .take(limit)
-        .map(
-          (entry) => DashboardChartItem(
-            label: entry.key,
-            value: entry.value,
-            color: Colors.deepOrange,
-          ),
-        )
-        .toList(growable: false);
+    return const <DashboardChartItem>[];
   }
 
   List<DashboardChartItem> _topProductsByQuantity(AppStore store, int limit) {
-    final totals = <String, double>{};
-    for (final sale in store.sales) {
-      if (sale.isDeleted || sale.isCancelled) continue;
-      for (final item in sale.items) {
-        totals[item.productName] =
-            (totals[item.productName] ?? 0) + item.quantity;
-      }
-    }
-    final entries = totals.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-    return entries
-        .take(limit)
-        .map(
-          (entry) => DashboardChartItem(
-            label: entry.key,
-            value: entry.value,
-            color: Colors.purple,
-          ),
-        )
-        .toList(growable: false);
+    return const <DashboardChartItem>[];
   }
 
   List<DashboardChartItem> _topCustomersBySales(AppStore store, int limit) {
-    final totals = <String, double>{};
-    for (final sale in store.sales) {
-      if (sale.isDeleted || sale.isCancelled) continue;
-      final name = sale.customerName.trim().isEmpty
-          ? 'Walk-in customer'
-          : sale.customerName.trim();
-      totals[name] = (totals[name] ?? 0) + _saleReportingTotal(sale);
-    }
-    final entries = totals.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-    return entries
-        .take(limit)
-        .map(
-          (entry) => DashboardChartItem(
-            label: entry.key,
-            value: entry.value,
-            color: Colors.teal,
-          ),
-        )
-        .toList(growable: false);
+    return const <DashboardChartItem>[];
   }
 
   List<DashboardOperationItem> recentOperations(
@@ -700,67 +712,15 @@ class DashboardService {
     DateTime? reference,
     int limit = 5,
   }) {
-    final items = <DashboardOperationItem>[
-      for (final sale in store.sales.where((item) => !item.isDeleted).take(20))
-        DashboardOperationItem(
-          type: DashboardOperationType.sale,
-          title: sale.invoiceNo,
-          subtitle:
-              sale.customerName.trim().isEmpty ? 'Sale' : sale.customerName,
-          amount: _saleReportingTotal(sale),
-          at: sale.date,
-        ),
-      for (final purchase
-          in store.purchases.where((item) => !item.isDeleted).take(20))
-        DashboardOperationItem(
-          type: DashboardOperationType.purchase,
-          title: purchase.purchaseNo,
-          subtitle: purchase.supplierName.trim().isEmpty
-              ? 'Purchase'
-              : purchase.supplierName,
-          amount: purchase.subtotal,
-          at: purchase.date,
-        ),
-      for (final expense
-          in store.expenses.where((item) => !item.isDeleted).take(20))
-        DashboardOperationItem(
-          type: DashboardOperationType.expense,
-          title: expense.title,
-          subtitle: expense.category,
-          amount: expense.amount,
-          at: expense.date,
-        ),
-      for (final movement in store.stockMovements.take(20))
-        DashboardOperationItem(
-          type: DashboardOperationType.stockMovement,
-          title: movement.type,
-          subtitle: movement.productName,
-          amount: movement.quantity.abs(),
-          at: movement.date,
-        ),
-      for (final transaction in store.accountTransactions
-          .where((item) => !item.isDeleted)
-          .take(20))
-        DashboardOperationItem(
-          type: DashboardOperationType.payment,
-          title: transaction.referenceNo.trim().isEmpty
-              ? transaction.type
-              : transaction.referenceNo,
-          subtitle: transaction.accountName,
-          amount: (transaction.debit - transaction.credit).abs(),
-          at: transaction.date,
-        ),
-    ];
-
-    items.sort((a, b) => b.at.compareTo(a.at));
-    return items.take(limit).toList(growable: false);
+    return const <DashboardOperationItem>[];
   }
 
   DashboardHealthSnapshot syncStatus(
     AppStore store, {
     DateTime? reference,
+    int? pendingSyncCount,
   }) {
-    final pending = store.pendingSyncCount;
+    final pending = pendingSyncCount ?? store.pendingSyncCount;
     if (store.isSuspendedByHost) {
       return DashboardHealthSnapshot(
         level: DashboardStatusLevel.danger,
@@ -834,41 +794,82 @@ class DashboardService {
     );
   }
 
-  double _averageDailyExpense(AppStore store, DateTime reference, int days) {
-    if (days <= 0) return 0;
-    final start = reference.subtract(Duration(days: days - 1));
-    final total = store.expenses
-        .where((expense) =>
-            expense.isPosted &&
-            !expense.isDeleted &&
-            !expense.date.isBefore(start) &&
-            !expense.date.isAfter(reference))
-        .fold<double>(0, (sum, expense) => sum + expense.amount);
-    return total / days;
+  int _intValue(Object? value) {
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  double _doubleValue(Object? value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  List<DashboardChartItem> _seriesFromSummaryList(
+    Object? value, {
+    Color? color,
+  }) {
+    if (value is! List) return const <DashboardChartItem>[];
+    final items = <DashboardChartItem>[];
+    for (final entry in value.whereType<Map>()) {
+      final data = Map<String, Object?>.from(entry);
+      final label = (data['label'] ?? data['key'] ?? '').toString().trim();
+      if (label.isEmpty) continue;
+      items.add(
+        DashboardChartItem(
+          label: label,
+          value: _doubleValue(data['value']),
+          color: color,
+        ),
+      );
+    }
+    return items;
+  }
+
+  List<DashboardOperationItem> _recentOperations(Object? value) {
+    if (value is! List) return const <DashboardOperationItem>[];
+    final items = <DashboardOperationItem>[];
+    for (final entry in value.whereType<Map>()) {
+      final data = Map<String, Object?>.from(entry);
+      final type = _operationTypeFromString(data['type']?.toString() ?? '');
+      final title = data['title']?.toString().trim() ?? '';
+      final subtitle = data['subtitle']?.toString().trim() ?? '';
+      final at = DateTime.tryParse(data['at']?.toString() ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0);
+      items.add(
+        DashboardOperationItem(
+          type: type,
+          title: title,
+          subtitle: subtitle,
+          amount: _doubleValue(data['amount']),
+          at: at,
+        ),
+      );
+    }
+    items.sort((a, b) => b.at.compareTo(a.at));
+    return items.take(5).toList(growable: false);
+  }
+
+  DashboardOperationType _operationTypeFromString(String value) {
+    switch (value.trim().toLowerCase()) {
+      case 'sale':
+        return DashboardOperationType.sale;
+      case 'purchase':
+        return DashboardOperationType.purchase;
+      case 'expense':
+        return DashboardOperationType.expense;
+      case 'payment':
+        return DashboardOperationType.payment;
+      case 'stockmovement':
+      case 'stock_movement':
+        return DashboardOperationType.stockMovement;
+      default:
+        return DashboardOperationType.other;
+    }
   }
 
   String _formatMoney(double value) {
     final normalized = value.isFinite ? value : 0;
     return normalized.toStringAsFixed(2);
-  }
-
-  String _dateKey(DateTime value) {
-    final local = value.toLocal();
-    return '${local.year.toString().padLeft(4, '0')}-'
-        '${local.month.toString().padLeft(2, '0')}-'
-        '${local.day.toString().padLeft(2, '0')}';
-  }
-
-  String _shortDateLabel(String dateKey) {
-    final parts = dateKey.split('-');
-    if (parts.length != 3) return dateKey;
-    return '${parts[1]}/${parts[2]}';
-  }
-
-  bool _isSameDay(DateTime left, DateTime right) {
-    final a = left.toLocal();
-    final b = right.toLocal();
-    return a.year == b.year && a.month == b.month && a.day == b.day;
   }
 
   DateTime? _latestDate(DateTime? a, DateTime? b) {

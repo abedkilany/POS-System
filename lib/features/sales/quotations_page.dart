@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
+import '../../core/services/business_revision_service.dart';
+import '../../core/repositories/business_repositories.dart';
+import '../../core/services/local_database_service.dart';
 import '../../data/app_store.dart';
 import '../../models/customer.dart';
 import '../../models/product.dart';
@@ -18,34 +21,19 @@ class QuotationsPage extends StatefulWidget {
 }
 
 class _QuotationsPageState extends State<QuotationsPage> {
-  late Future<void> _dataFuture;
+  Future<List<SaleQuotation>?>? _quotationsFuture;
+  String _quotationsFutureKey = '';
 
-  void _handleStoreChanged() {
-    if (!mounted) return;
-    setState(() {});
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    widget.store.addListener(_handleStoreChanged);
-    _dataFuture = widget.store.ensureQuotationsPageDataLoaded();
-  }
-
-  @override
-  void didUpdateWidget(covariant QuotationsPage oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.store != widget.store) {
-      oldWidget.store.removeListener(_handleStoreChanged);
-      widget.store.addListener(_handleStoreChanged);
-      _dataFuture = widget.store.ensureQuotationsPageDataLoaded();
+  Future<List<SaleQuotation>?> _loadQuotations() async {
+    final key = '${BusinessRevisionService.instance.salesRevision}|quotations';
+    if (_quotationsFuture == null || _quotationsFutureKey != key) {
+      _quotationsFutureKey = key;
+      _quotationsFuture = () async {
+        final page = await SaleRepository.queryQuotationsPage(limit: 500);
+        return page?.items;
+      }();
     }
-  }
-
-  @override
-  void dispose() {
-    widget.store.removeListener(_handleStoreChanged);
-    super.dispose();
+    return _quotationsFuture!;
   }
 
   Future<void> _createQuotation() async {
@@ -55,11 +43,10 @@ class _QuotationsPageState extends State<QuotationsPage> {
       context: context,
       builder: (context) => _QuotationDialog(store: widget.store),
     );
-    if (result == null) {
-      return;
-    }
+    if (result == null) return;
     try {
-      await widget.store.createSaleQuotation(
+      await SaleRepository.createSaleQuotation(context: 
+        widget.store,
         customerName: result.customerName,
         customerId: result.customerId,
         items: result.items,
@@ -99,16 +86,18 @@ class _QuotationsPageState extends State<QuotationsPage> {
         ],
       ),
     );
-    if (confirm != true) {
-      return;
-    }
+    if (confirm != true) return;
     try {
-      final sale = await widget.store.convertSaleQuotationToSale(quotation.id);
+      final sale = await SaleRepository.convertSaleQuotationToSale(
+        widget.store,
+        quotation.id,
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text(tr.format(
-                  'quotation_invoice_created', {'invoiceNo': sale.invoiceNo}))),
+            content: Text(tr.format(
+                'quotation_invoice_created', {'invoiceNo': sale.invoiceNo})),
+          ),
         );
       }
     } catch (error) {
@@ -138,7 +127,9 @@ class _QuotationsPageState extends State<QuotationsPage> {
         ],
       ),
     );
-    if (confirm == true) await widget.store.deleteSaleQuotation(quotation.id);
+    if (confirm == true) {
+      await SaleRepository.deleteSaleQuotation(widget.store, quotation.id);
+    }
   }
 
   @override
@@ -150,13 +141,20 @@ class _QuotationsPageState extends State<QuotationsPage> {
         message: 'You do not have access to quotation records.',
       );
     }
-    return FutureBuilder<void>(
-      future: _dataFuture,
+    if (!LocalDatabaseService.canQueryBusinessSqlite) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator.adaptive()),
+      );
+    }
+    return FutureBuilder<List<SaleQuotation>?>(
+      future: _loadQuotations(),
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
-          return const Center(child: CircularProgressIndicator.adaptive());
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator.adaptive()),
+          );
         }
-        final quotations = widget.store.saleQuotations;
+        final quotations = snapshot.data ?? const <SaleQuotation>[];
         return Scaffold(
           appBar: AppBar(
             title: Text(tr.text('quotations')),
@@ -192,9 +190,10 @@ class _QuotationsPageState extends State<QuotationsPage> {
                             ? Icons.check_circle_outline
                             : Icons.request_quote_outlined),
                         title: Text(
-                            '${quotation.quotationNo} • ${quotation.customerName}'),
+                            '${quotation.quotationNo} â€¢ ${quotation.customerName}'),
                         subtitle: Text(
-                            '${_localizedStatus(tr, quotation.status)} • ${quotation.items.length} ${tr.text('items')} • ${quotation.total.toStringAsFixed(2)} ${quotation.invoiceCurrency}'),
+                          '${_localizedStatus(tr, quotation.status)} â€¢ ${quotation.items.length} ${tr.text('items')} â€¢ ${quotation.total.toStringAsFixed(2)} ${quotation.invoiceCurrency}',
+                        ),
                         trailing: Wrap(
                           spacing: 8,
                           children: [
@@ -278,13 +277,15 @@ String _localizedStatus(AppLocalizations tr, String status) {
 }
 
 class _QuotationDraft {
-  const _QuotationDraft(
-      {required this.customerName,
-      required this.customerId,
-      required this.items,
-      required this.discount,
-      required this.invoiceCurrency,
-      required this.note});
+  const _QuotationDraft({
+    required this.customerName,
+    required this.customerId,
+    required this.items,
+    required this.discount,
+    required this.invoiceCurrency,
+    required this.note,
+  });
+
   final String customerName, customerId, invoiceCurrency, note;
   final List<SaleItem> items;
   final double discount;
@@ -304,37 +305,47 @@ class _QuotationDialogState extends State<_QuotationDialog> {
   final TextEditingController _discountController = TextEditingController();
   final TextEditingController _noteController = TextEditingController();
   final List<SaleItem> _items = [];
-  late final List<Customer> _customers;
-  late final Map<String, Customer> _customerById;
-  late final List<DropdownMenuItem<String>> _customerItems;
-  late final List<Product> _products;
-  late final Map<String, Product> _productById;
-  late final List<DropdownMenuItem<String>> _productItems;
+  late final Future<void> _loadFuture;
+  Map<String, Customer> _customerById = <String, Customer>{};
+  List<DropdownMenuItem<String>> _customerItems = <DropdownMenuItem<String>>[];
+  Map<String, Product> _productById = <String, Product>{};
+  List<DropdownMenuItem<String>> _productItems = <DropdownMenuItem<String>>[];
 
   @override
   void initState() {
     super.initState();
-    _customers = <Customer>[
+    _loadFuture = _loadData();
+  }
+
+  Future<void> _loadData() async {
+    final customerPage = await CustomerRepository.queryPage(
+      limit: 500,
+      includeWalkIn: true,
+    );
+    final productPage = await ProductRepository.queryPage(
+      limit: 500,
+      activeOnly: true,
+      stockTrackedOnly: true,
+    );
+    final customers = <Customer>[
       widget.store.walkInCustomer,
-      ...widget.store.customers
+      ...?customerPage?.items
+          .where((item) => item.id != AppStore.walkInCustomerId),
     ];
-    _customerById = {for (final customer in _customers) customer.id: customer};
-    _customerItems = [
-      for (final customer in _customers)
-        DropdownMenuItem(
-          value: customer.id,
-          child: Text(customer.name),
-        ),
-    ];
-    _products = widget.store.products;
-    _productById = {for (final product in _products) product.id: product};
-    _productItems = [
-      for (final product in _products)
-        DropdownMenuItem(
-          value: product.id,
-          child: Text(product.name),
-        ),
-    ];
+    final products = productPage?.items ?? const <Product>[];
+    if (!mounted) return;
+    setState(() {
+      _customerById = {for (final customer in customers) customer.id: customer};
+      _customerItems = [
+        for (final customer in customers)
+          DropdownMenuItem(value: customer.id, child: Text(customer.name)),
+      ];
+      _productById = {for (final product in products) product.id: product};
+      _productItems = [
+        for (final product in products)
+          DropdownMenuItem(value: product.id, child: Text(product.name)),
+      ];
+    });
   }
 
   @override
@@ -361,15 +372,18 @@ class _QuotationDialogState extends State<_QuotationDialog> {
           conversionToBase: existing.conversionToBase,
         );
       } else {
-        _items.add(SaleItem(
+        _items.add(
+          SaleItem(
             productId: product.id,
             productName: product.name,
-            unitPrice: widget.store.defaultProductUsdPrice(product),
+            unitPrice: product.price,
             quantity: 1,
             unitCost: product.usdCost,
             unitName: product.unit,
             baseQuantity: 1,
-            conversionToBase: 1));
+            conversionToBase: 1,
+          ),
+        );
       }
     });
   }
@@ -383,92 +397,108 @@ class _QuotationDialogState extends State<_QuotationDialog> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    return AlertDialog(
-      title: Text(tr.text('new_quotation')),
-      content: SizedBox(
-        width: 720,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              DropdownButtonFormField<String>(
-                initialValue: _customerId,
-                decoration: InputDecoration(labelText: tr.text('customer')),
-                items: _customerItems,
-                onChanged: (value) => setState(
-                    () => _customerId = value ?? AppStore.walkInCustomerId),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                initialValue: _invoiceCurrency,
-                decoration: InputDecoration(labelText: tr.text('currency')),
-                items: const [
-                  DropdownMenuItem(value: 'USD', child: Text('USD')),
-                  DropdownMenuItem(value: 'LBP', child: Text('LBP'))
-                ],
-                onChanged: (value) =>
-                    setState(() => _invoiceCurrency = value ?? 'USD'),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                decoration: InputDecoration(labelText: tr.text('add_product')),
-                items: _productItems,
-                onChanged: (value) {
-                  final product = value == null ? null : _productById[value];
-                  if (product != null) _addProduct(product);
-                },
-              ),
-              const SizedBox(height: 12),
-              ..._items.map((item) => ListTile(
-                    dense: true,
-                    title: Text(item.productName),
-                    subtitle: Text(
-                        '${item.quantity.toStringAsFixed(0)} x ${item.unitPrice.toStringAsFixed(2)}'),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.remove_circle_outline),
-                      onPressed: () => setState(() => _items.remove(item)),
+    return FutureBuilder<void>(
+      future: _loadFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Center(child: CircularProgressIndicator.adaptive());
+        }
+        return AlertDialog(
+          title: Text(tr.text('new_quotation')),
+          content: SizedBox(
+            width: 720,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  DropdownButtonFormField<String>(
+                    initialValue: _customerId,
+                    decoration: InputDecoration(labelText: tr.text('customer')),
+                    items: _customerItems,
+                    onChanged: (value) => setState(
+                        () => _customerId = value ?? AppStore.walkInCustomerId),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: _invoiceCurrency,
+                    decoration: InputDecoration(labelText: tr.text('currency')),
+                    items: const [
+                      DropdownMenuItem(value: 'USD', child: Text('USD')),
+                      DropdownMenuItem(value: 'LBP', child: Text('LBP'))
+                    ],
+                    onChanged: (value) =>
+                        setState(() => _invoiceCurrency = value ?? 'USD'),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    decoration:
+                        InputDecoration(labelText: tr.text('add_product')),
+                    items: _productItems,
+                    onChanged: (value) {
+                      final product = value == null ? null : _productById[value];
+                      if (product != null) _addProduct(product);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  ..._items.map(
+                    (item) => ListTile(
+                      dense: true,
+                      title: Text(item.productName),
+                      subtitle: Text(
+                          '${item.quantity.toStringAsFixed(0)} x ${item.unitPrice.toStringAsFixed(2)}'),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.remove_circle_outline),
+                        onPressed: () => setState(() => _items.remove(item)),
+                      ),
                     ),
-                  )),
-              TextField(
-                  controller: _discountController,
-                  keyboardType: TextInputType.number,
-                  decoration: InputDecoration(labelText: tr.text('discount')),
-                  onChanged: (_) => setState(() {})),
-              TextField(
-                  controller: _noteController,
-                  decoration: InputDecoration(labelText: tr.text('notes'))),
-              const SizedBox(height: 12),
-              Text(
-                  '${tr.text('total')}: ${_total.toStringAsFixed(2)} $_invoiceCurrency',
-                  style: Theme.of(context).textTheme.titleMedium),
-            ],
+                  ),
+                  TextField(
+                    controller: _discountController,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(labelText: tr.text('discount')),
+                    onChanged: (_) => setState(() {}),
+                  ),
+                  TextField(
+                    controller: _noteController,
+                    decoration: InputDecoration(labelText: tr.text('notes')),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    '${tr.text('total')}: ${_total.toStringAsFixed(2)} $_invoiceCurrency',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ],
+              ),
+            ),
           ),
-        ),
-      ),
-      actions: [
-        TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(tr.text('cancel'))),
-        FilledButton(
-          onPressed: _items.isEmpty
-              ? null
-              : () {
-                  final customer =
-                      _customerById[_customerId] ?? widget.store.walkInCustomer;
-                  Navigator.pop(
-                      context,
-                      _QuotationDraft(
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text(tr.text('cancel'))),
+            FilledButton(
+              onPressed: _items.isEmpty
+                  ? null
+                  : () {
+                      final customer = _customerById[_customerId] ??
+                          widget.store.walkInCustomer;
+                      Navigator.pop(
+                        context,
+                        _QuotationDraft(
                           customerName: customer.name,
                           customerId: customer.id,
                           items: List<SaleItem>.from(_items),
                           discount: _discount,
                           invoiceCurrency: _invoiceCurrency,
-                          note: _noteController.text));
-                },
-          child: Text(tr.text('save')),
-        ),
-      ],
+                          note: _noteController.text,
+                        ),
+                      );
+                    },
+              child: Text(tr.text('save')),
+            ),
+          ],
+        );
+      },
     );
   }
 }

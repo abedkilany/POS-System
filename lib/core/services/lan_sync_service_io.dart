@@ -837,7 +837,9 @@ class LanSyncService {
     await request.response.close();
   }
 
-  Map<String, dynamic> _currentLanSnapshotEnvelope({bool force = false}) {
+  Future<Map<String, dynamic>> _currentLanSnapshotEnvelope({
+    bool force = false,
+  }) async {
     final now = DateTime.now();
     final cached = _snapshotTransferCache;
     final age = _snapshotTransferCacheAt == null
@@ -846,7 +848,7 @@ class LanSyncService {
     if (!force && cached != null && age < const Duration(minutes: 5)) {
       return cached;
     }
-    final envelope = store.exportUnifiedSnapshotEnvelope(
+    final envelope = await store.exportUnifiedSnapshotEnvelope(
       kind: 'full_store',
       maxItemsPerChunk: 300,
     );
@@ -855,8 +857,10 @@ class LanSyncService {
     return envelope;
   }
 
-  Map<String, dynamic> _snapshotManifestResponse({bool force = false}) {
-    final envelope = _currentLanSnapshotEnvelope(force: force);
+  Future<Map<String, dynamic>> _snapshotManifestResponse({
+    bool force = false,
+  }) async {
+    final envelope = await _currentLanSnapshotEnvelope(force: force);
     return <String, dynamic>{
       'ok': true,
       'snapshotFormat': envelope['snapshotFormat'],
@@ -969,7 +973,7 @@ class LanSyncService {
             .copyWith(secret: '', pairedDevices: paired, hostRegistry: registry)
             .save();
 
-        final snapshotInfo = _snapshotManifestResponse(force: true);
+        final snapshotInfo = await _snapshotManifestResponse(force: true);
         await _json(request, {
           'ok': true,
           'message': 'LAN device paired successfully.',
@@ -1074,14 +1078,17 @@ class LanSyncService {
 
       if (request.method == 'GET' && request.uri.path == '/snapshot/manifest') {
         final force = request.uri.queryParameters['force'] == '1';
-        await _json(request, _snapshotManifestResponse(force: force));
+        await _json(
+          request,
+          await _snapshotManifestResponse(force: force),
+        );
         return;
       }
 
       if (request.method == 'GET' && request.uri.path == '/snapshot/chunk') {
         final ordinal =
             int.tryParse(request.uri.queryParameters['ordinal'] ?? '') ?? -1;
-        final envelope = _currentLanSnapshotEnvelope();
+        final envelope = await _currentLanSnapshotEnvelope();
         final chunks =
             (envelope['snapshotChunks'] as List<dynamic>? ?? const <dynamic>[])
                 .whereType<Map>()
@@ -1108,7 +1115,7 @@ class LanSyncService {
       if (request.method == 'GET' && request.uri.path == '/snapshot') {
         request.response.headers.contentType = ContentType.json;
         request.response
-            .write(jsonEncode(_currentLanSnapshotEnvelope(force: true)));
+            .write(jsonEncode(await _currentLanSnapshotEnvelope(force: true)));
         await request.response.close();
         return;
       }
@@ -1152,7 +1159,7 @@ class LanSyncService {
           appliedSequence: sequence,
           ackSequence: sequence,
         );
-        await store.compactSyncedSyncHistoryForMaintenance();
+        await store.syncState.compactSyncedSyncHistoryForMaintenance(store);
         await _json(request,
             {'ok': true, 'serverTime': DateTime.now().toIso8601String()});
         return;
@@ -1350,7 +1357,7 @@ class LanSyncService {
       );
       final snapshot = jsonEncode(snapshotEnvelope);
       onProgress?.call(0.74, 'Importing LAN snapshot chunks locally...');
-      await store.importSyncSnapshotJson(snapshot);
+      await store.recovery.importSyncSnapshotJson(snapshot);
       await _markHostSnapshotGenerationApplied('lan', snapshotEnvelope);
       final hostCursor = store.syncSnapshotGeneratedAtFromJson(snapshot);
       final settings = LanSyncSettings.load();
@@ -1434,7 +1441,7 @@ class LanSyncService {
       );
       final snapshot = jsonEncode(snapshotEnvelope);
       onProgress?.call(0.72, 'Applying LAN snapshot chunks locally...');
-      await store.importSyncSnapshotJson(snapshot);
+      await store.recovery.importSyncSnapshotJson(snapshot);
       await _markHostSnapshotGenerationApplied('lan', snapshotEnvelope);
       final hostCursor = store.syncSnapshotGeneratedAtFromJson(snapshot);
       final settings = LanSyncSettings.load();
@@ -1473,7 +1480,7 @@ class LanSyncService {
         force: true,
       );
       final snapshot = jsonEncode(snapshotEnvelope);
-      await store.importSyncSnapshotJson(snapshot);
+      await store.recovery.importSyncSnapshotJson(snapshot);
       await _markHostSnapshotGenerationApplied('lan', snapshotEnvelope);
       final hostCursor = store.syncSnapshotGeneratedAtFromJson(snapshot);
       final settings = LanSyncSettings.load();
@@ -1512,10 +1519,10 @@ class LanSyncService {
       );
       final snapshot = jsonEncode(snapshotEnvelope);
       onProgress?.call(0.72, 'Applying LAN snapshot chunks locally...');
-      await store.importSyncSnapshotJson(snapshot);
+      await store.recovery.importSyncSnapshotJson(snapshot);
       await _markHostSnapshotGenerationApplied('lan', snapshotEnvelope);
       onProgress?.call(0.86, 'Marking rebuilt data as synced...');
-      await store.markAllSyncChangesSynced();
+      await store.syncState.markAllSyncChangesSynced(store);
       final hostCursor = store.syncSnapshotGeneratedAtFromJson(snapshot);
       final settings = LanSyncSettings.load();
       await settings
@@ -1535,7 +1542,9 @@ class LanSyncService {
       await _sendLanAck(host,
           port: port, token: token, cursor: hostCursor, sequence: hostSequence);
       onProgress?.call(0.94, 'Running Client sync log maintenance...');
-      await store.compactClientSyncedSyncHistoryForMaintenance();
+      await store.syncState.compactClientSyncedSyncHistoryForMaintenance(
+        store,
+      );
       onProgress?.call(1.0, 'LAN rebuild completed.');
       return const LanSyncResult(
           ok: true, message: 'LAN rebuild completed from snapshot chunks.');
@@ -1668,7 +1677,7 @@ class LanSyncService {
       {int port = 8787,
       String token = '',
       LanSyncProgressCallback? onProgress}) async {
-    final pending = _syncCore.pendingChangesForTarget('host');
+    final pending = await _syncCore.pendingChangesForTarget('host');
     final pendingIds = _syncCore.changeIds(pending);
     if (pending.isEmpty) {
       return const LanSyncResult(ok: true, message: 'No LAN changes to push.');
@@ -1867,7 +1876,7 @@ class LanSyncService {
       String token = '',
       LanSyncProgressCallback? onProgress}) async {
     final settings = LanSyncSettings.load();
-    final pending = _syncCore.pendingChangesForTarget('host');
+    final pending = await _syncCore.pendingChangesForTarget('host');
 
     // New Client bootstrap must use the Host snapshot, not the incremental
     // event stream. A Host can have valid products/customers/sales that were
@@ -2022,7 +2031,9 @@ class LanSyncService {
           sequence: generatedSequence);
       await store.clearSuspendedByHost();
       onProgress?.call(0.97, 'Running Client sync log maintenance...');
-      await store.compactClientSyncedSyncHistoryForMaintenance();
+      await store.syncState.compactClientSyncedSyncHistoryForMaintenance(
+        store,
+      );
       onProgress?.call(1.0, 'LAN sync completed.');
       return LanSyncResult(
         ok: true,

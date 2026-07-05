@@ -9,9 +9,10 @@ class SettingsBackupActions {
     try {
       final filename =
           'ventio_backup_${DateTime.now().millisecondsSinceEpoch}.json';
+      final backupJson = await store.exportBackupJson();
       await downloadTextFile(
         filename: filename,
-        content: store.exportBackupJson(),
+        content: backupJson,
         dialogTitle: tr.text('export'),
         cancelMessage: tr.text('file_save_cancelled'),
       );
@@ -68,8 +69,10 @@ class SettingsBackupActions {
       final selectedSections = await confirmBackupImport(context, plan);
       if (selectedSections == null || selectedSections.isEmpty) return;
 
-      await store.importBackupJson(rawJson,
-          selectedSectionIds: selectedSections);
+      await store.recovery.importBackupJson(
+        rawJson,
+        selectedSectionIds: selectedSections,
+      );
       await _publishImportedSnapshotToCloudIfNeeded(store);
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -664,7 +667,7 @@ class SettingsBackupActions {
 
     try {
       final backup =
-          'RESET_PROTECTION_TOKEN:$token\n${store.exportBackupJson()}';
+          'RESET_PROTECTION_TOKEN:$token\n${await store.exportBackupJson()}';
       await downloadTextFile(
           filename:
               'reset_protection_backup_${DateTime.now().millisecondsSinceEpoch}.json',

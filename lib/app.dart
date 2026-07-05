@@ -19,6 +19,7 @@ import 'core/services/lan_sync_service.dart';
 import 'core/services/local_auto_backup_service.dart';
 import 'core/services/app_update_service.dart';
 import 'core/services/account_auth_service.dart';
+import 'core/repositories/auth_repository.dart';
 import 'core/services/page_timing_scope.dart';
 import 'core/services/startup_timing_service.dart';
 import 'data/app_store.dart';
@@ -86,6 +87,7 @@ class _VentioAppState extends State<VentioApp> {
     onSnapshotProgress: _handleAutoSnapshotProgress,
   );
   bool _syncStarted = false;
+  Timer? _heavyCacheWarmTimer;
   bool _autoSnapshotProgressDialogOpen = false;
   bool _firstFrameMarked = false;
 
@@ -93,7 +95,6 @@ class _VentioAppState extends State<VentioApp> {
   void initState() {
     super.initState();
     _registerPageTimings();
-    AccountingService.setMutationListener(() => _store.notifyListeners());
     _initializeApp();
   }
 
@@ -148,7 +149,14 @@ class _VentioAppState extends State<VentioApp> {
             _locale = savedLocale;
           });
         }
-        unawaited(_primeHeavyCaches());
+        _heavyCacheWarmTimer?.cancel();
+        _heavyCacheWarmTimer = Timer(
+          const Duration(milliseconds: 500),
+          () {
+            if (!mounted) return;
+            unawaited(_primeHeavyCaches());
+          },
+        );
         if (_store.activeUser != null) {
           unawaited(_startSyncAfterLogin());
         }
@@ -158,7 +166,6 @@ class _VentioAppState extends State<VentioApp> {
   }
 
   Future<void> _primeHeavyCaches() async {
-    await Future<void>.delayed(const Duration(milliseconds: 500));
     if (!mounted) return;
     try {
       await _reportsSnapshotService.prewarm(_store);
@@ -264,6 +271,7 @@ class _VentioAppState extends State<VentioApp> {
   void dispose() {
     unawaited(_autoSyncController.stop());
     _autoCloudSyncController.stop();
+    _heavyCacheWarmTimer?.cancel();
     _autoSnapshotProgress.dispose();
     AccountingService.setMutationListener(null);
     _store.dispose();
@@ -1266,7 +1274,7 @@ class _MainShellState extends State<MainShell> {
                   } else if (value == 'logout') {
                     await widget.onLogout?.call();
                     await AccountAuthCache.clear();
-                    await widget.store.logout();
+                    await AuthRepository.logout(widget.store);
                   }
                 },
                 itemBuilder: (context) {

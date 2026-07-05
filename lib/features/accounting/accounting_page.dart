@@ -5,8 +5,13 @@ import '../../core/localization/app_localizations.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/utils/revision_cache.dart';
+import '../../core/services/business_revision_service.dart';
 import '../../core/services/accounting_service.dart';
 import '../../core/services/accounting_aging_service.dart';
+import '../../core/repositories/business_repositories.dart';
+import '../../core/services/local_database_service.dart';
+import '../../core/storage/sqlite/business_sqlite_store.dart'
+    show BusinessQueryPage;
 import '../../data/app_store.dart';
 import 'accounting_snapshot_service.dart';
 import '../../models/account_transaction.dart';
@@ -15,6 +20,8 @@ import '../../models/accounting_account.dart';
 import '../../models/journal_entry.dart';
 import '../../models/aging_report.dart';
 import '../../models/user_role.dart';
+
+// ignore_for_file: use_build_context_synchronously
 import '../accounts/account_ledger_widgets.dart';
 
 const ScrollCacheExtent _kAccountingListCacheExtent =
@@ -217,7 +224,7 @@ class _CachedFuturePanelState<T> extends State<_CachedFuturePanel<T>> {
   void initState() {
     super.initState();
     _future = widget.loadFuture();
-    _lastSeenRevision = widget.store.accountingRevision;
+    _lastSeenRevision = BusinessRevisionService.instance.accountingRevision;
     widget.store.addListener(_refresh);
   }
 
@@ -227,7 +234,7 @@ class _CachedFuturePanelState<T> extends State<_CachedFuturePanel<T>> {
     if (oldWidget.store != widget.store) {
       oldWidget.store.removeListener(_refresh);
       widget.store.addListener(_refresh);
-      _lastSeenRevision = widget.store.accountingRevision;
+      _lastSeenRevision = BusinessRevisionService.instance.accountingRevision;
     }
     if (oldWidget.cacheKey != widget.cacheKey) {
       _refresh(force: true);
@@ -242,7 +249,7 @@ class _CachedFuturePanelState<T> extends State<_CachedFuturePanel<T>> {
 
   void _refresh({bool force = false}) {
     if (!mounted) return;
-    final revision = widget.store.accountingRevision;
+    final revision = BusinessRevisionService.instance.accountingRevision;
     if (!force && revision == _lastSeenRevision) return;
     _lastSeenRevision = revision;
     setState(() => _future = widget.loadFuture());
@@ -290,7 +297,7 @@ class _AccountingSummaryStripLoader extends StatelessWidget {
         if (snapshot.hasError) {
           return _CompactSummaryStrip(
             store: store,
-            metrics: _AccountingMetrics.fromStore(store),
+            metrics: _AccountingMetrics.fromSummary(const <String, Object?>{}),
           );
         }
         return const _SummaryStripPlaceholder();
@@ -726,90 +733,73 @@ class _AccountsTab extends StatelessWidget {
   final AppStore store;
   final String query;
   final String accountType;
-  static final RevisionKeyCache<List<_AccountRowData>> _rowsCache =
-      RevisionKeyCache<List<_AccountRowData>>();
-  static final RevisionKeyCache<Map<String, String>> _searchIndexCache =
-      RevisionKeyCache<Map<String, String>>();
+  static final RevisionKeyCache<Future<List<_AccountRowData>>>
+      _sqliteRowsCache = RevisionKeyCache<Future<List<_AccountRowData>>>();
 
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final normalizedQuery = _normalizedSearchQuery(query);
-    final dataRevision = accountType == 'customer'
-        ? store.customersRevision
-        : store.suppliersRevision;
-    final rowsRevision = Object.hashAll(<Object?>[
-      dataRevision,
-      store.accountTransactionsRevision,
-    ]);
-    final index = _searchIndexCache.getOrCompute(
-      dataRevision,
-      '${store.appIdentity.storeId}|$accountType',
-      () {
-        final map = <String, String>{};
-        if (accountType == 'customer') {
-          for (final customer in store.customers) {
-            map[customer.id] = [
-              customer.name,
-              customer.phone,
-              customer.address,
-            ].join(' ').toLowerCase();
+    if (LocalDatabaseService.canQueryBusinessSqlite) {
+      return FutureBuilder<List<_AccountRowData>>(
+        future: _rowsFromSqlite(normalizedQuery),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const Center(child: CircularProgressIndicator.adaptive());
           }
-        } else {
-          for (final supplier in store.suppliers) {
-            map[supplier.id] = [
-              supplier.name,
-              supplier.nameEn,
-              supplier.nameAr,
-              supplier.phone,
-              supplier.address,
-            ].join(' ').toLowerCase();
+          final rows = snapshot.data ?? const <_AccountRowData>[];
+          if (rows.isEmpty) {
+            return _EmptyAccountingState(
+              message: tr.text(accountType == 'customer'
+                  ? 'no_customers_found'
+                  : 'no_suppliers_found'),
+            );
           }
-        }
-        return map;
-      },
-    );
-    final rows = _rowsCache.getOrCompute(
-      rowsRevision,
-      '${store.appIdentity.storeId}|$accountType|$normalizedQuery',
-      () {
-        final computed = accountType == 'customer'
-            ? store.customers
-                .where((customer) =>
-                    normalizedQuery.isEmpty ||
-                    (index[customer.id]?.contains(normalizedQuery) ?? false))
-                .map((customer) => _AccountRowData(
-                      id: customer.id,
-                      name: customer.name,
-                      subtitle: [customer.phone, customer.address]
-                          .where((part) => part.trim().isNotEmpty)
-                          .join(' • '),
-                      balance: store.accountBalance('customer', customer.id),
-                    ))
-                .toList()
-            : store.suppliers
-                .where((supplier) =>
-                    normalizedQuery.isEmpty ||
-                    (index[supplier.id]?.contains(normalizedQuery) ?? false))
-                .map((supplier) => _AccountRowData(
-                      id: supplier.id,
-                      name: supplier.name,
-                      subtitle: [supplier.phone, supplier.address]
-                          .where((part) => part.trim().isNotEmpty)
-                          .join(' • '),
-                      balance: store.accountBalance('supplier', supplier.id),
-                    ))
-                .toList();
-        computed.sort((a, b) => b.balance.abs().compareTo(a.balance.abs()));
-        return computed;
-      },
-    );
+          return _buildRows(context, rows);
+        },
+      );
+    }
+    return const Center(child: CircularProgressIndicator.adaptive());
+  }
 
+  Future<List<_AccountRowData>> _rowsFromSqlite(String normalizedQuery) {
+    final key =
+        '${store.appIdentity.storeId}|$accountType|$normalizedQuery|${BusinessRevisionService.instance.accountingRevision}';
+    return _sqliteRowsCache.getOrCompute(
+      BusinessRevisionService.instance.accountingRevision,
+      key,
+      () async {
+        final items = await AccountingService.listPartyBalancesReport(
+          accountType: accountType,
+          query: normalizedQuery,
+          limit: 500,
+        );
+        final rows = items
+            .map(
+              (item) => _AccountRowData(
+                id: item.id,
+                name: item.name,
+                subtitle: [item.accountCode, item.accountName]
+                    .where((part) => part.trim().isNotEmpty)
+                    .join(' • '),
+                balance: item.balance,
+              ),
+            )
+            .toList(growable: false);
+        rows.sort((a, b) => b.balance.abs().compareTo(a.balance.abs()));
+        return rows;
+      },
+    );
+  }
+
+  Widget _buildRows(BuildContext context, List<_AccountRowData> rows) {
+    final tr = AppLocalizations.of(context);
     if (rows.isEmpty) {
       return _EmptyAccountingState(
-          message: tr.text(accountType == 'customer'
-              ? 'no_customers_found'
-              : 'no_suppliers_found'));
+        message: tr.text(accountType == 'customer'
+            ? 'no_customers_found'
+            : 'no_suppliers_found'),
+      );
     }
 
     return LayoutBuilder(
@@ -924,7 +914,7 @@ class _AccountListRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final color = accountBalanceColor(context, store, accountType, row.id);
+    final color = accountBalanceColor(context, accountType, row.balance);
     final actions = [
       OutlinedButton.icon(
         onPressed: () => showAccountLedgerSheet(
@@ -1072,24 +1062,47 @@ class _AgingReportsTab extends StatelessWidget {
 
   final AppStore store;
   final String query;
-  static final RevisionValueCache<_AgingReportsData> _cache =
-      RevisionValueCache<_AgingReportsData>();
+  static final RevisionKeyCache<Future<_AgingReportsData>> _cache =
+      RevisionKeyCache<Future<_AgingReportsData>>();
 
   @override
   Widget build(BuildContext context) {
-    final reports = _cache.getOrCompute(
-      store.accountingRevision,
-      () => _AgingReportsData(
-        customerReport: AccountingAgingService.customerAgingFromStore(
-          sales: store.sales,
-          accountTransactions: store.accountTransactions,
-        ),
-        supplierReport: AccountingAgingService.supplierAgingFromStore(
-          purchases: store.purchases,
-          accountTransactions: store.accountTransactions,
-        ),
-      ),
+    if (!LocalDatabaseService.canQueryBusinessSqlite) {
+      return const Center(child: CircularProgressIndicator.adaptive());
+    }
+    return FutureBuilder<_AgingReportsData>(
+      future: _reportsFromSqlite(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Center(child: CircularProgressIndicator.adaptive());
+        }
+        final value = snapshot.data;
+        if (value == null) {
+          return const Center(child: CircularProgressIndicator.adaptive());
+        }
+        return _buildReports(context, value);
+      },
     );
+  }
+
+  Future<_AgingReportsData> _reportsFromSqlite() {
+    return _cache.getOrCompute(
+      BusinessRevisionService.instance.accountingRevision,
+      store.appIdentity.storeId,
+      () async {
+        final customerReport =
+            await AccountingAgingService.customerAgingReport();
+        final supplierReport =
+            await AccountingAgingService.supplierAgingReport();
+        return _AgingReportsData(
+          customerReport: customerReport,
+          supplierReport: supplierReport,
+        );
+      },
+    );
+  }
+
+  Widget _buildReports(BuildContext context, _AgingReportsData reports) {
     final customerReport = reports.customerReport;
     final supplierReport = reports.supplierReport;
 
@@ -1329,88 +1342,90 @@ class _TransactionsTab extends StatelessWidget {
   final AppStore store;
   final String query;
   final bool cashOnly;
-  static final RevisionKeyCache<List<AccountTransaction>> _rowsCache =
-      RevisionKeyCache<List<AccountTransaction>>();
+  static final RevisionKeyCache<Future<BusinessQueryPage<AccountTransaction>?>>
+      _rowsCache = RevisionKeyCache<Future<BusinessQueryPage<AccountTransaction>?>>();
 
   @override
   Widget build(BuildContext context) {
     final normalizedQuery = _normalizedSearchQuery(query);
-    final rows = _rowsCache.getOrCompute(
-      store.accountTransactionsRevision,
-      '${store.appIdentity.storeId}|$cashOnly|$normalizedQuery',
-      () {
-        final computed = store.accountTransactions
-            .where((txn) =>
-                (!cashOnly || _isCashTxn(txn)) &&
-                _matchesNormalized(normalizedQuery, [
-                  txn.accountName,
-                  txn.referenceNo,
-                  txn.paymentMethod,
-                  txn.note,
-                  txn.type
-                ]))
-            .toList(growable: false);
-        computed.sort((a, b) => b.date.compareTo(a.date));
-        return computed;
-      },
-    );
-
-    if (rows.isEmpty) {
-      return _EmptyAccountingState(
-          message: AppLocalizations.of(context).text(
-              cashOnly ? 'no_cash_movements' : 'no_account_transactions'));
+    if (!LocalDatabaseService.canQueryBusinessSqlite) {
+      return const Center(child: CircularProgressIndicator.adaptive());
     }
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final isWide = constraints.maxWidth >= 780;
-        final rowExtent = isWide ? 72.0 : 92.0;
-        return Card(
-          elevation: 0,
-          clipBehavior: Clip.antiAlias,
-          child: isWide
-              ? Column(
-                  children: [
-                    const _TransactionTableHeader(),
-                    Expanded(
-                      child: ListView.builder(
-                        scrollCacheExtent: _kAccountingListCacheExtent,
-                        keyboardDismissBehavior:
-                            ScrollViewKeyboardDismissBehavior.onDrag,
-                        itemExtent: rowExtent,
-                        itemCount: rows.length,
-                        itemBuilder: (context, index) {
-                          final transaction = rows[index];
-                          return _TransactionRow(
-                              store: store,
-                              transaction: transaction,
-                              isWide: isWide);
-                        },
-                      ),
+    return FutureBuilder<BusinessQueryPage<AccountTransaction>?>(
+      future: _rowsFuture(normalizedQuery),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Center(child: CircularProgressIndicator.adaptive());
+        }
+        final rows = snapshot.data?.items ?? const <AccountTransaction>[];
+        if (rows.isEmpty) {
+          return _EmptyAccountingState(
+              message: AppLocalizations.of(context).text(
+                  cashOnly ? 'no_cash_movements' : 'no_account_transactions'));
+        }
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final isWide = constraints.maxWidth >= 780;
+            final rowExtent = isWide ? 72.0 : 92.0;
+            return Card(
+              elevation: 0,
+              clipBehavior: Clip.antiAlias,
+              child: isWide
+                  ? Column(
+                      children: [
+                        const _TransactionTableHeader(),
+                        Expanded(
+                          child: ListView.builder(
+                            scrollCacheExtent: _kAccountingListCacheExtent,
+                            keyboardDismissBehavior:
+                                ScrollViewKeyboardDismissBehavior.onDrag,
+                            itemExtent: rowExtent,
+                            itemCount: rows.length,
+                            itemBuilder: (context, index) {
+                              final transaction = rows[index];
+                              return _TransactionRow(
+                                  store: store,
+                                  transaction: transaction,
+                                  isWide: isWide);
+                            },
+                          ),
+                        ),
+                      ],
+                    )
+                  : ListView.builder(
+                      scrollCacheExtent: _kAccountingListCacheExtent,
+                      keyboardDismissBehavior:
+                          ScrollViewKeyboardDismissBehavior.onDrag,
+                      itemExtent: rowExtent,
+                      itemCount: rows.length,
+                      itemBuilder: (context, index) {
+                        final transaction = rows[index];
+                        return _TransactionRow(
+                            store: store,
+                            transaction: transaction,
+                            isWide: isWide);
+                      },
                     ),
-                  ],
-                )
-              : ListView.builder(
-                  scrollCacheExtent: _kAccountingListCacheExtent,
-                  keyboardDismissBehavior:
-                      ScrollViewKeyboardDismissBehavior.onDrag,
-                  itemExtent: rowExtent,
-                  itemCount: rows.length,
-                  itemBuilder: (context, index) {
-                    final transaction = rows[index];
-                    return _TransactionRow(
-                        store: store, transaction: transaction, isWide: isWide);
-                  },
-                ),
+            );
+          },
         );
       },
     );
   }
 
-  bool _isCashTxn(AccountTransaction txn) =>
-      txn.type == 'paymentReceived' ||
-      txn.type == 'paymentPaid' ||
-      txn.type == 'paymentReversal';
+  Future<BusinessQueryPage<AccountTransaction>?> _rowsFuture(
+    String normalizedQuery,
+  ) {
+    return _rowsCache.getOrCompute(
+      BusinessRevisionService.instance.accountTransactionsRevision,
+      '${store.appIdentity.storeId}|$cashOnly|$normalizedQuery',
+      () => LocalDatabaseService.queryAccountTransactionsFromSqlite(
+        query: normalizedQuery,
+        cashOnly: cashOnly,
+        limit: 500,
+      ),
+    );
+  }
 }
 
 class _TransactionTableHeader extends StatelessWidget {
@@ -2227,7 +2242,7 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
   void initState() {
     super.initState();
     _future = _load();
-    _lastSeenRevision = widget.store.accountingRevision;
+    _lastSeenRevision = BusinessRevisionService.instance.accountingRevision;
     widget.store.addListener(_refresh);
   }
 
@@ -2266,7 +2281,7 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
 
   void _refresh({bool force = false}) {
     if (!mounted) return;
-    final revision = widget.store.accountingRevision;
+    final revision = BusinessRevisionService.instance.accountingRevision;
     if (!force && revision == _lastSeenRevision) return;
     _lastSeenRevision = revision;
     setState(() => _future = _load());
@@ -3148,8 +3163,7 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
     final notes = TextEditingController();
     final transferTargets =
         locations.where((location) => location.id != item.referenceId).toList();
-    final activeUsers =
-        widget.store.users.where((user) => user.isActive).toList();
+    final activeUsers = await UserRepository.listActive();
     final activeUser = widget.store.activeUser;
     final handoverUsers =
         activeUsers.where((user) => user.id != (activeUser?.id ?? '')).toList();
@@ -3983,7 +3997,7 @@ class _AccountingSettingsTabState extends State<_AccountingSettingsTab> {
   void initState() {
     super.initState();
     _future = _loadCached();
-    _lastSeenRevision = widget.store.accountingRevision;
+    _lastSeenRevision = BusinessRevisionService.instance.accountingRevision;
     widget.store.addListener(_refresh);
   }
 
@@ -3993,7 +4007,7 @@ class _AccountingSettingsTabState extends State<_AccountingSettingsTab> {
     if (oldWidget.store != widget.store) {
       oldWidget.store.removeListener(_refresh);
       widget.store.addListener(_refresh);
-      _lastSeenRevision = widget.store.accountingRevision;
+      _lastSeenRevision = BusinessRevisionService.instance.accountingRevision;
     }
   }
 
@@ -4037,7 +4051,7 @@ class _AccountingSettingsTabState extends State<_AccountingSettingsTab> {
 
   Future<_AccountingSettingsData> _loadCached() {
     return _futureCache.getOrCompute(
-      widget.store.accountingRevision,
+      BusinessRevisionService.instance.accountingRevision,
       widget.store.appIdentity.storeId,
       _load,
     );
@@ -4045,7 +4059,7 @@ class _AccountingSettingsTabState extends State<_AccountingSettingsTab> {
 
   void _refresh({bool force = false}) {
     if (!mounted) return;
-    final revision = widget.store.accountingRevision;
+    final revision = BusinessRevisionService.instance.accountingRevision;
     if (!force && revision == _lastSeenRevision) return;
     _lastSeenRevision = revision;
     setState(() => _future = _loadCached());
@@ -4524,63 +4538,6 @@ class _AccountingMetrics {
       todayCashOut: _doubleValue(summary['todayCashOut']),
     );
   }
-
-  factory _AccountingMetrics.fromStore(AppStore store) {
-    final customers = store.customers;
-    final suppliers = store.suppliers;
-    final accountTransactions = store.accountTransactions;
-    double customerReceivables = 0;
-    double customerCredits = 0;
-    for (final customer in customers) {
-      final balance = store.accountBalance('customer', customer.id);
-      if (balance > 0) {
-        customerReceivables += balance;
-      } else if (balance < 0) {
-        customerCredits += balance.abs();
-      }
-    }
-    double supplierPayables = 0;
-    double supplierAdvances = 0;
-    for (final supplier in suppliers) {
-      final balance = store.accountBalance('supplier', supplier.id);
-      if (balance < 0) {
-        supplierPayables += balance.abs();
-      } else if (balance > 0) {
-        supplierAdvances += balance;
-      }
-    }
-    final today = DateTime.now();
-    double todayCashIn = 0;
-    double todayCashOut = 0;
-    for (final txn in accountTransactions) {
-      if (!_sameDay(txn.date, today)) continue;
-      if (_isCashIn(txn)) {
-        todayCashIn += _cashAmount(txn);
-      }
-      if (_isCashOut(txn)) {
-        todayCashOut += _cashAmount(txn);
-      }
-    }
-    return _AccountingMetrics(
-      customerReceivables: customerReceivables,
-      customerCredits: customerCredits,
-      supplierPayables: supplierPayables,
-      supplierAdvances: supplierAdvances,
-      todayCashIn: todayCashIn,
-      todayCashOut: todayCashOut,
-    );
-  }
-
-  static bool _sameDay(DateTime a, DateTime b) =>
-      a.year == b.year && a.month == b.month && a.day == b.day;
-  static bool _isCashIn(AccountTransaction txn) =>
-      txn.type == 'paymentReceived' ||
-      (txn.type == 'paymentReversal' && txn.accountType == 'supplier');
-  static bool _isCashOut(AccountTransaction txn) =>
-      txn.type == 'paymentPaid' ||
-      (txn.type == 'paymentReversal' && txn.accountType == 'customer');
-  static double _cashAmount(AccountTransaction txn) =>
-      txn.debit > 0 ? txn.debit : txn.credit;
 }
 
 double _doubleValue(Object? value) {

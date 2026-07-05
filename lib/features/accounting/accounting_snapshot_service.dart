@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
+import '../../core/services/business_revision_service.dart';
 import '../../core/services/local_database_service.dart';
 import '../../core/services/startup_timing_service.dart';
 import '../../data/app_store.dart';
@@ -17,7 +18,7 @@ class AccountingSnapshotService {
       <String, Map<String, Object?>>{};
 
   String _cacheKey(AppStore store, DateTime reference) =>
-      '${store.appIdentity.storeId}:${store.accountingRevision}:${reference.year}-${reference.month}-${reference.day}';
+      '${store.appIdentity.storeId}:${BusinessRevisionService.instance.accountingRevision}:${reference.year}-${reference.month}-${reference.day}';
 
   Map<String, Object?>? peekMetrics(AppStore store, {DateTime? now}) {
     final reference = (now ?? DateTime.now()).toLocal();

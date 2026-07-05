@@ -533,7 +533,7 @@ class GoogleDriveBackupService {
       final now = DateTime.now();
       status.value = const GoogleDriveBackupStatus(
           isRunning: true, message: 'Compressing backup...');
-      final bytes = _buildZipBytes(store.exportBackupJson(), now, reason);
+      final bytes = _buildZipBytes(await store.exportBackupJson(), now, reason);
       final fileName = reason == 'manual'
           ? 'ventio_manual_${_dateTimeStamp(now)}.vtb'
           : 'ventio_daily_${_dateStamp(now)}.vtb';

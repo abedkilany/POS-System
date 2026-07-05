@@ -9,6 +9,8 @@ import '../../models/journal_entry.dart';
 import '../../models/purchase.dart';
 import '../../models/sale.dart';
 import '../../models/store_profile.dart';
+import '../storage/sqlite/business_sqlite_store.dart';
+import '../services/local_database_service.dart';
 import '../utils/currency_utils.dart';
 import '../storage/sqlite/sqlite_migration_manager.dart';
 import '../storage/sqlite/ventio_drift_database.dart';
@@ -1375,6 +1377,243 @@ class AccountingService {
       ''',
     ).get();
     return rows.map((row) => AdvancedAccountingItem.fromRow(row.data)).toList();
+  }
+
+  static Future<List<AdvancedAccountingItem>> listPartyBalancesReport({
+    required String accountType,
+    String query = '',
+    int limit = 100,
+    int offset = 0,
+  }) async {
+    if (!isAvailable) return const <AdvancedAccountingItem>[];
+    final normalizedType = accountType.trim().toLowerCase();
+    if (normalizedType != 'customer' && normalizedType != 'supplier') {
+      return const <AdvancedAccountingItem>[];
+    }
+    final table = normalizedType == 'customer' ? 'customers' : 'suppliers';
+    final conditions = <String>[
+      "b.balance IS NOT NULL",
+      "ABS(b.balance) > 0.0001",
+    ];
+    final variables = <Variable<Object>>[
+      Variable<String>(normalizedType),
+    ];
+    final normalizedQuery = query.trim().toLowerCase();
+    if (normalizedQuery.isNotEmpty) {
+      final pattern = '%$normalizedQuery%';
+      conditions.add('('
+          'lower(t.name) LIKE ? OR lower(COALESCE(t.phone, \'\')) LIKE ? OR '
+          'lower(COALESCE(t.address, \'\')) LIKE ?'
+          ')');
+      variables
+        ..add(Variable<String>(pattern))
+        ..add(Variable<String>(pattern))
+        ..add(Variable<String>(pattern));
+    }
+    final safeLimit = limit.clamp(1, 500).toInt();
+    final safeOffset = offset < 0 ? 0 : offset;
+    final rows = await _db.customSelect(
+      '''
+      WITH balances AS (
+        SELECT account_id,
+               SUM(debit - credit) AS balance
+        FROM account_transactions
+        WHERE deleted_at = '' AND lower(account_type) = ? AND trim(account_id) <> ''
+        GROUP BY account_id
+      )
+      SELECT t.id, t.name, t.phone AS account_code, t.address AS account_name,
+             b.balance
+      FROM balances b
+      INNER JOIN $table t ON t.id = b.account_id
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY ABS(b.balance) DESC, lower(t.name) ASC, t.id ASC
+      LIMIT ? OFFSET ?
+      ''',
+      variables: <Variable<Object>>[
+        ...variables,
+        Variable<int>(safeLimit),
+        Variable<int>(safeOffset),
+      ],
+    ).get();
+    return rows.map((row) {
+      final data = Map<String, Object?>.from(row.data);
+      data['type'] = normalizedType;
+      data['status'] = normalizedType == 'customer'
+          ? 'customer_balance'
+          : 'supplier_balance';
+      return AdvancedAccountingItem.fromRow(data);
+    }).toList(growable: false);
+  }
+
+  static Future<Map<String, double>> readPartyBalancesByIds({
+    required String accountType,
+    required Iterable<String> accountIds,
+  }) async {
+    if (!isAvailable) return const <String, double>{};
+    final normalizedType = accountType.trim().toLowerCase();
+    if (normalizedType != 'customer' && normalizedType != 'supplier') {
+      return const <String, double>{};
+    }
+    final ids = accountIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toList(growable: false);
+    if (ids.isEmpty) return const <String, double>{};
+    final table = normalizedType == 'customer' ? 'customers' : 'suppliers';
+    final placeholders = List<String>.filled(ids.length, '?').join(', ');
+    final rows = await _db.customSelect(
+      '''
+      WITH balances AS (
+        SELECT account_id, SUM(debit - credit) AS balance
+        FROM account_transactions
+        WHERE deleted_at = '' AND lower(account_type) = ? AND trim(account_id) <> ''
+        GROUP BY account_id
+      )
+      SELECT t.id, COALESCE(b.balance, 0) AS balance
+      FROM $table t
+      LEFT JOIN balances b ON b.account_id = t.id
+      WHERE t.deleted_at = '' AND t.id IN ($placeholders)
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(normalizedType),
+        for (final id in ids) Variable<String>(id),
+      ],
+    ).get();
+    return <String, double>{
+      for (final row in rows)
+        row.read<String>('id'): (row.read<num>('balance')).toDouble(),
+    };
+  }
+
+  static Future<double> readPartyBalance({
+    required String accountType,
+    required String accountId,
+  }) async {
+    if (!isAvailable) return 0;
+    final normalizedType = accountType.trim().toLowerCase();
+    final normalizedAccountId = accountId.trim();
+    if (normalizedAccountId.isEmpty ||
+        (normalizedType != 'customer' && normalizedType != 'supplier')) {
+      return 0;
+    }
+    final row = await _db.customSelect(
+      '''
+      SELECT COALESCE(SUM(debit - credit), 0) AS balance
+      FROM account_transactions
+      WHERE deleted_at = '' AND lower(account_type) = ? AND account_id = ?
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(normalizedType),
+        Variable<String>(normalizedAccountId),
+      ],
+    ).getSingle();
+    return (row.read<num>('balance')).toDouble();
+  }
+
+  static Future<List<AccountTransaction>> listPartyTransactions({
+    required String accountType,
+    required String accountId,
+    String query = '',
+    int limit = 200,
+    int offset = 0,
+  }) async {
+    if (!isAvailable) return const <AccountTransaction>[];
+    final normalizedType = accountType.trim().toLowerCase();
+    final normalizedAccountId = accountId.trim();
+    if (normalizedAccountId.isEmpty ||
+        (normalizedType != 'customer' && normalizedType != 'supplier')) {
+      return const <AccountTransaction>[];
+    }
+    final conditions = <String>[
+      "deleted_at = ''",
+      'lower(account_type) = ?',
+      'account_id = ?',
+    ];
+    final variables = <Variable<Object>>[
+      Variable<String>(normalizedType),
+      Variable<String>(normalizedAccountId),
+    ];
+    final normalizedQuery = query.trim().toLowerCase();
+    if (normalizedQuery.isNotEmpty) {
+      final pattern = '%$normalizedQuery%';
+      conditions.add('('
+          'lower(transaction_type) LIKE ? OR '
+          'lower(reference_no) LIKE ? OR '
+          'lower(note) LIKE ? OR '
+          'lower(account_name) LIKE ?'
+          ')');
+      variables
+        ..add(Variable<String>(pattern))
+        ..add(Variable<String>(pattern))
+        ..add(Variable<String>(pattern))
+        ..add(Variable<String>(pattern));
+    }
+    final safeLimit = limit.clamp(1, 500).toInt();
+    final safeOffset = offset < 0 ? 0 : offset;
+    final rows = await _db.customSelect(
+      '''
+      SELECT id, account_type AS accountType, account_id AS accountId,
+             account_name AS accountName, transaction_date AS date,
+             transaction_type AS type, reference_id AS referenceId,
+             reference_no AS referenceNo, debit, credit, currency,
+             payment_method AS paymentMethod, note, created_at AS createdAt,
+             updated_at AS updatedAt, deleted_at AS deletedAt,
+             device_id AS deviceId, sync_status AS syncStatus,
+             store_id AS storeId, branch_id AS branchId, version,
+             last_modified_by_device_id AS lastModifiedByDeviceId
+      FROM account_transactions
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY transaction_date DESC, updated_at DESC, id DESC
+      LIMIT ? OFFSET ?
+      ''',
+      variables: <Variable<Object>>[
+        ...variables,
+        Variable<int>(safeLimit),
+        Variable<int>(safeOffset),
+      ],
+    ).get();
+    return rows
+        .map((row) => AccountTransaction.fromJson(
+              Map<String, dynamic>.from(row.data),
+            ))
+        .toList(growable: false);
+  }
+
+  static Future<AccountTransaction> saveAccountTransaction(
+    AccountTransaction transaction, {
+    required String deviceId,
+    required String storeId,
+    required String branchId,
+  }) async {
+    final now = DateTime.now().toUtc();
+    final normalized = transaction.copyWith(
+      accountType: transaction.accountType.trim().toLowerCase(),
+      accountName: transaction.accountName.trim(),
+      currency: transaction.currency.trim().isEmpty
+          ? 'USD'
+          : transaction.currency.trim().toUpperCase(),
+      paymentMethod: transaction.paymentMethod.trim(),
+      debit: transaction.debit.isFinite && transaction.debit > 0
+          ? transaction.debit
+          : 0,
+      credit: transaction.credit.isFinite && transaction.credit > 0
+          ? transaction.credit
+          : 0,
+      deviceId: deviceId,
+      storeId: storeId,
+      branchId: branchId,
+      syncStatus: 'pending',
+      updatedAt: now,
+      lastModifiedByDeviceId: deviceId,
+    );
+    if (!isAvailable) return normalized;
+    await LocalDatabaseService.upsertBusinessEntityJsonImmediate(
+      BusinessSqliteStore.accountTransactionsKey,
+      normalized.toJson(),
+      sortIndex: now.millisecondsSinceEpoch,
+    );
+    await recordAccountPayment(normalized);
+    return normalized;
   }
 
   static Future<List<AdvancedAccountingItem>> listOpenCashDrawersReport() async {

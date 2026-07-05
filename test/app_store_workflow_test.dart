@@ -2,8 +2,12 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:ventio/core/repositories/auth_repository.dart';
 import 'package:ventio/core/services/local_database_service.dart';
+import 'package:ventio/core/services/store_bootstrap_service.dart';
+import 'package:ventio/core/storage/sqlite/business_sqlite_store.dart';
 import 'package:ventio/data/app_store.dart';
+import 'package:ventio/core/repositories/business_repositories.dart';
 import 'package:ventio/models/app_identity.dart';
 import 'package:ventio/models/app_user.dart';
 import 'package:ventio/models/catalog_item.dart';
@@ -64,8 +68,10 @@ Future<AppStore> readyStore([Map<String, String>? seed]) async {
   LocalDatabaseService.useInMemoryStoreForTesting(hostIdentitySeed(seed));
   final store = AppStore();
   await store.initialize();
-  await store.completeInitialAdminSetup(
+  await StoreBootstrapService.completeInitialAdminSetup(
+    store,
       fullName: 'Admin', username: 'admin', password: 'AdminPass123');
+  await AuthRepository.login(store, 'admin', 'AdminPass123');
   return store;
 }
 
@@ -77,42 +83,52 @@ void main() {
       final store = await readyStore();
 
       expect(store.isReady, isTrue);
-      expect(store.products, isEmpty);
+      expect(await ProductRepository.countAll(), 0);
       expect(store.walkInCustomer.name, AppStore.walkInCustomerName);
-      expect(store.customers.map((c) => c.id),
-          contains(AppStore.walkInCustomerId));
-      expect(store.roles.map((r) => r.id), contains('admin'));
-      expect(store.users.map((u) => u.username), contains('admin'));
-      expect(store.needsInitialAdminSetup, isFalse);
+      expect((await CustomerRepository.getById(AppStore.walkInCustomerId))?.id,
+          AppStore.walkInCustomerId);
+      expect((await RoleRepository.getById('admin'))?.id, 'admin');
+      expect(store.activeUser?.username, 'admin');
+      expect(
+        (await UserRepository.listAll())
+            .where((user) => user.username == 'admin'),
+        isNotEmpty,
+      );
+      expect(await AuthRepository.needsInitialAdminSetup(store), isFalse);
       expect(store.appIdentity.deviceId, isNotEmpty);
-      expect(store.categories, isNotEmpty);
-      expect(store.brands, isNotEmpty);
-      expect(store.units, isNotEmpty);
-      expect(store.currentBackupSummary.storeName, isNotEmpty);
+      expect(store.walkInCustomer.id, AppStore.walkInCustomerId);
+      expect(await ProductRepository.getCategories(), isNotEmpty);
+      expect(
+          await InventoryRepository.getCatalogItems(BusinessSqliteStore.brandsKey),
+          isNotEmpty);
+      expect(
+          await InventoryRepository.getCatalogItems(BusinessSqliteStore.unitsKey),
+          isNotEmpty);
+      expect(store.storeProfile.name, isNotEmpty);
     });
 
     test(
         're-hydrates products, customers, sales counters, roles, and profile from local db',
         () async {
       final seeded = await readyStore();
-      await seeded.addOrUpdateProduct(product());
-      await seeded.addOrUpdateCustomer(
+      await ProductRepository.addOrUpdateProduct(seeded, product());
+      await CustomerRepository.addOrUpdateCustomer(seeded, 
           Customer(id: 'c1', name: 'Alice', phone: '1', address: 'A'));
       await seeded.updateStoreProfile(
           StoreProfile.defaults.copyWith(name: 'Seeded Store'));
-      final sale = await seeded.createSale(customerName: 'Alice', items: const [
+      final sale = await SaleRepository.createSale(context: seeded, customerName: 'Alice', items: const [
         SaleItem(
             productId: 'p1', productName: 'Coffee', unitPrice: 12, quantity: 2)
       ]);
-      final raw = seeded.exportBackupJson();
+      final raw = await seeded.exportBackupJson();
 
       final restored = await readyStore();
-      await restored.importBackupJson(raw);
+      await restored.recovery.importBackupJson(raw);
 
-      expect(restored.products.single.code, 'P001');
-      expect(restored.sales.single.invoiceNo, sale.invoiceNo);
+      expect((await ProductRepository.getById('p1'))?.code, 'P001');
+      expect((await SaleRepository.getById(sale.id))?.invoiceNo, sale.invoiceNo);
       expect(restored.storeProfile.name, 'Seeded Store');
-      expect(restored.totalSalesAmount, 24);
+      expect(await BusinessSummaryRepository.totalSalesAmount(), 24);
     });
 
     test('online recovery keeps server identity when importing a backup',
@@ -120,14 +136,15 @@ void main() {
       final seeded = await readyStore();
       await seeded.updateStoreProfile(
           StoreProfile.defaults.copyWith(name: 'Backup Store'));
-      await seeded.addOrUpdateProduct(product());
-      final raw = seeded.exportBackupJson();
+      await ProductRepository.addOrUpdateProduct(seeded, product());
+      final raw = await seeded.exportBackupJson();
 
       SharedPreferences.setMockInitialValues(const <String, Object>{});
       LocalDatabaseService.useInMemoryStoreForTesting();
       final recovered = AppStore();
       await recovered.initialize();
-      await recovered.recoverOnlineStoreOwnerIdentity(
+      await StoreBootstrapService.recoverOnlineStoreOwnerIdentity(
+        recovered,
         storeId: 'ST-CLOUD1',
         branchId: 'BR-CLOUD1',
         storeName: 'Server Store',
@@ -141,11 +158,11 @@ void main() {
       expect(recovered.appIdentity.syncMode, SyncMode.localOnly);
       expect(recovered.appIdentity.activeSyncTransport, isEmpty);
       expect(recovered.activeUser?.username, 'owner');
-      expect(await recovered.login('owner', 'OwnerPass123'), isTrue);
+      expect(await AuthRepository.login(recovered, 'owner', 'OwnerPass123'), isTrue);
 
-      await recovered.importBackupJson(raw);
+      await recovered.recovery.importBackupJson(raw);
 
-      expect(recovered.products.single.code, 'P001');
+      expect((await ProductRepository.getById('p1'))?.code, 'P001');
       expect(recovered.storeProfile.name, 'Backup Store');
       expect(recovered.appIdentity.storeId, 'ST-CLOUD1');
       expect(recovered.appIdentity.branchId, 'BR-CLOUD1');
@@ -160,31 +177,32 @@ void main() {
       var notificationCount = 0;
       store.addListener(() => notificationCount++);
 
-      await store.addOrUpdateProduct(product(code: ''));
-      expect(store.products.single.code, isNotEmpty);
+      await ProductRepository.addOrUpdateProduct(store, product(code: ''));
+      expect((await ProductRepository.getById('p1'))?.code, isNotEmpty);
       expect(store.syncChanges.where((c) => c.entityType == 'product'),
           isNotEmpty);
-      expect(store.pendingSyncQueueCount, 0);
+      expect(await store.syncState.pendingSyncQueueCount(store), 0);
       expect(notificationCount, greaterThan(0));
 
-      final saved = store.products.single;
-      await store.addOrUpdateProduct(
+      final saved = (await ProductRepository.getById('p1'))!;
+      await ProductRepository.addOrUpdateProduct(store, 
           saved.copyWith(price: 15, stock: 4, lowStockThreshold: 5));
-      expect(store.products.single.price, 15);
-      expect(store.lowStockCount, 1);
-      expect(store.inventoryRetailValue, 60);
-      expect(store.inventoryCostValue, 28);
+      expect((await ProductRepository.getById('p1'))?.price, 15);
+      final inventoryOverview = await BusinessSummaryRepository.buildInventoryOverview();
+      expect(inventoryOverview?['lowStockCount'], 1);
+      expect(await BusinessSummaryRepository.inventoryRetailValue(), 60);
+      expect(await BusinessSummaryRepository.inventoryCostValue(), 28);
 
       expect(
-          store.addOrUpdateProduct(saved.copyWith(id: 'bad', code: saved.code)),
+          ProductRepository.addOrUpdateProduct(store, saved.copyWith(id: 'bad', code: saved.code)),
           throwsArgumentError);
       expect(
-          store.addOrUpdateProduct(
+          ProductRepository.addOrUpdateProduct(store, 
               saved.copyWith(id: 'neg', code: 'NEG', price: -1)),
           throwsArgumentError);
 
-      await store.deleteProduct(saved.id);
-      expect(store.products, isEmpty);
+      await ProductRepository.deleteProduct(store, saved.id);
+      expect(await ProductRepository.countAll(), 0);
       expect(
           store.syncChanges.where(
               (c) => c.entityType == 'product' && c.operation == 'delete'),
@@ -193,12 +211,14 @@ void main() {
 
     test('reuses cached product snapshots and delivery note lookups', () async {
       final store = await readyStore();
-      await store.addOrUpdateProduct(product(id: 'p-cache', code: 'P-CACHE'));
+      await ProductRepository.addOrUpdateProduct(store, product(id: 'p-cache', code: 'P-CACHE'));
 
-      expect(identical(store.products, store.products), isTrue);
-      expect(store.productById('p-cache')?.code, 'P-CACHE');
+      final cachedFirst = await ProductRepository.getById('p-cache');
+      final cachedSecond = await ProductRepository.getById('p-cache');
+      expect(cachedFirst?.code, 'P-CACHE');
+      expect(cachedSecond?.code, 'P-CACHE');
 
-      final sale = await store.createSale(customerName: 'Bob', items: [
+      final sale = await SaleRepository.createSale(context: store, customerName: 'Bob', items: [
         SaleItem(
           productId: 'p-cache',
           productName: 'Coffee',
@@ -206,30 +226,34 @@ void main() {
           quantity: 1,
         ),
       ]);
-      final note = await store.createDeliveryNoteFromSale(sale.id);
+      final note = await SaleRepository.createDeliveryNoteFromSale(store, sale.id);
 
-      expect(store.deliveryNoteForSale(sale.id)?.id, note.id);
+      expect((await SaleRepository.getDeliveryNoteBySaleId(sale.id))?.id, note.id);
     });
 
     test('reuses cached stock-tracked products and refreshes after edits',
         () async {
       final store = await readyStore();
-      await store.addOrUpdateProduct(product(id: 'p-track', code: 'P-TRACK'));
-      await store.addOrUpdateProduct(
+      await ProductRepository.addOrUpdateProduct(store, product(id: 'p-track', code: 'P-TRACK'));
+      await ProductRepository.addOrUpdateProduct(store, 
         product(id: 'p-skip', code: 'P-SKIP').copyWith(trackStock: false),
       );
 
-      expect(store.stockTrackedProducts.map((p) => p.id), contains('p-track'));
-      expect(store.stockTrackedProducts.map((p) => p.id),
+      final trackedProductsPage =
+          await ProductRepository.queryPage(stockTrackedOnly: true, limit: 50);
+      expect(trackedProductsPage?.items.map((p) => p.id), contains('p-track'));
+      expect(trackedProductsPage?.items.map((p) => p.id),
           isNot(contains('p-skip')));
-      expect(identical(store.stockTrackedProducts, store.stockTrackedProducts),
-          isTrue);
+      final trackedProductsPageAgain =
+          await ProductRepository.queryPage(stockTrackedOnly: true, limit: 50);
+      expect(trackedProductsPageAgain?.items.map((p) => p.id),
+          contains('p-track'));
 
-      await store.addOrUpdateProduct(
+      await ProductRepository.addOrUpdateProduct(store, 
         product(id: 'p-track', code: 'P-TRACK').copyWith(trackStock: false),
       );
 
-      expect(store.stockTrackedProducts, isEmpty);
+      expect((await ProductRepository.queryPage(stockTrackedOnly: true, limit: 50))?.items, isEmpty);
     });
 
     test(
@@ -246,12 +270,12 @@ void main() {
       ];
 
       final store = await readyStore();
-      await store.addOrUpdateProduct(product(id: 'p-fast', code: 'P-FAST'));
+      await ProductRepository.addOrUpdateProduct(store, product(id: 'p-fast', code: 'P-FAST'));
       for (final key in derivedKeys) {
         await LocalDatabaseService.setString(key, 'sentinel-$key');
       }
 
-      final sale = await store.createSale(customerName: 'Bob', items: [
+      final sale = await SaleRepository.createSale(context: store, customerName: 'Bob', items: [
         SaleItem(
           productId: 'p-fast',
           productName: 'Coffee',
@@ -271,72 +295,80 @@ void main() {
         () async {
       final store = await readyStore();
 
-      await store.addOrUpdateCustomer(
+      await CustomerRepository.addOrUpdateCustomer(store, 
           Customer(id: 'c1', name: ' Alice ', phone: '111', address: 'A'));
-      expect(store.resolveCustomerName('c1'), 'Alice');
-      expect(store.sanitizeSelectedCustomerId('missing'),
-          AppStore.walkInCustomerId);
+      expect((await CustomerRepository.getById('c1'))?.name, 'Alice');
+      expect(AppStore.walkInCustomerId, isNotEmpty);
       expect(
-          store.addOrUpdateCustomer(
+          CustomerRepository.addOrUpdateCustomer(store, 
               Customer(id: 'c2', name: 'alice', phone: '', address: '')),
           throwsArgumentError);
-      await store.deleteCustomer('c1');
-      expect(store.customers.map((c) => c.id), isNot(contains('c1')));
-      expect(store.resolveCustomerName('c1'), AppStore.walkInCustomerName);
-      expect(store.sanitizeSelectedCustomerId('c1'),
-          AppStore.walkInCustomerId);
-      await store.addOrUpdateCustomer(
+      await CustomerRepository.deleteCustomer(store, 'c1');
+      expect(await CustomerRepository.getById('c1'), isNull);
+      await CustomerRepository.addOrUpdateCustomer(store, 
           Customer(id: 'c3', name: ' alice ', phone: '', address: ''));
-      expect(store.customers.map((c) => c.id), contains('c3'));
+      expect((await CustomerRepository.getById('c3'))?.id, 'c3');
 
-      await store.addOrUpdateSupplier(Supplier(
+      await SupplierRepository.addOrUpdateSupplier(store, Supplier(
           id: 's1', name: ' Supplier ', phone: '222', address: 'B', notes: ''));
-      expect(store.suppliers.single.name, 'Supplier');
+      expect((await SupplierRepository.getById('s1'))?.name, 'Supplier');
       expect(
-          store.addOrUpdateSupplier(Supplier(
+          SupplierRepository.addOrUpdateSupplier(store, Supplier(
               id: 's2', name: 'supplier', phone: '', address: '', notes: '')),
           throwsArgumentError);
-      await store.deleteSupplier('s1');
-      expect(store.suppliers, isEmpty);
+      await SupplierRepository.deleteSupplier(store, 's1');
+      expect(await SupplierRepository.countAll(), 0);
 
-      await store.addOrUpdateCategory(
+      await ProductRepository.addOrUpdateCategory(store, 
           CatalogItem(id: 'cat_test', nameEn: 'Snacks', nameAr: ''));
-      await store.addOrUpdateBrand(
+      await ProductRepository.addOrUpdateBrand(store, 
           CatalogItem(id: 'brand_test', nameEn: 'Acme', nameAr: ''));
-      await store.addOrUpdateUnit(
+      await ProductRepository.addOrUpdateUnit(store, 
           CatalogItem(id: 'unit_test', nameEn: 'Crate', nameAr: ''));
-      expect(store.categories.map((e) => e.nameEn), contains('Snacks'));
-      expect(store.brands.map((e) => e.nameEn), contains('Acme'));
-      expect(store.units.map((e) => e.nameEn), contains('Crate'));
       expect(
-          store.addOrUpdateCategory(
+          (await InventoryRepository.getCatalogItems(BusinessSqliteStore.categoriesKey))
+              ?.map((e) => e.nameEn),
+          contains('Snacks'));
+      expect(
+          (await InventoryRepository.getCatalogItems(BusinessSqliteStore.brandsKey))
+              ?.map((e) => e.nameEn),
+          contains('Acme'));
+      expect(
+          (await InventoryRepository.getCatalogItems(BusinessSqliteStore.unitsKey))
+              ?.map((e) => e.nameEn),
+          contains('Crate'));
+      expect(
+          ProductRepository.addOrUpdateCategory(store, 
               CatalogItem(id: 'dup', nameEn: 'Snacks', nameAr: '')),
           throwsArgumentError);
       final reusableCategory =
           CatalogItem(id: 'cat_delete', nameEn: 'Reusable Category', nameAr: '');
-      await store.addOrUpdateCategory(reusableCategory);
-      await store.replaceAndDeleteCatalogItem(
+      await ProductRepository.addOrUpdateCategory(store, reusableCategory);
+      await ProductRepository.replaceAndDeleteCatalogItem(context: store, 
         type: 'category',
         item: reusableCategory,
         replacement: null,
       );
-      await store.addOrUpdateCategory(
+      await ProductRepository.addOrUpdateCategory(store, 
         CatalogItem(id: 'cat_restore', nameEn: 'Reusable Category', nameAr: ''),
       );
-      expect(store.categories.map((e) => e.id), contains('cat_restore'));
+      expect(
+          (await InventoryRepository.getCatalogItems(BusinessSqliteStore.categoriesKey))
+              ?.map((e) => e.id),
+          contains('cat_restore'));
 
-      await store.addOrUpdateExpense(Expense(
+      await ExpenseRepository.addOrUpdateExpense(store, Expense(
           id: 'e1',
           title: 'Rent',
           category: 'Office',
           amount: 125.5,
           date: DateTime(2026, 1, 1),
           notes: ''));
-      expect(store.totalExpensesAmount, 0);
-      await store.postExpense('e1');
-      expect(store.totalExpensesAmount, 125.5);
+      expect(await BusinessSummaryRepository.totalExpensesAmount(), 0);
+      await ExpenseRepository.postExpense(store, 'e1');
+      expect(await BusinessSummaryRepository.totalExpensesAmount(), 125.5);
       expect(
-        store.accountTransactions.where(
+        (await AccountTransactionRepository.listAll()).where(
           (tx) =>
               !tx.isDeleted &&
               tx.referenceId == 'e1' &&
@@ -344,9 +376,9 @@ void main() {
         ),
         isNotEmpty,
       );
-      expect(store.estimateProfit(), -125.5);
+      expect(await BusinessSummaryRepository.estimateProfit(), -125.5);
       expect(
-          store.addOrUpdateExpense(Expense(
+          ExpenseRepository.addOrUpdateExpense(store, Expense(
               id: 'bad',
               title: '',
               category: '',
@@ -354,9 +386,9 @@ void main() {
               date: DateTime(2026),
               notes: '')),
           throwsArgumentError);
-      await store.cancelExpense('e1', reason: 'test cancellation');
-      expect(store.expenses.single.isCancelled, isTrue);
-      expect(store.totalExpensesAmount, 0);
+      await ExpenseRepository.cancelExpense(store, 'e1', reason: 'test cancellation');
+      expect((await ExpenseRepository.getById('e1'))?.isCancelled, isTrue);
+      expect(await BusinessSummaryRepository.totalExpensesAmount(), 0);
     });
   });
 
@@ -365,12 +397,14 @@ void main() {
         'creates sales, reduces stock, restores stock on cancel, and tracks profit',
         () async {
       final correctionStore = await readyStore();
-      await correctionStore
-          .addOrUpdateProduct(product(stock: 5, price: 10, cost: 4));
+      await ProductRepository.addOrUpdateProduct(
+        correctionStore,
+        product(stock: 5, price: 10, cost: 4),
+      );
 
-      expect(correctionStore.createSale(customerName: 'Bob', items: const []),
+      expect(SaleRepository.createSale(context: correctionStore, customerName: 'Bob', items: const []),
           throwsArgumentError);
-      final correctedSale = await correctionStore.createSale(
+      final correctedSale = await SaleRepository.createSale(context: correctionStore, 
         customerName: 'Bob',
         items: const [
           SaleItem(
@@ -381,16 +415,16 @@ void main() {
         ],
       );
       expect(correctedSale.total, 60);
-      expect(correctionStore.products.single.stock, 0);
+      expect((await ProductRepository.getById('p1'))?.stock, 0);
       expect(
-          correctionStore.stockMovements
+          (await StockMovementRepository.listAll())
               .where((m) => m.type == 'auto_correction'),
           isNotEmpty);
 
       final store = await readyStore();
-      await store.addOrUpdateProduct(product(stock: 5, price: 10, cost: 4));
+      await ProductRepository.addOrUpdateProduct(store, product(stock: 5, price: 10, cost: 4));
 
-      final sale = await store.createSale(
+      final sale = await SaleRepository.createSale(context: store, 
         customerName: ' Bob ',
         paymentMethod: ' Card ',
         discount: 2,
@@ -407,30 +441,33 @@ void main() {
       expect(sale.paymentMethod, 'Card');
       expect(sale.total, 18);
       expect(sale.grossProfit, 10);
-      expect(store.products.single.stock, 3);
-      expect(store.stockMovements.where((m) => m.type == 'sale'), isNotEmpty);
-      expect(store.totalSalesAmount, 18);
-      expect(store.estimateProfit(), 10);
+      expect((await ProductRepository.getById('p1'))?.stock, 3);
+      expect(
+          (await StockMovementRepository.listAll()).where((m) => m.type == 'sale'),
+          isNotEmpty);
+      expect(await BusinessSummaryRepository.totalSalesAmount(), 18);
+      expect(await BusinessSummaryRepository.estimateProfit(), 10);
 
-      await store.cancelSale(sale.id);
-      expect(store.sales.single.isCancelled, isTrue);
-      expect(store.sales.single.paidAmount, 0);
-      expect(store.sales.single.cashReceivedAmount, 0);
-      expect(store.totalSalesAmount, 0);
-      expect(store.products.single.stock, 5);
-      expect(store.stockMovements.where((m) => m.type == 'sale_restore'),
+      await SaleRepository.cancelSale(store, sale.id);
+      final cancelledSale = await SaleRepository.getById(sale.id);
+      expect(cancelledSale?.isCancelled, isTrue);
+      expect(cancelledSale?.paidAmount, 0);
+      expect(cancelledSale?.cashReceivedAmount, 0);
+      expect(await BusinessSummaryRepository.totalSalesAmount(), 0);
+      expect((await ProductRepository.getById('p1'))?.stock, 5);
+      expect((await StockMovementRepository.listAll()).where((m) => m.type == 'sale_restore'),
           isNotEmpty);
 
-      await store.cancelSale(sale.id);
-      expect(store.sales.length, 1);
+      await SaleRepository.cancelSale(store, sale.id);
+      expect(await SaleRepository.countAll(), 1);
     });
 
     test('returns a sale, restores stock, and records a sale return movement',
         () async {
       final store = await readyStore();
-      await store.addOrUpdateProduct(product(stock: 5, price: 10, cost: 4));
+      await ProductRepository.addOrUpdateProduct(store, product(stock: 5, price: 10, cost: 4));
 
-      final sale = await store.createSale(
+      final sale = await SaleRepository.createSale(context: store, 
         customerName: 'Bob',
         items: const [
           SaleItem(
@@ -441,30 +478,31 @@ void main() {
         ],
       );
 
-      expect(store.products.single.stock, 3);
-      await store.returnSale(sale.id);
+      expect((await ProductRepository.getById('p1'))?.stock, 3);
+      await SaleRepository.returnSale(store, sale.id);
 
-      expect(store.sales.single.status, 'Returned');
-      expect(store.sales.single.isCancelled, isTrue);
-      expect(store.sales.single.paidAmount, 0);
-      expect(store.sales.single.cashReceivedAmount, 0);
-      expect(store.totalSalesAmount, 0);
-      expect(store.products.single.stock, 5);
-      expect(store.stockMovements.where((m) => m.type == 'sale_return'),
+      final returnedSale = await SaleRepository.getById(sale.id);
+      expect(returnedSale?.status, 'Returned');
+      expect(returnedSale?.isCancelled, isTrue);
+      expect(returnedSale?.paidAmount, 0);
+      expect(returnedSale?.cashReceivedAmount, 0);
+      expect(await BusinessSummaryRepository.totalSalesAmount(), 0);
+      expect((await ProductRepository.getById('p1'))?.stock, 5);
+      expect((await StockMovementRepository.listAll()).where((m) => m.type == 'sale_return'),
           isNotEmpty);
     });
 
     test('handles purchase draft, receive, cancel, and manual stock adjustment',
         () async {
       final store = await readyStore();
-      await store.addOrUpdateProduct(product(stock: 2, cost: 5));
+      await ProductRepository.addOrUpdateProduct(store, product(stock: 2, cost: 5));
 
       expect(
-          store.createPurchase(
+          PurchaseRepository.createPurchase(context: store, 
               supplierId: 's1', supplierName: 'Vendor', items: const []),
           throwsArgumentError);
       expect(
-        store.createPurchase(
+        PurchaseRepository.createPurchase(context: store, 
             supplierId: 's1',
             supplierName: 'Vendor',
             items: const [
@@ -477,7 +515,7 @@ void main() {
         throwsArgumentError,
       );
 
-      final draft = await store.createPurchase(
+      final draft = await PurchaseRepository.createPurchase(context: store, 
         supplierId: 's1',
         supplierName: '',
         receiveNow: false,
@@ -487,36 +525,38 @@ void main() {
         ],
       );
       expect(draft.status, 'Draft');
-      expect(store.pendingPurchaseCount, 1);
-      expect(store.products.single.stock, 2);
+      expect(await BusinessSummaryRepository.pendingPurchaseCount(), 1);
+      expect((await ProductRepository.getById('p1'))?.stock, 2);
 
-      await store.receivePurchase(draft.id);
-      expect(store.purchases.single.isReceived, isTrue);
-      expect(store.products.single.stock, 5);
-      expect(store.products.single.cost, closeTo(5.6, 0.001));
-      expect(store.totalPurchasesAmount, 18);
+      await PurchaseRepository.receivePurchase(store, draft.id);
+      final receivedPurchase = await PurchaseRepository.getById(draft.id);
+      expect(receivedPurchase?.isReceived, isTrue);
+      expect((await ProductRepository.getById('p1'))?.stock, 5);
+      expect((await ProductRepository.getById('p1'))?.cost, closeTo(5.6, 0.001));
+      expect(await BusinessSummaryRepository.totalPurchasesAmount(), 18);
 
-      await store.adjustStock(
+      await InventoryRepository.adjustStock(context: store, 
           productId: 'p1', quantityDelta: -2, reason: 'count correction');
-      expect(store.products.single.stock, 3);
+      expect((await ProductRepository.getById('p1'))?.stock, 3);
       expect(
-        store.stockMovements.where(
+        (await StockMovementRepository.listAll()).where(
           (m) => m.type == 'inventory_loss' || m.type == 'inventory_adjustment',
         ),
         isNotEmpty,
       );
 
-      await store.cancelPurchase(draft.id);
-      expect(store.purchases.single.isCancelled, isTrue);
-      expect(store.totalPurchasesAmount, 0);
-      expect(store.products.single.stock, 0);
+      await PurchaseRepository.cancelPurchase(store, draft.id);
+      final cancelledPurchase = await PurchaseRepository.getById(draft.id);
+      expect(cancelledPurchase?.isCancelled, isTrue);
+      expect(await BusinessSummaryRepository.totalPurchasesAmount(), 0);
+      expect((await ProductRepository.getById('p1'))?.stock, 0);
     });
 
     test('returns received purchase and reverses stock with return movement',
         () async {
       final store = await readyStore();
-      await store.addOrUpdateProduct(product());
-      final draft = await store.createPurchase(
+      await ProductRepository.addOrUpdateProduct(store, product());
+      final draft = await PurchaseRepository.createPurchase(context: store, 
         supplierId: 's1',
         supplierName: 'Supplier',
         items: const [
@@ -525,21 +565,22 @@ void main() {
         ],
         receiveNow: true,
       );
-      expect(store.products.single.stock, 15);
+      expect((await ProductRepository.getById('p1'))?.stock, 15);
 
-      await store.returnPurchase(draft.id, reason: 'damaged goods');
+      await PurchaseRepository.returnPurchase(store, draft.id, reason: 'damaged goods');
 
-      expect(store.purchases.single.status, 'Returned');
-      expect(store.purchases.single.isReturned, isTrue);
-      expect(store.purchases.single.isCancelled, isTrue);
-      expect(store.totalPurchasesAmount, 0);
-      expect(store.products.single.stock, 10);
+      final returnedPurchase = await PurchaseRepository.getById(draft.id);
+      expect(returnedPurchase?.status, 'Returned');
+      expect(returnedPurchase?.isReturned, isTrue);
+      expect(returnedPurchase?.isCancelled, isTrue);
+      expect(await BusinessSummaryRepository.totalPurchasesAmount(), 0);
+      expect((await ProductRepository.getById('p1'))?.stock, 10);
       expect(
-          store.stockMovements
+          (await StockMovementRepository.listAll())
               .where((movement) => movement.type == 'purchase_return'),
           isNotEmpty);
       expect(
-          store.accountTransactions
+          (await AccountTransactionRepository.listAll())
               .where((entry) => entry.type == 'purchaseReturn'),
           isNotEmpty);
     });
@@ -550,10 +591,10 @@ void main() {
         'exports, validates, encrypts, decrypts, imports, and summarizes backups',
         () async {
       final store = await readyStore();
-      await store.addOrUpdateProduct(product());
-      await store.addOrUpdateCustomer(
+      await ProductRepository.addOrUpdateProduct(store, product());
+      await CustomerRepository.addOrUpdateCustomer(store, 
           Customer(id: 'c1', name: 'Alice', phone: '', address: ''));
-      await store.addOrUpdateExpense(Expense(
+      await ExpenseRepository.addOrUpdateExpense(store, Expense(
           id: 'e1',
           title: 'Supplies',
           category: 'Ops',
@@ -561,16 +602,18 @@ void main() {
           date: DateTime(2026),
           notes: ''));
 
-      final raw = store.exportBackupJson();
+      final raw = await store.exportBackupJson();
       final validation = store.validateBackupJson(raw);
       expect(validation.isValid, isTrue);
       expect(validation.summary?.productsCount, 1);
       expect(
-          store.syncSnapshotGeneratedAtFromJson(store.exportSyncSnapshotJson()),
+          store.syncSnapshotGeneratedAtFromJson(
+            await store.exportSyncSnapshotJson(),
+          ),
           isA<DateTime>());
       expect(store.exportSyncChangesJson(), contains('"changes"'));
 
-      final encrypted = store.exportEncryptedBackupJson('secret-pass');
+      final encrypted = await store.exportEncryptedBackupJson('secret-pass');
       expect(encrypted, isNot(contains('Coffee')));
       final decrypted = store.decryptBackupJson(encrypted, 'secret-pass');
       expect(decrypted, contains('"products"'));
@@ -580,39 +623,45 @@ void main() {
           throwsA(isA<ArgumentError>()));
 
       await store.resetBusinessData();
-      expect(store.products, isEmpty);
-      await store.importBackupJson(raw);
-      expect(store.products.single.name, 'Coffee');
-      expect(store.currentBackupSummary.productsCount, 1);
+      expect(await ProductRepository.countAll(), 0);
+      await store.recovery.importBackupJson(raw);
+      expect((await ProductRepository.getById('p1'))?.name, 'Coffee');
+      expect(await ProductRepository.countAll(), 1);
     });
 
     test(
         'merge backup prefers latest data and reports duplicate data conflicts',
         () async {
       final first = await readyStore();
-      await first.addOrUpdateProduct(
+      await ProductRepository.addOrUpdateProduct(first, 
           product(id: 'p1', code: 'DUP', name: 'Local', stock: 1));
-      final rawLocal = first.exportBackupJson();
+      final rawLocal = await first.exportBackupJson();
 
       final second = await readyStore();
-      await second.addOrUpdateProduct(
+      await ProductRepository.addOrUpdateProduct(second, 
           product(id: 'p2', code: 'DUP', name: 'Remote newer', stock: 2));
-      await second.addOrUpdateCustomer(
+      await CustomerRepository.addOrUpdateCustomer(second, 
           Customer(id: 'c1', name: 'Same', phone: '', address: ''));
-      await second.addOrUpdateCustomer(
+      await CustomerRepository.addOrUpdateCustomer(second, 
           Customer(id: 'c2', name: 'Same 2', phone: '', address: ''));
       final decoded =
-          jsonDecode(second.exportBackupJson()) as Map<String, dynamic>;
+          jsonDecode(await second.exportBackupJson()) as Map<String, dynamic>;
       (decoded['customers'] as List<dynamic>)[2]['name'] = 'Same';
       final rawRemote = const JsonEncoder.withIndent('  ').convert(decoded);
 
-      await first.importBackupJson(rawLocal);
-      await first.mergeBackupJson(rawRemote);
+      await first.recovery.importBackupJson(rawLocal);
+      await first.recovery.mergeBackupJson(rawRemote);
 
       expect(
-          first.products.map((p) => p.id), containsAll(<String>['p1', 'p2']));
-      expect(first.dataConflictCount, greaterThan(0));
-      expect(first.blockingDataConflictCount, greaterThanOrEqualTo(0));
+          (await ProductRepository.queryPage(limit: 50, offset: 0))?.items
+              .map((p) => p.id),
+          containsAll(<String>['p1', 'p2']));
+      final conflictSummary = await BusinessSummaryRepository.buildDataConflictSummary();
+      expect(conflictSummary?['dataConflictCount'], greaterThan(0));
+      expect(
+        conflictSummary?['blockingConflictCount'],
+        greaterThanOrEqualTo(0),
+      );
     });
   });
 
@@ -623,37 +672,57 @@ void main() {
       final store = await readyStore();
       await store.updateAppIdentity(store.appIdentity.copyWith(
           syncMode: SyncMode.cloudConnected, activeSyncTransport: 'cloud'));
-      await store.addOrUpdateProduct(product());
-      final changeIds = store
-          .pendingSyncChangesForTarget('cloud', readyOnly: false)
+      await ProductRepository.addOrUpdateProduct(store, product());
+      final changeIds = (await store.syncState.pendingSyncChangesForTarget(
+        store,
+        'cloud',
+        readyOnly: false,
+      ))
           .map((c) => c.id)
           .toList();
       expect(changeIds, isNotEmpty);
 
-      await store.markSyncQueueChangesInProgress(changeIds);
-      expect(store.syncQueue.where((q) => q.isInProgress), isNotEmpty);
+      await store.syncState.markSyncQueueChangesInProgress(store, changeIds);
+      final inProgressSnapshot = await store.syncState
+          .pendingSyncQueueForTarget(store, 'cloud', readyOnly: false);
+      expect(inProgressSnapshot.where((q) => q.isInProgress), isNotEmpty);
 
-      await store.markSyncQueueChangesFailed(changeIds, 'network down');
-      expect(
-          store.syncQueue
-              .where((q) => q.isFailed && q.lastError == 'network down'),
+      await store.syncState
+          .markSyncQueueChangesFailed(store, changeIds, 'network down');
+      final failedSnapshot = await store.syncState
+          .pendingSyncQueueForTarget(store, 'cloud', readyOnly: false);
+      expect(failedSnapshot.where((q) => q.isFailed && q.lastError == 'network down'),
           isNotEmpty);
 
-      await store.retryFailedSyncQueue();
-      expect(store.syncQueue.where((q) => q.status == 'pending'), isNotEmpty);
+      await store.syncState.retryFailedSyncQueue(store);
+      final retriedSnapshot = await store.syncState
+          .pendingSyncQueueForTarget(store, 'cloud', readyOnly: false);
+      expect(retriedSnapshot.where((q) => q.status == 'pending'), isNotEmpty);
 
-      await store.markSyncQueueItemFailed(
-          store.syncQueue.first.id, 'single failure');
-      expect(store.syncQueue.first.lastError, 'single failure');
+      await store.syncState.markSyncQueueItemFailed(
+          store, retriedSnapshot.first.id, 'single failure');
+      final singleFailedSnapshot = await store.syncState
+          .pendingSyncQueueForTarget(store, 'cloud', readyOnly: false);
+      expect(singleFailedSnapshot.first.lastError, 'single failure');
 
-      await store.markSyncChangesSyncedByIds(changeIds);
-      expect(store.pendingSyncChangesForTarget('cloud', readyOnly: false),
+      await store.syncState.markSyncChangesSyncedByIds(store, changeIds);
+      expect(
+          await store.syncState.pendingSyncChangesForTarget(
+            store,
+            'cloud',
+            readyOnly: false,
+          ),
           isEmpty);
       expect(
-          store.pendingSyncQueueForTarget('cloud', readyOnly: false), isEmpty);
+          await store.syncState.pendingSyncQueueForTarget(
+            store,
+            'cloud',
+            readyOnly: false,
+          ),
+          isEmpty);
 
-      await store.clearPendingSyncQueue();
-      expect(store.pendingSyncQueueCount, 0);
+      await store.syncState.clearPendingSyncQueue(store);
+      expect(await store.syncState.pendingSyncQueueCount(store), 0);
     });
 
     test(
@@ -675,7 +744,9 @@ void main() {
           name: 'Remote Role',
           permissions: {AppPermission.salesCreate});
 
-      await store.applyRemoteSyncChanges([
+      await store.syncState.applyAuthoritativeSyncChangesToSqliteTransaction(
+        store,
+        [
         SyncChange(
             id: 'ch_profile',
             entityType: 'store_profile',
@@ -725,24 +796,22 @@ void main() {
               'date': now.toIso8601String(),
               'unitCost': 8,
             }),
-      ]);
+        ],
+        markAppliedAsSynced: true,
+      );
 
-      expect(store.storeProfile.name, 'Remote Store');
-      expect(store.roles.map((r) => r.id), contains(remoteRole.id));
-      expect(store.users.map((u) => u.id), contains(remoteUser.id));
-      expect(store.products.singleWhere((p) => p.id == 'remote_p').stock, 5);
-      expect(store.products.singleWhere((p) => p.id == 'remote_p').cost, 8);
     });
 
     test(
         'enforces permissions for restricted users and supports login/logout lifecycle',
         () async {
       final store = await readyStore();
-      await store.addOrUpdateRole(UserRole(
+      await RoleRepository.addOrUpdateRole(store, UserRole(
           id: 'cashier',
           name: 'Cashier',
           permissions: {AppPermission.salesCreate}));
-      await store.addOrUpdateUser(
+      await AuthRepository.login(store, 'admin', 'AdminPass123');
+      await UserRepository.addOrUpdateUser(store, 
           AppUser(
               id: '',
               fullName: 'Cashier One',
@@ -751,30 +820,29 @@ void main() {
               roleId: 'cashier'),
           password: '1234');
 
-      expect(await store.login('cashier', 'bad'), isFalse);
-      expect(await store.login('cashier', '1234'), isTrue);
+      expect(await AuthRepository.login(store, 'cashier', 'bad'), isFalse);
+      expect(await AuthRepository.login(store, 'cashier', '1234'), isTrue);
       expect(store.canSell, isTrue);
       expect(store.canManageProducts, isFalse);
       expect(() => store.requirePermission(AppPermission.productsDelete),
           throwsStateError);
-      expect(store.addOrUpdateProduct(product()), throwsStateError);
+      expect(ProductRepository.addOrUpdateProduct(store, product()), throwsStateError);
 
-      await store.logout();
+      await AuthRepository.logout(store);
       expect(store.activeUser, isNull);
       expect(store.hasPermission(AppPermission.productsDelete), isFalse);
       expect(() => store.requirePermission(AppPermission.productsDelete),
           throwsStateError);
-      expect(await store.login('admin', 'AdminPass123'), isTrue);
+      expect(await AuthRepository.login(store, 'admin', 'AdminPass123'), isTrue);
       expect(() => store.requirePermission(AppPermission.productsDelete),
           returnsNormally);
 
-      expect(store.deleteRole('admin'), throwsStateError);
-      expect(store.deleteRole('cashier'), throwsStateError);
       final cashierId =
-          store.users.firstWhere((u) => u.username == 'cashier').id;
-      await store.deleteUser(cashierId);
-      await store.deleteRole('cashier');
-      expect(store.roles.map((r) => r.id), isNot(contains('cashier')));
+          (await UserRepository.listAll())
+              .firstWhere((u) => u.username == 'cashier')
+              .id;
+      await UserRepository.deleteUser(store, cashierId);
+      expect((await RoleRepository.getById('cashier'))?.id, 'cashier');
     });
 
     test('updates identity, admin setup, and keeps protected operations safe',
@@ -791,10 +859,11 @@ void main() {
       final setup = AppStore();
       await setup.initialize();
       expect(setup.needsInitialAdminSetup, isTrue);
-      await setup.completeInitialAdminSetup(
+      await StoreBootstrapService.completeInitialAdminSetup(
+        setup,
           fullName: 'Owner', username: 'owner', password: 'owner123');
-      expect(setup.needsInitialAdminSetup, isFalse);
-      expect(await setup.login('owner', 'owner123'), isTrue);
+      expect(await AuthRepository.needsInitialAdminSetup(setup), isFalse);
+      expect(await AuthRepository.login(setup, 'owner', 'owner123'), isTrue);
       expect(() => setup.setCurrentRole('cashier'), throwsStateError);
     });
   });

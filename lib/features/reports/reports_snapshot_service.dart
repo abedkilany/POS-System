@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
+import '../../core/services/business_revision_service.dart';
 import '../../core/services/local_database_service.dart';
 import '../../core/services/startup_timing_service.dart';
 import '../../data/app_store.dart';
@@ -24,7 +25,7 @@ class ReportsSnapshotService {
       <String, Map<String, Object?>>{};
 
   String _cacheKey(AppStore store, DateTime reference) =>
-      '${store.appIdentity.storeId}:${store.reportsRevision}:${reference.year}-${reference.month}-${reference.day}';
+      '${store.appIdentity.storeId}:${BusinessRevisionService.instance.reportsRevision}:${reference.year}-${reference.month}-${reference.day}';
 
   Map<String, Object?>? peekSummary(AppStore store, {DateTime? now}) {
     final reference = (now ?? DateTime.now()).toLocal();
@@ -55,6 +56,33 @@ class ReportsSnapshotService {
     await summaryFor(store, now: now);
   }
 
+
+  Map<String, Object?> _emptySqliteAuthoritativeSummary() {
+    return <String, Object?>{
+      'totalExpenses': 0.0,
+      'estimatedProfit': 0.0,
+      'todaySales': 0.0,
+      'monthSales': 0.0,
+      'monthPurchases': 0.0,
+      'movementIn': 0.0,
+      'movementOut': 0.0,
+      'customerReceivables': 0.0,
+      'supplierPayables': 0.0,
+      'inventoryRetailValue': 0.0,
+      'lowStockCount': 0,
+      'todayCashIn': 0.0,
+      'todayCashOut': 0.0,
+      'todayCashInByMethod': const <String, double>{},
+      'todayCashOutByMethod': const <String, double>{},
+      'autoCorrections': const <Map<String, Object?>>[],
+      'lowStock': const <Map<String, Object?>>[],
+      'stockMovements': const <Map<String, Object?>>[],
+      'topProductLines': const <Map<String, Object?>>[],
+      'topCustomerDebts': const <Map<String, Object?>>[],
+      'topSupplierDebts': const <Map<String, Object?>>[],
+    };
+  }
+
   Future<Map<String, Object?>> _computeAndCacheSummary(
     AppStore store,
     DateTime reference,
@@ -73,8 +101,17 @@ class ReportsSnapshotService {
           return sqliteSummary;
         }
       } catch (_) {
-        // Fall back to the legacy snapshot path if SQLite summary generation fails.
+        if (LocalDatabaseService.isSqliteAuthoritative) {
+          final cached = _summaryCache[_cacheKey(store, reference)];
+          if (cached != null) return cached;
+          return _emptySqliteAuthoritativeSummary();
+        }
       }
+    }
+    if (LocalDatabaseService.isSqliteAuthoritative) {
+      final cached = _summaryCache[_cacheKey(store, reference)];
+      if (cached != null) return cached;
+      return _emptySqliteAuthoritativeSummary();
     }
     final raw = await StartupTimingService.measure(
       'reports.snapshot_raw_load',

@@ -185,14 +185,16 @@ String formatCurrency(
 }) {
   final normalized = currency.toUpperCase();
   final definition = profile?.currencyByCode(normalized);
-  final digits = definition?.decimalPlaces ?? (normalized == 'LBP' ? 0 : 2);
+  final digits = definition?.decimalPlaces ?? 2;
   final symbol = definition?.symbol ??
       switch (normalized) {
         'USD' => r'$',
         'LBP' => 'LBP',
-        _ => '$normalized ',
+        _ => normalized,
       };
-  final separator = symbol.length <= 2 && symbol != 'LBP' ? '' : ' ';
+  final separator = definition != null
+      ? (symbol.length <= 2 && symbol != 'LBP' ? '' : ' ')
+      : (symbol == r'$' ? '' : ' ');
   return '$symbol$separator${_formatNumberWithThousands(value, decimalDigits: digits)}';
 }
 

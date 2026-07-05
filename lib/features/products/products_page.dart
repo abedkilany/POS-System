@@ -8,7 +8,10 @@ import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 
 import '../../core/localization/app_localizations.dart';
+import '../../core/services/business_revision_service.dart';
+import '../../core/repositories/business_repositories.dart';
 import '../../core/services/local_database_service.dart';
+import '../../core/storage/sqlite/business_sqlite_store.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../data/app_store.dart';
@@ -211,7 +214,7 @@ class _ProductsPageState extends State<ProductsPage> {
     AppLocalizations tr,
     String localeTag,
   ) {
-    final allProducts = widget.store.products;
+    final allProducts = <Product>[];
     final products = _filteredProducts(allProducts);
     final categories = _categoriesFor(allProducts);
     _syncProductReveal(products.length);
@@ -231,18 +234,18 @@ class _ProductsPageState extends State<ProductsPage> {
   Future<_ProductsQueryResult?> _queryProductsFromSqlite(String value) {
     final limit = math.max(1, _visibleProductCount);
     final key =
-        '${widget.store.productsPageRevision}|$value|$categoryFilter|$limit';
+        '${BusinessRevisionService.instance.productsPageRevision}|$value|$categoryFilter|$limit';
     if (_productsQueryFuture == null || _productsQueryFutureKey != key) {
       _productsQueryFutureKey = key;
       _productsQueryFuture = () async {
-        final page = await LocalDatabaseService.queryProductsFromSqlite(
+        final page = await ProductRepository.queryPage(
           query: value,
           category: categoryFilter,
           limit: limit,
         );
         if (page == null) return null;
         final categories =
-            await LocalDatabaseService.queryProductCategoriesFromSqlite() ??
+            await ProductRepository.getCategories() ??
                 const <String>[];
         return _ProductsQueryResult(
           items: page.items,
@@ -453,7 +456,7 @@ class _ProductsPageState extends State<ProductsPage> {
 
   List<Product> _filteredProducts(List<Product> source) {
     final value = query.trim().toLowerCase();
-    final revision = widget.store.productsRevision;
+    final revision = BusinessRevisionService.instance.productsRevision;
     if (_cachedRevision != revision) {
       _cachedProductSource = null;
       _cachedCategorySource = null;
@@ -546,7 +549,7 @@ class _ProductsPageState extends State<ProductsPage> {
   }
 
   List<String> _categoriesFor(List<Product> source) {
-    if (_cachedRevision != widget.store.productsRevision) {
+    if (_cachedRevision != BusinessRevisionService.instance.productsRevision) {
       _cachedCategorySource = null;
       _cachedCategories = const <String>[];
     }
@@ -569,7 +572,8 @@ class _ProductsPageState extends State<ProductsPage> {
     String localeTag,
   ) {
     final cacheKey = product.id;
-    final signature = '${widget.store.productsPageRevision}|$localeTag';
+    final signature =
+        '${BusinessRevisionService.instance.productsPageRevision}|$localeTag';
     final cached = _rowCache[cacheKey];
     if (cached != null && cached.signature == signature) {
       return cached.row;
@@ -580,7 +584,6 @@ class _ProductsPageState extends State<ProductsPage> {
     }
     final row = _ProductRowData.fromStore(
       product,
-      widget.store,
       widget.store.storeProfile,
       tr,
     );
@@ -590,7 +593,7 @@ class _ProductsPageState extends State<ProductsPage> {
       if (elapsed > 1000) {
         debugPrint(
           '[ProductsPage] row productId=${product.id} '
-          'revision=${widget.store.productsPageRevision} took=${elapsed / 1000.0}ms',
+          'revision=${BusinessRevisionService.instance.productsPageRevision} took=${elapsed / 1000.0}ms',
         );
       }
     }
@@ -615,7 +618,9 @@ class _ProductsPageState extends State<ProductsPage> {
         ],
       ),
     );
-    if (confirmed == true) await widget.store.deleteProduct(product.id);
+    if (confirmed == true) {
+      await ProductRepository.deleteProduct(widget.store, product.id);
+    }
   }
 
   Future<void> _openCatalogManager(BuildContext context, String type) async {
@@ -637,7 +642,7 @@ class _ProductsPageState extends State<ProductsPage> {
     );
     if (result == null) return;
     try {
-      await widget.store.addOrUpdateProduct(result.product);
+      await ProductRepository.addOrUpdateProduct(widget.store, result.product);
       if (result.priceSave != null) {
         await result.priceSave!();
       }
@@ -909,29 +914,21 @@ class _ProductRowData {
   final String meta;
   final String purchaseMeta;
 
-  factory _ProductRowData.fromStore(Product product, AppStore store,
-      StoreProfile storeProfile, AppLocalizations tr) {
+  factory _ProductRowData.fromStore(
+      Product product, StoreProfile storeProfile, AppLocalizations tr) {
     final subtitle = [
       product.code,
       product.barcode,
       product.category,
       product.brand
     ].where((e) => e.trim().isNotEmpty).join(' • ');
-    final lastPurchase = store.lastPurchasePriceForProduct(product.id);
-    final avgPurchase = store.averagePurchaseCostForProduct(product.id);
-    final supplierCount = store.supplierCountForProduct(product.id);
-    final displayPrice = store.defaultProductUsdPrice(product);
+    final displayPrice = product.usdPrice > 0 ? product.usdPrice : product.price;
     final meta = product.trackStock
         ? '${product.stock} ${product.unit} • ${formatUsdReferenceAmount(displayPrice, storeProfile)}'
         : '${tr.text('quantity_type_service')} • ${formatUsdReferenceAmount(displayPrice, storeProfile)}';
-    final purchaseMeta = [
-      if (lastPurchase != null)
-        '${tr.text('last_cost')}: ${formatUsdReferenceAmount(lastPurchase, storeProfile)}',
-      if (avgPurchase > 0)
-        '${tr.text('average_cost')}: ${formatUsdReferenceAmount(avgPurchase, storeProfile)}',
-      if (supplierCount > 0)
-        tr.format('suppliers_count', {'count': supplierCount}),
-    ].join(' • ');
+    final purchaseMeta = product.cost > 0
+        ? '${tr.text('cost_price')}: ${formatUsdReferenceAmount(product.cost, storeProfile)}'
+        : '';
     return _ProductRowData(
         product: product,
         subtitle: subtitle,
@@ -995,17 +992,24 @@ class _ProductDialogState extends State<_ProductDialog> {
   late final String _productId;
   late List<SupplierProductPrice> supplierPriceDrafts;
   late List<_CurrencyPriceOverrideDraft> priceOverrideDrafts;
+  bool _lookupsLoading = true;
+  List<CatalogItem> _categories = const <CatalogItem>[];
+  List<CatalogItem> _brands = const <CatalogItem>[];
+  List<CatalogItem> _units = const <CatalogItem>[];
+  List<Supplier> _suppliers = const <Supplier>[];
+  List<SupplierProductPrice> _allSupplierPrices = const <SupplierProductPrice>[];
+  List<ProductPrice> _allProductPrices = const <ProductPrice>[];
+  List<ProductPriceOverride> _allProductPriceOverrides =
+      const <ProductPriceOverride>[];
+  String _defaultPriceListId = '';
 
   @override
   void initState() {
     super.initState();
-    final tr = AppLocalizations.of(context);
     final product = widget.product;
     _productId =
         product?.id ?? DateTime.now().microsecondsSinceEpoch.toString();
-    supplierPriceDrafts = product == null
-        ? <SupplierProductPrice>[]
-        : widget.store.supplierProductPricesForProduct(product.id).toList();
+    supplierPriceDrafts = <SupplierProductPrice>[];
     barcodeController = TextEditingController(text: product?.barcode ?? '');
     codeController =
         TextEditingController(text: product?.code ?? _generateUniqueSku());
@@ -1016,25 +1020,13 @@ class _ProductDialogState extends State<_ProductDialog> {
     nameArController = TextEditingController(text: product?.nameAr ?? '');
     descriptionController =
         TextEditingController(text: product?.description ?? '');
-    final defaultProductPrice = product == null
-        ? null
-        : widget.store.defaultProductPriceFor(product.id);
-    priceOverrideDrafts = defaultProductPrice == null
-        ? <_CurrencyPriceOverrideDraft>[]
-        : widget.store.productPriceOverrides
-            .where((item) =>
-                item.productPriceId == defaultProductPrice.id && item.isActive)
-            .map(_CurrencyPriceOverrideDraft.fromOverride)
-            .toList();
-    priceCurrency = defaultProductPrice?.baseCurrencyCode ??
-        product?.originalCurrency ??
+    priceOverrideDrafts = <_CurrencyPriceOverrideDraft>[];
+    priceCurrency = product?.originalCurrency ??
         widget.store.storeProfile.defaultProductCurrency;
-    costCurrency = product?.costCurrency ??
-        widget.store.storeProfile.defaultProductCurrency;
+    costCurrency =
+        product?.costCurrency ?? widget.store.storeProfile.defaultProductCurrency;
     priceController = TextEditingController(
-        text: defaultProductPrice?.baseAmount.toString() ??
-            product?.originalPrice.toString() ??
-            '');
+        text: product?.originalPrice.toString() ?? '');
     costController =
         TextEditingController(text: product?.originalCost.toString() ?? '');
     stockController =
@@ -1042,21 +1034,143 @@ class _ProductDialogState extends State<_ProductDialog> {
     lowStockController = TextEditingController(
         text: (product?.lowStockThreshold ?? 5).toString());
     imagePath = product?.imagePath ?? '';
-    category = product?.category ??
-        (widget.store.categories.isNotEmpty
-            ? widget.store.categories.first.code.isNotEmpty
-                ? widget.store.categories.first.code
-                : widget.store.categories.first.nameEn
-            : tr.text('general'));
+    category = product?.category ?? '';
     brand = product?.brand ?? '';
     unit = product?.unit ??
-        (widget.store.units.isNotEmpty ? widget.store.units.first.code : 'pcs');
+        'pcs';
     quantityType = product?.quantityType ?? ProductQuantityType.countable;
     saleUnitDrafts = (product?.saleUnits ?? const [])
         .map(_SaleUnitDraft.fromSaleUnit)
         .toList();
     trackStock = product?.trackStock ?? true;
     isActive = product?.isActive ?? true;
+    unawaited(_loadLookups());
+  }
+
+  Future<void> _loadLookups() async {
+    final product = widget.product;
+    final tr = AppLocalizations.of(context);
+    try {
+      final results = await Future.wait<Object?>([
+        InventoryRepository.getCatalogItems(BusinessSqliteStore.categoriesKey),
+        InventoryRepository.getCatalogItems(BusinessSqliteStore.brandsKey),
+        InventoryRepository.getCatalogItems(BusinessSqliteStore.unitsKey),
+        SupplierRepository.getAll(),
+        InventoryRepository.getPriceLists(),
+        InventoryRepository.getProductPrices(),
+        InventoryRepository.getProductPriceOverrides(),
+        InventoryRepository.getSupplierProductPrices(),
+      ]);
+
+      final categories = (results[0] as List<CatalogItem>?) ?? const <CatalogItem>[];
+      final brands = (results[1] as List<CatalogItem>?) ?? const <CatalogItem>[];
+      final units = (results[2] as List<CatalogItem>?) ?? const <CatalogItem>[];
+      final suppliers = (results[3] as List<Supplier>?) ?? const <Supplier>[];
+      final priceLists = (results[4] as List<PriceList>?) ?? const <PriceList>[];
+      final allProductPrices =
+          (results[5] as List<ProductPrice>?) ?? const <ProductPrice>[];
+      final allProductPriceOverrides =
+          (results[6] as List<ProductPriceOverride>?) ??
+              const <ProductPriceOverride>[];
+      final allSupplierPrices =
+          (results[7] as List<SupplierProductPrice>?) ??
+              const <SupplierProductPrice>[];
+
+      final defaultPriceList = priceLists.isEmpty
+          ? null
+          : priceLists.firstWhere(
+              (item) => item.isDefault && item.isActive,
+              orElse: () => priceLists.first,
+            );
+      final defaultPriceListId = defaultPriceList?.id ?? '';
+      final defaultProductPrice = product == null || defaultPriceList == null
+          ? null
+          : allProductPrices.where((item) {
+              return item.productId == product.id &&
+                  item.priceListId == defaultPriceList.id &&
+                  item.unitId == 'base' &&
+                  item.isActive;
+            }).fold<ProductPrice?>(null, (current, candidate) {
+              if (current == null) return candidate;
+              return candidate.updatedAt.isAfter(current.updatedAt)
+                  ? candidate
+                  : current;
+            });
+
+      final nextSupplierPrices = product == null
+          ? <SupplierProductPrice>[]
+          : allSupplierPrices
+              .where((item) => item.productId == product.id && !item.isDeleted)
+              .toList(growable: false);
+      final nextPriceOverrides = defaultProductPrice == null
+          ? <_CurrencyPriceOverrideDraft>[]
+          : allProductPriceOverrides
+              .where((item) =>
+                  item.productPriceId == defaultProductPrice.id && item.isActive)
+              .map(_CurrencyPriceOverrideDraft.fromOverride)
+              .toList(growable: false);
+      final nextCategory = product != null &&
+              product.category.trim().isNotEmpty
+          ? product.category.trim()
+          : _fallbackCatalogValue(categories, tr.text('general'));
+      final nextBrand =
+          product != null ? product.brand.trim() : '';
+      final nextUnit = product != null && product.unit.trim().isNotEmpty
+          ? product.unit.trim()
+          : _fallbackCatalogValue(units, 'pcs');
+
+      if (!mounted) return;
+      setState(() {
+        _categories = categories;
+        _brands = brands;
+        _units = units;
+        _suppliers = suppliers;
+        _allProductPrices = allProductPrices;
+        _allProductPriceOverrides = allProductPriceOverrides;
+        _allSupplierPrices = allSupplierPrices;
+        _defaultPriceListId = defaultPriceListId;
+        supplierPriceDrafts = nextSupplierPrices;
+        priceOverrideDrafts = nextPriceOverrides;
+        category = nextCategory;
+        brand = nextBrand;
+        unit = nextUnit;
+        if (defaultProductPrice != null) {
+          priceCurrency = defaultProductPrice.baseCurrencyCode;
+          priceController.text = defaultProductPrice.baseAmount.toString();
+        } else if (product != null) {
+          priceCurrency = product.originalCurrency.trim().isNotEmpty
+              ? product.originalCurrency
+              : widget.store.storeProfile.defaultProductCurrency;
+          priceController.text = product.originalPrice.toString();
+        }
+        costCurrency = product != null && product.costCurrency.trim().isNotEmpty
+            ? product.costCurrency
+            : widget.store.storeProfile.defaultProductCurrency;
+        if (product != null) {
+          costController.text = product.originalCost.toString();
+          stockController.text = product.stock.toString();
+          lowStockController.text = product.lowStockThreshold.toString();
+          imagePath = product.imagePath;
+          quantityType = product.quantityType;
+          saleUnitDrafts = (product.saleUnits).map(_SaleUnitDraft.fromSaleUnit).toList();
+          trackStock = product.trackStock;
+          isActive = product.isActive;
+        }
+        _lookupsLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _lookupsLoading = false;
+      });
+      debugPrint('Failed to load product lookups: $error');
+    }
+  }
+
+  String _fallbackCatalogValue(List<CatalogItem> items, String fallback) {
+    if (items.isEmpty) return fallback;
+    final first = items.first;
+    return first.code.trim().isNotEmpty ? first.code.trim() : first.nameEn.trim();
   }
 
   @override
@@ -1090,6 +1204,19 @@ class _ProductDialogState extends State<_ProductDialog> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
+    if (_lookupsLoading) {
+      final title = widget.product == null
+          ? tr.text('add_product')
+          : tr.text('edit_product');
+      return AlertDialog(
+        title: Text(title),
+        content: const SizedBox(
+          width: 320,
+          height: 160,
+          child: Center(child: CircularProgressIndicator.adaptive()),
+        ),
+      );
+    }
     final width =
         math.min(MediaQuery.sizeOf(context).width - 32, 760).toDouble();
     return AlertDialog(
@@ -1160,7 +1287,7 @@ class _ProductDialogState extends State<_ProductDialog> {
                       _CatalogDropdown(
                         label: tr.text('category'),
                         value: category,
-                        items: widget.store.categories,
+                        items: _categories,
                         onChanged: (value) => setState(() => category = value),
                         onAdd: () => _addCatalogItem(context, 'category'),
                         onManage: () =>
@@ -1169,7 +1296,7 @@ class _ProductDialogState extends State<_ProductDialog> {
                       _CatalogDropdown(
                         label: tr.text('brand'),
                         value: brand,
-                        items: widget.store.brands,
+                        items: _brands,
                         onChanged: (value) => setState(() => brand = value),
                         onAdd: () => _addCatalogItem(context, 'brand'),
                         onManage: () => _manageCatalogItems(context, 'brand'),
@@ -1177,7 +1304,7 @@ class _ProductDialogState extends State<_ProductDialog> {
                       _CatalogDropdown(
                         label: tr.text('unit'),
                         value: unit,
-                        items: widget.store.units,
+                        items: _units,
                         onChanged: (value) => setState(() => unit = value),
                         onAdd: () => _addCatalogItem(context, 'unit'),
                         onManage: () => _manageCatalogItems(context, 'unit'),
@@ -1245,11 +1372,11 @@ class _ProductDialogState extends State<_ProductDialog> {
                               setState(() => costCurrency = value)),
                     ]),
                     const SizedBox(height: 12),
-                    _CurrencyPriceOverridesEditor(
-                      drafts: priceOverrideDrafts,
-                      baseCurrencyCode: priceCurrency,
-                      availableCurrencyCodes: widget
-                          .store.storeProfile.currencies
+                      _CurrencyPriceOverridesEditor(
+                        drafts: priceOverrideDrafts,
+                        baseCurrencyCode: priceCurrency,
+                        availableCurrencyCodes: widget
+                            .store.storeProfile.currencies
                           .map((item) => item.code)
                           .toList(growable: false),
                       onChanged: (items) =>
@@ -1265,7 +1392,7 @@ class _ProductDialogState extends State<_ProductDialog> {
                     _SupplierPricesEditor(
                       prices: supplierPriceDrafts,
                       productId: _productId,
-                      suppliers: widget.store.suppliers,
+                      suppliers: _suppliers,
                       storeProfile: widget.store.storeProfile,
                       onChanged: (items) =>
                           setState(() => supplierPriceDrafts = items),
@@ -1376,8 +1503,9 @@ class _ProductDialogState extends State<_ProductDialog> {
     setState(() => barcodeController.text = value);
   }
 
-  void _save() {
+  Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
+    final tr = AppLocalizations.of(context);
     final nameEn = nameEnController.text.trim();
     final nameAr = nameArController.text.trim();
     final originalPrice = double.tryParse(priceController.text.trim()) ?? 0;
@@ -1387,6 +1515,19 @@ class _ProductDialogState extends State<_ProductDialog> {
         originalPrice, priceCurrency, widget.store.storeProfile);
     final usdCost = toUsdReferencePrice(
         originalCost, costCurrency, widget.store.storeProfile);
+    final code = _resolvedSku();
+    final codeCount = await ProductRepository.countByCode(
+          code,
+          excludeProductId: widget.product?.id,
+        ) ??
+        0;
+    if (codeCount > 0) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(tr.text('sku_already_exists'))));
+      return;
+    }
+    if (!mounted) return;
     Navigator.pop(
       context,
       _ProductFormResult(
@@ -1399,7 +1540,7 @@ class _ProductDialogState extends State<_ProductDialog> {
           name: nameEn.isNotEmpty ? nameEn : nameAr,
           nameEn: nameEn,
           nameAr: nameAr,
-          code: _resolvedSku(),
+          code: code,
           barcode: barcodeController.text.trim(),
           category: category.trim(),
           brand: brand.trim(),
@@ -1447,14 +1588,36 @@ class _ProductDialogState extends State<_ProductDialog> {
 
   Future<void> _saveProductPriceDrafts(
       String productId, double amount, String currencyCode) async {
-    final previousBasePrice = widget.store.defaultProductPriceFor(productId);
-    await widget.store.setDefaultProductBasePrice(
+    final previousBasePrice = _allProductPrices.where((item) {
+      return item.productId == productId &&
+          (_defaultPriceListId.isEmpty ||
+              item.priceListId == _defaultPriceListId) &&
+          item.unitId == 'base' &&
+          item.isActive;
+    }).fold<ProductPrice?>(null, (current, candidate) {
+      if (current == null) return candidate;
+      return candidate.updatedAt.isAfter(current.updatedAt) ? candidate : current;
+    });
+    await ProductRepository.setDefaultProductBasePrice(
+      widget.store,
       productId: productId,
       unitId: 'base',
       amount: amount,
       currencyCode: currencyCode,
     );
-    final basePrice = widget.store.defaultProductPriceFor(productId);
+    final basePrice = previousBasePrice ??
+        _allProductPrices.where((item) {
+          return item.productId == productId &&
+              (_defaultPriceListId.isEmpty ||
+                  item.priceListId == _defaultPriceListId) &&
+              item.unitId == 'base' &&
+              item.isActive;
+        }).fold<ProductPrice?>(null, (current, candidate) {
+          if (current == null) return candidate;
+          return candidate.updatedAt.isAfter(current.updatedAt)
+              ? candidate
+              : current;
+        });
     if (basePrice != null) {
       final activeCurrencies = <String>{};
       for (final draft in priceOverrideDrafts) {
@@ -1467,7 +1630,8 @@ class _ProductDialogState extends State<_ProductDialog> {
           continue;
         }
         activeCurrencies.add(normalizedCurrency);
-        await widget.store.setProductPriceOverride(
+        await ProductRepository.setProductPriceOverride(
+          context: widget.store,
           productPriceId: basePrice.id,
           currencyCode: normalizedCurrency,
           amount: overrideAmount,
@@ -1477,11 +1641,12 @@ class _ProductDialogState extends State<_ProductDialog> {
       if (previousBasePrice != null) {
         existingOverridePriceIds.add(previousBasePrice.id);
       }
-      for (final item in widget.store.productPriceOverrides) {
+      for (final item in _allProductPriceOverrides) {
         if (existingOverridePriceIds.contains(item.productPriceId) &&
             item.isActive &&
             !activeCurrencies.contains(item.currencyCode)) {
-          await widget.store.removeProductPriceOverride(
+          await ProductRepository.removeProductPriceOverride(
+            widget.store,
               item.productPriceId, item.currencyCode);
         }
       }
@@ -1493,7 +1658,8 @@ class _ProductDialogState extends State<_ProductDialog> {
           unit.conversionToBase <= 0) {
         continue;
       }
-      await widget.store.setDefaultProductBasePrice(
+      await ProductRepository.setDefaultProductBasePrice(
+        widget.store,
         productId: productId,
         unitId: unit.id,
         amount: unit.originalPrice,
@@ -1504,14 +1670,21 @@ class _ProductDialogState extends State<_ProductDialog> {
 
   Future<void> _saveSupplierPriceDrafts(String productId) async {
     final activeDraftIds = supplierPriceDrafts.map((item) => item.id).toSet();
-    final existing = widget.store.supplierProductPricesForProduct(productId);
+    final existing = _allSupplierPrices
+        .where((item) => item.productId == productId && !item.isDeleted)
+        .toList(growable: false);
     for (final item in supplierPriceDrafts) {
-      await widget.store
-          .addOrUpdateSupplierProductPrice(item.copyWith(productId: productId));
+      await InventoryRepository.addOrUpdateSupplierProductPrice(
+        widget.store,
+        item.copyWith(productId: productId),
+      );
     }
     for (final item in existing) {
       if (!activeDraftIds.contains(item.id)) {
-        await widget.store.deleteSupplierProductPrice(item.id);
+        await InventoryRepository.deleteSupplierProductPrice(
+          widget.store,
+          item.id,
+        );
       }
     }
   }
@@ -1521,17 +1694,17 @@ class _ProductDialogState extends State<_ProductDialog> {
         context: context, builder: (_) => _CatalogItemDialog(type: type));
     if (item == null) return;
     if (type == 'category') {
-      await widget.store.addOrUpdateCategory(item);
+      await ProductRepository.addOrUpdateCategory(widget.store, item);
       setState(() => category = item.nameEn.trim().isNotEmpty
           ? item.nameEn.trim()
           : item.nameAr.trim());
     } else if (type == 'brand') {
-      await widget.store.addOrUpdateBrand(item);
+      await ProductRepository.addOrUpdateBrand(widget.store, item);
       setState(() => brand = item.nameEn.trim().isNotEmpty
           ? item.nameEn.trim()
           : item.nameAr.trim());
     } else {
-      await widget.store.addOrUpdateUnit(item);
+      await ProductRepository.addOrUpdateUnit(widget.store, item);
       setState(() => unit =
           item.code.trim().isNotEmpty ? item.code.trim() : item.nameEn.trim());
     }
@@ -1550,27 +1723,14 @@ class _ProductDialogState extends State<_ProductDialog> {
       : codeController.text.trim();
 
   String _generateUniqueSku() {
-    final used = widget.store.products
-        .where((item) => item.id != widget.product?.id)
-        .map((item) => item.code.trim().toUpperCase())
-        .toSet();
-    var counter = widget.store.products.length + 1;
-    while (true) {
-      final candidate = 'PRD-${counter.toString().padLeft(5, '0')}';
-      if (!used.contains(candidate)) return candidate;
-      counter++;
-    }
+    final stamp = DateTime.now().microsecondsSinceEpoch.toString();
+    return 'PRD-${stamp.substring(stamp.length - 5)}';
   }
 
   String? _uniqueSku(String? value) {
     final normalized = (value ?? '').trim().toLowerCase();
     if (normalized.isEmpty) return null;
-    final exists = widget.store.products.any((item) =>
-        item.id != widget.product?.id &&
-        item.code.trim().toLowerCase() == normalized);
-    return exists
-        ? AppLocalizations.of(context).text('sku_already_exists')
-        : null;
+    return null;
   }
 
   String? _nameRequired() {
@@ -2863,21 +3023,39 @@ class _CatalogManagerDialog extends StatefulWidget {
 }
 
 class _CatalogManagerDialogState extends State<_CatalogManagerDialog> {
-  List<CatalogItem> get _items {
-    if (widget.type == 'category') return widget.store.categories;
-    if (widget.type == 'brand') return widget.store.brands;
-    return widget.store.units;
+  bool _loading = true;
+  List<CatalogItem> _items = const <CatalogItem>[];
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadItems());
+  }
+
+  Future<void> _loadItems() async {
+    final key = widget.type == 'category'
+        ? BusinessSqliteStore.categoriesKey
+        : widget.type == 'brand'
+            ? BusinessSqliteStore.brandsKey
+            : BusinessSqliteStore.unitsKey;
+    final items = await InventoryRepository.getCatalogItems(key) ??
+        const <CatalogItem>[];
+    if (!mounted) return;
+    setState(() {
+      _items = items;
+      _loading = false;
+    });
   }
 
   Future<void> _saveItem(CatalogItem item) async {
     if (widget.type == 'category') {
-      await widget.store.addOrUpdateCategory(item);
+      await ProductRepository.addOrUpdateCategory(widget.store, item);
     } else if (widget.type == 'brand') {
-      await widget.store.addOrUpdateBrand(item);
+      await ProductRepository.addOrUpdateBrand(widget.store, item);
     } else {
-      await widget.store.addOrUpdateUnit(item);
+      await ProductRepository.addOrUpdateUnit(widget.store, item);
     }
-    setState(() {});
+    await _loadItems();
   }
 
   Future<void> _add(BuildContext context) async {
@@ -2903,10 +3081,15 @@ class _CatalogManagerDialogState extends State<_CatalogManagerDialog> {
     if (!_supportsDelete) return;
     final tr = AppLocalizations.of(context);
     final language = tr.locale.languageCode;
-    final usageCount = widget.store.productsUsingCatalogItem(widget.type, item);
+    final messenger = ScaffoldMessenger.of(context);
+    final usageCount = await ProductRepository.countByCatalogItem(
+          widget.type,
+          item,
+        );
     final alternatives = _items.where((entry) => entry.id != item.id).toList();
 
     if (alternatives.isEmpty) {
+      if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(tr.text('catalog_delete_last_item_error'))),
       );
@@ -2915,6 +3098,7 @@ class _CatalogManagerDialogState extends State<_CatalogManagerDialog> {
 
     CatalogItem? replacement =
         alternatives.isNotEmpty ? alternatives.first : null;
+    if (!context.mounted) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -2976,21 +3160,20 @@ class _CatalogManagerDialogState extends State<_CatalogManagerDialog> {
     if (confirmed != true) return;
 
     try {
-      await widget.store.replaceAndDeleteCatalogItem(
+      await ProductRepository.replaceAndDeleteCatalogItem(
+        context: widget.store,
         type: widget.type,
         item: item,
         replacement: usageCount > 0 ? replacement : null,
       );
       if (!mounted) return;
-      setState(() {});
-      ScaffoldMessenger.of(this.context).showSnackBar(
+      await _loadItems();
+      messenger.showSnackBar(
         SnackBar(content: Text(tr.text('catalog_item_deleted'))),
       );
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(this.context).showSnackBar(
-        SnackBar(content: Text(error.toString())),
-      );
+      messenger.showSnackBar(SnackBar(content: Text(error.toString())));
     }
   }
 
@@ -3012,7 +3195,12 @@ class _CatalogManagerDialogState extends State<_CatalogManagerDialog> {
               : tr.text('manage_lookup_items')),
       content: SizedBox(
         width: dialogWidth,
-        child: ResponsiveDialogBox(
+        child: _loading
+            ? const SizedBox(
+                height: 240,
+                child: Center(child: CircularProgressIndicator.adaptive()),
+              )
+            : ResponsiveDialogBox(
           maxWidth: dialogWidth,
           child: ListView.separated(
             shrinkWrap: true,

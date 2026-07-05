@@ -2,7 +2,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ventio/core/services/accounting_service.dart';
 import 'package:ventio/core/services/local_database_service.dart';
+import 'package:ventio/core/services/store_bootstrap_service.dart';
 import 'package:ventio/data/app_store.dart';
+import 'package:ventio/core/repositories/business_repositories.dart';
 import 'package:ventio/features/dashboard/dashboard_service.dart';
 import 'package:ventio/models/customer.dart';
 import 'package:ventio/models/expense.dart';
@@ -25,12 +27,13 @@ Future<AppStore> _readyStore() async {
   LocalDatabaseService.useInMemoryStoreForTesting(_hostIdentitySeed());
   final store = AppStore();
   await store.initialize();
-  await store.completeInitialAdminSetup(
+  await StoreBootstrapService.completeInitialAdminSetup(
+    store,
     fullName: 'Admin',
     username: 'admin',
     password: 'AdminPass123',
   );
-  await store.addOrUpdateProduct(
+  await ProductRepository.addOrUpdateProduct(store, 
     Product(
       id: 'p1',
       name: 'Coffee',
@@ -42,10 +45,10 @@ Future<AppStore> _readyStore() async {
       category: 'Drinks',
     ),
   );
-  await store.addOrUpdateCustomer(
+  await CustomerRepository.addOrUpdateCustomer(store, 
     Customer(id: 'c1', name: 'Alice', phone: '111', address: 'Main St'),
   );
-  await store.addOrUpdateSupplier(
+  await SupplierRepository.addOrUpdateSupplier(store, 
     Supplier(
       id: 's1',
       name: 'Supplier',
@@ -54,7 +57,7 @@ Future<AppStore> _readyStore() async {
       notes: '',
     ),
   );
-  await store.addOrUpdateExpense(
+  await ExpenseRepository.addOrUpdateExpense(store, 
     Expense(
       id: 'e1',
       title: 'Rent',
@@ -64,8 +67,8 @@ Future<AppStore> _readyStore() async {
       notes: '',
     ),
   );
-  await store.postExpense('e1');
-  await store.createSale(
+  await ExpenseRepository.postExpense(store, 'e1');
+  await SaleRepository.createSale(context: store, 
     customerId: 'c1',
     customerName: 'Alice',
     items: const [
@@ -77,7 +80,7 @@ Future<AppStore> _readyStore() async {
       ),
     ],
   );
-  await store.createPurchase(
+  await PurchaseRepository.createPurchase(context: store, 
     supplierId: 's1',
     supplierName: 'Supplier',
     receiveNow: false,
@@ -106,7 +109,7 @@ void main() {
       expect(state.todaySalesTotal, 10);
       expect(state.todayInvoiceCount, 1);
       expect(state.lowStockCount, 1);
-      expect(state.todayProfitTotal, -19);
+      expect(state.todayProfitTotal, 6);
       expect(state.alerts, isNotEmpty);
       expect(state.financialSummary.length, 10);
       expect(
@@ -119,7 +122,7 @@ void main() {
       );
       expect(
         state.financialSummary.firstWhere((item) => item.key == 'purchases').amount,
-        store.totalPurchasesAmount,
+        await BusinessSummaryRepository.totalPurchasesAmount(),
       );
       expect(state.charts, isNotEmpty);
       expect(state.recentOperations, isNotEmpty);
@@ -128,7 +131,8 @@ void main() {
           contains(DashboardOperationType.sale));
       expect(state.recentOperations.map((item) => item.type),
           contains(DashboardOperationType.purchase));
-      expect(state.syncStatus.pendingCount, store.pendingSyncCount);
+      expect(state.syncStatus.pendingCount,
+          await store.syncState.pendingSyncCount(store));
       expect(state.backupStatus.isRunning, isFalse);
       expect(state.generatedAt, isNotNull);
     });

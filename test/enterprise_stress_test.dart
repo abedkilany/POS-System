@@ -2,8 +2,11 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:ventio/core/repositories/auth_repository.dart';
 import 'package:ventio/core/services/local_database_service.dart';
+import 'package:ventio/core/services/store_bootstrap_service.dart';
 import 'package:ventio/data/app_store.dart';
+import 'package:ventio/core/repositories/business_repositories.dart';
 import 'package:ventio/models/product.dart';
 import 'package:ventio/models/sale_item.dart';
 
@@ -48,8 +51,10 @@ Future<AppStore> _readyStore() async {
   LocalDatabaseService.useInMemoryStoreForTesting(_hostIdentitySeed());
   final store = AppStore();
   await store.initialize();
-  await store.completeInitialAdminSetup(
+  await StoreBootstrapService.completeInitialAdminSetup(
+      store,
       fullName: 'Admin', username: 'admin', password: 'AdminPass123');
+  await AuthRepository.login(store, 'admin', 'AdminPass123');
   return store;
 }
 
@@ -61,16 +66,19 @@ void main() {
       final store = await _readyStore();
 
       for (var i = 0; i < 75; i++) {
-        await store.addOrUpdateProduct(_product(i));
+        await ProductRepository.addOrUpdateProduct(store, _product(i));
       }
 
-      expect(store.products, hasLength(75));
-      expect(store.inventoryRetailValue, greaterThan(0));
-      expect(store.inventoryCostValue, greaterThan(0));
+      final seededProductsPage =
+          await ProductRepository.queryPage(limit: 100, offset: 0);
+      final seededProducts = seededProductsPage?.items ?? const <Product>[];
+      expect(seededProducts, hasLength(75));
+      expect(await BusinessSummaryRepository.inventoryRetailValue(), greaterThan(0));
+      expect(await BusinessSummaryRepository.inventoryCostValue(), greaterThan(0));
 
       for (var i = 0; i < 30; i++) {
-        final product = store.products[i % store.products.length];
-        await store.createSale(
+        final product = seededProducts[i % seededProducts.length];
+        await SaleRepository.createSale(context: store, 
           customerName: 'Stress Customer $i',
           items: [
             SaleItem(
@@ -83,28 +91,33 @@ void main() {
         );
       }
 
-      expect(store.sales, hasLength(30));
-      expect(store.products.where((p) => p.stock < 0), isEmpty);
-      expect(store.totalSalesAmount, greaterThan(0));
+      expect(await SaleRepository.countAll(), 30);
+      final refreshedProductsPage =
+          await ProductRepository.queryPage(limit: 100, offset: 0);
+      expect(refreshedProductsPage?.items.where((p) => p.stock < 0), isEmpty);
+      expect(await BusinessSummaryRepository.totalSalesAmount(), greaterThan(0));
       expect(store.syncChanges, isNotEmpty);
-      expect(store.pendingSyncQueueCount, 0);
+      expect(await store.syncState.pendingSyncQueueCount(store), 0);
     });
 
     test('backup restore survives a populated store round trip', () async {
       final store = await _readyStore();
       for (var i = 0; i < 20; i++) {
-        await store.addOrUpdateProduct(_product(i));
+        await ProductRepository.addOrUpdateProduct(store, _product(i));
       }
 
-      final backup = store.exportBackupJson();
+      final backup = await store.exportBackupJson();
       expect(store.validateBackupJson(backup).isValid, isTrue);
 
       await store.resetBusinessData();
-      expect(store.products, isEmpty);
+      expect(await ProductRepository.countAll(), 0);
 
-      await store.importBackupJson(backup);
-      expect(store.products, hasLength(20));
-      expect(store.products.map((p) => p.code), contains('STRESS-0'));
+      await store.recovery.importBackupJson(backup);
+      final restoredProductsPage =
+          await ProductRepository.queryPage(limit: 50, offset: 0);
+      final restoredProducts = restoredProductsPage?.items ?? const <Product>[];
+      expect(restoredProducts, hasLength(20));
+      expect(restoredProducts.map((p) => p.code), contains('STRESS-0'));
     });
   });
 }

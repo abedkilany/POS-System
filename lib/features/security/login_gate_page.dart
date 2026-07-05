@@ -2,11 +2,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
+import '../../core/repositories/auth_repository.dart';
 import '../../core/services/account_auth_service.dart';
 import '../../core/services/cloud_sync_service.dart';
 import '../../core/services/sync_diagnostics_log.dart';
 import '../../core/services/page_timing_scope.dart';
 import '../../core/services/startup_timing_service.dart';
+import '../../core/services/store_bootstrap_service.dart';
 import '../../core/services/windows_release_catalog.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/sync_unified/sync_unified.dart';
@@ -201,7 +203,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
         .toUpperCase();
     SyncDiagnosticsLog.add(
       '[RECOVER_IDENTITY] press '
-      'hasLocalStoreData=${widget.store.hasLocalStoreData} '
+      'hasLocalAdminUser=${widget.store.hasLocalAdminUser} '
       'hasStoreIdentity=${widget.store.appIdentity.hostDeviceId.trim().isNotEmpty} '
       'hasCache=${cache != null} '
       'accountToken=${cache?.accountToken.trim().isNotEmpty == true} '
@@ -313,7 +315,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
             ? ''
             : _recoveryUsernameFromResult(result, recoveryCache);
         if (recoveryCache != null && recoveryUsername.isNotEmpty) {
-          await widget.store.recoverOnlineStoreOwnerIdentity(
+          await StoreBootstrapService.recoverOnlineStoreOwnerIdentity(
+            widget.store,
             storeId: result.identity?.storeId ?? storeId,
             branchId: result.identity?.branchId ?? branchId,
             storeName: result.storeName.trim().isNotEmpty
@@ -384,7 +387,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
     final cloud = CloudSyncSettings.load();
     SyncDiagnosticsLog.add(
       '[RECOVER_DATA] press '
-      'hasLocalStoreData=${widget.store.hasLocalStoreData} '
+      'hasLocalAdminUser=${widget.store.hasLocalAdminUser} '
       'hasStoreIdentity=${widget.store.appIdentity.hostDeviceId.trim().isNotEmpty} '
       'hasCache=${cache != null} '
       'accountToken=${cache?.accountToken.trim().isNotEmpty == true}',
@@ -586,14 +589,15 @@ class _LoginGatePageState extends State<LoginGatePage> {
           mode: 'login',
         );
         _setAuthCache(cached);
-        await widget.store.applyCloudStoreOwnerCredentials(
+        await StoreBootstrapService.applyCloudStoreOwnerCredentials(
+          widget.store,
           username: onlineResult.username.isNotEmpty
               ? onlineResult.username
               : parts.first,
           fullName: null,
           password: _passwordController.text,
         );
-        await widget.store.logout();
+        await AuthRepository.logout(widget.store);
         setState(() => _loggingIn = false);
         return;
       } catch (error) {
@@ -607,7 +611,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
       }
     }
 
-    final ok = await widget.store.login(
+    final ok = await AuthRepository.login(
+      widget.store,
       localUsername,
       _passwordController.text,
       remember: _rememberLogin,
@@ -685,7 +690,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
         mode: 'registered_local',
       );
       _setAuthCache(cached);
-      await widget.store.recoverOnlineStoreOwnerIdentity(
+      await StoreBootstrapService.recoverOnlineStoreOwnerIdentity(
+        widget.store,
         storeId: onlineResult.storeId,
         branchId: onlineResult.branchId,
         storeName:
@@ -694,7 +700,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
         password: password,
       );
 
-      await widget.store.logout();
+      await AuthRepository.logout(widget.store);
       if (mounted) {
         setState(() {
           _showRegister = false;

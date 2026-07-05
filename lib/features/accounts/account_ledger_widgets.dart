@@ -2,22 +2,27 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
 import '../../core/localization/app_localizations.dart';
+import '../../core/services/accounting_service.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../core/utils/responsive.dart';
 import '../../data/app_store.dart';
 import '../../models/account_transaction.dart';
+import '../../models/store_profile.dart';
 
-String accountBalanceText(BuildContext context, AppStore store, String accountType, String accountId) {
+String accountBalanceText(
+  BuildContext context,
+  String accountType,
+  double balance,
+  StoreProfile storeProfile,
+) {
   final tr = AppLocalizations.of(context);
-  final balance = store.accountBalance(accountType, accountId);
   if (balance.abs() < 0.0001) return tr.text('account_settled');
-  final amount = formatUsdReferenceAmount(balance.abs(), store.storeProfile);
+  final amount = formatUsdReferenceAmount(balance.abs(), storeProfile);
   if (accountType == 'customer') return balance > 0 ? '${tr.text('account_receivable')}: $amount' : '${tr.text('account_credit')}: $amount';
   return balance > 0 ? '${tr.text('account_advance')}: $amount' : '${tr.text('account_payable')}: $amount';
 }
 
-Color accountBalanceColor(BuildContext context, AppStore store, String accountType, String accountId) {
-  final balance = store.accountBalance(accountType, accountId);
+Color accountBalanceColor(BuildContext context, String accountType, double balance) {
   if (balance.abs() < 0.0001) return Theme.of(context).colorScheme.primary;
   if (accountType == 'customer') return balance > 0 ? Colors.orange.shade700 : Colors.green.shade700;
   return balance < 0 ? Colors.orange.shade700 : Colors.green.shade700;
@@ -45,6 +50,8 @@ Future<void> showAccountPaymentDialog({
   required String accountId,
   required String accountName,
 }) async {
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  final successMessage = AppLocalizations.of(context).text('payment_saved');
   final result = await showDialog<_PaymentDraft>(
     context: context,
     builder: (_) => _PaymentDialog(accountType: accountType, accountName: accountName),
@@ -52,77 +59,146 @@ Future<void> showAccountPaymentDialog({
   if (result == null) return;
   final now = DateTime.now();
   final isCustomer = accountType == 'customer';
-  await store.addOrUpdateAccountTransaction(AccountTransaction(
-    id: 'txn-${now.microsecondsSinceEpoch}',
-    accountType: accountType,
-    accountId: accountId,
-    accountName: accountName,
-    date: now,
-    type: isCustomer ? 'paymentReceived' : 'paymentPaid',
-    referenceId: '',
-    referenceNo: result.referenceNo,
-    paymentMethod: result.paymentMethod,
-    debit: isCustomer ? 0 : result.amount,
-    credit: isCustomer ? result.amount : 0,
-    note: result.note,
-  ));
-  if (context.mounted) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context).text('payment_saved'))));
-  }
+  await AccountingService.saveAccountTransaction(
+    AccountTransaction(
+      id: 'txn-${now.microsecondsSinceEpoch}',
+      accountType: accountType,
+      accountId: accountId,
+      accountName: accountName,
+      date: now,
+      type: isCustomer ? 'paymentReceived' : 'paymentPaid',
+      referenceId: '',
+      referenceNo: result.referenceNo,
+      paymentMethod: result.paymentMethod,
+      debit: isCustomer ? 0 : result.amount,
+      credit: isCustomer ? result.amount : 0,
+      note: result.note,
+    ),
+    deviceId: store.deviceId,
+    storeId: store.appIdentity.storeId,
+    branchId: store.appIdentity.branchId,
+  );
+  messenger?.showSnackBar(SnackBar(content: Text(successMessage)));
 }
 
-class _AccountLedgerSheet extends StatelessWidget {
-  const _AccountLedgerSheet({required this.store, required this.accountType, required this.accountId, required this.accountName});
+class _AccountLedgerSheet extends StatefulWidget {
+  const _AccountLedgerSheet({
+    required this.store,
+    required this.accountType,
+    required this.accountId,
+    required this.accountName,
+  });
 
   final AppStore store;
   final String accountType, accountId, accountName;
 
   @override
+  State<_AccountLedgerSheet> createState() => _AccountLedgerSheetState();
+}
+
+class _AccountLedgerSheetState extends State<_AccountLedgerSheet> {
+  late final Future<_LedgerData> _future = _loadLedgerData();
+
+  Future<_LedgerData> _loadLedgerData() async {
+    final rows = await AccountingService.listPartyTransactions(
+      accountType: widget.accountType,
+      accountId: widget.accountId,
+      limit: 500,
+    );
+    final balance = await AccountingService.readPartyBalance(
+      accountType: widget.accountType,
+      accountId: widget.accountId,
+    );
+    return _LedgerData(rows: rows, balance: balance);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final rows = store.accountTransactionsForAccount(accountType, accountId);
-    final balance = store.accountBalance(accountType, accountId);
-    return DraggableScrollableSheet(
-      expand: false,
-      initialChildSize: 0.86,
-      minChildSize: 0.45,
-      maxChildSize: 0.96,
-      builder: (context, scrollController) => Padding(
-        padding: VentioResponsive.pageInsets(context),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+    return FutureBuilder<_LedgerData>(
+      future: _future,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const SizedBox(
+            height: 420,
+            child: Center(child: CircularProgressIndicator.adaptive()),
+          );
+        }
+        final data = snapshot.data;
+        if (data == null) {
+          return const SizedBox(
+            height: 420,
+            child: Center(child: CircularProgressIndicator.adaptive()),
+          );
+        }
+        return DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.86,
+          minChildSize: 0.45,
+          maxChildSize: 0.96,
+          builder: (context, scrollController) => Padding(
+            padding: VentioResponsive.pageInsets(context),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(child: Text(accountName, style: Theme.of(context).textTheme.headlineSmall)),
-                IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        widget.accountName,
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.account_balance_wallet_outlined),
+                    title:
+                        Text(AppLocalizations.of(context).text('current_balance')),
+                    subtitle: Text(
+                      _balanceDescription(context, widget.accountType, data.balance),
+                    ),
+                    trailing: Text(
+                      formatUsdReferenceAmount(
+                        data.balance.abs(),
+                        widget.store.storeProfile,
+                      ),
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: data.rows.isEmpty
+                      ? Center(
+                          child: Text(
+                            AppLocalizations.of(context)
+                                .text('no_account_transactions'),
+                          ),
+                        )
+                      : ListView.builder(
+                          scrollCacheExtent: const ScrollCacheExtent.pixels(2000),
+                          keyboardDismissBehavior:
+                              ScrollViewKeyboardDismissBehavior.onDrag,
+                          controller: scrollController,
+                          itemExtent: 72.0,
+                          itemCount: data.rows.length,
+                          itemBuilder: (context, index) => _TransactionTile(
+                            store: widget.store,
+                            transaction: data.rows[index],
+                          ),
+                        ),
+                ),
               ],
             ),
-            const SizedBox(height: 8),
-            Card(
-              child: ListTile(
-                leading: const Icon(Icons.account_balance_wallet_outlined),
-                title: Text(AppLocalizations.of(context).text('current_balance')),
-                subtitle: Text(_balanceDescription(context, accountType, balance)),
-                trailing: Text(formatUsdReferenceAmount(balance.abs(), store.storeProfile), style: Theme.of(context).textTheme.titleMedium),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Expanded(
-              child: rows.isEmpty
-                  ? Center(child: Text(AppLocalizations.of(context).text('no_account_transactions')))
-                  : ListView.builder(
-                      scrollCacheExtent: const ScrollCacheExtent.pixels(2000),
-                      keyboardDismissBehavior:
-                          ScrollViewKeyboardDismissBehavior.onDrag,
-                      controller: scrollController,
-                      itemExtent: 72.0,
-                      itemCount: rows.length,
-                      itemBuilder: (context, index) => _TransactionTile(store: store, transaction: rows[index]),
-                    ),
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
@@ -198,6 +274,16 @@ class _TransactionTile extends StatelessWidget {
   }
 
   String _dateText(DateTime date) => '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+}
+
+class _LedgerData {
+  const _LedgerData({
+    required this.rows,
+    required this.balance,
+  });
+
+  final List<AccountTransaction> rows;
+  final double balance;
 }
 
 class _PaymentDraft {
