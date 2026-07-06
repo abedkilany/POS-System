@@ -1,4 +1,4 @@
-﻿// ignore_for_file: unused_element, unused_field, unused_element_parameter
+// ignore_for_file: unused_element, unused_field, unused_element_parameter
 
 import 'dart:async';
 import 'dart:convert';
@@ -292,8 +292,6 @@ class AppStore extends ChangeNotifier implements BusinessSessionContext {
       'host_transfer_approved_device_v1';
   static const _hostTransferRequestKey = 'host_transfer_request_v1';
   static const _hostTransferNotificationKey = 'host_transfer_notification_v1';
-  static const _devFeatureFlagsKey = 'dev_feature_flags_v1';
-  static const _stressLabEnabledFlag = 'stressLabEnabled';
 
   final List<SyncChange> _syncChanges = [];
   final List<SyncQueueItem> _syncQueue = [];
@@ -352,7 +350,8 @@ class AppStore extends ChangeNotifier implements BusinessSessionContext {
     _sessionPermissions
       ..clear()
       ..addAll(permissions);
-    _sessionIsAdmin = activeUser?.roleId == 'admin' || permissions.contains('*');
+    _sessionIsAdmin =
+        activeUser?.roleId == 'admin' || permissions.contains('*');
     await LocalDatabaseService.setString(
       _activeUserKey,
       rememberLogin && activeUser != null ? activeUser.id : '',
@@ -506,10 +505,9 @@ class AppStore extends ChangeNotifier implements BusinessSessionContext {
   AppUser? get currentUser => _activeUser;
   @override
   AppIdentity get appIdentity =>
-      _appIdentity ?? 
+      _appIdentity ??
       AppIdentity.defaults(deviceId: _deviceId, platform: _detectPlatform());
-  bool get isAdmin =>
-      _sessionIsAdmin || _activeUser?.roleId == 'admin';
+  bool get isAdmin => _sessionIsAdmin || _activeUser?.roleId == 'admin';
   bool hasAnyPermission(Iterable<String> permissions) =>
       permissions.any(hasPermission);
   bool canAccessPage(String pageId) {
@@ -632,42 +630,6 @@ class AppStore extends ChangeNotifier implements BusinessSessionContext {
     await LocalDatabaseService.setString(_localeKey, languageCode);
   }
 
-  Map<String, dynamic> _loadDevFeatureFlags() {
-    final raw = LocalDatabaseService.getString(_devFeatureFlagsKey);
-    if (raw == null || raw.trim().isEmpty) return <String, dynamic>{};
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is Map<String, dynamic>) {
-        return Map<String, dynamic>.from(decoded);
-      }
-      if (decoded is Map) {
-        return decoded.map((key, value) => MapEntry(key.toString(), value));
-      }
-    } catch (_) {
-      // Keep Developer/QA feature gates safe-by-default if the local setting is malformed.
-    }
-    return <String, dynamic>{};
-  }
-
-  bool get isStressLabEnabled {
-    final flags = _loadDevFeatureFlags();
-    final value = flags[_stressLabEnabledFlag];
-    if (value is bool) return value;
-    if (value is String) return value.trim().toLowerCase() == 'true';
-    return false;
-  }
-
-  Future<void> setStressLabEnabled(bool enabled) async {
-    final flags = _loadDevFeatureFlags();
-    flags[_stressLabEnabledFlag] = enabled;
-    flags['updatedAt'] = DateTime.now().toUtc().toIso8601String();
-    await LocalDatabaseService.setString(
-      _devFeatureFlagsKey,
-      jsonEncode(flags),
-    );
-    notifyListeners();
-  }
-
   @override
   bool hasPermission(String permission) {
     if (_activeUser == null) return false;
@@ -746,7 +708,8 @@ class AppStore extends ChangeNotifier implements BusinessSessionContext {
       _activeUser = null;
       return;
     }
-    final activeId = LocalDatabaseService.getString(_activeUserKey)?.trim() ?? '';
+    final activeId =
+        LocalDatabaseService.getString(_activeUserKey)?.trim() ?? '';
     if (activeId.isEmpty) {
       _activeUser = null;
       return;
@@ -757,7 +720,8 @@ class AppStore extends ChangeNotifier implements BusinessSessionContext {
       return;
     }
     _activeUser = user;
-    _sessionIsAdmin = user.roleId == 'admin' || _sessionPermissions.contains('*');
+    _sessionIsAdmin =
+        user.roleId == 'admin' || _sessionPermissions.contains('*');
   }
 
   Future<String?> _loadEntityListJsonForStartup(String key) {
@@ -2040,8 +2004,7 @@ class AppStore extends ChangeNotifier implements BusinessSessionContext {
     }
 
     final writes = <Future<void>>[];
-    if (sync) {
-    }
+    if (sync) {}
     if (storeProfile) {
       writes.add(
         LocalDatabaseService.setString(
@@ -2316,15 +2279,15 @@ class AppStore extends ChangeNotifier implements BusinessSessionContext {
     final sales = await SaleRepository.listAll();
     final purchases = await PurchaseRepository.listAll();
     final stockMovements = await StockMovementRepository.listAll();
-    final categories =
-        await InventoryRepository.getCatalogItems(BusinessSqliteStore.categoriesKey) ??
-            const <CatalogItem>[];
-    final brands =
-        await InventoryRepository.getCatalogItems(BusinessSqliteStore.brandsKey) ??
-            const <CatalogItem>[];
-    final units =
-        await InventoryRepository.getCatalogItems(BusinessSqliteStore.unitsKey) ??
-            const <CatalogItem>[];
+    final categories = await InventoryRepository.getCatalogItems(
+            BusinessSqliteStore.categoriesKey) ??
+        const <CatalogItem>[];
+    final brands = await InventoryRepository.getCatalogItems(
+            BusinessSqliteStore.brandsKey) ??
+        const <CatalogItem>[];
+    final units = await InventoryRepository.getCatalogItems(
+            BusinessSqliteStore.unitsKey) ??
+        const <CatalogItem>[];
 
     bool hasProductReferences(String productId) {
       return sales.any(
@@ -2366,7 +2329,8 @@ class AppStore extends ChangeNotifier implements BusinessSessionContext {
           _hasPendingSyncFor('customer', item.id);
     });
     final remainingSuppliers = await retainActiveRows(suppliers, (item) {
-      return !expired(item.deletedAt) || _hasPendingSyncFor('supplier', item.id);
+      return !expired(item.deletedAt) ||
+          _hasPendingSyncFor('supplier', item.id);
     });
     final remainingSupplierProductPrices =
         await retainActiveRows(supplierProductPrices, (item) {
@@ -2377,7 +2341,8 @@ class AppStore extends ChangeNotifier implements BusinessSessionContext {
       return !expired(item.deletedAt) || _hasPendingSyncFor('expense', item.id);
     });
     final remainingCategories = await retainActiveRows(categories, (item) {
-      return !expired(item.deletedAt) || _hasPendingSyncFor('category', item.id);
+      return !expired(item.deletedAt) ||
+          _hasPendingSyncFor('category', item.id);
     });
     final remainingBrands = await retainActiveRows(brands, (item) {
       return !expired(item.deletedAt) || _hasPendingSyncFor('brand', item.id);
@@ -2389,7 +2354,8 @@ class AppStore extends ChangeNotifier implements BusinessSessionContext {
       return !expired(item.deletedAt) || _hasPendingSyncFor('sale', item.id);
     });
     final remainingPurchases = await retainActiveRows(purchases, (item) {
-      return !expired(item.deletedAt) || _hasPendingSyncFor('purchase', item.id);
+      return !expired(item.deletedAt) ||
+          _hasPendingSyncFor('purchase', item.id);
     });
 
     final removed = (products.length - remainingProducts.length) +
@@ -2410,7 +2376,9 @@ class AppStore extends ChangeNotifier implements BusinessSessionContext {
     Future<void> replaceRows(String key, List<dynamic> rows) async {
       await LocalDatabaseService.replaceBusinessEntityJsonListImmediate(
         key,
-        rows.map((item) => (item as dynamic).toJson() as Map<String, dynamic>).toList(growable: false),
+        rows
+            .map((item) => (item as dynamic).toJson() as Map<String, dynamic>)
+            .toList(growable: false),
         sortIndices: List<int?>.generate(rows.length, (index) => index),
       );
     }
@@ -2432,13 +2400,16 @@ class AppStore extends ChangeNotifier implements BusinessSessionContext {
     ]);
 
     if (remainingProducts.length != products.length) {
-      BusinessRevisionService.instance.touchForKey(BusinessSqliteStore.productsKey);
+      BusinessRevisionService.instance
+          .touchForKey(BusinessSqliteStore.productsKey);
     }
     if (remainingCustomers.length != customers.length) {
-      BusinessRevisionService.instance.touchForKey(BusinessSqliteStore.customersKey);
+      BusinessRevisionService.instance
+          .touchForKey(BusinessSqliteStore.customersKey);
     }
     if (remainingSuppliers.length != suppliers.length) {
-      BusinessRevisionService.instance.touchForKey(BusinessSqliteStore.suppliersKey);
+      BusinessRevisionService.instance
+          .touchForKey(BusinessSqliteStore.suppliersKey);
     }
     if (remainingSupplierProductPrices.length != supplierProductPrices.length) {
       BusinessRevisionService.instance.touchForKey(
@@ -2446,22 +2417,28 @@ class AppStore extends ChangeNotifier implements BusinessSessionContext {
       );
     }
     if (remainingExpenses.length != expenses.length) {
-      BusinessRevisionService.instance.touchForKey(BusinessSqliteStore.expensesKey);
+      BusinessRevisionService.instance
+          .touchForKey(BusinessSqliteStore.expensesKey);
     }
     if (remainingCategories.length != categories.length) {
-      BusinessRevisionService.instance.touchForKey(BusinessSqliteStore.categoriesKey);
+      BusinessRevisionService.instance
+          .touchForKey(BusinessSqliteStore.categoriesKey);
     }
     if (remainingBrands.length != brands.length) {
-      BusinessRevisionService.instance.touchForKey(BusinessSqliteStore.brandsKey);
+      BusinessRevisionService.instance
+          .touchForKey(BusinessSqliteStore.brandsKey);
     }
     if (remainingUnits.length != units.length) {
-      BusinessRevisionService.instance.touchForKey(BusinessSqliteStore.unitsKey);
+      BusinessRevisionService.instance
+          .touchForKey(BusinessSqliteStore.unitsKey);
     }
     if (remainingSales.length != sales.length) {
-      BusinessRevisionService.instance.touchForKey(BusinessSqliteStore.salesKey);
+      BusinessRevisionService.instance
+          .touchForKey(BusinessSqliteStore.salesKey);
     }
     if (remainingPurchases.length != purchases.length) {
-      BusinessRevisionService.instance.touchForKey(BusinessSqliteStore.purchasesKey);
+      BusinessRevisionService.instance
+          .touchForKey(BusinessSqliteStore.purchasesKey);
     }
     await _saveSyncStateOnly();
     notifyListeners();
@@ -2723,10 +2700,6 @@ class AppStore extends ChangeNotifier implements BusinessSessionContext {
         sequence: isHostEvent ? _nextSyncSequence() : 0,
       );
       final queued = _enqueueSyncChange(changeId, now);
-      // If no sync transport is enabled by the current Sync settings, keep the
-      // local audit envelope but mark it complete immediately. This prevents
-      // Stress Lab/local-only usage from accumulating misleading pending LAN work
-      // just because a legacy AppIdentity still says syncMode=lanOnly.
       final change = queued == null
           ? draftChange.copyWith(isSynced: true, syncedAt: now)
           : draftChange;
@@ -3101,9 +3074,8 @@ class AppStore extends ChangeNotifier implements BusinessSessionContext {
     List<SyncChange>? changes,
     bool includeDeviceAndSyncState = true,
   }) async {
-    final inventoryCounts =
-        await InventoryRepository.getInventoryCounts() ??
-            const <InventoryCountSession>[];
+    final inventoryCounts = await InventoryRepository.getInventoryCounts() ??
+        const <InventoryCountSession>[];
     Future<List<Map<String, dynamic>>> loadRows<T>(
       Future<List<T>?> Function() loader,
     ) async {
@@ -3120,9 +3092,8 @@ class AppStore extends ChangeNotifier implements BusinessSessionContext {
       'version': 12,
       'generatedAt': DateTime.now().toIso8601String(),
       'schemaVersion': 17,
-      'backupType': includeDeviceAndSyncState
-          ? 'full_device_backup'
-          : 'business_backup',
+      'backupType':
+          includeDeviceAndSyncState ? 'full_device_backup' : 'business_backup',
       if (includeDeviceAndSyncState)
         'localDatabaseEntries': LocalDatabaseService.allEntries(),
       if (!includeDeviceAndSyncState) 'storeId': appIdentity.storeId,
@@ -3139,17 +3110,21 @@ class AppStore extends ChangeNotifier implements BusinessSessionContext {
       'sales': await loadRows(() => SaleRepository.listAll()),
       'saleQuotations': await loadRows(() => SaleRepository.getQuotations()),
       'deliveryNotes': await loadRows(() => SaleRepository.getDeliveryNotes()),
-      'billsOfMaterials': await loadRows(() => InventoryRepository.getBillOfMaterials()),
-      'manufacturingOrders': await loadRows(() => InventoryRepository.getManufacturingOrders()),
+      'billsOfMaterials':
+          await loadRows(() => InventoryRepository.getBillOfMaterials()),
+      'manufacturingOrders':
+          await loadRows(() => InventoryRepository.getManufacturingOrders()),
       'suppliers': await loadRows(() => SupplierRepository.listAll()),
       'supplierProductPrices': await loadRows(
         () => InventoryRepository.getSupplierProductPrices(),
       ),
       'categories': await loadRows(
-        () => InventoryRepository.getCatalogItems(BusinessSqliteStore.categoriesKey),
+        () => InventoryRepository.getCatalogItems(
+            BusinessSqliteStore.categoriesKey),
       ),
       'brands': await loadRows(
-        () => InventoryRepository.getCatalogItems(BusinessSqliteStore.brandsKey),
+        () =>
+            InventoryRepository.getCatalogItems(BusinessSqliteStore.brandsKey),
       ),
       'units': await loadRows(
         () => InventoryRepository.getCatalogItems(BusinessSqliteStore.unitsKey),
@@ -3159,10 +3134,12 @@ class AppStore extends ChangeNotifier implements BusinessSessionContext {
       'stockMovements': await loadRows(() => StockMovementRepository.listAll()),
       'inventoryCounts': inventoryCounts.map((item) => item.toJson()).toList(),
       'warehouses': await loadRows(() => WarehouseRepository.listAll()),
-      'accountTransactions': await loadRows(() => AccountTransactionRepository.listAll()),
+      'accountTransactions':
+          await loadRows(() => AccountTransactionRepository.listAll()),
       if (includeDeviceAndSyncState) 'deviceId': _deviceId,
       if (includeDeviceAndSyncState)
-        'syncChanges': (changes ?? _syncChanges).map((item) => item.toJson()).toList(),
+        'syncChanges':
+            (changes ?? _syncChanges).map((item) => item.toJson()).toList(),
       if (includeDeviceAndSyncState)
         'syncQueue': _syncQueue.map((item) => item.toJson()).toList(),
       'roles': (await RoleRepository.listAll())
@@ -3277,14 +3254,15 @@ class AppStore extends ChangeNotifier implements BusinessSessionContext {
   Future<Map<String, List<dynamic>>> _unifiedSnapshotCollectionPayloads({
     Set<String>? sectionIds,
   }) async {
-    final inventoryCounts =
-        await InventoryRepository.getInventoryCounts() ??
-            const <InventoryCountSession>[];
+    final inventoryCounts = await InventoryRepository.getInventoryCounts() ??
+        const <InventoryCountSession>[];
     Future<List<dynamic>> loadList<T>(
       Future<List<T>?> Function() loader,
     ) async {
       final items = await loader() ?? List<T>.empty(growable: false);
-      return items.map((item) => (item as dynamic).toJson()).toList(growable: false);
+      return items
+          .map((item) => (item as dynamic).toJson())
+          .toList(growable: false);
     }
 
     final all = <String, List<dynamic>>{
@@ -3311,21 +3289,30 @@ class AppStore extends ChangeNotifier implements BusinessSessionContext {
       'users': (await UserRepository.listAll())
           .map((item) => item.toJson())
           .toList(),
-      'categories': await loadList(() => InventoryRepository.getCatalogItems(BusinessSqliteStore.categoriesKey)),
-      'brands': await loadList(() => InventoryRepository.getCatalogItems(BusinessSqliteStore.brandsKey)),
-      'units': await loadList(() => InventoryRepository.getCatalogItems(BusinessSqliteStore.unitsKey)),
+      'categories': await loadList(() => InventoryRepository.getCatalogItems(
+          BusinessSqliteStore.categoriesKey)),
+      'brands': await loadList(() =>
+          InventoryRepository.getCatalogItems(BusinessSqliteStore.brandsKey)),
+      'units': await loadList(() =>
+          InventoryRepository.getCatalogItems(BusinessSqliteStore.unitsKey)),
       'warehouses': await loadList(() => WarehouseRepository.listAll()),
       'products': await loadList(() => ProductRepository.listAll()),
       'customers': await loadList(() => CustomerRepository.listAll()),
       'suppliers': await loadList(() => SupplierRepository.listAll()),
-      'supplierProductPrices': await loadList(() => InventoryRepository.getSupplierProductPrices()),
+      'supplierProductPrices':
+          await loadList(() => InventoryRepository.getSupplierProductPrices()),
       'priceLists': await loadList(() => InventoryRepository.getPriceLists()),
-      'productPrices': await loadList(() => InventoryRepository.getProductPrices()),
-      'productPriceOverrides': await loadList(() => InventoryRepository.getProductPriceOverrides()),
-      'productCosts': await loadList(() => InventoryRepository.getProductCosts()),
-      'costingMethodHistory': await loadList(() => InventoryRepository.getCostingMethodHistory()),
+      'productPrices':
+          await loadList(() => InventoryRepository.getProductPrices()),
+      'productPriceOverrides':
+          await loadList(() => InventoryRepository.getProductPriceOverrides()),
+      'productCosts':
+          await loadList(() => InventoryRepository.getProductCosts()),
+      'costingMethodHistory':
+          await loadList(() => InventoryRepository.getCostingMethodHistory()),
       'inventoryCostingMethod': <dynamic>[_inventoryCostingMethod.code],
-      'inventoryCostLayers': await loadList(() => InventoryRepository.getInventoryCostLayers()),
+      'inventoryCostLayers':
+          await loadList(() => InventoryRepository.getInventoryCostLayers()),
       'stockMovements': await loadList(() => StockMovementRepository.listAll()),
       'inventoryCounts': inventoryCounts.map((item) => item.toJson()).toList(),
       'sales': await loadList(() => SaleRepository.listAll()),
@@ -3333,9 +3320,12 @@ class AppStore extends ChangeNotifier implements BusinessSessionContext {
       'deliveryNotes': await loadList(() => SaleRepository.getDeliveryNotes()),
       'purchases': await loadList(() => PurchaseRepository.listAll()),
       'expenses': await loadList(() => ExpenseRepository.listAll()),
-      'accountTransactions': await loadList(() => AccountTransactionRepository.listAll()),
-      'billsOfMaterials': await loadList(() => InventoryRepository.getBillOfMaterials()),
-      'manufacturingOrders': await loadList(() => InventoryRepository.getManufacturingOrders()),
+      'accountTransactions':
+          await loadList(() => AccountTransactionRepository.listAll()),
+      'billsOfMaterials':
+          await loadList(() => InventoryRepository.getBillOfMaterials()),
+      'manufacturingOrders':
+          await loadList(() => InventoryRepository.getManufacturingOrders()),
     };
 
     final ordered = <String, List<dynamic>>{};
@@ -3507,7 +3497,8 @@ class AppStore extends ChangeNotifier implements BusinessSessionContext {
     return payload;
   }
 
-  Future<List<Map<String, dynamic>>> exportCloudLoginBootstrapSnapshotChunks() async {
+  Future<List<Map<String, dynamic>>>
+      exportCloudLoginBootstrapSnapshotChunks() async {
     return await exportUnifiedSnapshotChunks(
       kind: 'login_bootstrap',
       sectionIds: {UnifiedSnapshotCatalog.loginSettingsAndUsers.id},
@@ -4375,12 +4366,3 @@ class AppStore extends ChangeNotifier implements BusinessSessionContext {
     super.dispose();
   }
 }
-
-
-
-
-
-
-
-
-

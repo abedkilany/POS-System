@@ -895,13 +895,13 @@ class LocalDatabaseService {
     _pendingScalarWrites.remove(key);
     _pendingScalarDeletes.remove(key);
     _pendingBusinessEntityWrites.remove(key);
-    _sqliteMirror.remove(key);
     await BusinessSqliteStore.replaceEntityPayloads(
       db,
       key,
       payloads,
       sortIndices: sortIndices,
     );
+    _sqliteMirror[key] = jsonEncode(payloads);
   }
 
   static Future<void> upsertBusinessEntityJson(
@@ -940,13 +940,16 @@ class LocalDatabaseService {
     if (_webStore != null) return;
     final db = SqliteMigrationManager.database;
     if (!_sqliteReady || db == null) return;
-    _sqliteMirror.remove(key);
     await BusinessSqliteStore.upsertEntityPayload(
       db,
       key,
       Map<String, dynamic>.from(payloadJson),
       sortIndex: sortIndex,
     );
+    final fresh = await BusinessSqliteStore.readEntityListJsonByKey(db, key);
+    if (fresh != null) {
+      _sqliteMirror[key] = fresh;
+    }
   }
 
   static Future<void> upsertSyncChange(SyncChange change) async {
@@ -1173,13 +1176,15 @@ class LocalDatabaseService {
         await _writeRawScalarValueImmediate(entry.key, entry.value);
       }
       for (final entry in businessWrites.entries) {
-        _sqliteMirror.remove(entry.key);
         await BusinessSqliteStore.upsertEntityPayloads(
           db,
           entry.key,
           entry.value.map((item) => item.payload).toList(growable: false),
           sortIndices:
               entry.value.map((item) => item.sortIndex).toList(growable: false),
+        );
+        _sqliteMirror[entry.key] = jsonEncode(
+          entry.value.map((item) => item.payload).toList(growable: false),
         );
       }
       if (syncChanges.isNotEmpty) {

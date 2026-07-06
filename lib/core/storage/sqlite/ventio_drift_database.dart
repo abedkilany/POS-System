@@ -573,6 +573,10 @@ class VentioDriftDatabase extends GeneratedDatabase {
         'CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);');
     await customStatement(
         'CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_products_code_lower ON products(lower(code));');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_products_barcode_lower ON products(lower(barcode));');
   }
 
   Future<void> _ensureProductUnitTables() async {
@@ -1022,6 +1026,8 @@ class VentioDriftDatabase extends GeneratedDatabase {
     await _ensureColumn('customers', 'name', "TEXT NOT NULL DEFAULT ''");
     await _ensureColumn('customers', 'phone', "TEXT NOT NULL DEFAULT ''");
     await _ensureColumn('customers', 'address', "TEXT NOT NULL DEFAULT ''");
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_customers_name_lower_trim ON customers(lower(trim(name)));');
   }
 
   Future<void> _ensureSupplierColumns() async {
@@ -1031,6 +1037,8 @@ class VentioDriftDatabase extends GeneratedDatabase {
     await _ensureColumn('suppliers', 'phone', "TEXT NOT NULL DEFAULT ''");
     await _ensureColumn('suppliers', 'address', "TEXT NOT NULL DEFAULT ''");
     await _ensureColumn('suppliers', 'notes', "TEXT NOT NULL DEFAULT ''");
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_suppliers_name_lower_trim ON suppliers(lower(trim(name)));');
   }
 
   Future<void> _ensureExpenseColumns() async {

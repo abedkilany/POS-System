@@ -2345,6 +2345,14 @@ class BusinessSqliteStore {
     return products.isEmpty ? null : products.first;
   }
 
+  static Future<Product?> readProductCoreById(
+    VentioDriftDatabase db,
+    String id,
+  ) async {
+    final products = await _readProductCoreByIds(db, <String>[id]);
+    return products.isEmpty ? null : products.first;
+  }
+
   static Future<Product?> readProductByCodeOrBarcode(
     VentioDriftDatabase db,
     String code,
@@ -2461,6 +2469,54 @@ class BusinessSqliteStore {
       data['purchaseUnits'] =
           purchaseUnitsByProduct[data['id']?.toString() ?? ''] ??
               const <Map<String, dynamic>>[];
+      final product = Product.fromJson(data);
+      productsById[product.id] = product;
+    }
+    return [
+      for (final id in ids)
+        if (productsById[id] != null) productsById[id]!,
+    ];
+  }
+
+  static Future<List<Product>> _readProductCoreByIds(
+    VentioDriftDatabase db,
+    List<String> ids,
+  ) async {
+    if (ids.isEmpty) return const <Product>[];
+    final placeholders = _inPlaceholders(ids.length);
+    final variables = ids.map((id) => Variable<String>(id)).toList();
+    final rows = await db.customSelect('''
+      SELECT id, name, code, name_en AS nameEn, name_ar AS nameAr,
+             price, cost, original_cost AS originalCost,
+             cost_currency AS costCurrency, usd_cost AS usdCost,
+             cost_exchange_rate_at_entry AS costExchangeRateAtEntry,
+             original_price AS originalPrice,
+             original_currency AS originalCurrency,
+             usd_price AS usdPrice,
+             exchange_rate_at_entry AS exchangeRateAtEntry,
+             stock, category, barcode, brand, supplier, description, unit,
+             quantity_type AS quantityType,
+             low_stock_threshold AS lowStockThreshold,
+             CASE WHEN track_stock = 1 THEN 1 ELSE 0 END AS trackStock,
+             CASE WHEN is_active = 1 THEN 1 ELSE 0 END AS isActive,
+             image_path AS imagePath, created_at AS createdAt,
+             updated_at AS updatedAt, deleted_at AS deletedAt,
+             device_id AS deviceId, sync_status AS syncStatus,
+             store_id AS storeId, branch_id AS branchId, version,
+             last_modified_by_device_id AS lastModifiedByDeviceId
+      FROM products
+      WHERE id IN ($placeholders)
+      ORDER BY sort_index ASC, updated_at ASC, id ASC
+    ''', variables: variables).get();
+
+    final productsById = <String, Product>{};
+    for (final row in rows) {
+      final data = Map<String, dynamic>.from(row.data);
+      data['trackStock'] =
+          data['trackStock'] == 1 || data['trackStock'] == true;
+      data['isActive'] = data['isActive'] == 1 || data['isActive'] == true;
+      data['saleUnits'] = const <Map<String, dynamic>>[];
+      data['purchaseUnits'] = const <Map<String, dynamic>>[];
       final product = Product.fromJson(data);
       productsById[product.id] = product;
     }

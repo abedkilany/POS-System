@@ -71,7 +71,7 @@ Future<int> _countBusinessEntityList(String key) async {
 }
 
 Future<void> _refreshMaterializedSummaries({
-  bool force = true,
+  bool force = false,
 }) async {
   final db = _businessDb();
   if (db == null) return;
@@ -309,6 +309,18 @@ class ProductRepository {
       return null;
     }
     return BusinessSqliteStore.readProductById(db, id);
+  }
+
+  static Future<Product?> getCoreById(String id) async {
+    final db = _businessDb();
+    if (db == null) {
+      final items = await listAll();
+      for (final item in items) {
+        if (item.id == id) return item;
+      }
+      return null;
+    }
+    return BusinessSqliteStore.readProductCoreById(db, id);
   }
 
   static Future<Product?> findByCodeOrBarcode(String code) async {
@@ -612,7 +624,7 @@ class ProductRepository {
     await _refreshEntityAndSync(
       context,
       BusinessSqliteStore.categoriesKey,
-      refreshSummaries: true,
+      refreshSummaries: false,
     );
   }
 
@@ -669,7 +681,7 @@ class ProductRepository {
     await _refreshEntityAndSync(
       context,
       BusinessSqliteStore.brandsKey,
-      refreshSummaries: true,
+      refreshSummaries: false,
     );
   }
 
@@ -726,7 +738,7 @@ class ProductRepository {
     await _refreshEntityAndSync(
       context,
       BusinessSqliteStore.unitsKey,
-      refreshSummaries: true,
+      refreshSummaries: false,
     );
   }
 
@@ -1422,12 +1434,13 @@ class SaleRepository {
     DateTime now, {
     required bool allowAutoCorrection,
     required bool mutateProducts,
-    required String stockMovementPrefix,
+    required String saleReferenceId,
+    required String saleReferenceNo,
   }) async {
     final normalized = <SaleItem>[];
     for (var lineIndex = 0; lineIndex < items.length; lineIndex += 1) {
       final item = items[lineIndex];
-      final product = await ProductRepository.getById(item.productId);
+      final product = await ProductRepository.getCoreById(item.productId);
       if (product == null) {
         throw ArgumentError('Product not found: ${item.productName}');
       }
@@ -1462,14 +1475,14 @@ class SaleRepository {
         }
         currentStock = corrected.stock;
         final correctionMovement = StockMovement(
-          id: '$stockMovementPrefix-${item.productId}-auto-correction-$lineIndex',
+          id: '$saleReferenceId-${item.productId}-auto-correction-$lineIndex',
           productId: item.productId,
           productName: item.productName,
           type: 'auto_correction',
           quantity: shortage,
           date: now,
-          referenceId: stockMovementPrefix,
-          referenceNo: stockMovementPrefix,
+          referenceId: saleReferenceId,
+          referenceNo: saleReferenceNo,
           reason: 'Automatic inventory correction before sale',
           adjustmentCategory: 'auto_sale_correction',
           notes:
@@ -1515,14 +1528,14 @@ class SaleRepository {
           payload: nextProduct.toJson(),
         );
         final saleMovement = StockMovement(
-          id: '$stockMovementPrefix-${item.productId}-sale-$lineIndex',
+          id: '$saleReferenceId-${item.productId}-sale-$lineIndex',
           productId: item.productId,
           productName: item.productName,
           type: 'sale',
           quantity: -baseQty,
           date: now,
-          referenceId: stockMovementPrefix,
-          referenceNo: stockMovementPrefix,
+          referenceId: saleReferenceId,
+          referenceNo: saleReferenceNo,
           reason: 'Sale invoice',
           unitCost: unitCost,
           createdAt: now,
@@ -1602,7 +1615,8 @@ class SaleRepository {
       now,
       allowAutoCorrection: true,
       mutateProducts: true,
-      stockMovementPrefix: 'sale_${_invoicePrefix(context)}_${sequence.toString().padLeft(6, '0')}',
+      saleReferenceId: 'sale_${_invoicePrefix(context)}_${sequence.toString().padLeft(6, '0')}',
+      saleReferenceNo: 'INV-${_invoicePrefix(context)}-${sequence.toString().padLeft(6, '0')}',
     );
     final subtotal = saleItems.fold<double>(0, (sum, item) => sum + item.lineTotal);
     final normalizedCustomerId =
@@ -1674,6 +1688,11 @@ class SaleRepository {
       operation: 'create',
       payload: sale.toJson(),
     );
+    try {
+      await AccountingService.recordSale(sale);
+    } catch (_) {
+      // Keep the sale flow operational if accounting posting is temporarily unavailable.
+    }
     await _refreshMaterializedSummaries();
     await context.refreshAfterDatabaseChange(BusinessSqliteStore.salesKey);
     await context.refreshAfterDatabaseChange(BusinessSqliteStore.productsKey);
@@ -1954,7 +1973,7 @@ class SaleRepository {
     if (restoreStock) {
       for (var lineIndex = 0; lineIndex < sale.items.length; lineIndex += 1) {
         final item = sale.items[lineIndex];
-        final product = await ProductRepository.getById(item.productId);
+        final product = await ProductRepository.getCoreById(item.productId);
         if (product == null || !product.trackStock) continue;
         final updatedProduct = product.copyWith(
           stock: product.stock + item.effectiveBaseQuantity,
@@ -2031,6 +2050,16 @@ class SaleRepository {
       operation: 'return',
       payload: returnedSale.toJson(),
     );
+    try {
+      await AccountingService.reverseEntryForReference(
+        referenceType: 'sale',
+        referenceId: sale.id,
+        reason: 'Sale returned',
+        createdBy: context.deviceId,
+      );
+    } catch (_) {
+      // Best effort: the operational return should still complete.
+    }
     await _refreshMaterializedSummaries();
     await context.refreshAfterDatabaseChange(BusinessSqliteStore.salesKey);
     await context.refreshAfterDatabaseChange(BusinessSqliteStore.productsKey);
@@ -2054,7 +2083,7 @@ class SaleRepository {
     if (restoreStock) {
       for (var lineIndex = 0; lineIndex < sale.items.length; lineIndex += 1) {
         final item = sale.items[lineIndex];
-        final product = await ProductRepository.getById(item.productId);
+        final product = await ProductRepository.getCoreById(item.productId);
         if (product == null || !product.trackStock) continue;
         final updatedProduct = product.copyWith(
           stock: product.stock + item.effectiveBaseQuantity,
@@ -2130,6 +2159,16 @@ class SaleRepository {
       operation: 'cancel',
       payload: cancelledSale.toJson(),
     );
+    try {
+      await AccountingService.reverseEntryForReference(
+        referenceType: 'sale',
+        referenceId: sale.id,
+        reason: status.trim().isEmpty ? 'Sale cancelled' : status.trim(),
+        createdBy: context.deviceId,
+      );
+    } catch (_) {
+      // Best effort: the operational cancellation should still complete.
+    }
     await _refreshMaterializedSummaries();
     await context.refreshAfterDatabaseChange(BusinessSqliteStore.salesKey);
     await context.refreshAfterDatabaseChange(BusinessSqliteStore.productsKey);
@@ -2819,7 +2858,7 @@ class PurchaseRepository {
     final updatedProducts = <Product>[];
     for (var lineIndex = 0; lineIndex < purchase.items.length; lineIndex += 1) {
       final item = purchase.items[lineIndex];
-      final product = await ProductRepository.getById(item.productId);
+      final product = await ProductRepository.getCoreById(item.productId);
       if (product == null || !product.trackStock) continue;
       final delta = isReturn || isCancel ? -item.baseQuantity : item.baseQuantity;
       final nextStock = product.stock + delta;
@@ -2918,7 +2957,7 @@ class PurchaseRepository {
       if (item.quantity <= 0 || item.conversionToBase <= 0 || item.unitCost < 0) {
         throw ArgumentError('Invalid purchase item values.');
       }
-      final product = await ProductRepository.getById(item.productId);
+      final product = await ProductRepository.getCoreById(item.productId);
       if (product == null) {
         throw ArgumentError('Product not found: ${item.productName}');
       }
@@ -2979,6 +3018,11 @@ class PurchaseRepository {
         isCancel: false,
       );
     }
+    try {
+      await AccountingService.recordPurchase(purchase);
+    } catch (_) {
+      // Keep the purchase flow operational if accounting posting is temporarily unavailable.
+    }
     await _refreshMaterializedSummaries();
     await context.refreshAfterDatabaseChange(BusinessSqliteStore.purchasesKey);
     if (receiveNow) {
@@ -3023,6 +3067,11 @@ class PurchaseRepository {
       isReturn: false,
       isCancel: false,
     );
+    try {
+      await AccountingService.recordPurchase(received);
+    } catch (_) {
+      // Keep the receive flow operational if accounting posting is temporarily unavailable.
+    }
     await _refreshMaterializedSummaries();
     await context.refreshAfterDatabaseChange(BusinessSqliteStore.purchasesKey);
     await context.refreshAfterDatabaseChange(BusinessSqliteStore.productsKey);
@@ -3146,6 +3195,16 @@ class PurchaseRepository {
       operation: 'return',
       payload: returned.toJson(),
     );
+    try {
+      await AccountingService.reverseEntryForReference(
+        referenceType: 'purchase',
+        referenceId: purchase.id,
+        reason: reason.trim().isEmpty ? 'Purchase returned' : reason.trim(),
+        createdBy: context.deviceId,
+      );
+    } catch (_) {
+      // Best effort: the operational return should still complete.
+    }
     final tx = AccountTransaction(
       id: '${purchase.id}-purchase-return',
       accountType: 'supplier',
@@ -3224,6 +3283,16 @@ class PurchaseRepository {
       operation: 'cancel',
       payload: cancelled.toJson(),
     );
+    try {
+      await AccountingService.reverseEntryForReference(
+        referenceType: 'purchase',
+        referenceId: purchase.id,
+        reason: reason.trim().isEmpty ? 'Purchase cancelled' : reason.trim(),
+        createdBy: context.deviceId,
+      );
+    } catch (_) {
+      // Best effort: the operational cancellation should still complete.
+    }
     await _refreshMaterializedSummaries();
     await context.refreshAfterDatabaseChange(BusinessSqliteStore.purchasesKey);
     await context.refreshAfterDatabaseChange(BusinessSqliteStore.productsKey);
@@ -3487,7 +3556,7 @@ class InventoryRepository {
 
     final now = DateTime.now();
     for (final line in countedLines) {
-      final product = await ProductRepository.getById(line.productId);
+      final product = await ProductRepository.getCoreById(line.productId);
       if (product == null || !product.trackStock) continue;
       final theoreticalAtCount = line.snapshotStock;
       final countedQty = line.countedQty ?? theoreticalAtCount;
@@ -3925,7 +3994,7 @@ class InventoryRepository {
     if (fromWarehouseId == toWarehouseId) {
       throw ArgumentError('Choose two different warehouses.');
     }
-    final product = await ProductRepository.getById(productId);
+    final product = await ProductRepository.getCoreById(productId);
     if (product == null) throw ArgumentError('Product not found.');
     if (!product.trackStock) {
       throw StateError('This product does not track stock.');
@@ -4046,7 +4115,7 @@ class InventoryRepository {
   }) async {
     context.requirePermission(AppPermission.productsEdit);
     if (quantityDelta == 0) return;
-    final product = await ProductRepository.getById(productId);
+    final product = await ProductRepository.getCoreById(productId);
     if (product == null) throw ArgumentError('Product not found.');
     if (!product.trackStock) {
       throw StateError('This product does not track stock.');
@@ -4119,7 +4188,7 @@ class InventoryRepository {
     if (components.isEmpty) {
       throw ArgumentError('BOM must contain at least one component.');
     }
-    final output = await ProductRepository.getById(outputProductId);
+    final output = await ProductRepository.getCoreById(outputProductId);
     if (output == null) throw ArgumentError('Output product was not found.');
     final cleanedComponents = <BillOfMaterialsLine>[];
     for (final component in components) {
@@ -4129,7 +4198,7 @@ class InventoryRepository {
       if (component.productId == outputProductId) {
         throw ArgumentError('Output product cannot be used as a component in the same BOM.');
       }
-      final product = await ProductRepository.getById(component.productId);
+      final product = await ProductRepository.getCoreById(component.productId);
       if (product == null) {
         throw ArgumentError('Component product was not found.');
       }
@@ -4188,7 +4257,7 @@ class InventoryRepository {
       (item) => item.id == bomId && !item.isDeleted && item.isActive,
       orElse: () => throw ArgumentError('BOM was not found.'),
     );
-    final output = await ProductRepository.getById(bom.outputProductId);
+    final output = await ProductRepository.getCoreById(bom.outputProductId);
     if (output == null) throw ArgumentError('Output product was not found.');
     final factor = quantity / bom.outputQuantity;
     final warehouses = await getWarehouses() ?? const <Warehouse>[];
@@ -4208,7 +4277,7 @@ class InventoryRepository {
             orElse: () => throw ArgumentError('Warehouse not found.'),
           );
     for (final component in bom.components) {
-      final product = await ProductRepository.getById(component.productId);
+      final product = await ProductRepository.getCoreById(component.productId);
       if (product == null || !product.trackStock) continue;
       final requiredQty = component.quantity * factor;
       if (product.stock < requiredQty) {
@@ -4239,7 +4308,7 @@ class InventoryRepository {
     );
     for (var lineIndex = 0; lineIndex < bom.components.length; lineIndex += 1) {
       final component = bom.components[lineIndex];
-      final product = await ProductRepository.getById(component.productId);
+      final product = await ProductRepository.getCoreById(component.productId);
       if (product == null || !product.trackStock) continue;
       final usedQty = component.quantity * factor;
       final updated = product.copyWith(

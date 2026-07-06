@@ -25,6 +25,7 @@ class AccountingService {
   static int? _entryNoCacheDbIdentity;
   static final Map<int, int> _entryNoSequenceByYear = <int, int>{};
   static Future<void> _entryNoQueue = Future<void>.value();
+  static Map<String, String>? _defaultAccountMapCache;
 
   static void setMutationListener(void Function()? listener) {
     _mutationListener = listener;
@@ -96,6 +97,8 @@ class AccountingService {
 
   static Future<Map<String, String>> readDefaultAccountMap() async {
     if (!isAvailable) return const <String, String>{};
+    final cached = _defaultAccountMapCache;
+    if (cached != null) return cached;
     final rows = await _db.customSelect(
       '''
       SELECT key, account_id
@@ -104,10 +107,12 @@ class AccountingService {
       ORDER BY key
       ''',
     ).get();
-    return <String, String>{
+    final result = <String, String>{
       for (final row in rows)
         row.data['key'].toString(): row.data['account_id'].toString(),
     };
+    _defaultAccountMapCache = result;
+    return result;
   }
 
 
@@ -140,6 +145,7 @@ class AccountingService {
         Variable<String>(now),
       ],
     );
+    _defaultAccountMapCache = null;
     _notifyMutation();
     await _writeAuditLog(
       action: 'update_setting',

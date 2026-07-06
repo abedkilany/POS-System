@@ -241,7 +241,7 @@ class MaintenanceService {
     );
     final overpaidSales = await _countSqliteRows(
       "sales",
-      "deleted_at = '' AND lower(status) NOT IN ('cancelled', 'returned') AND paid_amount > invoice_total + 0.01",
+      "deleted_at = '' AND lower(status) NOT IN ('cancelled', 'returned') AND paid_amount > transaction_amount + 0.01",
     );
     final missingProductRefs = await _countSqliteRows(
       "sale_items",

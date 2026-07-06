@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -8,8 +7,8 @@ import '../../core/services/startup_timing_service.dart';
 import '../../core/services/page_timing_scope.dart';
 import '../../data/app_store.dart';
 import '../../core/localization/app_localizations.dart';
-import '../database/database_page.dart';
 import '../dev_tools/stress_lab_page.dart';
+import '../database/database_page.dart';
 import 'diagnostics_page.dart';
 import 'maintenance_models.dart';
 import 'maintenance_service.dart';
@@ -29,8 +28,6 @@ class _MaintenancePageState extends State<MaintenancePage> {
   bool _loading = true;
   bool _lastRunWasDeep = false;
   bool _showDatabaseExplorer = false;
-  bool get _showAdvancedTools =>
-      kDebugMode || widget.store.canManageMaintenance;
 
   @override
   void initState() {
@@ -315,7 +312,6 @@ class _MaintenancePageState extends State<MaintenancePage> {
         padding: const EdgeInsets.all(16),
         children: [
           const SizedBox(height: 16),
-          if (_showAdvancedTools) _buildAdvancedToolsCard(tr),
           Row(
             children: [
               const Icon(Icons.health_and_safety_outlined, size: 32),
@@ -479,6 +475,22 @@ class _MaintenancePageState extends State<MaintenancePage> {
               icon: const Icon(Icons.description_outlined),
               label: Text(tr.text('export_technical_report')),
             ),
+            FilledButton.icon(
+              onPressed: widget.store.canManageMaintenance
+                  ? () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => PageTimingScope(
+                            key: const ValueKey('StressLabPage'),
+                            pageKey: 'StressLabPage',
+                            pageLabel: 'Stress lab',
+                            child: StressLabPage(store: widget.store),
+                          ),
+                        ),
+                      )
+                  : null,
+              icon: const Icon(Icons.speed_outlined),
+              label: Text(tr.text('stress_lab')),
+            ),
             OutlinedButton.icon(
               onPressed: widget.store.canManageMaintenance
                   ? () => Navigator.of(context).push(
@@ -522,41 +534,6 @@ class _MaintenancePageState extends State<MaintenancePage> {
           ],
         ),
       ],
-    );
-  }
-
-  Widget _buildAdvancedToolsCard(AppLocalizations tr) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(tr.text('advanced_tools')),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              children: [
-                FilledButton.icon(
-                  onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => PageTimingScope(
-                        key: const ValueKey('StressLabPage'),
-                        pageKey: 'StressLabPage',
-                        pageLabel: 'Stress lab',
-                        child: StressLabPage(store: widget.store),
-                      ),
-                    ),
-                  ),
-                  icon: const Icon(Icons.speed_outlined),
-                  label: Text(tr.text('stress_lab')),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
     );
   }
 

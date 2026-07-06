@@ -116,6 +116,7 @@ class _VentioAppState extends State<VentioApp> {
       (key: 'ManufacturingPage', label: 'Manufacturing'),
       (key: 'ReportsPage', label: 'Reports'),
       (key: 'MaintenancePage', label: 'Maintenance'),
+      (key: 'StressLabPage', label: 'Stress lab'),
       (key: 'DatabasePage', label: 'Database'),
       (key: 'SettingsPage', label: 'Settings'),
       (key: 'AdminSubscribersPage', label: 'Admin subscribers'),
@@ -125,7 +126,6 @@ class _VentioAppState extends State<VentioApp> {
       (key: 'SyncSetupPage', label: 'Sync setup'),
       (key: 'UsersPermissionsPage', label: 'Users permissions'),
       (key: 'BarcodeScannerPage', label: 'Barcode scanner'),
-      (key: 'StressLabPage', label: 'Stress lab'),
       (key: '_NoAccessPage', label: 'No access'),
     ];
     for (final page in pages) {
