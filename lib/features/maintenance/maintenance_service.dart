@@ -6,7 +6,6 @@ import '../../core/services/local_database_service.dart';
 import '../../core/services/google_drive_backup_service.dart';
 import '../../core/services/local_auto_backup_service.dart';
 import '../../core/services/maintenance_storage_info.dart';
-import '../../core/repositories/business_repositories.dart';
 import '../../core/services/startup_timing_service.dart';
 import '../../core/storage/sqlite/sqlite_migration_manager.dart';
 import '../../data/app_store.dart';
@@ -22,42 +21,43 @@ class MaintenanceService {
     final sqliteCounts = await _sqliteTableCounts();
     final backupSnapshot = await _backupSnapshot();
     final counts = <String, int>{
-      'products': sqliteCounts['products'] ?? 0,
-      'customers': sqliteCounts['customers'] ?? 0,
-      'suppliers': sqliteCounts['suppliers'] ?? 0,
-      'sales': sqliteCounts['sales'] ?? 0,
-      'purchases': sqliteCounts['purchases'] ?? 0,
-      'expenses': sqliteCounts['expenses'] ?? 0,
-      'stockMovements': sqliteCounts['stockMovements'] ?? 0,
-      'accountTransactions': sqliteCounts['accountTransactions'] ?? 0,
-      'users': sqliteCounts['users'] ?? await UserRepository.countAll(),
-      'roles': sqliteCounts['roles'] ?? await RoleRepository.countAll(),
+      'products': sqliteCounts['products'] ?? store.products.length,
+      'customers': sqliteCounts['customers'] ?? store.customers.length,
+      'suppliers': sqliteCounts['suppliers'] ?? store.suppliers.length,
+      'sales': sqliteCounts['sales'] ?? store.sales.length,
+      'purchases':
+          sqliteCounts['purchases'] ?? store.purchasesOverview.totalCount,
+      'expenses':
+          sqliteCounts['expenses'] ?? store.expensesOverview.totalCount,
+      'stockMovements':
+          sqliteCounts['stockMovements'] ?? store.stockMovements.length,
+      'accountTransactions': sqliteCounts['accountTransactions'] ??
+          store.accountTransactions.length,
+      'users': sqliteCounts['users'] ?? store.users.length,
+      'roles': sqliteCounts['roles'] ?? store.roles.length,
       'localDatabaseKeys': sqliteCounts['localDatabaseKeys'] ??
           LocalDatabaseService.keys().length,
       'pendingSyncChanges':
           sqliteCounts['pendingSyncChanges'] ?? store.pendingSyncChanges.length,
       'pendingSyncQueue':
-          sqliteCounts['pendingSyncQueue'] ?? store.pendingSyncCount,
-      'dataConflicts': sqliteCounts['dataConflicts'] ?? 0,
+          sqliteCounts['pendingSyncQueue'] ?? store.pendingSyncQueue.length,
+      'dataConflicts':
+          sqliteCounts['dataConflicts'] ?? store.dataConflicts.length,
       'appLogs': sqliteCounts['appLogs'] ?? 0,
       'auditLogs': sqliteCounts['auditLogs'] ?? 0,
       ...backupSnapshot.counts,
     };
 
-    final deepIssues = deep
-        ? await Future.wait([
-            _duplicateIssues(),
-            _stockIssues(),
-            _salesIssues(),
-            _purchaseIssues(),
-          ])
-        : const <List<MaintenanceIssue>>[];
-
     final issues = <MaintenanceIssue>[
       _databaseLocationIssue(storage),
       _localKeysIssue(counts['localDatabaseKeys'] ?? 0),
       ...backupSnapshot.issues,
-      if (deep) ...deepIssues.expand((items) => items),
+      if (deep) ...[
+        ..._duplicateIssues(),
+        ..._stockIssues(),
+        ..._salesIssues(),
+        ..._purchaseIssues(),
+      ],
       ..._syncIssues(counts),
     ];
 
@@ -94,8 +94,8 @@ class MaintenanceService {
           message: 'No data was changed. The health check was refreshed only.',
         );
       case MaintenanceRepairAction.repairMissingCloudQueue:
-        final repaired = await store.syncState
-            .repairMissingHostCloudQueueForPendingChanges(store);
+        final repaired =
+            await store.repairMissingHostCloudQueueForPendingChanges();
         return MaintenanceRepairResult(
           title: 'Cloud sync queue repair completed',
           message: repaired == 0
@@ -137,22 +137,16 @@ class MaintenanceService {
     );
   }
 
-  Future<List<MaintenanceIssue>> _duplicateIssues() async {
-    final duplicateProductNames = await _countSqliteDuplicates(
-      'products',
-      "deleted_at = '' AND trim(name) <> ''",
-      'name',
-    );
-    final duplicateCustomerNames = await _countSqliteDuplicates(
-      'customers',
-      "deleted_at = '' AND trim(name) <> ''",
-      'name',
-    );
-    final duplicateSupplierNames = await _countSqliteDuplicates(
-      'suppliers',
-      "deleted_at = '' AND trim(name) <> ''",
-      'name',
-    );
+  List<MaintenanceIssue> _duplicateIssues() {
+    final duplicateProductNames = _countDuplicates(store.products
+        .map((item) => item.name.trim().toLowerCase())
+        .where((item) => item.isNotEmpty));
+    final duplicateCustomerNames = _countDuplicates(store.customers
+        .map((item) => item.name.trim().toLowerCase())
+        .where((item) => item.isNotEmpty));
+    final duplicateSupplierNames = _countDuplicates(store.suppliers
+        .map((item) => item.name.trim().toLowerCase())
+        .where((item) => item.isNotEmpty));
     return [
       MaintenanceIssue(
         id: 'duplicate_product_names',
@@ -187,19 +181,14 @@ class MaintenanceService {
     ];
   }
 
-  Future<List<MaintenanceIssue>> _stockIssues() async {
-    final negativeStockProducts = await _countSqliteRows(
-      "products",
-      "deleted_at = '' AND track_stock = 1 AND stock < 0",
-    );
-    final zeroCostProducts = await _countSqliteRows(
-      "products",
-      "deleted_at = '' AND is_active = 1 AND cost <= 0",
-    );
-    final zeroPriceProducts = await _countSqliteRows(
-      "products",
-      "deleted_at = '' AND is_active = 1 AND price <= 0",
-    );
+  List<MaintenanceIssue> _stockIssues() {
+    final negativeStockProducts = store.products
+        .where((item) => item.trackStock && item.stock < 0)
+        .length;
+    final zeroCostProducts =
+        store.products.where((item) => item.isActive && item.cost <= 0).length;
+    final zeroPriceProducts =
+        store.products.where((item) => item.isActive && item.price <= 0).length;
     return [
       MaintenanceIssue(
         id: 'negative_stock',
@@ -234,19 +223,23 @@ class MaintenanceService {
     ];
   }
 
-  Future<List<MaintenanceIssue>> _salesIssues() async {
-    final emptySales = await _countSqliteRows(
-      "sales",
-      "deleted_at = '' AND NOT EXISTS (SELECT 1 FROM sale_items si WHERE si.sale_id = sales.id)",
-    );
-    final overpaidSales = await _countSqliteRows(
-      "sales",
-      "deleted_at = '' AND lower(status) NOT IN ('cancelled', 'returned') AND paid_amount > transaction_amount + 0.01",
-    );
-    final missingProductRefs = await _countSqliteRows(
-      "sale_items",
-      "trim(product_id) <> '' AND NOT EXISTS (SELECT 1 FROM products p WHERE p.id = sale_items.product_id AND p.deleted_at = '')",
-    );
+  List<MaintenanceIssue> _salesIssues() {
+    final emptySales = store.sales
+        .where((item) => !item.isDeleted && item.items.isEmpty)
+        .length;
+    final overpaidSales = store.sales
+        .where((item) =>
+            !item.isDeleted &&
+            !item.isCancelled &&
+            item.paidAmount > item.invoiceTotal + 0.01)
+        .length;
+    final productIds = store.products.map((product) => product.id).toSet();
+    final missingProductRefs = store.sales
+        .where((sale) => !sale.isDeleted)
+        .expand((sale) => sale.items)
+        .where((item) =>
+            item.productId.isNotEmpty && !productIds.contains(item.productId))
+        .length;
     return [
       MaintenanceIssue(
         id: 'empty_sales',
@@ -281,11 +274,10 @@ class MaintenanceService {
     ];
   }
 
-  Future<List<MaintenanceIssue>> _purchaseIssues() async {
-    final emptyPurchases = await _countSqliteRows(
-      "purchases",
-      "deleted_at = '' AND NOT EXISTS (SELECT 1 FROM purchase_items pi WHERE pi.purchase_id = purchases.id)",
-    );
+  List<MaintenanceIssue> _purchaseIssues() {
+    final emptyPurchases = store.purchases
+        .where((item) => !item.isDeleted && item.items.isEmpty)
+        .length;
     return [
       MaintenanceIssue(
         id: 'empty_purchases',
@@ -303,8 +295,8 @@ class MaintenanceService {
   List<MaintenanceIssue> _syncIssues(Map<String, int> counts) {
     final pendingSync =
         (counts['pendingSyncChanges'] ?? store.pendingSyncChanges.length) +
-        (counts['pendingSyncQueue'] ?? store.pendingSyncCount);
-    final conflicts = counts['dataConflicts'] ?? 0;
+            (counts['pendingSyncQueue'] ?? store.pendingSyncQueue.length);
+    final conflicts = counts['dataConflicts'] ?? store.dataConflicts.length;
     final canRepairCloudQueue = store.appIdentity.isHost &&
         store.appIdentity.isCloudEnabled &&
         pendingSync > 0;
@@ -505,38 +497,39 @@ class MaintenanceService {
     return counts;
   }
 
-  Future<int> _countSqliteRows(
-    String tableName, [
-    String whereSql = '1=1',
-  ]) async {
+  Future<int> _countSqliteRows(String tableName) async {
     final db = SqliteMigrationManager.database;
     if (db == null) return 0;
+    final whereActive =
+        _softDeleteTables.contains(tableName) ? " WHERE deleted_at = ''" : '';
     final row = await db
-        .customSelect('SELECT COUNT(*) AS row_count FROM $tableName WHERE $whereSql')
+        .customSelect(
+            'SELECT COUNT(*) AS row_count FROM $tableName$whereActive')
         .getSingleOrNull();
     return row?.read<int>('row_count') ?? 0;
   }
 
-  Future<int> _countSqliteDuplicates(
-    String tableName,
-    String whereSql,
-    String columnName,
-  ) {
-    final db = SqliteMigrationManager.database;
-    if (db == null) return Future.value(0);
-    final row = db.customSelect('''
-      SELECT COUNT(*) AS row_count
-      FROM (
-        SELECT lower(trim($columnName)) AS value
-        FROM $tableName
-        WHERE $whereSql
-        GROUP BY lower(trim($columnName))
-        HAVING COUNT(*) > 1
-      )
-    ''').getSingleOrNull();
-    return row.then((value) => value?.read<int>('row_count') ?? 0);
+  int _countDuplicates(Iterable<String> values) {
+    final counts = <String, int>{};
+    for (final value in values) {
+      counts[value] = (counts[value] ?? 0) + 1;
+    }
+    return counts.values.where((count) => count > 1).length;
   }
 }
+
+const _softDeleteTables = <String>{
+  'products',
+  'customers',
+  'suppliers',
+  'sales',
+  'purchases',
+  'expenses',
+  'stock_movements',
+  'account_transactions',
+  'app_users',
+  'user_roles',
+};
 
 class _BackupSnapshot {
   const _BackupSnapshot({

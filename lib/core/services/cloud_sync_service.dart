@@ -7,7 +7,6 @@ import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../app_brand.dart';
-import '../repositories/auth_repository.dart';
 import '../../data/app_store.dart';
 import '../../models/app_identity.dart';
 import '../../models/sync_change.dart';
@@ -711,13 +710,8 @@ class CloudSyncService {
     // If an older build left cloud_host rows as submitted, recover them to
     // pending so the next relay push sends them again and only marks them
     // synced after the Host ACKs them.
-    await store.syncState.recoverSubmittedSyncQueue(
-      store,
-      target: 'cloud_host',
-    );
-    return await store.syncState.outstandingSyncQueueCountForTarget(
-              store, 'cloud_host') >
-          0;
+    await store.recoverSubmittedSyncQueue(target: 'cloud_host');
+    return false;
   }
 
 
@@ -727,13 +721,6 @@ class CloudSyncService {
   }) async {
     if (!store.appIdentity.isClient) {
       return const CloudSyncResult(ok: true, message: 'No Client drain needed.');
-    }
-    if (await _clientCloudHostWorkNeedsDrain()) {
-      return const CloudSyncResult(
-        ok: false,
-        message: _clientCloudRebuildBlockedMessage,
-        syncDeferred: true,
-      );
     }
     onProgress?.call(0.06, 'Sending pending Client changes before rebuild...');
     await registerCurrentDevice(settings, transport: 'cloud');
@@ -1533,11 +1520,11 @@ class CloudSyncService {
             );
             onProgress?.call(
                 0.78, 'Importing Cloud snapshot chunks locally...');
-            await store.recovery.importSyncSnapshotJson(jsonEncode(envelope));
+            await store.importSyncSnapshotJson(jsonEncode(envelope));
             await _markHostSnapshotGenerationApplied('cloud', envelope);
             onProgress?.call(0.88, 'Verifying local store data...');
             final verified = await store.verifyLocalBusinessDataIntegrity();
-            if (await AuthRepository.needsInitialAdminSetup(store)) {
+            if (store.needsInitialAdminSetup) {
               throw StateError(verified.message);
             }
             // Verification warnings should not restart pairing after a
@@ -2421,11 +2408,12 @@ class CloudSyncService {
   }) async {
     final kind =
         snapshotKind.trim().isEmpty ? 'full_store' : snapshotKind.trim();
+    if (kind != 'login_bootstrap') {
+      await store.ensureHeavyDataLoaded();
+    }
     final chunks = kind == 'login_bootstrap'
-        ? await store.exportCloudLoginBootstrapSnapshotChunks()
-        : await store.exportCloudBootstrapSnapshotChunks(
-            maxItemsPerChunk: 300,
-          );
+        ? store.exportCloudLoginBootstrapSnapshotChunks()
+        : store.exportCloudBootstrapSnapshotChunks(maxItemsPerChunk: 300);
     if (chunks.isEmpty) return null;
     if (kind != 'login_bootstrap' &&
         !_relaySnapshotHasBusinessCollections(chunks)) {
@@ -3447,7 +3435,7 @@ class CloudSyncService {
     await CloudSyncSettings.clearSavedPullCursor();
     await SyncDeviceStateStore.resetClientProgress(store.appIdentity,
         transport: 'cloud');
-    await store.recovery.importSyncSnapshotJson(jsonEncode(envelope));
+    await store.importSyncSnapshotJson(jsonEncode(envelope));
     await _markHostSnapshotGenerationApplied('cloud', envelope,
         markRestoreCommandExecuted: true);
     onProgress?.call(0.90, 'Verifying rebuilt local data...');
@@ -3492,8 +3480,8 @@ class CloudSyncService {
         !settings.isConfigured) {
       return 0;
     }
-    await store.syncState.removeLegacyCloudBootstrapSnapshotQueue(store);
-    final chunks = await store.exportCloudLoginBootstrapSnapshotChunks();
+    await store.removeLegacyCloudBootstrapSnapshotQueue();
+    final chunks = store.exportCloudLoginBootstrapSnapshotChunks();
     if (chunks.isEmpty) return 0;
     return const UnifiedSnapshotTransferService().uploadChunks(
       _CloudSnapshotPushTransport(
@@ -3520,10 +3508,10 @@ class CloudSyncService {
         !settings.isConfigured) {
       return 0;
     }
-    await store.syncState.removeLegacyCloudBootstrapSnapshotQueue(store);
-    final chunks = await store.exportCloudBootstrapSnapshotChunks(
-      maxItemsPerChunk: 300,
-    );
+    await store.removeLegacyCloudBootstrapSnapshotQueue();
+    await store.ensureHeavyDataLoaded();
+    final chunks =
+        store.exportCloudBootstrapSnapshotChunks(maxItemsPerChunk: 300);
     if (chunks.isEmpty || !_relaySnapshotHasBusinessCollections(chunks)) {
       return 0;
     }
@@ -3555,15 +3543,12 @@ class CloudSyncService {
     const batchSize = 1500;
 
     while (true) {
-      await store.syncState.recoverStaleInProgressSyncQueue(
-        store,
-        target: target,
-      );
-      await store.syncState.retryFailedSyncQueue(store, target: target);
-      final pending = await _syncCore.pendingChangesForTarget(
-        target,
-        limit: batchSize,
-      );
+      await store.recoverStaleInProgressSyncQueue(target: target);
+      await store.retryFailedSyncQueue(target: target);
+      final pending = _syncCore
+          .pendingChangesForTarget(target)
+          .take(batchSize)
+          .toList(growable: false);
       final pendingIds = _syncCore.changeIds(pending);
       if (pending.isEmpty) break;
       batchNumber += 1;
@@ -3665,19 +3650,13 @@ class CloudSyncService {
 
     try {
       while (true) {
-        await store.syncState.recoverSubmittedSyncQueue(
-          store,
-          target: target,
-        );
-        await store.syncState.recoverStaleInProgressSyncQueue(
-          store,
-          target: target,
-        );
-        await store.syncState.retryFailedSyncQueue(store, target: target);
-        final pending = await _syncCore.pendingChangesForTarget(
-          target,
-          limit: batchSize,
-        );
+        await store.recoverSubmittedSyncQueue(target: target);
+        await store.recoverStaleInProgressSyncQueue(target: target);
+        await store.retryFailedSyncQueue(target: target);
+        final pending = _syncCore
+            .pendingChangesForTarget(target)
+            .take(batchSize)
+            .toList(growable: false);
         final pendingIds = _syncCore.changeIds(pending);
         if (pending.isEmpty) break;
         batchNumber += 1;
@@ -3745,7 +3724,7 @@ class CloudSyncService {
     CloudSyncSettings settings,
   ) async {
     final identity = store.appIdentity;
-    final pending = await _syncCore.pendingChangesForTarget('cloud');
+    final pending = _syncCore.pendingChangesForTarget('cloud');
     if (pending.isEmpty) return true;
     final pendingIds = _syncCore.changeIds(pending);
     final latestSequence = store.latestStoredAuthoritativeSequence;
@@ -3905,7 +3884,7 @@ class CloudSyncService {
       }
       if (store.appIdentity.isClient &&
           (restoredSnapshot || applied > 0) &&
-          !(await AuthRepository.needsInitialAdminSetup(store))) {
+          !store.needsInitialAdminSetup) {
         await CloudProvisioningStatus.markComplete(
             message: 'Initial Store data downloaded.');
       }
@@ -3954,9 +3933,7 @@ class CloudSyncService {
         onProgress?.call(0.10, 'Preparing Host cloud snapshot queue...');
         await store.ensureHostCloudBootstrapSnapshotQueued();
         final repairedCloudQueue =
-            await store.syncState.repairMissingHostCloudQueueForPendingChanges(
-              store,
-            );
+            await store.repairMissingHostCloudQueueForPendingChanges();
         if (repairedCloudQueue > 0) {
           onProgress?.call(0.18,
               '$repairedCloudQueue missing Host cloud snapshot queue item(s) were repaired...');
@@ -3965,8 +3942,8 @@ class CloudSyncService {
         await sendHostHeartbeat(settings);
         onProgress?.call(0.40, 'Registering Host device...');
         await registerCurrentDevice(settings, transport: 'cloud');
-        final hostPendingCount = await store.syncState
-            .pendingSyncQueueCountForTarget(store, 'cloud');
+        final hostPendingCount =
+            _syncCore.pendingChangesForTarget('cloud').length;
         onProgress?.call(
             0.55, 'Publishing Host changes through Cloud relay...');
         final relayPublished = await _broadcastHostAuthorityViaRelay(settings);
@@ -4332,7 +4309,7 @@ class CloudSyncService {
       }
       if (store.appIdentity.isClient &&
           (restoredSnapshot || pulled > 0) &&
-          !(await AuthRepository.needsInitialAdminSetup(store)) &&
+          !store.needsInitialAdminSetup &&
           !initialSnapshotStillUploading) {
         await CloudProvisioningStatus.markComplete(
             message: 'Initial Store data downloaded.');
@@ -4374,9 +4351,7 @@ class CloudSyncService {
         onProgress?.call(0.10, 'Preparing Host cloud snapshot queue...');
         await store.ensureHostCloudBootstrapSnapshotQueued();
         final repairedCloudQueue =
-            await store.syncState.repairMissingHostCloudQueueForPendingChanges(
-              store,
-            );
+            await store.repairMissingHostCloudQueueForPendingChanges();
         if (repairedCloudQueue > 0) {
           onProgress?.call(0.18,
               '$repairedCloudQueue missing Host cloud snapshot queue item(s) were repaired...');
@@ -4386,7 +4361,7 @@ class CloudSyncService {
         onProgress?.call(0.40, 'Registering Host device...');
         await registerCurrentDevice(settings, transport: 'cloud');
         final hostPendingCount =
-            (await _syncCore.pendingChangesForTarget('cloud')).length;
+            _syncCore.pendingChangesForTarget('cloud').length;
         onProgress?.call(0.55, 'Publishing Host changes through Cloud relay...');
         final relayPublished = await _broadcastHostAuthorityViaRelay(settings);
         if (!relayPublished) {
@@ -4399,7 +4374,7 @@ class CloudSyncService {
         pushed = hostPendingCount;
         onProgress?.call(
             0.90, 'Running safe local sync history maintenance...');
-        await store.syncState.compactSyncedSyncHistoryForMaintenance(store);
+        await store.compactSyncedSyncHistoryForMaintenance();
         onProgress?.call(0.96, 'Running safe Cloud maintenance...');
         await runCloudMaintenance(settings);
         onProgress?.call(1.0, 'Host Cloud sync completed.');
@@ -4646,13 +4621,11 @@ class CloudSyncService {
       }
       if (store.appIdentity.isClient) {
         onProgress?.call(0.97, 'Running Client sync history maintenance...');
-        await store.syncState.compactClientSyncedSyncHistoryForMaintenance(
-          store,
-        );
+        await store.compactClientSyncedSyncHistoryForMaintenance();
       }
       if (store.appIdentity.isClient &&
           (restoredSnapshot || pulled > 0) &&
-          !(await AuthRepository.needsInitialAdminSetup(store)) &&
+          !store.needsInitialAdminSetup &&
           !initialSnapshotStillUploading) {
         await CloudProvisioningStatus.markComplete(
             message: 'Initial Store data downloaded.');

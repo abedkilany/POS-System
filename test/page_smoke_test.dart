@@ -6,9 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ventio/core/localization/app_localizations.dart';
 import 'package:ventio/core/services/local_database_service.dart';
-import 'package:ventio/core/services/store_bootstrap_service.dart';
 import 'package:ventio/data/app_store.dart';
-import 'package:ventio/core/repositories/business_repositories.dart';
 import 'package:ventio/features/accounting/accounting_page.dart';
 import 'package:ventio/features/customers/customers_page.dart';
 import 'package:ventio/features/dashboard/dashboard_page.dart';
@@ -61,13 +59,12 @@ Future<AppStore> _readyStore() async {
   LocalDatabaseService.useInMemoryStoreForTesting(_hostIdentitySeed());
   final store = AppStore();
   await store.initialize();
-  await StoreBootstrapService.completeInitialAdminSetup(
-    store,
+  await store.completeInitialAdminSetup(
     fullName: 'Admin',
     username: 'admin',
     password: 'AdminPass123',
   );
-  await ProductRepository.addOrUpdateProduct(store, 
+  await store.addOrUpdateProduct(
     Product(
       id: 'p1',
       name: 'Coffee',
@@ -79,10 +76,10 @@ Future<AppStore> _readyStore() async {
       barcode: '111',
     ),
   );
-  await CustomerRepository.addOrUpdateCustomer(store, 
+  await store.addOrUpdateCustomer(
     Customer(id: 'c1', name: 'Alice', phone: '111', address: 'Main St'),
   );
-  await SupplierRepository.addOrUpdateSupplier(store, 
+  await store.addOrUpdateSupplier(
     Supplier(
         id: 's1',
         name: 'Supplier',
@@ -90,7 +87,7 @@ Future<AppStore> _readyStore() async {
         address: 'Warehouse',
         notes: ''),
   );
-  await ExpenseRepository.addOrUpdateExpense(store, 
+  await store.addOrUpdateExpense(
     Expense(
       id: 'e1',
       title: 'Rent',
@@ -100,7 +97,7 @@ Future<AppStore> _readyStore() async {
       notes: '',
     ),
   );
-  await SaleRepository.createSale(context: store, 
+  await store.createSale(
     customerId: 'c1',
     customerName: 'Alice',
     items: const [
@@ -108,7 +105,7 @@ Future<AppStore> _readyStore() async {
           productId: 'p1', productName: 'Coffee', unitPrice: 10, quantity: 1),
     ],
   );
-  await PurchaseRepository.createPurchase(context: store, 
+  await store.createPurchase(
     supplierId: 's1',
     supplierName: 'Supplier',
     receiveNow: false,

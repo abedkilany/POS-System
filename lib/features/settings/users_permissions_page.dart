@@ -1,16 +1,11 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
-import '../../core/repositories/business_repositories.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/services/account_auth_service.dart';
 import '../../data/app_store.dart';
 import '../../models/app_user.dart';
 import '../../models/user_role.dart';
-
-// ignore_for_file: use_build_context_synchronously
 
 class UsersPermissionsPage extends StatefulWidget {
   const UsersPermissionsPage({super.key, required this.store});
@@ -22,36 +17,6 @@ class UsersPermissionsPage extends StatefulWidget {
 }
 
 class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
-  List<UserRole> _roles = const <UserRole>[];
-  List<AppUser> _users = const <AppUser>[];
-  bool _loading = true;
-
-  @override
-  void initState() {
-    super.initState();
-    unawaited(_loadData());
-  }
-
-  Future<void> _loadData() async {
-    final results = await Future.wait<dynamic>([
-      RoleRepository.listAll(),
-      UserRepository.listAll(),
-    ]);
-    if (!mounted) return;
-    setState(() {
-      _roles = results[0] as List<UserRole>;
-      _users = results[1] as List<AppUser>;
-      _loading = false;
-    });
-  }
-
-  UserRole? _roleById(String id) {
-    for (final role in _roles) {
-      if (role.id == id) return role;
-    }
-    return null;
-  }
-
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
@@ -64,12 +29,9 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
         message: 'This page is not available for your current role.',
       );
     }
-    final loading = _loading;
     return Scaffold(
       appBar: AppBar(title: Text(tr.text('users_permissions'))),
-      body: loading
-          ? const Center(child: CircularProgressIndicator())
-          : ListView(
+      body: ListView(
         padding: VentioResponsive.pageInsets(context),
         children: [
           Card(
@@ -89,7 +51,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                 label: Text(tr.text('add_role')),
               ),
             ),
-            for (final role in _roles)
+            for (final role in store.roles)
               Card(
                 child: ListTile(
                   leading: Icon(role.isSystem
@@ -127,12 +89,12 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
             _SectionHeader(
               title: tr.text('users'),
               action: FilledButton.icon(
-                onPressed: _roles.isEmpty ? null : () => _editUser(),
+                onPressed: store.roles.isEmpty ? null : () => _editUser(),
                 icon: const Icon(Icons.person_add_alt),
                 label: Text(tr.text('add_user')),
               ),
             ),
-            for (final user in _users)
+            for (final user in store.users)
               Card(
                 child: ListTile(
                   leading: CircleAvatar(
@@ -144,8 +106,8 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                   ),
                   title: Text('${user.fullName} (${user.username})'),
                   subtitle: Text(user.isSystem && user.roleId == 'admin'
-                      ? '${_roleById(user.roleId)?.name ?? user.roleId} • Store Owner • Full Access locked'
-                      : '${_roleById(user.roleId)?.name ?? user.roleId} • ${user.isActive ? tr.text('active') : tr.text('disabled')}'),
+                      ? '${store.roleById(user.roleId)?.name ?? user.roleId} • Store Owner • Full Access locked'
+                      : '${store.roleById(user.roleId)?.name ?? user.roleId} • ${user.isActive ? tr.text('active') : tr.text('disabled')}'),
                   trailing: Wrap(
                     spacing: 8,
                     children: [
@@ -300,11 +262,11 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
     );
     if (result == null) return;
     try {
-      await RoleRepository.addOrUpdateRole(widget.store, result);
-      await _loadData();
+      await widget.store.addOrUpdateRole(result);
+      if (mounted) setState(() {});
     } catch (e) {
       if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
+        ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(_friendlyErrorMessage(e))),
         );
       }
@@ -333,11 +295,11 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
     );
     if (confirmed != true) return;
     try {
-      await RoleRepository.deleteRole(widget.store, role.id);
-      await _loadData();
+      await widget.store.deleteRole(role.id);
+      if (mounted) setState(() {});
     } catch (e) {
       if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
+        ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(_friendlyErrorMessage(e))),
         );
       }
@@ -351,7 +313,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
     final usernameController =
         TextEditingController(text: user?.username ?? '');
     final passwordController = TextEditingController();
-    String roleId = user?.roleId ?? _roles.first.id;
+    String roleId = user?.roleId ?? widget.store.roles.first.id;
     bool isActive = user?.isActive ?? true;
     final extra = Set<String>.from(user?.extraPermissions ?? const <String>{});
     final denied =
@@ -410,7 +372,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                       initialValue: roleId,
                       decoration: InputDecoration(labelText: tr.text('role')),
                       items: [
-                        for (final role in _roles)
+                        for (final role in widget.store.roles)
                           DropdownMenuItem(
                               value: role.id, child: Text(role.name)),
                       ],
@@ -547,13 +509,10 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
     bool alreadyAskedCloudAuth = false,
   }) async {
     try {
-      await UserRepository.addOrUpdateUser(
-        widget.store,
-        result.user,
-        password: result.password,
-      );
+      await widget.store
+          .addOrUpdateUser(result.user, password: result.password);
       if (mounted) {
-        await _loadData();
+        setState(() {});
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(isStoreOwner
@@ -761,7 +720,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
     );
     if (confirmed != true) return;
     try {
-      await UserRepository.deleteUser(widget.store, user.id);
+      await widget.store.deleteUser(user.id);
       if (mounted) setState(() {});
     } catch (e) {
       if (mounted) {

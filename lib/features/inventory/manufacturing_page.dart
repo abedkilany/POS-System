@@ -3,14 +3,11 @@
 import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
-import '../../core/services/business_revision_service.dart';
-import '../../core/repositories/business_repositories.dart';
-import '../../core/services/local_database_service.dart';
+
 import '../../data/app_store.dart';
 import '../../models/manufacturing.dart';
 import '../../models/product.dart';
 import '../../models/user_role.dart';
-import '../../widgets/summary_card.dart';
 
 class ManufacturingPage extends StatefulWidget {
   const ManufacturingPage({super.key, required this.store});
@@ -21,25 +18,9 @@ class ManufacturingPage extends StatefulWidget {
 }
 
 class _ManufacturingPageState extends State<ManufacturingPage> {
-  Future<List<BillOfMaterials>?>? _bomsFuture;
-  Future<List<ManufacturingOrder>?>? _ordersFuture;
-  String _futureKey = '';
-
   String _t(String key) => AppLocalizations.of(context).text(key);
   String _tf(String key, Map<String, Object?> values) =>
       AppLocalizations.of(context).format(key, values);
-
-  Future<void> _loadData() async {
-    final key =
-        '${BusinessRevisionService.instance.inventoryRevision}|manufacturing';
-    if (_futureKey == key && _bomsFuture != null && _ordersFuture != null) {
-      return;
-    }
-    _futureKey = key;
-    _bomsFuture = InventoryRepository.getBillOfMaterials();
-    _ordersFuture = InventoryRepository.getManufacturingOrders();
-  }
-
   @override
   Widget build(BuildContext context) {
     if (!widget.store.hasAnyPermission(<String>{
@@ -51,127 +32,94 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
         message: 'You do not have access to manufacturing tools.',
       );
     }
-    if (!LocalDatabaseService.canQueryBusinessSqlite) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator.adaptive()),
-      );
-    }
-    return FutureBuilder<void>(
-      future: _loadData(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState != ConnectionState.done) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator.adaptive()),
-          );
-        }
-        return FutureBuilder<List<BillOfMaterials>?>(
-          future: _bomsFuture,
-          builder: (context, bomsSnapshot) {
-            return FutureBuilder<List<ManufacturingOrder>?>(
-              future: _ordersFuture,
-              builder: (context, ordersSnapshot) {
-                final boms = bomsSnapshot.data ?? const <BillOfMaterials>[];
-                final orders =
-                    ordersSnapshot.data ?? const <ManufacturingOrder>[];
-                return Scaffold(
-                  appBar: AppBar(title: Text(_t('manufacturing_page'))),
-                  floatingActionButton: FloatingActionButton.extended(
-                    onPressed: widget.store.hasAnyPermission(<String>{
-                      AppPermission.inventoryManufacturingManage,
-                      AppPermission.productsEdit,
-                    })
-                        ? _showCreateBomDialog
-                        : null,
-                    icon: const Icon(Icons.add),
-                    label: Text(_t('new_bom')),
-                  ),
-                  body: ListView(
-                    padding: const EdgeInsets.all(16),
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: SummaryCard(
-                              title: _t('boms'),
-                              value: boms.length.toString(),
-                              icon: Icons.account_tree_outlined,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: SummaryCard(
-                              title: _t('orders'),
-                              value: orders.length.toString(),
-                              icon: Icons.precision_manufacturing_outlined,
-                            ),
-                          ),
-                        ],
+    return AnimatedBuilder(
+      animation: widget.store,
+      builder: (context, _) {
+        final boms = widget.store.billsOfMaterials;
+        final orders = widget.store.manufacturingOrders;
+        return Scaffold(
+          appBar: AppBar(title: Text(_t('manufacturing_page'))),
+          floatingActionButton: FloatingActionButton.extended(
+            onPressed: widget.store.hasAnyPermission(<String>{
+              AppPermission.inventoryManufacturingManage,
+              AppPermission.productsEdit,
+            })
+                ? _showCreateBomDialog
+                : null,
+            icon: const Icon(Icons.add),
+            label: Text(_t('new_bom')),
+          ),
+          body: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                      child: _SummaryCard(
+                          title: _t('boms'),
+                          value: boms.length.toString(),
+                          icon: Icons.account_tree_outlined)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                      child: _SummaryCard(
+                          title: _t('orders'),
+                          value: orders.length.toString(),
+                          icon: Icons.precision_manufacturing_outlined)),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Text(_t('bills_of_materials'),
+                  style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 8),
+              if (boms.isEmpty)
+                Card(
+                    child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Center(
+                            child: Text(_t('no_manufacturing_recipes')))))
+              else
+                ...boms.map((bom) => Card(
+                      child: ListTile(
+                        leading: const Icon(Icons.account_tree_outlined),
+                        title: Text(bom.name),
+                        subtitle: Text(_tf('bom_subtitle', {
+                          'product': bom.outputProductName,
+                          'output': bom.outputQuantity,
+                          'components': bom.components.length,
+                          'cost': bom.unitCost.toStringAsFixed(2)
+                        })),
+                        trailing: FilledButton.icon(
+                          onPressed: () => _showCompleteOrderDialog(bom),
+                          icon: const Icon(Icons.play_arrow),
+                          label: Text(_t('produce')),
+                        ),
                       ),
-                      const SizedBox(height: 16),
-                      Text(_t('bills_of_materials'),
-                          style: Theme.of(context).textTheme.titleLarge),
-                      const SizedBox(height: 8),
-                      if (boms.isEmpty)
-                        Card(
-                          child: Padding(
-                            padding: const EdgeInsets.all(24),
-                            child: Center(
-                              child: Text(_t('no_manufacturing_recipes')),
-                            ),
-                          ),
-                        )
-                      else
-                        ...boms.map(
-                          (bom) => Card(
-                            child: ListTile(
-                              leading: const Icon(Icons.account_tree_outlined),
-                              title: Text(bom.name),
-                              subtitle: Text(_tf('bom_subtitle', {
-                                'product': bom.outputProductName,
-                                'output': bom.outputQuantity,
-                                'components': bom.components.length,
-                                'cost': bom.unitCost.toStringAsFixed(2)
-                              })),
-                              trailing: FilledButton.icon(
-                                onPressed: () => _showCompleteOrderDialog(bom),
-                                icon: const Icon(Icons.play_arrow),
-                                label: Text(_t('produce')),
-                              ),
-                            ),
-                          ),
-                        ),
-                      const SizedBox(height: 24),
-                      Text(_t('manufacturing_orders'),
-                          style: Theme.of(context).textTheme.titleLarge),
-                      const SizedBox(height: 8),
-                      if (orders.isEmpty)
-                        Card(
-                          child: Padding(
-                            padding: const EdgeInsets.all(24),
-                            child: Center(child: Text(_t('no_manufacturing_orders'))),
-                          ),
-                        )
-                      else
-                        ...orders.map(
-                          (order) => Card(
-                            child: ListTile(
-                              leading:
-                                  const Icon(Icons.precision_manufacturing_outlined),
-                              title: Text(order.orderNo),
-                              subtitle: Text(_tf('order_subtitle', {
-                                'product': order.outputProductName,
-                                'qty': order.quantity,
-                                'status': order.status
-                              })),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                );
-              },
-            );
-          },
+                    )),
+              const SizedBox(height: 24),
+              Text(_t('manufacturing_orders'),
+                  style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 8),
+              if (orders.isEmpty)
+                Card(
+                    child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child:
+                            Center(child: Text(_t('no_manufacturing_orders')))))
+              else
+                ...orders.map((order) => Card(
+                      child: ListTile(
+                        leading:
+                            const Icon(Icons.precision_manufacturing_outlined),
+                        title: Text(order.orderNo),
+                        subtitle: Text(_tf('order_subtitle', {
+                          'product': order.outputProductName,
+                          'qty': order.quantity,
+                          'status': order.status
+                        })),
+                      ),
+                    )),
+            ],
+          ),
         );
       },
     );
@@ -184,16 +132,10 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
     })) {
       return;
     }
-    final productPage = await ProductRepository.queryPage(
-      limit: 500,
-      stockTrackedOnly: true,
-    );
-    if (!mounted) return;
-    final products = productPage?.items ?? const <Product>[];
+    final products = widget.store.stockTrackedProducts;
     if (products.length < 2) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_t('create_two_stock_products_first'))),
-      );
+          SnackBar(content: Text(_t('create_two_stock_products_first'))));
       return;
     }
     final productById = {for (final product in products) product.id: product};
@@ -217,7 +159,9 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
 
     Product firstAlternativeProduct(String excludedId) {
       for (final product in products) {
-        if (product.id != excludedId) return product;
+        if (product.id != excludedId) {
+          return product;
+        }
       }
       return products.first;
     }
@@ -253,13 +197,16 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
                           InputDecoration(labelText: _t('output_product')),
                       items: productItems,
                       onChanged: (value) {
-                        final selected = value == null ? null : productById[value];
+                        final selected =
+                            value == null ? null : productById[value];
                         if (selected == null) return;
                         setDialogState(() {
                           output = selected;
                           final replacementId =
                               firstAlternativeProduct(output.id).id;
-                          for (var i = 0; i < componentProductIds.length; i += 1) {
+                          for (var i = 0;
+                              i < componentProductIds.length;
+                              i += 1) {
                             if (componentProductIds[i] == output.id) {
                               componentProductIds[i] = replacementId;
                             }
@@ -292,36 +239,34 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
                             ),
                           ),
                           const SizedBox(width: 8),
-                          SizedBox(
-                            width: 100,
-                            child: TextField(
-                              controller: componentQtyControllers[index],
-                              keyboardType: TextInputType.number,
-                              decoration: InputDecoration(labelText: _t('qty')),
-                            ),
-                          ),
+                          Expanded(
+                              child: TextField(
+                                  controller: componentQtyControllers[index],
+                                  keyboardType: TextInputType.number,
+                                  decoration:
+                                      InputDecoration(labelText: _t('qty')))),
                           IconButton(
-                            icon: const Icon(Icons.remove_circle_outline),
-                            onPressed: componentProductIds.length <= 1
+                            onPressed: componentProductIds.length == 1
                                 ? null
                                 : () => setDialogState(() {
                                       componentProductIds.removeAt(index);
-                                      componentQtyControllers.removeAt(index)
-                                          .dispose();
+                                      componentQtyControllers.removeAt(index);
                                     }),
-                          )
+                            icon: const Icon(Icons.delete_outline),
+                          ),
                         ],
                       );
                     }),
                     TextButton.icon(
                       onPressed: () => setDialogState(() {
-                        componentProductIds.add(firstAlternativeProduct(output.id).id);
+                        componentProductIds
+                            .add(firstAlternativeProduct(output.id).id);
                         componentQtyControllers
                             .add(TextEditingController(text: '1'));
                       }),
                       icon: const Icon(Icons.add),
                       label: Text(_t('add_component')),
-                    )
+                    ),
                   ],
                 ),
               ),
@@ -331,31 +276,78 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
                   onPressed: () => Navigator.pop(dialogContext, false),
                   child: Text(_t('cancel'))),
               FilledButton(
-                onPressed: () => Navigator.pop(dialogContext, true),
-                child: Text(_t('save')),
-              ),
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  child: Text(_t('save'))),
             ],
           );
         },
       ),
     );
-    if (!mounted) return;
     if (confirmed != true) {
-      nameController.dispose();
-      outputQtyController.dispose();
-      for (final controller in componentQtyControllers) {
-        controller.dispose();
-      }
       return;
     }
-    nameController.dispose();
-    outputQtyController.dispose();
-    for (final controller in componentQtyControllers) {
-      controller.dispose();
+    try {
+      final components = <BillOfMaterialsLine>[];
+      for (var i = 0; i < componentProductIds.length; i++) {
+        final product = productById[componentProductIds[i]];
+        if (product == null) {
+          throw StateError(
+              'Selected component product is no longer available.');
+        }
+        components.add(BillOfMaterialsLine(
+            productId: product.id,
+            productName: product.name,
+            quantity: double.tryParse(componentQtyControllers[i].text) ?? 0,
+            unitCost: product.usdCost));
+      }
+      await widget.store.createBillOfMaterials(
+        name: nameController.text,
+        outputProductId: output.id,
+        outputQuantity: double.tryParse(outputQtyController.text) ?? 1,
+        components: components,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.toString())));
     }
   }
 
-  Future<void> _showCompleteOrderDialog(BillOfMaterials bom) async {}
+  Future<void> _showCompleteOrderDialog(BillOfMaterials bom) async {
+    if (!widget.store.hasAnyPermission(<String>{
+      AppPermission.inventoryManufacturingManage,
+      AppPermission.productsEdit,
+    })) return;
+    final qtyController =
+        TextEditingController(text: bom.outputQuantity.toString());
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(_tf('produce_product', {'product': bom.outputProductName})),
+        content: TextField(
+            controller: qtyController,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(labelText: _t('quantity_to_produce'))),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: Text(_t('cancel'))),
+          FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: Text(_t('complete'))),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await widget.store.completeManufacturingOrder(
+          bomId: bom.id, quantity: double.tryParse(qtyController.text) ?? 0);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.toString())));
+    }
+  }
 }
 
 class _AccessDeniedScaffold extends StatelessWidget {
@@ -390,6 +382,33 @@ class _AccessDeniedScaffold extends StatelessWidget {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SummaryCard extends StatelessWidget {
+  const _SummaryCard(
+      {required this.title, required this.value, required this.icon});
+  final String title;
+  final String value;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            Icon(icon),
+            const SizedBox(width: 12),
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(title),
+              Text(value, style: Theme.of(context).textTheme.headlineSmall)
+            ])
+          ],
         ),
       ),
     );

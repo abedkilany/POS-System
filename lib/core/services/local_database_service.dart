@@ -62,11 +62,14 @@ class LocalDatabaseService {
       _pendingBusinessEntityWrites.isNotEmpty;
 
   static bool get canQueryBusinessSqlite =>
-      // Large-app mode keeps SQLite authoritative once the database is ready.
-      // Business mutations are written directly through SQLite-backed helpers,
-      // so screens can keep querying SQLite even while lightweight runtime
-      // state continues to update.
-      _memoryStore == null && _webStore == null && isSqliteAuthoritative;
+      // While entity writes are still queued or flushing, SQLite can lag
+      // behind the live in-memory store. Use the live store instead so the
+      // current page reflects edits immediately.
+      _memoryStore == null &&
+      _webStore == null &&
+      isSqliteAuthoritative &&
+      _pendingBusinessEntityWrites.isEmpty &&
+      _flushInProgress == null;
 
   @visibleForTesting
   static void useInMemoryStoreForTesting([Map<String, String>? seed]) {
@@ -159,8 +162,6 @@ class LocalDatabaseService {
   }
 
   static Map<String, String>? get _memoryStore => _memoryStoreForTesting;
-
-  static bool get isInMemoryStoreForTesting => _memoryStoreForTesting != null;
 
   static Future<void> _persistWebString(String key, String value) async {
     final prefs = _webPreferences;
@@ -349,43 +350,6 @@ class LocalDatabaseService {
     return null;
   }
 
-  static List<Map<String, dynamic>> _decodeMemoryEntityList(String? raw) {
-    if (raw == null || raw.trim().isEmpty) return <Map<String, dynamic>>[];
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! List) return <Map<String, dynamic>>[];
-      return decoded
-          .whereType<Map>()
-          .map((item) => Map<String, dynamic>.from(item))
-          .toList();
-    } catch (_) {
-      return <Map<String, dynamic>>[];
-    }
-  }
-
-  static void _upsertMemoryEntityList(
-    Map<String, String> memory,
-    String key,
-    Map<String, dynamic> payloadJson,
-  ) {
-    final list = _decodeMemoryEntityList(memory[key]);
-    final payload = Map<String, dynamic>.from(payloadJson);
-    final id = payload['id']?.toString().trim() ?? '';
-    if (id.isEmpty) {
-      list.add(payload);
-    } else {
-      final index = list.indexWhere(
-        (item) => item['id']?.toString().trim() == id,
-      );
-      if (index == -1) {
-        list.add(payload);
-      } else {
-        list[index] = payload;
-      }
-    }
-    memory[key] = jsonEncode(list);
-  }
-
   static Future<List<String>> getBusinessEntityListJsonBatches(
     String key, {
     int batchSize = 100,
@@ -442,22 +406,6 @@ class LocalDatabaseService {
     return AccountingRepository.getAccountTransactions();
   }
 
-  static Future<BusinessQueryPage<AccountTransaction>?>
-      queryAccountTransactionsFromSqlite({
-    String query = '',
-    bool cashOnly = false,
-    int limit = 100,
-    int offset = 0,
-  }) async {
-    if (!canQueryBusinessSqlite) return null;
-    return AccountingRepository.queryAccountTransactionsPage(
-      query: query,
-      cashOnly: cashOnly,
-      limit: limit,
-      offset: offset,
-    );
-  }
-
   static Future<List<Customer>?> getCustomersFromSqlite() async {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
       return null;
@@ -470,18 +418,6 @@ class LocalDatabaseService {
       return null;
     }
     return ProductRepository.getAll();
-  }
-
-  static Future<Product?> getProductFromSqliteById(String id) async {
-    if (!canQueryBusinessSqlite) return null;
-    return ProductRepository.getById(id);
-  }
-
-  static Future<Product?> findProductFromSqliteByCodeOrBarcode(
-    String code,
-  ) async {
-    if (!canQueryBusinessSqlite) return null;
-    return ProductRepository.findByCodeOrBarcode(code);
   }
 
   static Future<List<Sale>?> getSalesFromSqlite() async {
@@ -549,49 +485,11 @@ class LocalDatabaseService {
     return SaleRepository.getQuotations();
   }
 
-  static Future<BusinessQueryPage<SaleQuotation>?>
-      querySaleQuotationsFromSqlite({
-    String query = '',
-    String status = 'all',
-    int limit = 50,
-    int offset = 0,
-  }) async {
-    if (!canQueryBusinessSqlite) return null;
-    return SaleRepository.queryQuotationsPage(
-      query: query,
-      status: status,
-      limit: limit,
-      offset: offset,
-    );
-  }
-
   static Future<List<DeliveryNote>?> getDeliveryNotesFromSqlite() async {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
       return null;
     }
     return SaleRepository.getDeliveryNotes();
-  }
-
-  static Future<BusinessQueryPage<DeliveryNote>?> queryDeliveryNotesFromSqlite({
-    String query = '',
-    String status = 'all',
-    int limit = 50,
-    int offset = 0,
-  }) async {
-    if (!canQueryBusinessSqlite) return null;
-    return SaleRepository.queryDeliveryNotesPage(
-      query: query,
-      status: status,
-      limit: limit,
-      offset: offset,
-    );
-  }
-
-  static Future<DeliveryNote?> getDeliveryNoteForSaleFromSqlite(
-    String saleId,
-  ) async {
-    if (!canQueryBusinessSqlite) return null;
-    return SaleRepository.getDeliveryNoteBySaleId(saleId);
   }
 
   static Future<List<Supplier>?> getSuppliersFromSqlite() async {
@@ -797,17 +695,6 @@ class LocalDatabaseService {
     );
   }
 
-  static Future<Map<String, Object?>?> buildExpensesOverviewFromSqlite({
-    String query = '',
-    String status = 'all',
-  }) async {
-    if (!canQueryBusinessSqlite) return null;
-    return ExpenseRepository.buildOverview(
-      query: query,
-      status: status,
-    );
-  }
-
   static Future<BusinessQueryPage<Product>?> queryProductsFromSqlite({
     String query = '',
     String category = '',
@@ -859,59 +746,11 @@ class LocalDatabaseService {
     );
   }
 
-  static Future<Map<String, Object?>?> buildInventoryOverviewFromSqlite() async {
-    if (!canQueryBusinessSqlite) return null;
-    return InventoryRepository.buildOverview();
-  }
-
-  static Future<Map<String, int>?> countInventoryMovementsAfterCountFromSqlite(
-    String inventoryCountId,
-  ) async {
-    if (!canQueryBusinessSqlite) return null;
-    return InventoryRepository.countMovementsAfterCount(inventoryCountId);
-  }
-
-  static Future<void> replaceBusinessEntityJsonListImmediate(
-    String key,
-    List<Map<String, dynamic>> payloads, {
-    List<int?>? sortIndices,
-  }) async {
-    final memory = _memoryStore;
-    if (memory != null) {
-      memory[key] = jsonEncode(payloads);
-      return;
-    }
-    if (_webStore != null) {
-      final value = jsonEncode(payloads);
-      _webStore![key] = value;
-      await _persistWebString(key, value);
-      return;
-    }
-    final db = SqliteMigrationManager.database;
-    if (!_sqliteReady || db == null) {
-      await _writeRawScalarValueImmediate(key, jsonEncode(payloads));
-      return;
-    }
-    _pendingScalarWrites.remove(key);
-    _pendingScalarDeletes.remove(key);
-    _pendingBusinessEntityWrites.remove(key);
-    await BusinessSqliteStore.replaceEntityPayloads(
-      db,
-      key,
-      payloads,
-      sortIndices: sortIndices,
-    );
-    _sqliteMirror[key] = jsonEncode(payloads);
-  }
-
   static Future<void> upsertBusinessEntityJson(
       String key, Map<String, dynamic> payloadJson,
       {int? sortIndex}) async {
     final memory = _memoryStore;
-    if (memory != null) {
-      _upsertMemoryEntityList(memory, key, payloadJson);
-      return;
-    }
+    if (memory != null) return;
     if (_webStore != null) return;
     final db = SqliteMigrationManager.database;
     if (!_sqliteReady || db == null) return;
@@ -929,39 +768,9 @@ class LocalDatabaseService {
     _scheduleFlush();
   }
 
-  static Future<void> upsertBusinessEntityJsonImmediate(
-      String key, Map<String, dynamic> payloadJson,
-      {int? sortIndex}) async {
-    final memory = _memoryStore;
-    if (memory != null) {
-      _upsertMemoryEntityList(memory, key, payloadJson);
-      return;
-    }
-    if (_webStore != null) return;
-    final db = SqliteMigrationManager.database;
-    if (!_sqliteReady || db == null) return;
-    await BusinessSqliteStore.upsertEntityPayload(
-      db,
-      key,
-      Map<String, dynamic>.from(payloadJson),
-      sortIndex: sortIndex,
-    );
-    final fresh = await BusinessSqliteStore.readEntityListJsonByKey(db, key);
-    if (fresh != null) {
-      _sqliteMirror[key] = fresh;
-    }
-  }
-
   static Future<void> upsertSyncChange(SyncChange change) async {
     final memory = _memoryStore;
-    if (memory != null) {
-      _upsertMemoryEntityList(
-        memory,
-        SyncSqliteStore.syncChangesKey,
-        change.toJson(),
-      );
-      return;
-    }
+    if (memory != null) return;
     if (_webStore != null) return;
     final db = SqliteMigrationManager.database;
     if (!_sqliteReady || db == null) return;
@@ -972,14 +781,7 @@ class LocalDatabaseService {
 
   static Future<void> upsertSyncQueueItem(SyncQueueItem item) async {
     final memory = _memoryStore;
-    if (memory != null) {
-      _upsertMemoryEntityList(
-        memory,
-        SyncSqliteStore.syncQueueKey,
-        item.toJson(),
-      );
-      return;
-    }
+    if (memory != null) return;
     if (_webStore != null) return;
     final db = SqliteMigrationManager.database;
     if (!_sqliteReady || db == null) return;
@@ -1125,22 +927,6 @@ class LocalDatabaseService {
     return;
   }
 
-
-  /// Runs a set of SQLite-authoritative writes inside one database transaction.
-  /// Falls back to a normal callback on memory/web/legacy stores so callers can
-  /// use it without platform branching.
-  static Future<T> runSqliteAuthoritativeTransaction<T>(
-      Future<T> Function() action) async {
-    final db = SqliteMigrationManager.database;
-    if (_memoryStore != null || _webStore != null || !_sqliteReady || db == null) {
-      return action();
-    }
-    _flushTimer?.cancel();
-    _flushTimer = null;
-    await flushPendingWrites();
-    return db.transaction(action);
-  }
-
   static Future<void> flushPendingWrites() async {
     if (_memoryStore != null || _webStore != null) return;
     if (_flushInProgress != null) return _flushInProgress!;
@@ -1176,15 +962,13 @@ class LocalDatabaseService {
         await _writeRawScalarValueImmediate(entry.key, entry.value);
       }
       for (final entry in businessWrites.entries) {
+        _sqliteMirror.remove(entry.key);
         await BusinessSqliteStore.upsertEntityPayloads(
           db,
           entry.key,
           entry.value.map((item) => item.payload).toList(growable: false),
           sortIndices:
               entry.value.map((item) => item.sortIndex).toList(growable: false),
-        );
-        _sqliteMirror[entry.key] = jsonEncode(
-          entry.value.map((item) => item.payload).toList(growable: false),
         );
       }
       if (syncChanges.isNotEmpty) {

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
-import '../../core/services/store_bootstrap_service.dart';
 import '../../core/services/account_auth_service.dart';
 import '../../core/utils/responsive.dart';
 import '../../data/app_store.dart';
@@ -84,8 +83,7 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
               setDialogState(() => saving = false);
               if (result.ok) {
                 try {
-                  await StoreBootstrapService.applyCloudStoreOwnerCredentials(
-                    widget.store,
+                  await widget.store.applyCloudStoreOwnerCredentials(
                     username: result.username.isNotEmpty
                         ? result.username
                         : cache.username,

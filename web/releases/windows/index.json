@@ -1,42 +1,6 @@
 {
     "releases":  [
                      {
-                         "name":  "VentioSetup-1.0.5-build5.exe",
-                         "url":  "/releases/windows/VentioSetup-1.0.5-build5.exe",
-                         "version":  "1.0.5",
-                         "build":  5,
-                         "size":  17695760,
-                         "sha256":  "e3854054827ce50d46da38aaa10c25d6c0b0aef6e55f553f6cb9274a6921e369",
-                         "publishedAt":  "2026-07-06T03:10:30Z"
-                     },
-                     {
-                         "name":  "VentioSetup-1.0.4-build4.exe",
-                         "url":  "/releases/windows/VentioSetup-1.0.4-build4.exe",
-                         "version":  "1.0.4",
-                         "build":  4,
-                         "size":  17693940,
-                         "sha256":  "75b0a0eb8cc6b357efc3a841c41feb5a8f8aff8eaff54293defbedc84bc25df9",
-                         "publishedAt":  "2026-07-05T22:48:17Z"
-                     },
-                     {
-                         "name":  "VentioSetup-1.0.3-build3.exe",
-                         "url":  "/releases/windows/VentioSetup-1.0.3-build3.exe",
-                         "version":  "1.0.3",
-                         "build":  3,
-                         "size":  17694131,
-                         "sha256":  "f94a974f8a24cbaf14f48121da118f75f71787777a559fabebaae57c378c2622",
-                         "publishedAt":  "2026-07-05T22:03:08Z"
-                     },
-                     {
-                         "name":  "VentioSetup-1.0.2-build2.exe",
-                         "url":  "/releases/windows/VentioSetup-1.0.2-build2.exe",
-                         "version":  "1.0.2",
-                         "build":  2,
-                         "size":  17692351,
-                         "sha256":  "d11cd4abf2724f6c59aafdc82d9714be730e8f4efd2831df4b45ef68857717cf",
-                         "publishedAt":  "2026-07-05T17:40:57Z"
-                     },
-                     {
                          "name":  "VentioSetup-1.0.1-build1.exe",
                          "url":  "/releases/windows/VentioSetup-1.0.1-build1.exe",
                          "version":  "1.0.1",

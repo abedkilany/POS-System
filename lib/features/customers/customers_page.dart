@@ -7,11 +7,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
 import '../../core/localization/app_localizations.dart';
-import '../../core/services/business_revision_service.dart';
-import '../../core/repositories/business_repositories.dart';
-import '../../core/services/accounting_service.dart';
 import '../../core/services/local_database_service.dart';
 import '../../core/utils/responsive.dart';
+import '../../core/utils/revision_cache.dart';
 import '../../data/app_store.dart';
 import '../../models/customer.dart';
 import '../../models/user_role.dart';
@@ -33,16 +31,26 @@ class _CustomersPageState extends State<CustomersPage> {
   String query = '';
   Timer? _customerRevealTimer;
   int _visibleCustomerCount = 100;
+  int _customerRevealTargetCount = 0;
   Future<_CustomerQueryResult?>? _customerQueryFuture;
   String _customerQueryFutureKey = '';
+  final RevisionKeyCache<List<Customer>> _filteredCustomersCache =
+      RevisionKeyCache<List<Customer>>();
+
+  void _handleStoreChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
 
   @override
   void initState() {
     super.initState();
+    widget.store.addListener(_handleStoreChanged);
   }
 
   @override
   void dispose() {
+    widget.store.removeListener(_handleStoreChanged);
     _customerRevealTimer?.cancel();
     super.dispose();
   }
@@ -51,8 +59,11 @@ class _CustomersPageState extends State<CustomersPage> {
   void didUpdateWidget(covariant CustomersPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.store != widget.store) {
+      oldWidget.store.removeListener(_handleStoreChanged);
+      widget.store.addListener(_handleStoreChanged);
       _customerQueryFuture = null;
       _customerQueryFutureKey = '';
+      _filteredCustomersCache.invalidate();
       _resetCustomerReveal();
     }
   }
@@ -61,6 +72,42 @@ class _CustomersPageState extends State<CustomersPage> {
     _customerRevealTimer?.cancel();
     _customerRevealTimer = null;
     _visibleCustomerCount = 100;
+    _customerRevealTargetCount = 0;
+  }
+
+  void _syncCustomerReveal(int totalCount) {
+    _customerRevealTargetCount = totalCount;
+    if (_visibleCustomerCount > totalCount) {
+      _visibleCustomerCount = totalCount;
+    }
+    if (_visibleCustomerCount >= totalCount) {
+      _customerRevealTimer?.cancel();
+      _customerRevealTimer = null;
+      return;
+    }
+    _customerRevealTimer ??=
+        Timer.periodic(const Duration(milliseconds: 20), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        _customerRevealTimer = null;
+        return;
+      }
+      if (_visibleCustomerCount >= _customerRevealTargetCount) {
+        timer.cancel();
+        _customerRevealTimer = null;
+        return;
+      }
+      setState(() {
+        _visibleCustomerCount = math.min(
+          _customerRevealTargetCount,
+          _visibleCustomerCount + 100,
+        );
+      });
+      if (_visibleCustomerCount >= _customerRevealTargetCount) {
+        timer.cancel();
+        _customerRevealTimer = null;
+      }
+    });
   }
 
   @override
@@ -83,7 +130,6 @@ class _CustomersPageState extends State<CustomersPage> {
               context,
               tr,
               customers: result.items,
-              balancesById: result.balancesById,
               totalCount: result.totalCount,
               loading: snapshot.connectionState == ConnectionState.waiting &&
                   result.items.isEmpty,
@@ -97,7 +143,6 @@ class _CustomersPageState extends State<CustomersPage> {
               context,
               tr,
               customers: const <Customer>[],
-              balancesById: const <String, double>{},
               totalCount: 0,
               loading: true,
             );
@@ -114,29 +159,46 @@ class _CustomersPageState extends State<CustomersPage> {
     AppLocalizations tr,
     String value,
   ) {
-    return const Center(child: CircularProgressIndicator.adaptive());
+    final customers = _filteredCustomersCache.getOrCompute(
+      widget.store.customersRevision,
+      value,
+      () => widget.store.customers.where((customer) {
+        final isWalkIn = customer.id == AppStore.walkInCustomerId ||
+            customer.name.trim().toLowerCase() ==
+                AppStore.walkInCustomerName.toLowerCase();
+        if (isWalkIn) return false;
+        return customer.name.toLowerCase().contains(value) ||
+            customer.phone.toLowerCase().contains(value);
+      }).toList(growable: false),
+    );
+    _syncCustomerReveal(customers.length);
+    final visibleCustomers = customers
+        .take(math.min(_visibleCustomerCount, customers.length))
+        .toList(
+          growable: false,
+        );
+    return _buildCustomersView(
+      context,
+      tr,
+      customers: visibleCustomers,
+      totalCount: customers.length,
+    );
   }
 
   Future<_CustomerQueryResult?> _queryCustomersFromSqlite(String value) {
     final limit = math.max(1, _visibleCustomerCount);
-    final key =
-        '${BusinessRevisionService.instance.customersRevision}|$value|$limit';
+    final key = '${widget.store.customersRevision}|$value|$limit';
     if (_customerQueryFuture == null || _customerQueryFutureKey != key) {
       _customerQueryFutureKey = key;
       _customerQueryFuture = () async {
-        final page = await CustomerRepository.queryPage(
+        final page = await LocalDatabaseService.queryCustomersFromSqlite(
           query: value,
           limit: limit,
         );
         if (page == null) return null;
-        final balancesById = await AccountingService.readPartyBalancesByIds(
-          accountType: 'customer',
-          accountIds: page.items.map((customer) => customer.id),
-        );
         return _CustomerQueryResult(
           items: page.items,
           totalCount: page.totalCount,
-          balancesById: balancesById,
         );
       }();
     }
@@ -155,7 +217,6 @@ class _CustomersPageState extends State<CustomersPage> {
     BuildContext context,
     AppLocalizations tr, {
     required List<Customer> customers,
-    required Map<String, double> balancesById,
     required int totalCount,
     bool loading = false,
     VoidCallback? onLoadMore,
@@ -248,21 +309,19 @@ class _CustomersPageState extends State<CustomersPage> {
                                       const SizedBox(height: 4),
                                       Text(
                                         accountBalanceText(
-                                          context,
-                                          'customer',
-                                          balancesById[customer.id] ?? 0,
-                                          widget.store.storeProfile,
-                                        ),
+                                            context,
+                                            widget.store,
+                                            'customer',
+                                            customer.id),
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
                                         style: TextStyle(
-                                          color: accountBalanceColor(
-                                            context,
-                                            'customer',
-                                            balancesById[customer.id] ?? 0,
-                                          ),
-                                          fontWeight: FontWeight.w700,
-                                        ),
+                                            color: accountBalanceColor(
+                                                context,
+                                                widget.store,
+                                                'customer',
+                                                customer.id),
+                                            fontWeight: FontWeight.w700),
                                       ),
                                     ],
                                   ),
@@ -283,20 +342,28 @@ class _CustomersPageState extends State<CustomersPage> {
                                                   accountType: 'customer',
                                                   accountId: customer.id,
                                                   accountName: customer.name);
-                                            } else if (value == 'payment' &&
+                                            }
+                                            if (value == 'payment' &&
                                                 widget.store
                                                     .hasAnyPermission(<String>{
                                                   AppPermission
                                                       .customersPaymentManage,
                                                   AppPermission.customersManage,
                                                 })) {
-                                              _payCustomer(context, customer);
-                                            } else if (value == 'edit' &&
+                                              showAccountPaymentDialog(
+                                                  context: context,
+                                                  store: widget.store,
+                                                  accountType: 'customer',
+                                                  accountId: customer.id,
+                                                  accountName: customer.name);
+                                            }
+                                            if (value == 'edit' &&
                                                 widget
                                                     .store.canManageCustomers) {
                                               _openCustomerForm(context,
                                                   customer: customer);
-                                            } else if (value == 'delete' &&
+                                            }
+                                            if (value == 'delete' &&
                                                 widget
                                                     .store.canManageCustomers) {
                                               _deleteCustomer(
@@ -351,8 +418,16 @@ class _CustomersPageState extends State<CustomersPage> {
                                                       .customersPaymentManage,
                                                   AppPermission.customersManage,
                                                 })
-                                                    ? () => _payCustomer(
-                                                        context, customer)
+                                                    ? () =>
+                                                        showAccountPaymentDialog(
+                                                            context: context,
+                                                            store: widget.store,
+                                                            accountType:
+                                                                'customer',
+                                                            accountId:
+                                                                customer.id,
+                                                            accountName:
+                                                                customer.name)
                                                     : null,
                                                 icon: const Icon(
                                                     Icons.payments_outlined),
@@ -391,24 +466,6 @@ class _CustomersPageState extends State<CustomersPage> {
     );
   }
 
-  Future<void> _payCustomer(
-    BuildContext context,
-    Customer customer,
-  ) async {
-    await showAccountPaymentDialog(
-      context: context,
-      store: widget.store,
-      accountType: 'customer',
-      accountId: customer.id,
-      accountName: customer.name,
-    );
-    if (!mounted) return;
-    setState(() {
-      _customerQueryFuture = null;
-      _customerQueryFutureKey = '';
-    });
-  }
-
   Future<void> _deleteCustomer(BuildContext context, Customer customer) async {
     if (!widget.store.canManageCustomers) return;
     final tr = AppLocalizations.of(context);
@@ -431,7 +488,7 @@ class _CustomersPageState extends State<CustomersPage> {
       ),
     );
     if (confirmed != true) return;
-    await CustomerRepository.deleteCustomer(widget.store, customer.id);
+    await widget.store.deleteCustomer(customer.id);
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(tr
@@ -448,7 +505,7 @@ class _CustomersPageState extends State<CustomersPage> {
       builder: (_) => _CustomerDialog(customer: customer),
     );
     if (result != null) {
-      await CustomerRepository.addOrUpdateCustomer(widget.store, result);
+      await widget.store.addOrUpdateCustomer(result);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(AppLocalizations.of(context).text(
@@ -462,12 +519,10 @@ class _CustomerQueryResult {
   const _CustomerQueryResult({
     required this.items,
     required this.totalCount,
-    required this.balancesById,
   });
 
   final List<Customer> items;
   final int totalCount;
-  final Map<String, double> balancesById;
 
   bool get hasMore => items.length < totalCount;
 }

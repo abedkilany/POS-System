@@ -4,7 +4,6 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import '../../core/services/business_revision_service.dart';
 import '../../core/services/accounting_aging_service.dart';
 import '../../core/services/accounting_service.dart';
 import '../../core/services/google_drive_backup_service.dart';
@@ -27,7 +26,7 @@ class DashboardSnapshotService {
       _computeSnapshot(input);
 
   String _summaryFutureKey(AppStore store, DateTime reference) =>
-      '${store.appIdentity.storeId}:${BusinessRevisionService.instance.dashboardRevision}:${reference.year}-${reference.month}-${reference.day}';
+      '${store.appIdentity.storeId}:${store.dashboardRevision}:${reference.year}-${reference.month}-${reference.day}';
 
   Future<DashboardSnapshotCache?> loadCachedSummary({
     required String storeId,
@@ -654,32 +653,6 @@ class DashboardSnapshotService {
     return future;
   }
 
-
-  Map<String, Object?> _emptySqliteAuthoritativeSummary(AppStore store) {
-    return <String, Object?>{
-      'todaySalesTotal': 0.0,
-      'todayProfitTotal': 0.0,
-      'todayInvoiceCount': 0,
-      'lowStockCount': 0,
-      'inventoryCostValue': 0.0,
-      'totalPurchasesAmount': 0.0,
-      'totalExpensesAmount': 0.0,
-      'todayExpenseTotal': 0.0,
-      'last7ExpenseAverage': 0.0,
-      'salesSince30Days': 0.0,
-      'profitSince30Days': 0.0,
-      'pendingSyncCount': store.pendingSyncCount,
-      'blockingConflictCount': 0,
-      'lowStockNames': const <String>[],
-      'salesLast7Days': const <Map<String, Object?>>[],
-      'salesLast30Days': const <Map<String, Object?>>[],
-      'expenseCategories': const <Map<String, Object?>>[],
-      'topProducts': const <Map<String, Object?>>[],
-      'topCustomers': const <Map<String, Object?>>[],
-      'recentOperations': const <Map<String, Object?>>[],
-    };
-  }
-
   Future<Map<String, Object?>> _computeAndCacheSummary(
     AppStore store,
     DateTime reference,
@@ -697,27 +670,14 @@ class DashboardSnapshotService {
           await _saveCachedSummary(
             sqliteSummary,
             storeId: store.appIdentity.storeId,
-            dashboardRevision: BusinessRevisionService.instance.dashboardRevision,
+            dashboardRevision: store.dashboardRevision,
             reference: reference,
           );
           return sqliteSummary;
         }
       } catch (_) {
-        // In SQLite-authoritative mode the dashboard must not fall back to
-        // loading complete business tables into memory. Return the last cached
-        // materialized summary when possible, otherwise return a small safe
-        // placeholder and let the SQLite summary builder/backfill repair it.
-        if (LocalDatabaseService.isSqliteAuthoritative) {
-          final cached = await loadCachedSummary(storeId: store.appIdentity.storeId);
-          if (cached != null) return cached.summary;
-          return _emptySqliteAuthoritativeSummary(store);
-        }
+        // Fall back to the legacy snapshot path if SQLite summary generation fails.
       }
-    }
-    if (LocalDatabaseService.isSqliteAuthoritative) {
-      final cached = await loadCachedSummary(storeId: store.appIdentity.storeId);
-      if (cached != null) return cached.summary;
-      return _emptySqliteAuthoritativeSummary(store);
     }
     final raw = await StartupTimingService.measure(
       'dashboard.snapshot_raw_load',
@@ -731,7 +691,7 @@ class DashboardSnapshotService {
     await _saveCachedSummary(
       computed,
       storeId: store.appIdentity.storeId,
-      dashboardRevision: BusinessRevisionService.instance.dashboardRevision,
+      dashboardRevision: store.dashboardRevision,
       reference: reference,
     );
     return computed;
@@ -746,13 +706,13 @@ class DashboardSnapshotService {
     final start7 = today.subtract(const Duration(days: 6));
     final start30 = today.subtract(const Duration(days: 29));
 
-    final products = const <dynamic>[];
-    final sales = const <dynamic>[];
-    final purchases = const <dynamic>[];
-    final expenses = const <dynamic>[];
-    final stockMovements = const <dynamic>[];
-    final accountTransactions = const <dynamic>[];
-    final syncQueue = const <dynamic>[];
+    final products = store.products;
+    final sales = store.sales;
+    final purchases = store.purchases;
+    final expenses = store.expenses;
+    final stockMovements = store.stockMovements;
+    final accountTransactions = store.accountTransactions;
+    final syncQueue = store.syncQueue;
 
     final sales7 = _dateMap(start7, 7);
     final sales30 = _dateMap(start30, 30);
@@ -1366,10 +1326,17 @@ class DashboardSnapshotService {
     dynamic raw, {
     required int days,
   }) {
-    return _seriesFromSummaryList(raw);
+    final summarySeries = _seriesFromSummaryList(raw);
+    if (summarySeries.any((item) => item.value > 0)) {
+      return summarySeries;
+    }
+    final liveSeries = _salesSeriesFromStore(store, reference, days);
+    if (liveSeries.any((item) => item.value > 0)) {
+      return liveSeries;
+    }
+    return summarySeries;
   }
 
-  // ignore: unused_element
   static List<DashboardChartItem> _salesSeriesFromStore(
     AppStore store,
     DateTime reference,
@@ -1382,7 +1349,7 @@ class DashboardSnapshotService {
       for (var i = 0; i < days; i += 1)
         _dateKey(start.add(Duration(days: i))): 0,
     };
-    for (final sale in const <dynamic>[]) {
+    for (final sale in store.sales) {
       if (sale.isDeleted || sale.isCancelled) continue;
       final date = sale.date.toLocal();
       if (date.isBefore(start) || date.isAfter(reference)) continue;

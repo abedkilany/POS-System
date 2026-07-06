@@ -2,10 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:ventio/core/repositories/auth_repository.dart';
 import 'package:ventio/core/services/local_database_service.dart';
-import 'package:ventio/core/services/store_bootstrap_service.dart';
-import 'package:ventio/core/repositories/business_repositories.dart';
 import 'package:ventio/data/app_store.dart';
 import 'package:ventio/models/product.dart';
 import 'package:ventio/models/sale.dart';
@@ -142,16 +139,9 @@ void main() {
       final store = AppStore();
       final stopwatch = Stopwatch()..start();
       await store.initialize();
-      await StoreBootstrapService.completeInitialAdminSetup(
-        store,
-        fullName: 'Admin',
-        username: 'admin',
-        password: 'AdminPass123',
-      );
-      await AuthRepository.login(store, 'admin', 'AdminPass123');
       stopwatch.stop();
 
-      expect(await ProductRepository.countAll(), 2500);
+      expect(store.products.length, 2500);
       expect(stopwatch.elapsedMilliseconds, lessThan(3000));
       store.dispose();
     });

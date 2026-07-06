@@ -7,11 +7,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
 import '../../core/localization/app_localizations.dart';
-import '../../core/services/business_revision_service.dart';
-import '../../core/repositories/business_repositories.dart';
-import '../../core/services/accounting_service.dart';
 import '../../core/services/local_database_service.dart';
 import '../../core/utils/responsive.dart';
+import '../../core/utils/revision_cache.dart';
 import '../../data/app_store.dart';
 import '../../models/supplier.dart';
 import '../../models/user_role.dart';
@@ -33,16 +31,26 @@ class _SuppliersPageState extends State<SuppliersPage> {
   String query = '';
   Timer? _supplierRevealTimer;
   int _visibleSupplierCount = 100;
+  int _supplierRevealTargetCount = 0;
   Future<_SupplierQueryResult?>? _supplierQueryFuture;
   String _supplierQueryFutureKey = '';
+  final RevisionKeyCache<List<Supplier>> _filteredSuppliersCache =
+      RevisionKeyCache<List<Supplier>>();
+
+  void _handleStoreChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
 
   @override
   void initState() {
     super.initState();
+    widget.store.addListener(_handleStoreChanged);
   }
 
   @override
   void dispose() {
+    widget.store.removeListener(_handleStoreChanged);
     _supplierRevealTimer?.cancel();
     super.dispose();
   }
@@ -51,8 +59,11 @@ class _SuppliersPageState extends State<SuppliersPage> {
   void didUpdateWidget(covariant SuppliersPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.store != widget.store) {
+      oldWidget.store.removeListener(_handleStoreChanged);
+      widget.store.addListener(_handleStoreChanged);
       _supplierQueryFuture = null;
       _supplierQueryFutureKey = '';
+      _filteredSuppliersCache.invalidate();
       _resetSupplierReveal();
     }
   }
@@ -61,6 +72,42 @@ class _SuppliersPageState extends State<SuppliersPage> {
     _supplierRevealTimer?.cancel();
     _supplierRevealTimer = null;
     _visibleSupplierCount = 100;
+    _supplierRevealTargetCount = 0;
+  }
+
+  void _syncSupplierReveal(int totalCount) {
+    _supplierRevealTargetCount = totalCount;
+    if (_visibleSupplierCount > totalCount) {
+      _visibleSupplierCount = totalCount;
+    }
+    if (_visibleSupplierCount >= totalCount) {
+      _supplierRevealTimer?.cancel();
+      _supplierRevealTimer = null;
+      return;
+    }
+    _supplierRevealTimer ??=
+        Timer.periodic(const Duration(milliseconds: 20), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        _supplierRevealTimer = null;
+        return;
+      }
+      if (_visibleSupplierCount >= _supplierRevealTargetCount) {
+        timer.cancel();
+        _supplierRevealTimer = null;
+        return;
+      }
+      setState(() {
+        _visibleSupplierCount = math.min(
+          _supplierRevealTargetCount,
+          _visibleSupplierCount + 100,
+        );
+      });
+      if (_visibleSupplierCount >= _supplierRevealTargetCount) {
+        timer.cancel();
+        _supplierRevealTimer = null;
+      }
+    });
   }
 
   @override
@@ -83,7 +130,6 @@ class _SuppliersPageState extends State<SuppliersPage> {
               context,
               tr,
               suppliers: result.items,
-              balancesById: result.balancesById,
               totalCount: result.totalCount,
               loading: snapshot.connectionState == ConnectionState.waiting &&
                   result.items.isEmpty,
@@ -97,7 +143,6 @@ class _SuppliersPageState extends State<SuppliersPage> {
               context,
               tr,
               suppliers: const <Supplier>[],
-              balancesById: const <String, double>{},
               totalCount: 0,
               loading: true,
             );
@@ -114,29 +159,42 @@ class _SuppliersPageState extends State<SuppliersPage> {
     AppLocalizations tr,
     String value,
   ) {
-    return const Center(child: CircularProgressIndicator.adaptive());
+    final suppliers = _filteredSuppliersCache.getOrCompute(
+      widget.store.suppliersRevision,
+      value,
+      () => widget.store.suppliers.where((supplier) {
+        return supplier.name.toLowerCase().contains(value) ||
+            supplier.phone.toLowerCase().contains(value);
+      }).toList(growable: false),
+    );
+    _syncSupplierReveal(suppliers.length);
+    final visibleSuppliers = suppliers
+        .take(math.min(_visibleSupplierCount, suppliers.length))
+        .toList(
+          growable: false,
+        );
+    return _buildSuppliersView(
+      context,
+      tr,
+      suppliers: visibleSuppliers,
+      totalCount: suppliers.length,
+    );
   }
 
   Future<_SupplierQueryResult?> _querySuppliersFromSqlite(String value) {
     final limit = math.max(1, _visibleSupplierCount);
-    final key =
-        '${BusinessRevisionService.instance.suppliersRevision}|$value|$limit';
+    final key = '${widget.store.suppliersRevision}|$value|$limit';
     if (_supplierQueryFuture == null || _supplierQueryFutureKey != key) {
       _supplierQueryFutureKey = key;
       _supplierQueryFuture = () async {
-        final page = await SupplierRepository.queryPage(
+        final page = await LocalDatabaseService.querySuppliersFromSqlite(
           query: value,
           limit: limit,
         );
         if (page == null) return null;
-        final balancesById = await AccountingService.readPartyBalancesByIds(
-          accountType: 'supplier',
-          accountIds: page.items.map((supplier) => supplier.id),
-        );
         return _SupplierQueryResult(
           items: page.items,
           totalCount: page.totalCount,
-          balancesById: balancesById,
         );
       }();
     }
@@ -155,7 +213,6 @@ class _SuppliersPageState extends State<SuppliersPage> {
     BuildContext context,
     AppLocalizations tr, {
     required List<Supplier> suppliers,
-    required Map<String, double> balancesById,
     required int totalCount,
     bool loading = false,
     VoidCallback? onLoadMore,
@@ -253,29 +310,21 @@ class _SuppliersPageState extends State<SuppliersPage> {
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis),
                                       const SizedBox(height: 4),
-                                      Builder(
-                                        builder: (context) {
-                                          final balance =
-                                              balancesById[supplier.id] ?? 0;
-                                          return Text(
-                                            accountBalanceText(
-                                              context,
-                                              'supplier',
-                                              balance,
-                                              widget.store.storeProfile,
-                                            ),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                              color: accountBalanceColor(
+                                      Text(
+                                        accountBalanceText(
+                                            context,
+                                            widget.store,
+                                            'supplier',
+                                            supplier.id),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                            color: accountBalanceColor(
                                                 context,
+                                                widget.store,
                                                 'supplier',
-                                                balance,
-                                              ),
-                                              fontWeight: FontWeight.w700,
-                                            ),
-                                          );
-                                        },
+                                                supplier.id),
+                                            fontWeight: FontWeight.w700),
                                       ),
                                     ],
                                   ),
@@ -296,20 +345,28 @@ class _SuppliersPageState extends State<SuppliersPage> {
                                                   accountType: 'supplier',
                                                   accountId: supplier.id,
                                                   accountName: supplier.name);
-                                            } else if (value == 'payment' &&
+                                            }
+                                            if (value == 'payment' &&
                                                 widget.store
                                                     .hasAnyPermission(<String>{
                                                   AppPermission
                                                       .suppliersPaymentManage,
                                                   AppPermission.suppliersManage,
                                                 })) {
-                                              _paySupplier(context, supplier);
-                                            } else if (value == 'edit' &&
+                                              showAccountPaymentDialog(
+                                                  context: context,
+                                                  store: widget.store,
+                                                  accountType: 'supplier',
+                                                  accountId: supplier.id,
+                                                  accountName: supplier.name);
+                                            }
+                                            if (value == 'edit' &&
                                                 widget
                                                     .store.canManageSuppliers) {
                                               _openSupplierForm(context,
                                                   supplier: supplier);
-                                            } else if (value == 'delete' &&
+                                            }
+                                            if (value == 'delete' &&
                                                 widget
                                                     .store.canManageSuppliers) {
                                               _deleteSupplier(
@@ -364,8 +421,16 @@ class _SuppliersPageState extends State<SuppliersPage> {
                                                       .suppliersPaymentManage,
                                                   AppPermission.suppliersManage,
                                                 })
-                                                    ? () => _paySupplier(
-                                                        context, supplier)
+                                                    ? () =>
+                                                        showAccountPaymentDialog(
+                                                            context: context,
+                                                            store: widget.store,
+                                                            accountType:
+                                                                'supplier',
+                                                            accountId:
+                                                                supplier.id,
+                                                            accountName:
+                                                                supplier.name)
                                                     : null,
                                                 icon: const Icon(
                                                     Icons.payments_outlined),
@@ -404,24 +469,6 @@ class _SuppliersPageState extends State<SuppliersPage> {
     );
   }
 
-  Future<void> _paySupplier(
-    BuildContext context,
-    Supplier supplier,
-  ) async {
-    await showAccountPaymentDialog(
-      context: context,
-      store: widget.store,
-      accountType: 'supplier',
-      accountId: supplier.id,
-      accountName: supplier.name,
-    );
-    if (!mounted) return;
-    setState(() {
-      _supplierQueryFuture = null;
-      _supplierQueryFutureKey = '';
-    });
-  }
-
   Future<void> _deleteSupplier(BuildContext context, Supplier supplier) async {
     if (!widget.store.canManageSuppliers) return;
     final tr = AppLocalizations.of(context);
@@ -444,7 +491,7 @@ class _SuppliersPageState extends State<SuppliersPage> {
       ),
     );
     if (confirmed != true) return;
-    await SupplierRepository.deleteSupplier(widget.store, supplier.id);
+    await widget.store.deleteSupplier(supplier.id);
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(tr
@@ -461,7 +508,7 @@ class _SuppliersPageState extends State<SuppliersPage> {
       builder: (_) => _SupplierDialog(supplier: supplier),
     );
     if (result != null) {
-      await SupplierRepository.addOrUpdateSupplier(widget.store, result);
+      await widget.store.addOrUpdateSupplier(result);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(AppLocalizations.of(context).text(
@@ -475,12 +522,10 @@ class _SupplierQueryResult {
   const _SupplierQueryResult({
     required this.items,
     required this.totalCount,
-    required this.balancesById,
   });
 
   final List<Supplier> items;
   final int totalCount;
-  final Map<String, double> balancesById;
 
   bool get hasMore => items.length < totalCount;
 }

@@ -15,7 +15,6 @@ import '../../core/services/lan_sync_service.dart';
 import '../../core/services/accounting_service.dart';
 import '../../core/sync_unified/sync_unified.dart';
 import '../../data/app_store.dart';
-import '../../data/app_store_stress_lab_compat.dart';
 import '../../models/account_transaction.dart';
 import '../../models/catalog_item.dart';
 import '../../models/customer.dart';
@@ -405,17 +404,17 @@ class _StressLabPageState extends State<StressLabPage> {
     return total;
   }
 
-  Future<String> _dbMetricsLine(String label) async {
+  String _dbMetricsLine(String label) {
     final entries = LocalDatabaseService.allEntries();
     final logicalBytes = _logicalDatabaseBytes();
-    final backup = await store.exportBackupJson();
+    final backup = store.exportBackupJson();
     return '$label dbKeys=${entries.length} logicalDbBytes=$logicalBytes logicalDbMB=${(logicalBytes / 1024 / 1024).toStringAsFixed(2)} '
         'backupBytes=${backup.length} backupMB=${(backup.length / 1024 / 1024).toStringAsFixed(2)}';
   }
 
-  Future<void> _logDatabaseMetrics(String label) async {
+  void _logDatabaseMetrics(String label) {
     try {
-      _addLog(await _dbMetricsLine(label));
+      _addLog(_dbMetricsLine(label));
     } catch (error) {
       _addLog('$label DB_METRICS_FAILED $error');
     }
@@ -467,14 +466,14 @@ class _StressLabPageState extends State<StressLabPage> {
       _addLog(
           'VENTIO_REAL_APP_STRESS_START batch=$_currentBatchId buildMode=${kReleaseMode ? 'release' : (kProfileMode ? 'profile' : 'debug')}');
       _addLog(_snapshotLine('BEFORE'));
-      await _logDatabaseMetrics('BEFORE_DB');
+      _logDatabaseMetrics('BEFORE_DB');
       await _seedCatalog();
       await _createSales();
       await _runActiveSync();
       await _exportBackupProbe();
-      await _logDatabaseMetrics('AFTER_DB');
+      _logDatabaseMetrics('AFTER_DB');
       _addLog(_snapshotLine('AFTER'));
-      await _addHealthSummary('REAL_APP_STRESS_SUMMARY');
+      _addHealthSummary('REAL_APP_STRESS_SUMMARY');
       _addLog('VENTIO_REAL_APP_STRESS_DONE batch=$_currentBatchId');
       _setStatus('Done', progress: 1);
     } catch (error) {
@@ -812,7 +811,7 @@ class _StressLabPageState extends State<StressLabPage> {
     _auditCheck(
       _dual('قاعدة البيانات', 'Database'),
       _dual('نمط القاعدة والنسخ الاحتياطي', 'Database snapshot and backup'),
-      databaseEntries.isNotEmpty && (await store.exportBackupJson()).isNotEmpty,
+      databaseEntries.isNotEmpty && store.exportBackupJson().isNotEmpty,
       _dual(
         'تمت قراءة ${databaseEntries.length} مفتاح/جداول وإنتاج نسخة احتياطية قابلة للتصدير.',
         'Read ${databaseEntries.length} keys/tables and produced an exportable backup.',
@@ -983,10 +982,10 @@ class _StressLabPageState extends State<StressLabPage> {
   Future<void> _exportBackupProbe() async {
     _setStatus('Exporting backup probe...', progress: 0.96);
     await _measure('Export backup probe', () async {
-      final raw = await store.exportBackupJson();
+      final raw = store.exportBackupJson();
       _addLog(
           'Backup probe sizeBytes=${raw.length} sizeMB=${(raw.length / 1024 / 1024).toStringAsFixed(2)}');
-      await _logDatabaseMetrics('BACKUP_PROBE_DB');
+      _logDatabaseMetrics('BACKUP_PROBE_DB');
     });
   }
 
@@ -1004,7 +1003,7 @@ class _StressLabPageState extends State<StressLabPage> {
       _addLog(
           'VENTIO_DAILY_OPERATIONS_START batch=$_currentBatchId buildMode=${kReleaseMode ? 'release' : (kProfileMode ? 'profile' : 'debug')}');
       _addLog(_snapshotLine('DAILY_BEFORE'));
-      await _logDatabaseMetrics('DAILY_BEFORE_DB');
+      _logDatabaseMetrics('DAILY_BEFORE_DB');
 
       final hasStressProducts = store.products
           .any((item) => item.name.contains('[STRESS]') && !item.isDeleted);
@@ -1017,9 +1016,9 @@ class _StressLabPageState extends State<StressLabPage> {
       await _runDailyOperationsMix();
       await _runActiveSync();
       await _exportBackupProbe();
-      await _logDatabaseMetrics('DAILY_AFTER_DB');
+      _logDatabaseMetrics('DAILY_AFTER_DB');
       _addLog(_snapshotLine('DAILY_AFTER'));
-      await _addHealthSummary('DAILY_OPERATIONS_SUMMARY');
+      _addHealthSummary('DAILY_OPERATIONS_SUMMARY');
       _addLog('VENTIO_DAILY_OPERATIONS_DONE batch=$_currentBatchId');
       _setStatus('Daily operations done', progress: 1);
     } catch (error, stack) {
@@ -1226,7 +1225,7 @@ class _StressLabPageState extends State<StressLabPage> {
     try {
       _addLog('AUTO_SYNC_WAIT_START seconds=60');
       _addLog(_snapshotLine('AUTO_SYNC_BEFORE_WAIT'));
-      await _logDatabaseMetrics('AUTO_SYNC_BEFORE_WAIT_DB');
+      _logDatabaseMetrics('AUTO_SYNC_BEFORE_WAIT_DB');
       for (var second = 1; second <= 60; second++) {
         await Future<void>.delayed(const Duration(seconds: 1));
         if (second % 15 == 0 || second == 60) {
@@ -1237,8 +1236,8 @@ class _StressLabPageState extends State<StressLabPage> {
             progress: second / 60);
       }
       _addLog(_snapshotLine('AUTO_SYNC_AFTER_WAIT'));
-      await _logDatabaseMetrics('AUTO_SYNC_AFTER_WAIT_DB');
-      await _addHealthSummary('AUTO_SYNC_WAIT_SUMMARY');
+      _logDatabaseMetrics('AUTO_SYNC_AFTER_WAIT_DB');
+      _addHealthSummary('AUTO_SYNC_WAIT_SUMMARY');
       _addLog('AUTO_SYNC_WAIT_DONE');
       _setStatus('Auto Sync wait done', progress: 1);
     } finally {
@@ -1272,14 +1271,14 @@ class _StressLabPageState extends State<StressLabPage> {
         _addLog(
             'LATE_CLIENT_GUARD_INCONCLUSIVE reason=no_compacted_sequence_window_yet');
       }
-      await _addHealthSummary('LATE_CLIENT_GUARD_SUMMARY');
+      _addHealthSummary('LATE_CLIENT_GUARD_SUMMARY');
       _setStatus('Late-client guard check done', progress: 1);
     } finally {
       if (mounted) setState(() => _running = false);
     }
   }
 
-  Future<void> _addHealthSummary(String label) async {
+  void _addHealthSummary(String label) {
     final rejectedQueue = store.syncQueue
         .where((item) => item.status.toLowerCase() == 'rejected')
         .length;
@@ -1291,7 +1290,7 @@ class _StressLabPageState extends State<StressLabPage> {
     final changes = store.syncChanges.length;
     final queue = store.syncQueue.length;
     final logicalBytes = _logicalDatabaseBytes();
-    final backupBytes = (await store.exportBackupJson()).length;
+    final backupBytes = store.exportBackupJson().length;
 
     final transport = _effectiveSyncTransport();
     final pendingIsExpectedForCloud =
@@ -1757,8 +1756,8 @@ class _StressLabPageState extends State<StressLabPage> {
 
   Future<void> _generateTestSummary() async {
     _addLog(_snapshotLine('MANUAL_SUMMARY_SNAPSHOT'));
-      await _logDatabaseMetrics('MANUAL_SUMMARY_DB');
-      await _addHealthSummary('MANUAL_TEST_SUMMARY');
+    _logDatabaseMetrics('MANUAL_SUMMARY_DB');
+    _addHealthSummary('MANUAL_TEST_SUMMARY');
   }
 
   Future<T?> _auditStep<T>(
@@ -2109,7 +2108,7 @@ class _StressLabPageState extends State<StressLabPage> {
       _addLog(
           'VENTIO_ONE_BUTTON_AUDIT_START batch=$_currentBatchId role=${_roleLabel()}');
       _addLog(_snapshotLine('AUDIT_BEFORE'));
-      await _logDatabaseMetrics('AUDIT_BEFORE_DB');
+      _logDatabaseMetrics('AUDIT_BEFORE_DB');
       await _prepareAppSurfaceData();
 
       _setStatus(_dual('إنشاء الكتالوج...', 'Building catalog...'),
@@ -2233,9 +2232,9 @@ class _StressLabPageState extends State<StressLabPage> {
             leadTimeDays: 3,
             notes: 'Generated by one-button Stress Lab audit',
           ));
-          final prices =
-              await store.supplierProductPricesForProduct(products.first.id);
-          return prices.length;
+          return store
+              .supplierProductPricesForProduct(products.first.id)
+              .length;
         },
             successDetails: (count) => _dual(
                 'أسعار الموردين لهذا المنتج: $count.',
@@ -2276,16 +2275,9 @@ class _StressLabPageState extends State<StressLabPage> {
               _dual('المخزون', 'Inventory'),
               _dual('تحويل مخزون بين المستودعات',
                   'Transfer stock between warehouses'), () async {
-            final sourceWarehouse = store.defaultWarehouse.id == warehouse.id
-                ? await store.createWarehouse(
-                    name: '[AUDIT] Source Warehouse $_currentBatchId',
-                    code: 'AUD-SRC-${DateTime.now().millisecondsSinceEpoch}',
-                    location: 'Stress Lab',
-                  )
-                : store.defaultWarehouse;
             await store.transferStock(
                 productId: products.first.id,
-                fromWarehouseId: sourceWarehouse.id,
+                fromWarehouseId: store.defaultWarehouse.id,
                 toWarehouseId: warehouse.id,
                 quantity: 3.0,
                 notes: 'Stress Lab audit transfer');
@@ -2540,7 +2532,7 @@ class _StressLabPageState extends State<StressLabPage> {
           progress: 0.97);
       await _auditStep(_dual('النسخ الاحتياطي', 'Backup'),
           _dual('توليد Backup JSON', 'Generate backup JSON'), () async {
-        final raw = await store.exportBackupJson();
+        final raw = store.exportBackupJson();
         final decoded = jsonDecode(raw) as Map<String, dynamic>;
         return '${raw.length} bytes, keys=${decoded.keys.length}';
       },
@@ -2663,9 +2655,9 @@ class _StressLabPageState extends State<StressLabPage> {
             'Core relationship check completed.');
       }, successDetails: (value) => value);
 
-      await _logDatabaseMetrics('AUDIT_AFTER_DB');
+      _logDatabaseMetrics('AUDIT_AFTER_DB');
       _addLog(_snapshotLine('AUDIT_AFTER'));
-      await _addHealthSummary('ONE_BUTTON_AUDIT_SUMMARY');
+      _addHealthSummary('ONE_BUTTON_AUDIT_SUMMARY');
       _addFinalAuditReport(startedAt);
       _setStatus(_dual('انتهى الاختبار الشامل', 'Full test completed'),
           progress: 1);
@@ -3288,9 +3280,9 @@ class _StressLabPageState extends State<StressLabPage> {
     expect(
         'BACKUP-001',
         'Backup',
-        (await store.exportBackupJson()).isNotEmpty,
+        store.exportBackupJson().isNotEmpty,
         'Backup JSON can be generated after stress run.',
-        'backupBytes=${(await store.exportBackupJson()).length}');
+        'backupBytes=${store.exportBackupJson().length}');
 
     final passed = _assertions.where((item) => item.passed).length;
     final blockingFailed =

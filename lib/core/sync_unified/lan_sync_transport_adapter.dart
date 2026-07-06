@@ -273,8 +273,8 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
   @override
   Future<UnifiedSyncResult> pushPending(UnifiedSyncPushRequest request) async {
     final effectiveSettings = _settingsWithUnifiedCursor();
-    final pendingCount = await _service.store.syncState
-        .pendingSyncQueueCountForTarget(_service.store, 'host');
+    final pendingCount =
+        _service.store.pendingSyncChangesForTarget('host').length;
     final result = await _service.pushPendingOnly(
       effectiveSettings.host,
       port: effectiveSettings.port,
@@ -337,13 +337,9 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
     try {
       final identity = _service.store.appIdentity;
       if (identity.isHost) {
-        await _service.store.syncState.compactSyncedSyncHistoryForMaintenance(
-          _service.store,
-        );
+        await _service.store.compactSyncedSyncHistoryForMaintenance();
       } else if (identity.isClient) {
-        await _service.store.syncState.compactClientSyncedSyncHistoryForMaintenance(
-          _service.store,
-        );
+        await _service.store.compactClientSyncedSyncHistoryForMaintenance();
       }
     } catch (_) {
       // Best-effort maintenance: never fail a successful sync because local

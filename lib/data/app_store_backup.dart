@@ -73,13 +73,24 @@ class BackupValidationResult {
 }
 
 extension AppStoreBackupExtensions on AppStore {
-  Future<String> exportEncryptedBackupJson(String password) async {
+  BackupSummary get currentBackupSummary => BackupSummary(
+        version: 11,
+        generatedAt: DateTime.now(),
+        productsCount: products.length,
+        customersCount: customers.length,
+        salesCount: sales.length,
+        suppliersCount: suppliers.length,
+        expensesCount: expenses.length,
+        storeName: _storeProfile.name,
+      );
+
+  String exportEncryptedBackupJson(String password) {
     requirePermission(AppPermission.backupExport);
     final cleaned = password.trim();
     if (cleaned.length < 8) {
       throw ArgumentError('Backup password must be at least 8 characters.');
     }
-    final plain = utf8.encode(await exportBackupJson());
+    final plain = utf8.encode(exportBackupJson());
     final salt = _generateSalt();
     final nonce = _generateNonce();
     final key = _deriveBackupKey(cleaned, salt);

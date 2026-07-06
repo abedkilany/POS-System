@@ -1,17 +1,14 @@
 // ignore_for_file: curly_braces_in_flow_control_structures
 
-// ignore_for_file: use_build_context_synchronously
-
 import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../core/localization/app_localizations.dart';
-import '../../core/services/business_revision_service.dart';
-import '../../core/repositories/business_repositories.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/utils/currency_utils.dart';
+import '../../core/utils/revision_cache.dart';
 import '../../core/services/page_timing_scope.dart';
 import '../../core/services/barcode_feedback_service.dart';
 import '../../core/services/local_database_service.dart';
@@ -49,6 +46,9 @@ class _PurchasesPageState extends State<PurchasesPage> {
   String _purchaseQueryFutureKey = '';
   Future<Map<String, Object?>?>? _purchaseOverviewFuture;
   String _purchaseOverviewFutureKey = '';
+  final RevisionKeyCache<List<Purchase>> _filteredPurchasesCache =
+      RevisionKeyCache<List<Purchase>>();
+  late Future<void> _dataFuture;
 
   void _handleStoreChanged() {
     if (!mounted) return;
@@ -65,7 +65,9 @@ class _PurchasesPageState extends State<PurchasesPage> {
       _purchaseQueryFutureKey = '';
       _purchaseOverviewFuture = null;
       _purchaseOverviewFutureKey = '';
+      _filteredPurchasesCache.invalidate();
       _resetPurchaseReveal();
+      _dataFuture = widget.store.ensurePurchasesPageDataLoaded();
     }
   }
 
@@ -80,6 +82,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
   void initState() {
     super.initState();
     widget.store.addListener(_handleStoreChanged);
+    _dataFuture = widget.store.ensurePurchasesPageDataLoaded();
     HardwareKeyboard.instance.addHandler(_handlePurchasesHardwareShortcutKey);
   }
 
@@ -154,7 +157,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
     if (normalized.isEmpty) {
       return fallbackProducts;
     }
-    final sqlite = await ProductRepository.queryPage(
+    final sqlite = await LocalDatabaseService.queryProductsFromSqlite(
       query: normalized,
       limit: 80,
       activeOnly: true,
@@ -327,15 +330,339 @@ class _PurchasesPageState extends State<PurchasesPage> {
         },
       );
     }
-    return const Center(child: CircularProgressIndicator.adaptive());
+    return FutureBuilder<void>(
+      future: _dataFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Center(child: CircularProgressIndicator.adaptive());
+        }
+        final allPurchases = widget.store.purchases;
+        final overview = widget.store.purchasesOverview;
+        final monthlyTotal = overview.monthlyTotal;
+        final monthlyCount = overview.monthlyCount;
+        final draftTotal = overview.draftTotal;
+        final query = _searchController.text.trim().toLowerCase();
+        final useDefaultView =
+            query.isEmpty && _statusFilter == 'all' && _sortMode == 'newest';
+        final purchases = useDefaultView
+            ? allPurchases
+            : _filteredPurchasesCache.getOrCompute(
+                widget.store.purchasesRevision,
+                '$_statusFilter|$_sortMode|$query',
+                () {
+                  final filtered = allPurchases.where((p) {
+                    final matchesSearch =
+                        query.isEmpty || p.searchText.contains(query);
+                    final matchesStatus = _statusFilter == 'all' ||
+                        (_statusFilter == 'draft' &&
+                            !p.isReceived &&
+                            !p.isCancelled) ||
+                        (_statusFilter == 'received' &&
+                            p.isReceived &&
+                            !p.isReturned) ||
+                        (_statusFilter == 'returned' && p.isReturned) ||
+                        (_statusFilter == 'cancelled' &&
+                            p.status.toLowerCase() == 'cancelled');
+                    return matchesSearch && matchesStatus;
+                  }).toList(growable: false);
+                  filtered.sort((a, b) {
+                    switch (_sortMode) {
+                      case 'oldest':
+                        return a.date.compareTo(b.date);
+                      case 'highest':
+                        return b.subtotal.compareTo(a.subtotal);
+                      case 'lowest':
+                        return a.subtotal.compareTo(b.subtotal);
+                      case 'supplier':
+                        return a.supplierName
+                            .toLowerCase()
+                            .compareTo(b.supplierName.toLowerCase());
+                      case 'newest':
+                      default:
+                        return b.date.compareTo(a.date);
+                    }
+                  });
+                  return filtered;
+                },
+              );
+        _syncPurchaseReveal(purchases.length);
+        final averagePurchase =
+            monthlyCount == 0 ? 0.0 : monthlyTotal / monthlyCount;
+        final visiblePurchaseCount =
+            math.min(_visiblePurchaseCount, purchases.length);
+        final pageInsets = VentioResponsive.pageInsets(context);
+        return Focus(
+          focusNode: _pageShortcutFocusNode,
+          autofocus: true,
+          onKeyEvent: _handlePurchasesShortcutKey,
+          child: CustomScrollView(
+            slivers: [
+              SliverPadding(
+                padding: pageInsets,
+                sliver: SliverList(
+                  delegate: SliverChildListDelegate(
+                    [
+                      LayoutBuilder(builder: (context, constraints) {
+                        final compact = constraints.maxWidth < 650;
+                        final indicator = PageDataLoadIndicator(
+                          loadedCount: visiblePurchaseCount,
+                          totalCount: purchases.length,
+                        );
+                        final title = Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(tr.text('purchases'),
+                                style:
+                                    Theme.of(context).textTheme.headlineSmall),
+                            const SizedBox(height: 4),
+                            Text(tr.text('purchases_desc')),
+                          ],
+                        );
+                        final button = FilledButton.icon(
+                          onPressed: widget.store.canManagePurchases
+                              ? () => _openPurchaseDialog(context)
+                              : null,
+                          icon: const Icon(Icons.add_shopping_cart),
+                          label: Text(tr.text('new_purchase')),
+                        );
+                        return compact
+                            ? Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                    Row(
+                                      children: [
+                                        Expanded(child: title),
+                                        const SizedBox(width: 12),
+                                        indicator,
+                                      ],
+                                    ),
+                                    const SizedBox(height: 12),
+                                    button
+                                  ])
+                            : Row(children: [
+                                Expanded(child: title),
+                                const SizedBox(width: 12),
+                                indicator,
+                                const SizedBox(width: 12),
+                                button
+                              ]);
+                      }),
+                      const SizedBox(height: 8),
+                      _buildPurchasesShortcutGuide(context, tr),
+                      const SizedBox(height: 16),
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 12,
+                        children: [
+                          _MetricCard(
+                              label: tr.text('purchase_total'),
+                              value: formatUsdReferenceAmount(
+                                  overview.totalPurchasesAmount,
+                                  widget.store.storeProfile),
+                              icon: Icons.shopping_cart_checkout),
+                          _MetricCard(
+                              label: tr.text('purchases_this_month'),
+                              value: formatUsdReferenceAmount(
+                                  monthlyTotal, widget.store.storeProfile),
+                              icon: Icons.calendar_month_outlined),
+                          _MetricCard(
+                              label: tr.text('draft_purchases'),
+                              value: formatUsdReferenceAmount(
+                                  draftTotal, widget.store.storeProfile),
+                              icon: Icons.pending_actions),
+                          _MetricCard(
+                              label: tr.text('avg_purchase'),
+                              value: formatUsdReferenceAmount(
+                                  averagePurchase, widget.store.storeProfile),
+                              icon: Icons.insights_outlined),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: _searchController,
+                        focusNode: _searchFocusNode,
+                        onChanged: (_) => setState(_resetPurchaseReveal),
+                        decoration: InputDecoration(
+                          prefixIcon: const Icon(Icons.search),
+                          hintText: tr.text('search_purchase_supplier_product'),
+                          border: const OutlineInputBorder(),
+                          suffixIcon: query.isEmpty
+                              ? null
+                              : IconButton(
+                                  tooltip: tr.text('clear_search'),
+                                  icon: const Icon(Icons.close),
+                                  onPressed: () {
+                                    _searchController.clear();
+                                    setState(_resetPurchaseReveal);
+                                  },
+                                ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final compact = constraints.maxWidth < 620;
+                          final filters = Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              ChoiceChip(
+                                  label: Text(
+                                      '${tr.text('all')} (${allPurchases.length})'),
+                                  selected: _statusFilter == 'all',
+                                  onSelected: (_) => setState(() {
+                                        _statusFilter = 'all';
+                                        _resetPurchaseReveal();
+                                      })),
+                              ChoiceChip(
+                                  label: Text(
+                                      '${tr.text('draft')} (${overview.draftCount})'),
+                                  selected: _statusFilter == 'draft',
+                                  onSelected: (_) => setState(() {
+                                        _statusFilter = 'draft';
+                                        _resetPurchaseReveal();
+                                      })),
+                              ChoiceChip(
+                                  label: Text(
+                                      '${tr.text('received')} (${overview.receivedCount})'),
+                                  selected: _statusFilter == 'received',
+                                  onSelected: (_) => setState(() {
+                                        _statusFilter = 'received';
+                                        _resetPurchaseReveal();
+                                      })),
+                              ChoiceChip(
+                                  label: Text(
+                                      '${tr.text('returned')} (${overview.returnedCount})'),
+                                  selected: _statusFilter == 'returned',
+                                  onSelected: (_) => setState(() {
+                                        _statusFilter = 'returned';
+                                        _resetPurchaseReveal();
+                                      })),
+                              ChoiceChip(
+                                  label: Text(
+                                      '${tr.text('cancelled')} (${overview.cancelledCount})'),
+                                  selected: _statusFilter == 'cancelled',
+                                  onSelected: (_) => setState(() {
+                                        _statusFilter = 'cancelled';
+                                        _resetPurchaseReveal();
+                                      })),
+                            ],
+                          );
+                          final sorter = DropdownButtonFormField<String>(
+                            initialValue: _sortMode,
+                            decoration: InputDecoration(
+                                labelText: tr.text('sort_by'),
+                                border: const OutlineInputBorder()),
+                            items: [
+                              DropdownMenuItem(
+                                  value: 'newest',
+                                  child: Text(tr.text('newest_first'))),
+                              DropdownMenuItem(
+                                  value: 'oldest',
+                                  child: Text(tr.text('oldest_first'))),
+                              DropdownMenuItem(
+                                  value: 'highest',
+                                  child: Text(tr.text('highest_amount'))),
+                              DropdownMenuItem(
+                                  value: 'lowest',
+                                  child: Text(tr.text('lowest_amount'))),
+                              DropdownMenuItem(
+                                  value: 'supplier',
+                                  child: Text(tr.text('supplier_name_sort'))),
+                            ],
+                            onChanged: (value) => setState(() {
+                              _sortMode = value ?? 'newest';
+                              _resetPurchaseReveal();
+                            }),
+                          );
+                          if (compact) {
+                            return Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  filters,
+                                  const SizedBox(height: 12),
+                                  sorter
+                                ]);
+                          }
+                          return Row(children: [
+                            Expanded(child: filters),
+                            SizedBox(width: 220, child: sorter)
+                          ]);
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                    ],
+                  ),
+                ),
+              ),
+              if (purchases.isEmpty)
+                SliverPadding(
+                  padding: EdgeInsets.fromLTRB(
+                      pageInsets.left, 0, pageInsets.right, pageInsets.bottom),
+                  sliver: SliverToBoxAdapter(
+                    child: Text(tr.text('no_purchases_yet')),
+                  ),
+                )
+              else
+                SliverPadding(
+                  padding: EdgeInsets.fromLTRB(
+                      pageInsets.left, 0, pageInsets.right, pageInsets.bottom),
+                  sliver: SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) {
+                        final purchase = purchases[index];
+                        return _PurchaseTile(
+                          purchase: purchase,
+                          storeProfile: widget.store.storeProfile,
+                          onTap: () => _showPurchaseDetails(context, purchase),
+                          onReceive: purchase.status == 'Draft'
+                              ? (widget.store.canManagePurchases
+                                  ? () => _receivePurchase(context, purchase.id)
+                                  : null)
+                              : null,
+                          onCancel: purchase.isReceived && !purchase.isReturned
+                              ? (widget.store.hasPermission(
+                                          AppPermission.purchasesCancel) ||
+                                      widget.store.canManagePurchases
+                                  ? () => _returnPurchase(context, purchase.id)
+                                  : null)
+                              : null,
+                          onDeleteDraft: !purchase.isReceived &&
+                                  !purchase.isCancelled &&
+                                  widget.store.canManagePurchases
+                              ? () => _deleteDraftPurchase(context, purchase.id)
+                              : null,
+                          onPermanentDelete:
+                              purchase.status.toLowerCase() == 'cancelled' &&
+                                      widget.store.hasPermission(
+                                          AppPermission.databaseManage)
+                                  ? () => _permanentlyDeletePurchase(
+                                      context, purchase.id)
+                                  : null,
+                          onDuplicate: widget.store.canManagePurchases
+                              ? () => _openPurchaseDialog(context,
+                                  template: purchase)
+                              : null,
+                          formatDate: _formatShortDate,
+                        );
+                      },
+                      childCount: visiblePurchaseCount,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   Future<Map<String, Object?>?> _queryPurchasesOverviewMapFromSqlite() async {
-    final key = '${BusinessRevisionService.instance.purchasesRevision}';
+    final key = '${widget.store.purchasesRevision}';
     if (_purchaseOverviewFuture == null || _purchaseOverviewFutureKey != key) {
       _purchaseOverviewFutureKey = key;
       _purchaseOverviewFuture =
-          PurchaseRepository.buildOverview(
+          LocalDatabaseService.buildPurchasesOverviewFromSqlite(
         reference: DateTime.now(),
       );
     }
@@ -378,11 +705,11 @@ class _PurchasesPageState extends State<PurchasesPage> {
   ) async {
     final limit = math.max(1, _visiblePurchaseCount);
     final key =
-        '${BusinessRevisionService.instance.purchasesRevision}|$_statusFilter|$_sortMode|$normalizedQuery|$limit';
+        '${widget.store.purchasesRevision}|$_statusFilter|$_sortMode|$normalizedQuery|$limit';
     if (_purchaseQueryFuture == null || _purchaseQueryFutureKey != key) {
       _purchaseQueryFutureKey = key;
       _purchaseQueryFuture = () async {
-        final page = await PurchaseRepository.queryPage(
+        final page = await LocalDatabaseService.queryPurchasesFromSqlite(
           query: normalizedQuery,
           status: _statusFilter,
           limit: limit,
@@ -670,7 +997,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
   Future<void> _receivePurchase(BuildContext context, String id) async {
     if (!widget.store.canManagePurchases) return;
     try {
-      await PurchaseRepository.receivePurchase(widget.store, id);
+      await widget.store.receivePurchase(id);
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content:
@@ -703,7 +1030,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
     );
     if (ok != true) return;
     try {
-      await PurchaseRepository.deleteDraftPurchase(widget.store, id);
+      await widget.store.deleteDraftPurchase(id);
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content:
@@ -739,10 +1066,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
     );
     if (ok != true) return;
     try {
-      await PurchaseRepository.permanentlyDeleteCancelledPurchase(
-        widget.store,
-        id,
-      );
+      await widget.store.permanentlyDeleteCancelledPurchase(id);
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(AppLocalizations.of(context)
@@ -797,11 +1121,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
     final reason = reasonController.text.trim();
     reasonController.dispose();
     try {
-      await PurchaseRepository.returnPurchase(
-        widget.store,
-        id,
-        reason: reason,
-      );
+      await widget.store.returnPurchase(id, reason: reason);
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(AppLocalizations.of(context)
@@ -1000,25 +1320,24 @@ class _PurchasesPageState extends State<PurchasesPage> {
     final items = template == null
         ? <PurchaseItem>[]
         : List<PurchaseItem>.of(template.items);
-    final purchaseProductsPage = await ProductRepository.queryPage(
-      query: '',
-      limit: 500,
-      activeOnly: true,
-      stockTrackedOnly: true,
-    );
-    var purchaseProducts = purchaseProductsPage?.items ?? const <Product>[];
-    final supplierPage = await SupplierRepository.queryPage(limit: 500);
-    var availableSuppliers = supplierPage?.items ?? const <Supplier>[];
+    var purchaseProducts = widget.store.products
+        .where((product) => product.trackStock && product.isActive)
+        .toList();
     String supplierId = template?.supplierId ??
-        (availableSuppliers.isNotEmpty ? availableSuppliers.first.id : '');
+        (widget.store.suppliers.isNotEmpty
+            ? widget.store.suppliers.first.id
+            : '');
     String supplierName = template?.supplierName ??
-        (availableSuppliers.isNotEmpty ? availableSuppliers.first.name : '');
+        (widget.store.suppliers.isNotEmpty
+            ? widget.store.suppliers.first.name
+            : '');
     if (supplierId.isNotEmpty &&
-        !availableSuppliers.any((supplier) => supplier.id == supplierId)) {
-      supplierId =
-          availableSuppliers.isNotEmpty ? availableSuppliers.first.id : '';
-      supplierName = availableSuppliers.isNotEmpty
-          ? availableSuppliers.first.name
+        !widget.store.suppliers.any((supplier) => supplier.id == supplierId)) {
+      supplierId = widget.store.suppliers.isNotEmpty
+          ? widget.store.suppliers.first.id
+          : '';
+      supplierName = widget.store.suppliers.isNotEmpty
+          ? widget.store.suppliers.first.name
           : supplierName;
     }
     Product? selectedProduct =
@@ -1038,84 +1357,29 @@ class _PurchasesPageState extends State<PurchasesPage> {
     String costCurrency = selectedProduct?.costCurrency ??
         widget.store.storeProfile.defaultProductCurrency;
     bool receiveNow = false;
-    final supplierPriceByProduct = <String, SupplierProductPrice?>{};
-    final lastPurchaseItemByProduct = <String, PurchaseItem?>{};
-    final lastPurchasePriceByProduct = <String, double?>{};
-    final averagePurchaseCostByProduct = <String, double>{};
-    final supplierCountByProduct = <String, int>{};
-    BuildContext? activePurchaseDialogContext;
-    StateSetter? activePurchaseDialogSetState;
-
-    Future<void> refreshPurchaseInsights(
-      Product product, {
-      StateSetter? setDialogState,
-    }) async {
-      final productId = product.id.trim();
-      if (productId.isEmpty) return;
-      final currentSupplierId = supplierId.trim();
-      final supplierPriceFuture = currentSupplierId.isEmpty
-          ? Future<SupplierProductPrice?>.value(null)
-          : PurchaseRepository.supplierProductPriceFor(
-              productId: productId,
-              supplierId: currentSupplierId,
-            );
-      final lastItemFuture = currentSupplierId.isEmpty
-          ? Future<PurchaseItem?>.value(null)
-          : PurchaseRepository.lastPurchaseItemFor(
-              productId: productId,
-              supplierId: currentSupplierId,
-            );
-      final lastGeneralFuture =
-          PurchaseRepository.lastPurchasePriceForProduct(productId);
-      final avgFuture = PurchaseRepository.averagePurchaseCostForProduct(productId);
-      final supplierCountFuture =
-          PurchaseRepository.supplierCountForProduct(productId);
-      final results = await Future.wait<Object?>([
-        supplierPriceFuture,
-        lastItemFuture,
-        lastGeneralFuture,
-        avgFuture,
-        supplierCountFuture,
-      ]);
-      supplierPriceByProduct[productId] = results[0] as SupplierProductPrice?;
-      lastPurchaseItemByProduct[productId] = results[1] as PurchaseItem?;
-      lastPurchasePriceByProduct[productId] = results[2] as double?;
-      averagePurchaseCostByProduct[productId] = results[3] as double? ?? 0;
-      supplierCountByProduct[productId] = results[4] as int? ?? 0;
-      setDialogState?.call(() {});
-    }
-
-    Future<void> refreshSupplierPriceCatalog() async {
-      supplierPriceByProduct.clear();
-      final currentSupplierId = supplierId.trim();
-      if (currentSupplierId.isEmpty) return;
-      final rows =
-          await PurchaseRepository.supplierProductPricesForSupplier(currentSupplierId);
-      for (final row in rows) {
-        supplierPriceByProduct[row.productId] = row;
-      }
-      activePurchaseDialogSetState?.call(() {});
-    }
 
     SupplierProductPrice? selectedSupplierPriceFor(Product product) {
-      return supplierId.isEmpty ? null : supplierPriceByProduct[product.id];
+      return supplierId.isEmpty
+          ? null
+          : widget.store.supplierProductPriceFor(
+              productId: product.id, supplierId: supplierId);
     }
 
     PurchaseItem? suggestedPurchaseItem(Product product) {
-      return supplierId.isEmpty ? null : lastPurchaseItemByProduct[product.id];
+      return supplierId.isEmpty
+          ? null
+          : widget.store.lastPurchaseItemFor(
+              productId: product.id, supplierId: supplierId);
     }
 
     double suggestedBaseCost(Product product) {
       final supplierPrice = selectedSupplierPriceFor(product);
       if (supplierPrice != null) {
-        return toUsdReferencePrice(
-          supplierPrice.cost,
-          supplierPrice.currency,
-          widget.store.storeProfile,
-        );
+        return toUsdReferencePrice(supplierPrice.cost, supplierPrice.currency,
+            widget.store.storeProfile);
       }
       return suggestedPurchaseItem(product)?.unitCostPerBase ??
-          lastPurchasePriceByProduct[product.id] ??
+          widget.store.lastPurchasePriceForProduct(product.id) ??
           product.usdCost;
     }
 
@@ -1123,7 +1387,9 @@ class _PurchasesPageState extends State<PurchasesPage> {
       final supplierPrice = selectedSupplierPriceFor(product);
       return supplierPrice?.currency ??
           suggestedPurchaseItem(product)?.unitCostCurrency ??
-          lastPurchaseItemByProduct[product.id]?.unitCostCurrency ??
+          widget.store
+              .lastPurchaseItemForProduct(product.id)
+              ?.unitCostCurrency ??
           product.costCurrency;
     }
 
@@ -1144,19 +1410,21 @@ class _PurchasesPageState extends State<PurchasesPage> {
 
     selectedUnit = selectedProduct?.effectivePurchaseUnits.first;
     applySuggestedSupplierPrice();
-    if (selectedProduct != null) {
-      unawaited(refreshSupplierPriceCatalog());
-      unawaited(refreshPurchaseInsights(selectedProduct));
-    }
 
     String priceHintForSelectedProduct() {
       final product = selectedProduct;
       if (product == null) return '';
-      final configuredSupplierPrice = supplierPriceByProduct[product.id];
-      final supplierPrice = lastPurchaseItemByProduct[product.id];
-      final lastGeneral = lastPurchasePriceByProduct[product.id];
-      final avg = averagePurchaseCostByProduct[product.id] ?? 0;
-      final supplierCount = supplierCountByProduct[product.id] ?? 0;
+      final configuredSupplierPrice = supplierId.isEmpty
+          ? null
+          : widget.store.supplierProductPriceFor(
+              productId: product.id, supplierId: supplierId);
+      final supplierPrice = supplierId.isEmpty
+          ? null
+          : widget.store.lastPurchasePriceFor(
+              productId: product.id, supplierId: supplierId);
+      final lastGeneral = widget.store.lastPurchasePriceForProduct(product.id);
+      final avg = widget.store.averagePurchaseCostForProduct(product.id);
+      final supplierCount = widget.store.supplierCountForProduct(product.id);
       final parts = <String>[];
       if (configuredSupplierPrice != null) {
         parts.add(
@@ -1164,7 +1432,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
       }
       if (supplierPrice != null) {
         parts.add(
-            '${tr.text('supplier_last_base')}: ${formatUsdReferenceAmount(supplierPrice.unitCostPerBase, widget.store.storeProfile)}');
+            '${tr.text('supplier_last_base')}: ${formatUsdReferenceAmount(supplierPrice, widget.store.storeProfile)}');
       }
       if (lastGeneral != null) {
         parts.add(
@@ -1276,16 +1544,9 @@ class _PurchasesPageState extends State<PurchasesPage> {
       phoneController.dispose();
       if (created == null) return;
       try {
-        await SupplierRepository.addOrUpdateSupplier(widget.store, created);
+        await widget.store.addOrUpdateSupplier(created);
         supplierId = created.id;
         supplierName = created.name;
-        final refreshedSuppliersPage =
-            await SupplierRepository.queryPage(limit: 500);
-        availableSuppliers = refreshedSuppliersPage?.items ?? availableSuppliers;
-        await refreshSupplierPriceCatalog();
-        if (selectedProduct != null) {
-          await refreshPurchaseInsights(selectedProduct!, setDialogState: setDialogState);
-        }
         setDialogState(() {});
       } catch (error) {
         if (mounted) showPurchaseError(error.toString());
@@ -1367,19 +1628,13 @@ class _PurchasesPageState extends State<PurchasesPage> {
       barcodeQuickController.dispose();
       if (created == null) return;
       try {
-        await ProductRepository.addOrUpdateProduct(widget.store, created);
+        await widget.store.addOrUpdateProduct(created);
         selectedProduct = created;
         selectedUnit = created.effectivePurchaseUnits.first;
-        final refreshedProducts = await ProductRepository.queryPage(
-          query: '',
-          limit: 500,
-          activeOnly: true,
-          stockTrackedOnly: true,
-        );
-        purchaseProducts = refreshedProducts?.items ?? purchaseProducts;
+        purchaseProducts = widget.store.products
+            .where((product) => product.trackStock && product.isActive)
+            .toList();
         applySuggestedSupplierPrice();
-        await refreshSupplierPriceCatalog();
-        await refreshPurchaseInsights(created, setDialogState: setDialogState);
         setDialogState(() {});
       } catch (error) {
         if (mounted) showPurchaseError(error.toString());
@@ -1571,10 +1826,8 @@ class _PurchasesPageState extends State<PurchasesPage> {
       for (final item in latestByProduct.values) {
         final productId = item.productId.trim();
         if (productId.isEmpty) continue;
-        final existing = await PurchaseRepository.supplierProductPriceFor(
-          productId: productId,
-          supplierId: supplierId,
-        );
+        final existing = widget.store.supplierProductPriceFor(
+            productId: productId, supplierId: supplierId);
         final newCurrency =
             item.unitCostCurrency.toUpperCase() == 'LBP' ? 'LBP' : 'USD';
         final newBaseCost =
@@ -1593,8 +1846,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
           cost: newBaseCost,
           currency: newCurrency,
           isPreferred: existing?.isPreferred ??
-              (await PurchaseRepository.supplierProductPricesForProduct(productId))
-                  .isEmpty,
+              widget.store.supplierProductPricesForProduct(productId).isEmpty,
           supplierSku: existing?.supplierSku ?? '',
           minOrderQty: existing?.minOrderQty,
           leadTimeDays: existing?.leadTimeDays,
@@ -1628,10 +1880,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
       );
       if (shouldUpdate != true) return;
       for (final price in updates) {
-        await InventoryRepository.addOrUpdateSupplierProductPrice(
-          widget.store,
-          price,
-        );
+        await widget.store.addOrUpdateSupplierProductPrice(price);
       }
     }
 
@@ -1709,7 +1958,6 @@ class _PurchasesPageState extends State<PurchasesPage> {
         selectedUnit = match.unit;
         productSearchController.text = match.product.name;
         applySuggestedSupplierPrice();
-        unawaited(refreshPurchaseInsights(match.product));
         BarcodeFeedbackService.play(force: true);
         setDialogState(() {});
         return;
@@ -1820,8 +2068,11 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                   final product = matches[index];
                                   final unit =
                                       product.effectivePurchaseUnits.first;
-                                  final configuredPrice =
-                                      supplierPriceByProduct[product.id];
+                                  final configuredPrice = supplierId.isEmpty
+                                      ? null
+                                      : widget.store.supplierProductPriceFor(
+                                          productId: product.id,
+                                          supplierId: supplierId);
                                   final subtitleParts = <String>[
                                     if (product.code.trim().isNotEmpty)
                                       product.code.trim(),
@@ -1875,7 +2126,6 @@ class _PurchasesPageState extends State<PurchasesPage> {
       selectedUnit = picked.unit;
       productSearchController.text = picked.product.name;
       applySuggestedSupplierPrice();
-      unawaited(refreshPurchaseInsights(picked.product));
       setDialogState(() {});
     }
 
@@ -1895,8 +2145,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
               SnackBar(content: Text(tr.text('invalid_paid_amount'))));
           return;
         }
-        await PurchaseRepository.createPurchase(context: 
-          widget.store,
+        await widget.store.createPurchase(
             supplierId: supplierId,
             supplierName: supplierName,
             items: purchaseItems,
@@ -1969,6 +2218,8 @@ class _PurchasesPageState extends State<PurchasesPage> {
       }
     }
 
+    BuildContext? activePurchaseDialogContext;
+    StateSetter? activePurchaseDialogSetState;
     bool handlePurchaseDialogHardwareShortcut(KeyEvent event) {
       final dialogContext = activePurchaseDialogContext;
       final setDialogState = activePurchaseDialogSetState;
@@ -1984,7 +2235,6 @@ class _PurchasesPageState extends State<PurchasesPage> {
 
     HardwareKeyboard.instance.addHandler(handlePurchaseDialogHardwareShortcut);
     try {
-      if (!mounted) return;
       await showModalBottomSheet<void>(
         context: context,
         isScrollControlled: true,
@@ -2129,7 +2379,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                                   decoration: InputDecoration(
                                                       labelText:
                                                           tr.text('supplier')),
-                                                  items: availableSuppliers
+                                                  items: widget.store.suppliers
                                                       .map((supplier) =>
                                                           DropdownMenuItem(
                                                               value:
@@ -2139,8 +2389,8 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                                                       .name)))
                                                       .toList(),
                                                   onChanged: (value) {
-                                                    final matches =
-                                                        availableSuppliers
+                                                    final matches = widget
+                                                        .store.suppliers
                                                         .where((s) =>
                                                             s.id == value)
                                                         .toList();
@@ -2153,16 +2403,6 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                                     supplierName =
                                                         supplier?.name ?? '';
                                                     applySuggestedSupplierPrice();
-                                                    unawaited(
-                                                      refreshSupplierPriceCatalog(),
-                                                    );
-                                                    if (selectedProduct != null) {
-                                                      unawaited(
-                                                        refreshPurchaseInsights(
-                                                          selectedProduct!,
-                                                        ),
-                                                      );
-                                                    }
                                                     setDialogState(() {});
                                                   },
                                                   validator: (_) => supplierId

@@ -8,8 +8,6 @@ import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../core/localization/app_localizations.dart';
-import '../../core/services/business_revision_service.dart';
-import '../../core/repositories/business_repositories.dart';
 import '../../core/shortcuts/app_shortcuts.dart';
 import '../../core/services/barcode_feedback_service.dart';
 import '../../core/services/page_timing_scope.dart';
@@ -29,8 +27,6 @@ import '../../models/sale_summary.dart';
 import '../../models/user_role.dart';
 import '../../widgets/app_section_header.dart';
 import '../../widgets/empty_state_card.dart';
-
-// ignore_for_file: use_build_context_synchronously
 import '../../widgets/page_data_load_indicator.dart';
 import '../barcode/barcode_scanner_page.dart';
 
@@ -106,8 +102,6 @@ class _SalesPageState extends State<SalesPage> {
   int _cashShiftRefreshKey = 0;
   int? _selectedCartIndex;
   int? _pendingDeleteCartIndex;
-  List<Product> _catalogProducts = <Product>[];
-  List<Customer> _customerCatalog = <Customer>[];
   final RevisionKeyCache<List<Product>> _visibleProductsCache =
       RevisionKeyCache<List<Product>>();
   final RevisionKeyCache<List<Product>> _activeProductsCache =
@@ -134,7 +128,7 @@ class _SalesPageState extends State<SalesPage> {
 
   int _currentStoreUiRevision() {
     return Object.hashAll(<Object?>[
-      BusinessRevisionService.instance.salesPageRevision,
+      widget.store.salesPageRevision,
       widget.store.canViewSales,
       widget.store.canSell,
       widget.store.canManageDeliveryNotes,
@@ -157,7 +151,7 @@ class _SalesPageState extends State<SalesPage> {
     _storeUiRevision = _currentStoreUiRevision();
     _loadQuickProductPages();
     _loadHeldSaleCarts();
-    _dataFuture = _loadSalesPageData();
+    _dataFuture = widget.store.ensureSalesPageDataLoaded();
     HardwareKeyboard.instance.addHandler(_handleSaleHardwareShortcutKey);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _manualBarcodeInput) return;
@@ -184,7 +178,7 @@ class _SalesPageState extends State<SalesPage> {
       _invoiceDetailsFutureById.clear();
       _expandedInvoiceIds.clear();
       _resetProductSearchReveal();
-      _dataFuture = _loadSalesPageData();
+      _dataFuture = widget.store.ensureSalesPageDataLoaded();
       _storeUiRevision = _currentStoreUiRevision();
     }
   }
@@ -207,31 +201,6 @@ class _SalesPageState extends State<SalesPage> {
     _cashReceivedFocusNode.dispose();
     _scannerController.dispose();
     super.dispose();
-  }
-
-  Future<void> _loadSalesPageData() async {
-    final productsPage = await ProductRepository.queryPage(
-      limit: 1000,
-      activeOnly: true,
-    );
-    final customersPage = await CustomerRepository.queryPage(
-      limit: 500,
-      includeWalkIn: true,
-    );
-    if (!mounted) return;
-    setState(() {
-      _catalogProducts = productsPage?.items ?? const <Product>[];
-      _customerCatalog = <Customer>[
-        widget.store.walkInCustomer,
-        ...?customersPage?.items
-            .where((item) => item.id != AppStore.walkInCustomerId),
-      ];
-      _visibleProductsCache.invalidate();
-      _activeProductsCache.invalidate();
-      _productSearchIndexCache.invalidate();
-      _barcodeLookupCache.invalidate();
-      _invoiceSearchIndexCache.invalidate();
-    });
   }
 
   double get _discount {
@@ -258,8 +227,8 @@ class _SalesPageState extends State<SalesPage> {
       _cart.fold<double>(0, (sum, item) => sum + item.quantity);
 
   bool get _isWalkInCustomer =>
-      _selectedCustomerId.trim().isEmpty ||
-      _selectedCustomerId.trim() == AppStore.walkInCustomerId;
+      widget.store.sanitizeSelectedCustomerId(_selectedCustomerId) ==
+      AppStore.walkInCustomerId;
   bool get _isCashPayment => _paymentMethod == 'Cash';
   bool get _isCreditPayment => _paymentMethod == 'Credit';
   bool get _showsCashReceived => !_isCashPayment;
@@ -343,11 +312,11 @@ class _SalesPageState extends State<SalesPage> {
 
   Map<String, String> _productSearchIndex() {
     return _productSearchIndexCache.getOrCompute(
-      BusinessRevisionService.instance.productsRevision,
+      widget.store.productsRevision,
       'product_search_index',
       () {
         final index = <String, String>{};
-        for (final product in _catalogProducts) {
+        for (final product in widget.store.products) {
           final buffer = StringBuffer()
             ..write(product.name)
             ..write(' ')
@@ -388,10 +357,9 @@ class _SalesPageState extends State<SalesPage> {
   }
 
   Map<String, _BarcodeProductMatch> _barcodeLookup() {
-    return _barcodeLookupCache.getOrCompute(
-        BusinessRevisionService.instance.productsRevision, () {
+    return _barcodeLookupCache.getOrCompute(widget.store.productsRevision, () {
       final lookup = <String, _BarcodeProductMatch>{};
-      for (final product in _catalogProducts) {
+      for (final product in widget.store.products) {
         if (!product.isActive || product.isDeleted) continue;
         final saleUnits = product.effectiveSaleUnits;
         final defaultUnit = saleUnits.first;
@@ -427,7 +395,7 @@ class _SalesPageState extends State<SalesPage> {
     if (normalized.isEmpty) {
       return fallbackProducts;
     }
-    final sqlite = await ProductRepository.queryPage(
+    final sqlite = await LocalDatabaseService.queryProductsFromSqlite(
       query: normalized,
       limit: limit,
       activeOnly: true,
@@ -451,13 +419,13 @@ class _SalesPageState extends State<SalesPage> {
   List<Product> _visibleProducts() {
     final q = _search.trim().toLowerCase();
     return _visibleProductsCache.getOrCompute(
-      BusinessRevisionService.instance.productsRevision,
+      widget.store.productsRevision,
       q,
       () {
         final activeProducts = _activeProductsCache.getOrCompute(
-          BusinessRevisionService.instance.productsRevision,
+          widget.store.productsRevision,
           'active_products',
-          () => _catalogProducts
+          () => widget.store.products
               .where((product) => product.isActive && !product.isDeleted)
               .toList(growable: false),
         );
@@ -714,8 +682,7 @@ class _SalesPageState extends State<SalesPage> {
   }
 
   void _setSelectedCustomerId(String? value) {
-    final normalized = value?.trim() ?? '';
-    final id = normalized.isEmpty ? AppStore.walkInCustomerId : normalized;
+    final id = widget.store.sanitizeSelectedCustomerId(value);
     setState(() {
       _selectedCustomerId = id;
       if (id == AppStore.walkInCustomerId && _paymentMethod == 'Credit') {
@@ -777,10 +744,8 @@ class _SalesPageState extends State<SalesPage> {
   }
 
   Customer _selectedCustomer() {
-    final id = _selectedCustomerId.trim().isEmpty
-        ? AppStore.walkInCustomerId
-        : _selectedCustomerId.trim();
-    return _customerCatalog.firstWhere(
+    final id = widget.store.sanitizeSelectedCustomerId(_selectedCustomerId);
+    return widget.store.customers.firstWhere(
       (customer) => customer.id == id,
       orElse: () => widget.store.walkInCustomer,
     );
@@ -799,7 +764,10 @@ class _SalesPageState extends State<SalesPage> {
     final normalized = query.trim().toLowerCase();
     final seen = <String>{};
     final customers = <Customer>[];
-    for (final customer in _customerCatalog) {
+    for (final customer in [
+      widget.store.walkInCustomer,
+      ...widget.store.customers
+    ]) {
       if (!seen.add(customer.id)) continue;
       if (normalized.isEmpty ||
           customer.name.toLowerCase().contains(normalized) ||
@@ -824,7 +792,7 @@ class _SalesPageState extends State<SalesPage> {
         Expanded(
           child: RawAutocomplete<Customer>(
             key: ValueKey(
-                'sale_customer_${_selectedCustomerId}_${BusinessRevisionService.instance.customersRevision}'),
+                'sale_customer_${_selectedCustomerId}_${widget.store.customersRevision}'),
             initialValue: TextEditingValue(
                 text: _customerSearchText(_selectedCustomer())),
             displayStringForOption: _customerSearchText,
@@ -1071,7 +1039,7 @@ class _SalesPageState extends State<SalesPage> {
       if (!context.mounted) return null;
       final messenger = ScaffoldMessenger.of(context);
       final createdMessage = tr.text('customer_created_selected');
-      await CustomerRepository.addOrUpdateCustomer(widget.store, customer);
+      await widget.store.addOrUpdateCustomer(customer);
       if (!context.mounted) return null;
       messenger.showSnackBar(SnackBar(content: Text(createdMessage)));
       return customer.id;
@@ -1430,8 +1398,8 @@ class _SalesPageState extends State<SalesPage> {
         .where((item) => item.id != session.referenceId)
         .toList(growable: false);
     final activeUser = widget.store.activeUser;
-    final handoverUsers = (await UserRepository.listActive())
-        .where((user) => user.id != (activeUser?.id ?? ''))
+    final handoverUsers = widget.store.users
+        .where((user) => user.isActive && user.id != (activeUser?.id ?? ''))
         .toList(growable: false);
     String closeMode = 'keep_drawer';
     String transferToId =
@@ -2153,27 +2121,9 @@ class _SalesPageState extends State<SalesPage> {
   }
 
   Product? _productById(String id) {
-    final cleanId = id.trim();
-    if (cleanId.isEmpty) return null;
-    for (final product in _catalogProducts) {
-      if (product.id == cleanId && product.isActive) {
-        return product;
-      }
-    }
-    return null;
-  }
-
-  double _defaultProductUsdPrice(Product product, {String? unitId}) {
-    final cleanUnitId = unitId?.trim() ?? '';
-    if (cleanUnitId.isEmpty || cleanUnitId == 'base') {
-      return product.price;
-    }
-    for (final unit in product.effectiveSaleUnits) {
-      if (unit.id == cleanUnitId) {
-        return unit.price;
-      }
-    }
-    return product.price;
+    final product = widget.store.productById(id);
+    if (product == null || !product.isActive) return null;
+    return product;
   }
 
   void _addQuickPage() {
@@ -2287,9 +2237,9 @@ class _SalesPageState extends State<SalesPage> {
     if (slotIndex < 0 || slotIndex >= page.slots.length) return;
     final tr = AppLocalizations.of(context);
     final products = _activeProductsCache.getOrCompute(
-      BusinessRevisionService.instance.productsRevision,
+      widget.store.productsRevision,
       'active_products',
-      () => _catalogProducts
+      () => widget.store.products
           .where((product) => product.isActive && !product.isDeleted)
           .toList(growable: false),
     );
@@ -2397,7 +2347,8 @@ class _SalesPageState extends State<SalesPage> {
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis),
                                 trailing: Text(formatUsdReferenceAmount(
-                                    _defaultProductUsdPrice(product),
+                                    widget.store
+                                        .defaultProductUsdPrice(product),
                                     widget.store.storeProfile)),
                                 onTap: () {
                                   setSheetState(() {
@@ -2745,7 +2696,7 @@ class _SalesPageState extends State<SalesPage> {
     final restored = <_DraftSaleItem>[];
     final missingNames = <String>[];
     for (final item in heldCart.items) {
-      final product = _productById(item.productId);
+      final product = widget.store.productById(item.productId);
       if (product == null || !product.isActive) {
         missingNames.add(item.productName);
         continue;
@@ -2761,12 +2712,10 @@ class _SalesPageState extends State<SalesPage> {
       restored.add(_DraftSaleItem(
           product: product,
           quantity: item.quantity,
-            saleUnit: restoredUnit.copyWith(
-              price: _defaultProductUsdPrice(
-                product,
-                unitId: restoredUnit.id,
-              ),
-            )));
+          saleUnit: restoredUnit.copyWith(
+            price: widget.store
+                .defaultProductUsdPrice(product, unitId: restoredUnit.id),
+          )));
     }
     if (restored.isEmpty) {
       if (!mounted) return;
@@ -3414,7 +3363,7 @@ class _SalesPageState extends State<SalesPage> {
                 child: _buildInvoicesPanelFromSales(
                   sheetContext,
                   tr,
-                  const <Sale>[],
+                  widget.store.sales,
                   onSearchChanged: resetSearchState,
                 ),
               );
@@ -3459,7 +3408,7 @@ class _SalesPageState extends State<SalesPage> {
                   child: _buildInvoicesPanelFromSales(
                     sheetContext,
                     tr,
-                    const <Sale>[],
+                    widget.store.sales,
                     onSearchChanged: resetSearchState,
                   ),
                 );
@@ -3473,11 +3422,11 @@ class _SalesPageState extends State<SalesPage> {
 
   Future<_SalesQueryResult?> _queryInvoicesFromSqlite() async {
     final query = _invoiceSearchController.text.trim().toLowerCase();
-    final key = '${BusinessRevisionService.instance.salesRevision}|$_visibleInvoiceCount|$query';
+    final key = '${widget.store.salesRevision}|$_visibleInvoiceCount|$query';
     if (_salesQueryFuture == null || _salesQueryFutureKey != key) {
       _salesQueryFutureKey = key;
       _salesQueryFuture = () async {
-        final page = await SaleRepository.querySummaryPage(
+        final page = await LocalDatabaseService.querySaleSummariesFromSqlite(
           query: query,
           limit: _visibleInvoiceCount,
         );
@@ -3609,6 +3558,9 @@ class _SalesPageState extends State<SalesPage> {
                                   ),
                                   OutlinedButton.icon(
                                     onPressed: (!sale.isCancelled &&
+                                            widget.store.deliveryNoteForSale(
+                                                    sale.id) ==
+                                                null &&
                                             widget.store.canManageDeliveryNotes)
                                         ? () =>
                                             _createDeliveryNote(context, sale)
@@ -3849,6 +3801,7 @@ class _SalesPageState extends State<SalesPage> {
               ),
               OutlinedButton.icon(
                 onPressed: (!sale.isCancelled &&
+                        widget.store.deliveryNoteForSale(sale.id) == null &&
                         widget.store.canManageDeliveryNotes)
                     ? () => _createDeliveryNote(context, sale)
                     : null,
@@ -3871,7 +3824,7 @@ class _SalesPageState extends State<SalesPage> {
 
   Map<String, String> _invoiceSearchIndex(List<Sale> sales) {
     return _invoiceSearchIndexCache.getOrCompute(
-      BusinessRevisionService.instance.salesRevision,
+      widget.store.salesRevision,
       'recent_invoices_search_index',
       () {
         final index = <String, String>{};
@@ -4470,7 +4423,8 @@ class _SalesPageState extends State<SalesPage> {
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis),
                                   trailing: Text(formatUsdReferenceAmount(
-                                      _defaultProductUsdPrice(product),
+                                      widget.store
+                                          .defaultProductUsdPrice(product),
                                       widget.store.storeProfile)),
                                   onTap: () {
                                     Navigator.pop(sheetContext);
@@ -4664,7 +4618,7 @@ class _SalesPageState extends State<SalesPage> {
     if (!widget.store.canManageDeliveryNotes) return;
     final tr = AppLocalizations.of(context);
     try {
-      await SaleRepository.createDeliveryNoteFromSale(widget.store, sale.id);
+      await widget.store.createDeliveryNoteFromSale(sale.id);
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(tr.text('delivery_note_created'))));
@@ -4698,7 +4652,7 @@ class _SalesPageState extends State<SalesPage> {
 
     if (confirmed != true) return;
 
-    await SaleRepository.returnSale(widget.store, sale.id);
+    await widget.store.returnSale(sale.id);
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(AppLocalizations.of(context)
@@ -4722,7 +4676,8 @@ class _SalesPageState extends State<SalesPage> {
 
     final rawSelectedUnit = saleUnit ?? product.effectiveSaleUnits.first;
     final selectedUnit = rawSelectedUnit.copyWith(
-      price: _defaultProductUsdPrice(product, unitId: rawSelectedUnit.id),
+      price: widget.store
+          .defaultProductUsdPrice(product, unitId: rawSelectedUnit.id),
     );
 
     final existingIndex = _cart.indexWhere((item) =>
@@ -5014,9 +4969,8 @@ class _SalesPageState extends State<SalesPage> {
 
     late final Sale sale;
     try {
-      sale = await SaleRepository.createSale(context: 
-        widget.store,
-        customerName: _selectedCustomer().name,
+      sale = await widget.store.createSale(
+        customerName: widget.store.resolveCustomerName(_selectedCustomerId),
         customerId: _selectedCustomerId,
         discount: _discount,
         originalDiscount: double.tryParse(_discountController.text.trim()) ?? 0,

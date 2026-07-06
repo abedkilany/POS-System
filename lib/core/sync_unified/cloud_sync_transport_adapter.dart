@@ -315,13 +315,9 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
     try {
       final identity = _service.store.appIdentity;
       if (identity.isHost) {
-        await _service.store.syncState.compactSyncedSyncHistoryForMaintenance(
-          _service.store,
-        );
+        await _service.store.compactSyncedSyncHistoryForMaintenance();
       } else if (identity.isClient) {
-        await _service.store.syncState.compactClientSyncedSyncHistoryForMaintenance(
-          _service.store,
-        );
+        await _service.store.compactClientSyncedSyncHistoryForMaintenance();
       }
     } catch (_) {
       // Best-effort maintenance: never fail a successful sync because local

@@ -8,7 +8,6 @@ import '../../core/localization/app_localizations.dart';
 import '../../core/services/startup_timing_service.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../core/utils/responsive.dart';
-import '../../core/repositories/business_repositories.dart';
 import '../../data/app_store.dart';
 import '../../widgets/page_data_load_indicator.dart';
 import '../accounting/accounting_page.dart';
@@ -32,8 +31,6 @@ class DashboardPage extends StatefulWidget {
 class _DashboardPageState extends State<DashboardPage> {
   static const DashboardSnapshotService _service = DashboardSnapshotService();
   DashboardState? _state;
-  int _productCount = 0;
-  int _customerCount = 0;
   bool _refreshInProgress = false;
   bool _firstReadyMarked = false;
   bool _suppressStartupRefresh = true;
@@ -125,17 +122,10 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Future<void> _refreshSnapshot() async {
     try {
-      final results = await Future.wait<dynamic>([
-        _service.buildState(widget.store),
-        ProductRepository.countAll(),
-        CustomerRepository.countAll(),
-      ]);
-      final state = results[0] as DashboardState;
+      final state = await _service.buildState(widget.store);
       if (!mounted) return;
       setState(() {
         _state = state;
-        _productCount = (results[1] as int?) ?? 0;
-        _customerCount = (results[2] as int?) ?? 0;
       });
       if (!_firstReadyMarked) {
         _firstReadyMarked = true;
@@ -491,13 +481,13 @@ class _DashboardPageState extends State<DashboardPage> {
               ),
               _SystemStatusData(
                 title: tr.text('products'),
-                value: '$_productCount',
+                value: '${widget.store.allProductsForDiagnostics.length}',
                 icon: Icons.inventory_2_outlined,
                 color: const Color(0xFF2563EB),
               ),
               _SystemStatusData(
                 title: tr.text('customers'),
-                value: '$_customerCount',
+                value: '${widget.store.allCustomersForDiagnostics.length}',
                 icon: Icons.people_alt_outlined,
                 color: const Color(0xFF16A34A),
               ),

@@ -348,11 +348,8 @@ void main() {
       expect(result.syncDeferred, isTrue);
       expect(result.message, contains('paused'));
       expect(
-        await pendingStore.syncState.outstandingSyncQueueCountForTarget(
-          pendingStore,
-          'cloud_host',
-        ),
-        greaterThan(0),
+        pendingStore.hasOutstandingSyncWorkForTarget('cloud_host'),
+        isTrue,
       );
       expect(pendingStore.syncQueue.single.status, 'pending');
     });
@@ -379,12 +376,7 @@ void main() {
       expect(service.pullCallCount, 1);
       expect(service.rebuildCallCount, 0);
       expect(
-        await pendingStore.syncState.outstandingSyncQueueCountForTarget(
-          pendingStore,
-          'cloud_host',
-        ),
-        greaterThan(0),
-      );
+          pendingStore.hasOutstandingSyncWorkForTarget('cloud_host'), isTrue);
       expect(pendingStore.syncQueue.single.status, 'pending');
     });
 
