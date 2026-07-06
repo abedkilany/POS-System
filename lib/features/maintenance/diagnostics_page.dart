@@ -250,6 +250,156 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
     });
   }
 
+  Future<void> _copyStartupTimingReport() async {
+    final report = StartupTimingService.buildTextReport();
+    await Clipboard.setData(ClipboardData(text: report));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Startup timing report copied.')),
+    );
+  }
+
+  Future<void> _saveStartupTimingReport() async {
+    final savedPath = await StartupTimingService.saveTextReport();
+    if (!mounted) return;
+    if (savedPath == null || savedPath.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Startup timing report was not saved.')),
+      );
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Startup timing report saved: $savedPath')),
+    );
+  }
+
+  String _formatMs(num value) {
+    final ms = value.toDouble();
+    if (ms < 1000) {
+      return '${ms.toStringAsFixed(ms == ms.truncateToDouble() ? 0 : 1)} ms';
+    }
+    final seconds = ms / 1000;
+    return '${seconds.toStringAsFixed(seconds < 10 ? 2 : 1)} s';
+  }
+
+  Widget _buildStartupTimingCard() {
+    final records = StartupTimingService.snapshot();
+    final totalElapsed =
+        StartupTimingService.snapshotJson()['totalElapsedMs'] ?? 0;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.timer_outlined),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Startup timing',
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    records.isEmpty
+                        ? 'No startup timing data captured yet.'
+                        : '${records.length} timing records captured. Total: ${_formatMs(totalElapsed)}',
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: _copyStartupTimingReport,
+                  icon: const Icon(Icons.copy, size: 18),
+                  label: const Text('Copy'),
+                ),
+                const SizedBox(width: 8),
+                TextButton.icon(
+                  onPressed: _saveStartupTimingReport,
+                  icon: const Icon(Icons.save_outlined, size: 18),
+                  label: const Text('Save'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (records.isEmpty)
+              const Text(
+                  'Open the app again and this section will show the startup trace.')
+            else
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 260),
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: records.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 8),
+                  itemBuilder: (context, index) {
+                    final record = records[index];
+                    return Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: record.failed
+                              ? Theme.of(context)
+                                  .colorScheme
+                                  .error
+                                  .withValues(alpha: 0.35)
+                              : Theme.of(context).dividerColor,
+                        ),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            record.failed
+                                ? Icons.error_outline
+                                : Icons.timelapse_outlined,
+                            color: record.failed
+                                ? Theme.of(context).colorScheme.error
+                                : Theme.of(context).colorScheme.primary,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  record.label,
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w700),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'category=${record.category} | start=${_formatMs(record.startedAtMs)} | end=${_formatMs(record.endedAtMs)} | duration=${_formatMs(record.durationMs)}${record.failed ? ' | failed' : ''}',
+                                ),
+                                if (record.details.isNotEmpty) ...[
+                                  const SizedBox(height: 4),
+                                  SelectableText(record.details),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
@@ -375,6 +525,8 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
               ],
             ),
           ),
+          const SizedBox(height: 12),
+          _buildStartupTimingCard(),
           if (_loading) const LinearProgressIndicator(),
           Expanded(
             child: TabBarView(

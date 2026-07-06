@@ -1,10 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../core/services/backup_download_service.dart';
 import '../../core/services/windows_release_catalog.dart';
-import '../../core/services/startup_timing_service.dart';
 import '../../core/services/page_timing_scope.dart';
 import '../../data/app_store.dart';
 import '../../core/localization/app_localizations.dart';
@@ -194,29 +192,6 @@ class _MaintenancePageState extends State<MaintenancePage> {
     }
   }
 
-  Future<void> _copyStartupTimingReport() async {
-    final report = StartupTimingService.buildTextReport();
-    await Clipboard.setData(ClipboardData(text: report));
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Startup timing report copied.')),
-    );
-  }
-
-  Future<void> _saveStartupTimingReport() async {
-    final savedPath = await StartupTimingService.saveTextReport();
-    if (!mounted) return;
-    if (savedPath == null || savedPath.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Startup timing report was not saved.')),
-      );
-      return;
-    }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Startup timing report saved: $savedPath')),
-    );
-  }
-
   Future<void> _confirmAndRunRepair(MaintenanceRepairAction action) async {
     final tr = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
@@ -339,9 +314,6 @@ class _MaintenancePageState extends State<MaintenancePage> {
           ),
           const SizedBox(height: 16),
           _buildMaintenanceActionsCard(tr, summary, availableRepairActions),
-          const SizedBox(height: 16),
-          _buildStartupTimingCard(tr),
-          const SizedBox(height: 16),
           const SizedBox(height: 16),
           if (_loading)
             const LinearProgressIndicator()
@@ -558,106 +530,6 @@ class _MaintenancePageState extends State<MaintenancePage> {
         ),
       ),
     );
-  }
-
-  Widget _buildStartupTimingCard(AppLocalizations tr) {
-    final records = StartupTimingService.snapshot();
-    final totalElapsed =
-        StartupTimingService.snapshotJson()['totalElapsedMs'] ?? 0;
-    return _SectionCard(
-      title: 'Startup timing',
-      icon: Icons.timer_outlined,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                records.isEmpty
-                    ? 'No startup timing data captured yet.'
-                    : '${records.length} timing records captured. Total: ${_formatMs(totalElapsed)}',
-              ),
-            ),
-            TextButton.icon(
-              onPressed: _copyStartupTimingReport,
-              icon: const Icon(Icons.copy, size: 18),
-              label: const Text('Copy'),
-            ),
-            const SizedBox(width: 8),
-            TextButton.icon(
-              onPressed: _saveStartupTimingReport,
-              icon: const Icon(Icons.save_outlined, size: 18),
-              label: const Text('Save'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        if (records.isEmpty)
-          const Text(
-              'Open the app again and this section will show the startup trace.')
-        else
-          ...records.map(
-            (record) => Padding(
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: record.failed
-                        ? Theme.of(context)
-                            .colorScheme
-                            .error
-                            .withValues(alpha: 0.35)
-                        : Theme.of(context).dividerColor,
-                  ),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(
-                      record.failed
-                          ? Icons.error_outline
-                          : Icons.timelapse_outlined,
-                      color: record.failed
-                          ? Theme.of(context).colorScheme.error
-                          : Theme.of(context).colorScheme.primary,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            record.label,
-                            style: const TextStyle(fontWeight: FontWeight.w700),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'category=${record.category} | start=${_formatMs(record.startedAtMs)} | end=${_formatMs(record.endedAtMs)} | duration=${_formatMs(record.durationMs)}${record.failed ? ' | failed' : ''}',
-                          ),
-                          if (record.details.isNotEmpty) ...[
-                            const SizedBox(height: 4),
-                            SelectableText(record.details),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-
-  String _formatMs(num value) {
-    final ms = value.toDouble();
-    if (ms < 1000) {
-      return '${ms.toStringAsFixed(ms == ms.truncateToDouble() ? 0 : 1)} ms';
-    }
-    final seconds = ms / 1000;
-    return '${seconds.toStringAsFixed(seconds < 10 ? 2 : 1)} s';
   }
 }
 
