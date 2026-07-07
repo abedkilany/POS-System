@@ -25,7 +25,6 @@ import 'data/app_store.dart';
 import 'features/accounting/accounting_snapshot_service.dart';
 import 'features/accounting/accounting_page.dart';
 import 'features/customers/customers_page.dart';
-import 'features/dashboard/dashboard_snapshot_service.dart';
 import 'features/dashboard/dashboard_page.dart';
 import 'features/database/database_page.dart';
 import 'features/expenses/expenses_page.dart';
@@ -180,7 +179,6 @@ class _VentioAppState extends State<VentioApp> {
       'ventio_app.prime_heavy_caches',
       () async {
         await Future.wait(<Future<void>>[
-          DashboardSnapshotService().prewarmSummary(_store).catchError((_) {}),
           AccountingSnapshotService().prewarm(_store).catchError((_) {}),
           ReportsSnapshotService().prewarm(_store).catchError((_) {}),
         ]);

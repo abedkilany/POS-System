@@ -49,6 +49,11 @@ class VentioDriftDatabase extends GeneratedDatabase {
       );
     ''');
 
+    final foundationVersion = await _metaValue('sqlite_foundation_version');
+    if (foundationVersion == '7') {
+      return;
+    }
+
     await customStatement('''
       CREATE TABLE IF NOT EXISTS migration_runs (
         id TEXT PRIMARY KEY NOT NULL,

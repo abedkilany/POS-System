@@ -52,6 +52,15 @@ class AccountingSnapshotService {
     AppStore store,
     DateTime reference,
   ) async {
+    if (store.isHeavyDataLoaded) {
+      final computed = await StartupTimingService.measure(
+        'accounting.snapshot_memory_metrics',
+        () async => _computeSnapshotFromStore(store, reference),
+        category: 'accounting',
+      );
+      _summaryCache[_cacheKey(store, reference)] = computed;
+      return computed;
+    }
     if (LocalDatabaseService.canQueryBusinessSqlite) {
       try {
         final sqliteMetrics = await StartupTimingService.measure(
@@ -88,6 +97,71 @@ class AccountingSnapshotService {
     );
     return _RawAccountingData(accountTransactionsJson: raw ?? '[]');
   }
+}
+
+Map<String, Object?> _computeSnapshotFromStore(
+  AppStore store,
+  DateTime reference,
+) {
+  final today = DateTime(reference.year, reference.month, reference.day);
+  final transactions = store.accountTransactions;
+
+  final accountBalances = <String, double>{};
+  var customerReceivables = 0.0;
+  var customerCredits = 0.0;
+  var supplierPayables = 0.0;
+  var supplierAdvances = 0.0;
+  var todayCashIn = 0.0;
+  var todayCashOut = 0.0;
+
+  for (final txn in transactions) {
+    if (txn.isDeleted) continue;
+    final type = txn.accountType.trim().toLowerCase();
+    final accountId = txn.accountId.trim();
+    if (accountId.isEmpty) continue;
+    if (type != 'customer' && type != 'supplier') continue;
+
+    final key = '$type|$accountId';
+    accountBalances[key] = (accountBalances[key] ?? 0) + txn.signedAmount;
+
+    final date = txn.date.toLocal();
+    if (date.year == today.year &&
+        date.month == today.month &&
+        date.day == today.day) {
+      if (_isCashIn(txn)) {
+        todayCashIn += _cashAmount(txn);
+      }
+      if (_isCashOut(txn)) {
+        todayCashOut += _cashAmount(txn);
+      }
+    }
+  }
+
+  for (final entry in accountBalances.entries) {
+    if (entry.key.startsWith('customer|')) {
+      if (entry.value > 0) {
+        customerReceivables += entry.value;
+      } else if (entry.value < 0) {
+        customerCredits += entry.value.abs();
+      }
+      continue;
+    }
+    if (entry.value < 0) {
+      supplierPayables += entry.value.abs();
+    } else if (entry.value > 0) {
+      supplierAdvances += entry.value;
+    }
+  }
+
+  return <String, Object?>{
+    'reference': reference.toIso8601String(),
+    'customerReceivables': customerReceivables,
+    'customerCredits': customerCredits,
+    'supplierPayables': supplierPayables,
+    'supplierAdvances': supplierAdvances,
+    'todayCashIn': todayCashIn,
+    'todayCashOut': todayCashOut,
+  };
 }
 
 Map<String, Object?> _computeSnapshot(Map<String, Object?> input) {
