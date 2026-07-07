@@ -239,6 +239,87 @@ class StartupTimingService {
     }
   }
 
+  static StartupTimingRecord? recordFor(String label) {
+    for (final record in _records.reversed) {
+      if (record.label == label) return record;
+    }
+    return null;
+  }
+
+  static List<StartupTimingRecord> recordsForCategory(String category) {
+    return _records
+        .where((record) => record.category == category)
+        .toList(growable: false);
+  }
+
+  static Map<String, int> categoryTotalsMs() {
+    final totals = <String, int>{};
+    for (final record in _records) {
+      totals[record.category] =
+          (totals[record.category] ?? 0) + record.durationMs;
+    }
+    return totals;
+  }
+
+  static int? startupReadyMs() {
+    final readyRecord = recordFor('app_store.ready');
+    final firstFrameRecord = recordFor('ventio_app_first_frame_painted');
+    final readyAtMs = readyRecord?.endedAtMs;
+    final firstFrameAtMs = firstFrameRecord?.endedAtMs;
+    if (readyAtMs == null && firstFrameAtMs == null) return null;
+    if (readyAtMs == null) return firstFrameAtMs;
+    if (firstFrameAtMs == null) return readyAtMs;
+    return readyAtMs > firstFrameAtMs ? readyAtMs : firstFrameAtMs;
+  }
+
+  static Map<String, dynamic> startupSummaryJson() {
+    final readyRecord = recordFor('app_store.ready');
+    final firstFrameRecord = recordFor('ventio_app_first_frame_painted');
+    final appInitRecord = recordFor('ventio_app.initialize');
+    final primeRecord = recordFor('ventio_app.prime_heavy_caches');
+    final startupModeRecord = recordFor('app_store.startup_mode');
+    return <String, dynamic>{
+      'sessionStartedAtUtc': sessionStartedAtUtc.toIso8601String(),
+      'totalElapsedMs': _nowMs(),
+      'startupReadyMs': startupReadyMs(),
+      'startupMode': startupModeRecord?.details ?? '',
+      'appInitializeMs': appInitRecord?.durationMs,
+      'storeReadyAtMs': readyRecord?.endedAtMs,
+      'firstFrameAtMs': firstFrameRecord?.endedAtMs,
+      'primeHeavyCachesMs': primeRecord?.durationMs,
+      'recordCount': _records.length,
+      'categoryTotalsMs': categoryTotalsMs(),
+      'interestingRecords': <String, dynamic>{
+        'localDatabaseInitialize':
+            recordFor('local_database.initialize')?.toJson(),
+        'sqliteBootstrap':
+            recordFor('local_database.sqlite_bootstrap')?.toJson(),
+        'sqliteRestoreOrValidate':
+            recordFor('sqlite_restore_or_validate')?.toJson(),
+        'sqliteFreshInitialize': recordFor('sqlite_fresh_initialize')?.toJson(),
+        'appStoreLegacyStartupLoad':
+            recordFor('app_store.legacy_startup_load')?.toJson(),
+        'appStoreFastStartupLoad':
+            recordFor('app_store.fast_startup_load')?.toJson(),
+        'appStoreCoreDeferredStartup':
+            recordFor('app_store.core_deferred_startup')?.toJson(),
+        'appStoreLedgerDeferredStartup':
+            recordFor('app_store.ledger_deferred_startup')?.toJson(),
+        'appStoreSyncDeferredStartup':
+            recordFor('app_store.sync_deferred_startup')?.toJson(),
+        'appStorePostStartupCacheWarm':
+            recordFor('app_store.post_startup_cache_warm')?.toJson(),
+        'reportsPrewarm': recordFor('reports.snapshot_sql_summary')?.toJson() ??
+            recordFor('reports.snapshot_raw_load')?.toJson(),
+        'accountingPrewarm':
+            recordFor('accounting.snapshot_sql_metrics')?.toJson() ??
+                recordFor('accounting.snapshot_raw_load')?.toJson(),
+        'ventioAppFirstFrame': firstFrameRecord?.toJson(),
+        'appStoreReady': readyRecord?.toJson(),
+      },
+    };
+  }
+
   static List<StartupTimingRecord> snapshot() =>
       List<StartupTimingRecord>.unmodifiable(_records);
 
@@ -247,8 +328,9 @@ class StartupTimingService {
         'totalElapsedMs': _nowMs(),
         'records':
             _records.map((item) => item.toJson()).toList(growable: false),
-        'pageTimings':
-            _pageRecords.values.map((item) => item.toJson()).toList(growable: false),
+        'pageTimings': _pageRecords.values
+            .map((item) => item.toJson())
+            .toList(growable: false),
       };
 
   static String buildPageReport() {

@@ -577,6 +577,8 @@ class AppStore extends ChangeNotifier {
     return _syncDataLoadFuture!;
   }
 
+  Future<void> ensureSyncDataLoaded() => _requestSyncDataLoad();
+
   Future<void> _loadDeferredGroup<T>({
     required String key,
     required Future<List<T>> Function() loader,
@@ -2927,6 +2929,11 @@ class AppStore extends ChangeNotifier {
             0;
     final canUseFastStartup =
         LocalDatabaseService.isSqliteAuthoritative && schemaVersion >= 17;
+    StartupTimingService.event(
+      'app_store.startup_mode',
+      category: 'app_store',
+      details: canUseFastStartup ? 'fast' : 'legacy',
+    );
 
     if (canUseFastStartup) {
       await StartupTimingService.measure(
@@ -2973,93 +2980,99 @@ class AppStore extends ChangeNotifier {
 
       _isReady = true;
       notifyListeners();
-      unawaited(_requestSyncDataLoad());
       StartupTimingService.event('app_store.ready', category: 'app_store');
       return;
     }
 
-    _products
-      ..clear()
-      ..addAll(await _loadProductsForStartup());
-    _customers
-      ..clear()
-      ..addAll(await _loadCustomersForStartup());
-    _sales
-      ..clear()
-      ..addAll(await _loadSalesForStartup());
-    _saleQuotations
-      ..clear()
-      ..addAll(await _loadSaleQuotationsForStartup());
-    _deliveryNotes
-      ..clear()
-      ..addAll(await _loadDeliveryNotesForStartup());
-    _billsOfMaterials
-      ..clear()
-      ..addAll(await _loadBillsOfMaterialsForStartup());
-    _manufacturingOrders
-      ..clear()
-      ..addAll(await _loadManufacturingOrdersForStartup());
-    _suppliers
-      ..clear()
-      ..addAll(await _loadSuppliersForStartup());
-    _supplierProductPrices
-      ..clear()
-      ..addAll(await _loadSupplierProductPricesForStartup());
-    _categories
-      ..clear()
-      ..addAll(await _loadCatalogItemsForStartup(_categoriesKey));
-    _brands
-      ..clear()
-      ..addAll(await _loadCatalogItemsForStartup(_brandsKey));
-    _units
-      ..clear()
-      ..addAll(await _loadCatalogItemsForStartup(_unitsKey));
-    _expenses
-      ..clear()
-      ..addAll(await _loadExpensesForStartup());
-    _purchases
-      ..clear()
-      ..addAll(await _loadPurchasesForStartup());
-    _stockMovements
-      ..clear()
-      ..addAll(_loadStockMovements());
-    _inventoryCounts
-      ..clear()
-      ..addAll(await _loadInventoryCountsForStartup());
-    _warehouses
-      ..clear()
-      ..addAll(await _loadWarehousesForStartup());
-    _ensureDefaultWarehouse();
-    _storeProfile = _loadStoreProfile();
-    AccountingService.configureMoneyPolicy(_storeProfile);
-    _invoiceCounter = _loadInvoiceCounter();
-    _purchaseCounter = _loadPurchaseCounter();
-    _currentRole = LocalDatabaseService.getString(_currentRoleKey) ?? 'admin';
-    _roles
-      ..clear()
-      ..addAll(_loadRoles());
-    _users
-      ..clear()
-      ..addAll(_loadUsers());
-    await _ensureDefaultAdminUser();
-    _rememberLogin =
-        LocalDatabaseService.getString(_rememberLoginKey) == 'true';
-    _restoreActiveUser();
-    _appIdentity = _loadOrCreateAppIdentity();
-    _syncSequence = _loadSyncSequence();
-    _normalizeCustomers();
-    _ensureCatalogDefaults();
-    _ensureDefaultPriceLists();
-    _ensureDefaultProductPriceEntries();
-    await _runDataMigrationsIfNeeded();
-    _rebuildStockMovementIndexes();
-    _rebuildPurchaseIndexes();
-    _rebuildExpenseIndexes();
-    _touchPurchasesData();
-    _touchExpensesData();
-    _heavyDataLoadCompleted = true;
-    _ledgerDataLoadCompleted = true;
-    _syncDataLoadCompleted = true;
+    await StartupTimingService.measure(
+      'app_store.legacy_startup_load',
+      () async {
+        _products
+          ..clear()
+          ..addAll(await _loadProductsForStartup());
+        _customers
+          ..clear()
+          ..addAll(await _loadCustomersForStartup());
+        _sales
+          ..clear()
+          ..addAll(await _loadSalesForStartup());
+        _saleQuotations
+          ..clear()
+          ..addAll(await _loadSaleQuotationsForStartup());
+        _deliveryNotes
+          ..clear()
+          ..addAll(await _loadDeliveryNotesForStartup());
+        _billsOfMaterials
+          ..clear()
+          ..addAll(await _loadBillsOfMaterialsForStartup());
+        _manufacturingOrders
+          ..clear()
+          ..addAll(await _loadManufacturingOrdersForStartup());
+        _suppliers
+          ..clear()
+          ..addAll(await _loadSuppliersForStartup());
+        _supplierProductPrices
+          ..clear()
+          ..addAll(await _loadSupplierProductPricesForStartup());
+        _categories
+          ..clear()
+          ..addAll(await _loadCatalogItemsForStartup(_categoriesKey));
+        _brands
+          ..clear()
+          ..addAll(await _loadCatalogItemsForStartup(_brandsKey));
+        _units
+          ..clear()
+          ..addAll(await _loadCatalogItemsForStartup(_unitsKey));
+        _expenses
+          ..clear()
+          ..addAll(await _loadExpensesForStartup());
+        _purchases
+          ..clear()
+          ..addAll(await _loadPurchasesForStartup());
+        _stockMovements
+          ..clear()
+          ..addAll(_loadStockMovements());
+        _inventoryCounts
+          ..clear()
+          ..addAll(await _loadInventoryCountsForStartup());
+        _warehouses
+          ..clear()
+          ..addAll(await _loadWarehousesForStartup());
+        _ensureDefaultWarehouse();
+        _storeProfile = _loadStoreProfile();
+        AccountingService.configureMoneyPolicy(_storeProfile);
+        _invoiceCounter = _loadInvoiceCounter();
+        _purchaseCounter = _loadPurchaseCounter();
+        _currentRole =
+            LocalDatabaseService.getString(_currentRoleKey) ?? 'admin';
+        _roles
+          ..clear()
+          ..addAll(_loadRoles());
+        _users
+          ..clear()
+          ..addAll(_loadUsers());
+        await _ensureDefaultAdminUser();
+        _rememberLogin =
+            LocalDatabaseService.getString(_rememberLoginKey) == 'true';
+        _restoreActiveUser();
+        _appIdentity = _loadOrCreateAppIdentity();
+        _syncSequence = _loadSyncSequence();
+        _normalizeCustomers();
+        _ensureCatalogDefaults();
+        _ensureDefaultPriceLists();
+        _ensureDefaultProductPriceEntries();
+        await _runDataMigrationsIfNeeded();
+        _rebuildStockMovementIndexes();
+        _rebuildPurchaseIndexes();
+        _rebuildExpenseIndexes();
+        _touchPurchasesData();
+        _touchExpensesData();
+        _heavyDataLoadCompleted = true;
+        _ledgerDataLoadCompleted = true;
+        _syncDataLoadCompleted = true;
+      },
+      category: 'app_store',
+    );
 
     _isReady = true;
     notifyListeners();
@@ -4169,7 +4182,8 @@ class AppStore extends ChangeNotifier {
     final requestId = (meta['requestId'] ?? '').toString();
     if ((sourceCommandId.isNotEmpty &&
             acceptedSourceCommandIds.contains(sourceCommandId)) ||
-        (requestId.isNotEmpty && acceptedSourceCommandIds.contains(requestId)) ||
+        (requestId.isNotEmpty &&
+            acceptedSourceCommandIds.contains(requestId)) ||
         acceptedSourceCommandIds.contains(change.id)) {
       return true;
     }
@@ -15460,7 +15474,9 @@ class AppStore extends ChangeNotifier {
         acceptedSourceCommandIds.add(storedSourceCommandId);
       }
       final storedRequestId = _syncMetaString(storedChange, 'requestId');
-      if (storedRequestId.isNotEmpty) acceptedSourceCommandIds.add(storedRequestId);
+      if (storedRequestId.isNotEmpty) {
+        acceptedSourceCommandIds.add(storedRequestId);
+      }
       changed = true;
     }
     if (changed) {

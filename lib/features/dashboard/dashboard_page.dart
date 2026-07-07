@@ -40,7 +40,10 @@ class _DashboardPageState extends State<DashboardPage> {
   void initState() {
     super.initState();
     widget.store.addListener(_handleStoreChanged);
-    _bootstrapDashboard();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _bootstrapDashboard();
+    });
   }
 
   @override
@@ -50,7 +53,10 @@ class _DashboardPageState extends State<DashboardPage> {
       oldWidget.store.removeListener(_handleStoreChanged);
       widget.store.addListener(_handleStoreChanged);
       _suppressStartupRefresh = true;
-      _bootstrapDashboard(forceRefresh: true);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _bootstrapDashboard(forceRefresh: true);
+      });
     }
   }
 

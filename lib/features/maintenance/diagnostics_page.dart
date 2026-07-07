@@ -282,10 +282,142 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
     return '${seconds.toStringAsFixed(seconds < 10 ? 2 : 1)} s';
   }
 
+  int? _asInt(Object? value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value.toString());
+  }
+
+  String _formatMsOrPending(int? value) {
+    return value == null ? 'pending' : _formatMs(value);
+  }
+
+  Widget _buildMetricChip(
+    String label,
+    String value, {
+    IconData? icon,
+  }) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: theme.dividerColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (icon != null) ...[
+                Icon(icon, size: 16, color: theme.colorScheme.primary),
+                const SizedBox(width: 6),
+              ],
+              Text(
+                label,
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: theme.textTheme.titleMedium
+                ?.copyWith(fontWeight: FontWeight.w700),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStartupRecordTile(StartupTimingRecord record) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: record.failed
+              ? theme.colorScheme.error.withValues(alpha: 0.35)
+              : theme.dividerColor,
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            record.failed ? Icons.error_outline : Icons.timelapse_outlined,
+            color: record.failed
+                ? theme.colorScheme.error
+                : theme.colorScheme.primary,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  record.label,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'category=${record.category} | start=${_formatMs(record.startedAtMs)} | end=${_formatMs(record.endedAtMs)} | duration=${_formatMs(record.durationMs)}${record.failed ? ' | failed' : ''}',
+                ),
+                if (record.details.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  SelectableText(record.details),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildStartupTimingCard() {
     final records = StartupTimingService.snapshot();
-    final totalElapsed =
-        StartupTimingService.snapshotJson()['totalElapsedMs'] ?? 0;
+    final summary = StartupTimingService.startupSummaryJson();
+    final totalElapsed = _asInt(summary['totalElapsedMs']) ?? 0;
+    final startupReadyMs = _asInt(summary['startupReadyMs']);
+    final startupMode = (summary['startupMode'] ?? '').toString();
+    final appInitializeMs = _asInt(summary['appInitializeMs']);
+    final primeHeavyCachesMs = _asInt(summary['primeHeavyCachesMs']);
+    final storeReadyAtMs = _asInt(summary['storeReadyAtMs']);
+    final firstFrameAtMs = _asInt(summary['firstFrameAtMs']);
+    final categoryTotals = Map<String, dynamic>.from(
+      summary['categoryTotalsMs'] as Map? ?? const <String, dynamic>{},
+    );
+    final interestingRecords = Map<String, dynamic>.from(
+      summary['interestingRecords'] as Map? ?? const <String, dynamic>{},
+    );
+    final groupedRecords = <String, List<StartupTimingRecord>>{};
+    for (final record in records) {
+      (groupedRecords[record.category] ??= <StartupTimingRecord>[]).add(record);
+    }
+    const categoryOrder = <String>[
+      'bootstrap',
+      'database',
+      'app_store',
+      'ui',
+      'reports',
+      'accounting',
+      'startup',
+    ];
+    final orderedCategories = <String>[
+      ...categoryOrder.where(groupedRecords.containsKey),
+      ...groupedRecords.keys.where((key) => !categoryOrder.contains(key)),
+    ];
+    final readyLabel =
+        startupReadyMs == null ? 'pending' : _formatMs(startupReadyMs);
+    final totalLabel = records.isEmpty ? '0 ms' : _formatMs(totalElapsed);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -298,7 +430,7 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    'Startup timing',
+                    'Startup performance',
                     style: Theme.of(context)
                         .textTheme
                         .titleMedium
@@ -314,7 +446,7 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
                   child: Text(
                     records.isEmpty
                         ? 'No startup timing data captured yet.'
-                        : '${records.length} timing records captured. Total: ${_formatMs(totalElapsed)}',
+                        : '${records.length} timing records captured. Total session: $totalLabel',
                   ),
                 ),
                 TextButton.icon(
@@ -331,69 +463,187 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
               ],
             ),
             const SizedBox(height: 12),
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                _buildMetricChip(
+                  'Total session',
+                  totalLabel,
+                  icon: Icons.timer_outlined,
+                ),
+                if (startupMode.isNotEmpty)
+                  _buildMetricChip(
+                    'Startup mode',
+                    startupMode,
+                    icon: Icons.layers_outlined,
+                  ),
+                _buildMetricChip(
+                  'Ready to use',
+                  readyLabel,
+                  icon: Icons.play_circle_outline,
+                ),
+                _buildMetricChip(
+                  'App init',
+                  _formatMsOrPending(appInitializeMs),
+                  icon: Icons.engineering_outlined,
+                ),
+                _buildMetricChip(
+                  'Store ready',
+                  _formatMsOrPending(storeReadyAtMs),
+                  icon: Icons.check_circle_outline,
+                ),
+                _buildMetricChip(
+                  'First frame',
+                  _formatMsOrPending(firstFrameAtMs),
+                  icon: Icons.visibility_outlined,
+                ),
+                _buildMetricChip(
+                  'Background warmup',
+                  _formatMsOrPending(primeHeavyCachesMs),
+                  icon: Icons.cloud_sync_outlined,
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (records.isNotEmpty)
+              Text(
+                'Ready to use is the later of store ready and first frame. The groups below show which startup step consumed time.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+              ),
+            const SizedBox(height: 12),
             if (records.isEmpty)
               const Text(
                   'Open the app again and this section will show the startup trace.')
-            else
+            else ...[
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  if (interestingRecords['localDatabaseInitialize'] != null)
+                    _buildMetricChip(
+                      'Local DB bootstrap',
+                      _formatMs(
+                        _asInt((interestingRecords['localDatabaseInitialize']
+                                as Map)['durationMs']) ??
+                            0,
+                      ),
+                    ),
+                  if (interestingRecords['sqliteBootstrap'] != null)
+                    _buildMetricChip(
+                      'SQLite bootstrap',
+                      _formatMs(
+                        _asInt((interestingRecords['sqliteBootstrap']
+                                as Map)['durationMs']) ??
+                            0,
+                      ),
+                    ),
+                  if (interestingRecords['appStoreLegacyStartupLoad'] != null)
+                    _buildMetricChip(
+                      'Legacy startup load',
+                      _formatMs(
+                        _asInt((interestingRecords['appStoreLegacyStartupLoad']
+                                as Map)['durationMs']) ??
+                            0,
+                      ),
+                    ),
+                  if (interestingRecords['appStoreFastStartupLoad'] != null)
+                    _buildMetricChip(
+                      'Fast startup load',
+                      _formatMs(
+                        _asInt((interestingRecords['appStoreFastStartupLoad']
+                                as Map)['durationMs']) ??
+                            0,
+                      ),
+                    ),
+                  if (interestingRecords['appStoreCoreDeferredStartup'] != null)
+                    _buildMetricChip(
+                      'Deferred core load',
+                      _formatMs(
+                        _asInt((interestingRecords[
+                                    'appStoreCoreDeferredStartup']
+                                as Map)['durationMs']) ??
+                            0,
+                      ),
+                    ),
+                  if (interestingRecords['appStoreSyncDeferredStartup'] != null)
+                    _buildMetricChip(
+                      'Sync deferred load',
+                      _formatMs(
+                        _asInt((interestingRecords[
+                                    'appStoreSyncDeferredStartup']
+                                as Map)['durationMs']) ??
+                            0,
+                      ),
+                    ),
+                  if (interestingRecords['reportsPrewarm'] != null)
+                    _buildMetricChip(
+                      'Reports prewarm',
+                      _formatMs(
+                        _asInt((interestingRecords['reportsPrewarm']
+                                as Map)['durationMs']) ??
+                            0,
+                      ),
+                    ),
+                  if (interestingRecords['accountingPrewarm'] != null)
+                    _buildMetricChip(
+                      'Accounting prewarm',
+                      _formatMs(
+                        _asInt((interestingRecords['accountingPrewarm']
+                                as Map)['durationMs']) ??
+                            0,
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
               ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 260),
+                constraints: const BoxConstraints(maxHeight: 340),
                 child: ListView.separated(
                   shrinkWrap: true,
-                  itemCount: records.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 8),
+                  itemCount: orderedCategories.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 10),
                   itemBuilder: (context, index) {
-                    final record = records[index];
-                    return Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: record.failed
-                              ? Theme.of(context)
-                                  .colorScheme
-                                  .error
-                                  .withValues(alpha: 0.35)
-                              : Theme.of(context).dividerColor,
+                    final category = orderedCategories[index];
+                    final categoryRecords =
+                        groupedRecords[category] ?? const [];
+                    final categoryTotal = _asInt(categoryTotals[category]) ?? 0;
+                    return Card(
+                      margin: EdgeInsets.zero,
+                      child: ExpansionTile(
+                        title: Text(
+                          category,
+                          style: const TextStyle(fontWeight: FontWeight.w700),
                         ),
-                      ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                        subtitle: Text(
+                          '${categoryRecords.length} steps · total ${_formatMs(categoryTotal)}',
+                        ),
+                        childrenPadding:
+                            const EdgeInsets.fromLTRB(16, 0, 16, 16),
                         children: [
-                          Icon(
-                            record.failed
-                                ? Icons.error_outline
-                                : Icons.timelapse_outlined,
-                            color: record.failed
-                                ? Theme.of(context).colorScheme.error
-                                : Theme.of(context).colorScheme.primary,
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                          if (categoryRecords.isEmpty)
+                            const Text('No timings captured in this category.')
+                          else
+                            Column(
                               children: [
-                                Text(
-                                  record.label,
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.w700),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'category=${record.category} | start=${_formatMs(record.startedAtMs)} | end=${_formatMs(record.endedAtMs)} | duration=${_formatMs(record.durationMs)}${record.failed ? ' | failed' : ''}',
-                                ),
-                                if (record.details.isNotEmpty) ...[
-                                  const SizedBox(height: 4),
-                                  SelectableText(record.details),
+                                for (var i = 0;
+                                    i < categoryRecords.length;
+                                    i += 1) ...[
+                                  _buildStartupRecordTile(categoryRecords[i]),
+                                  if (i != categoryRecords.length - 1)
+                                    const SizedBox(height: 8),
                                 ],
                               ],
                             ),
-                          ),
                         ],
                       ),
                     );
                   },
                 ),
               ),
+            ],
           ],
         ),
       ),

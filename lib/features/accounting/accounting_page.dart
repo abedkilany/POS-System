@@ -102,10 +102,29 @@ class _AccountingPageState extends State<AccountingPage>
             child: TabBarView(
               controller: _tabController,
               children: [
-                _AccountsAccountingGroup(store: widget.store, query: _query),
-                _CashAccountingGroup(store: widget.store, query: _query),
-                _ReportsAccountingGroup(store: widget.store, query: _query),
-                _SettingsAccountingGroup(store: widget.store),
+                _LazyTabPane(
+                  controller: _tabController,
+                  index: 0,
+                  builder: (_) => _AccountsAccountingGroup(
+                      store: widget.store, query: _query),
+                ),
+                _LazyTabPane(
+                  controller: _tabController,
+                  index: 1,
+                  builder: (_) =>
+                      _CashAccountingGroup(store: widget.store, query: _query),
+                ),
+                _LazyTabPane(
+                  controller: _tabController,
+                  index: 2,
+                  builder: (_) => _ReportsAccountingGroup(
+                      store: widget.store, query: _query),
+                ),
+                _LazyTabPane(
+                  controller: _tabController,
+                  index: 3,
+                  builder: (_) => _SettingsAccountingGroup(store: widget.store),
+                ),
               ],
             ),
           ),
@@ -257,40 +276,83 @@ class _CachedFuturePanelState<T> extends State<_CachedFuturePanel<T>> {
   }
 }
 
-class _AccountingSummaryStripLoader extends StatelessWidget {
+class _AccountingSummaryStripLoader extends StatefulWidget {
   const _AccountingSummaryStripLoader({required this.store});
 
   final AppStore store;
 
   @override
+  State<_AccountingSummaryStripLoader> createState() =>
+      _AccountingSummaryStripLoaderState();
+}
+
+class _AccountingSummaryStripLoaderState
+    extends State<_AccountingSummaryStripLoader> {
+  Future<Map<String, Object?>>? _future;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _load();
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant _AccountingSummaryStripLoader oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != widget.store) {
+      _future = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _load();
+      });
+    }
+  }
+
+  void _load() {
+    if (!mounted) return;
+    final now = DateTime.now().toLocal();
+    setState(() {
+      _future = _AccountingPageState._snapshotService.metricsFor(
+        widget.store,
+        now: now,
+      );
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     final now = DateTime.now().toLocal();
-    final cached =
-        _AccountingPageState._snapshotService.peekMetrics(store, now: now);
+    final cached = _AccountingPageState._snapshotService
+        .peekMetrics(widget.store, now: now);
     if (cached != null) {
       return _CompactSummaryStrip(
-        store: store,
+        store: widget.store,
         metrics: _AccountingMetrics.fromSummary(cached),
       );
     }
 
+    final future = _future;
+    if (future == null) {
+      return const _SummaryStripPlaceholder();
+    }
+
     return FutureBuilder<Map<String, Object?>>(
-      future: _AccountingPageState._snapshotService.metricsFor(
-        store,
-        now: now,
-      ),
+      future: future,
       builder: (context, snapshot) {
         final summary = snapshot.data;
         if (summary != null) {
           return _CompactSummaryStrip(
-            store: store,
+            store: widget.store,
             metrics: _AccountingMetrics.fromSummary(summary),
           );
         }
         if (snapshot.hasError) {
           return _CompactSummaryStrip(
-            store: store,
-            metrics: _AccountingMetrics.fromStore(store),
+            store: widget.store,
+            metrics: _AccountingMetrics.fromStore(widget.store),
           );
         }
         return const _SummaryStripPlaceholder();
@@ -525,16 +587,53 @@ class _AccountsAccountingGroup extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Expanded(
-            child: TabBarView(
-              children: [
-                _AccountsTab(
-                    store: store, query: query, accountType: 'customer'),
-                _AccountsTab(
-                    store: store, query: query, accountType: 'supplier'),
-                _AgingReportsTab(store: store, query: query),
-                _TransactionsTab(store: store, query: query, cashOnly: false),
-                _GeneralLedgerTab(store: store, query: query),
-              ],
+            child: Builder(
+              builder: (context) {
+                final controller = DefaultTabController.of(context);
+                return TabBarView(
+                  children: [
+                    _LazyTabPane(
+                      controller: controller,
+                      index: 0,
+                      builder: (_) => _AccountsTab(
+                        store: store,
+                        query: query,
+                        accountType: 'customer',
+                      ),
+                    ),
+                    _LazyTabPane(
+                      controller: controller,
+                      index: 1,
+                      builder: (_) => _AccountsTab(
+                        store: store,
+                        query: query,
+                        accountType: 'supplier',
+                      ),
+                    ),
+                    _LazyTabPane(
+                      controller: controller,
+                      index: 2,
+                      builder: (_) =>
+                          _AgingReportsTab(store: store, query: query),
+                    ),
+                    _LazyTabPane(
+                      controller: controller,
+                      index: 3,
+                      builder: (_) => _TransactionsTab(
+                        store: store,
+                        query: query,
+                        cashOnly: false,
+                      ),
+                    ),
+                    _LazyTabPane(
+                      controller: controller,
+                      index: 4,
+                      builder: (_) =>
+                          _GeneralLedgerTab(store: store, query: query),
+                    ),
+                  ],
+                );
+              },
             ),
           ),
         ],
@@ -572,12 +671,36 @@ class _CashAccountingGroup extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Expanded(
-            child: TabBarView(
-              children: [
-                _TransactionsTab(store: store, query: query, cashOnly: true),
-                _AdvancedAccountingTab(store: store, cashOnly: true),
-                _CashBankReportTab(store: store),
-              ],
+            child: Builder(
+              builder: (context) {
+                final controller = DefaultTabController.of(context);
+                return TabBarView(
+                  children: [
+                    _LazyTabPane(
+                      controller: controller,
+                      index: 0,
+                      builder: (_) => _TransactionsTab(
+                        store: store,
+                        query: query,
+                        cashOnly: true,
+                      ),
+                    ),
+                    _LazyTabPane(
+                      controller: controller,
+                      index: 1,
+                      builder: (_) => _AdvancedAccountingTab(
+                        store: store,
+                        cashOnly: true,
+                      ),
+                    ),
+                    _LazyTabPane(
+                      controller: controller,
+                      index: 2,
+                      builder: (_) => _CashBankReportTab(store: store),
+                    ),
+                  ],
+                );
+              },
             ),
           ),
         ],
@@ -621,14 +744,40 @@ class _ReportsAccountingGroup extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Expanded(
-            child: TabBarView(
-              children: [
-                _TrialBalanceTab(store: store, query: query),
-                _IncomeStatementTab(store: store),
-                _BalanceSheetTab(store: store),
-                _CashFlowStatementTab(store: store),
-                _TaxReportTab(store: store),
-              ],
+            child: Builder(
+              builder: (context) {
+                final controller = DefaultTabController.of(context);
+                return TabBarView(
+                  children: [
+                    _LazyTabPane(
+                      controller: controller,
+                      index: 0,
+                      builder: (_) =>
+                          _TrialBalanceTab(store: store, query: query),
+                    ),
+                    _LazyTabPane(
+                      controller: controller,
+                      index: 1,
+                      builder: (_) => _IncomeStatementTab(store: store),
+                    ),
+                    _LazyTabPane(
+                      controller: controller,
+                      index: 2,
+                      builder: (_) => _BalanceSheetTab(store: store),
+                    ),
+                    _LazyTabPane(
+                      controller: controller,
+                      index: 3,
+                      builder: (_) => _CashFlowStatementTab(store: store),
+                    ),
+                    _LazyTabPane(
+                      controller: controller,
+                      index: 4,
+                      builder: (_) => _TaxReportTab(store: store),
+                    ),
+                  ],
+                );
+              },
             ),
           ),
         ],
@@ -662,11 +811,24 @@ class _SettingsAccountingGroup extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Expanded(
-            child: TabBarView(
-              children: [
-                _AdvancedAccountingTab(store: store),
-                _AccountingSettingsTab(store: store),
-              ],
+            child: Builder(
+              builder: (context) {
+                final controller = DefaultTabController.of(context);
+                return TabBarView(
+                  children: [
+                    _LazyTabPane(
+                      controller: controller,
+                      index: 0,
+                      builder: (_) => _AdvancedAccountingTab(store: store),
+                    ),
+                    _LazyTabPane(
+                      controller: controller,
+                      index: 1,
+                      builder: (_) => _AccountingSettingsTab(store: store),
+                    ),
+                  ],
+                );
+              },
             ),
           ),
         ],
@@ -692,6 +854,60 @@ class _AccountingGroupTabs extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _LazyTabPane extends StatefulWidget {
+  const _LazyTabPane({
+    required this.controller,
+    required this.index,
+    required this.builder,
+  });
+
+  final TabController controller;
+  final int index;
+  final WidgetBuilder builder;
+
+  @override
+  State<_LazyTabPane> createState() => _LazyTabPaneState();
+}
+
+class _LazyTabPaneState extends State<_LazyTabPane> {
+  Widget? _builtChild;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_handleTabChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant _LazyTabPane oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_handleTabChanged);
+      widget.controller.addListener(_handleTabChanged);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_handleTabChanged);
+    super.dispose();
+  }
+
+  void _handleTabChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final active = widget.controller.index == widget.index;
+    if (active && _builtChild == null) {
+      _builtChild = widget.builder(context);
+    }
+    return _builtChild ?? const SizedBox.expand();
   }
 }
 

@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:drift/drift.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../storage/sqlite/business_sqlite_store.dart';
 import '../storage/sqlite/sqlite_migration_manager.dart';
 import '../storage/sqlite/sync_sqlite_store.dart';
+import '../storage/sqlite/ventio_drift_database.dart';
 import '../../models/sync_change.dart';
 import '../../models/sync_queue_item.dart';
 import '../../models/account_transaction.dart';
@@ -1032,6 +1034,178 @@ class LocalDatabaseService {
       return entries;
     }
     return const <String, String>{};
+  }
+
+  static VentioDriftDatabase? _syncDatabase() {
+    if (_memoryStoreForTesting != null || _webStore != null || !_sqliteReady) {
+      return null;
+    }
+    return SqliteMigrationManager.database;
+  }
+
+  static List<SyncChange> _memorySyncChanges() {
+    final raw = _memoryStore?[SyncSqliteStore.syncChangesKey];
+    if (raw == null || raw.trim().isEmpty) return const <SyncChange>[];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return const <SyncChange>[];
+      return decoded
+          .whereType<Map>()
+          .map((item) => SyncChange.fromJson(Map<String, dynamic>.from(item)))
+          .toList(growable: false);
+    } catch (_) {
+      return const <SyncChange>[];
+    }
+  }
+
+  static List<SyncQueueItem> _memorySyncQueue() {
+    final raw = _memoryStore?[SyncSqliteStore.syncQueueKey];
+    if (raw == null || raw.trim().isEmpty) return const <SyncQueueItem>[];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return const <SyncQueueItem>[];
+      return decoded
+          .whereType<Map>()
+          .map(
+              (item) => SyncQueueItem.fromJson(Map<String, dynamic>.from(item)))
+          .toList(growable: false);
+    } catch (_) {
+      return const <SyncQueueItem>[];
+    }
+  }
+
+  static Future<int> pendingSyncQueueCountForTarget(
+    String target, {
+    bool readyOnly = true,
+  }) async {
+    final memory = _memoryStore;
+    if (memory != null) {
+      final queue = _memorySyncQueue();
+      final now = DateTime.now();
+      final staleCutoff = now.subtract(const Duration(seconds: 45));
+      return queue.where((item) {
+        if (item.target != target) return false;
+        final isActive = item.status == 'pending' ||
+            item.status == 'failed' ||
+            (item.status == 'inProgress' &&
+                item.updatedAt.isBefore(staleCutoff));
+        if (!isActive) return false;
+        if (!readyOnly) return true;
+        return item.nextRetryAt == null || !item.nextRetryAt!.isAfter(now);
+      }).length;
+    }
+    if (_webStore != null) {
+      final queueRaw = _webStore![SyncSqliteStore.syncQueueKey] ?? '[]';
+      try {
+        final decoded = jsonDecode(queueRaw);
+        if (decoded is! List) return 0;
+        final queue = decoded
+            .whereType<Map>()
+            .map((item) =>
+                SyncQueueItem.fromJson(Map<String, dynamic>.from(item)))
+            .toList(growable: false);
+        final now = DateTime.now();
+        final staleCutoff = now.subtract(const Duration(seconds: 45));
+        return queue.where((item) {
+          if (item.target != target) return false;
+          final isActive = item.status == 'pending' ||
+              item.status == 'failed' ||
+              (item.status == 'inProgress' &&
+                  item.updatedAt.isBefore(staleCutoff));
+          if (!isActive) return false;
+          if (!readyOnly) return true;
+          return item.nextRetryAt == null || !item.nextRetryAt!.isAfter(now);
+        }).length;
+      } catch (_) {
+        return 0;
+      }
+    }
+    final db = _syncDatabase();
+    if (db == null) return 0;
+    final now = DateTime.now();
+    final staleCutoff =
+        now.subtract(const Duration(seconds: 45)).toIso8601String();
+    final conditions = <String>[
+      'target = ?',
+      "(status IN ('pending', 'failed') OR (status = 'inProgress' AND updated_at < ?))",
+    ];
+    final variables = <Variable<Object>>[
+      Variable<String>(target),
+      Variable<String>(staleCutoff),
+    ];
+    if (readyOnly) {
+      conditions.add("(next_retry_at = '' OR next_retry_at <= ?)");
+      variables.add(Variable<String>(now.toIso8601String()));
+    }
+    final row = await db.customSelect(
+      '''
+      SELECT COUNT(*) AS value
+      FROM sync_queue
+      WHERE ${conditions.join(' AND ')}
+      ''',
+      variables: variables,
+    ).getSingle();
+    return (row.data['value'] as num?)?.toInt() ?? 0;
+  }
+
+  static Future<int> pendingSyncChangesCount() async {
+    final memory = _memoryStore;
+    if (memory != null) {
+      return _memorySyncChanges().where((item) => !item.isSynced).length;
+    }
+    if (_webStore != null) {
+      final raw = _webStore![SyncSqliteStore.syncChangesKey] ?? '[]';
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is! List) return 0;
+        return decoded
+            .whereType<Map>()
+            .map((item) => SyncChange.fromJson(Map<String, dynamic>.from(item)))
+            .where((item) => !item.isSynced)
+            .length;
+      } catch (_) {
+        return 0;
+      }
+    }
+    final db = _syncDatabase();
+    if (db == null) return 0;
+    final row = await db
+        .customSelect(
+          "SELECT COUNT(*) AS value FROM sync_events WHERE is_synced = 0",
+        )
+        .getSingle();
+    return (row.data['value'] as num?)?.toInt() ?? 0;
+  }
+
+  static Future<int> outstandingSyncQueueCountForTarget(String target) async {
+    final memory = _memoryStore;
+    if (memory != null) {
+      return _memorySyncQueue()
+          .where((item) => item.target == target && item.status != 'synced')
+          .length;
+    }
+    if (_webStore != null) {
+      final queueRaw = _webStore![SyncSqliteStore.syncQueueKey] ?? '[]';
+      try {
+        final decoded = jsonDecode(queueRaw);
+        if (decoded is! List) return 0;
+        return decoded
+            .whereType<Map>()
+            .map((item) =>
+                SyncQueueItem.fromJson(Map<String, dynamic>.from(item)))
+            .where((item) => item.target == target && item.status != 'synced')
+            .length;
+      } catch (_) {
+        return 0;
+      }
+    }
+    final db = _syncDatabase();
+    if (db == null) return 0;
+    final row = await db.customSelect(
+      "SELECT COUNT(*) AS value FROM sync_queue WHERE target = ? AND status != 'synced'",
+      variables: <Variable<Object>>[Variable<String>(target)],
+    ).getSingle();
+    return (row.data['value'] as num?)?.toInt() ?? 0;
   }
 
   static bool get isEmpty {

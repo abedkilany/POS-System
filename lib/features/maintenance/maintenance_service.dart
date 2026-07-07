@@ -27,8 +27,7 @@ class MaintenanceService {
       'sales': sqliteCounts['sales'] ?? store.sales.length,
       'purchases':
           sqliteCounts['purchases'] ?? store.purchasesOverview.totalCount,
-      'expenses':
-          sqliteCounts['expenses'] ?? store.expensesOverview.totalCount,
+      'expenses': sqliteCounts['expenses'] ?? store.expensesOverview.totalCount,
       'stockMovements':
           sqliteCounts['stockMovements'] ?? store.stockMovements.length,
       'accountTransactions': sqliteCounts['accountTransactions'] ??
@@ -80,6 +79,7 @@ class MaintenanceService {
   String buildDiagnosticReport(MaintenanceSummary summary) {
     return const JsonEncoder.withIndent('  ').convert(<String, dynamic>{
       'maintenance': summary.toJson(),
+      'startupTimingSummary': StartupTimingService.startupSummaryJson(),
       'startupTiming': StartupTimingService.snapshotJson(),
     });
   }

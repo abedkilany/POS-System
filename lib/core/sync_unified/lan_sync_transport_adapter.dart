@@ -1,3 +1,4 @@
+import '../services/local_database_service.dart';
 import '../services/account_auth_service.dart';
 import '../services/lan_sync_service.dart';
 import 'sync_contracts.dart';
@@ -274,7 +275,10 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
   Future<UnifiedSyncResult> pushPending(UnifiedSyncPushRequest request) async {
     final effectiveSettings = _settingsWithUnifiedCursor();
     final pendingCount =
-        _service.store.pendingSyncChangesForTarget('host').length;
+        await LocalDatabaseService.pendingSyncQueueCountForTarget(
+      'host',
+      readyOnly: false,
+    );
     final result = await _service.pushPendingOnly(
       effectiveSettings.host,
       port: effectiveSettings.port,

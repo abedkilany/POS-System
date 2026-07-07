@@ -22,9 +22,10 @@ import 'core/services/account_auth_service.dart';
 import 'core/services/page_timing_scope.dart';
 import 'core/services/startup_timing_service.dart';
 import 'data/app_store.dart';
-import 'features/accounting/accounting_page.dart';
 import 'features/accounting/accounting_snapshot_service.dart';
+import 'features/accounting/accounting_page.dart';
 import 'features/customers/customers_page.dart';
+import 'features/dashboard/dashboard_snapshot_service.dart';
 import 'features/dashboard/dashboard_page.dart';
 import 'features/database/database_page.dart';
 import 'features/expenses/expenses_page.dart';
@@ -33,8 +34,8 @@ import 'features/inventory/manufacturing_page.dart';
 import 'features/maintenance/maintenance_page.dart';
 import 'features/products/products_page.dart';
 import 'features/purchases/purchases_page.dart';
-import 'features/reports/reports_page.dart';
 import 'features/reports/reports_snapshot_service.dart';
+import 'features/reports/reports_page.dart';
 import 'features/sales/sales_page.dart';
 import 'features/sales/quotations_page.dart';
 import 'features/sales/delivery_notes_page.dart';
@@ -63,11 +64,6 @@ class VentioApp extends StatefulWidget {
 }
 
 class _VentioAppState extends State<VentioApp> {
-  static const ReportsSnapshotService _reportsSnapshotService =
-      ReportsSnapshotService();
-  static const AccountingSnapshotService _accountingSnapshotService =
-      AccountingSnapshotService();
-
   Locale _locale = const Locale('en');
   ThemeMode _themeMode = ThemeMode.system;
   final AppStore _store = AppStore();
@@ -88,6 +84,7 @@ class _VentioAppState extends State<VentioApp> {
   bool _syncStarted = false;
   bool _autoSnapshotProgressDialogOpen = false;
   bool _firstFrameMarked = false;
+  bool _cacheWarmStarted = false;
 
   @override
   void initState() {
@@ -148,42 +145,68 @@ class _VentioAppState extends State<VentioApp> {
             _locale = savedLocale;
           });
         }
-        unawaited(_primeHeavyCaches());
         if (_store.activeUser != null) {
           unawaited(_startSyncAfterLogin());
+          unawaited(_primeDeferredPageCaches());
         }
       },
       category: 'ui',
     );
   }
 
-  Future<void> _primeHeavyCaches() async {
-    await Future<void>.delayed(const Duration(milliseconds: 500));
-    if (!mounted) return;
-    try {
-      await _reportsSnapshotService.prewarm(_store);
-    } catch (error, stackTrace) {
-      debugPrint('Reports prewarm failed: $error');
-      debugPrint('$stackTrace');
-    }
-    if (!mounted) return;
-    try {
-      await _accountingSnapshotService.prewarm(_store);
-    } catch (error, stackTrace) {
-      debugPrint('Accounting prewarm failed: $error');
-      debugPrint('$stackTrace');
-    }
-  }
-
   Future<void> _startSyncAfterLogin() async {
     if (_syncStarted || _store.activeUser == null) return;
     _syncStarted = true;
-    await Future<void>.delayed(const Duration(seconds: 2));
+    await StartupTimingService.measure(
+      'ventio_app.start_sync_after_login',
+      () async {
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        if (!mounted || _store.activeUser == null) return;
+        unawaited(_autoSyncController.start());
+        unawaited(_startCloudAndBackupAfterLogin());
+      },
+      category: 'app_store',
+    );
+  }
+
+  Future<void> _primeDeferredPageCaches() async {
+    if (_cacheWarmStarted || !_store.isReady || _store.activeUser == null) {
+      return;
+    }
+    _cacheWarmStarted = true;
+    await Future<void>.delayed(const Duration(seconds: 3));
+    if (!mounted || !_store.isReady || _store.activeUser == null) return;
+    await StartupTimingService.measure(
+      'ventio_app.prime_heavy_caches',
+      () async {
+        await Future.wait(<Future<void>>[
+          DashboardSnapshotService().prewarmSummary(_store).catchError((_) {}),
+          AccountingSnapshotService().prewarm(_store).catchError((_) {}),
+          ReportsSnapshotService().prewarm(_store).catchError((_) {}),
+        ]);
+      },
+      category: 'app_store',
+    );
+  }
+
+  Future<void> _startCloudAndBackupAfterLogin() async {
+    await Future<void>.delayed(const Duration(seconds: 15));
     if (!mounted || _store.activeUser == null) return;
-    unawaited(_autoSyncController.start());
-    unawaited(_autoCloudSyncController.start());
-    unawaited(LocalAutoBackupService.runDueBackup(_store));
-    unawaited(GoogleDriveBackupService.runDueBackup(_store));
+    unawaited(StartupTimingService.measure(
+      'ventio_app.start_cloud_sync_after_login',
+      () => _autoCloudSyncController.start(),
+      category: 'app_store',
+    ));
+    unawaited(StartupTimingService.measure(
+      'ventio_app.run_local_backup_after_login',
+      () => LocalAutoBackupService.runDueBackup(_store),
+      category: 'app_store',
+    ));
+    unawaited(StartupTimingService.measure(
+      'ventio_app.run_google_backup_after_login',
+      () => GoogleDriveBackupService.runDueBackup(_store),
+      category: 'app_store',
+    ));
   }
 
   Future<void> _stopSyncForLogout() async {
