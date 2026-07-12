@@ -38,7 +38,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
   final TextEditingController _confirmPasswordController =
       TextEditingController();
   final TextEditingController _storeNameController =
-      TextEditingController(text: 'my_store');
+      TextEditingController();
   AccountAuthCache? _authCache;
 
   bool _savingSetup = false;
@@ -68,9 +68,6 @@ class _LoginGatePageState extends State<LoginGatePage> {
     widget.store.addListener(_storeListener);
     _authCache = AccountAuthCache.load();
     _rememberLogin = widget.store.rememberLogin;
-    _storeNameController.text = widget.store.storeProfile.name.trim().isEmpty
-        ? 'my_store'
-        : _normalizeLoginPart(widget.store.storeProfile.name.trim());
   }
 
   @override

@@ -510,20 +510,21 @@ class _MaintenancePageState extends State<MaintenancePage> {
               spacing: 12,
               runSpacing: 12,
               children: [
-                FilledButton.icon(
-                  onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => PageTimingScope(
-                        key: const ValueKey('StressLabPage'),
-                        pageKey: 'StressLabPage',
-                        pageLabel: 'Stress lab',
-                        child: StressLabPage(store: widget.store),
+                if (widget.store.isStressLabEnabled)
+                  FilledButton.icon(
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => PageTimingScope(
+                          key: const ValueKey('StressLabPage'),
+                          pageKey: 'StressLabPage',
+                          pageLabel: 'Stress lab',
+                          child: StressLabPage(store: widget.store),
+                        ),
                       ),
                     ),
+                    icon: const Icon(Icons.speed_outlined),
+                    label: Text(tr.text('stress_lab')),
                   ),
-                  icon: const Icon(Icons.speed_outlined),
-                  label: Text(tr.text('stress_lab')),
-                ),
               ],
             ),
           ],

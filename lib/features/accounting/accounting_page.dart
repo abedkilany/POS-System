@@ -3370,9 +3370,8 @@ class _AdvancedAccountingTabState extends State<_AdvancedAccountingTab> {
     final handoverUsers =
         activeUsers.where((user) => user.id != (activeUser?.id ?? '')).toList();
     String closeMode = 'close_only';
-    String transferToId =
-        transferTargets.isNotEmpty ? transferTargets.first.id : '';
-    String nextUserId = handoverUsers.isNotEmpty ? handoverUsers.first.id : '';
+    String transferToId = '';
+    String nextUserId = '';
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(

@@ -1402,9 +1402,8 @@ class _SalesPageState extends State<SalesPage> {
         .where((user) => user.isActive && user.id != (activeUser?.id ?? ''))
         .toList(growable: false);
     String closeMode = 'keep_drawer';
-    String transferToId =
-        transferTargets.isNotEmpty ? transferTargets.first.id : '';
-    String nextUserId = handoverUsers.isNotEmpty ? handoverUsers.first.id : '';
+    String transferToId = '';
+    String nextUserId = '';
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(

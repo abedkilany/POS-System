@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/localization/app_localizations.dart';
@@ -854,39 +855,11 @@ class _QuickActionsPanel extends StatelessWidget {
                 spacing: 12,
                 runSpacing: 12,
                 children: actions.map((action) {
-                  return SizedBox(
+                  return _QuickActionTile(
                     width: width,
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(22),
-                      onTap: action.onPressed,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 16,
-                        ),
-                        decoration: BoxDecoration(
-                          color: action.color.withValues(alpha: 0.075),
-                          borderRadius: BorderRadius.circular(22),
-                          border: Border.all(
-                            color: action.color.withValues(alpha: 0.10),
-                          ),
-                        ),
-                        child: Column(
-                          children: [
-                            _IconBubble(icon: action.icon, color: action.color),
-                            const SizedBox(height: 10),
-                            Text(
-                              action.label,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              textAlign: TextAlign.center,
-                              style: theme.textTheme.labelLarge?.copyWith(
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
+                    action: action,
+                    textStyle: theme.textTheme.labelLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
                     ),
                   );
                 }).toList(),
@@ -894,6 +867,114 @@ class _QuickActionsPanel extends StatelessWidget {
             },
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _QuickActionTile extends StatefulWidget {
+  const _QuickActionTile({
+    required this.width,
+    required this.action,
+    required this.textStyle,
+  });
+
+  final double width;
+  final _QuickAction action;
+  final TextStyle? textStyle;
+
+  @override
+  State<_QuickActionTile> createState() => _QuickActionTileState();
+}
+
+class _QuickActionTileState extends State<_QuickActionTile> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final action = widget.action;
+    final baseFill = action.color.withValues(alpha: 0.075);
+    final hoverFill = action.color.withValues(alpha: 0.14);
+    final baseBorder = action.color.withValues(alpha: 0.10);
+    final hoverBorder = action.color.withValues(alpha: 0.28);
+    final shadowColor = action.color.withValues(alpha: _hovered ? 0.22 : 0.08);
+
+    return SizedBox(
+      width: widget.width,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) {
+          if (_hovered) return;
+          setState(() => _hovered = true);
+        },
+        onExit: (_) {
+          if (!_hovered) return;
+          setState(() => _hovered = false);
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOut,
+          transform: Matrix4.translationValues(0, _hovered ? -2 : 0, 0),
+          decoration: BoxDecoration(
+            color: _hovered ? hoverFill : baseFill,
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(
+              color: _hovered ? hoverBorder : baseBorder,
+              width: _hovered ? 1.4 : 1.0,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: shadowColor,
+                blurRadius: _hovered ? 18 : 8,
+                offset: Offset(0, _hovered ? 8 : 4),
+              ),
+            ],
+          ),
+          child: Material(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(22),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(22),
+              onTap: action.onPressed,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 16,
+                ),
+                child: Column(
+                  children: [
+                    AnimatedScale(
+                      duration: const Duration(milliseconds: 160),
+                      curve: Curves.easeOut,
+                      scale: _hovered ? 1.05 : 1,
+                      child: _IconBubble(
+                        icon: action.icon,
+                        color: action.color,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    AnimatedDefaultTextStyle(
+                      duration: const Duration(milliseconds: 160),
+                      curve: Curves.easeOut,
+                      style: widget.textStyle?.copyWith(
+                            color: _hovered
+                                ? Theme.of(context).colorScheme.onSurface
+                                : widget.textStyle?.color,
+                          ) ??
+                          DefaultTextStyle.of(context).style,
+                      child: Text(
+                        action.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

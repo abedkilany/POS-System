@@ -3842,6 +3842,41 @@ class _StressLabPageState extends State<StressLabPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (!widget.store.isStressLabEnabled) {
+      return Scaffold(
+        appBar: AppBar(
+          title: Text(AppLocalizations.of(context).text('stress_lab')),
+        ),
+        body: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.lock_outline, size: 42),
+                    const SizedBox(height: 12),
+                    Text(
+                      AppLocalizations.of(context).text('stress_lab'),
+                      style: Theme.of(context).textTheme.titleLarge,
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      AppLocalizations.of(context)
+                          .text('stress_lab_description'),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     final identity = store.appIdentity;
     final tr = AppLocalizations.of(context);
     final pass = _report.where((item) => item.isPass).length;
