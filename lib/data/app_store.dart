@@ -17,6 +17,8 @@ import '../core/services/startup_timing_service.dart';
 import '../core/services/sync_diagnostics_log.dart';
 import '../core/sync_unified/sync_device_state.dart';
 import '../core/snapshot/unified_snapshot.dart';
+import '../core/storage/sqlite/business_sqlite_store.dart';
+import '../core/storage/sqlite/sqlite_migration_manager.dart';
 import '../core/utils/currency_utils.dart';
 
 import '../models/account_transaction.dart';
@@ -48,6 +50,7 @@ import '../models/app_user.dart';
 import '../models/app_identity.dart';
 
 part 'app_store_backup.dart';
+part 'app_store_recovery.dart';
 
 bool _verifyPasswordInBackground(Map<String, String> request) {
   const prefix = 'pbkdf2sha256:';
@@ -5357,6 +5360,60 @@ class AppStore extends ChangeNotifier {
         isImportant: true,
       ),
     );
+    notifyListeners();
+  }
+
+  Future<void> applySessionUser({
+    required AppUser activeUser,
+    required String currentRole,
+    required Set<String> permissions,
+    required bool rememberLogin,
+  }) async {
+    final index = _users.indexWhere((item) => item.id == activeUser.id);
+    if (index == -1) {
+      _users.add(activeUser);
+    } else {
+      _users[index] = activeUser;
+    }
+    _activeUser = activeUser;
+    _currentRole = currentRole;
+    _rememberLogin = rememberLogin;
+    await LocalDatabaseService.setString(_activeUserKey, activeUser.id);
+    await LocalDatabaseService.setString(_currentRoleKey, currentRole);
+    await LocalDatabaseService.setString(
+      _rememberLoginKey,
+      rememberLogin ? 'true' : 'false',
+    );
+    await _saveRolesAndUsers();
+    notifyListeners();
+  }
+
+  Future<void> clearSessionUser() async {
+    _activeUser = null;
+    _rememberLogin = false;
+    await LocalDatabaseService.setString(_activeUserKey, '');
+    await LocalDatabaseService.setString(_currentRoleKey, 'admin');
+    await LocalDatabaseService.setString(_rememberLoginKey, 'false');
+    notifyListeners();
+  }
+
+  Future<void> _loadSessionPermissionsFromStorage() async {
+    _currentRole = LocalDatabaseService.getString(_currentRoleKey) ?? 'admin';
+  }
+
+  Future<void> _restoreActiveUserFromStorage() async {
+    final activeId = LocalDatabaseService.getString(_activeUserKey);
+    if (activeId == null || activeId.trim().isEmpty) return;
+    final match = _users.where((user) => user.id == activeId).toList(growable: false);
+    if (match.isEmpty) return;
+    _activeUser = match.first;
+  }
+
+  Future<void> _refreshAuthFlags() async {
+    _rememberLogin = LocalDatabaseService.getString(_rememberLoginKey) == 'true';
+  }
+
+  void refreshUi() {
     notifyListeners();
   }
 
@@ -16395,6 +16452,7 @@ class AppStore extends ChangeNotifier {
   Future<void> markSyncQueueChangesInProgress(
     Iterable<String> changeIds,
   ) async {
+    await ensureSyncDataLoaded();
     final idSet = changeIds.toSet();
     if (idSet.isEmpty) return;
     final now = DateTime.now();
@@ -16598,13 +16656,13 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> retryFailedSyncQueue({String? target}) async {
+    await ensureSyncDataLoaded();
     final now = DateTime.now();
     var changed = false;
     for (var i = 0; i < _syncQueue.length; i++) {
       final item = _syncQueue[i];
       if (item.status == 'failed' &&
-          (target == null || item.target == target) &&
-          (item.nextRetryAt == null || !item.nextRetryAt!.isAfter(now))) {
+          (target == null || item.target == target)) {
         _syncQueue[i] = item.copyWith(
           status: 'pending',
           updatedAt: now,

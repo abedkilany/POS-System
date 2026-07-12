@@ -729,6 +729,16 @@ class BusinessSqliteStore {
     };
   }
 
+  static Future<void> refreshSummaryTables(
+    VentioDriftDatabase db, {
+    required DateTime reference,
+    bool force = false,
+  }) async {
+    // Compatibility hook for callers that expect a refresh step after sync or
+    // migration. Summary values are computed directly from typed tables.
+    await Future<void>.value();
+  }
+
   static const String _saleTotalsCte = '''
       WITH sale_totals AS (
         SELECT s.id, s.invoice_no, s.customer_name, s.document_date,
@@ -1904,6 +1914,76 @@ class BusinessSqliteStore {
               const <Map<String, dynamic>>[];
       return Product.fromJson(data);
     }).toList(growable: false);
+  }
+
+  static Future<Product?> readProductById(
+    VentioDriftDatabase db,
+    String productId,
+  ) async {
+    final rows = await db.customSelect('''
+      SELECT id, name, code, name_en AS nameEn, name_ar AS nameAr,
+             price, cost, original_cost AS originalCost,
+             cost_currency AS costCurrency, usd_cost AS usdCost,
+             cost_exchange_rate_at_entry AS costExchangeRateAtEntry,
+             original_price AS originalPrice,
+             original_currency AS originalCurrency,
+             usd_price AS usdPrice,
+             exchange_rate_at_entry AS exchangeRateAtEntry,
+             stock, category, barcode, brand, supplier, description, unit,
+             quantity_type AS quantityType,
+             low_stock_threshold AS lowStockThreshold,
+             CASE WHEN track_stock = 1 THEN 1 ELSE 0 END AS trackStock,
+             CASE WHEN is_active = 1 THEN 1 ELSE 0 END AS isActive,
+             image_path AS imagePath, created_at AS createdAt,
+             updated_at AS updatedAt, deleted_at AS deletedAt,
+             device_id AS deviceId, sync_status AS syncStatus,
+             store_id AS storeId, branch_id AS branchId, version,
+             last_modified_by_device_id AS lastModifiedByDeviceId
+      FROM products
+      WHERE id = ?
+      LIMIT 1
+    ''', variables: <Variable<Object>>[Variable<String>(productId)]).get();
+    if (rows.isEmpty) return null;
+
+    final saleUnitRows = await db.customSelect('''
+      SELECT product_id AS productId, line_no AS lineNo, unit_id AS id,
+             name, conversion_to_base AS conversionToBase,
+             price, original_price AS originalPrice,
+             original_currency AS originalCurrency, barcode,
+             CASE WHEN is_default = 1 THEN 1 ELSE 0 END AS isDefault
+      FROM product_sale_units
+      WHERE product_id = ?
+      ORDER BY line_no ASC
+    ''', variables: <Variable<Object>>[Variable<String>(productId)]).get();
+    final purchaseUnitRows = await db.customSelect('''
+      SELECT product_id AS productId, line_no AS lineNo, unit_id AS id,
+             name, conversion_to_base AS conversionToBase,
+             price, original_price AS originalPrice,
+             original_currency AS originalCurrency, barcode,
+             CASE WHEN is_default = 1 THEN 1 ELSE 0 END AS isDefault
+      FROM product_purchase_units
+      WHERE product_id = ?
+      ORDER BY line_no ASC
+    ''', variables: <Variable<Object>>[Variable<String>(productId)]).get();
+
+    final data = Map<String, dynamic>.from(rows.first.data);
+    data['trackStock'] = data['trackStock'] == 1 || data['trackStock'] == true;
+    data['isActive'] = data['isActive'] == 1 || data['isActive'] == true;
+    data['saleUnits'] = saleUnitRows
+        .map((row) {
+          final item = Map<String, dynamic>.from(row.data);
+          item['isDefault'] = item['isDefault'] == 1 || item['isDefault'] == true;
+          return item;
+        })
+        .toList(growable: false);
+    data['purchaseUnits'] = purchaseUnitRows
+        .map((row) {
+          final item = Map<String, dynamic>.from(row.data);
+          item['isDefault'] = item['isDefault'] == 1 || item['isDefault'] == true;
+          return item;
+        })
+        .toList(growable: false);
+    return Product.fromJson(data);
   }
 
   static Future<List<Sale>> readSales(VentioDriftDatabase db) async {

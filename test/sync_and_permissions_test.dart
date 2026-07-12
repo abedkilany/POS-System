@@ -1,4 +1,9 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:ventio/core/services/local_database_service.dart';
+import 'package:ventio/data/app_store.dart';
 
 import 'package:ventio/models/app_identity.dart';
 import 'package:ventio/models/app_user.dart';
@@ -7,6 +12,83 @@ import 'package:ventio/models/sync_queue_item.dart';
 import 'package:ventio/models/user_role.dart';
 
 void main() {
+  group('AppStore sync queue recovery', () {
+    test(
+        'recovers submitted cloud_host rows to pending without duplicating work',
+        () async {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      SharedPreferences.setMockInitialValues(const <String, Object>{});
+      final now = DateTime.utc(2026, 1, 1, 12);
+      LocalDatabaseService.useInMemoryStoreForTesting(<String, String>{
+        'app_identity_v1': jsonEncode(<String, dynamic>{
+          'storeId': 'ST-REC',
+          'branchId': 'BR-REC',
+          'deviceId': 'DV-REC',
+          'deviceName': 'Recovery Client',
+          'platform': 'web',
+          'deviceRole': 'client',
+          'appRole': 'store',
+          'syncMode': 'cloudConnected',
+          'createdAt': now.toIso8601String(),
+          'updatedAt': now.toIso8601String(),
+          'hostDeviceId': 'HOST-REC',
+          'cloudTenantId': '',
+          'deviceToken': 'device_rec',
+          'storeEpoch': 1,
+          'recoveryKey': 'RK-REC',
+          'activeSyncTransport': 'cloud',
+        }),
+        'sync_changes_v1': jsonEncode(<Map<String, dynamic>>[
+          SyncChange(
+            id: 'cmd-1',
+            entityType: 'product',
+            entityId: 'p1',
+            operation: 'create',
+            deviceId: 'DV-REC',
+            createdAt: now,
+            payload: const <String, dynamic>{
+              'id': 'p1',
+              'code': 'REC-1',
+            },
+          ).toJson(),
+        ]),
+        'sync_queue_v1': '[]',
+        'sync_sequence_v1': '0',
+      });
+
+      final store = AppStore();
+      await store.initialize();
+      await LocalDatabaseService.replaceBusinessEntityJsonListImmediate(
+        'sync_queue_v1',
+        <Map<String, dynamic>>[
+          SyncQueueItem(
+            id: 'cmd-1-cloud_host',
+            changeId: 'cmd-1',
+            target: 'cloud_host',
+            status: 'submitted',
+            attempts: 1,
+            createdAt: now,
+            updatedAt: now,
+          ).toJson(),
+        ],
+      );
+      await store.refreshAfterDatabaseChange('sync_queue_v1');
+      expect(store.syncQueue.single.status, 'submitted');
+      expect(store.hasOutstandingSyncWorkForTarget('cloud_host'), isTrue);
+
+      await store.recoverSubmittedSyncQueue(target: 'cloud_host');
+      expect(store.syncQueue.single.status, 'pending');
+      expect(store.hasOutstandingSyncWorkForTarget('cloud_host'), isTrue);
+      expect(
+          store.pendingSyncQueueForTarget('cloud_host', readyOnly: false),
+          hasLength(1));
+
+      await store.recoverSubmittedSyncQueue(target: 'cloud_host');
+      expect(store.syncQueue, hasLength(1));
+      expect(store.syncQueue.single.status, 'pending');
+    });
+  });
+
   group('SyncQueueItem state machine', () {
     test('pending item is ready when no retry date exists', () {
       final item = SyncQueueItem(

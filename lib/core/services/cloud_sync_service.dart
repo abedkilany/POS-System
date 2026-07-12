@@ -708,10 +708,10 @@ class CloudSyncService {
     // legacy cloud_change_requests row exists.
     //
     // If an older build left cloud_host rows as submitted, recover them to
-    // pending so the next relay push sends them again and only marks them
-    // synced after the Host ACKs them.
+    // pending so the next relay push sends them again. Until that happens,
+    // any pull or rebuild must stay paused.
     await store.recoverSubmittedSyncQueue(target: 'cloud_host');
-    return false;
+    return store.hasOutstandingSyncWorkForTarget('cloud_host');
   }
 
 
@@ -721,6 +721,13 @@ class CloudSyncService {
   }) async {
     if (!store.appIdentity.isClient) {
       return const CloudSyncResult(ok: true, message: 'No Client drain needed.');
+    }
+    if (await _clientCloudHostWorkNeedsDrain()) {
+      return const CloudSyncResult(
+        ok: false,
+        message: _clientCloudRebuildBlockedMessage,
+        syncDeferred: true,
+      );
     }
     onProgress?.call(0.06, 'Sending pending Client changes before rebuild...');
     await registerCurrentDevice(settings, transport: 'cloud');

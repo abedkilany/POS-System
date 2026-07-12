@@ -166,6 +166,36 @@ class _OfflineCloudSyncService extends CloudSyncService {
   }
 }
 
+class _DrainAwareCloudSyncService extends CloudSyncService {
+  _DrainAwareCloudSyncService(super.store);
+
+  int rebuildCallCount = 0;
+
+  @override
+  Future<CloudSyncResult> rebuildFromCloudHostSnapshot(
+    CloudSyncSettings settings, {
+    CloudSyncProgressCallback? onProgress,
+    bool requestFreshSnapshot = true,
+    String expectedSnapshotGeneration = '',
+    String expectedRestoreCommandId = '',
+  }) async {
+    rebuildCallCount += 1;
+    if (store.hasOutstandingSyncWorkForTarget('cloud_host')) {
+      return const CloudSyncResult(
+        ok: false,
+        message:
+            'Cloud rebuild is paused until the Client finishes sending its pending changes to the Host.',
+        syncDeferred: true,
+      );
+    }
+    return const CloudSyncResult(
+      ok: true,
+      message: 'rebuild completed',
+      restoredSnapshot: true,
+    );
+  }
+}
+
 class _PairingBootstrapSpyService extends CloudSyncService {
   _PairingBootstrapSpyService(
     super.store, {
@@ -378,6 +408,35 @@ void main() {
       expect(
           pendingStore.hasOutstandingSyncWorkForTarget('cloud_host'), isTrue);
       expect(pendingStore.syncQueue.single.status, 'pending');
+    });
+
+    test(
+        'resumes rebuild after the client clears cloud_host work queued',
+        () async {
+      final pendingStore = await _buildClientStoreWithPendingCloudHostWork();
+      final service = _DrainAwareCloudSyncService(pendingStore);
+      final pendingAdapter = CloudSyncTransportAdapter(
+        service: service,
+        settings: const CloudSyncSettings(
+          enabled: true,
+          apiBaseUrl: 'https://sync.test',
+        ),
+      );
+
+      final blocked = await pendingAdapter.rebuildFromHostSnapshot();
+
+      expect(blocked.ok, isFalse);
+      expect(blocked.data['syncDeferred'], isTrue);
+      expect(blocked.message, contains('paused'));
+      expect(service.rebuildCallCount, 1);
+
+      await pendingStore.clearPendingSyncQueue();
+      final resumed = await pendingAdapter.rebuildFromHostSnapshot();
+
+      expect(resumed.ok, isTrue);
+      expect(resumed.data, isEmpty);
+      expect(resumed.message, contains('rebuild completed'));
+      expect(service.rebuildCallCount, 2);
     });
 
     test('does not rebuild when Cloud Host is offline', () async {

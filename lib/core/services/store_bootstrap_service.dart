@@ -4,10 +4,7 @@ import '../../data/app_store.dart';
 import '../../models/app_identity.dart';
 import '../../models/app_user.dart';
 import '../../models/catalog_item.dart';
-import '../../models/product_costing.dart';
-import '../../models/store_profile.dart';
 import '../../models/user_role.dart';
-import '../repositories/business_session_context.dart';
 import '../repositories/business_repositories.dart';
 import '../services/local_database_service.dart';
 import '../services/password_hashing.dart';
@@ -32,7 +29,7 @@ class StoreBootstrapService {
       throw ArgumentError('Password must be at least 6 characters.');
     }
 
-    final existingUsers = await UserRepository.listAll();
+    final existingUsers = store.users;
     final activeUsers = existingUsers.where((user) => user.isActive).toList();
     final legacyPassword = String.fromCharCodes(const [
       97,
@@ -97,7 +94,7 @@ class StoreBootstrapService {
             lastLoginAt: now,
           );
     await LocalDatabaseService.runSqliteAuthoritativeTransaction(() async {
-      final existingRoles = await RoleRepository.listAll();
+      final existingRoles = store.roles;
       if (existingRoles.indexWhere((role) => role.id == 'admin') == -1) {
         await LocalDatabaseService.replaceBusinessEntityJsonListImmediate(
           BusinessSqliteStore.rolesKey,
@@ -115,7 +112,7 @@ class StoreBootstrapService {
         );
       }
 
-      final existingUsers = await UserRepository.listAll();
+      final existingUsers = store.users;
       final users = <Map<String, dynamic>>[
         ...existingUsers
             .where((user) => user.id != adminUser.id)
@@ -207,7 +204,7 @@ class StoreBootstrapService {
     }
 
     final passwordHash = await PasswordHashing.hashPassword(cleanPassword);
-    final existingAdminRole = await RoleRepository.getById('admin');
+    final existingAdminRole = store.roleById('admin');
     if (existingAdminRole == null) {
       await LocalDatabaseService.replaceBusinessEntityJsonListImmediate(
         BusinessSqliteStore.rolesKey,
@@ -222,7 +219,13 @@ class StoreBootstrapService {
       );
       await store.refreshAfterDatabaseChange(BusinessSqliteStore.rolesKey);
     }
-    final existingUser = await UserRepository.getByUsername(cleanUsername);
+    AppUser? existingUser;
+    for (final user in store.users) {
+      if (user.username.trim().toLowerCase() == cleanUsername) {
+        existingUser = user;
+        break;
+      }
+    }
     final recoveredUser = existingUser == null
         ? AppUser(
             id: 'owner_${now.microsecondsSinceEpoch}',
@@ -242,11 +245,19 @@ class StoreBootstrapService {
             lastLoginAt: now,
             isSystem: true,
           );
-    await UserRepository.addOrUpdateUser(
-      _BootstrapSessionContext(store),
-      recoveredUser,
-      password: cleanPassword,
+    final currentUsers = store.users.toList(growable: false);
+    final updatedUsers = currentUsers
+        .where((user) => user.id != recoveredUser.id)
+        .map((user) => user.toJson())
+        .toList(growable: false);
+    await LocalDatabaseService.replaceBusinessEntityJsonListImmediate(
+      BusinessSqliteStore.usersKey,
+      <Map<String, dynamic>>[
+        ...updatedUsers,
+        recoveredUser.toJson(),
+      ],
     );
+    await store.refreshAfterDatabaseChange(BusinessSqliteStore.usersKey);
     await store.applySessionUser(
       activeUser: recoveredUser,
       currentRole: 'Admin',
@@ -285,7 +296,16 @@ class StoreBootstrapService {
       isSystem: true,
       updatedAt: DateTime.now(),
     );
-    await UserRepository.addOrUpdateUser(store, updated, password: cleanPassword);
+    await LocalDatabaseService.replaceBusinessEntityJsonListImmediate(
+      BusinessSqliteStore.usersKey,
+      <Map<String, dynamic>>[
+        ...store.users
+            .where((user) => user.id != updated.id)
+            .map((user) => user.toJson()),
+        updated.toJson(),
+      ],
+    );
+    await store.refreshAfterDatabaseChange(BusinessSqliteStore.usersKey);
     await store.applySessionUser(
       activeUser: updated,
       currentRole: 'Admin',
@@ -347,39 +367,4 @@ class StoreBootstrapService {
       );
     }
   }
-}
-
-class _BootstrapSessionContext implements BusinessSessionContext {
-  _BootstrapSessionContext(this.store);
-
-  final AppStore store;
-
-  @override
-  String get deviceId => store.deviceId;
-
-  @override
-  AppIdentity get appIdentity => store.appIdentity;
-
-  @override
-  StoreProfile get storeProfile => store.storeProfile;
-
-  @override
-  AppUser? get activeUser => store.activeUser;
-
-  @override
-  String get currentRole => store.currentRole;
-
-  @override
-  InventoryCostingMethod get inventoryCostingMethod =>
-      store.inventoryCostingMethod;
-
-  @override
-  bool hasPermission(String permission) => true;
-
-  @override
-  void requirePermission(String permission) {}
-
-  @override
-  Future<void> refreshAfterDatabaseChange(String key) =>
-      store.refreshAfterDatabaseChange(key);
 }

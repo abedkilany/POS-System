@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:ventio/core/repositories/auth_repository.dart';
 import 'package:ventio/core/services/local_database_service.dart';
 import 'package:ventio/data/app_store.dart';
 import 'package:ventio/models/app_identity.dart';
@@ -631,7 +632,10 @@ void main() {
       expect(changeIds, isNotEmpty);
 
       await store.markSyncQueueChangesInProgress(changeIds);
-      expect(store.syncQueue.where((q) => q.isInProgress), isNotEmpty);
+      final syncQueueSnapshot = store.syncQueue.toList();
+      final inProgressRows =
+          syncQueueSnapshot.where((q) => q.isInProgress).toList();
+      expect(inProgressRows, isNotEmpty);
 
       await store.markSyncQueueChangesFailed(changeIds, 'network down');
       expect(
@@ -775,6 +779,92 @@ void main() {
       await store.deleteUser(cashierId);
       await store.deleteRole('cashier');
       expect(store.roles.map((r) => r.id), isNot(contains('cashier')));
+    });
+
+    test(
+        'persists the active session across restart, logout, and user switching',
+        () async {
+      final store = await readyStore();
+      await store.addOrUpdateRole(UserRole(
+          id: 'cashier',
+          name: 'Cashier',
+          permissions: {AppPermission.salesCreate}));
+      await store.addOrUpdateUser(
+          AppUser(
+              id: '',
+              fullName: 'Cashier One',
+              username: 'cashier',
+              passwordHash: '',
+              roleId: 'cashier'),
+          password: '1234');
+
+      expect(
+          await AuthRepository.login(store, 'cashier', '1234', remember: true),
+          isTrue);
+      expect(store.activeUser?.username, 'cashier');
+      expect(store.currentRole, 'Cashier');
+      expect(store.rememberLogin, isTrue);
+
+      final restarted = AppStore();
+      await restarted.initialize();
+      expect(restarted.activeUser?.username, 'cashier');
+      expect(restarted.currentRole, 'Cashier');
+      expect(restarted.rememberLogin, isTrue);
+
+      expect(await AuthRepository.login(restarted, 'admin', 'AdminPass123'),
+          isTrue);
+      expect(restarted.activeUser?.username, 'admin');
+      expect(restarted.currentRole, 'Admin');
+      expect(restarted.rememberLogin, isFalse);
+
+      await AuthRepository.logout(restarted);
+      expect(restarted.activeUser, isNull);
+      expect(restarted.rememberLogin, isFalse);
+
+      final afterLogoutRestart = AppStore();
+      await afterLogoutRestart.initialize();
+      expect(afterLogoutRestart.activeUser, isNull);
+      expect(afterLogoutRestart.rememberLogin, isFalse);
+    });
+
+    test(
+        'refreshAfterDatabaseChange reloads sqlite-backed users and session state',
+        () async {
+      final store = await readyStore();
+      await store.addOrUpdateRole(UserRole(
+          id: 'cashier',
+          name: 'Cashier',
+          permissions: {AppPermission.salesCreate}));
+      await store.addOrUpdateUser(
+          AppUser(
+              id: '',
+              fullName: 'Cashier One',
+              username: 'cashier',
+              passwordHash: '',
+              roleId: 'cashier'),
+          password: '1234');
+      expect(
+          await AuthRepository.login(store, 'cashier', '1234', remember: true),
+          isTrue);
+
+      final usersSnapshot = store.users.toList(growable: false);
+      await LocalDatabaseService.replaceBusinessEntityJsonListImmediate(
+        'users_v1',
+        usersSnapshot.map((user) {
+          if (user.username == 'cashier') {
+            return user.copyWith(fullName: 'Cashier Reloaded').toJson();
+          }
+          return user.toJson();
+        }).toList(growable: false),
+        sortIndices:
+            List<int?>.generate(usersSnapshot.length, (index) => index),
+      );
+
+      await store.refreshAfterDatabaseChange('users_v1');
+      expect(
+          store.users.singleWhere((u) => u.username == 'cashier').fullName,
+          'Cashier Reloaded');
+      expect(store.activeUser?.fullName, 'Cashier Reloaded');
     });
 
     test('updates identity, admin setup, and keeps protected operations safe',

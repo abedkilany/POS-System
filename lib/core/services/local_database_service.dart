@@ -60,6 +60,8 @@ class LocalDatabaseService {
   static bool get isSqliteAuthoritative =>
       _sqliteReady && SqliteMigrationManager.database != null;
 
+  static bool get isInMemoryStoreForTesting => _memoryStoreForTesting != null;
+
   static bool get hasPendingBusinessEntityWrites =>
       _pendingBusinessEntityWrites.isNotEmpty;
 
@@ -989,6 +991,47 @@ class LocalDatabaseService {
           _pendingSyncQueueItems.isNotEmpty) {
         _scheduleFlush();
       }
+    }
+  }
+
+  static Future<void> runSqliteAuthoritativeTransaction(
+      Future<void> Function() action) async {
+    await action();
+  }
+
+  static Future<void> replaceBusinessEntityJsonListImmediate(
+    String key,
+    List<Map<String, dynamic>> payloads,
+    {List<int?>? sortIndices}
+  ) async {
+    var orderedPayloads = payloads;
+    if (sortIndices != null && sortIndices.length == payloads.length) {
+      final entries = <({Map<String, dynamic> payload, int? sortIndex})>[];
+      for (var i = 0; i < payloads.length; i += 1) {
+        entries.add((payload: payloads[i], sortIndex: sortIndices[i]));
+      }
+      entries.sort((a, b) {
+        final aIndex = a.sortIndex ?? 1 << 30;
+        final bIndex = b.sortIndex ?? 1 << 30;
+        return aIndex.compareTo(bIndex);
+      });
+      orderedPayloads = entries.map((item) => item.payload).toList(growable: false);
+    }
+    final encoded = jsonEncode(orderedPayloads);
+    final memory = _memoryStore;
+    if (memory != null) {
+      memory[key] = encoded;
+      return;
+    }
+    if (_webStore != null) {
+      _webStore![key] = encoded;
+      await _persistWebString(key, encoded);
+      return;
+    }
+    final db = SqliteMigrationManager.database;
+    if (_sqliteReady && db != null) {
+      await BusinessSqliteStore.saveKeyJson(db, key, encoded);
+      _sqliteMirror[key] = encoded;
     }
   }
 

@@ -1,11 +1,8 @@
 import 'dart:async';
 
 import '../../data/app_store.dart';
-import '../../models/user_role.dart';
 import '../services/app_logging_service.dart';
-import '../services/local_database_service.dart';
 import '../services/password_hashing.dart';
-import 'business_repositories.dart';
 
 class AuthRepository {
   AuthRepository._();
@@ -18,7 +15,7 @@ class AuthRepository {
   }) async {
     if (store.isSuspendedByHost) return false;
     final normalized = username.trim().toLowerCase();
-    final users = await UserRepository.listAll();
+    final users = store.users;
     final activeMatches = users
         .where(
           (user) =>
@@ -81,22 +78,14 @@ class AuthRepository {
       return false;
     }
 
-    final role = await RoleRepository.getById(user.roleId);
+    final role = store.roleById(user.roleId);
     final permissions = <String>{
-      if (role?.isAdmin == true) ...AppPermission.all else ...?role?.permissions,
+      ...?role?.permissions,
       ...user.extraPermissions,
     }..removeAll(user.deniedPermissions);
     final roleName = role?.name ?? user.roleId;
     final now = DateTime.now();
     final updated = user.copyWith(lastLoginAt: now);
-    await LocalDatabaseService.setString(
-      'active_user_v1',
-      updated.id,
-    );
-    await LocalDatabaseService.setString(
-      'remember_login_v1',
-      remember ? 'true' : 'false',
-    );
     await store.applySessionUser(
       activeUser: updated,
       currentRole: roleName,
@@ -148,12 +137,12 @@ class AuthRepository {
   }
 
   static Future<bool> hasLocalAdminUser(AppStore store) async {
-    final users = await UserRepository.listAll();
+    final users = store.users;
     return users.any((user) => user.roleId == 'admin' && user.isActive);
   }
 
   static Future<bool> needsInitialAdminSetup(AppStore store) async {
-    final users = await UserRepository.listAll();
+    final users = store.users;
     if (users.isEmpty) return true;
     if (users.length != 1) return false;
     final user = users.first;
