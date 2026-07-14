@@ -68,6 +68,14 @@ class AppStoreRecoveryService {
             String storageKey,
             List<Map<String, dynamic>> rows,
           ) async {
+            if (storageKey == AppStore._stockMovementsKey) {
+              await BusinessSqliteStore.saveKeyJson(
+                SqliteMigrationManager.database!,
+                storageKey,
+                jsonEncode(rows),
+              );
+              return;
+            }
             await LocalDatabaseService.replaceBusinessEntityJsonListImmediate(
               storageKey,
               rows,
@@ -154,6 +162,18 @@ class AppStoreRecoveryService {
             'stockMovements',
             AppStore._stockMovementsKey,
             'stockMovements',
+          );
+          await LocalDatabaseService.replaceWarehouseInventoryRowsImmediate(
+            _snapshotListMaps(decoded, 'warehouseInventory', aliases: <String>['warehouse_inventory']),
+          );
+          await LocalDatabaseService.replaceStockOperationsRowsImmediate(
+            _snapshotListMaps(decoded, 'stockOperations', aliases: <String>['stock_operations']),
+          );
+          await LocalDatabaseService.replaceInventoryReconciliationsRowsImmediate(
+            _snapshotListMaps(decoded, 'inventoryReconciliations', aliases: <String>['inventory_reconciliations']),
+          );
+          await LocalDatabaseService.replaceInventoryMigrationAdjustmentsRowsImmediate(
+            _snapshotListMaps(decoded, 'inventoryMigrationAdjustments', aliases: <String>['inventory_migration_adjustments']),
           );
           await replaceSection(
             'inventoryCounts',
@@ -334,6 +354,13 @@ class AppStoreRecoveryService {
       category: 'backup',
     );
 
+    if (restoreFullDeviceBackup && localDatabaseEntries.isNotEmpty) {
+      await replaceFromSnapshotPayloadDirectToSqlite(
+        decoded,
+        preserveLocalIdentityForLanClient: preservePairedHostIdentity,
+      );
+    }
+
     await _refreshRuntimeAfterRecovery(loadStoreProfile: true);
     if (restoreFullDeviceBackup && localDatabaseEntries.isNotEmpty) {
       await store.reloadAllAfterDatabaseChange();
@@ -440,6 +467,18 @@ class AppStoreRecoveryService {
           await mergeRows(AppStore._expensesKey, _snapshotListMaps(decoded, 'expenses'));
           await mergeRows(AppStore._purchasesKey, _snapshotListMaps(decoded, 'purchases'));
           await mergeRows(AppStore._stockMovementsKey, _snapshotListMaps(decoded, 'stockMovements'));
+          await LocalDatabaseService.replaceWarehouseInventoryRowsImmediate(
+            _snapshotListMaps(decoded, 'warehouseInventory', aliases: <String>['warehouse_inventory']),
+          );
+          await LocalDatabaseService.replaceStockOperationsRowsImmediate(
+            _snapshotListMaps(decoded, 'stockOperations', aliases: <String>['stock_operations']),
+          );
+          await LocalDatabaseService.replaceInventoryReconciliationsRowsImmediate(
+            _snapshotListMaps(decoded, 'inventoryReconciliations', aliases: <String>['inventory_reconciliations']),
+          );
+          await LocalDatabaseService.replaceInventoryMigrationAdjustmentsRowsImmediate(
+            _snapshotListMaps(decoded, 'inventoryMigrationAdjustments', aliases: <String>['inventory_migration_adjustments']),
+          );
           await mergeRows(AppStore._warehousesKey, _snapshotListMaps(decoded, 'warehouses'));
           await mergeRows(
             AppStore._accountTransactionsKey,
@@ -606,6 +645,16 @@ class AppStoreRecoveryService {
             );
           }
 
+          final importedStockMovements =
+              _snapshotListMaps(decoded, 'stockMovements');
+          store._stockMovements
+            ..clear()
+            ..addAll(
+              importedStockMovements
+                  .map((item) => StockMovement.fromJson(item))
+                  .toList(growable: false),
+            );
+
           final now = DateTime.now();
           final rawSyncChanges = _snapshotListMaps(decoded, 'syncChanges');
           final syncChangesForClient = preserveLocalIdentityForLanClient
@@ -656,7 +705,38 @@ class AppStoreRecoveryService {
             replaceRows(AppStore._unitsKey, _snapshotListMaps(decoded, 'units')),
             replaceRows(AppStore._expensesKey, _snapshotListMaps(decoded, 'expenses')),
             replaceRows(AppStore._purchasesKey, _snapshotListMaps(decoded, 'purchases')),
-            replaceRows(AppStore._stockMovementsKey, _snapshotListMaps(decoded, 'stockMovements')),
+            replaceRows(AppStore._stockMovementsKey, importedStockMovements),
+            LocalDatabaseService.replaceStockMovementRowsImmediate(
+              importedStockMovements,
+            ),
+            LocalDatabaseService.replaceWarehouseInventoryRowsImmediate(
+              _snapshotListMaps(
+                decoded,
+                'warehouseInventory',
+                aliases: <String>['warehouse_inventory'],
+              ),
+            ),
+            LocalDatabaseService.replaceStockOperationsRowsImmediate(
+              _snapshotListMaps(
+                decoded,
+                'stockOperations',
+                aliases: <String>['stock_operations'],
+              ),
+            ),
+            LocalDatabaseService.replaceInventoryReconciliationsRowsImmediate(
+              _snapshotListMaps(
+                decoded,
+                'inventoryReconciliations',
+                aliases: <String>['inventory_reconciliations'],
+              ),
+            ),
+            LocalDatabaseService.replaceInventoryMigrationAdjustmentsRowsImmediate(
+              _snapshotListMaps(
+                decoded,
+                'inventoryMigrationAdjustments',
+                aliases: <String>['inventory_migration_adjustments'],
+              ),
+            ),
             replaceRows(AppStore._inventoryCountsKey, _snapshotListMaps(decoded, 'inventoryCounts')),
             replaceRows(AppStore._warehousesKey, _snapshotListMaps(decoded, 'warehouses')),
             replaceRows(
@@ -735,8 +815,8 @@ class AppStoreRecoveryService {
           }
 
           await Future.wait(writes);
-          await LocalDatabaseService.flushPendingWrites();
         });
+        await LocalDatabaseService.flushPendingWrites();
       },
       category: 'snapshot',
     );

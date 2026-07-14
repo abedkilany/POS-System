@@ -26,6 +26,8 @@ class Sale {
     this.paidAmountInPaymentCurrency = 0,
     this.cashReceivedAmountInPaymentCurrency = 0,
     this.note = '',
+    this.warehouseId = 'main',
+    this.warehouseName = 'Main warehouse',
     this.originalDiscount,
     this.discountCurrency = 'USD',
     this.discountExchangeRateAtEntry = 0,
@@ -42,6 +44,7 @@ class Sale {
         updatedAt = updatedAt ?? createdAt ?? date;
 
   final String id, invoiceNo, customerName, customerId, status, paymentMethod, paymentStatus, invoiceCurrency, paymentCurrency, baseCurrency, note, deviceId, syncStatus, storeId, branchId, lastModifiedByDeviceId;
+  final String warehouseId, warehouseName;
   final DateTime date, createdAt, updatedAt;
   final DateTime? deletedAt;
   final List<SaleItem> items;
@@ -98,6 +101,8 @@ class Sale {
     double? paidAmountInPaymentCurrency,
     double? cashReceivedAmountInPaymentCurrency,
     String? note,
+    String? warehouseId,
+    String? warehouseName,
     DateTime? createdAt,
     DateTime? updatedAt,
     DateTime? deletedAt,
@@ -137,6 +142,8 @@ class Sale {
         paidAmountInPaymentCurrency: paidAmountInPaymentCurrency ?? this.paidAmountInPaymentCurrency,
         cashReceivedAmountInPaymentCurrency: cashReceivedAmountInPaymentCurrency ?? this.cashReceivedAmountInPaymentCurrency,
         note: note ?? this.note,
+        warehouseId: warehouseId ?? this.warehouseId,
+        warehouseName: warehouseName ?? this.warehouseName,
         createdAt: createdAt ?? this.createdAt,
         updatedAt: updatedAt ?? this.updatedAt,
         deletedAt: clearDeletedAt ? null : (deletedAt ?? this.deletedAt),
@@ -175,6 +182,8 @@ class Sale {
         'paidAmountInPaymentCurrency': paidAmountInPaymentCurrency,
         'cashReceivedAmountInPaymentCurrency': cashReceivedAmountInPaymentCurrency,
         'note': note,
+        'warehouseId': warehouseId,
+        'warehouseName': warehouseName,
         'items': items.map((item) => item.toJson()).toList(),
         'createdAt': createdAt.toIso8601String(),
         'updatedAt': updatedAt.toIso8601String(),
@@ -257,6 +266,12 @@ class Sale {
       paidAmountInPaymentCurrency: paidAmountInPaymentCurrency,
       cashReceivedAmountInPaymentCurrency: cashReceivedAmountInPaymentCurrency,
       note: json['note'] as String? ?? '',
+      warehouseId: json['warehouseId']?.toString().isNotEmpty == true
+          ? json['warehouseId']!.toString()
+          : 'main',
+      warehouseName: json['warehouseName']?.toString().isNotEmpty == true
+          ? json['warehouseName']!.toString()
+          : 'Main warehouse',
       items: items,
       createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ?? date,
       updatedAt: updated,

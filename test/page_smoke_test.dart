@@ -56,6 +56,7 @@ Map<String, String> _hostIdentitySeed() {
 Future<AppStore> _readyStore() async {
   TestWidgetsFlutterBinding.ensureInitialized();
   SharedPreferences.setMockInitialValues(const <String, Object>{});
+  LocalDatabaseService.clearInMemoryStoreForTesting();
   LocalDatabaseService.useInMemoryStoreForTesting(_hostIdentitySeed());
   final store = AppStore();
   await store.initialize();
@@ -133,6 +134,7 @@ Widget _wrap(Widget child) {
 
 void main() {
   group('Feature page smoke tests', () {
+    tearDown(LocalDatabaseService.clearInMemoryStoreForTesting);
     late AppStore store;
 
     setUp(() async {

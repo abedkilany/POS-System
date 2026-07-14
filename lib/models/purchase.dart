@@ -13,6 +13,8 @@ class Purchase {
     this.paymentStatus = 'paid',
     this.paymentMethod = 'Cash',
     this.paidAmount = 0,
+    this.warehouseId = 'main',
+    this.warehouseName = 'Main warehouse',
     this.cancelReason = '',
     this.cancelledByDeviceId = '',
     this.reversalApplied = false,
@@ -51,6 +53,8 @@ class Purchase {
       note,
       paymentStatus,
       paymentMethod,
+      warehouseId,
+      warehouseName,
       cancelReason,
       cancelledByDeviceId;
   final DateTime date, createdAt, updatedAt;
@@ -120,9 +124,11 @@ class Purchase {
           List<PurchaseItem>? items,
           String? note,
           String? paymentStatus,
-          String? paymentMethod,
-          double? paidAmount,
-          String? cancelReason,
+           String? paymentMethod,
+           double? paidAmount,
+           String? warehouseId,
+           String? warehouseName,
+           String? cancelReason,
           String? cancelledByDeviceId,
           bool? reversalApplied,
           DateTime? cancelledAt,
@@ -148,6 +154,8 @@ class Purchase {
         paymentStatus: paymentStatus ?? this.paymentStatus,
         paymentMethod: paymentMethod ?? this.paymentMethod,
         paidAmount: paidAmount ?? this.paidAmount,
+        warehouseId: warehouseId ?? this.warehouseId,
+        warehouseName: warehouseName ?? this.warehouseName,
         cancelReason: cancelReason ?? this.cancelReason,
         cancelledByDeviceId: cancelledByDeviceId ?? this.cancelledByDeviceId,
         reversalApplied: reversalApplied ?? this.reversalApplied,
@@ -176,6 +184,8 @@ class Purchase {
         'paymentStatus': paymentStatus,
         'paymentMethod': paymentMethod,
         'paidAmount': paidAmount,
+        'warehouseId': warehouseId,
+        'warehouseName': warehouseName,
         'cancelReason': cancelReason,
         'cancelledByDeviceId': cancelledByDeviceId,
         'reversalApplied': reversalApplied,
@@ -209,6 +219,12 @@ class Purchase {
       paymentStatus: json['paymentStatus']?.toString() ?? 'paid',
       paymentMethod: json['paymentMethod']?.toString() ?? 'Cash',
       paidAmount: (json['paidAmount'] as num? ?? 0).toDouble(),
+      warehouseId: json['warehouseId']?.toString().isNotEmpty == true
+          ? json['warehouseId']!.toString()
+          : 'main',
+      warehouseName: json['warehouseName']?.toString().isNotEmpty == true
+          ? json['warehouseName']!.toString()
+          : 'Main warehouse',
       cancelReason: json['cancelReason']?.toString() ?? '',
       cancelledByDeviceId: json['cancelledByDeviceId']?.toString() ?? '',
       reversalApplied: json['reversalApplied'] == true,

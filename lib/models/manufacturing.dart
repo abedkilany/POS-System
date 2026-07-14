@@ -144,6 +144,10 @@ class ManufacturingOrder {
     required this.outputProductId,
     required this.outputProductName,
     required this.quantity,
+    this.rawMaterialsWarehouseId = 'main',
+    this.rawMaterialsWarehouseName = 'Main warehouse',
+    this.finishedGoodsWarehouseId = 'main',
+    this.finishedGoodsWarehouseName = 'Main warehouse',
     this.status = 'completed',
     this.notes = '',
     DateTime? date,
@@ -161,6 +165,10 @@ class ManufacturingOrder {
         updatedAt = updatedAt ?? createdAt ?? date ?? DateTime.now();
 
   final String id, orderNo, bomId, bomName, outputProductId, outputProductName, status, notes;
+  final String rawMaterialsWarehouseId,
+      rawMaterialsWarehouseName,
+      finishedGoodsWarehouseId,
+      finishedGoodsWarehouseName;
   final double quantity;
   final DateTime date, createdAt, updatedAt;
   final DateTime? deletedAt;
@@ -169,7 +177,7 @@ class ManufacturingOrder {
 
   bool get isDeleted => deletedAt != null;
 
-  ManufacturingOrder copyWith({String? id, String? orderNo, String? bomId, String? bomName, String? outputProductId, String? outputProductName, double? quantity, String? status, String? notes, DateTime? date, DateTime? createdAt, DateTime? updatedAt, DateTime? deletedAt, bool clearDeletedAt = false, String? deviceId, String? syncStatus, String? storeId, String? branchId, int? version, String? lastModifiedByDeviceId}) => ManufacturingOrder(
+  ManufacturingOrder copyWith({String? id, String? orderNo, String? bomId, String? bomName, String? outputProductId, String? outputProductName, double? quantity, String? rawMaterialsWarehouseId, String? rawMaterialsWarehouseName, String? finishedGoodsWarehouseId, String? finishedGoodsWarehouseName, String? status, String? notes, DateTime? date, DateTime? createdAt, DateTime? updatedAt, DateTime? deletedAt, bool clearDeletedAt = false, String? deviceId, String? syncStatus, String? storeId, String? branchId, int? version, String? lastModifiedByDeviceId}) => ManufacturingOrder(
         id: id ?? this.id,
         orderNo: orderNo ?? this.orderNo,
         bomId: bomId ?? this.bomId,
@@ -177,6 +185,10 @@ class ManufacturingOrder {
         outputProductId: outputProductId ?? this.outputProductId,
         outputProductName: outputProductName ?? this.outputProductName,
         quantity: quantity ?? this.quantity,
+        rawMaterialsWarehouseId: rawMaterialsWarehouseId ?? this.rawMaterialsWarehouseId,
+        rawMaterialsWarehouseName: rawMaterialsWarehouseName ?? this.rawMaterialsWarehouseName,
+        finishedGoodsWarehouseId: finishedGoodsWarehouseId ?? this.finishedGoodsWarehouseId,
+        finishedGoodsWarehouseName: finishedGoodsWarehouseName ?? this.finishedGoodsWarehouseName,
         status: status ?? this.status,
         notes: notes ?? this.notes,
         date: date ?? this.date,
@@ -199,6 +211,10 @@ class ManufacturingOrder {
         'outputProductId': outputProductId,
         'outputProductName': outputProductName,
         'quantity': quantity,
+        'rawMaterialsWarehouseId': rawMaterialsWarehouseId,
+        'rawMaterialsWarehouseName': rawMaterialsWarehouseName,
+        'finishedGoodsWarehouseId': finishedGoodsWarehouseId,
+        'finishedGoodsWarehouseName': finishedGoodsWarehouseName,
         'status': status,
         'notes': notes,
         'date': date.toIso8601String(),
@@ -223,6 +239,18 @@ class ManufacturingOrder {
       outputProductId: json['outputProductId']?.toString() ?? '',
       outputProductName: json['outputProductName']?.toString() ?? '',
       quantity: (json['quantity'] as num? ?? 0).toDouble(),
+      rawMaterialsWarehouseId: json['rawMaterialsWarehouseId']?.toString().isNotEmpty == true
+          ? json['rawMaterialsWarehouseId'].toString()
+          : 'main',
+      rawMaterialsWarehouseName: json['rawMaterialsWarehouseName']?.toString().isNotEmpty == true
+          ? json['rawMaterialsWarehouseName'].toString()
+          : 'Main warehouse',
+      finishedGoodsWarehouseId: json['finishedGoodsWarehouseId']?.toString().isNotEmpty == true
+          ? json['finishedGoodsWarehouseId'].toString()
+          : 'main',
+      finishedGoodsWarehouseName: json['finishedGoodsWarehouseName']?.toString().isNotEmpty == true
+          ? json['finishedGoodsWarehouseName'].toString()
+          : 'Main warehouse',
       status: json['status']?.toString() ?? 'completed',
       notes: json['notes']?.toString() ?? '',
       date: date,

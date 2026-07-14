@@ -159,4 +159,14 @@ class SqliteMigrationManager {
 
   static Future<SqliteMigrationStatus> initializePhase2() => initializePhase3();
 
+  static Future<void> resetForTesting() async {
+    final db = _database;
+    _database = null;
+    _initialized = false;
+    _lastError = null;
+    if (db != null) {
+      await db.close();
+    }
+  }
+
 }

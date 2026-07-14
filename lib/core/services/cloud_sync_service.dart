@@ -2419,8 +2419,8 @@ class CloudSyncService {
       await store.ensureHeavyDataLoaded();
     }
     final chunks = kind == 'login_bootstrap'
-        ? store.exportCloudLoginBootstrapSnapshotChunks()
-        : store.exportCloudBootstrapSnapshotChunks(maxItemsPerChunk: 300);
+        ? await store.exportCloudLoginBootstrapSnapshotChunks()
+        : await store.exportCloudBootstrapSnapshotChunks(maxItemsPerChunk: 300);
     if (chunks.isEmpty) return null;
     if (kind != 'login_bootstrap' &&
         !_relaySnapshotHasBusinessCollections(chunks)) {
@@ -3488,7 +3488,7 @@ class CloudSyncService {
       return 0;
     }
     await store.removeLegacyCloudBootstrapSnapshotQueue();
-    final chunks = store.exportCloudLoginBootstrapSnapshotChunks();
+    final chunks = await store.exportCloudLoginBootstrapSnapshotChunks();
     if (chunks.isEmpty) return 0;
     return const UnifiedSnapshotTransferService().uploadChunks(
       _CloudSnapshotPushTransport(
@@ -3518,7 +3518,7 @@ class CloudSyncService {
     await store.removeLegacyCloudBootstrapSnapshotQueue();
     await store.ensureHeavyDataLoaded();
     final chunks =
-        store.exportCloudBootstrapSnapshotChunks(maxItemsPerChunk: 300);
+        await store.exportCloudBootstrapSnapshotChunks(maxItemsPerChunk: 300);
     if (chunks.isEmpty || !_relaySnapshotHasBusinessCollections(chunks)) {
       return 0;
     }

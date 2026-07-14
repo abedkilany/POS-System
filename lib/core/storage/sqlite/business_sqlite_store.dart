@@ -420,6 +420,7 @@ class BusinessSqliteStore {
     final total = await _countWhere(db, 'products', whereSql, variables);
     final safeLimit = _safeLimit(limit);
     final safeOffset = _safeOffset(offset);
+    final allowLegacyFallback = !await _warehouseInventoryBackfillCompleted(db);
     final rows = await db.customSelect('''
       SELECT id, name, code, name_en AS nameEn, name_ar AS nameAr,
              price, cost, original_cost AS originalCost,
@@ -448,6 +449,7 @@ class BusinessSqliteStore {
       Variable<int>(safeLimit),
       Variable<int>(safeOffset),
     ]).get();
+    final stockByIdentity = await _warehouseInventoryStockByIdentity(db);
     final productIds =
         rows.map((row) => row.read<String>('id')).toList(growable: false);
     final saleUnitsByProduct = await _readProductUnitRowsByProduct(
@@ -462,8 +464,10 @@ class BusinessSqliteStore {
     );
     return BusinessQueryPage<Product>(
       items: rows
-          .map((row) => _productFromQueryRow(
+        .map((row) => _productFromQueryRow(
                 row,
+                stockByIdentity: stockByIdentity,
+                allowLegacyFallback: allowLegacyFallback,
                 saleUnitsByProduct: saleUnitsByProduct,
                 purchaseUnitsByProduct: purchaseUnitsByProduct,
               ))
@@ -540,6 +544,10 @@ class BusinessSqliteStore {
       $_purchaseTotalsCte
       SELECT SUM(subtotal) AS value FROM purchase_totals
     ''');
+    final allowLegacyFallback = !await _warehouseInventoryBackfillCompleted(db);
+    final inventoryQuantityExpr = allowLegacyFallback
+        ? 'COALESCE(wt.quantity, p.stock)'
+        : 'COALESCE(wt.quantity, 0)';
     final expenseRows = await db.customSelect('''
       SELECT category, amount, expense_date
       FROM expenses
@@ -565,19 +573,34 @@ class BusinessSqliteStore {
     }
 
     final inventoryRow = await db.customSelect('''
-      SELECT COALESCE(SUM(usd_cost * stock), 0) AS inventoryCostValue,
-             SUM(CASE WHEN stock <= low_stock_threshold THEN 1 ELSE 0 END)
-               AS lowStockCount
-      FROM products
-      WHERE deleted_at = '' AND track_stock = 1
+      WITH warehouse_totals AS (
+        SELECT store_id, product_id, COALESCE(SUM(quantity), 0) AS quantity
+        FROM warehouse_inventory
+        GROUP BY store_id, product_id
+      )
+      SELECT COALESCE(SUM(usd_cost * $inventoryQuantityExpr), 0)
+               AS inventoryCostValue,
+             SUM(CASE WHEN $inventoryQuantityExpr <= p.low_stock_threshold
+               THEN 1 ELSE 0 END) AS lowStockCount
+      FROM products p
+      LEFT JOIN warehouse_totals wt
+        ON wt.product_id = p.id AND wt.store_id = p.store_id
+      WHERE p.deleted_at = '' AND p.track_stock = 1
     ''').getSingle();
     final lowStockRows = await db.customSelect('''
-      SELECT name
-      FROM products
-      WHERE deleted_at = ''
-        AND track_stock = 1
-        AND stock <= low_stock_threshold
-      ORDER BY lower(name) ASC
+      WITH warehouse_totals AS (
+        SELECT store_id, product_id, COALESCE(SUM(quantity), 0) AS quantity
+        FROM warehouse_inventory
+        GROUP BY store_id, product_id
+      )
+      SELECT p.name
+      FROM products p
+      LEFT JOIN warehouse_totals wt
+        ON wt.product_id = p.id AND wt.store_id = p.store_id
+      WHERE p.deleted_at = ''
+        AND p.track_stock = 1
+        AND $inventoryQuantityExpr <= p.low_stock_threshold
+      ORDER BY lower(p.name) ASC
       LIMIT 20
     ''').get();
     final duplicateCodeCount = await _intScalar(db, '''
@@ -665,6 +688,10 @@ class BusinessSqliteStore {
       Variable<String>(_iso(monthStart)),
       Variable<String>(_iso(nextMonth)),
     ]);
+    final allowLegacyFallback = !await _warehouseInventoryBackfillCompleted(db);
+    final inventoryQuantityExpr = allowLegacyFallback
+        ? 'COALESCE(wt.quantity, p.stock)'
+        : 'COALESCE(wt.quantity, 0)';
     final movementTotals = await db.customSelect('''
       SELECT
         SUM(CASE WHEN quantity > 0 THEN quantity ELSE 0 END) AS movementIn,
@@ -673,11 +700,19 @@ class BusinessSqliteStore {
       WHERE deleted_at = ''
     ''').getSingle();
     final inventory = await db.customSelect('''
-      SELECT COALESCE(SUM(usd_price * stock), 0) AS inventoryRetailValue,
-             SUM(CASE WHEN stock <= low_stock_threshold THEN 1 ELSE 0 END)
-               AS lowStockCount
-      FROM products
-      WHERE deleted_at = '' AND track_stock = 1
+      WITH warehouse_totals AS (
+        SELECT store_id, product_id, COALESCE(SUM(quantity), 0) AS quantity
+        FROM warehouse_inventory
+        GROUP BY store_id, product_id
+      )
+      SELECT COALESCE(SUM(usd_price * $inventoryQuantityExpr), 0)
+               AS inventoryRetailValue,
+             SUM(CASE WHEN $inventoryQuantityExpr <= p.low_stock_threshold
+               THEN 1 ELSE 0 END) AS lowStockCount
+      FROM products p
+      LEFT JOIN warehouse_totals wt
+        ON wt.product_id = p.id AND wt.store_id = p.store_id
+      WHERE p.deleted_at = '' AND p.track_stock = 1
     ''').getSingle();
     final balances = await _accountBalanceSummary(db, today, tomorrow);
 
@@ -1527,7 +1562,9 @@ class BusinessSqliteStore {
       SELECT id, product_id, product_name, movement_type, quantity,
              movement_date, reference_id, reference_no, reason,
              adjustment_category, notes, evidence_ref, warehouse_id,
-             warehouse_name, unit_cost, created_at, updated_at, device_id,
+             warehouse_name, movement_group_id, document_line_id,
+             source_movement_id, reversal_of_movement_id, idempotency_key,
+             unit_cost, created_at, updated_at, device_id,
              sync_status, store_id, branch_id, version,
              last_modified_by_device_id, reviewed_at, reviewed_by, review_note
       FROM stock_movements
@@ -1855,6 +1892,8 @@ class BusinessSqliteStore {
       FROM products
       ORDER BY sort_index ASC, updated_at ASC, id ASC
     ''').get();
+    final stockByIdentity = await _warehouseInventoryStockByIdentity(db);
+    final allowLegacyFallback = !await _warehouseInventoryBackfillCompleted(db);
     final saleUnitRows = await db.customSelect('''
       SELECT product_id AS productId, line_no AS lineNo, unit_id AS id,
              name, conversion_to_base AS conversionToBase,
@@ -1907,6 +1946,14 @@ class BusinessSqliteStore {
       data['trackStock'] =
           data['trackStock'] == 1 || data['trackStock'] == true;
       data['isActive'] = data['isActive'] == 1 || data['isActive'] == true;
+      final storeId = data['storeId']?.toString() ?? '';
+      final productId = data['id']?.toString() ?? '';
+      final derivedStock = stockByIdentity['$storeId::$productId'];
+      if (derivedStock != null) {
+        data['stock'] = derivedStock;
+      } else if (!allowLegacyFallback) {
+        data['stock'] = 0;
+      }
       data['saleUnits'] = saleUnitsByProduct[data['id']?.toString() ?? ''] ??
           const <Map<String, dynamic>>[];
       data['purchaseUnits'] =
@@ -1944,6 +1991,8 @@ class BusinessSqliteStore {
       LIMIT 1
     ''', variables: <Variable<Object>>[Variable<String>(productId)]).get();
     if (rows.isEmpty) return null;
+    final stockByIdentity = await _warehouseInventoryStockByIdentity(db);
+    final allowLegacyFallback = !await _warehouseInventoryBackfillCompleted(db);
 
     final saleUnitRows = await db.customSelect('''
       SELECT product_id AS productId, line_no AS lineNo, unit_id AS id,
@@ -1969,6 +2018,13 @@ class BusinessSqliteStore {
     final data = Map<String, dynamic>.from(rows.first.data);
     data['trackStock'] = data['trackStock'] == 1 || data['trackStock'] == true;
     data['isActive'] = data['isActive'] == 1 || data['isActive'] == true;
+    final storeId = data['storeId']?.toString() ?? '';
+    final derivedStock = stockByIdentity['$storeId::$productId'];
+    if (derivedStock != null) {
+      data['stock'] = derivedStock;
+    } else if (!allowLegacyFallback) {
+      data['stock'] = 0;
+    }
     data['saleUnits'] = saleUnitRows
         .map((row) {
           final item = Map<String, dynamic>.from(row.data);
@@ -1987,6 +2043,12 @@ class BusinessSqliteStore {
   }
 
   static Future<List<Sale>> readSales(VentioDriftDatabase db) async {
+    final hasWarehouseColumns =
+        await _tableHasColumn(db, 'sales', 'warehouse_id') &&
+            await _tableHasColumn(db, 'sales', 'warehouse_name');
+    final warehouseSelect = hasWarehouseColumns
+        ? 'note, warehouse_id AS warehouseId,\n             warehouse_name AS warehouseName'
+        : 'note';
     final saleRows = await db.customSelect('''
       SELECT id, invoice_no AS invoiceNo, customer_name AS customerName,
              customer_id AS customerId, document_date AS date,
@@ -2009,7 +2071,8 @@ class BusinessSqliteStore {
              paid_amount_in_payment_currency AS paidAmountInPaymentCurrency,
              cash_received_amount_in_payment_currency
                AS cashReceivedAmountInPaymentCurrency,
-             note, created_at AS createdAt, updated_at AS updatedAt,
+             $warehouseSelect,
+             created_at AS createdAt, updated_at AS updatedAt,
              deleted_at AS deletedAt, device_id AS deviceId,
              sync_status AS syncStatus, store_id AS storeId,
              branch_id AS branchId, version,
@@ -2084,6 +2147,12 @@ class BusinessSqliteStore {
   ) async {
     final placeholders = _inPlaceholders(ids.length);
     final variables = ids.map((id) => Variable<String>(id)).toList();
+    final hasWarehouseColumns =
+        await _tableHasColumn(db, 'sales', 'warehouse_id') &&
+            await _tableHasColumn(db, 'sales', 'warehouse_name');
+    final warehouseSelect = hasWarehouseColumns
+        ? 'note, warehouse_id AS warehouseId,\n             warehouse_name AS warehouseName'
+        : 'note';
     final saleRows = await db.customSelect('''
       SELECT id, invoice_no AS invoiceNo, customer_name AS customerName,
              customer_id AS customerId, document_date AS date,
@@ -2107,7 +2176,8 @@ class BusinessSqliteStore {
                AS paidAmountInPaymentCurrency,
              cash_received_amount_in_payment_currency
                AS cashReceivedAmountInPaymentCurrency,
-             note, created_at AS createdAt, updated_at AS updatedAt,
+             $warehouseSelect,
+             created_at AS createdAt, updated_at AS updatedAt,
              deleted_at AS deletedAt, device_id AS deviceId,
              sync_status AS syncStatus, store_id AS storeId,
              branch_id AS branchId, version,
@@ -2414,10 +2484,17 @@ class BusinessSqliteStore {
   }
 
   static Future<List<Purchase>> readPurchases(VentioDriftDatabase db) async {
+    final hasWarehouseColumns =
+        await _tableHasColumn(db, 'purchases', 'warehouse_id') &&
+            await _tableHasColumn(db, 'purchases', 'warehouse_name');
+    final hasPayloadJson = await _tableHasColumn(db, 'purchases', 'payload_json');
+    final payloadJsonColumn =
+        hasPayloadJson ? ', payload_json AS payloadJson' : '';
     final purchaseRows = await db.customSelect('''
       SELECT id, purchase_no AS purchaseNo,
              supplier_id AS supplierId,
              supplier_name AS supplierName,
+             $payloadJsonColumn
              document_date AS date,
              status, note, payment_status AS paymentStatus,
              payment_method AS paymentMethod,
@@ -2430,7 +2507,7 @@ class BusinessSqliteStore {
              deleted_at AS deletedAt, device_id AS deviceId,
              sync_status AS syncStatus, store_id AS storeId,
              branch_id AS branchId, version,
-             last_modified_by_device_id AS lastModifiedByDeviceId
+             last_modified_by_device_id AS lastModifiedByDeviceId${hasWarehouseColumns ? ', warehouse_id AS warehouseId, warehouse_name AS warehouseName' : ''}
       FROM purchases
       ORDER BY sort_index ASC, updated_at ASC, id ASC
     ''').get();
@@ -2464,6 +2541,23 @@ class BusinessSqliteStore {
       final data = Map<String, dynamic>.from(row.data);
       data['reversalApplied'] =
           data['reversalApplied'] == 1 || data['reversalApplied'] == true;
+      if (hasPayloadJson &&
+          (data['warehouseId'] == null ||
+              data['warehouseId'].toString().isEmpty) &&
+          data['payloadJson']?.toString().isNotEmpty == true) {
+        try {
+          final payload =
+              Map<String, dynamic>.from(jsonDecode(data['payloadJson'].toString()));
+          data['warehouseId'] =
+              payload['warehouseId']?.toString().isNotEmpty == true
+                  ? payload['warehouseId']
+                  : 'main';
+          data['warehouseName'] =
+              payload['warehouseName']?.toString().isNotEmpty == true
+                  ? payload['warehouseName']
+                  : 'Main warehouse';
+        } catch (_) {}
+      }
       data['items'] = itemsByPurchase[data['id']?.toString() ?? ''] ??
           const <Map<String, dynamic>>[];
       return Purchase.fromJson(data);
@@ -2482,12 +2576,19 @@ class BusinessSqliteStore {
     VentioDriftDatabase db,
     List<String> ids,
   ) async {
+    final hasWarehouseColumns =
+        await _tableHasColumn(db, 'purchases', 'warehouse_id') &&
+            await _tableHasColumn(db, 'purchases', 'warehouse_name');
+    final hasPayloadJson = await _tableHasColumn(db, 'purchases', 'payload_json');
+    final payloadJsonColumn =
+        hasPayloadJson ? 'payload_json AS payloadJson,' : '';
     final placeholders = _inPlaceholders(ids.length);
     final variables = ids.map((id) => Variable<String>(id)).toList();
     final purchaseRows = await db.customSelect('''
       SELECT id, purchase_no AS purchaseNo,
              supplier_id AS supplierId,
              supplier_name AS supplierName,
+             $payloadJsonColumn
              document_date AS date,
              status, note, payment_status AS paymentStatus,
              payment_method AS paymentMethod,
@@ -2500,10 +2601,10 @@ class BusinessSqliteStore {
              deleted_at AS deletedAt, device_id AS deviceId,
              sync_status AS syncStatus, store_id AS storeId,
              branch_id AS branchId, version,
-             last_modified_by_device_id AS lastModifiedByDeviceId
-      FROM purchases
-      WHERE id IN ($placeholders)
-      ORDER BY sort_index ASC, updated_at ASC, id ASC
+             last_modified_by_device_id AS lastModifiedByDeviceId${hasWarehouseColumns ? ', warehouse_id AS warehouseId, warehouse_name AS warehouseName' : ''}
+       FROM purchases
+       WHERE id IN ($placeholders)
+       ORDER BY sort_index ASC, updated_at ASC, id ASC
     ''', variables: variables).get();
     final itemRows = await db.customSelect('''
       SELECT id, purchase_id AS purchaseId, line_no AS lineNo,
@@ -2534,6 +2635,23 @@ class BusinessSqliteStore {
       final data = Map<String, dynamic>.from(row.data);
       data['reversalApplied'] =
           data['reversalApplied'] == 1 || data['reversalApplied'] == true;
+      if (hasPayloadJson &&
+          (data['warehouseId'] == null ||
+              data['warehouseId'].toString().isEmpty) &&
+          data['payloadJson']?.toString().isNotEmpty == true) {
+        try {
+          final payload =
+              Map<String, dynamic>.from(jsonDecode(data['payloadJson'].toString()));
+          data['warehouseId'] =
+              payload['warehouseId']?.toString().isNotEmpty == true
+                  ? payload['warehouseId']
+                  : 'main';
+          data['warehouseName'] =
+              payload['warehouseName']?.toString().isNotEmpty == true
+                  ? payload['warehouseName']
+                  : 'Main warehouse';
+        } catch (_) {}
+      }
       data['items'] = itemsByPurchase[data['id']?.toString() ?? ''] ??
           const <Map<String, dynamic>>[];
       final purchase = Purchase.fromJson(data);
@@ -2869,24 +2987,54 @@ class BusinessSqliteStore {
 
   static Future<List<ManufacturingOrder>> readManufacturingOrders(
       VentioDriftDatabase db) async {
+    final hasPayloadJson =
+        await _tableHasColumn(db, 'manufacturing_orders', 'payload_json');
+    final hasWarehouseColumns =
+        await _tableHasColumn(db, 'manufacturing_orders', 'raw_materials_warehouse_id') &&
+            await _tableHasColumn(db, 'manufacturing_orders', 'finished_goods_warehouse_id');
+    final payloadJsonColumn =
+        hasPayloadJson ? 'payload_json AS payloadJson,' : '';
     final rows = await db.customSelect('''
       SELECT id, order_no AS orderNo, bom_id AS bomId, bom_name AS bomName,
              output_product_id AS outputProductId,
              output_product_name AS outputProductName,
-             quantity, status, notes,
+             quantity, ${hasWarehouseColumns ? 'raw_materials_warehouse_id AS rawMaterialsWarehouseId, raw_materials_warehouse_name AS rawMaterialsWarehouseName, finished_goods_warehouse_id AS finishedGoodsWarehouseId, finished_goods_warehouse_name AS finishedGoodsWarehouseName,' : ''} status, notes,
              document_date AS date, created_at AS createdAt,
              updated_at AS updatedAt, deleted_at AS deletedAt,
              device_id AS deviceId, sync_status AS syncStatus,
              store_id AS storeId, branch_id AS branchId, version,
-             last_modified_by_device_id AS lastModifiedByDeviceId
+             last_modified_by_device_id AS lastModifiedByDeviceId$payloadJsonColumn
       FROM manufacturing_orders
       ORDER BY sort_index ASC, updated_at ASC, id ASC
     ''').get();
-    return rows
-        .map((row) => ManufacturingOrder.fromJson(
-              Map<String, dynamic>.from(row.data),
-            ))
-        .toList(growable: false);
+    return rows.map((row) {
+      final data = Map<String, dynamic>.from(row.data);
+      if (hasPayloadJson &&
+          data['rawMaterialsWarehouseId']?.toString().isEmpty != false &&
+          data['payloadJson']?.toString().isNotEmpty == true) {
+        try {
+          final payload =
+              Map<String, dynamic>.from(jsonDecode(data['payloadJson'].toString()));
+          data['rawMaterialsWarehouseId'] =
+              payload['rawMaterialsWarehouseId']?.toString().isNotEmpty == true
+                  ? payload['rawMaterialsWarehouseId']
+                  : 'main';
+          data['rawMaterialsWarehouseName'] =
+              payload['rawMaterialsWarehouseName']?.toString().isNotEmpty == true
+                  ? payload['rawMaterialsWarehouseName']
+                  : 'Main warehouse';
+          data['finishedGoodsWarehouseId'] =
+              payload['finishedGoodsWarehouseId']?.toString().isNotEmpty == true
+                  ? payload['finishedGoodsWarehouseId']
+                  : 'main';
+          data['finishedGoodsWarehouseName'] =
+              payload['finishedGoodsWarehouseName']?.toString().isNotEmpty == true
+                  ? payload['finishedGoodsWarehouseName']
+                  : 'Main warehouse';
+        } catch (_) {}
+      }
+      return ManufacturingOrder.fromJson(data);
+    }).toList(growable: false);
   }
 
   static Future<void> saveKeyJson(
@@ -3544,9 +3692,11 @@ class BusinessSqliteStore {
          device_id, sync_status, store_id, branch_id, version, sort_index,
          product_id, product_name, movement_type, quantity, movement_date,
          reference_id, reference_no, reason, adjustment_category, notes,
-         evidence_ref, warehouse_id, warehouse_name, unit_cost,
+         evidence_ref, warehouse_id, warehouse_name, movement_group_id,
+         document_line_id, source_movement_id, reversal_of_movement_id,
+         idempotency_key, unit_cost,
          last_modified_by_device_id, reviewed_at, reviewed_by, review_note)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       """,
       variables: <Variable<Object>>[
         Variable<String>(id),
@@ -3589,6 +3739,11 @@ class BusinessSqliteStore {
         Variable<String>(
           _textValue(payload['warehouseName'], fallback: 'Main warehouse'),
         ),
+        Variable<String>(_textValue(payload['movementGroupId'])),
+        Variable<String>(_textValue(payload['documentLineId'])),
+        Variable<String>(_textValue(payload['sourceMovementId'])),
+        Variable<String>(_textValue(payload['reversalOfMovementId'])),
+        Variable<String>(_textValue(payload['idempotencyKey'])),
         Variable<double>(_doubleValue(payload['unitCost'])),
         Variable<String>(
           _textValue(
@@ -3798,6 +3953,58 @@ class BusinessSqliteStore {
     required String deletedAt,
     required int sortIndex,
   }) async {
+    final hasWarehouseColumns =
+        await _tableHasColumn(db, table, 'warehouse_id') &&
+            await _tableHasColumn(db, table, 'warehouse_name');
+    final typedColumns = <String, Object?>{
+      'invoice_no': _textValue(payload['invoiceNo']),
+      'customer_id': _textValue(payload['customerId']),
+      'customer_name': _textValue(payload['customerName']),
+      'document_date': _dateString(payload['date']) ?? createdAt,
+      'status': _textValue(payload['status'], fallback: 'Paid'),
+      'discount': _doubleValue(payload['discount']),
+      'original_discount': _doubleValue(
+        payload['originalDiscount'],
+        fallback: _doubleValue(payload['discount']),
+      ),
+      'discount_currency':
+          _textValue(payload['discountCurrency'], fallback: 'USD'),
+      'discount_exchange_rate_at_entry':
+          _doubleValue(payload['discountExchangeRateAtEntry']),
+      'payment_method':
+          _textValue(payload['paymentMethod'], fallback: 'Cash'),
+      'payment_status':
+          _textValue(payload['paymentStatus'], fallback: 'paid'),
+      'invoice_currency':
+          _textValue(payload['invoiceCurrency'], fallback: 'USD'),
+      'payment_currency':
+          _textValue(payload['paymentCurrency'], fallback: 'USD'),
+      'exchange_rate_at_payment':
+          _doubleValue(payload['exchangeRateAtPayment']),
+      'base_currency': _textValue(payload['baseCurrency'], fallback: 'USD'),
+      'exchange_rate_at_invoice':
+          _doubleValue(payload['exchangeRateAtInvoice'], fallback: 1),
+      'transaction_amount': _doubleValue(payload['transactionAmount']),
+      'base_amount': _doubleValue(payload['baseAmount']),
+      'paid_base_amount': _doubleValue(payload['paidBaseAmount']),
+      'exchange_difference_amount':
+          _doubleValue(payload['exchangeDifferenceAmount']),
+      'paid_amount': _doubleValue(payload['paidAmount']),
+      'cash_received_amount': _doubleValue(payload['cashReceivedAmount']),
+      'paid_amount_in_payment_currency':
+          _doubleValue(payload['paidAmountInPaymentCurrency']),
+      'cash_received_amount_in_payment_currency':
+          _doubleValue(payload['cashReceivedAmountInPaymentCurrency']),
+      'note': _textValue(payload['note']),
+    };
+    if (hasWarehouseColumns) {
+      typedColumns['warehouse_id'] =
+          _textValue(payload['warehouseId'], fallback: 'main');
+      typedColumns['warehouse_name'] = _textValue(
+        payload['warehouseName'],
+        fallback: 'Main warehouse',
+      );
+    }
     await _upsertTypedEntityRow(
       db,
       table,
@@ -3809,47 +4016,7 @@ class BusinessSqliteStore {
       updatedAt: updatedAt,
       deletedAt: deletedAt,
       sortIndex: sortIndex,
-      typedColumns: <String, Object?>{
-        'invoice_no': _textValue(payload['invoiceNo']),
-        'customer_id': _textValue(payload['customerId']),
-        'customer_name': _textValue(payload['customerName']),
-        'document_date': _dateString(payload['date']) ?? createdAt,
-        'status': _textValue(payload['status'], fallback: 'Paid'),
-        'discount': _doubleValue(payload['discount']),
-        'original_discount': _doubleValue(
-          payload['originalDiscount'],
-          fallback: _doubleValue(payload['discount']),
-        ),
-        'discount_currency':
-            _textValue(payload['discountCurrency'], fallback: 'USD'),
-        'discount_exchange_rate_at_entry':
-            _doubleValue(payload['discountExchangeRateAtEntry']),
-        'payment_method':
-            _textValue(payload['paymentMethod'], fallback: 'Cash'),
-        'payment_status':
-            _textValue(payload['paymentStatus'], fallback: 'paid'),
-        'invoice_currency':
-            _textValue(payload['invoiceCurrency'], fallback: 'USD'),
-        'payment_currency':
-            _textValue(payload['paymentCurrency'], fallback: 'USD'),
-        'exchange_rate_at_payment':
-            _doubleValue(payload['exchangeRateAtPayment']),
-        'base_currency': _textValue(payload['baseCurrency'], fallback: 'USD'),
-        'exchange_rate_at_invoice':
-            _doubleValue(payload['exchangeRateAtInvoice'], fallback: 1),
-        'transaction_amount': _doubleValue(payload['transactionAmount']),
-        'base_amount': _doubleValue(payload['baseAmount']),
-        'paid_base_amount': _doubleValue(payload['paidBaseAmount']),
-        'exchange_difference_amount':
-            _doubleValue(payload['exchangeDifferenceAmount']),
-        'paid_amount': _doubleValue(payload['paidAmount']),
-        'cash_received_amount': _doubleValue(payload['cashReceivedAmount']),
-        'paid_amount_in_payment_currency':
-            _doubleValue(payload['paidAmountInPaymentCurrency']),
-        'cash_received_amount_in_payment_currency':
-            _doubleValue(payload['cashReceivedAmountInPaymentCurrency']),
-        'note': _textValue(payload['note']),
-      },
+      typedColumns: typedColumns,
     );
 
     await db.customStatement(
@@ -3985,6 +4152,9 @@ class BusinessSqliteStore {
     required String deletedAt,
     required int sortIndex,
   }) async {
+    final hasWarehouseColumns =
+        await _tableHasColumn(db, table, 'warehouse_id') &&
+            await _tableHasColumn(db, table, 'warehouse_name');
     await _upsertTypedEntityRow(
       db,
       table,
@@ -4008,6 +4178,13 @@ class BusinessSqliteStore {
         'payment_method':
             _textValue(payload['paymentMethod'], fallback: 'Cash'),
         'paid_amount': _doubleValue(payload['paidAmount']),
+        if (hasWarehouseColumns) ...{
+          'warehouse_id': _textValue(payload['warehouseId'], fallback: 'main'),
+          'warehouse_name': _textValue(
+            payload['warehouseName'],
+            fallback: 'Main warehouse',
+          ),
+        },
         'cancel_reason': _textValue(payload['cancelReason']),
         'cancelled_by_device_id': _textValue(payload['cancelledByDeviceId']),
         'reversal_applied': _boolValue(payload['reversalApplied']),
@@ -4149,10 +4326,46 @@ class BusinessSqliteStore {
         'output_product_id': _textValue(payload['outputProductId']),
         'output_product_name': _textValue(payload['outputProductName']),
         'quantity': _doubleValue(payload['quantity']),
+        'raw_materials_warehouse_id':
+            _textValue(payload['rawMaterialsWarehouseId'], fallback: 'main'),
+        'raw_materials_warehouse_name': _textValue(
+          payload['rawMaterialsWarehouseName'],
+          fallback: 'Main warehouse',
+        ),
+        'finished_goods_warehouse_id':
+            _textValue(payload['finishedGoodsWarehouseId'], fallback: 'main'),
+        'finished_goods_warehouse_name': _textValue(
+          payload['finishedGoodsWarehouseName'],
+          fallback: 'Main warehouse',
+        ),
         'status': _textValue(payload['status'], fallback: 'completed'),
         'notes': _textValue(payload['notes']),
         'document_date': _dateString(payload['date']) ?? createdAt,
       },
+    );
+  }
+
+  static Future<void> upsertManufacturingOrderPayloadInTransaction(
+    VentioDriftDatabase db,
+    Map<String, dynamic> payload, {
+    required String id,
+    required String payloadJson,
+    required String createdAt,
+    required String updatedAt,
+    required String deletedAt,
+    required int sortIndex,
+  }) async {
+    await _upsertManufacturingOrderPayload(
+      db,
+      _tableByKey[manufacturingOrdersKey]!,
+      _entityTypeByKey[manufacturingOrdersKey]!,
+      payload,
+      id: id,
+      payloadJson: payloadJson,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+      deletedAt: deletedAt,
+      sortIndex: sortIndex,
     );
   }
 
@@ -4597,6 +4810,10 @@ class BusinessSqliteStore {
     for (final table in _tableByKey.values) {
       await db.customStatement('DELETE FROM $table;');
     }
+    await db.customStatement('DELETE FROM warehouse_inventory;');
+    await db.customStatement('DELETE FROM stock_operations;');
+    await db.customStatement('DELETE FROM inventory_reconciliations;');
+    await db.customStatement('DELETE FROM inventory_migration_adjustments;');
     await db.customStatement('DELETE FROM settings;');
     await db.customStatement('DELETE FROM local_key_values;');
   }
@@ -4647,6 +4864,11 @@ class BusinessSqliteStore {
       warehouseId: _rowText(row, 'warehouse_id', fallback: 'main'),
       warehouseName:
           _rowText(row, 'warehouse_name', fallback: 'Main warehouse'),
+      movementGroupId: _rowText(row, 'movement_group_id'),
+      documentLineId: _rowText(row, 'document_line_id'),
+      sourceMovementId: _rowText(row, 'source_movement_id'),
+      reversalOfMovementId: _rowText(row, 'reversal_of_movement_id'),
+      idempotencyKey: _rowText(row, 'idempotency_key'),
       unitCost: _rowDouble(row, 'unit_cost'),
       createdAt: _parseDate(_rowText(row, 'created_at')) ?? date,
       updatedAt: _parseDate(_rowText(row, 'updated_at')) ?? date,
@@ -4702,6 +4924,8 @@ class BusinessSqliteStore {
 
   static Product _productFromQueryRow(
     QueryRow row, {
+    Map<String, double> stockByIdentity = const <String, double>{},
+    bool allowLegacyFallback = true,
     Map<String, List<Map<String, dynamic>>> saleUnitsByProduct =
         const <String, List<Map<String, dynamic>>>{},
     Map<String, List<Map<String, dynamic>>> purchaseUnitsByProduct =
@@ -4711,11 +4935,49 @@ class BusinessSqliteStore {
     final productId = data['id']?.toString() ?? '';
     data['trackStock'] = data['trackStock'] == 1 || data['trackStock'] == true;
     data['isActive'] = data['isActive'] == 1 || data['isActive'] == true;
+    final storeId = data['storeId']?.toString() ?? '';
+    final derivedStock = stockByIdentity['$storeId::$productId'];
+    if (derivedStock != null) {
+      data['stock'] = derivedStock;
+    } else if (!allowLegacyFallback) {
+      data['stock'] = 0;
+    }
     data['saleUnits'] =
         saleUnitsByProduct[productId] ?? const <Map<String, dynamic>>[];
     data['purchaseUnits'] =
         purchaseUnitsByProduct[productId] ?? const <Map<String, dynamic>>[];
     return Product.fromJson(data);
+  }
+
+  static Future<Map<String, double>> _warehouseInventoryStockByIdentity(
+    VentioDriftDatabase db, {
+    String storeId = '',
+  }) async {
+    final conditions = <String>[];
+    final variables = <Variable<Object>>[];
+    if (storeId.trim().isNotEmpty) {
+      conditions.add('store_id = ?');
+      variables.add(Variable<String>(storeId.trim()));
+    }
+    final whereSql = conditions.isEmpty ? '1=1' : conditions.join(' AND ');
+    final rows = await db.customSelect('''
+      SELECT store_id AS storeId, product_id AS productId,
+             COALESCE(SUM(quantity), 0) AS quantity
+      FROM warehouse_inventory
+      WHERE $whereSql
+      GROUP BY store_id, product_id
+    ''', variables: variables).get();
+    return <String, double>{
+      for (final row in rows)
+        '${row.read<String>('storeId')}::${row.read<String>('productId')}':
+            _doubleValue(row.data['quantity'], fallback: 0),
+    };
+  }
+
+  static Future<bool> _warehouseInventoryBackfillCompleted(
+    VentioDriftDatabase db,
+  ) async {
+    return await _metaValue(db, 'warehouse_inventory_backfill_v1') == 'done';
   }
 
   static String _rowText(

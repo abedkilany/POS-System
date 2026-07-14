@@ -25,6 +25,7 @@ import '../../models/sale.dart';
 import '../../models/sale_item.dart';
 import '../../models/sale_summary.dart';
 import '../../models/user_role.dart';
+import '../../models/warehouse.dart';
 import '../../widgets/app_section_header.dart';
 import '../../widgets/empty_state_card.dart';
 import '../../widgets/page_data_load_indicator.dart';
@@ -73,6 +74,7 @@ class _SalesPageState extends State<SalesPage> {
   final List<_DraftSaleItem> _cart = [];
   final List<_QuickProductPage> _quickPages = [];
   String _selectedCustomerId = AppStore.walkInCustomerId;
+  String _selectedWarehouseId = Warehouse.defaultId;
   String _paymentMethod = 'Cash';
   String _invoiceCurrency = 'USD';
   String _paymentCurrency = 'USD';
@@ -146,6 +148,7 @@ class _SalesPageState extends State<SalesPage> {
     _invoiceCurrency = widget.store.storeProfile.defaultSaleInvoiceCurrency;
     _paymentCurrency = widget.store.storeProfile.defaultSalePaymentCurrency;
     _discountCurrency = widget.store.storeProfile.defaultSaleInvoiceCurrency;
+    _selectedWarehouseId = widget.store.resolveWarehouseForSale().id;
     _paymentExchangeRateController.text =
         widget.store.storeProfile.usdToLbpRate.toStringAsFixed(0);
     _storeUiRevision = _currentStoreUiRevision();
@@ -212,10 +215,14 @@ class _SalesPageState extends State<SalesPage> {
 
   double get _subtotal => _cart.fold(0, (sum, item) => sum + item.lineTotal);
   String _stockAvailabilityLabel(Product product, AppLocalizations tr,
-      {bool includeUnit = false}) {
+      {bool includeUnit = false, String? warehouseId}) {
     if (!product.trackStock) return 'Non-stock';
+    final available = widget.store.stockForWarehouse(
+      product.id,
+      warehouseId ?? _selectedWarehouseId,
+    );
     final quantity =
-        includeUnit ? _formatQuantity(product.stock) : product.stock.toString();
+        includeUnit ? _formatQuantity(available) : available.toString();
     return includeUnit
         ? '${tr.text('stock')}: $quantity ${product.unit}'
         : '${tr.text('stock')}: $quantity';
@@ -1227,6 +1234,59 @@ class _SalesPageState extends State<SalesPage> {
     );
   }
 
+  Widget _buildSalesWarehouseSelector(BuildContext context, AppLocalizations tr) {
+    final activeWarehouses = widget.store.warehouses;
+    final selectedWarehouse = activeWarehouses.firstWhere(
+      (item) => item.id == _selectedWarehouseId,
+      orElse: () => widget.store.resolveWarehouseForSale(),
+    );
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: VentioResponsive.cardInsets(context),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              tr.text('warehouse'),
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 10),
+            DropdownButtonFormField<String>(
+              initialValue: selectedWarehouse.id,
+              decoration: InputDecoration(
+                labelText: tr.text('warehouse'),
+              ),
+              items: activeWarehouses
+                  .map(
+                    (warehouse) => DropdownMenuItem<String>(
+                      value: warehouse.id,
+                      child: Text(
+                        warehouse.id == Warehouse.defaultId
+                            ? '${warehouse.name} (${tr.text('default')})'
+                            : warehouse.name,
+                      ),
+                    ),
+                  )
+                  .toList(growable: false),
+              onChanged: activeWarehouses.isEmpty
+                  ? null
+                  : (value) {
+                      if (value == null || value.trim().isEmpty) return;
+                      setState(() => _selectedWarehouseId = value.trim());
+                    },
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '${tr.text('stock')}: ${selectedWarehouse.name}',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _showSaleShiftQuickAction() async {
     if (!widget.store.canSell) return;
     final tr = AppLocalizations.of(context);
@@ -1626,6 +1686,8 @@ class _SalesPageState extends State<SalesPage> {
           _buildShortcutGuide(context, tr),
           const SizedBox(height: 8),
           _buildSaleShiftStatusCard(context, tr),
+          const SizedBox(height: 8),
+          _buildSalesWarehouseSelector(context, tr),
           const SizedBox(height: 12),
           Expanded(
             child: Row(
@@ -2431,6 +2493,8 @@ class _SalesPageState extends State<SalesPage> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _buildSaleShiftStatusCard(context, tr),
+                  const SizedBox(height: 8),
+                  _buildSalesWarehouseSelector(context, tr),
                   const SizedBox(height: 8),
                   _buildMobileSaleControls(context, tr, products),
                   const SizedBox(height: 8),
@@ -4995,6 +5059,10 @@ class _SalesPageState extends State<SalesPage> {
             ? _convertCurrencyAmount(
                 cashReceivedAmount, _invoiceCurrency, _paymentCurrency)
             : _cashReceivedInPaymentCurrency,
+        warehouseId: _selectedWarehouseId,
+        warehouseName: widget.store.resolveWarehouseForSale(
+          warehouseId: _selectedWarehouseId,
+        ).name,
         items: _cart
             .map(
               (item) => SaleItem(
@@ -5038,6 +5106,7 @@ class _SalesPageState extends State<SalesPage> {
       _invoiceCurrency = widget.store.storeProfile.defaultSaleInvoiceCurrency;
       _paymentCurrency = widget.store.storeProfile.defaultSalePaymentCurrency;
       _discountCurrency = widget.store.storeProfile.defaultSaleInvoiceCurrency;
+      _selectedWarehouseId = widget.store.resolveWarehouseForSale().id;
       _paymentExchangeRateController.text =
           widget.store.storeProfile.usdToLbpRate.toStringAsFixed(0);
       _searchController.clear();

@@ -8,10 +8,13 @@ import '../storage/sqlite/business_sqlite_store.dart';
 import '../storage/sqlite/sqlite_migration_manager.dart';
 import '../storage/sqlite/sync_sqlite_store.dart';
 import '../storage/sqlite/ventio_drift_database.dart';
+import '../repositories/warehouse_inventory_repository.dart';
 import '../../models/app_identity.dart';
 import '../../models/sync_change.dart';
 import '../../models/sync_queue_item.dart';
 import '../../models/store_profile.dart';
+import '../../models/stock_movement.dart';
+import '../../models/warehouse_inventory.dart';
 
 const String _appIdentityKey = 'app_identity_v1';
 const String _storeProfileKey = 'store_profile_v5';
@@ -22,6 +25,12 @@ const String _cloudHostBootstrapMarkerPrefix =
     'cloud_host_bootstrap_snapshot_v3_';
 const String _invoiceCounterKey = 'invoice_counter_v1';
 const String _purchaseCounterKey = 'purchase_counter_v1';
+
+enum _StockOperationState {
+  proceed,
+  completed,
+  inProgress,
+}
 
 class SqliteSyncStateService {
   const SqliteSyncStateService();
@@ -1427,7 +1436,6 @@ class SqliteSyncStateService {
         markAppliedAsSynced: markAppliedAsSynced,
         mirrorToCloud: mirrorToCloud,
       );
-      await LocalDatabaseService.flushPendingWrites();
     });
     await _refreshSummaryTables();
     await _refreshSyncKeys(context);
@@ -1619,6 +1627,7 @@ class SqliteSyncStateService {
           break;
         case 'stock_movement':
           await _applyStockMovementChange(
+            context,
             db,
             change,
             refreshKeys: refreshKeys,
@@ -1762,6 +1771,7 @@ class SqliteSyncStateService {
   }
 
   Future<void> _applyStockMovementChange(
+    BusinessSessionContext context,
     VentioDriftDatabase db,
     SyncChange change, {
     required Set<String> refreshKeys,
@@ -1777,44 +1787,343 @@ class SqliteSyncStateService {
       return;
     }
 
-    await BusinessSqliteStore.upsertEntityPayload(
-      db,
-      key,
-      change.payload,
-    );
-    refreshKeys.add(key);
-
-    final productId = change.payload['productId']?.toString() ?? '';
-    if (productId.isEmpty) return;
-    final product = await BusinessSqliteStore.readProductById(db, productId);
-    if (product == null || !product.trackStock) return;
-    final quantity = (change.payload['quantity'] as num?)?.toDouble() ??
-        double.tryParse(change.payload['quantity']?.toString() ?? '') ??
-        0;
-    if (quantity == 0) return;
-    final unitCost = (change.payload['unitCost'] as num?)?.toDouble() ??
-        double.tryParse(change.payload['unitCost']?.toString() ?? '') ??
-        0;
-    final movementType = change.payload['type']?.toString() ?? 'adjustment';
-    final date = DateTime.tryParse(change.payload['date']?.toString() ?? '') ??
-        DateTime.now();
-    final updatedProduct = product.copyWith(
-      stock: product.stock + quantity,
-      cost: movementType == 'purchase_receive' && unitCost > 0
-          ? unitCost
-          : product.cost,
-      usdCost: movementType == 'purchase_receive' && unitCost > 0
-          ? unitCost
-          : product.usdCost,
-      updatedAt: date.isAfter(product.updatedAt) ? date : product.updatedAt,
+    final movement = StockMovement.fromJson(change.payload).copyWith(
+      id: change.entityId,
       syncStatus: 'synced',
+      storeId: change.storeId.isEmpty ? context.appIdentity.storeId : change.storeId,
+      branchId:
+          change.branchId.trim().isEmpty ? context.appIdentity.branchId : change.branchId.trim(),
+      movementGroupId:
+          _syncMetaString(change, 'movementGroupId').trim().isNotEmpty
+              ? _syncMetaString(change, 'movementGroupId').trim()
+              : _syncMetaString(change, 'groupId').trim(),
+      documentLineId: _syncMetaString(change, 'documentLineId').trim(),
+      sourceMovementId: _syncMetaString(change, 'sourceMovementId').trim(),
+      reversalOfMovementId:
+          _syncMetaString(change, 'reversalOfMovementId').trim(),
+      idempotencyKey: _stockOperationIdempotencyKey(
+        change,
+        StockMovement.fromJson(change.payload),
+      ),
     );
-    await BusinessSqliteStore.upsertEntityPayload(
+    final operationKey = _stockOperationIdempotencyKey(change, movement);
+    final operation = await _acquireStockOperation(
       db,
-      BusinessSqliteStore.productsKey,
-      updatedProduct.toJson(),
+      context: context,
+      change: change,
+      movement: movement,
+      idempotencyKey: operationKey,
     );
-    refreshKeys.add(BusinessSqliteStore.productsKey);
+    if (operation == _StockOperationState.completed) {
+      refreshKeys.add(key);
+      return;
+    }
+    if (operation == _StockOperationState.inProgress) {
+      return;
+    }
+
+    try {
+      await BusinessSqliteStore.upsertEntityPayload(
+        db,
+        key,
+        movement.toJson(),
+      );
+      refreshKeys.add(key);
+
+      final hasAppliedMovement = await _hasAppliedStockMovement(
+        db,
+        movement: movement,
+      );
+      if (!hasAppliedMovement) {
+        await _applyWarehouseAwareMovement(
+          db,
+          context: context,
+          movement: movement,
+        );
+      }
+
+      await _updateProductCompatibilityCacheFromWarehouseInventory(
+        db,
+        storeId: movement.storeId.isEmpty
+            ? context.appIdentity.storeId
+            : movement.storeId,
+        productId: movement.productId,
+      );
+      refreshKeys.add(BusinessSqliteStore.productsKey);
+      await _markStockOperationCompleted(
+        db,
+        context: context,
+        change: change,
+        movement: movement,
+        idempotencyKey: operationKey,
+      );
+    } catch (error) {
+      await _markStockOperationFailed(
+        db,
+        context: context,
+        change: change,
+        movement: movement,
+        idempotencyKey: operationKey,
+        reason: error.toString(),
+      );
+      rethrow;
+    }
+  }
+
+  String _stockOperationIdempotencyKey(
+    SyncChange change,
+    StockMovement movement,
+  ) {
+    final payloadKey = _syncMetaString(change, 'idempotencyKey').trim();
+    if (payloadKey.isNotEmpty) return payloadKey;
+    final requestId = _syncMetaString(change, 'requestId').trim();
+    if (requestId.isNotEmpty) return requestId;
+    final explicit = movement.idempotencyKey.trim();
+    if (explicit.isNotEmpty) return explicit;
+    return change.id.trim();
+  }
+
+  Future<_StockOperationState> _acquireStockOperation(
+    VentioDriftDatabase db, {
+    required BusinessSessionContext context,
+    required SyncChange change,
+    required StockMovement movement,
+    required String idempotencyKey,
+  }) async {
+    final now = DateTime.now().toUtc().toIso8601String();
+    final rows = await db.customSelect(
+      '''
+      SELECT status, updated_at AS updatedAt
+      FROM stock_operations
+      WHERE store_id = ? AND idempotency_key = ?
+      LIMIT 1
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(change.storeId.isEmpty
+            ? context.appIdentity.storeId
+            : change.storeId),
+        Variable<String>(idempotencyKey),
+      ],
+    ).get();
+    if (rows.isNotEmpty) {
+      final status = rows.first.read<String>('status');
+      final updatedAt = DateTime.tryParse(rows.first.read<String>('updatedAt'));
+      if (status == 'completed') return _StockOperationState.completed;
+      if (status == 'pending' &&
+          updatedAt != null &&
+          DateTime.now().toUtc().difference(updatedAt).inSeconds < 30) {
+        return _StockOperationState.inProgress;
+      }
+    }
+    await db.customInsert(
+      '''
+      INSERT INTO stock_operations
+        (id, store_id, branch_id, operation_type, document_type, document_id,
+         movement_group_id, idempotency_key, status, created_at, started_at,
+         updated_at, completed_at, failure_reason, attempt_count, device_id,
+         last_modified_by_device_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, '', '', 0, ?, ?)
+      ON CONFLICT(store_id, idempotency_key) DO UPDATE SET
+        branch_id = excluded.branch_id,
+        operation_type = excluded.operation_type,
+        document_type = excluded.document_type,
+        document_id = excluded.document_id,
+        movement_group_id = excluded.movement_group_id,
+        status = CASE
+          WHEN stock_operations.status = 'completed' THEN stock_operations.status
+          ELSE 'pending'
+        END,
+        started_at = CASE
+          WHEN stock_operations.status = 'completed' THEN stock_operations.started_at
+          ELSE excluded.started_at
+        END,
+        updated_at = excluded.updated_at,
+        failure_reason = CASE
+          WHEN stock_operations.status = 'completed' THEN stock_operations.failure_reason
+          ELSE ''
+        END,
+        attempt_count = CASE
+          WHEN stock_operations.status = 'completed' THEN stock_operations.attempt_count
+          ELSE stock_operations.attempt_count + 1
+        END,
+        device_id = excluded.device_id,
+        last_modified_by_device_id = excluded.last_modified_by_device_id
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>('op_${movement.id}'),
+        Variable<String>(change.storeId.isEmpty
+            ? context.appIdentity.storeId
+            : change.storeId),
+        Variable<String>(change.branchId.trim().isEmpty
+            ? context.appIdentity.branchId
+            : change.branchId.trim()),
+        Variable<String>('sync_replay'),
+        Variable<String>('stock_movement'),
+        Variable<String>(change.entityId),
+        Variable<String>(movement.movementGroupId.isEmpty
+            ? movement.id
+            : movement.movementGroupId),
+        Variable<String>(idempotencyKey),
+        Variable<String>(now),
+        Variable<String>(now),
+        Variable<String>(now),
+        Variable<String>(movement.deviceId),
+        Variable<String>(movement.lastModifiedByDeviceId),
+      ],
+    );
+    return _StockOperationState.proceed;
+  }
+
+  Future<bool> _hasAppliedStockMovement(
+    VentioDriftDatabase db, {
+    required StockMovement movement,
+  }) async {
+    final rows = await db.customSelect(
+      '''
+      SELECT id
+      FROM stock_movements
+      WHERE (idempotency_key <> '' AND idempotency_key = ?)
+         OR id = ?
+      LIMIT 1
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(movement.idempotencyKey.trim()),
+        Variable<String>(movement.id),
+      ],
+    ).get();
+    return rows.isNotEmpty;
+  }
+
+  Future<void> _applyWarehouseAwareMovement(
+    VentioDriftDatabase db, {
+    required BusinessSessionContext context,
+    required StockMovement movement,
+  }) async {
+    final storeId = movement.storeId.trim().isEmpty
+        ? context.appIdentity.storeId
+        : movement.storeId.trim();
+    final branchId = movement.branchId.trim().isEmpty
+        ? context.appIdentity.branchId
+        : movement.branchId.trim();
+    final warehouseId = movement.warehouseId.trim().isEmpty
+        ? 'main'
+        : movement.warehouseId.trim();
+    final inventory = await WarehouseInventoryRepository.getByIdentity(
+      db,
+      storeId: storeId,
+      warehouseId: warehouseId,
+      productId: movement.productId,
+    );
+    final nextQuantity = (inventory?.quantity ?? 0) + movement.quantity;
+    await WarehouseInventoryRepository.upsert(
+      db,
+      WarehouseInventory(
+        id: inventory?.id ??
+            'wi_${storeId}_${warehouseId}_${movement.productId}',
+        storeId: storeId,
+        branchId: branchId,
+        warehouseId: warehouseId,
+        productId: movement.productId,
+        quantity: nextQuantity,
+        version: (inventory?.version ?? 0) + 1,
+        createdAt: inventory?.createdAt ?? movement.createdAt,
+        updatedAt: movement.updatedAt,
+        deviceId: movement.deviceId,
+        syncStatus: 'synced',
+        lastModifiedByDeviceId: movement.lastModifiedByDeviceId,
+      ),
+    );
+  }
+
+  Future<void> _updateProductCompatibilityCacheFromWarehouseInventory(
+    VentioDriftDatabase db, {
+    required String storeId,
+    required String productId,
+  }) async {
+    final rows = await db.customSelect(
+      '''
+      SELECT COALESCE(SUM(quantity), 0) AS quantity
+      FROM warehouse_inventory
+      WHERE store_id = ? AND product_id = ?
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(storeId),
+        Variable<String>(productId),
+      ],
+    ).get();
+    if (rows.isEmpty) return;
+    final quantity = rows.first.read<num>('quantity').toDouble();
+    await db.customUpdate(
+      '''
+      UPDATE products
+      SET stock = ?, updated_at = ?
+      WHERE store_id = ? AND id = ?
+      ''',
+      variables: <Variable<Object>>[
+        Variable<double>(quantity),
+        Variable<String>(DateTime.now().toUtc().toIso8601String()),
+        Variable<String>(storeId),
+        Variable<String>(productId),
+      ],
+    );
+  }
+
+  Future<void> _markStockOperationCompleted(
+    VentioDriftDatabase db, {
+    required BusinessSessionContext context,
+    required SyncChange change,
+    required StockMovement movement,
+    required String idempotencyKey,
+  }) async {
+    final now = DateTime.now().toUtc().toIso8601String();
+    await db.customUpdate(
+      '''
+      UPDATE stock_operations
+      SET status = 'completed',
+          updated_at = ?,
+          completed_at = ?,
+          failure_reason = '',
+          attempt_count = attempt_count + 1
+      WHERE store_id = ? AND idempotency_key = ?
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(now),
+        Variable<String>(now),
+        Variable<String>(change.storeId.isEmpty
+            ? context.appIdentity.storeId
+            : change.storeId),
+        Variable<String>(idempotencyKey),
+      ],
+    );
+  }
+
+  Future<void> _markStockOperationFailed(
+    VentioDriftDatabase db, {
+    required BusinessSessionContext context,
+    required SyncChange change,
+    required StockMovement movement,
+    required String idempotencyKey,
+    required String reason,
+  }) async {
+    final now = DateTime.now().toUtc().toIso8601String();
+    await db.customUpdate(
+      '''
+      UPDATE stock_operations
+      SET status = 'failed',
+          updated_at = ?,
+          failure_reason = ?,
+          attempt_count = attempt_count + 1
+      WHERE store_id = ? AND idempotency_key = ?
+      ''',
+      variables: <Variable<Object>>[
+        Variable<String>(now),
+        Variable<String>(reason),
+        Variable<String>(change.storeId.isEmpty
+            ? context.appIdentity.storeId
+            : change.storeId),
+        Variable<String>(idempotencyKey),
+      ],
+    );
   }
 
   Future<void> _applySystemReset(

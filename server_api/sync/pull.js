@@ -106,7 +106,6 @@ export default async function handler(req, res) {
             where store_id = ${storeId}
               and branch_id = ${branchId}
               and operation <> 'delete'
-              and entity_type <> 'stock_movement'
               and (${loginBootstrapOnly} = false or entity_type in ('store_profile', 'role', 'user'))
               and (
                 ${loginBootstrapOnly} = true
@@ -136,7 +135,6 @@ export default async function handler(req, res) {
             where store_id = ${storeId}
               and branch_id = ${branchId}
               and operation <> 'delete'
-              and entity_type <> 'stock_movement'
               and (${loginBootstrapOnly} = false or entity_type in ('store_profile', 'role', 'user'))
               and (
                 ${loginBootstrapOnly} = true

@@ -22,6 +22,7 @@ Map<String, String> _hostIdentitySeed() {
 Future<AppStore> _readyStore() async {
   TestWidgetsFlutterBinding.ensureInitialized();
   SharedPreferences.setMockInitialValues(const <String, Object>{});
+  LocalDatabaseService.clearInMemoryStoreForTesting();
   LocalDatabaseService.useInMemoryStoreForTesting(_hostIdentitySeed());
   final store = AppStore();
   await store.initialize();
@@ -95,6 +96,7 @@ Future<AppStore> _readyStore() async {
 
 void main() {
   group('DashboardService', () {
+    tearDown(LocalDatabaseService.clearInMemoryStoreForTesting);
     test('builds a dashboard snapshot without widget-side calculations',
         () async {
       final store = await _readyStore();

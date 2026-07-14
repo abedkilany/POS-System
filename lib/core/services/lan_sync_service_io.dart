@@ -837,7 +837,7 @@ class LanSyncService {
     await request.response.close();
   }
 
-  Map<String, dynamic> _currentLanSnapshotEnvelope({bool force = false}) {
+  Future<Map<String, dynamic>> _currentLanSnapshotEnvelope({bool force = false}) async {
     final now = DateTime.now();
     final cached = _snapshotTransferCache;
     final age = _snapshotTransferCacheAt == null
@@ -846,7 +846,7 @@ class LanSyncService {
     if (!force && cached != null && age < const Duration(minutes: 5)) {
       return cached;
     }
-    final envelope = store.exportUnifiedSnapshotEnvelope(
+    final envelope = await store.exportUnifiedSnapshotEnvelope(
       kind: 'full_store',
       maxItemsPerChunk: 300,
     );
@@ -855,8 +855,8 @@ class LanSyncService {
     return envelope;
   }
 
-  Map<String, dynamic> _snapshotManifestResponse({bool force = false}) {
-    final envelope = _currentLanSnapshotEnvelope(force: force);
+  Future<Map<String, dynamic>> _snapshotManifestResponse({bool force = false}) async {
+    final envelope = await _currentLanSnapshotEnvelope(force: force);
     return <String, dynamic>{
       'ok': true,
       'snapshotFormat': envelope['snapshotFormat'],
@@ -969,7 +969,7 @@ class LanSyncService {
             .copyWith(secret: '', pairedDevices: paired, hostRegistry: registry)
             .save();
 
-        final snapshotInfo = _snapshotManifestResponse(force: true);
+        final snapshotInfo = await _snapshotManifestResponse(force: true);
         await _json(request, {
           'ok': true,
           'message': 'LAN device paired successfully.',
@@ -1074,14 +1074,14 @@ class LanSyncService {
 
       if (request.method == 'GET' && request.uri.path == '/snapshot/manifest') {
         final force = request.uri.queryParameters['force'] == '1';
-        await _json(request, _snapshotManifestResponse(force: force));
+        await _json(request, await _snapshotManifestResponse(force: force));
         return;
       }
 
       if (request.method == 'GET' && request.uri.path == '/snapshot/chunk') {
         final ordinal =
             int.tryParse(request.uri.queryParameters['ordinal'] ?? '') ?? -1;
-        final envelope = _currentLanSnapshotEnvelope();
+        final envelope = await _currentLanSnapshotEnvelope();
         final chunks =
             (envelope['snapshotChunks'] as List<dynamic>? ?? const <dynamic>[])
                 .whereType<Map>()
@@ -1108,7 +1108,7 @@ class LanSyncService {
       if (request.method == 'GET' && request.uri.path == '/snapshot') {
         request.response.headers.contentType = ContentType.json;
         request.response
-            .write(jsonEncode(_currentLanSnapshotEnvelope(force: true)));
+            .write(jsonEncode(await _currentLanSnapshotEnvelope(force: true)));
         await request.response.close();
         return;
       }

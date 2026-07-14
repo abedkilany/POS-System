@@ -1331,6 +1331,13 @@ class _PurchasesPageState extends State<PurchasesPage> {
         (widget.store.suppliers.isNotEmpty
             ? widget.store.suppliers.first.name
             : '');
+    final initialWarehouse = widget.store.resolveWarehouseForPurchase(
+      warehouseId: template?.warehouseId ?? '',
+    );
+    String selectedWarehouseId = initialWarehouse.id;
+    String selectedWarehouseName = template?.warehouseName.isNotEmpty == true
+        ? template!.warehouseName
+        : initialWarehouse.name;
     if (supplierId.isNotEmpty &&
         !widget.store.suppliers.any((supplier) => supplier.id == supplierId)) {
       supplierId = widget.store.suppliers.isNotEmpty
@@ -2078,7 +2085,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                       product.code.trim(),
                                     if (product.barcode.trim().isNotEmpty)
                                       product.barcode.trim(),
-                                    '${tr.text('stock')}: ${_formatQuantity(product.stock)}',
+                                    '${tr.text('stock')}: ${_formatQuantity(widget.store.stockForWarehouse(product.id, selectedWarehouseId))}',
                                     if (configuredPrice != null)
                                       '${tr.text('supplier_price')}: ${formatCurrency(configuredPrice.cost, currency: configuredPrice.currency)}',
                                   ];
@@ -2152,7 +2159,9 @@ class _PurchasesPageState extends State<PurchasesPage> {
             receiveNow: receiveNow,
             paymentStatus: paymentStatus,
             paymentMethod: paymentMethod,
-            paidAmount: paidAmount);
+            paidAmount: paidAmount,
+            warehouseId: selectedWarehouseId,
+            warehouseName: selectedWarehouseName);
         if (dialogContext.mounted) {
           await updateSupplierPricesFromItemsIfNeeded(
               dialogContext, purchaseItems);
@@ -2424,6 +2433,41 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                               ),
                                             ],
                                           ),
+                                          const SizedBox(height: 12),
+                                          DropdownButtonFormField<String>(
+                                            initialValue: selectedWarehouseId,
+                                            decoration: InputDecoration(
+                                                labelText: tr.text('warehouse')),
+                                            items: widget.store.warehouses
+                                                .map(
+                                                  (warehouse) =>
+                                                      DropdownMenuItem<String>(
+                                                    value: warehouse.id,
+                                                    child: Text(warehouse.name),
+                                                  ),
+                                                )
+                                                .toList(),
+                                            onChanged: (value) {
+                                              final selected =
+                                                  widget.store
+                                                      .resolveWarehouseForPurchase(
+                                                warehouseId: value ?? '',
+                                              );
+                                              selectedWarehouseId = selected.id;
+                                              selectedWarehouseName =
+                                                  selected.name;
+                                              setDialogState(() {});
+                                            },
+                                            validator: (_) =>
+                                                selectedWarehouseId.isEmpty
+                                                    ? tr.text(
+                                                        'warehouse_required')
+                                                    : null,
+                                          ),
+                                          const SizedBox(height: 8),
+                                          Text(
+                                            '${tr.text('warehouse')}: ${selectedWarehouseName.isEmpty ? selectedWarehouseId : selectedWarehouseName}',
+                                          ),
                                           SizedBox(height: gap),
                                           SwitchListTile(
                                             contentPadding: EdgeInsets.zero,
@@ -2542,7 +2586,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                                       .isNotEmpty)
                                                     selectedProduct!.barcode
                                                         .trim(),
-                                                  '${tr.text('stock')}: ${_formatQuantity(selectedProduct!.stock)}',
+                                                  '${tr.text('stock')}: ${_formatQuantity(widget.store.stockForWarehouse(selectedProduct!.id, selectedWarehouseId))}',
                                                 ].join(' • ');
                                       return sectionCard(
                                         title: tr.text('add_product'),

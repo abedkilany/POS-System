@@ -100,6 +100,10 @@ class UnifiedSnapshotCatalog {
     collections: <String>[
       'stockMovements',
       'inventoryCounts',
+      'warehouseInventory',
+      'stockOperations',
+      'inventoryReconciliations',
+      'inventoryMigrationAdjustments',
       'costingMethodHistory',
       'inventoryCostingMethod',
       'inventoryCostLayers',

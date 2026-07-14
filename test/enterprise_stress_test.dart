@@ -45,6 +45,7 @@ Map<String, String> _hostIdentitySeed() {
 Future<AppStore> _readyStore() async {
   TestWidgetsFlutterBinding.ensureInitialized();
   SharedPreferences.setMockInitialValues(const <String, Object>{});
+  LocalDatabaseService.clearInMemoryStoreForTesting();
   LocalDatabaseService.useInMemoryStoreForTesting(_hostIdentitySeed());
   final store = AppStore();
   await store.initialize();
@@ -55,6 +56,7 @@ Future<AppStore> _readyStore() async {
 
 void main() {
   group('Enterprise stress and recovery tests', () {
+    tearDown(LocalDatabaseService.clearInMemoryStoreForTesting);
     test(
         'handles realistic catalog and sales volume without corrupting inventory',
         () async {
@@ -96,7 +98,7 @@ void main() {
         await store.addOrUpdateProduct(_product(i));
       }
 
-      final backup = store.exportBackupJson();
+      final backup = await store.exportBackupJson();
       expect(store.validateBackupJson(backup).isValid, isTrue);
 
       await store.resetBusinessData();

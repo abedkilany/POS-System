@@ -39,14 +39,18 @@ class ReportsPage extends StatelessWidget {
         return tr.text('payment_paid');
       case 'paymentReversal':
         return tr.text('payment_reversal');
+      case 'transfer_in':
       case 'warehouse_transfer_in':
         return tr.text('warehouse_transfer_in');
+      case 'transfer_out':
       case 'warehouse_transfer_out':
         return tr.text('warehouse_transfer_out');
       case 'count_adjustment':
         return tr.text('count_adjustment');
       case 'manufacturing_consume':
         return tr.text('manufacturing_consume');
+      case 'manufacturing_produce':
+        return tr.text('manufacturing_output');
       case 'manufacturing_output':
         return tr.text('manufacturing_output');
       default:

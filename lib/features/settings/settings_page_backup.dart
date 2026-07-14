@@ -9,9 +9,10 @@ class SettingsBackupActions {
     try {
       final filename =
           'ventio_backup_${DateTime.now().millisecondsSinceEpoch}.json';
+      final content = await store.exportBackupJson();
       await downloadTextFile(
         filename: filename,
-        content: store.exportBackupJson(),
+        content: content,
         dialogTitle: tr.text('export'),
         cancelMessage: tr.text('file_save_cancelled'),
       );
@@ -664,7 +665,7 @@ class SettingsBackupActions {
 
     try {
       final backup =
-          'RESET_PROTECTION_TOKEN:$token\n${store.exportBackupJson()}';
+          'RESET_PROTECTION_TOKEN:$token\n${await store.exportBackupJson()}';
       await downloadTextFile(
           filename:
               'reset_protection_backup_${DateTime.now().millisecondsSinceEpoch}.json',

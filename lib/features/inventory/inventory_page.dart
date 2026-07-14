@@ -13,6 +13,7 @@ import '../../models/inventory_count.dart';
 import '../../models/product.dart';
 import '../../models/stock_movement.dart';
 import '../../models/user_role.dart';
+import '../../models/warehouse.dart';
 import '../../widgets/page_data_load_indicator.dart';
 import '../../widgets/summary_card.dart';
 import '../barcode/barcode_scanner_page.dart';
@@ -41,14 +42,18 @@ String _movementTypeLabel(AppLocalizations tr, String type) {
       return tr.text('payment_paid');
     case 'paymentReversal':
       return tr.text('payment_reversal');
+    case 'transfer_in':
     case 'warehouse_transfer_in':
       return tr.text('warehouse_transfer_in');
+    case 'transfer_out':
     case 'warehouse_transfer_out':
       return tr.text('warehouse_transfer_out');
     case 'count_adjustment':
       return tr.text('count_adjustment');
     case 'manufacturing_consume':
       return tr.text('manufacturing_consume');
+    case 'manufacturing_produce':
+      return tr.text('manufacturing_output');
     case 'manufacturing_output':
       return tr.text('manufacturing_output');
     default:
@@ -402,6 +407,7 @@ class _InventoryPageState extends State<InventoryPage>
     final qtyController = TextEditingController();
     final notesController = TextEditingController();
     final evidenceController = TextEditingController();
+    var selectedWarehouseId = widget.store.resolveWarehouseForPurchase().id;
     var category = 'damage';
     final categories = <String, String>{
       'damage': tr.text('adjustment_damage'),
@@ -421,7 +427,27 @@ class _InventoryPageState extends State<InventoryPage>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text('${tr.text('current_stock')}: ${product.stock}'),
+                Text(
+                  '${tr.text('current_stock')}: ${widget.store.stockForWarehouse(product.id, selectedWarehouseId)}',
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  initialValue: selectedWarehouseId,
+                  decoration: InputDecoration(labelText: tr.text('warehouse')),
+                  items: widget.store.warehouses
+                      .map((warehouse) => DropdownMenuItem<String>(
+                            value: warehouse.id,
+                            child: Text(warehouse.name),
+                          ))
+                      .toList(),
+                  onChanged: (value) {
+                    setDialogState(() {
+                      selectedWarehouseId = widget.store
+                          .resolveWarehouseForPurchase(warehouseId: value ?? '')
+                          .id;
+                    });
+                  },
+                ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
                   initialValue: category,
@@ -469,6 +495,7 @@ class _InventoryPageState extends State<InventoryPage>
                 try {
                   await widget.store.adjustStock(
                     productId: productId,
+                    warehouseId: selectedWarehouseId,
                     quantityDelta: delta,
                     reason: categories[category] ?? category,
                     adjustmentCategory: category,
@@ -1456,7 +1483,7 @@ class _StockCountTabState extends State<_StockCountTab> {
                   title: Text(
                       '${tr.text('active_stock_count')} • ${active.countNo}'),
                   subtitle: Text(
-                      '${tr.text('started_at')}: ${active.createdAt.toLocal().toString().split('.').first}'),
+                      '${tr.text('warehouse')}: ${active.warehouseName} • ${tr.text('started_at')}: ${active.createdAt.toLocal().toString().split('.').first}'),
                 ),
                 const Divider(height: 1),
                 for (final product in products.take(200))
@@ -1492,7 +1519,7 @@ class _StockCountTabState extends State<_StockCountTab> {
                             : Icons.cancel_outlined),
                     title: Text(session.countNo),
                     subtitle: Text(
-                        '${tr.text('status')}: ${session.status} • ${tr.text('counted_products')}: ${session.countedLines}/${session.totalLines}'),
+                        '${tr.text('status')}: ${session.status} • ${tr.text('warehouse')}: ${session.warehouseName} • ${tr.text('counted_products')}: ${session.countedLines}/${session.totalLines}'),
                     trailing: Text(session.createdAt
                         .toLocal()
                         .toString()
@@ -1508,7 +1535,52 @@ class _StockCountTabState extends State<_StockCountTab> {
 
   Future<void> _startCount() async {
     try {
-      await widget.store.createInventoryCountSession();
+      final tr = AppLocalizations.of(context);
+      final selected = await showDialog<Warehouse>(
+        context: context,
+        builder: (dialogContext) {
+          final initial = widget.store.resolveWarehouseForPurchase();
+          var selectedWarehouse = initial;
+          return StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+              title: Text(tr.text('start_stock_count')),
+              content: DropdownButtonFormField<String>(
+                initialValue: selectedWarehouse.id,
+                decoration: InputDecoration(labelText: tr.text('warehouse')),
+                items: widget.store.warehouses
+                    .map(
+                      (warehouse) => DropdownMenuItem<String>(
+                        value: warehouse.id,
+                        child: Text(warehouse.name),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) {
+                  setDialogState(() {
+                    selectedWarehouse = widget.store
+                        .resolveWarehouseForPurchase(warehouseId: value ?? '');
+                  });
+                },
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: Text(tr.text('cancel')),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(dialogContext, selectedWarehouse),
+                  child: Text(tr.text('start')),
+                ),
+              ],
+            ),
+          );
+        },
+      );
+      if (selected == null) return;
+      await widget.store.createInventoryCountSession(
+        warehouseId: selected.id,
+        warehouseName: selected.name,
+      );
       if (mounted) setState(() {});
     } catch (error) {
       if (mounted) {
@@ -1561,7 +1633,7 @@ class _StockCountProductTile extends StatelessWidget {
     return ListTile(
       title: Text(product.name),
       subtitle: Text([
-        '${tr.text('system_stock')}: ${product.stock}',
+        '${tr.text('system_stock')}: ${line?.snapshotStock ?? product.stock}',
         if (line?.isCounted == true)
           '${tr.text('counted')}: ${line!.countedQty}',
         if (line?.countedAt != null)

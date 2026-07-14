@@ -172,7 +172,7 @@ class LocalAutoBackupService {
       final now = DateTime.now();
       status.value = const LocalAutoBackupStatus(
           isRunning: true, message: 'Compressing backup...');
-      final bytes = _buildZipBytes(store.exportBackupJson(), now, reason);
+      final bytes = _buildZipBytes(await store.exportBackupJson(), now, reason);
 
       if (reason == 'manual') {
         final manualFile = File(

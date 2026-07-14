@@ -320,28 +320,128 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
     })) return;
     final qtyController =
         TextEditingController(text: bom.outputQuantity.toString());
+    final warehouses = widget.store.warehouses;
+    if (warehouses.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_t('warehouse_not_found'))),
+      );
+      return;
+    }
+    var rawWarehouseId = widget.store
+        .resolveWarehouseForPurchase()
+        .id;
+    var finishedWarehouseId = widget.store
+        .resolveWarehouseForSale()
+        .id;
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(_tf('produce_product', {'product': bom.outputProductName})),
-        content: TextField(
-            controller: qtyController,
-            keyboardType: TextInputType.number,
-            decoration: InputDecoration(labelText: _t('quantity_to_produce'))),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: Text(_t('cancel'))),
-          FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: Text(_t('complete'))),
-        ],
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final rawWarehouse = warehouses.firstWhere(
+            (item) => item.id == rawWarehouseId,
+            orElse: () => warehouses.first,
+          );
+          final finishedWarehouse = warehouses.firstWhere(
+            (item) => item.id == finishedWarehouseId,
+            orElse: () => warehouses.first,
+          );
+          final componentAvailability = bom.components.map((component) {
+            final available =
+                widget.store.stockForWarehouse(component.productId, rawWarehouse.id);
+            return '${component.productName}: ${available.toStringAsFixed(2)}';
+          }).toList(growable: false);
+          return AlertDialog(
+            title: Text(_tf('produce_product', {'product': bom.outputProductName})),
+            content: SizedBox(
+              width: 560,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                        controller: qtyController,
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                          labelText: _t('quantity_to_produce'),
+                        )),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      initialValue: rawWarehouse.id,
+                      decoration: InputDecoration(
+                        labelText: _t('raw_materials_warehouse'),
+                      ),
+                      items: warehouses
+                          .map(
+                            (item) => DropdownMenuItem(
+                              value: item.id,
+                              child: Text(item.name),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setDialogState(() => rawWarehouseId = value);
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      initialValue: finishedWarehouse.id,
+                      decoration: InputDecoration(
+                        labelText: _t('finished_goods_warehouse'),
+                      ),
+                      items: warehouses
+                          .map(
+                            (item) => DropdownMenuItem(
+                              value: item.id,
+                              child: Text(item.name),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setDialogState(() => finishedWarehouseId = value);
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        _t('available_in_raw_warehouse'),
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    ...componentAvailability.map(Text.new),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: Text(_t('cancel'))),
+              FilledButton(
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  child: Text(_t('complete'))),
+            ],
+          );
+        },
       ),
     );
     if (confirmed != true) return;
     try {
       await widget.store.completeManufacturingOrder(
-          bomId: bom.id, quantity: double.tryParse(qtyController.text) ?? 0);
+        bomId: bom.id,
+        quantity: double.tryParse(qtyController.text) ?? 0,
+        rawMaterialsWarehouseId: rawWarehouseId,
+        rawMaterialsWarehouseName: warehouses
+            .firstWhere((item) => item.id == rawWarehouseId, orElse: () => warehouses.first)
+            .name,
+        finishedGoodsWarehouseId: finishedWarehouseId,
+        finishedGoodsWarehouseName: warehouses
+            .firstWhere((item) => item.id == finishedWarehouseId, orElse: () => warehouses.first)
+            .name,
+      );
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context)

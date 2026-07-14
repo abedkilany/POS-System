@@ -172,6 +172,10 @@ const snapshotCollections = {
   units: 'unit',
   purchases: 'purchase',
   stockMovements: 'stock_movement',
+  warehouseInventory: 'warehouse_inventory',
+  stockOperations: 'stock_operation',
+  inventoryReconciliations: 'inventory_reconciliation',
+  inventoryMigrationAdjustments: 'inventory_migration_adjustment',
   inventoryCounts: 'inventory_count',
   accountTransactions: 'account_transaction',
   roles: 'role',
@@ -186,6 +190,21 @@ function idOf(item, fallback) {
 function payloadVersion(payload) {
   const value = Number(payload && payload.version);
   return Number.isFinite(value) ? value : 1;
+}
+
+function isWarehouseAwareStockMovement(payload) {
+  if (!payload || typeof payload !== 'object') return false;
+  return Boolean(
+    String(payload.warehouseId || payload.warehouse_id || '').trim() ||
+    String(payload.idempotencyKey || payload.idempotency_key || '').trim() ||
+    String(payload.movementGroupId || payload.movement_group_id || '').trim() ||
+    String(payload.documentLineId || payload.document_line_id || '').trim()
+  );
+}
+
+function movementIdempotencyKey(payload) {
+  if (!payload || typeof payload !== 'object') return '';
+  return String(payload.idempotencyKey || payload.idempotency_key || '').trim();
 }
 
 function payloadUpdatedAt(payload, fallback) {
@@ -300,6 +319,120 @@ async function materializeChange(change) {
     const productId = String(p.productId || p.product_id || '').trim();
     const quantity = Number(p.quantity || 0);
     if (!productId || !Number.isFinite(quantity) || quantity === 0) return;
+    const branch = change.branchId || 'main';
+    const warehouseAware = isWarehouseAwareStockMovement(p);
+    if (warehouseAware) {
+      const warehouseId = String(p.warehouseId || p.warehouse_id || 'main').trim() || 'main';
+      const idempotencyKey = movementIdempotencyKey(p);
+      const duplicateRows = idempotencyKey
+        ? await sql`
+            select 1
+            from entity_snapshots
+            where store_id = ${change.storeId}
+              and branch_id = ${branch}
+              and entity_type = 'stock_movement'
+              and (
+                entity_id = ${change.entityId}
+                or payload->>'idempotencyKey' = ${idempotencyKey}
+                or payload->>'idempotency_key' = ${idempotencyKey}
+              )
+            limit 1
+          `
+        : await sql`
+            select 1
+            from entity_snapshots
+            where store_id = ${change.storeId}
+              and branch_id = ${branch}
+              and entity_type = 'stock_movement'
+              and entity_id = ${change.entityId}
+            limit 1
+          `;
+      if (duplicateRows.length) {
+        return;
+      }
+      const movementSnapshotId = change.entityId;
+      await upsertSnapshot({
+        storeId: change.storeId,
+        branchId: branch,
+        entityType: 'stock_movement',
+        entityId: movementSnapshotId,
+        operation: 'upsert',
+        payload: p,
+        updatedAt,
+      });
+      const warehouseRows = await sql`
+        select coalesce(sum((payload->>'quantity')::numeric), 0) as quantity
+        from entity_snapshots
+        where store_id = ${change.storeId}
+          and branch_id = ${branch}
+          and entity_type = 'warehouse_inventory'
+          and payload->>'productId' = ${productId}
+          and payload->>'warehouseId' = ${warehouseId}
+      `;
+      const productBalanceRows = await sql`
+        select coalesce(sum((payload->>'quantity')::numeric), 0) as quantity
+        from entity_snapshots
+        where store_id = ${change.storeId}
+          and branch_id = ${branch}
+          and entity_type = 'warehouse_inventory'
+          and payload->>'productId' = ${productId}
+      `;
+      const nextWarehouseQuantity = Number(warehouseRows[0]?.quantity || 0) + quantity;
+      const nextProductQuantity = Number(productBalanceRows[0]?.quantity || 0) + quantity;
+      await upsertSnapshot({
+        storeId: change.storeId,
+        branchId: branch,
+        entityType: 'warehouse_inventory',
+        entityId: `${warehouseId}::${productId}`,
+        operation: 'upsert',
+        payload: {
+          id: p.id || `${change.storeId}_${warehouseId}_${productId}`,
+          storeId: change.storeId,
+          branchId: branch,
+          warehouseId,
+          productId,
+          quantity: nextWarehouseQuantity,
+          updatedAt,
+          createdAt: p.createdAt || updatedAt,
+          deviceId: p.deviceId || change.deviceId || '',
+          syncStatus: 'synced',
+          lastModifiedByDeviceId: p.lastModifiedByDeviceId || p.deviceId || change.deviceId || '',
+        },
+        updatedAt,
+        force: true,
+      });
+      const productRows = await sql`
+        select payload, operation, updated_at
+        from entity_snapshots
+        where store_id = ${change.storeId}
+          and branch_id = ${branch}
+          and entity_type = 'product'
+          and entity_id = ${productId}
+        limit 1
+      `;
+      if (productRows.length && productRows[0].operation !== 'delete') {
+        const product = productRows[0].payload || {};
+        const nextProduct = {
+          ...product,
+          stock: nextProductQuantity,
+          updatedAt,
+          syncStatus: 'synced',
+          storeId: change.storeId,
+          branchId: branch,
+        };
+        await upsertSnapshot({
+          storeId: change.storeId,
+          branchId: branch,
+          entityType: 'product',
+          entityId: productId,
+          operation: 'upsert',
+          payload: nextProduct,
+          updatedAt,
+          force: true,
+        });
+      }
+      return;
+    }
 
     const movementRows = await sql`
       select entity_id
@@ -312,7 +445,8 @@ async function materializeChange(change) {
     `;
     if (movementRows.length) return;
 
-    const rows = await sql`
+    const legacyWarehouseId = 'main';
+    const productRows = await sql`
       select payload, operation, updated_at
       from entity_snapshots
       where store_id = ${change.storeId}
@@ -321,13 +455,53 @@ async function materializeChange(change) {
         and entity_id = ${productId}
       limit 1
     `;
-    if (!rows.length || rows[0].operation === 'delete') return;
+    if (!productRows.length || productRows[0].operation === 'delete') return;
 
-    const product = rows[0].payload || {};
-    const currentStock = Number(product.stock || 0);
+    const product = productRows[0].payload || {};
+    const legacyWarehouseRows = await sql`
+      select coalesce(sum((payload->>'quantity')::numeric), 0) as quantity
+      from entity_snapshots
+      where store_id = ${change.storeId}
+        and branch_id = ${change.branchId || 'main'}
+        and entity_type = 'warehouse_inventory'
+        and payload->>'productId' = ${productId}
+        and payload->>'warehouseId' = ${legacyWarehouseId}
+    `;
+    const legacyWarehouseQuantity = Number(legacyWarehouseRows[0]?.quantity || 0) + quantity;
+    await upsertSnapshot({
+      storeId: change.storeId,
+      branchId: change.branchId,
+      entityType: 'warehouse_inventory',
+      entityId: `${legacyWarehouseId}::${productId}`,
+      operation: 'upsert',
+      payload: {
+        id: p.id || `${change.storeId}_${legacyWarehouseId}_${productId}`,
+        storeId: change.storeId,
+        branchId: change.branchId || 'main',
+        warehouseId: legacyWarehouseId,
+        productId,
+        quantity: legacyWarehouseQuantity,
+        updatedAt,
+        createdAt: p.createdAt || updatedAt,
+        deviceId: p.deviceId || change.deviceId || '',
+        syncStatus: 'synced',
+        lastModifiedByDeviceId: p.lastModifiedByDeviceId || p.deviceId || change.deviceId || '',
+      },
+      updatedAt,
+      force: true,
+    });
+    const productBalanceRowsAfter = await sql`
+      select coalesce(sum((payload->>'quantity')::numeric), 0) as quantity
+      from entity_snapshots
+      where store_id = ${change.storeId}
+        and branch_id = ${change.branchId || 'main'}
+        and entity_type = 'warehouse_inventory'
+        and payload->>'productId' = ${productId}
+    `;
+    const currentStock = Number(productBalanceRowsAfter[0]?.quantity || 0);
     const nextProduct = {
       ...product,
-      stock: currentStock + quantity,
+      stock: currentStock,
       updatedAt,
       syncStatus: 'synced',
       storeId: change.storeId,

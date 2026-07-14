@@ -15,12 +15,12 @@ class VentioDriftDatabase extends GeneratedDatabase {
       : super(executor ?? openVentioSqliteConnection());
 
   @override
-  int get schemaVersion => 14;
+  int get schemaVersion => 15;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
-        onCreate: (migrator) => initializeFoundation(),
-        onUpgrade: (migrator, from, to) => initializeFoundation(),
+        onCreate: (migrator) => _applyFoundationSchema(),
+        onUpgrade: (migrator, from, to) => _applyFoundationSchema(),
         beforeOpen: (details) async {
           await customStatement('PRAGMA foreign_keys = ON;');
           await customStatement('PRAGMA journal_mode = WAL;');
@@ -37,6 +37,10 @@ class VentioDriftDatabase extends GeneratedDatabase {
       const <DatabaseSchemaEntity>[];
 
   Future<void> initializeFoundation() async {
+    await _applyFoundationSchema();
+  }
+
+  Future<void> _applyFoundationSchema() async {
     await customStatement('PRAGMA foreign_keys = ON;');
     await customStatement('PRAGMA journal_mode = WAL;');
     await customStatement('PRAGMA synchronous = NORMAL;');
@@ -49,10 +53,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
       );
     ''');
 
-    final foundationVersion = await _metaValue('sqlite_foundation_version');
-    if (foundationVersion == '7') {
-      return;
-    }
+    await _metaValue('sqlite_foundation_version');
 
     await customStatement('''
       CREATE TABLE IF NOT EXISTS migration_runs (
@@ -130,6 +131,10 @@ class VentioDriftDatabase extends GeneratedDatabase {
     ]) {
       await _createBusinessEntityTable(tableName);
     }
+    await _ensureWarehouseInventoryTable();
+    await _ensureStockOperationsTable();
+    await _ensureInventoryMigrationAdjustmentsTable();
+    await _ensureInventoryReconciliationsTable();
     await _ensureOperationalBusinessColumns();
     await _ensureSimpleBusinessColumns();
     await _ensureComplexBusinessColumns();
@@ -229,7 +234,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
       'INSERT OR REPLACE INTO migration_meta (key, value, updated_at) VALUES (?, ?, ?)',
       variables: <Variable<Object>>[
         const Variable<String>('sqlite_foundation_version'),
-        const Variable<String>('7'),
+        const Variable<String>('12'),
         Variable<String>(DateTime.now().toUtc().toIso8601String()),
       ],
     );
@@ -468,6 +473,8 @@ class VentioDriftDatabase extends GeneratedDatabase {
     await _ensureSupplierColumns();
     await _ensureExpenseColumns();
     await _ensureWarehouseColumns();
+    await _ensureWarehouseInventoryColumns();
+    await _ensureStockOperationsColumns();
     await _ensureCatalogColumns('catalog_categories');
     await _ensureCatalogColumns('catalog_brands');
     await _ensureCatalogColumns('catalog_units');
@@ -662,6 +669,9 @@ class VentioDriftDatabase extends GeneratedDatabase {
     await _ensureColumn('sales', 'cash_received_amount_in_payment_currency',
         'REAL NOT NULL DEFAULT 0');
     await _ensureColumn('sales', 'note', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('sales', 'warehouse_id', "TEXT NOT NULL DEFAULT 'main'");
+    await _ensureColumn(
+        'sales', 'warehouse_name', "TEXT NOT NULL DEFAULT 'Main warehouse'");
     await customStatement(
         'CREATE INDEX IF NOT EXISTS idx_sales_date ON sales(document_date);');
     await customStatement(
@@ -812,6 +822,10 @@ class VentioDriftDatabase extends GeneratedDatabase {
         'purchases', 'payment_method', "TEXT NOT NULL DEFAULT 'Cash'");
     await _ensureColumn('purchases', 'paid_amount', 'REAL NOT NULL DEFAULT 0');
     await _ensureColumn(
+        'purchases', 'warehouse_id', "TEXT NOT NULL DEFAULT 'main'");
+    await _ensureColumn('purchases', 'warehouse_name',
+        "TEXT NOT NULL DEFAULT 'Main warehouse'");
+    await _ensureColumn(
         'purchases', 'cancel_reason', "TEXT NOT NULL DEFAULT ''");
     await _ensureColumn(
         'purchases', 'cancelled_by_device_id', "TEXT NOT NULL DEFAULT ''");
@@ -932,6 +946,14 @@ class VentioDriftDatabase extends GeneratedDatabase {
     await _ensureColumn(
         'manufacturing_orders', 'quantity', 'REAL NOT NULL DEFAULT 0');
     await _ensureColumn(
+        'manufacturing_orders', 'raw_materials_warehouse_id', "TEXT NOT NULL DEFAULT 'main'");
+    await _ensureColumn(
+        'manufacturing_orders', 'raw_materials_warehouse_name', "TEXT NOT NULL DEFAULT 'Main warehouse'");
+    await _ensureColumn(
+        'manufacturing_orders', 'finished_goods_warehouse_id', "TEXT NOT NULL DEFAULT 'main'");
+    await _ensureColumn(
+        'manufacturing_orders', 'finished_goods_warehouse_name', "TEXT NOT NULL DEFAULT 'Main warehouse'");
+    await _ensureColumn(
         'manufacturing_orders', 'status', "TEXT NOT NULL DEFAULT 'completed'");
     await _ensureColumn(
         'manufacturing_orders', 'notes', "TEXT NOT NULL DEFAULT ''");
@@ -966,6 +988,16 @@ class VentioDriftDatabase extends GeneratedDatabase {
     await _ensureColumn('stock_movements', 'warehouse_name',
         "TEXT NOT NULL DEFAULT 'Main warehouse'");
     await _ensureColumn(
+        'stock_movements', 'movement_group_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'stock_movements', 'document_line_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'stock_movements', 'source_movement_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('stock_movements', 'reversal_of_movement_id',
+        "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'stock_movements', 'idempotency_key', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
         'stock_movements', 'unit_cost', 'REAL NOT NULL DEFAULT 0');
     await _ensureColumn('stock_movements', 'last_modified_by_device_id',
         "TEXT NOT NULL DEFAULT ''");
@@ -984,6 +1016,16 @@ class VentioDriftDatabase extends GeneratedDatabase {
         'CREATE INDEX IF NOT EXISTS idx_stock_movements_type_date ON stock_movements(movement_type, movement_date);');
     await customStatement(
         'CREATE INDEX IF NOT EXISTS idx_stock_movements_warehouse_date ON stock_movements(warehouse_id, movement_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_group_id ON stock_movements(movement_group_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_document_line_id ON stock_movements(document_line_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_source_movement_id ON stock_movements(source_movement_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_reversal_of_movement_id ON stock_movements(reversal_of_movement_id);');
+    await customStatement(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_stock_movements_idempotency_key ON stock_movements(idempotency_key) WHERE trim(idempotency_key) <> '';");
   }
 
   Future<void> _ensureAccountTransactionColumns() async {
@@ -1067,6 +1109,127 @@ class VentioDriftDatabase extends GeneratedDatabase {
         'warehouses', 'is_default', 'INTEGER NOT NULL DEFAULT 0');
     await _ensureColumn(
         'warehouses', 'is_active', 'INTEGER NOT NULL DEFAULT 1');
+  }
+
+  Future<void> _ensureWarehouseInventoryTable() async {
+    await _ensureWarehouseInventoryColumns();
+  }
+
+  Future<void> _ensureWarehouseInventoryColumns() async {
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS warehouse_inventory (
+        id TEXT PRIMARY KEY NOT NULL,
+        store_id TEXT NOT NULL,
+        branch_id TEXT NOT NULL DEFAULT 'main',
+        warehouse_id TEXT NOT NULL,
+        product_id TEXT NOT NULL,
+        quantity REAL NOT NULL DEFAULT 0,
+        version INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        device_id TEXT NOT NULL DEFAULT '',
+        sync_status TEXT NOT NULL DEFAULT 'pending',
+        last_modified_by_device_id TEXT NOT NULL DEFAULT '',
+        UNIQUE(store_id, warehouse_id, product_id)
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_warehouse_inventory_store_warehouse_product ON warehouse_inventory(store_id, warehouse_id, product_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_warehouse_inventory_product ON warehouse_inventory(product_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_warehouse_inventory_warehouse ON warehouse_inventory(warehouse_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_warehouse_inventory_updated_at ON warehouse_inventory(updated_at);');
+  }
+
+  Future<void> _ensureStockOperationsTable() async {
+    await _ensureStockOperationsColumns();
+  }
+
+  Future<void> _ensureStockOperationsColumns() async {
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS stock_operations (
+        id TEXT PRIMARY KEY NOT NULL,
+        store_id TEXT NOT NULL,
+        branch_id TEXT NOT NULL DEFAULT 'main',
+        operation_type TEXT NOT NULL,
+        document_type TEXT NOT NULL,
+        document_id TEXT NOT NULL,
+        movement_group_id TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT NOT NULL,
+        started_at TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL DEFAULT '',
+        completed_at TEXT NOT NULL DEFAULT '',
+        failure_reason TEXT NOT NULL DEFAULT '',
+        attempt_count INTEGER NOT NULL DEFAULT 0,
+        device_id TEXT NOT NULL DEFAULT '',
+        last_modified_by_device_id TEXT NOT NULL DEFAULT '',
+        UNIQUE(store_id, idempotency_key)
+      );
+    ''');
+    await _ensureColumn('stock_operations', 'started_at', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('stock_operations', 'updated_at', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('stock_operations', 'failure_reason', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn('stock_operations', 'attempt_count', 'INTEGER NOT NULL DEFAULT 0');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_operations_document ON stock_operations(store_id, document_type, document_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_operations_group ON stock_operations(movement_group_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_operations_status ON stock_operations(status, created_at);');
+  }
+
+  Future<void> _ensureInventoryReconciliationsTable() async {
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS inventory_reconciliations (
+        id TEXT PRIMARY KEY NOT NULL,
+        store_id TEXT NOT NULL,
+        branch_id TEXT NOT NULL DEFAULT 'main',
+        warehouse_id TEXT NOT NULL,
+        product_id TEXT NOT NULL,
+        legacy_product_stock REAL NOT NULL DEFAULT 0,
+        ledger_balance REAL NOT NULL DEFAULT 0,
+        warehouse_balance REAL NOT NULL DEFAULT 0,
+        difference REAL NOT NULL DEFAULT 0,
+        classification TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open',
+        created_at TEXT NOT NULL,
+        resolved_at TEXT NOT NULL DEFAULT '',
+        resolution_note TEXT NOT NULL DEFAULT '',
+        UNIQUE(store_id, warehouse_id, product_id)
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_inventory_reconciliations_store_status ON inventory_reconciliations(store_id, status, classification);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_inventory_reconciliations_product ON inventory_reconciliations(product_id);');
+  }
+
+  Future<void> _ensureInventoryMigrationAdjustmentsTable() async {
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS inventory_migration_adjustments (
+        id TEXT PRIMARY KEY NOT NULL,
+        migration_batch_id TEXT NOT NULL,
+        store_id TEXT NOT NULL,
+        branch_id TEXT NOT NULL DEFAULT 'main',
+        warehouse_id TEXT NOT NULL,
+        product_id TEXT NOT NULL,
+        legacy_product_stock REAL NOT NULL DEFAULT 0,
+        ledger_balance REAL NOT NULL DEFAULT 0,
+        applied_delta REAL NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        notes TEXT NOT NULL DEFAULT '',
+        UNIQUE(migration_batch_id, store_id, warehouse_id, product_id)
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_inventory_migration_adjustments_batch ON inventory_migration_adjustments(migration_batch_id, store_id, warehouse_id, product_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_inventory_migration_adjustments_store ON inventory_migration_adjustments(store_id, product_id);');
   }
 
   Future<void> _ensureCatalogColumns(String tableName) async {
@@ -2623,3 +2786,5 @@ class VentioDriftDatabase extends GeneratedDatabase {
         'CREATE INDEX IF NOT EXISTS idx_${tableName}_sort_index ON $tableName(sort_index);');
   }
 }
+
+

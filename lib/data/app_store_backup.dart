@@ -84,13 +84,13 @@ extension AppStoreBackupExtensions on AppStore {
         storeName: _storeProfile.name,
       );
 
-  String exportEncryptedBackupJson(String password) {
+  Future<String> exportEncryptedBackupJson(String password) async {
     requirePermission(AppPermission.backupExport);
     final cleaned = password.trim();
     if (cleaned.length < 8) {
       throw ArgumentError('Backup password must be at least 8 characters.');
     }
-    final plain = utf8.encode(exportBackupJson());
+    final plain = utf8.encode(await exportBackupJson());
     final salt = _generateSalt();
     final nonce = _generateNonce();
     final key = _deriveBackupKey(cleaned, salt);

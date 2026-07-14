@@ -16,6 +16,7 @@ import '../../models/delivery_note.dart';
 import '../../models/expense.dart';
 import '../../models/inventory_count.dart';
 import '../../models/inventory_cost_layer.dart';
+import '../../models/inventory_reconciliation.dart';
 import '../../models/manufacturing.dart';
 import '../../models/product.dart';
 import '../../models/product_costing.dart';
@@ -27,8 +28,10 @@ import '../../models/stock_movement.dart';
 import '../../models/supplier.dart';
 import '../../models/supplier_product_price.dart';
 import '../../models/warehouse.dart';
+import '../../models/warehouse_inventory.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../repositories/business_repositories.dart';
+import '../repositories/inventory_reconciliation_repository.dart';
 import 'startup_timing_service.dart';
 import '../../models/sale_summary.dart';
 
@@ -57,6 +60,32 @@ class LocalDatabaseService {
   static const Duration _flushDelay = Duration(milliseconds: 120);
   static bool _sqliteReady = false;
 
+  static int _intValue(Object? value, {int fallback = 0}) {
+    if (value == null) return fallback;
+    if (value is int) return value;
+    if (value is double) return value.round();
+    if (value is num) return value.toInt();
+    if (value is String) {
+      final parsed = int.tryParse(value);
+      if (parsed != null) return parsed;
+      final doubleParsed = double.tryParse(value);
+      if (doubleParsed != null) return doubleParsed.toInt();
+    }
+    return fallback;
+  }
+
+  static double _doubleValue(Object? value, {double fallback = 0}) {
+    if (value == null) return fallback;
+    if (value is double) return value;
+    if (value is int) return value.toDouble();
+    if (value is num) return value.toDouble();
+    if (value is String) {
+      final parsed = double.tryParse(value);
+      if (parsed != null) return parsed;
+    }
+    return fallback;
+  }
+
   static bool get isSqliteAuthoritative =>
       _sqliteReady && SqliteMigrationManager.database != null;
 
@@ -84,6 +113,24 @@ class LocalDatabaseService {
   @visibleForTesting
   static void clearInMemoryStoreForTesting() {
     _memoryStoreForTesting = null;
+  }
+
+  @visibleForTesting
+  static Future<void> resetForTesting() async {
+    _memoryStoreForTesting = null;
+    _webStore = null;
+    _webPreferences = null;
+    _sqliteReady = false;
+    _sqliteMirror.clear();
+    _pendingScalarWrites.clear();
+    _pendingScalarDeletes.clear();
+    _pendingBusinessEntityWrites.clear();
+    _pendingSyncChanges.clear();
+    _pendingSyncQueueItems.clear();
+    _flushTimer?.cancel();
+    _flushTimer = null;
+    _flushInProgress = null;
+    await SqliteMigrationManager.resetForTesting();
   }
 
   static Future<void> initialize() async {
@@ -152,6 +199,13 @@ class LocalDatabaseService {
         await StartupTimingService.measure(
           'rebuild_business_tables_without_payload_json',
           () => activeDb.rebuildBusinessTablesWithoutPayloadJson(),
+          category: 'database',
+        );
+        await StartupTimingService.measure(
+          'backfill_warehouse_inventory',
+          () => InventoryReconciliationRepository.backfillFromLegacyData(
+            activeDb,
+          ),
           category: 'database',
         );
         _sqliteReady = true;
@@ -399,7 +453,106 @@ class LocalDatabaseService {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
       return null;
     }
-    return InventoryRepository.getStockMovements();
+    final typed = await InventoryRepository.getStockMovements();
+    if (typed != null && typed.isNotEmpty) return typed;
+    final raw = await getBusinessEntityListJson(BusinessSqliteStore.stockMovementsKey);
+    if (raw == null || raw.trim().isEmpty) return typed;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return typed;
+      return decoded
+          .whereType<Map>()
+          .map((item) => StockMovement.fromJson(Map<String, dynamic>.from(item)))
+          .toList(growable: false);
+    } catch (_) {
+      return typed;
+    }
+  }
+
+  static Future<List<WarehouseInventory>?> getWarehouseInventoriesFromSqlite() async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+      return null;
+    }
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    final rows = await db.customSelect('''
+      SELECT id, store_id AS storeId, branch_id AS branchId,
+             warehouse_id AS warehouseId, product_id AS productId,
+             quantity, version, created_at AS createdAt,
+             updated_at AS updatedAt, device_id AS deviceId,
+             sync_status AS syncStatus,
+             last_modified_by_device_id AS lastModifiedByDeviceId
+      FROM warehouse_inventory
+      ORDER BY store_id ASC, warehouse_id ASC, product_id ASC
+    ''').get();
+    return rows
+        .map((row) => WarehouseInventory.fromJson(Map<String, dynamic>.from(row.data)))
+        .toList(growable: false);
+  }
+
+  static Future<List<InventoryReconciliation>?> getInventoryReconciliationsFromSqlite() async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+      return null;
+    }
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    final rows = await db.customSelect('''
+      SELECT id, store_id AS storeId, branch_id AS branchId,
+             warehouse_id AS warehouseId, product_id AS productId,
+             legacy_product_stock AS legacyProductStock,
+             ledger_balance AS ledgerBalance,
+             warehouse_balance AS warehouseBalance,
+             difference, classification, status, created_at AS createdAt,
+             resolved_at AS resolvedAt, resolution_note AS resolutionNote
+      FROM inventory_reconciliations
+      ORDER BY store_id ASC, warehouse_id ASC, product_id ASC
+    ''').get();
+    return rows
+        .map((row) => InventoryReconciliation.fromJson(Map<String, dynamic>.from(row.data)))
+        .toList(growable: false);
+  }
+
+  static Future<List<Map<String, dynamic>>?> getStockOperationsFromSqlite() async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+      return null;
+    }
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    final rows = await db.customSelect('''
+      SELECT id, store_id AS storeId, branch_id AS branchId,
+             operation_type AS operationType, document_type AS documentType,
+             document_id AS documentId, movement_group_id AS movementGroupId,
+             idempotency_key AS idempotencyKey, status, created_at AS createdAt,
+             started_at AS startedAt, updated_at AS updatedAt,
+             completed_at AS completedAt, failure_reason AS failureReason,
+             attempt_count AS attemptCount, device_id AS deviceId,
+             last_modified_by_device_id AS lastModifiedByDeviceId
+      FROM stock_operations
+      ORDER BY store_id ASC, created_at ASC, id ASC
+    ''').get();
+    return rows
+        .map((row) => Map<String, dynamic>.from(row.data))
+        .toList(growable: false);
+  }
+
+  static Future<List<Map<String, dynamic>>?> getInventoryMigrationAdjustmentsFromSqlite() async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+      return null;
+    }
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    final rows = await db.customSelect('''
+      SELECT id, migration_batch_id AS migrationBatchId, store_id AS storeId,
+             branch_id AS branchId, warehouse_id AS warehouseId,
+             product_id AS productId, legacy_product_stock AS legacyProductStock,
+             ledger_balance AS ledgerBalance, applied_delta AS appliedDelta,
+             created_at AS createdAt, updated_at AS updatedAt, notes
+      FROM inventory_migration_adjustments
+      ORDER BY migration_batch_id ASC, store_id ASC, warehouse_id ASC, product_id ASC
+    ''').get();
+    return rows
+        .map((row) => Map<String, dynamic>.from(row.data))
+        .toList(growable: false);
   }
 
   static Future<List<AccountTransaction>?>
@@ -996,7 +1149,14 @@ class LocalDatabaseService {
 
   static Future<void> runSqliteAuthoritativeTransaction(
       Future<void> Function() action) async {
-    await action();
+    final db = SqliteMigrationManager.database;
+    if (db == null || !_sqliteReady) {
+      await action();
+      return;
+    }
+    await db.transaction(() async {
+      await action();
+    });
   }
 
   static Future<void> replaceBusinessEntityJsonListImmediate(
@@ -1035,6 +1195,216 @@ class LocalDatabaseService {
     }
   }
 
+  static Future<void> replaceWarehouseInventoryRowsImmediate(
+    List<Map<String, dynamic>> rows,
+  ) async {
+    final memory = _memoryStore;
+    if (memory != null || _webStore != null) return;
+    final db = SqliteMigrationManager.database;
+    if (!_sqliteReady || db == null) return;
+    await db.customStatement('DELETE FROM warehouse_inventory');
+    for (final row in rows) {
+      await db.customInsert(
+        '''
+        INSERT OR REPLACE INTO warehouse_inventory
+          (id, store_id, branch_id, warehouse_id, product_id, quantity,
+           version, created_at, updated_at, device_id, sync_status,
+           last_modified_by_device_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(row['id']?.toString() ?? ''),
+          Variable<String>(row['storeId']?.toString() ?? row['store_id']?.toString() ?? ''),
+          Variable<String>(row['branchId']?.toString() ?? row['branch_id']?.toString() ?? 'main'),
+          Variable<String>(row['warehouseId']?.toString() ?? row['warehouse_id']?.toString() ?? ''),
+          Variable<String>(row['productId']?.toString() ?? row['product_id']?.toString() ?? ''),
+          Variable<double>(_doubleValue(row['quantity'], fallback: 0)),
+          Variable<int>(_intValue(row['version'], fallback: 1)),
+          Variable<String>(row['createdAt']?.toString() ?? row['created_at']?.toString() ?? DateTime.now().toIso8601String()),
+          Variable<String>(row['updatedAt']?.toString() ?? row['updated_at']?.toString() ?? DateTime.now().toIso8601String()),
+          Variable<String>(row['deviceId']?.toString() ?? row['device_id']?.toString() ?? ''),
+          Variable<String>(row['syncStatus']?.toString() ?? row['sync_status']?.toString() ?? 'synced'),
+          Variable<String>(row['lastModifiedByDeviceId']?.toString() ?? row['last_modified_by_device_id']?.toString() ?? ''),
+        ],
+      );
+    }
+  }
+
+  static Future<void> replaceStockOperationsRowsImmediate(
+    List<Map<String, dynamic>> rows,
+  ) async {
+    final memory = _memoryStore;
+    if (memory != null || _webStore != null) return;
+    final db = SqliteMigrationManager.database;
+    if (!_sqliteReady || db == null) return;
+    await db.customStatement('DELETE FROM stock_operations');
+    for (final row in rows) {
+      await db.customInsert(
+        '''
+        INSERT OR REPLACE INTO stock_operations
+          (id, store_id, branch_id, operation_type, document_type, document_id,
+           movement_group_id, idempotency_key, status, created_at, started_at,
+           updated_at, completed_at, failure_reason, attempt_count, device_id,
+           last_modified_by_device_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(row['id']?.toString() ?? ''),
+          Variable<String>(row['storeId']?.toString() ?? row['store_id']?.toString() ?? ''),
+          Variable<String>(row['branchId']?.toString() ?? row['branch_id']?.toString() ?? 'main'),
+          Variable<String>(row['operationType']?.toString() ?? row['operation_type']?.toString() ?? ''),
+          Variable<String>(row['documentType']?.toString() ?? row['document_type']?.toString() ?? ''),
+          Variable<String>(row['documentId']?.toString() ?? row['document_id']?.toString() ?? ''),
+          Variable<String>(row['movementGroupId']?.toString() ?? row['movement_group_id']?.toString() ?? ''),
+          Variable<String>(row['idempotencyKey']?.toString() ?? row['idempotency_key']?.toString() ?? ''),
+          Variable<String>(row['status']?.toString() ?? 'pending'),
+          Variable<String>(row['createdAt']?.toString() ?? row['created_at']?.toString() ?? DateTime.now().toIso8601String()),
+          Variable<String>(row['startedAt']?.toString() ?? row['started_at']?.toString() ?? ''),
+          Variable<String>(row['updatedAt']?.toString() ?? row['updated_at']?.toString() ?? ''),
+          Variable<String>(row['completedAt']?.toString() ?? row['completed_at']?.toString() ?? ''),
+          Variable<String>(row['failureReason']?.toString() ?? row['failure_reason']?.toString() ?? ''),
+          Variable<int>(_intValue(row['attemptCount'] ?? row['attempt_count'], fallback: 0)),
+          Variable<String>(row['deviceId']?.toString() ?? row['device_id']?.toString() ?? ''),
+          Variable<String>(row['lastModifiedByDeviceId']?.toString() ?? row['last_modified_by_device_id']?.toString() ?? ''),
+        ],
+      );
+    }
+  }
+
+  static Future<void> replaceStockMovementRowsImmediate(
+    List<Map<String, dynamic>> rows,
+  ) async {
+    final memory = _memoryStore;
+    if (memory != null || _webStore != null) return;
+    final db = SqliteMigrationManager.database;
+    if (!_sqliteReady || db == null) return;
+    await db.customStatement('DELETE FROM stock_movements');
+    for (final row in rows) {
+      await db.customInsert(
+        '''
+        INSERT OR REPLACE INTO stock_movements
+          (id, entity_type, created_at, updated_at, deleted_at, device_id,
+           sync_status, store_id, branch_id, version, sort_index, product_id,
+           product_name, movement_type, quantity, movement_date, reference_id,
+           reference_no, reason, adjustment_category, notes, evidence_ref,
+           warehouse_id, warehouse_name, movement_group_id, document_line_id,
+           source_movement_id, reversal_of_movement_id, idempotency_key,
+           unit_cost, last_modified_by_device_id, reviewed_at, reviewed_by,
+           review_note)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(row['id']?.toString() ?? ''),
+          Variable<String>(row['entityType']?.toString() ?? row['entity_type']?.toString() ?? 'stock_movement'),
+          Variable<String>(row['createdAt']?.toString() ?? row['created_at']?.toString() ?? DateTime.now().toIso8601String()),
+          Variable<String>(row['updatedAt']?.toString() ?? row['updated_at']?.toString() ?? DateTime.now().toIso8601String()),
+          Variable<String>(row['deletedAt']?.toString() ?? row['deleted_at']?.toString() ?? ''),
+          Variable<String>(row['deviceId']?.toString() ?? row['device_id']?.toString() ?? ''),
+          Variable<String>(row['syncStatus']?.toString() ?? row['sync_status']?.toString() ?? 'pending'),
+          Variable<String>(row['storeId']?.toString() ?? row['store_id']?.toString() ?? ''),
+          Variable<String>(row['branchId']?.toString() ?? row['branch_id']?.toString() ?? 'main'),
+          Variable<int>(_intValue(row['version'], fallback: 1)),
+          Variable<int>(_intValue(row['sortIndex'] ?? row['sort_index'], fallback: 0)),
+          Variable<String>(row['productId']?.toString() ?? row['product_id']?.toString() ?? ''),
+          Variable<String>(row['productName']?.toString() ?? row['product_name']?.toString() ?? ''),
+          Variable<String>(row['movementType']?.toString() ?? row['movement_type']?.toString() ?? row['type']?.toString() ?? 'adjustment'),
+          Variable<double>(_doubleValue(row['quantity'], fallback: 0)),
+          Variable<String>(row['movementDate']?.toString() ?? row['movement_date']?.toString() ?? row['date']?.toString() ?? DateTime.now().toIso8601String()),
+          Variable<String>(row['referenceId']?.toString() ?? row['reference_id']?.toString() ?? ''),
+          Variable<String>(row['referenceNo']?.toString() ?? row['reference_no']?.toString() ?? ''),
+          Variable<String>(row['reason']?.toString() ?? ''),
+          Variable<String>(row['adjustmentCategory']?.toString() ?? row['adjustment_category']?.toString() ?? ''),
+          Variable<String>(row['notes']?.toString() ?? ''),
+          Variable<String>(row['evidenceRef']?.toString() ?? row['evidence_ref']?.toString() ?? ''),
+          Variable<String>(row['warehouseId']?.toString() ?? row['warehouse_id']?.toString() ?? 'main'),
+          Variable<String>(row['warehouseName']?.toString() ?? row['warehouse_name']?.toString() ?? 'Main warehouse'),
+          Variable<String>(row['movementGroupId']?.toString() ?? row['movement_group_id']?.toString() ?? ''),
+          Variable<String>(row['documentLineId']?.toString() ?? row['document_line_id']?.toString() ?? ''),
+          Variable<String>(row['sourceMovementId']?.toString() ?? row['source_movement_id']?.toString() ?? ''),
+          Variable<String>(row['reversalOfMovementId']?.toString() ?? row['reversal_of_movement_id']?.toString() ?? ''),
+          Variable<String>(row['idempotencyKey']?.toString() ?? row['idempotency_key']?.toString() ?? ''),
+          Variable<double>(_doubleValue(row['unitCost'] ?? row['unit_cost'], fallback: 0)),
+          Variable<String>(row['lastModifiedByDeviceId']?.toString() ?? row['last_modified_by_device_id']?.toString() ?? row['device_id']?.toString() ?? ''),
+          Variable<String>(row['reviewedAt']?.toString() ?? row['reviewed_at']?.toString() ?? ''),
+          Variable<String>(row['reviewedBy']?.toString() ?? row['reviewed_by']?.toString() ?? ''),
+          Variable<String>(row['reviewNote']?.toString() ?? row['review_note']?.toString() ?? ''),
+        ],
+      );
+    }
+  }
+
+  static Future<void> replaceInventoryReconciliationsRowsImmediate(
+    List<Map<String, dynamic>> rows,
+  ) async {
+    final memory = _memoryStore;
+    if (memory != null || _webStore != null) return;
+    final db = SqliteMigrationManager.database;
+    if (!_sqliteReady || db == null) return;
+    await db.customStatement('DELETE FROM inventory_reconciliations');
+    for (final row in rows) {
+      await db.customInsert(
+        '''
+        INSERT OR REPLACE INTO inventory_reconciliations
+          (id, store_id, branch_id, warehouse_id, product_id,
+           legacy_product_stock, ledger_balance, warehouse_balance, difference,
+           classification, status, created_at, resolved_at, resolution_note)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(row['id']?.toString() ?? ''),
+          Variable<String>(row['storeId']?.toString() ?? row['store_id']?.toString() ?? ''),
+          Variable<String>(row['branchId']?.toString() ?? row['branch_id']?.toString() ?? 'main'),
+          Variable<String>(row['warehouseId']?.toString() ?? row['warehouse_id']?.toString() ?? ''),
+          Variable<String>(row['productId']?.toString() ?? row['product_id']?.toString() ?? ''),
+          Variable<double>(_doubleValue(row['legacyProductStock'] ?? row['legacy_product_stock'], fallback: 0)),
+          Variable<double>(_doubleValue(row['ledgerBalance'] ?? row['ledger_balance'], fallback: 0)),
+          Variable<double>(_doubleValue(row['warehouseBalance'] ?? row['warehouse_balance'], fallback: 0)),
+          Variable<double>(_doubleValue(row['difference'], fallback: 0)),
+          Variable<String>(row['classification']?.toString() ?? ''),
+          Variable<String>(row['status']?.toString() ?? 'open'),
+          Variable<String>(row['createdAt']?.toString() ?? row['created_at']?.toString() ?? DateTime.now().toIso8601String()),
+          Variable<String>(row['resolvedAt']?.toString() ?? row['resolved_at']?.toString() ?? ''),
+          Variable<String>(row['resolutionNote']?.toString() ?? row['resolution_note']?.toString() ?? ''),
+        ],
+      );
+    }
+  }
+
+  static Future<void> replaceInventoryMigrationAdjustmentsRowsImmediate(
+    List<Map<String, dynamic>> rows,
+  ) async {
+    final memory = _memoryStore;
+    if (memory != null || _webStore != null) return;
+    final db = SqliteMigrationManager.database;
+    if (!_sqliteReady || db == null) return;
+    await db.customStatement('DELETE FROM inventory_migration_adjustments');
+    for (final row in rows) {
+      await db.customInsert(
+        '''
+        INSERT OR REPLACE INTO inventory_migration_adjustments
+          (id, migration_batch_id, store_id, branch_id, warehouse_id, product_id,
+           legacy_product_stock, ledger_balance, applied_delta, created_at,
+           updated_at, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''',
+        variables: <Variable<Object>>[
+          Variable<String>(row['id']?.toString() ?? ''),
+          Variable<String>(row['migrationBatchId']?.toString() ?? row['migration_batch_id']?.toString() ?? ''),
+          Variable<String>(row['storeId']?.toString() ?? row['store_id']?.toString() ?? ''),
+          Variable<String>(row['branchId']?.toString() ?? row['branch_id']?.toString() ?? 'main'),
+          Variable<String>(row['warehouseId']?.toString() ?? row['warehouse_id']?.toString() ?? ''),
+          Variable<String>(row['productId']?.toString() ?? row['product_id']?.toString() ?? ''),
+          Variable<double>(_doubleValue(row['legacyProductStock'] ?? row['legacy_product_stock'], fallback: 0)),
+          Variable<double>(_doubleValue(row['ledgerBalance'] ?? row['ledger_balance'], fallback: 0)),
+          Variable<double>(_doubleValue(row['appliedDelta'] ?? row['applied_delta'], fallback: 0)),
+          Variable<String>(row['createdAt']?.toString() ?? row['created_at']?.toString() ?? DateTime.now().toIso8601String()),
+          Variable<String>(row['updatedAt']?.toString() ?? row['updated_at']?.toString() ?? DateTime.now().toIso8601String()),
+          Variable<String>(row['notes']?.toString() ?? ''),
+        ],
+      );
+    }
+  }
+
   static List<String> keys() {
     final memory = _memoryStore;
     if (memory != null) return memory.keys.toList()..sort();
@@ -1069,6 +1439,27 @@ class LocalDatabaseService {
         final value =
             await BusinessSqliteStore.readEntityListJsonByKey(db, key);
         if (value != null) entries[key] = value;
+      }
+      final warehouseInventory = await getWarehouseInventoriesFromSqlite();
+      if (warehouseInventory != null) {
+        entries['warehouse_inventory'] =
+            jsonEncode(warehouseInventory.map((item) => item.toJson()).toList(growable: false));
+      }
+      final stockOperations = await getStockOperationsFromSqlite();
+      if (stockOperations != null) {
+        entries['stock_operations'] = jsonEncode(stockOperations);
+      }
+      final inventoryReconciliations = await getInventoryReconciliationsFromSqlite();
+      if (inventoryReconciliations != null) {
+        entries['inventory_reconciliations'] = jsonEncode(
+          inventoryReconciliations.map((item) => item.toJson()).toList(growable: false),
+        );
+      }
+      final inventoryMigrationAdjustments =
+          await getInventoryMigrationAdjustmentsFromSqlite();
+      if (inventoryMigrationAdjustments != null) {
+        entries['inventory_migration_adjustments'] =
+            jsonEncode(inventoryMigrationAdjustments);
       }
       for (final key in SyncSqliteStore.sqliteBackedKeys) {
         final value = await SyncSqliteStore.readKeyJson(db, key);

@@ -14,6 +14,11 @@ class StockMovement {
     this.evidenceRef = '',
     this.warehouseId = 'main',
     this.warehouseName = 'Main warehouse',
+    this.movementGroupId = '',
+    this.documentLineId = '',
+    this.sourceMovementId = '',
+    this.reversalOfMovementId = '',
+    this.idempotencyKey = '',
     this.unitCost = 0,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -31,6 +36,8 @@ class StockMovement {
 
   final String id, productId, productName, type, referenceId, referenceNo, reason;
   final String adjustmentCategory, notes, evidenceRef, warehouseId, warehouseName;
+  final String movementGroupId, documentLineId, sourceMovementId;
+  final String reversalOfMovementId, idempotencyKey;
   final double quantity;
   final double unitCost;
   final DateTime date, createdAt, updatedAt;
@@ -43,9 +50,43 @@ class StockMovement {
 
   double get value => quantity.abs() * unitCost;
 
-  StockMovement copyWith({String? productName, String? type, double? quantity, DateTime? date, String? referenceId, String? referenceNo, String? reason, String? adjustmentCategory, String? notes, String? evidenceRef, String? warehouseId, String? warehouseName, double? unitCost, DateTime? createdAt, DateTime? updatedAt, String? deviceId, String? syncStatus, String? storeId, String? branchId, int? version, String? lastModifiedByDeviceId, DateTime? reviewedAt, bool clearReviewedAt = false, String? reviewedBy, String? reviewNote}) => StockMovement(
-        id: id,
-        productId: productId,
+  StockMovement copyWith({
+    String? id,
+    String? productId,
+    String? productName,
+    String? type,
+    double? quantity,
+    DateTime? date,
+    String? referenceId,
+    String? referenceNo,
+    String? reason,
+    String? adjustmentCategory,
+    String? notes,
+    String? evidenceRef,
+    String? warehouseId,
+    String? warehouseName,
+    String? movementGroupId,
+    String? documentLineId,
+    String? sourceMovementId,
+    String? reversalOfMovementId,
+    String? idempotencyKey,
+    double? unitCost,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    String? deviceId,
+    String? syncStatus,
+    String? storeId,
+    String? branchId,
+    int? version,
+    String? lastModifiedByDeviceId,
+    DateTime? reviewedAt,
+    bool clearReviewedAt = false,
+    String? reviewedBy,
+    String? reviewNote,
+  }) =>
+      StockMovement(
+        id: id ?? this.id,
+        productId: productId ?? this.productId,
         productName: productName ?? this.productName,
         type: type ?? this.type,
         quantity: quantity ?? this.quantity,
@@ -58,6 +99,12 @@ class StockMovement {
         evidenceRef: evidenceRef ?? this.evidenceRef,
         warehouseId: warehouseId ?? this.warehouseId,
         warehouseName: warehouseName ?? this.warehouseName,
+        movementGroupId: movementGroupId ?? this.movementGroupId,
+        documentLineId: documentLineId ?? this.documentLineId,
+        sourceMovementId: sourceMovementId ?? this.sourceMovementId,
+        reversalOfMovementId:
+            reversalOfMovementId ?? this.reversalOfMovementId,
+        idempotencyKey: idempotencyKey ?? this.idempotencyKey,
         unitCost: unitCost ?? this.unitCost,
         createdAt: createdAt ?? this.createdAt,
         updatedAt: updatedAt ?? this.updatedAt,
@@ -87,6 +134,11 @@ class StockMovement {
         'evidenceRef': evidenceRef,
         'warehouseId': warehouseId,
         'warehouseName': warehouseName,
+        'movementGroupId': movementGroupId,
+        'documentLineId': documentLineId,
+        'sourceMovementId': sourceMovementId,
+        'reversalOfMovementId': reversalOfMovementId,
+        'idempotencyKey': idempotencyKey,
         'unitCost': unitCost,
         'createdAt': createdAt.toIso8601String(),
         'updatedAt': updatedAt.toIso8601String(),
@@ -118,6 +170,11 @@ class StockMovement {
       evidenceRef: json['evidenceRef']?.toString() ?? '',
       warehouseId: json['warehouseId']?.toString() ?? 'main',
       warehouseName: json['warehouseName']?.toString() ?? 'Main warehouse',
+      movementGroupId: json['movementGroupId']?.toString() ?? '',
+      documentLineId: json['documentLineId']?.toString() ?? '',
+      sourceMovementId: json['sourceMovementId']?.toString() ?? '',
+      reversalOfMovementId: json['reversalOfMovementId']?.toString() ?? '',
+      idempotencyKey: json['idempotencyKey']?.toString() ?? '',
       unitCost: (json['unitCost'] as num? ?? 0).toDouble(),
       createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? '') ?? date,
       updatedAt: DateTime.tryParse(json['updatedAt']?.toString() ?? '') ?? date,

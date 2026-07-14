@@ -2332,7 +2332,7 @@ class SettingsPage extends StatelessWidget {
 
     try {
       final backup =
-          'RESET_PROTECTION_TOKEN:$token\n${store.exportBackupJson()}';
+          'RESET_PROTECTION_TOKEN:$token\n${await store.exportBackupJson()}';
       await downloadTextFile(
           filename:
               'reset_protection_backup_${DateTime.now().millisecondsSinceEpoch}.json',
