@@ -287,6 +287,10 @@ class _StressLabPageState extends State<StressLabPage> {
 
   AppStore get store => widget.store;
 
+  void _resetStressLabAccess() {
+    unawaited(widget.store.setStressLabEnabled(false));
+  }
+
   @override
   void dispose() {
     _productsController.dispose();
@@ -296,6 +300,7 @@ class _StressLabPageState extends State<StressLabPage> {
     _progressEveryController.dispose();
     _pressureMultiplierController.dispose();
     _pressureProgressEveryController.dispose();
+    _resetStressLabAccess();
     super.dispose();
   }
 
@@ -2534,7 +2539,7 @@ class _StressLabPageState extends State<StressLabPage> {
           progress: 0.97);
       await _auditStep(_dual('النسخ الاحتياطي', 'Backup'),
           _dual('توليد Backup JSON', 'Generate backup JSON'), () async {
-      final raw = await store.exportBackupJson();
+        final raw = await store.exportBackupJson();
         final decoded = jsonDecode(raw) as Map<String, dynamic>;
         return '${raw.length} bytes, keys=${decoded.keys.length}';
       },
@@ -3898,124 +3903,125 @@ class _StressLabPageState extends State<StressLabPage> {
           title: Text(tr.text('stress_lab')),
         ),
         body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(tr.text('stress_lab'),
-                        style: Theme.of(context).textTheme.headlineSmall),
-                    const SizedBox(height: 8),
-                    Text(tr.text('stress_lab_desc')),
-                    const SizedBox(height: 8),
-                    Text(_tf('role_device_transport_epoch', {
-                      'role': _roleLabel(),
-                      'device': identity.deviceId,
-                      'transport': _effectiveSyncTransport(),
-                      'epoch': identity.storeEpoch
-                    })),
-                    const SizedBox(height: 16),
-                    LinearProgressIndicator(value: _running ? _progress : null),
-                    const SizedBox(height: 8),
-                    Text(localizeRuntimeMessage(_status, tr)),
-                    const SizedBox(height: 16),
-                    FilledButton.icon(
-                      onPressed: _running ? null : _runOneButtonSystemAudit,
-                      icon: const Icon(Icons.health_and_safety_outlined),
-                      label: Text(tr.text('run_stress_lab_audit')),
-                    ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        _numberField(
-                            _dual('مضاعف الضغط', 'Pressure multiplier'),
-                            _pressureMultiplierController),
-                        _numberField(_dual('تقدم كل', 'Progress every'),
-                            _pressureProgressEveryController),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        OutlinedButton.icon(
-                          onPressed: _log.isEmpty ? null : _copyLog,
-                          icon: const Icon(Icons.copy),
-                          label: Text(tr.text('copy_full_report')),
-                        ),
-                        OutlinedButton.icon(
-                          onPressed: _running ? null : _clearLog,
-                          icon: const Icon(Icons.clear_all),
-                          label: Text(tr.text('clear_report')),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            if (_report.isNotEmpty)
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(16),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('${tr.text('overall_result')}: $overall',
-                          style: Theme.of(context).textTheme.titleLarge),
+                      Text(tr.text('stress_lab'),
+                          style: Theme.of(context).textTheme.headlineSmall),
                       const SizedBox(height: 8),
-                      Text(tr.format('stress_lab_pass_warn_fail',
-                          {'pass': pass, 'warn': warn, 'fail': fail})),
+                      Text(tr.text('stress_lab_desc')),
+                      const SizedBox(height: 8),
+                      Text(_tf('role_device_transport_epoch', {
+                        'role': _roleLabel(),
+                        'device': identity.deviceId,
+                        'transport': _effectiveSyncTransport(),
+                        'epoch': identity.storeEpoch
+                      })),
+                      const SizedBox(height: 16),
+                      LinearProgressIndicator(
+                          value: _running ? _progress : null),
+                      const SizedBox(height: 8),
+                      Text(localizeRuntimeMessage(_status, tr)),
+                      const SizedBox(height: 16),
+                      FilledButton.icon(
+                        onPressed: _running ? null : _runOneButtonSystemAudit,
+                        icon: const Icon(Icons.health_and_safety_outlined),
+                        label: Text(tr.text('run_stress_lab_audit')),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          _numberField(
+                              _dual('مضاعف الضغط', 'Pressure multiplier'),
+                              _pressureMultiplierController),
+                          _numberField(_dual('تقدم كل', 'Progress every'),
+                              _pressureProgressEveryController),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: _log.isEmpty ? null : _copyLog,
+                            icon: const Icon(Icons.copy),
+                            label: Text(tr.text('copy_full_report')),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: _running ? null : _clearLog,
+                            icon: const Icon(Icons.clear_all),
+                            label: Text(tr.text('clear_report')),
+                          ),
+                        ],
+                      ),
                     ],
                   ),
                 ),
               ),
-            const SizedBox(height: 12),
-            Expanded(
-              child: _report.isEmpty
-                  ? DecoratedBox(
-                      decoration: BoxDecoration(
-                          border:
-                              Border.all(color: Theme.of(context).dividerColor),
-                          borderRadius: BorderRadius.circular(8)),
-                      child: Center(
-                          child: Text(tr.text('stress_lab_report_prompt'))),
-                    )
-                  : ListView.builder(
-                      itemCount: _report.length,
-                      itemBuilder: (context, index) {
-                        final item = _report[index];
-                        final icon = item.isPass
-                            ? Icons.check_circle_outline
-                            : item.isWarn
-                                ? Icons.warning_amber_outlined
-                                : Icons.error_outline;
-                        return Card(
-                          child: ListTile(
-                            leading: Icon(icon),
-                            title: Text(
-                                '${_reportLabel(item.section, tr)} — ${_reportLabel(item.name, tr)}'),
-                            subtitle: Text(
-                                '${localizeRuntimeMessage(item.details, tr)}\n${tr.isArabic ? 'المدة' : 'Duration'}: ${item.elapsedMs} ms'),
-                            isThreeLine: true,
-                            trailing: Text(_reportLabel(item.status, tr)),
-                          ),
-                        );
-                      },
+              const SizedBox(height: 12),
+              if (_report.isNotEmpty)
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('${tr.text('overall_result')}: $overall',
+                            style: Theme.of(context).textTheme.titleLarge),
+                        const SizedBox(height: 8),
+                        Text(tr.format('stress_lab_pass_warn_fail',
+                            {'pass': pass, 'warn': warn, 'fail': fail})),
+                      ],
                     ),
-            ),
-          ],
+                  ),
+                ),
+              const SizedBox(height: 12),
+              Expanded(
+                child: _report.isEmpty
+                    ? DecoratedBox(
+                        decoration: BoxDecoration(
+                            border: Border.all(
+                                color: Theme.of(context).dividerColor),
+                            borderRadius: BorderRadius.circular(8)),
+                        child: Center(
+                            child: Text(tr.text('stress_lab_report_prompt'))),
+                      )
+                    : ListView.builder(
+                        itemCount: _report.length,
+                        itemBuilder: (context, index) {
+                          final item = _report[index];
+                          final icon = item.isPass
+                              ? Icons.check_circle_outline
+                              : item.isWarn
+                                  ? Icons.warning_amber_outlined
+                                  : Icons.error_outline;
+                          return Card(
+                            child: ListTile(
+                              leading: Icon(icon),
+                              title: Text(
+                                  '${_reportLabel(item.section, tr)} — ${_reportLabel(item.name, tr)}'),
+                              subtitle: Text(
+                                  '${localizeRuntimeMessage(item.details, tr)}\n${tr.isArabic ? 'المدة' : 'Duration'}: ${item.elapsedMs} ms'),
+                              isThreeLine: true,
+                              trailing: Text(_reportLabel(item.status, tr)),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
         ),
-      ),
       ),
     );
   }

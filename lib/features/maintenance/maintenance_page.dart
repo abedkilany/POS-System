@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
@@ -27,8 +29,12 @@ class _MaintenancePageState extends State<MaintenancePage> {
   bool _loading = true;
   bool _lastRunWasDeep = false;
   bool _showDatabaseExplorer = false;
+  int _advancedToolsTapCount = 0;
+  bool _stressLabUnlocked = false;
   bool get _showAdvancedTools =>
       kDebugMode || widget.store.canManageMaintenance;
+  bool get _showStressLabButton =>
+      widget.store.isStressLabEnabled || _stressLabUnlocked;
 
   @override
   void initState() {
@@ -49,6 +55,25 @@ class _MaintenancePageState extends State<MaintenancePage> {
       _loading = false;
       _lastRunWasDeep = deep;
     });
+  }
+
+  void _unlockStressLab() {
+    if (_stressLabUnlocked) return;
+    final nextCount = _advancedToolsTapCount + 1;
+    if (nextCount < 7) {
+      setState(() => _advancedToolsTapCount = nextCount);
+      return;
+    }
+    setState(() {
+      _advancedToolsTapCount = 0;
+      _stressLabUnlocked = true;
+    });
+  }
+
+  void _hideStressLabButton() {
+    _advancedToolsTapCount = 0;
+    _stressLabUnlocked = false;
+    unawaited(widget.store.setStressLabEnabled(false));
   }
 
   String _formatBytes(int bytes) {
@@ -219,6 +244,12 @@ class _MaintenancePageState extends State<MaintenancePage> {
           content: Text(
               '${_localizedMaintenanceRepairTitle(tr, result.title)}: ${_localizedMaintenanceRepairMessage(tr, result.message)}')),
     );
+  }
+
+  @override
+  void dispose() {
+    _hideStressLabButton();
+    super.dispose();
   }
 
   @override
@@ -504,24 +535,38 @@ class _MaintenancePageState extends State<MaintenancePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(tr.text('advanced_tools')),
+            InkWell(
+              key: const ValueKey('AdvancedToolsUnlockTarget'),
+              onTap: _unlockStressLab,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Text(tr.text('advanced_tools')),
+              ),
+            ),
             const SizedBox(height: 12),
             Wrap(
               spacing: 12,
               runSpacing: 12,
               children: [
-                if (widget.store.isStressLabEnabled)
+                if (_showStressLabButton)
                   FilledButton.icon(
-                    onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => PageTimingScope(
-                          key: const ValueKey('StressLabPage'),
-                          pageKey: 'StressLabPage',
-                          pageLabel: 'Stress lab',
-                          child: StressLabPage(store: widget.store),
+                    key: const ValueKey('StressLabButton'),
+                    onPressed: () async {
+                      await widget.store.setStressLabEnabled(true);
+                      if (!mounted) return;
+                      await Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => PageTimingScope(
+                            key: const ValueKey('StressLabPage'),
+                            pageKey: 'StressLabPage',
+                            pageLabel: 'Stress lab',
+                            child: StressLabPage(store: widget.store),
+                          ),
                         ),
-                      ),
-                    ),
+                      );
+                      if (!mounted) return;
+                      _hideStressLabButton();
+                    },
                     icon: const Icon(Icons.speed_outlined),
                     label: Text(tr.text('stress_lab')),
                   ),
