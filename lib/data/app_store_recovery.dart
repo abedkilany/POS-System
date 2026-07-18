@@ -331,6 +331,7 @@ class AppStoreRecoveryService {
             for (final entry in localDatabaseEntries.entries) {
               final key = entry.key.toString();
               if (keysToSkip.contains(key)) continue;
+              if (BusinessSqliteStore.isTypedEntityKey(key)) continue;
               if (preservePairedHostIdentity &&
                   _shouldPreserveLiveHostConnectionKey(key)) {
                 continue;
@@ -706,9 +707,6 @@ class AppStoreRecoveryService {
             replaceRows(AppStore._expensesKey, _snapshotListMaps(decoded, 'expenses')),
             replaceRows(AppStore._purchasesKey, _snapshotListMaps(decoded, 'purchases')),
             replaceRows(AppStore._stockMovementsKey, importedStockMovements),
-            LocalDatabaseService.replaceStockMovementRowsImmediate(
-              importedStockMovements,
-            ),
             LocalDatabaseService.replaceWarehouseInventoryRowsImmediate(
               _snapshotListMaps(
                 decoded,
@@ -907,7 +905,9 @@ class AppStoreRecoveryService {
   }
 
   Future<List<Map<String, dynamic>>> _readRows(String storageKey) async {
-    final raw = await LocalDatabaseService.getBusinessEntityListJson(storageKey);
+    final db = SqliteMigrationManager.database;
+    if (db == null) return const <Map<String, dynamic>>[];
+    final raw = await BusinessSqliteStore.readEntityListJsonByKey(db, storageKey);
     if (raw == null || raw.trim().isEmpty) return const <Map<String, dynamic>>[];
     try {
       final decoded = jsonDecode(raw);

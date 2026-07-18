@@ -251,6 +251,8 @@ class _StressLabPageState extends State<StressLabPage> {
       'المحاسبة المتقدمة' => actual == 'Advanced Accounting',
       'المخزون' => actual == 'Inventory',
       'المخزون المتقدم' => actual == 'Advanced Inventory',
+      '??? ????????' =>
+          actual == 'Sales pressure' || actual.startsWith('Sales pressure '),
       'ملخص البيانات' => actual == 'Data Summary',
       'سلامة البيانات' => actual == 'Data Integrity',
       'صيانة التطبيق' => actual == 'App Maintenance',
@@ -1999,7 +2001,7 @@ class _StressLabPageState extends State<StressLabPage> {
             _dual('ضغط المخزون', 'Inventory pressure'),
             _dual('تنفيذ $count تعديل مخزون', 'Apply $count stock adjustments'),
             count, (i) async {
-          final product = salePool[i % salePool.length];
+          final product = salePool[(i ~/ 2) % salePool.length];
           await store.adjustStock(
             productId: product.id,
             warehouseId: store.resolveWarehouseForPurchase().id,
@@ -2043,6 +2045,37 @@ class _StressLabPageState extends State<StressLabPage> {
             startProgress: 0.89,
             endProgress: 0.915,
             progressEvery: progressEvery);
+      }
+
+      if (salePool.isNotEmpty) {
+        final salesWarehouseId = store.resolveWarehouseForSale().id;
+        await _pressureStep(
+          _dual('تثبيت مخزون البيع', 'Sales stock buffer'),
+          _dual('رفع رصيد منتجات البيع إلى مستوى آمن قبل الضغط', 'Raise sale products to a safe stock buffer before pressure'),
+          salePool.length,
+          (i) async {
+            final product = salePool[i];
+            final current = await store.warehouseStockFromSqlite(
+              product.id,
+              warehouseId: salesWarehouseId,
+            );
+            const targetStock = 35.0;
+            final needed = targetStock - current;
+            if (needed > 0.000001) {
+              await store.adjustStock(
+                productId: product.id,
+                warehouseId: salesWarehouseId,
+                quantityDelta: needed,
+                reason: 'Stress Lab sales pressure buffer',
+                adjustmentCategory: 'pressure_buffer',
+                notes: '$_currentBatchId sales buffer $i',
+              );
+            }
+          },
+          startProgress: 0.915,
+          endProgress: 0.925,
+          progressEvery: max(1, min(progressEvery, salePool.length)),
+        );
       }
 
       if (salePool.isNotEmpty && customerPool.isNotEmpty) {
@@ -2411,6 +2444,35 @@ class _StressLabPageState extends State<StressLabPage> {
           _dual('اختبار المبيعات والوثائق...',
               'Running sales and documents test...'),
           progress: 0.64);
+      if (products.isNotEmpty) {
+        final salesWarehouseId = store.resolveWarehouseForSale().id;
+        final salesPrepProducts = <Product>{};
+        salesPrepProducts.add(products.first);
+        if (products.length > 1) {
+          salesPrepProducts.add(products[1]);
+        }
+        if (products.length > 2) {
+          salesPrepProducts.add(products.last);
+        }
+        for (final product in salesPrepProducts) {
+          final current = await store.warehouseStockFromSqlite(
+            product.id,
+            warehouseId: salesWarehouseId,
+          );
+          const targetStock = 35.0;
+          final needed = targetStock - current;
+          if (needed > 0.000001) {
+            await store.adjustStock(
+              productId: product.id,
+              warehouseId: salesWarehouseId,
+              quantityDelta: needed,
+              reason: 'Stress Lab sales scenario buffer',
+              adjustmentCategory: 'pressure_buffer',
+              notes: '$_currentBatchId sales prep ${product.id}',
+            );
+          }
+        }
+      }
       Sale? normalSale;
       if (products.length >= 2 && customer != null) {
         normalSale = await _auditStep(
@@ -2710,8 +2772,12 @@ class _StressLabPageState extends State<StressLabPage> {
     if (saleMissing.isNotEmpty ||
         purchaseMissing.isNotEmpty ||
         stockMissingReferences.isNotEmpty) {
+      final missingRefSample = stockMissingReferences
+          .map((movement) =>
+              '${movement.id}:${movement.type}:${movement.referenceId}')
+          .join(', ');
       throw StateError(
-          'Integrity issues: saleMissing=${saleMissing.length}, purchaseMissing=${purchaseMissing.length}, stockMissingRefs=${stockMissingReferences.length}');
+          'Integrity issues: saleMissing=${saleMissing.length}, purchaseMissing=${purchaseMissing.length}, stockMissingRefs=${stockMissingReferences.length}${missingRefSample.isEmpty ? '' : ' sample=[$missingRefSample]'}');
     }
   }
 
@@ -3461,15 +3527,18 @@ class _StressLabPageState extends State<StressLabPage> {
     final openSubledgerOnly = nonZeroContributors.isNotEmpty &&
         nonZeroContributors.every(
             (entry) => entry.key == 'customer' || entry.key == 'supplier');
-    final details = diff <= 0.01 || transactions.isEmpty || openSubledgerOnly
-        ? _dual(
-            'Trial balance investigation OK: tx=${transactions.length} debit=${_money(debit)} credit=${_money(credit)} diff=${_money(diff)}${openSubledgerOnly ? ' openSubledger=${_money(nonZeroContributors.fold<double>(0, (sum, entry) => sum + entry.value))} topAccountTypes=$top' : ''}.',
-            'Trial balance investigation OK: tx=${transactions.length} debit=${_money(debit)} credit=${_money(credit)} diff=${_money(diff)}${openSubledgerOnly ? ' openSubledger=${_money(nonZeroContributors.fold<double>(0, (sum, entry) => sum + entry.value))} topAccountTypes=$top' : ''}.',
-          )
-        : _dual(
-            'diff=${_money(diff)} debit=${_money(debit)} credit=${_money(credit)} tx=${transactions.length} topAccountTypes=$top possibleCause=missing expense references, reversal/payment handling for cancelled/returned invoices, or legacy accountTransactions not matching SQLite journals.',
-            'diff=${_money(diff)} debit=${_money(debit)} credit=${_money(credit)} tx=${transactions.length} topAccountTypes=$top possibleCause=missing expense references, reversal/payment handling for cancelled/returned invoices, or legacy accountTransactions not matching SQLite journals.',
-          );
+    if (diff <= 0.01 || transactions.isEmpty || openSubledgerOnly) {
+      final details = _dual(
+        'Trial balance investigation OK: tx=${transactions.length} debit=${_money(debit)} credit=${_money(credit)} diff=${_money(diff)}${openSubledgerOnly ? ' openSubledger=${_money(nonZeroContributors.fold<double>(0, (sum, entry) => sum + entry.value))} topAccountTypes=$top' : ''}.',
+        'Trial balance investigation OK: tx=${transactions.length} debit=${_money(debit)} credit=${_money(credit)} diff=${_money(diff)}${openSubledgerOnly ? ' openSubledger=${_money(nonZeroContributors.fold<double>(0, (sum, entry) => sum + entry.value))} topAccountTypes=$top' : ''}.',
+      );
+      _addLog('INVESTIGATION_TRIAL_BALANCE $details');
+      return details;
+    }
+    final details = _dual(
+      'diff=${_money(diff)} debit=${_money(debit)} credit=${_money(credit)} tx=${transactions.length} topAccountTypes=$top possibleCause=missing expense references, reversal/payment handling for cancelled/returned invoices, or legacy accountTransactions not matching SQLite journals.',
+      'diff=${_money(diff)} debit=${_money(debit)} credit=${_money(credit)} tx=${transactions.length} topAccountTypes=$top possibleCause=missing expense references, reversal/payment handling for cancelled/returned invoices, or legacy accountTransactions not matching SQLite journals.',
+    );
     _addLog('INVESTIGATION_TRIAL_BALANCE $details');
     return details;
   }

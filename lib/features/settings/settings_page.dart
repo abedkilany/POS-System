@@ -4763,7 +4763,9 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     if (trimmedName.isNotEmpty) return trimmedName;
     final id = deviceId.trim();
     if (id.length <= 8) return id.isEmpty ? tr.text('unknown_client') : id;
-    return '${tr.text('client_label')} ${id.substring(0, 4)}…${id.substring(id.length - 4)}';
+    final prefix = id.substring(0, 4);
+    final suffix = id.substring(id.length - 4);
+    return '${tr.text('client_label')} $prefix…$suffix';
   }
 
   String _formatShortDateTime(DateTime? value) {

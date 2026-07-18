@@ -2,6 +2,16 @@
 
 Ventio is an offline-first sales, inventory, sync, and backup management app with LAN, cloud, and Google Drive backup support.
 
+## Pure DB-First Contract
+
+The runtime goal is now `pure db-first` for native app startup and normal data access:
+
+- SQLite is the source of truth for app state, business data, and settings during normal runtime.
+- Legacy JSON and `SharedPreferences` are allowed only for one-time migration, import/restore flows, or tests.
+- Any remaining web-specific or test-only storage shims must not become the production source of truth.
+
+See [PURE_DB_FIRST_CONTRACT.md](./PURE_DB_FIRST_CONTRACT.md) for the execution phases and acceptance rules.
+
 ## Current Release
 
 - Version: `1.0.31+41`

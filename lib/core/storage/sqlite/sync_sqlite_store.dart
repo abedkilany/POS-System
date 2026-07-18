@@ -8,9 +8,8 @@ import 'ventio_drift_database.dart';
 
 /// SQLite-backed storage for Ventio sync data.
 ///
-/// Phase 2 moves sync state out of legacy JSON storage's large JSON blob rewrite path while
-/// keeping the public LocalDatabaseService get/set API unchanged for the rest
-/// of the app. Business data continues to live in legacy JSON storage until Phase 3.
+/// This module owns the sync tables and the small compatibility bridge used
+/// during one-time migration from older app installs.
 class SyncSqliteStore {
   SyncSqliteStore._();
 
@@ -221,7 +220,7 @@ class SyncSqliteStore {
       VentioDriftDatabase db, List<SyncChange> changes) async {
     // Performance fix: merge changes instead of deleting/reinserting the whole
     // sync history. With thousands of pending changes, the old path made every
-    // normal save rewrite thousands of rows and kept the old legacy JSON storage slowdown alive.
+    // normal save rewrite thousands of rows.
     final existingEventRows = await db.customSelect('''
       SELECT id, payload_json, is_synced, synced_at, sequence
       FROM sync_events

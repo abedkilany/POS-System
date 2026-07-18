@@ -82,58 +82,17 @@ class ReportsSnapshotService {
           return sqliteSummary;
         }
       } catch (_) {
-        // Fall back to the legacy snapshot path if SQLite summary generation fails.
+        // Keep the runtime SQLite-first. If the typed SQL path fails, fall
+        // back to the already loaded in-memory store instead of raw JSON.
       }
     }
-    final raw = await StartupTimingService.measure(
-      'reports.snapshot_raw_load',
-      _loadRawData,
+    final computed = await StartupTimingService.measure(
+      'reports.snapshot_store_summary',
+      () async => _computeSnapshotFromStore(store, reference),
       category: 'reports',
-    );
-    final computed = await compute<Map<String, Object?>, Map<String, Object?>>(
-      _computeSnapshot,
-      raw.toComputeInput(reference),
     );
     _summaryCache[_cacheKey(store, reference)] = computed;
     return computed;
-  }
-
-  Future<_RawReportsData> _loadRawData() async {
-    final products = await LocalDatabaseService.getBusinessEntityListJson(
-      'products_v4',
-    );
-    final sales = await LocalDatabaseService.getBusinessEntityListJson(
-      'sales_v4',
-    );
-    final purchases = await LocalDatabaseService.getBusinessEntityListJson(
-      'purchases_v1',
-    );
-    final expenses = await LocalDatabaseService.getBusinessEntityListJson(
-      'expenses_v4',
-    );
-    final stockMovements = await LocalDatabaseService.getBusinessEntityListJson(
-      'stock_movements_v1',
-    );
-    final accountTransactions =
-        await LocalDatabaseService.getBusinessEntityListJson(
-      'account_transactions_v1',
-    );
-    final customers = await LocalDatabaseService.getBusinessEntityListJson(
-      'customers_v4',
-    );
-    final suppliers = await LocalDatabaseService.getBusinessEntityListJson(
-      'suppliers_v4',
-    );
-    return _RawReportsData(
-      productsJson: products ?? '[]',
-      salesJson: sales ?? '[]',
-      purchasesJson: purchases ?? '[]',
-      expensesJson: expenses ?? '[]',
-      stockMovementsJson: stockMovements ?? '[]',
-      accountTransactionsJson: accountTransactions ?? '[]',
-      customersJson: customers ?? '[]',
-      suppliersJson: suppliers ?? '[]',
-    );
   }
 }
 
@@ -600,39 +559,3 @@ bool _isCashOut(AccountTransaction txn) =>
 
 double _cashAmount(AccountTransaction txn) =>
     txn.debit > 0 ? txn.debit : txn.credit;
-
-class _RawReportsData {
-  const _RawReportsData({
-    required this.productsJson,
-    required this.salesJson,
-    required this.purchasesJson,
-    required this.expensesJson,
-    required this.stockMovementsJson,
-    required this.accountTransactionsJson,
-    required this.customersJson,
-    required this.suppliersJson,
-  });
-
-  final String productsJson;
-  final String salesJson;
-  final String purchasesJson;
-  final String expensesJson;
-  final String stockMovementsJson;
-  final String accountTransactionsJson;
-  final String customersJson;
-  final String suppliersJson;
-
-  Map<String, Object?> toComputeInput(DateTime reference) {
-    return <String, Object?>{
-      'reference': reference.toIso8601String(),
-      'productsJson': productsJson,
-      'salesJson': salesJson,
-      'purchasesJson': purchasesJson,
-      'expensesJson': expensesJson,
-      'stockMovementsJson': stockMovementsJson,
-      'accountTransactionsJson': accountTransactionsJson,
-      'customersJson': customersJson,
-      'suppliersJson': suppliersJson,
-    };
-  }
-}

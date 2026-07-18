@@ -602,40 +602,6 @@ class DashboardSnapshotService {
     return a.isAfter(b) ? a : b;
   }
 
-  Future<_RawDashboardData> _loadRawData() async {
-    final products = await LocalDatabaseService.getBusinessEntityListJson(
-      'products_v4',
-    );
-    final sales = await LocalDatabaseService.getBusinessEntityListJson(
-      'sales_v4',
-    );
-    final purchases = await LocalDatabaseService.getBusinessEntityListJson(
-      'purchases_v1',
-    );
-    final expenses = await LocalDatabaseService.getBusinessEntityListJson(
-      'expenses_v4',
-    );
-    final stockMovements = await LocalDatabaseService.getBusinessEntityListJson(
-      'stock_movements_v1',
-    );
-    final accountTransactions =
-        await LocalDatabaseService.getBusinessEntityListJson(
-      'account_transactions_v1',
-    );
-    final syncQueue = await LocalDatabaseService.getBusinessEntityListJson(
-      'sync_queue_v1',
-    );
-    return _RawDashboardData(
-      productsJson: products ?? '[]',
-      salesJson: sales ?? '[]',
-      purchasesJson: purchases ?? '[]',
-      expensesJson: expenses ?? '[]',
-      stockMovementsJson: stockMovements ?? '[]',
-      accountTransactionsJson: accountTransactions ?? '[]',
-      syncQueueJson: syncQueue ?? '[]',
-    );
-  }
-
   Future<Map<String, Object?>> _summaryFutureFor(
     AppStore store,
     DateTime reference,
@@ -657,6 +623,20 @@ class DashboardSnapshotService {
     AppStore store,
     DateTime reference,
   ) async {
+    if (store.isHeavyDataLoaded) {
+      final computed = await StartupTimingService.measure(
+        'dashboard.snapshot_memory_summary',
+        () async => _computeSnapshotFromStore(store, reference),
+        category: 'dashboard',
+      );
+      await _saveCachedSummary(
+        computed,
+        storeId: store.appIdentity.storeId,
+        dashboardRevision: store.dashboardRevision,
+        reference: reference,
+      );
+      return computed;
+    }
     if (LocalDatabaseService.canQueryBusinessSqlite) {
       try {
         final sqliteSummary = await StartupTimingService.measure(
@@ -676,17 +656,14 @@ class DashboardSnapshotService {
           return sqliteSummary;
         }
       } catch (_) {
-        // Fall back to the legacy snapshot path if SQLite summary generation fails.
+        // Keep the runtime SQLite-first. If the typed SQL path fails, use the
+        // already loaded in-memory store instead of raw JSON.
       }
     }
-    final raw = await StartupTimingService.measure(
-      'dashboard.snapshot_raw_load',
-      _loadRawData,
+    final computed = await StartupTimingService.measure(
+      'dashboard.snapshot_store_summary',
+      () async => _computeSnapshotFromStore(store, reference),
       category: 'dashboard',
-    );
-    final computed = await compute<Map<String, Object?>, Map<String, Object?>>(
-      _computeSnapshot,
-      raw.toComputeInput(reference),
     );
     await _saveCachedSummary(
       computed,
@@ -1588,37 +1565,4 @@ class DashboardSnapshotCache {
   final DateTime referenceUtc;
   final DateTime savedAtUtc;
   final Map<String, Object?> summary;
-}
-
-class _RawDashboardData {
-  const _RawDashboardData({
-    required this.productsJson,
-    required this.salesJson,
-    required this.purchasesJson,
-    required this.expensesJson,
-    required this.stockMovementsJson,
-    required this.accountTransactionsJson,
-    required this.syncQueueJson,
-  });
-
-  final String productsJson;
-  final String salesJson;
-  final String purchasesJson;
-  final String expensesJson;
-  final String stockMovementsJson;
-  final String accountTransactionsJson;
-  final String syncQueueJson;
-
-  Map<String, Object?> toComputeInput(DateTime reference) {
-    return <String, Object?>{
-      'reference': reference.toIso8601String(),
-      'productsJson': productsJson,
-      'salesJson': salesJson,
-      'purchasesJson': purchasesJson,
-      'expensesJson': expensesJson,
-      'stockMovementsJson': stockMovementsJson,
-      'accountTransactionsJson': accountTransactionsJson,
-      'syncQueueJson': syncQueueJson,
-    };
-  }
 }

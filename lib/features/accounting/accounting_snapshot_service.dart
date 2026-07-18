@@ -75,27 +75,17 @@ class AccountingSnapshotService {
           return sqliteMetrics;
         }
       } catch (_) {
-        // Fall back to the legacy snapshot path if SQLite metrics generation fails.
+        // Keep the runtime SQLite-first. If the typed SQL path fails, use the
+        // already loaded in-memory store instead of falling back to raw JSON.
       }
     }
-    final raw = await StartupTimingService.measure(
-      'accounting.snapshot_raw_load',
-      _loadRawData,
+    final computed = await StartupTimingService.measure(
+      'accounting.snapshot_store_metrics',
+      () async => _computeSnapshotFromStore(store, reference),
       category: 'accounting',
-    );
-    final computed = await compute<Map<String, Object?>, Map<String, Object?>>(
-      _computeSnapshot,
-      raw.toComputeInput(reference),
     );
     _summaryCache[_cacheKey(store, reference)] = computed;
     return computed;
-  }
-
-  Future<_RawAccountingData> _loadRawData() async {
-    final raw = await LocalDatabaseService.getBusinessEntityListJson(
-      'account_transactions_v1',
-    );
-    return _RawAccountingData(accountTransactionsJson: raw ?? '[]');
   }
 }
 
@@ -251,18 +241,3 @@ bool _isCashOut(AccountTransaction txn) =>
 
 double _cashAmount(AccountTransaction txn) =>
     txn.debit > 0 ? txn.debit : txn.credit;
-
-class _RawAccountingData {
-  const _RawAccountingData({
-    required this.accountTransactionsJson,
-  });
-
-  final String accountTransactionsJson;
-
-  Map<String, Object?> toComputeInput(DateTime reference) {
-    return <String, Object?>{
-      'reference': reference.toIso8601String(),
-      'accountTransactionsJson': accountTransactionsJson,
-    };
-  }
-}
