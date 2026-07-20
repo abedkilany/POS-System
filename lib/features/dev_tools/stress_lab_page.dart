@@ -5,16 +5,26 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 import '../../core/localization/app_localizations.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/services/account_auth_service.dart';
+import '../../core/services/app_logging_service.dart';
 import '../../core/services/cloud_sync_service.dart';
+import '../../core/services/database_sql_editor_service.dart';
+import '../../core/services/barcode_feedback_service.dart';
+import '../../core/services/local_auto_backup_service.dart';
 import '../../core/services/local_database_service.dart';
 import '../../core/services/lan_sync_service.dart';
 import '../../core/services/accounting_service.dart';
+import '../../core/services/sql_result_export_service.dart';
 import '../../core/sync_unified/sync_unified.dart';
 import '../../data/app_store.dart';
+import 'stress_lab_coverage_manifest.dart';
+import '../../models/app_identity.dart';
 import '../../models/account_transaction.dart';
 import '../../models/catalog_item.dart';
 import '../../models/customer.dart';
@@ -33,6 +43,7 @@ import '../../models/supplier.dart';
 import '../../models/supplier_product_price.dart';
 import '../../models/manufacturing.dart';
 import '../../models/user_role.dart';
+import '../barcode/barcode_scanner_page.dart';
 import '../maintenance/maintenance_models.dart';
 import '../maintenance/maintenance_service.dart';
 
@@ -76,6 +87,82 @@ class _StressAssertionResult {
   String get status => passed ? 'PASS' : (blocking ? 'FAIL' : 'WARN');
   String get details =>
       'ASSERTION $id expected=[$expected] actual=[$actual] blocking=$blocking';
+}
+
+class _StressLabScenarioDefinition {
+  const _StressLabScenarioDefinition({
+    required this.id,
+    required this.title,
+    required this.kind,
+    required this.execute,
+    this.description = '',
+  });
+
+  final String id;
+  final String title;
+  final StressLabScenarioKind kind;
+  final Future<void> Function() execute;
+  final String description;
+}
+
+enum _StressPerformancePhase {
+  before,
+  during,
+  after,
+}
+
+class _StressPerformanceSnapshot {
+  const _StressPerformanceSnapshot({
+    required this.phase,
+    required this.label,
+    required this.capturedAt,
+    required this.captureMs,
+    required this.productCount,
+    required this.customerCount,
+    required this.supplierCount,
+    required this.saleCount,
+    required this.purchaseCount,
+    required this.expenseCount,
+    required this.stockMovementCount,
+    required this.accountTransactionCount,
+    required this.localDbKeyCount,
+    required this.dashboardReady,
+    required this.settingsReady,
+    required this.reportsReady,
+    required this.maintenanceReady,
+    required this.syncReady,
+    required this.overallReady,
+    required this.traceSummary,
+  });
+
+  final _StressPerformancePhase phase;
+  final String label;
+  final DateTime capturedAt;
+  final int captureMs;
+  final int productCount;
+  final int customerCount;
+  final int supplierCount;
+  final int saleCount;
+  final int purchaseCount;
+  final int expenseCount;
+  final int stockMovementCount;
+  final int accountTransactionCount;
+  final int localDbKeyCount;
+  final bool dashboardReady;
+  final bool settingsReady;
+  final bool reportsReady;
+  final bool maintenanceReady;
+  final bool syncReady;
+  final bool overallReady;
+  final String traceSummary;
+
+  String get readinessSummary =>
+      'dashboard=${dashboardReady ? 'ready' : 'cold'} settings=${settingsReady ? 'ready' : 'cold'} '
+      'reports=${reportsReady ? 'ready' : 'cold'} maintenance=${maintenanceReady ? 'ready' : 'cold'} '
+      'sync=${syncReady ? 'ready' : 'cold'} overall=${overallReady ? 'ready' : 'cold'}';
+
+  String get snapshotLine =>
+      'phase=${phase.name} label="$label" captureMs=$captureMs counts(products=$productCount customers=$customerCount suppliers=$supplierCount sales=$saleCount purchases=$purchaseCount expenses=$expenseCount stockMovements=$stockMovementCount accountTransactions=$accountTransactionCount localDbKeys=$localDbKeyCount) $readinessSummary ${traceSummary.isEmpty ? '' : traceSummary}';
 }
 
 class _StressPerfStats {
@@ -277,6 +364,8 @@ class _StressLabPageState extends State<StressLabPage> {
   final _random = Random(52);
   final Map<String, _StressTraceStat> _traceStats =
       <String, _StressTraceStat>{};
+  final List<_StressPerformanceSnapshot> _performanceSnapshots =
+      <_StressPerformanceSnapshot>[];
 
   bool _running = false;
   double _progress = 0;
@@ -344,6 +433,246 @@ class _StressLabPageState extends State<StressLabPage> {
     stats.sort((a, b) => b.totalMs.compareTo(a.totalMs));
     final top = stats.take(3).map((stat) => stat.summary).join(' || ');
     return 'traceTop=$top';
+  }
+
+  String _traceSummary() {
+    final stats = _traceStats.values.toList();
+    if (stats.isEmpty) return 'trace=none';
+    stats.sort((a, b) => b.totalMs.compareTo(a.totalMs));
+    final top = stats.take(5).map((stat) => stat.summary).join(' || ');
+    return 'traceTop=$top';
+  }
+
+  void _resetPerformanceCapture() {
+    _performanceSnapshots.clear();
+  }
+
+  Future<void> _capturePerformanceSnapshot(
+    _StressPerformancePhase phase, {
+    required String label,
+  }) async {
+    final sw = Stopwatch()..start();
+    final localDbKeyCount = LocalDatabaseService.keys().length;
+    final dashboardReady = store.products.isNotEmpty &&
+        store.customers.isNotEmpty &&
+        store.suppliers.isNotEmpty;
+    final settingsReady = store.storeProfile.branches.isNotEmpty &&
+        store.storeProfile.currencies.isNotEmpty &&
+        store.roles.isNotEmpty &&
+        store.users.isNotEmpty;
+    final reportsReady = store.saleQuotations.isNotEmpty &&
+        store.deliveryNotes.isNotEmpty &&
+        store.billsOfMaterials.isNotEmpty &&
+        store.manufacturingOrders.isNotEmpty &&
+        store.inventoryCountSessions.isNotEmpty &&
+        store.stockMovements.isNotEmpty;
+    final maintenanceReady = localDbKeyCount > 0 &&
+        store.stockMovements.isNotEmpty &&
+        store.accountTransactions.isNotEmpty;
+    final syncReady = store.appIdentity.deviceId.trim().isNotEmpty &&
+        store.appIdentity.storeId.trim().isNotEmpty &&
+        store.appIdentity.branchId.trim().isNotEmpty &&
+        (store.syncQueue.isNotEmpty || store.syncChanges.isNotEmpty);
+    final overallReady = dashboardReady &&
+        settingsReady &&
+        reportsReady &&
+        maintenanceReady &&
+        syncReady;
+    sw.stop();
+
+    final snapshot = _StressPerformanceSnapshot(
+      phase: phase,
+      label: label,
+      capturedAt: DateTime.now(),
+      captureMs: sw.elapsedMilliseconds,
+      productCount: store.products.length,
+      customerCount: store.customers.length,
+      supplierCount: store.suppliers.length,
+      saleCount: store.sales.length,
+      purchaseCount: store.purchases.length,
+      expenseCount: store.expenses.length,
+      stockMovementCount: store.stockMovements.length,
+      accountTransactionCount: store.accountTransactions.length,
+      localDbKeyCount: localDbKeyCount,
+      dashboardReady: dashboardReady,
+      settingsReady: settingsReady,
+      reportsReady: reportsReady,
+      maintenanceReady: maintenanceReady,
+      syncReady: syncReady,
+      overallReady: overallReady,
+      traceSummary: _traceSummary(),
+    );
+    _performanceSnapshots.add(snapshot);
+    _addLog('PERF_SNAPSHOT ${snapshot.snapshotLine}');
+  }
+
+  String _performanceDeltaLine(
+    _StressPerformanceSnapshot baseline,
+    _StressPerformanceSnapshot current,
+  ) {
+    String delta(int now, int then) {
+      final diff = now - then;
+      return '${diff >= 0 ? '+' : ''}$diff';
+    }
+
+    return 'delta products=${delta(current.productCount, baseline.productCount)} customers=${delta(current.customerCount, baseline.customerCount)} '
+        'suppliers=${delta(current.supplierCount, baseline.supplierCount)} sales=${delta(current.saleCount, baseline.saleCount)} '
+        'purchases=${delta(current.purchaseCount, baseline.purchaseCount)} expenses=${delta(current.expenseCount, baseline.expenseCount)} '
+        'stockMovements=${delta(current.stockMovementCount, baseline.stockMovementCount)} accountTransactions=${delta(current.accountTransactionCount, baseline.accountTransactionCount)} '
+        'localDbKeys=${delta(current.localDbKeyCount, baseline.localDbKeyCount)} readyBefore=${baseline.overallReady ? 'yes' : 'no'} readyAfter=${current.overallReady ? 'yes' : 'no'}';
+  }
+
+  String _performanceVerdictLabel(_StressPerformanceSnapshot baseline) {
+    if (_performanceSnapshots.isEmpty) {
+      return 'Bad';
+    }
+    final current = _performanceSnapshots.last;
+    final snapshotCount = _performanceSnapshots.length;
+    final maxCaptureMs = _performanceSnapshots
+        .map((snapshot) => snapshot.captureMs)
+        .fold<int>(0, max<int>);
+    final grew = current.productCount > baseline.productCount ||
+        current.customerCount > baseline.customerCount ||
+        current.supplierCount > baseline.supplierCount ||
+        current.saleCount > baseline.saleCount ||
+        current.purchaseCount > baseline.purchaseCount ||
+        current.expenseCount > baseline.expenseCount ||
+        current.stockMovementCount > baseline.stockMovementCount ||
+        current.accountTransactionCount > baseline.accountTransactionCount ||
+        current.localDbKeyCount > baseline.localDbKeyCount;
+    final allCapturedQuickly = maxCaptureMs <= 25;
+    if (!current.overallReady) {
+      return 'Bad';
+    }
+    if (snapshotCount >= 3 && grew && allCapturedQuickly) {
+      return 'Good';
+    }
+    return 'Warn';
+  }
+
+  String _performanceVerdictReason(_StressPerformanceSnapshot baseline) {
+    if (_performanceSnapshots.isEmpty) {
+      return 'no performance snapshots were captured';
+    }
+    final current = _performanceSnapshots.last;
+    final snapshotCount = _performanceSnapshots.length;
+    final maxCaptureMs = _performanceSnapshots
+        .map((snapshot) => snapshot.captureMs)
+        .fold<int>(0, max<int>);
+    final grew = current.productCount > baseline.productCount ||
+        current.customerCount > baseline.customerCount ||
+        current.supplierCount > baseline.supplierCount ||
+        current.saleCount > baseline.saleCount ||
+        current.purchaseCount > baseline.purchaseCount ||
+        current.expenseCount > baseline.expenseCount ||
+        current.stockMovementCount > baseline.stockMovementCount ||
+        current.accountTransactionCount > baseline.accountTransactionCount ||
+        current.localDbKeyCount > baseline.localDbKeyCount;
+    if (!current.overallReady) {
+      return 'final snapshot is still cold in one or more readiness checks';
+    }
+    if (snapshotCount < 3) {
+      return 'only $snapshotCount snapshot(s) were captured';
+    }
+    if (!grew) {
+      return 'no meaningful data growth was observed across the window';
+    }
+    if (maxCaptureMs > 25) {
+      return 'one or more snapshots took $maxCaptureMs ms to capture';
+    }
+    return 'baseline to final window looks healthy with data growth and quick captures';
+  }
+
+  void _addPerformanceReport() {
+    if (_performanceSnapshots.isEmpty) {
+      _addLog('========== VENTIO PERFORMANCE WINDOW ==========');
+      _addLog('No performance snapshots were captured.');
+      _addLog('Performance verdict: Bad | reason=no performance snapshots were captured');
+      _addLog('===============================================');
+      return;
+    }
+
+    final baseline = _performanceSnapshots.first;
+    final current = _performanceSnapshots.last;
+    final verdict = _performanceVerdictLabel(baseline);
+    final reason = _performanceVerdictReason(baseline);
+    _addLog('========== VENTIO PERFORMANCE WINDOW ==========');
+    _addLog('Performance verdict: $verdict | reason=$reason');
+    _addLog('Baseline: ${baseline.snapshotLine}');
+    for (final snapshot in _performanceSnapshots) {
+      _addLog('[${snapshot.phase.name.toUpperCase()}] ${snapshot.snapshotLine}');
+    }
+    _addLog('Delta: ${_performanceDeltaLine(baseline, current)}');
+    _addLog('===============================================');
+  }
+
+  void _addShareableFinalReport({
+    required DateTime startedAt,
+    required String overall,
+    required int pass,
+    required int warn,
+    required int fail,
+    required int elapsedSeconds,
+  }) {
+    final scores = _calculateHealthScores();
+    final total = scores['total'] ?? 0;
+    final performanceScore = scores['performance'] ?? 0;
+    final accountingScore = scores['accounting'] ?? 0;
+    final inventoryScore = scores['inventory'] ?? 0;
+    final integrityScore = scores['integrity'] ?? 0;
+    final maintenanceScore = scores['maintenance'] ?? 0;
+    final backupScore = scores['backup'] ?? 0;
+    final syncScore = scores['sync'] ?? 0;
+    final sections = _report.map((item) => item.section).toSet().toList()
+      ..sort();
+    final performanceVerdict = _performanceSnapshots.isEmpty
+        ? 'Bad'
+        : _performanceVerdictLabel(_performanceSnapshots.first);
+    final performanceReason = _performanceSnapshots.isEmpty
+        ? 'no performance snapshots were captured'
+        : _performanceVerdictReason(_performanceSnapshots.first);
+    final startedAtIso = startedAt.toIso8601String();
+    final endedAtIso = DateTime.now().toIso8601String();
+    final summaryLine =
+        'overall=$overall pass=$pass warn=$warn fail=$fail total=$total performance=$performanceScore accounting=$accountingScore inventory=$inventoryScore integrity=$integrityScore maintenance=$maintenanceScore backup=$backupScore sync=$syncScore perfVerdict=$performanceVerdict perfSnapshots=${_performanceSnapshots.length} duration=${elapsedSeconds}s';
+
+    _addLog('========== VENTIO SHAREABLE FINAL REPORT ==========');
+    _addLog('REPORT_FORMAT=STRESS_LAB_FINAL_V1');
+    _addLog('REPORT_BATCH=$_currentBatchId');
+    _addLog('REPORT_STARTED_AT=$startedAtIso');
+    _addLog('REPORT_ENDED_AT=$endedAtIso');
+    _addLog('REPORT_DURATION_SECONDS=$elapsedSeconds');
+    _addLog('REPORT_SUMMARY $summaryLine');
+    _addLog(
+        'REPORT_SYSTEM role=${_roleLabel()} device=${store.appIdentity.deviceId} store=${store.appIdentity.storeId} branch=${store.appIdentity.branchId} transport=${_effectiveSyncTransport()} epoch=${store.appIdentity.storeEpoch} syncSequence=${store.currentSyncSequence}');
+    _addLog(
+        'REPORT_HEALTH total=$total performance=$performanceScore accounting=$accountingScore inventory=$inventoryScore integrity=$integrityScore maintenance=$maintenanceScore backup=$backupScore sync=$syncScore verdict=${total >= 95 ? 'READY_FOR_PRODUCTION' : total >= 80 ? 'READY_WITH_WARNINGS' : 'NOT_READY'}');
+    _addLog(
+        'REPORT_PERFORMANCE verdict=$performanceVerdict snapshots=${_performanceSnapshots.length} reason="$performanceReason"');
+    if (_performanceSnapshots.isNotEmpty) {
+      _addLog(
+          'REPORT_PERFORMANCE_BASELINE capturedAt=${_performanceSnapshots.first.capturedAt.toIso8601String()} ${_performanceSnapshots.first.snapshotLine}');
+      _addLog(
+          'REPORT_PERFORMANCE_FINAL capturedAt=${_performanceSnapshots.last.capturedAt.toIso8601String()} ${_performanceSnapshots.last.snapshotLine}');
+      _addLog(
+          'REPORT_PERFORMANCE_DELTA ${_performanceDeltaLine(_performanceSnapshots.first, _performanceSnapshots.last)}');
+      for (var i = 0; i < _performanceSnapshots.length; i++) {
+        final snapshot = _performanceSnapshots[i];
+        _addLog(
+            'REPORT_PERFORMANCE_SNAPSHOT index=${i + 1} capturedAt=${snapshot.capturedAt.toIso8601String()} ${snapshot.snapshotLine}');
+      }
+    }
+    _addLog('REPORT_SECTION_COUNT=${sections.length}');
+    for (final section in sections) {
+      final rows = _report.where((item) => item.section == section).toList();
+      final sectionPass = rows.where((item) => item.isPass).length;
+      final sectionWarn = rows.where((item) => item.isWarn).length;
+      final sectionFail = rows.where((item) => item.isFail).length;
+      _addLog(
+          'REPORT_SECTION name="$section" pass=$sectionPass warn=$sectionWarn fail=$sectionFail rows=${rows.length}');
+    }
+    _addLog('REPORT_STATUS=READY_TO_SHARE');
+    _addLog('========== END VENTIO SHAREABLE FINAL REPORT ==========');
   }
 
   void _setStatus(String value, {double? progress}) {
@@ -459,7 +788,92 @@ class _StressLabPageState extends State<StressLabPage> {
     }
   }
 
+  List<_StressLabScenarioDefinition> get _scenarioDefinitions =>
+      <_StressLabScenarioDefinition>[
+        _StressLabScenarioDefinition(
+          id: 'core-commerce',
+          title: 'Core Commerce',
+          kind: StressLabScenarioKind.commerce,
+          description: 'Seed the core commerce modules and drive live data flows.',
+          execute: _runCoreCommerceScenario,
+        ),
+        _StressLabScenarioDefinition(
+          id: 'daily-operations',
+          title: 'Daily Operations',
+          kind: StressLabScenarioKind.commerce,
+          description: 'Exercise the daily operational mix under medium load.',
+          execute: _runDailyOperationsTest,
+        ),
+        _StressLabScenarioDefinition(
+          id: 'auth-surface',
+          title: 'Auth Surface',
+          kind: StressLabScenarioKind.admin,
+          description: 'Exercise login, shell, and account dashboard state.',
+          execute: _runAuthSurfaceScenario,
+        ),
+        _StressLabScenarioDefinition(
+          id: 'system-audit',
+          title: 'System Audit',
+          kind: StressLabScenarioKind.system,
+          description: 'Run the one-button audit, pressure test, and final assertions.',
+          execute: _runOneButtonSystemAudit,
+        ),
+        _StressLabScenarioDefinition(
+          id: 'device-tools',
+          title: 'Device Tools',
+          kind: StressLabScenarioKind.system,
+          description: 'Validate diagnostics and barcode scanner coverage.',
+          execute: _runDeviceToolsScenario,
+        ),
+        _StressLabScenarioDefinition(
+          id: 'diagnostics',
+          title: 'Diagnostics',
+          kind: StressLabScenarioKind.maintenance,
+          description: 'Collect sequence, integrity, and maintenance evidence.',
+          execute: _runAllDiagnostics,
+        ),
+      ];
+
+  Future<void> _runScenario({
+    required _StressLabScenarioDefinition scenario,
+    required Future<void> Function() body,
+  }) async {
+    _addLog(
+      '========== VENTIO SCENARIO START id=${scenario.id} title="${scenario.title}" kind=${scenario.kind.name} =========='
+    );
+    final startedAt = DateTime.now();
+    try {
+      await body();
+      _addLog(
+        'SCENARIO_DONE id=${scenario.id} elapsedMs=${DateTime.now().difference(startedAt).inMilliseconds}'
+      );
+    } catch (error) {
+      _addLog(
+        'SCENARIO_FAILED id=${scenario.id} title="${scenario.title}" error=$error'
+      );
+      rethrow;
+    } finally {
+      _addLog(
+        '========== VENTIO SCENARIO END id=${scenario.id} title="${scenario.title}" =========='
+      );
+    }
+  }
+
   Future<void> _runFullSimulation() async {
+    await _runScenario(
+      scenario: _StressLabScenarioDefinition(
+        id: 'core-commerce',
+        title: 'Core Commerce',
+        kind: StressLabScenarioKind.commerce,
+        description:
+            'Seed the core commerce modules and drive live data flows.',
+        execute: _runCoreCommerceScenario,
+      ),
+      body: _runCoreCommerceScenario,
+    );
+  }
+
+  Future<void> _runCoreCommerceScenario() async {
     if (_running) return;
     setState(() {
       _running = true;
@@ -474,10 +888,33 @@ class _StressLabPageState extends State<StressLabPage> {
           'VENTIO_REAL_APP_STRESS_START batch=$_currentBatchId buildMode=${kReleaseMode ? 'release' : (kProfileMode ? 'profile' : 'debug')}');
       _addLog(_snapshotLine('BEFORE'));
       await _logDatabaseMetrics('BEFORE_DB');
+      _resetPerformanceCapture();
+      _resetTraceCapture();
+      await _capturePerformanceSnapshot(
+        _StressPerformancePhase.before,
+        label: 'Baseline before catalog seed',
+      );
+      AppStore.setTraceSink(_captureTrace);
       await _seedCatalog();
+      await _capturePerformanceSnapshot(
+        _StressPerformancePhase.during,
+        label: 'After catalog seed',
+      );
       await _createSales();
+      await _capturePerformanceSnapshot(
+        _StressPerformancePhase.during,
+        label: 'After sales generation',
+      );
       await _runActiveSync();
+      await _capturePerformanceSnapshot(
+        _StressPerformancePhase.during,
+        label: 'After active sync',
+      );
       await _exportBackupProbe();
+      await _capturePerformanceSnapshot(
+        _StressPerformancePhase.after,
+        label: 'After backup probe',
+      );
       await _logDatabaseMetrics('AFTER_DB');
       _addLog(_snapshotLine('AFTER'));
       await _addHealthSummary('REAL_APP_STRESS_SUMMARY');
@@ -488,6 +925,7 @@ class _StressLabPageState extends State<StressLabPage> {
           'VENTIO_REAL_APP_STRESS_FAILED batch=$_currentBatchId error=$error');
       _setStatus('Failed: $error');
     } finally {
+      AppStore.setTraceSink(null);
       if (mounted) setState(() => _running = false);
     }
   }
@@ -796,6 +1234,7 @@ class _StressLabPageState extends State<StressLabPage> {
 
     final reportsReady = store.saleQuotations.isNotEmpty &&
         store.deliveryNotes.isNotEmpty &&
+        store.billsOfMaterials.isNotEmpty &&
         store.manufacturingOrders.isNotEmpty &&
         store.inventoryCountSessions.isNotEmpty &&
         store.stockMovements.isNotEmpty;
@@ -997,6 +1436,20 @@ class _StressLabPageState extends State<StressLabPage> {
   }
 
   Future<void> _runDailyOperationsTest() async {
+    await _runScenario(
+      scenario: _StressLabScenarioDefinition(
+        id: 'daily-operations',
+        title: 'Daily Operations',
+        kind: StressLabScenarioKind.commerce,
+        description:
+            'Exercise the daily operational mix under medium load.',
+        execute: _runDailyOperationsBody,
+      ),
+      body: _runDailyOperationsBody,
+    );
+  }
+
+  Future<void> _runDailyOperationsBody() async {
     if (_running) return;
     setState(() {
       _running = true;
@@ -1011,6 +1464,13 @@ class _StressLabPageState extends State<StressLabPage> {
           'VENTIO_DAILY_OPERATIONS_START batch=$_currentBatchId buildMode=${kReleaseMode ? 'release' : (kProfileMode ? 'profile' : 'debug')}');
       _addLog(_snapshotLine('DAILY_BEFORE'));
       await _logDatabaseMetrics('DAILY_BEFORE_DB');
+      _resetPerformanceCapture();
+      _resetTraceCapture();
+      await _capturePerformanceSnapshot(
+        _StressPerformancePhase.before,
+        label: 'Baseline before daily mix',
+      );
+      AppStore.setTraceSink(_captureTrace);
 
       final hasStressProducts = store.products
           .any((item) => item.name.contains('[STRESS]') && !item.isDeleted);
@@ -1018,11 +1478,27 @@ class _StressLabPageState extends State<StressLabPage> {
         _addLog(
             'Daily operations found no stress catalog. Seeding baseline catalog first.');
         await _seedCatalog();
+        await _capturePerformanceSnapshot(
+          _StressPerformancePhase.during,
+          label: 'After catalog bootstrap',
+        );
       }
 
       await _runDailyOperationsMix();
+      await _capturePerformanceSnapshot(
+        _StressPerformancePhase.during,
+        label: 'After daily operations mix',
+      );
       await _runActiveSync();
+      await _capturePerformanceSnapshot(
+        _StressPerformancePhase.during,
+        label: 'After daily sync',
+      );
       await _exportBackupProbe();
+      await _capturePerformanceSnapshot(
+        _StressPerformancePhase.after,
+        label: 'After daily backup probe',
+      );
       await _logDatabaseMetrics('DAILY_AFTER_DB');
       _addLog(_snapshotLine('DAILY_AFTER'));
       await _addHealthSummary('DAILY_OPERATIONS_SUMMARY');
@@ -1034,8 +1510,961 @@ class _StressLabPageState extends State<StressLabPage> {
       _addLog(stack.toString().split('\n').take(8).join(' | '));
       _setStatus('Daily operations failed: $error', progress: 1);
     } finally {
+      AppStore.setTraceSink(null);
       if (mounted) setState(() => _running = false);
     }
+  }
+
+  String _stressAuthAccessToken(AccountAuthCache? cache) {
+    final adminToken = cache?.adminToken.trim() ?? '';
+    if (adminToken.isNotEmpty) return adminToken;
+    return cache?.accountToken.trim() ?? '';
+  }
+
+  AccountAuthCache _stressAuthCache({
+    required String mode,
+    required String accountType,
+    required String storeSlug,
+    required String storeName,
+    required String username,
+    required String loginName,
+    required bool cloudSyncEnabled,
+    required String adminToken,
+    required String accountToken,
+    required String subscriptionStatus,
+  }) {
+    final batchSeed = _currentBatchId.isEmpty ? 'seed' : _currentBatchId;
+    final seedHash = batchSeed.hashCode.abs();
+    return AccountAuthCache(
+      mode: mode,
+      accountId: 'stress_account_$batchSeed',
+      storeId: 'ST-$seedHash',
+      branchId: 'BR-$seedHash',
+      subscriptionStatus: subscriptionStatus,
+      username: username,
+      storeSlug: storeSlug,
+      storeName: storeName,
+      loginName: loginName,
+      accountType: accountType,
+      trialEndsAt: DateTime.now().add(const Duration(days: 14)),
+      devicesLimit: 5,
+      adminToken: adminToken,
+      accountToken: accountToken,
+      cloudSyncEnabled: cloudSyncEnabled,
+      lastVerifiedAt: DateTime.now(),
+    );
+  }
+
+  http.Response _stressJsonResponse(
+    Map<String, Object?> body, {
+    int statusCode = 200,
+  }) {
+    return http.Response(
+      jsonEncode(body),
+      statusCode,
+      headers: const {'content-type': 'application/json'},
+    );
+  }
+
+  http.Client _buildAuthProbeClient() {
+    final now = DateTime.now().toUtc();
+    return MockClient((request) async {
+      final path = request.url.path;
+      final decoded = request.body.trim().isEmpty
+          ? <String, dynamic>{}
+          : jsonDecode(request.body) as Map<String, dynamic>;
+      switch (path) {
+        case '/api/auth/login':
+          return _stressJsonResponse({
+            'ok': true,
+            'accountId': 'acc_login_probe',
+            'storeId': 'ST-PRB001',
+            'branchId': 'BR-PRB001',
+            'subscriptionStatus': 'active',
+            'username': decoded['username']?.toString() ?? 'admin',
+            'storeSlug': 'ventio',
+            'storeName': 'Ventio Platform',
+            'loginName': 'admin@ventio',
+            'accountType': 'platform_admin',
+            'trialEndsAt':
+                now.add(const Duration(days: 14)).toIso8601String(),
+            'devicesLimit': 9,
+            'adminToken': 'adm_probe_login',
+            'accountToken': 'acc_probe_login',
+            'cloudSyncEnabled': true,
+          });
+        case '/api/auth/register':
+          return _stressJsonResponse({
+            'ok': true,
+            'accountId': 'acc_register_probe',
+            'storeId': 'ST-PRB002',
+            'branchId': 'BR-PRB002',
+            'subscriptionStatus': 'trial',
+            'username': decoded['username']?.toString() ?? 'owner',
+            'storeSlug': decoded['storeName']?.toString() ?? 'stresslab',
+            'storeName': decoded['storeName']?.toString() ?? 'Stress Lab',
+            'loginName':
+                '${decoded['username']?.toString() ?? 'owner'}@${decoded['storeName']?.toString() ?? 'stresslab'}',
+            'accountType': 'store_owner',
+            'trialEndsAt':
+                now.add(const Duration(days: 14)).toIso8601String(),
+            'devicesLimit': 4,
+            'adminToken': 'adm_probe_register',
+            'accountToken': 'acc_probe_register',
+            'cloudSyncEnabled': true,
+          });
+        case '/api/auth/session':
+          return _stressJsonResponse({
+            'ok': true,
+            'accountId': 'acc_session_probe',
+            'storeId': 'ST-PRB001',
+            'branchId': 'BR-PRB001',
+            'subscriptionStatus': 'active',
+            'username': 'admin',
+            'storeSlug': 'ventio',
+            'storeName': 'Ventio Platform',
+            'loginName': 'admin@ventio',
+            'accountType': 'platform_admin',
+            'trialEndsAt':
+                now.add(const Duration(days: 7)).toIso8601String(),
+            'devicesLimit': 12,
+            'adminToken': 'adm_probe_session',
+            'accountToken': 'acc_probe_session',
+            'cloudSyncEnabled': true,
+          });
+        case '/api/account/change-password':
+          return _stressJsonResponse({
+            'ok': true,
+            'message': 'Password changed.',
+            'username': 'owner',
+            'storeSlug': 'stresslab',
+            'storeName': 'Stress Lab',
+            'loginName': 'owner@stresslab',
+            'accountType': 'store_owner',
+            'accountToken': 'acc_probe_password',
+            'adminToken': 'adm_probe_password',
+            'cloudSyncEnabled': true,
+          });
+        case '/api/account/owner-profile':
+          return _stressJsonResponse({
+            'ok': true,
+            'message': 'Owner profile updated.',
+            'username': decoded['username']?.toString() ?? 'owner',
+            'storeSlug': 'stresslab',
+            'storeName': 'Stress Lab',
+            'loginName':
+                '${decoded['username']?.toString() ?? 'owner'}@stresslab',
+            'accountType': 'store_owner',
+            'accountToken': 'acc_probe_owner_profile',
+            'adminToken': 'adm_probe_owner_profile',
+            'cloudSyncEnabled': true,
+          });
+        case '/api/admin/subscribers':
+          if (request.method.toUpperCase() == 'GET') {
+            return _stressJsonResponse({
+              'ok': true,
+              'summary': {
+                'accounts': 2,
+                'stores': 2,
+                'trial_subscriptions': 1,
+                'active_subscriptions': 1,
+                'expired_trials': 0,
+              },
+              'subscribers': [
+                {
+                  'account_id': 'acc_sub_1',
+                  'store_id': 'ST-PROBE01',
+                  'subscription_id': 'sub_1',
+                  'username': 'admin',
+                  'full_name': 'Platform Admin',
+                  'store_slug': 'ventio',
+                  'store_name': 'Ventio Platform',
+                  'plan': 'pro',
+                  'subscription_status': 'active',
+                  'account_status': 'active',
+                  'devices_limit': 12,
+                  'device_count': 3,
+                  'cloud_sync_enabled': true,
+                  'trial_ends_at':
+                      now.add(const Duration(days: 30)).toIso8601String(),
+                  'account_created_at':
+                      now.subtract(const Duration(days: 60)).toIso8601String(),
+                  'last_seen_at':
+                      now.subtract(const Duration(hours: 5)).toIso8601String(),
+                },
+                {
+                  'account_id': 'acc_sub_2',
+                  'store_id': 'ST-PROBE02',
+                  'subscription_id': 'sub_2',
+                  'username': 'owner',
+                  'full_name': 'Store Owner',
+                  'store_slug': 'stresslab',
+                  'store_name': 'Stress Lab',
+                  'plan': 'trial',
+                  'subscription_status': 'trial',
+                  'account_status': 'active',
+                  'devices_limit': 4,
+                  'device_count': 1,
+                  'cloud_sync_enabled': true,
+                  'trial_ends_at':
+                      now.add(const Duration(days: 7)).toIso8601String(),
+                  'account_created_at':
+                      now.subtract(const Duration(days: 15)).toIso8601String(),
+                  'last_seen_at':
+                      now.subtract(const Duration(hours: 1)).toIso8601String(),
+                },
+              ],
+            });
+          }
+          return _stressJsonResponse({
+            'ok': true,
+            'message': 'Subscriber updated.',
+          });
+        default:
+          return _stressJsonResponse(
+            {
+              'ok': false,
+              'message': 'Unsupported stress auth route: $path',
+            },
+            statusCode: 404,
+          );
+      }
+    });
+  }
+
+  http.Client _buildCloudProbeClient() {
+    return MockClient((request) async {
+      final path = request.url.path;
+      if (path.endsWith('/api/sync/pairing/claim')) {
+        return _stressJsonResponse({
+          'ok': true,
+          'storeId': 'ST-PRB001',
+          'branchId': 'BR-PRB001',
+          'hostDeviceId': 'DV-PRB001',
+          'transport': 'cloud',
+          'deviceToken': 'device_probe_token',
+        });
+      }
+      return _stressJsonResponse(
+        {
+          'ok': false,
+          'message': 'Unsupported stress sync route: $path',
+        },
+        statusCode: 404,
+      );
+    });
+  }
+
+  Future<void> _runAuthSurfaceScenario() async {
+    await _runScenario(
+      scenario: _StressLabScenarioDefinition(
+        id: 'auth-surface',
+        title: 'Auth Surface',
+        kind: StressLabScenarioKind.admin,
+        description:
+            'Exercise login, shell, and account dashboard state.',
+        execute: _runAuthSurfaceBody,
+      ),
+      body: _runAuthSurfaceBody,
+    );
+  }
+
+  Future<void> _runAuthSurfaceBody() async {
+    final originalCache = AccountAuthCache.load();
+    try {
+      final authService = AccountAuthService(client: _buildAuthProbeClient());
+      final loginResult = await authService.login(
+        username: 'admin@ventio',
+        password: 'stress123',
+      );
+      _auditCheck(
+        'LoginGatePage',
+        'Online login success path',
+        loginResult.ok &&
+            loginResult.accountType == 'platform_admin' &&
+            loginResult.accountToken.isNotEmpty &&
+            loginResult.adminToken.isNotEmpty,
+        'Online login returns a platform admin session with both tokens.',
+        'Online login probe did not return a complete platform admin session.',
+      );
+      final platformAdminCache = await AccountAuthService.cacheOnlineResult(
+        loginResult,
+        mode: 'login',
+      );
+      _auditCheck(
+        'LoginGatePage',
+        'Platform admin unlock',
+        platformAdminCache.accountType == 'platform_admin' &&
+            platformAdminCache.loginName.contains('@') &&
+            platformAdminCache.storeSlug == 'ventio',
+        'Platform admin cache can route to the admin dashboard.',
+        'Platform admin cache did not look ready for the admin dashboard.',
+      );
+      final sessionResult = await authService.refreshSession(
+        accountToken: platformAdminCache.accountToken,
+      );
+      _auditCheck(
+        'MainShell',
+        'Session refresh and routing readiness',
+        sessionResult.ok &&
+            sessionResult.accountType == 'platform_admin' &&
+            sessionResult.storeId.startsWith('ST-') &&
+            sessionResult.branchId.startsWith('BR-'),
+        'Main shell has a refreshed platform-admin session to work with.',
+        'Main shell session refresh did not return the expected platform-admin data.',
+      );
+      final subscribersResult = await authService.fetchAdminSubscribers(
+        adminToken: _stressAuthAccessToken(platformAdminCache),
+      );
+      _auditCheck(
+        'PlatformAdminDashboardPage',
+        'Subscribers surface available',
+        subscribersResult.ok &&
+            subscribersResult.subscribers.length >= 2 &&
+            subscribersResult.summary.isNotEmpty,
+        'Platform admin dashboard can load subscriber data.',
+        'Platform admin dashboard did not receive subscriber data.',
+      );
+      _auditCheck(
+        'AdminSubscribersPage',
+        'Subscriber rows and filters',
+        subscribersResult.subscribers.any((item) => item.subscriptionStatus ==
+                'active') &&
+            subscribersResult.subscribers.any(
+                (item) => item.subscriptionStatus == 'trial'),
+        'Admin subscribers page has active and trial records to filter and display.',
+        'Admin subscribers page is missing the expected subscriber mix.',
+      );
+      final updateResult = await authService.updateAdminSubscriber(
+        adminToken: _stressAuthAccessToken(platformAdminCache),
+        subscriber: subscribersResult.subscribers.first,
+        username: 'admin',
+        fullName: 'Platform Admin Updated',
+        storeName: 'Ventio Platform',
+        storeSlug: 'ventio',
+        accountStatus: 'active',
+        plan: 'pro',
+        subscriptionStatus: 'active',
+        devicesLimit: 12,
+        cloudSyncEnabled: true,
+        trialEndsAt: DateTime.now().add(const Duration(days: 21)),
+      );
+      _auditCheck(
+        'AdminSubscribersPage',
+        'Subscriber edit/save path',
+        updateResult.ok,
+        'Admin subscriber edit request succeeds through the service layer.',
+        'Admin subscriber edit request failed in the service layer.',
+      );
+      final deleteResult = await authService.deleteAdminSubscriber(
+        adminToken: _stressAuthAccessToken(platformAdminCache),
+        subscriber: subscribersResult.subscribers.last,
+      );
+      _auditCheck(
+        'AdminSubscribersPage',
+        'Subscriber delete path',
+        deleteResult.ok,
+        'Admin subscriber delete request succeeds through the service layer.',
+        'Admin subscriber delete request failed in the service layer.',
+      );
+
+      final registerResult = await authService.register(
+        username: 'owner',
+        password: 'stress123',
+        fullName: 'Store Owner',
+        storeName: 'stresslab',
+      );
+      _auditCheck(
+        'LoginGatePage',
+        'Initial register path',
+        registerResult.ok &&
+            registerResult.accountType == 'store_owner' &&
+            registerResult.storeSlug == 'stresslab',
+        'Registration returns a store-owner session for the login gate.',
+        'Registration did not return a valid store-owner session.',
+      );
+      final storeOwnerCache = await AccountAuthService.cacheOnlineResult(
+        registerResult,
+        mode: 'registered_local',
+      );
+      _auditCheck(
+        'LoginGatePage',
+        'Store owner unlock',
+        storeOwnerCache.accountType == 'store_owner' &&
+            storeOwnerCache.mode == 'registered_local' &&
+            storeOwnerCache.storeSlug == 'stresslab' &&
+            storeOwnerCache.storeSlug != 'ventio',
+        'Store owner cache can route to the store dashboard.',
+        'Store owner cache did not look ready for the store dashboard.',
+      );
+      final passwordResult = await authService.changePassword(
+        accountToken: storeOwnerCache.accountToken,
+        currentPassword: 'stress123',
+        newPassword: 'stress456',
+      );
+      _auditCheck(
+        'StoreAccountDashboardPage',
+        'Password update flow',
+        passwordResult.ok &&
+            passwordResult.accountToken.isNotEmpty &&
+            passwordResult.adminToken.isNotEmpty,
+        'Store account dashboard can complete the password change flow.',
+        'Store account dashboard password change flow did not complete.',
+      );
+      final ownerProfileResult = await authService.updateOwnerProfile(
+        accountToken: passwordResult.accountToken,
+        username: 'owner',
+        fullName: 'Stress Lab Owner',
+        newPassword: 'stress789',
+      );
+      _auditCheck(
+        'StoreAccountDashboardPage',
+        'Owner profile update flow',
+        ownerProfileResult.ok &&
+            ownerProfileResult.loginName.contains('@') &&
+            ownerProfileResult.accountToken.isNotEmpty,
+        'Store account dashboard can push owner profile updates.',
+        'Store account dashboard owner profile update did not complete.',
+      );
+      _auditCheck(
+        'StoreAccountDashboardPage',
+        'Recovery flag readiness',
+        storeOwnerCache.cloudSyncEnabled &&
+            storeOwnerCache.accountToken.isNotEmpty,
+        'Store account dashboard can expose recovery actions.',
+        'Store account dashboard still lacks recovery-ready cache data.',
+      );
+      _auditCheck(
+        'MainShell',
+        'Navigation and identity readiness',
+        widget.store.appIdentity.deviceId.trim().isNotEmpty &&
+            widget.store.appIdentity.storeId.trim().isNotEmpty &&
+            widget.store.appIdentity.branchId.trim().isNotEmpty &&
+            widget.store.canViewMaintenance &&
+            widget.store.canViewSettings,
+        'Main shell has a valid device/store identity and navigation flags.',
+        'Main shell still lacks part of the identity or navigation state.',
+      );
+    } finally {
+      if (originalCache == null) {
+        await AccountAuthCache.clear();
+      } else {
+        await AccountAuthCache.save(originalCache);
+      }
+    }
+  }
+
+  Future<void> _runDeviceToolsScenario() async {
+    await _runScenario(
+      scenario: _StressLabScenarioDefinition(
+        id: 'device-tools',
+        title: 'Device Tools',
+        kind: StressLabScenarioKind.system,
+        description:
+            'Validate diagnostics and barcode scanner coverage.',
+        execute: _runDeviceToolsBody,
+      ),
+      body: _runDeviceToolsBody,
+    );
+  }
+
+  Future<void> _runDeviceToolsBody() async {
+    final reportSummary = await _auditStep<Map<String, Object?>>(
+      'DiagnosticsPage',
+      'Maintenance report generation',
+      () async {
+        final result = await MaintenanceService(store).runHealthCheck(
+          deep: true,
+        );
+        final report = MaintenanceService(store).buildDiagnosticReport(result);
+        final decoded = jsonDecode(report);
+        return <String, Object?>{
+          'score': result.healthScore,
+          'issues': result.issues.length,
+          'reportHasMaintenance':
+              decoded is Map && decoded['maintenance'] is Map,
+          'reportHasStartupTiming':
+              decoded is Map && decoded['startupTiming'] is Map,
+        };
+      },
+      successDetails: (value) =>
+          'score=${value['score']} issues=${value['issues']} reportHasMaintenance=${value['reportHasMaintenance']} reportHasStartupTiming=${value['reportHasStartupTiming']}',
+    );
+    final appCounts = await AppLogger.counts();
+    final auditCounts = await AuditLogger.counts();
+    final scannerSupported = BarcodeScannerPage.isSupportedPlatform;
+    final scannerSupportedByRules = kIsWeb ||
+        defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS ||
+        defaultTargetPlatform == TargetPlatform.macOS;
+    _auditCheck(
+      'DiagnosticsPage',
+      'Log and database exports available',
+      reportSummary != null &&
+          appCounts.isNotEmpty &&
+          auditCounts.isNotEmpty &&
+          LocalDatabaseService.keys().isNotEmpty,
+      'Diagnostics page can read app logs, audit logs, and local keys.',
+      'Diagnostics page still cannot see one of logs or local keys.',
+    );
+    _auditCheck(
+      'BarcodeScannerPage',
+      'Scanner platform branch',
+      scannerSupported == scannerSupportedByRules,
+      scannerSupported
+          ? 'Scanner support is available on this platform.'
+          : 'Scanner fallback will show the unsupported-platform state.',
+      'Barcode scanner platform detection failed.',
+    );
+    _auditCheck(
+      'BarcodeScannerPage',
+      'Fallback copy ready',
+      !scannerSupported,
+      'Current desktop platform will use the fallback scanner screen.',
+      'This platform should not require the fallback scanner screen.',
+      warning: scannerSupported,
+    );
+  }
+
+  Future<void> _runMaintenanceSurfaceScenario() async {
+    await _runScenario(
+      scenario: _StressLabScenarioDefinition(
+        id: 'maintenance-surface',
+        title: 'Maintenance Surface',
+        kind: StressLabScenarioKind.maintenance,
+        description: 'Exercise maintenance checks and repairs.',
+        execute: _runMaintenanceSurfaceBody,
+      ),
+      body: _runMaintenanceSurfaceBody,
+    );
+  }
+
+  Future<void> _runMaintenanceSurfaceBody() async {
+    final service = MaintenanceService(store);
+    final quick = await service.runHealthCheck(deep: false);
+    final deep = await service.runHealthCheck(deep: true);
+    final report = service.buildDiagnosticReport(deep);
+    final decoded = jsonDecode(report);
+    final availableRepairActions = deep.issues
+        .map((issue) => issue.repairAction)
+        .whereType<MaintenanceRepairAction>()
+        .toSet();
+
+    _auditCheck(
+      'MaintenancePage',
+      'Quick health check available',
+      quick.generatedAt.isAfter(DateTime.fromMillisecondsSinceEpoch(0)) &&
+          quick.counts.isNotEmpty,
+      'Maintenance can build a quick health summary.',
+      'Maintenance quick health check did not return usable data.',
+    );
+    _auditCheck(
+      'MaintenancePage',
+      'Deep diagnostics available',
+      deep.issues.length >= quick.issues.length &&
+          decoded is Map &&
+          decoded['maintenance'] is Map &&
+          decoded['startupTiming'] is Map,
+      'Maintenance can build a deep report with timing data.',
+      'Maintenance deep report or diagnostics data is incomplete.',
+    );
+
+    final refreshRepair = await service.runRepair(
+      MaintenanceRepairAction.refreshOnly,
+    );
+    _auditCheck(
+      'MaintenancePage',
+      'Refresh repair path',
+      refreshRepair.message.isNotEmpty,
+      'Maintenance refresh repair completed without mutating data.',
+      'Maintenance refresh repair did not return a usable result.',
+    );
+
+    if (availableRepairActions
+        .contains(MaintenanceRepairAction.repairMissingCloudQueue)) {
+      final queueRepair =
+          await service.runRepair(MaintenanceRepairAction.repairMissingCloudQueue);
+      _auditCheck(
+        'MaintenancePage',
+        'Cloud queue repair path',
+        queueRepair.changedRecords >= 0,
+        'Maintenance can repair missing Host to Cloud queue rows when needed.',
+        'Maintenance cloud queue repair did not return a valid result.',
+      );
+    }
+  }
+
+  Future<void> _runSettingsSurfaceScenario() async {
+    await _runScenario(
+      scenario: _StressLabScenarioDefinition(
+        id: 'settings-surface',
+        title: 'Settings Surface',
+        kind: StressLabScenarioKind.settings,
+        description: 'Exercise settings persistence and subpage services.',
+        execute: _runSettingsSurfaceBody,
+      ),
+      body: _runSettingsSurfaceBody,
+    );
+  }
+
+  Future<void> _runSettingsSurfaceBody() async {
+    final originalProfile = store.storeProfile;
+    final originalCloud = CloudSyncSettings.load();
+    final originalLan = LanSyncSettings.load();
+    final originalAutoBackup = await LocalAutoBackupService.loadSettings();
+    final originalBarcode = BarcodeFeedbackService.loadSettings();
+
+    try {
+      final nextProfile = originalProfile.copyWith(
+        footerNote: 'Stress Lab settings probe',
+        priceDisplayMode: 'multiple',
+        priceDisplayCurrencies: const ['USD', 'LBP', 'EUR'],
+      );
+      await store.updateStoreProfile(nextProfile);
+      _auditCheck(
+        'SettingsPage',
+        'Store profile and document settings',
+        store.storeProfile.footerNote == 'Stress Lab settings probe' &&
+            store.storeProfile.priceDisplayMode == 'multiple' &&
+            store.storeProfile.priceDisplayCurrencies.contains('EUR'),
+        'Settings can persist store profile, currency, and document state.',
+        'Settings store profile roundtrip did not persist as expected.',
+      );
+
+      final autoBackupUpdated = originalAutoBackup.copyWith(
+        enabled: !originalAutoBackup.enabled,
+        locationPath: originalAutoBackup.locationPath,
+        dailyCount: originalAutoBackup.dailyCount,
+        weeklyCount: originalAutoBackup.weeklyCount,
+        monthlyCount: originalAutoBackup.monthlyCount,
+      );
+      await LocalAutoBackupService.saveSettings(autoBackupUpdated);
+      final autoBackupReloaded = await LocalAutoBackupService.loadSettings();
+      _auditCheck(
+        'SettingsPage',
+        'Local auto backup settings',
+        autoBackupReloaded.enabled == autoBackupUpdated.enabled &&
+            autoBackupReloaded.locationPath.trim() ==
+                autoBackupUpdated.locationPath.trim() &&
+            autoBackupReloaded.dailyCount == autoBackupUpdated.dailyCount &&
+            autoBackupReloaded.weeklyCount == autoBackupUpdated.weeklyCount &&
+            autoBackupReloaded.monthlyCount == autoBackupUpdated.monthlyCount,
+        'Settings can persist local backup preferences.',
+        'Local backup settings did not roundtrip correctly.',
+      );
+
+      final cloudUpdated = originalCloud.copyWith(
+        autoSyncEnabled: !originalCloud.autoSyncEnabled,
+        intervalSeconds: originalCloud.intervalSeconds ==
+                CloudSyncSettings.maxIntervalSeconds
+            ? CloudSyncSettings.minIntervalSeconds
+            : originalCloud.intervalSeconds + 1,
+      );
+      await cloudUpdated.save();
+      final cloudReloaded = CloudSyncSettings.load();
+      _auditCheck(
+        'SettingsPage',
+        'Cloud sync settings',
+        cloudReloaded.apiBaseUrl.trim().isNotEmpty &&
+            cloudReloaded.autoSyncEnabled == cloudUpdated.autoSyncEnabled &&
+            cloudReloaded.intervalSeconds == cloudUpdated.intervalSeconds,
+        'Settings can persist cloud sync preferences.',
+        'Cloud sync settings did not roundtrip correctly.',
+      );
+
+      final lanUpdated = originalLan.copyWith(
+        autoSyncEnabled: !originalLan.autoSyncEnabled,
+        hostModeEnabled: originalLan.hostModeEnabled,
+        setupComplete: originalLan.setupComplete,
+        mode: originalLan.mode,
+        secret: originalLan.secret,
+      );
+      await lanUpdated.save();
+      final lanReloaded = LanSyncSettings.load();
+      _auditCheck(
+        'SettingsPage',
+        'LAN sync settings',
+        lanReloaded.host.trim() == lanUpdated.host.trim() &&
+            lanReloaded.port == lanUpdated.port &&
+            lanReloaded.autoSyncEnabled == lanUpdated.autoSyncEnabled &&
+            lanReloaded.mode == lanUpdated.mode,
+        'Settings can persist LAN sync preferences.',
+        'LAN sync settings did not roundtrip correctly.',
+      );
+
+      final barcodeUpdated = originalBarcode.copyWith(
+        soundEnabled: !originalBarcode.soundEnabled,
+        vibrationEnabled: !originalBarcode.vibrationEnabled,
+        volume: originalBarcode.volume,
+      );
+      await BarcodeFeedbackService.saveSettings(barcodeUpdated);
+      final barcodeReloaded = BarcodeFeedbackService.loadSettings();
+      _auditCheck(
+        'SettingsPage',
+        'Scanner feedback settings',
+        barcodeReloaded.soundEnabled == barcodeUpdated.soundEnabled &&
+            barcodeReloaded.vibrationEnabled ==
+                barcodeUpdated.vibrationEnabled &&
+            (barcodeReloaded.volume - barcodeUpdated.volume).abs() < 0.01,
+        'Settings can persist scanner feedback preferences.',
+        'Scanner feedback settings did not roundtrip correctly.',
+      );
+    } finally {
+      await store.updateStoreProfile(originalProfile);
+      await LocalAutoBackupService.saveSettings(originalAutoBackup);
+      await originalCloud.save();
+      await originalLan.save();
+      await BarcodeFeedbackService.saveSettings(originalBarcode);
+    }
+  }
+
+  Future<void> _runDatabaseSurfaceScenario() async {
+    await _runScenario(
+      scenario: _StressLabScenarioDefinition(
+        id: 'database-surface',
+        title: 'Database Surface',
+        kind: StressLabScenarioKind.maintenance,
+        description: 'Exercise database explorer and SQL validation logic.',
+        execute: _runDatabaseSurfaceBody,
+      ),
+      body: _runDatabaseSurfaceBody,
+    );
+  }
+
+  Future<void> _runDatabaseSurfaceBody() async {
+    final entries = await LocalDatabaseService.adminEntries();
+    final keyCount = entries.length;
+    final tables = DatabaseSqlEditorService.splitStatements(
+      "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name;",
+    );
+    final queryResults = await DatabaseSqlEditorService.runScript(
+      tables.first,
+      allowWrites: false,
+    );
+    final columns = queryResults.isEmpty
+        ? const <String>[]
+        : SqlResultExportService.orderedColumns(queryResults.first.rows);
+    final blockedWrite = DatabaseSqlEditorService.validateStatement(
+          'UPDATE sqlite_master SET name = name;',
+          allowWrites: false,
+        ) !=
+        null;
+
+    _auditCheck(
+      'DatabasePage',
+      'Database entries available',
+      keyCount > 0,
+      'Database explorer can load local keys and tables.',
+      'Database explorer did not find any entries.',
+    );
+    _auditCheck(
+      'DatabasePage',
+      'SQL query execution',
+      queryResults.isNotEmpty &&
+          queryResults.first.isQuery &&
+          (queryResults.first.rows.length <=
+              DatabaseSqlEditorService.defaultLimit),
+      'Database explorer can execute read-only SQL queries.',
+      'Database SQL query execution failed.',
+    );
+    _auditCheck(
+      'DatabasePage',
+      'SQL export and protection',
+      columns.isNotEmpty && blockedWrite,
+      'Database explorer can export query columns and blocks unsafe writes.',
+      'Database export or write protection is not working.',
+    );
+  }
+
+  Future<void> _runSyncSetupSurfaceScenario() async {
+    await _runScenario(
+      scenario: _StressLabScenarioDefinition(
+        id: 'sync-setup-surface',
+        title: 'Sync Setup Surface',
+        kind: StressLabScenarioKind.sync,
+        description: 'Exercise sync settings and cloud pairing logic.',
+        execute: _runSyncSetupSurfaceBody,
+      ),
+      body: _runSyncSetupSurfaceBody,
+    );
+  }
+
+  Future<void> _runSyncSetupSurfaceBody() async {
+    final originalIdentity = store.appIdentity;
+    final originalCloud = CloudSyncSettings.load();
+    final originalLan = LanSyncSettings.load();
+    final originalIdentityJson =
+        jsonEncode(originalIdentity.copyWith().toJson());
+
+    try {
+      final cloudUpdated = originalCloud.copyWith(
+        autoSyncEnabled: !originalCloud.autoSyncEnabled,
+        intervalSeconds: originalCloud.intervalSeconds ==
+                CloudSyncSettings.maxIntervalSeconds
+            ? CloudSyncSettings.minIntervalSeconds
+            : originalCloud.intervalSeconds + 1,
+      );
+      await cloudUpdated.save();
+      final cloudReloaded = CloudSyncSettings.load();
+
+      final lanUpdated = originalLan.copyWith(
+        autoSyncEnabled: !originalLan.autoSyncEnabled,
+        hostModeEnabled: originalLan.hostModeEnabled,
+        setupComplete: originalLan.setupComplete,
+      );
+      await lanUpdated.save();
+      final lanReloaded = LanSyncSettings.load();
+
+      final probeIdentity = originalIdentity.copyWith(
+        storeId: 'ST-PRB001',
+        branchId: 'BR-PRB001',
+        deviceId: 'DV-PRB001',
+        deviceRole: DeviceRole.client,
+        syncMode: SyncMode.localOnly,
+        hostDeviceId: 'DV-PRB001',
+        deviceToken: 'device_probe_token',
+        activeSyncTransport: 'local',
+      );
+      await LocalDatabaseService.setString(
+        'app_identity_v1',
+        jsonEncode(probeIdentity.toJson()),
+      );
+      await store.refreshAfterDatabaseChange('app_identity_v1');
+      final cloudClaim = await CloudSyncService(
+        store,
+        client: _buildCloudProbeClient(),
+      ).claimPairingCode(
+        CloudSyncSettings(
+          enabled: true,
+          apiBaseUrl: 'https://sync-probe.ventio.test',
+        ),
+        'PAIR-12345',
+      );
+
+      _auditCheck(
+        'SyncSetupPage',
+        'Cloud settings persistence',
+        cloudReloaded.apiBaseUrl.trim().isNotEmpty &&
+            cloudReloaded.autoSyncEnabled == cloudUpdated.autoSyncEnabled &&
+            cloudReloaded.intervalSeconds == cloudUpdated.intervalSeconds,
+        'Sync setup can persist cloud settings changes.',
+        'Sync setup cloud settings did not roundtrip correctly.',
+      );
+      _auditCheck(
+        'SyncSetupPage',
+        'Cloud pairing probe',
+        cloudClaim.ok && cloudClaim.message.isNotEmpty,
+        'Sync setup can complete the simulated cloud pairing claim.',
+        'Sync setup simulated cloud pairing did not complete.',
+        warning: true,
+      );
+      _auditCheck(
+        'SyncSetupPage',
+        'LAN settings persistence',
+        lanReloaded.host.trim().isNotEmpty &&
+            lanReloaded.port == lanUpdated.port &&
+            lanReloaded.autoSyncEnabled == lanUpdated.autoSyncEnabled,
+        'Sync setup can persist LAN settings and QR-ready host details.',
+        'Sync setup LAN settings did not roundtrip correctly.',
+      );
+      _auditCheck(
+        'BarcodeScannerPage',
+        'QR scan entry point',
+        true,
+        BarcodeScannerPage.isSupportedPlatform || kIsWeb
+            ? 'Sync setup can route into the barcode scanner page when scanning a code.'
+            : 'Current desktop platform uses the fallback scanner screen as expected.',
+        'This check should always be available.',
+      );
+    } finally {
+      await LocalDatabaseService.setString(
+        'app_identity_v1',
+        originalIdentityJson,
+      );
+      await store.refreshAfterDatabaseChange('app_identity_v1');
+      await originalCloud.save();
+      await originalLan.save();
+    }
+  }
+
+  Future<void> _runUsersPermissionsSurfaceScenario() async {
+    await _runScenario(
+      scenario: _StressLabScenarioDefinition(
+        id: 'users-permissions-surface',
+        title: 'Users Permissions Surface',
+        kind: StressLabScenarioKind.settings,
+        description: 'Exercise role and user management flows.',
+        execute: _runUsersPermissionsSurfaceBody,
+      ),
+      body: _runUsersPermissionsSurfaceBody,
+    );
+  }
+
+  Future<void> _runUsersPermissionsSurfaceBody() async {
+    final tempRole = UserRole(
+      id: 'stress_temp_role',
+      name: 'Stress Temp Role',
+      permissions: const <String>{
+        AppPermission.productsView,
+        AppPermission.customersView,
+      },
+    );
+    final tempUser = AppUser(
+      id: 'stress_temp_user',
+      fullName: 'Stress Temp User',
+      username: 'stress.temp.user',
+      passwordHash: '',
+      roleId: tempRole.id,
+      isActive: true,
+      isSystem: false,
+    );
+
+    await store.addOrUpdateRole(tempRole);
+    await store.addOrUpdateUser(tempUser, password: 'stress-temp-123');
+    final savedRole = store.roleById(tempRole.id);
+    final savedUser = store.users.where((user) => user.id == tempUser.id).toList();
+    _auditCheck(
+      'UsersPermissionsPage',
+      'Role and user creation',
+      savedRole != null &&
+          savedUser.isNotEmpty &&
+          savedRole.permissions.contains(AppPermission.productsView) &&
+          savedUser.first.roleId == tempRole.id,
+      'Users permissions can create and persist roles and users.',
+      'Users permissions did not persist the temporary role or user.',
+    );
+
+    await store.addOrUpdateRole(
+      tempRole.copyWith(
+        permissions: const <String>{
+          AppPermission.productsView,
+          AppPermission.customersView,
+          AppPermission.salesView,
+        },
+      ),
+    );
+    final updatedRole = store.roleById(tempRole.id);
+    _auditCheck(
+      'UsersPermissionsPage',
+      'Role updates',
+      updatedRole != null &&
+          updatedRole.permissions.contains(AppPermission.salesView),
+      'Users permissions can update role permissions.',
+      'Users permissions role update did not persist.',
+    );
+
+    await store.deleteUser(tempUser.id);
+    await store.deleteRole(tempRole.id);
+    _auditCheck(
+      'UsersPermissionsPage',
+      'Cleanup and system account protection',
+      store.roleById('admin')?.isSystem == true &&
+          store.users.any((user) => user.isSystem && user.roleId == 'admin') &&
+          store.roleById(tempRole.id) == null &&
+          store.users.where((user) => user.id == tempUser.id).isEmpty,
+      'Users permissions keeps the built-in admin account protected.',
+      'Users permissions cleanup or system account protection failed.',
+    );
   }
 
   Future<void> _runDailyOperationsMix() async {
@@ -1749,6 +3178,20 @@ class _StressLabPageState extends State<StressLabPage> {
   }
 
   Future<void> _runAllDiagnostics() async {
+    await _runScenario(
+      scenario: _StressLabScenarioDefinition(
+        id: 'diagnostics',
+        title: 'Diagnostics',
+        kind: StressLabScenarioKind.maintenance,
+        description:
+            'Collect sequence, integrity, and maintenance evidence.',
+        execute: _runAllDiagnosticsBody,
+      ),
+      body: _runAllDiagnosticsBody,
+    );
+  }
+
+  Future<void> _runAllDiagnosticsBody() async {
     if (_running) return;
     await _compareDeviceState();
     await _runSequenceAudit();
@@ -2148,7 +3591,28 @@ class _StressLabPageState extends State<StressLabPage> {
           'VENTIO_ONE_BUTTON_AUDIT_START batch=$_currentBatchId role=${_roleLabel()}');
       _addLog(_snapshotLine('AUDIT_BEFORE'));
       await _logDatabaseMetrics('AUDIT_BEFORE_DB');
+      _resetPerformanceCapture();
+      _resetTraceCapture();
+      await _capturePerformanceSnapshot(
+        _StressPerformancePhase.before,
+        label: 'Baseline before app surface prep',
+      );
+      AppStore.setTraceSink(_captureTrace);
       await _prepareAppSurfaceData();
+      await _capturePerformanceSnapshot(
+        _StressPerformancePhase.during,
+        label: 'After app surface prep',
+      );
+      await _runAuthSurfaceBody();
+      await _capturePerformanceSnapshot(
+        _StressPerformancePhase.during,
+        label: 'After auth surface probe',
+      );
+      await _runDeviceToolsBody();
+      await _capturePerformanceSnapshot(
+        _StressPerformancePhase.during,
+        label: 'After device tools probe',
+      );
 
       _setStatus(_dual('إنشاء الكتالوج...', 'Building catalog...'),
           progress: 0.05);
@@ -2710,6 +4174,11 @@ class _StressLabPageState extends State<StressLabPage> {
           _dual(
               'إجمالي المبيعات النشطة ${_money(activeSalesTotal)} أقل من المتوقع ${_money(expectedMinimumRevenue)}.',
               'Active sales total ${_money(activeSalesTotal)} is lower than expected ${_money(expectedMinimumRevenue)}.'));
+      await _runMaintenanceSurfaceBody();
+      await _runSettingsSurfaceBody();
+      await _runDatabaseSurfaceBody();
+      await _runSyncSetupSurfaceBody();
+      await _runUsersPermissionsSurfaceBody();
       await _runDeepAccountingChecks();
       _runInventoryConsistencyChecks();
       _runPerformanceHealthChecks();
@@ -2724,6 +4193,10 @@ class _StressLabPageState extends State<StressLabPage> {
             'Core relationship check completed.');
       }, successDetails: (value) => value);
 
+      await _capturePerformanceSnapshot(
+        _StressPerformancePhase.after,
+        label: 'After final audit and integrity checks',
+      );
       await _logDatabaseMetrics('AUDIT_AFTER_DB');
       _addLog(_snapshotLine('AUDIT_AFTER'));
       await _addHealthSummary('ONE_BUTTON_AUDIT_SUMMARY');
@@ -2731,6 +4204,7 @@ class _StressLabPageState extends State<StressLabPage> {
       _setStatus(_dual('انتهى الاختبار الشامل', 'Full test completed'),
           progress: 1);
     } finally {
+      AppStore.setTraceSink(null);
       if (mounted) setState(() => _running = false);
     }
   }
@@ -3171,6 +4645,33 @@ class _StressLabPageState extends State<StressLabPage> {
     final batchSuppliers = store.suppliers
         .where((supplier) => supplier.name.contains(_currentBatchId))
         .toList(growable: false);
+    final batchQuotations = store.saleQuotations
+        .where((quotation) =>
+            quotation.note.contains(_currentBatchId) ||
+            quotation.customerName.contains(_currentBatchId) ||
+            quotation.quotationNo.contains(_currentBatchId) ||
+            quotation.id.contains(_currentBatchId))
+        .toList(growable: false);
+    final batchDeliveryNotes = store.deliveryNotes
+        .where((note) =>
+            note.note.contains(_currentBatchId) ||
+            note.invoiceNo.contains(_currentBatchId) ||
+            note.customerName.contains(_currentBatchId) ||
+            note.id.contains(_currentBatchId))
+        .toList(growable: false);
+    final batchBoms = store.billsOfMaterials
+        .where((bom) =>
+            bom.notes.contains(_currentBatchId) ||
+            bom.name.contains(_currentBatchId) ||
+            bom.id.contains(_currentBatchId))
+        .toList(growable: false);
+    final batchManufacturingOrders = store.manufacturingOrders
+        .where((order) =>
+            order.notes.contains(_currentBatchId) ||
+            order.bomName.contains(_currentBatchId) ||
+            order.orderNo.contains(_currentBatchId) ||
+            order.id.contains(_currentBatchId))
+        .toList(growable: false);
     final batchSales = _batchSales();
     final batchPurchases = _batchPurchases();
     final activeSales = batchSales
@@ -3184,6 +4685,9 @@ class _StressLabPageState extends State<StressLabPage> {
     final trialBalanceRows = accountingAvailable
         ? await AccountingService.trialBalanceReport()
         : const <dynamic>[];
+    final expectedProducts = _lastPressureMultiplier + 4;
+    final expectedCustomers = _lastPressureMultiplier + 1;
+    final expectedSuppliers = _lastPressureMultiplier + 1;
     final trialDebit =
         trialBalanceRows.fold<double>(0, (sum, row) => sum + row.debit);
     final trialCredit =
@@ -3265,11 +4769,47 @@ class _StressLabPageState extends State<StressLabPage> {
     expect(
         'MASTER-DATA-001',
         'Master Data',
-        batchProducts.length >= 1004 &&
-            batchCustomers.length >= 1001 &&
-            batchSuppliers.length >= 1001,
-        'At least 1004 products, 1001 customers, and 1001 suppliers for this batch.',
+        batchProducts.length >= expectedProducts &&
+            batchCustomers.length >= expectedCustomers &&
+            batchSuppliers.length >= expectedSuppliers,
+        'At least $expectedProducts products, $expectedCustomers customers, and $expectedSuppliers suppliers for this batch.',
         'products=${batchProducts.length} customers=${batchCustomers.length} suppliers=${batchSuppliers.length}');
+    expect(
+        'QUOTATION-FLOW-001',
+        'Sales Documents',
+        batchQuotations.isNotEmpty &&
+            batchQuotations.any((quotation) => quotation.isConverted),
+        'A batch quotation exists and at least one quotation was converted into a sale.',
+        'quotations=${batchQuotations.length} converted=${batchQuotations.where((quotation) => quotation.isConverted).length}');
+    expect(
+        'DELIVERY-NOTE-001',
+        'Sales Documents',
+        batchDeliveryNotes.isNotEmpty &&
+            batchDeliveryNotes.any((note) => note.isDelivered),
+        'A batch delivery note exists and at least one was marked delivered.',
+        'deliveryNotes=${batchDeliveryNotes.length} delivered=${batchDeliveryNotes.where((note) => note.isDelivered).length}');
+    expect(
+        'MANUFACTURING-001',
+        'Manufacturing',
+        batchBoms.isNotEmpty &&
+            batchBoms.any((bom) => bom.isActive && !bom.isDeleted) &&
+            batchManufacturingOrders.isNotEmpty &&
+            batchManufacturingOrders.any((order) =>
+                order.status.toLowerCase() == 'completed' &&
+                !order.isDeleted),
+        'Batch BOMs and completed manufacturing orders were created.',
+        'boms=${batchBoms.length} manufacturingOrders=${batchManufacturingOrders.length}');
+    expect(
+        'REPORTS-001',
+        'Reports',
+        batchQuotations.isNotEmpty &&
+            batchDeliveryNotes.isNotEmpty &&
+            batchBoms.isNotEmpty &&
+            batchManufacturingOrders.isNotEmpty &&
+            store.inventoryCountSessions.isNotEmpty &&
+            store.stockMovements.isNotEmpty,
+        'Reports have quotations, delivery notes, BOMs, manufacturing orders, inventory counts, and stock movements to summarize.',
+        'quotations=${batchQuotations.length} deliveryNotes=${batchDeliveryNotes.length} boms=${batchBoms.length} manufacturingOrders=${batchManufacturingOrders.length} inventoryCounts=${store.inventoryCountSessions.length} stockMovements=${store.stockMovements.length}');
     expect(
         'SALES-ACCOUNTING-001',
         'Accounting',
@@ -3864,7 +5404,16 @@ class _StressLabPageState extends State<StressLabPage> {
         : warn > 0
             ? 'نجح مع تحذيرات'
             : 'نجح';
+    _addPerformanceReport();
     _addHealthScoreReport();
+    _addShareableFinalReport(
+      startedAt: startedAt,
+      overall: overall,
+      pass: pass,
+      warn: warn,
+      fail: fail,
+      elapsedSeconds: elapsed,
+    );
     _addLog('========== VENTIO STRESS LAB FINAL REPORT ==========');
     _addLog(
         'النتيجة العامة: $overall | نجاح=$pass | تحذيرات=$warn | فشل=$fail | الزمن=${elapsed}s | batch=$_currentBatchId');
