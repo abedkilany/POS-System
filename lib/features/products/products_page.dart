@@ -995,6 +995,7 @@ class _ProductDialogState extends State<_ProductDialog> {
   late final String _productId;
   late List<SupplierProductPrice> supplierPriceDrafts;
   late List<_CurrencyPriceOverrideDraft> priceOverrideDrafts;
+  List<Supplier> _supplierOptions = const <Supplier>[];
 
   @override
   void initState() {
@@ -1006,6 +1007,8 @@ class _ProductDialogState extends State<_ProductDialog> {
     supplierPriceDrafts = product == null
         ? <SupplierProductPrice>[]
         : widget.store.supplierProductPricesForProduct(product.id).toList();
+    _supplierOptions = widget.store.suppliers.toList(growable: false);
+    unawaited(_loadSupplierOptions());
     barcodeController = TextEditingController(text: product?.barcode ?? '');
     codeController =
         TextEditingController(text: product?.code ?? _generateUniqueSku());
@@ -1057,6 +1060,14 @@ class _ProductDialogState extends State<_ProductDialog> {
         .toList();
     trackStock = product?.trackStock ?? true;
     isActive = product?.isActive ?? true;
+  }
+
+  Future<void> _loadSupplierOptions() async {
+    final page = await LocalDatabaseService.querySuppliersFromSqlite(
+      limit: 500,
+    );
+    if (!mounted || page == null) return;
+    setState(() => _supplierOptions = page.items);
   }
 
   @override
@@ -1265,7 +1276,7 @@ class _ProductDialogState extends State<_ProductDialog> {
                     _SupplierPricesEditor(
                       prices: supplierPriceDrafts,
                       productId: _productId,
-                      suppliers: widget.store.suppliers,
+                      suppliers: _supplierOptions,
                       storeProfile: widget.store.storeProfile,
                       onChanged: (items) =>
                           setState(() => supplierPriceDrafts = items),

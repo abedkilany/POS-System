@@ -7,6 +7,7 @@ import '../../core/utils/responsive.dart';
 import '../../core/utils/revision_cache.dart';
 import '../../core/services/accounting_service.dart';
 import '../../core/services/accounting_aging_service.dart';
+import '../../core/services/local_database_service.dart';
 import '../../data/app_store.dart';
 import 'accounting_snapshot_service.dart';
 import '../../models/account_transaction.dart';
@@ -350,10 +351,7 @@ class _AccountingSummaryStripLoaderState
           );
         }
         if (snapshot.hasError) {
-          return _CompactSummaryStrip(
-            store: widget.store,
-            metrics: _AccountingMetrics.fromStore(widget.store),
-          );
+          return const _SummaryStripPlaceholder();
         }
         return const _SummaryStripPlaceholder();
       },
@@ -942,6 +940,67 @@ class _AccountsTab extends StatelessWidget {
   final AppStore store;
   final String query;
   final String accountType;
+
+  Future<List<_AccountRowData>?> _rowsFromSqlite(String normalizedQuery) async {
+    final rows =
+        await LocalDatabaseService.queryAccountingAccountRowsFromSqlite(
+      accountType: accountType,
+      query: normalizedQuery,
+      limit: 500,
+    );
+    return rows
+        ?.map((row) => _AccountRowData(
+              id: row['id']?.toString() ?? '',
+              name: row['name']?.toString() ?? '',
+              subtitle: row['subtitle']?.toString() ?? '',
+              balance: _doubleValue(row['balance']),
+            ))
+        .where((row) => row.id.trim().isNotEmpty)
+        .toList(growable: false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final normalizedQuery = _normalizedSearchQuery(query);
+    if (LocalDatabaseService.canQueryBusinessSqlite) {
+      return FutureBuilder<List<_AccountRowData>?>(
+        future: _rowsFromSqlite(normalizedQuery),
+        builder: (context, snapshot) {
+          final rows = snapshot.data;
+          if (rows != null && !snapshot.hasError) {
+            return _AccountsRowsView(
+              store: store,
+              accountType: accountType,
+              rows: rows,
+            );
+          }
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator.adaptive());
+          }
+          return _AccountsTabMemory(
+            store: store,
+            query: query,
+            accountType: accountType,
+          );
+        },
+      );
+    }
+    return _AccountsTabMemory(
+      store: store,
+      query: query,
+      accountType: accountType,
+    );
+  }
+}
+
+// ignore: unused_element
+class _AccountsTabMemory extends StatelessWidget {
+  const _AccountsTabMemory(
+      {required this.store, required this.query, required this.accountType});
+
+  final AppStore store;
+  final String query;
+  final String accountType;
   static final RevisionKeyCache<List<_AccountRowData>> _rowsCache =
       RevisionKeyCache<List<_AccountRowData>>();
   static final RevisionKeyCache<Map<String, String>> _searchIndexCache =
@@ -1028,6 +1087,77 @@ class _AccountsTab extends StatelessWidget {
               : 'no_suppliers_found'));
     }
 
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isWide = constraints.maxWidth >= 760;
+        final rowExtent = isWide ? 84.0 : 104.0;
+        return Card(
+          elevation: 0,
+          clipBehavior: Clip.antiAlias,
+          child: isWide
+              ? Column(
+                  children: [
+                    _AccountTableHeader(accountType: accountType),
+                    Expanded(
+                      child: ListView.builder(
+                        scrollCacheExtent: _kAccountingListCacheExtent,
+                        keyboardDismissBehavior:
+                            ScrollViewKeyboardDismissBehavior.onDrag,
+                        itemExtent: rowExtent,
+                        itemCount: rows.length,
+                        itemBuilder: (context, index) {
+                          final row = rows[index];
+                          return _AccountListRow(
+                              store: store,
+                              accountType: accountType,
+                              row: row,
+                              isWide: isWide);
+                        },
+                      ),
+                    ),
+                  ],
+                )
+              : ListView.builder(
+                  scrollCacheExtent: _kAccountingListCacheExtent,
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
+                  itemExtent: rowExtent,
+                  itemCount: rows.length,
+                  itemBuilder: (context, index) {
+                    final row = rows[index];
+                    return _AccountListRow(
+                        store: store,
+                        accountType: accountType,
+                        row: row,
+                        isWide: isWide);
+                  },
+                ),
+        );
+      },
+    );
+  }
+}
+
+class _AccountsRowsView extends StatelessWidget {
+  const _AccountsRowsView({
+    required this.store,
+    required this.accountType,
+    required this.rows,
+  });
+
+  final AppStore store;
+  final String accountType;
+  final List<_AccountRowData> rows;
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    if (rows.isEmpty) {
+      return _EmptyAccountingState(
+          message: tr.text(accountType == 'customer'
+              ? 'no_customers_found'
+              : 'no_suppliers_found'));
+    }
     return LayoutBuilder(
       builder: (context, constraints) {
         final isWide = constraints.maxWidth >= 760;
@@ -1283,52 +1413,79 @@ class _AccountListRow extends StatelessWidget {
   }
 }
 
-class _AgingReportsTab extends StatelessWidget {
+class _AgingReportsTab extends StatefulWidget {
   const _AgingReportsTab({required this.store, required this.query});
 
   final AppStore store;
   final String query;
-  static final RevisionValueCache<_AgingReportsData> _cache =
-      RevisionValueCache<_AgingReportsData>();
+
+  @override
+  State<_AgingReportsTab> createState() => _AgingReportsTabState();
+}
+
+class _AgingReportsTabState extends State<_AgingReportsTab> {
+  Future<_AgingReportsData>? _future;
+  int _futureRevision = -1;
+
+  Future<_AgingReportsData> _reportsFromSqlite() async {
+    final results = await Future.wait<AgingReportResult>([
+      AccountingAgingService.customerAgingReport(),
+      AccountingAgingService.supplierAgingReport(),
+    ]);
+    return _AgingReportsData(
+      customerReport: results[0],
+      supplierReport: results[1],
+    );
+  }
+
+  Future<_AgingReportsData> _futureForRevision() {
+    final revision = widget.store.accountingRevision;
+    if (_future == null || _futureRevision != revision) {
+      _futureRevision = revision;
+      _future = _reportsFromSqlite();
+    }
+    return _future!;
+  }
 
   @override
   Widget build(BuildContext context) {
-    final reports = _cache.getOrCompute(
-      store.accountingRevision,
-      () => _AgingReportsData(
-        customerReport: AccountingAgingService.customerAgingFromStore(
-          sales: store.sales,
-          accountTransactions: store.accountTransactions,
-        ),
-        supplierReport: AccountingAgingService.supplierAgingFromStore(
-          purchases: store.purchases,
-          accountTransactions: store.accountTransactions,
-        ),
-      ),
+    return FutureBuilder<_AgingReportsData>(
+      future: _futureForRevision(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            snapshot.data == null) {
+          return const Center(child: CircularProgressIndicator.adaptive());
+        }
+        return _buildReports(
+            context, snapshot.data ?? _AgingReportsData.empty());
+      },
     );
+  }
+
+  Widget _buildReports(BuildContext context, _AgingReportsData reports) {
     final customerReport = reports.customerReport;
     final supplierReport = reports.supplierReport;
 
     return ListView(
       children: [
         _AgingReportSection(
-          store: store,
+          store: widget.store,
           title: AppLocalizations.of(context).text('customer_aging'),
           subtitle:
               AppLocalizations.of(context).text('customer_aging_subtitle'),
           icon: Icons.people_outline,
           report: customerReport,
-          query: query,
+          query: widget.query,
         ),
         const SizedBox(height: 12),
         _AgingReportSection(
-          store: store,
+          store: widget.store,
           title: AppLocalizations.of(context).text('supplier_aging'),
           subtitle:
               AppLocalizations.of(context).text('supplier_aging_subtitle'),
           icon: Icons.local_shipping_outlined,
           report: supplierReport,
-          query: query,
+          query: widget.query,
         ),
       ],
     );
@@ -1340,6 +1497,19 @@ class _AgingReportsData {
     required this.customerReport,
     required this.supplierReport,
   });
+
+  factory _AgingReportsData.empty() => _AgingReportsData(
+        customerReport: AgingReportResult(
+          asOfDate: DateTime.fromMillisecondsSinceEpoch(0),
+          rows: const <AgingReportRow>[],
+          openDocuments: const <AgingOpenDocument>[],
+        ),
+        supplierReport: AgingReportResult(
+          asOfDate: DateTime.fromMillisecondsSinceEpoch(0),
+          rows: const <AgingReportRow>[],
+          openDocuments: const <AgingOpenDocument>[],
+        ),
+      );
 
   final AgingReportResult customerReport;
   final AgingReportResult supplierReport;
@@ -4739,63 +4909,6 @@ class _AccountingMetrics {
       todayCashOut: _doubleValue(summary['todayCashOut']),
     );
   }
-
-  factory _AccountingMetrics.fromStore(AppStore store) {
-    final customers = store.customers;
-    final suppliers = store.suppliers;
-    final accountTransactions = store.accountTransactions;
-    double customerReceivables = 0;
-    double customerCredits = 0;
-    for (final customer in customers) {
-      final balance = store.accountBalance('customer', customer.id);
-      if (balance > 0) {
-        customerReceivables += balance;
-      } else if (balance < 0) {
-        customerCredits += balance.abs();
-      }
-    }
-    double supplierPayables = 0;
-    double supplierAdvances = 0;
-    for (final supplier in suppliers) {
-      final balance = store.accountBalance('supplier', supplier.id);
-      if (balance < 0) {
-        supplierPayables += balance.abs();
-      } else if (balance > 0) {
-        supplierAdvances += balance;
-      }
-    }
-    final today = DateTime.now();
-    double todayCashIn = 0;
-    double todayCashOut = 0;
-    for (final txn in accountTransactions) {
-      if (!_sameDay(txn.date, today)) continue;
-      if (_isCashIn(txn)) {
-        todayCashIn += _cashAmount(txn);
-      }
-      if (_isCashOut(txn)) {
-        todayCashOut += _cashAmount(txn);
-      }
-    }
-    return _AccountingMetrics(
-      customerReceivables: customerReceivables,
-      customerCredits: customerCredits,
-      supplierPayables: supplierPayables,
-      supplierAdvances: supplierAdvances,
-      todayCashIn: todayCashIn,
-      todayCashOut: todayCashOut,
-    );
-  }
-
-  static bool _sameDay(DateTime a, DateTime b) =>
-      a.year == b.year && a.month == b.month && a.day == b.day;
-  static bool _isCashIn(AccountTransaction txn) =>
-      txn.type == 'paymentReceived' ||
-      (txn.type == 'paymentReversal' && txn.accountType == 'supplier');
-  static bool _isCashOut(AccountTransaction txn) =>
-      txn.type == 'paymentPaid' ||
-      (txn.type == 'paymentReversal' && txn.accountType == 'customer');
-  static double _cashAmount(AccountTransaction txn) =>
-      txn.debit > 0 ? txn.debit : txn.credit;
 }
 
 double _doubleValue(Object? value) {

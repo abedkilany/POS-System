@@ -392,7 +392,7 @@ class _InventoryPageState extends State<InventoryPage>
               _MovementsList(store: widget.store),
               _AutoCorrectionsTab(store: widget.store),
               _StockCountTab(store: widget.store),
-              _WasteLossReport(store: widget.store),
+              _WasteLossReportDb(store: widget.store),
             ],
           ),
         ),
@@ -527,6 +527,18 @@ class _InventoryProductsResult {
   });
 
   final List<Product> items;
+  final int totalCount;
+
+  bool get hasMore => items.length < totalCount;
+}
+
+class _StockMovementsQueryResult {
+  const _StockMovementsQueryResult({
+    required this.items,
+    required this.totalCount,
+  });
+
+  final List<StockMovement> items;
   final int totalCount;
 
   bool get hasMore => items.length < totalCount;
@@ -1061,16 +1073,62 @@ class _WarehouseProductStock {
   final double stock;
 }
 
-class _MovementsList extends StatelessWidget {
+class _MovementsList extends StatefulWidget {
   const _MovementsList({required this.store});
   final AppStore store;
+
+  @override
+  State<_MovementsList> createState() => _MovementsListState();
+}
+
+class _MovementsListState extends State<_MovementsList> {
   static final RevisionKeyCache<List<StockMovement>> _movementsCache =
       RevisionKeyCache<List<StockMovement>>();
+  Future<_StockMovementsQueryResult?>? _movementsFuture;
+  String _movementsFutureKey = '';
+  int _visibleMovementCount = 100;
+
+  @override
+  void didUpdateWidget(covariant _MovementsList oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.store != widget.store) {
+      _movementsFuture = null;
+      _movementsFutureKey = '';
+      _visibleMovementCount = 100;
+    }
+  }
+
+  Future<_StockMovementsQueryResult?> _queryMovementsFromSqlite() {
+    final limit = _visibleMovementCount.clamp(1, 500).toInt();
+    final key = '${widget.store.stockMovementsRevision}|$limit';
+    if (_movementsFuture == null || _movementsFutureKey != key) {
+      _movementsFutureKey = key;
+      _movementsFuture = () async {
+        final page = await LocalDatabaseService.queryStockMovementsFromSqlite(
+          limit: limit,
+          sortMode: 'newest',
+        );
+        if (page == null) return null;
+        return _StockMovementsQueryResult(
+          items: page.items,
+          totalCount: page.totalCount,
+        );
+      }();
+    }
+    return _movementsFuture!;
+  }
+
+  void _loadMoreMovements(int totalCount) {
+    setState(() {
+      _visibleMovementCount = math.min(totalCount, _visibleMovementCount + 100);
+      _movementsFuture = null;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    if (!store.hasAnyPermission(<String>{
+    if (!widget.store.hasAnyPermission(<String>{
       AppPermission.inventoryMovementsView,
       AppPermission.reportsView,
       AppPermission.productsEdit,
@@ -1081,51 +1139,126 @@ class _MovementsList extends StatelessWidget {
             'Stock movement history is not available for your current role.',
       );
     }
+    if (LocalDatabaseService.canQueryBusinessSqlite) {
+      return FutureBuilder<_StockMovementsQueryResult?>(
+        future: _queryMovementsFromSqlite(),
+        builder: (context, snapshot) {
+          final result = snapshot.data;
+          if (result != null && !snapshot.hasError) {
+            return _buildMovementsView(
+              context,
+              tr,
+              result.items,
+              totalCount: result.totalCount,
+              loading: snapshot.connectionState == ConnectionState.waiting &&
+                  result.items.isEmpty,
+              onLoadMore: result.hasMore
+                  ? () => _loadMoreMovements(result.totalCount)
+                  : null,
+            );
+          }
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return _buildMovementsView(
+              context,
+              tr,
+              const <StockMovement>[],
+              totalCount: 0,
+              loading: true,
+            );
+          }
+          return _buildMovementsFromMemory(context, tr);
+        },
+      );
+    }
+    return _buildMovementsFromMemory(context, tr);
+  }
+
+  Widget _buildMovementsFromMemory(BuildContext context, AppLocalizations tr) {
     final movements = _movementsCache.getOrCompute(
-      store.stockMovementsRevision,
-      store.appIdentity.storeId,
-      () => store.stockMovements.toList(growable: false),
+      widget.store.stockMovementsRevision,
+      widget.store.appIdentity.storeId,
+      () => widget.store.stockMovements.toList(growable: false),
     );
+    final visible = movements.take(200).toList(growable: false);
+    return _buildMovementsView(
+      context,
+      tr,
+      visible,
+      totalCount: movements.length,
+    );
+  }
+
+  Widget _buildMovementsView(
+    BuildContext context,
+    AppLocalizations tr,
+    List<StockMovement> movements, {
+    required int totalCount,
+    bool loading = false,
+    VoidCallback? onLoadMore,
+  }) {
     return ListView(
       padding: VentioResponsive.pageInsets(context),
       children: [
-        Card(
-          child: movements.isEmpty
-              ? Padding(
-                  padding: VentioResponsive.pageInsets(context),
-                  child: Text(tr.text('no_stock_movements')))
-              : Column(
-                  children: [
-                    for (final movement in movements.take(200)) ...[
-                      ListTile(
-                        leading: CircleAvatar(
-                            child: Icon(movement.quantity >= 0
-                                ? Icons.add
-                                : Icons.remove)),
-                        title: Text(movement.productName),
-                        subtitle: Text(
-                            "${_movementTypeLabel(tr, movement.type)} • ${movement.warehouseName} • ${movement.referenceNo} • ${movement.date.toLocal().toString().split('.').first}\n${movement.reason}${movement.notes.isNotEmpty ? ' • ${movement.notes}' : ''}${movement.evidenceRef.isNotEmpty ? ' • ${tr.text('evidence')}: ${movement.evidenceRef}' : ''}"),
-                        isThreeLine: true,
-                        trailing: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Text(
-                                  movement.quantity > 0
-                                      ? '+${movement.quantity}'
-                                      : '${movement.quantity}',
-                                  style:
-                                      Theme.of(context).textTheme.titleMedium),
-                              if (movement.unitCost > 0)
-                                Text(formatUsdReferenceAmount(
-                                    movement.value, store.storeProfile)),
-                            ]),
-                      ),
-                      const Divider(height: 1),
-                    ],
-                  ],
-                ),
+        PageDataLoadIndicator(
+          loadedCount: movements.length,
+          totalCount: totalCount,
         ),
+        const SizedBox(height: 12),
+        Card(
+          child: loading
+              ? const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Center(child: CircularProgressIndicator.adaptive()),
+                )
+              : movements.isEmpty
+                  ? Padding(
+                      padding: VentioResponsive.pageInsets(context),
+                      child: Text(tr.text('no_stock_movements')))
+                  : Column(
+                      children: [
+                        for (final movement in movements) ...[
+                          ListTile(
+                            leading: CircleAvatar(
+                                child: Icon(movement.quantity >= 0
+                                    ? Icons.add
+                                    : Icons.remove)),
+                            title: Text(movement.productName),
+                            subtitle: Text(
+                                "${_movementTypeLabel(tr, movement.type)} • ${movement.warehouseName} • ${movement.referenceNo} • ${movement.date.toLocal().toString().split('.').first}\n${movement.reason}${movement.notes.isNotEmpty ? ' • ${movement.notes}' : ''}${movement.evidenceRef.isNotEmpty ? ' • ${tr.text('evidence')}: ${movement.evidenceRef}' : ''}"),
+                            isThreeLine: true,
+                            trailing: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text(
+                                      movement.quantity > 0
+                                          ? '+${movement.quantity}'
+                                          : '${movement.quantity}',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleMedium),
+                                  if (movement.unitCost > 0)
+                                    Text(formatUsdReferenceAmount(
+                                        movement.value,
+                                        widget.store.storeProfile)),
+                                ]),
+                          ),
+                          const Divider(height: 1),
+                        ],
+                      ],
+                    ),
+        ),
+        if (onLoadMore != null && movements.length < totalCount) ...[
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.center,
+            child: OutlinedButton.icon(
+              onPressed: onLoadMore,
+              icon: const Icon(Icons.expand_more),
+              label: const Text('Load more'),
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -1146,6 +1279,13 @@ class _AutoCorrectionsTabState extends State<_AutoCorrectionsTab> {
       RevisionKeyCache<List<StockMovement>>();
   final RevisionKeyCache<List<StockMovement>> _pendingCache =
       RevisionKeyCache<List<StockMovement>>();
+  Future<_StockMovementsQueryResult?>? _correctionsFuture;
+  Future<_StockMovementsQueryResult?>? _pendingCountFuture;
+  Future<_StockMovementsQueryResult?>? _allCountFuture;
+  String _correctionsFutureKey = '';
+  String _pendingCountFutureKey = '';
+  String _allCountFutureKey = '';
+  int _visibleCorrectionCount = 100;
 
   @override
   void didUpdateWidget(covariant _AutoCorrectionsTab oldWidget) {
@@ -1153,7 +1293,87 @@ class _AutoCorrectionsTabState extends State<_AutoCorrectionsTab> {
     if (oldWidget.store != widget.store) {
       _allCache.invalidate();
       _pendingCache.invalidate();
+      _correctionsFuture = null;
+      _pendingCountFuture = null;
+      _allCountFuture = null;
+      _correctionsFutureKey = '';
+      _pendingCountFutureKey = '';
+      _allCountFutureKey = '';
+      _visibleCorrectionCount = 100;
     }
+  }
+
+  Future<_StockMovementsQueryResult?> _queryCorrectionsFromSqlite({
+    required bool reviewed,
+    required int limit,
+  }) {
+    final key = '${widget.store.stockMovementsRevision}|$reviewed|$limit';
+    if (_correctionsFuture == null || _correctionsFutureKey != key) {
+      _correctionsFutureKey = key;
+      _correctionsFuture = () async {
+        final page = await LocalDatabaseService.queryStockMovementsFromSqlite(
+          type: 'auto_correction',
+          reviewed: reviewed,
+          limit: limit,
+          sortMode: 'newest',
+        );
+        if (page == null) return null;
+        return _StockMovementsQueryResult(
+          items: page.items,
+          totalCount: page.totalCount,
+        );
+      }();
+    }
+    return _correctionsFuture!;
+  }
+
+  Future<_StockMovementsQueryResult?> _queryPendingCorrectionsCount() {
+    final key = '${widget.store.stockMovementsRevision}|pending_count';
+    if (_pendingCountFuture == null || _pendingCountFutureKey != key) {
+      _pendingCountFutureKey = key;
+      _pendingCountFuture = () async {
+        final page = await LocalDatabaseService.queryStockMovementsFromSqlite(
+          type: 'auto_correction',
+          reviewed: false,
+          limit: 1,
+          sortMode: 'newest',
+        );
+        if (page == null) return null;
+        return _StockMovementsQueryResult(
+          items: page.items,
+          totalCount: page.totalCount,
+        );
+      }();
+    }
+    return _pendingCountFuture!;
+  }
+
+  Future<_StockMovementsQueryResult?> _queryAllCorrectionsCount() {
+    final key = '${widget.store.stockMovementsRevision}|all_count';
+    if (_allCountFuture == null || _allCountFutureKey != key) {
+      _allCountFutureKey = key;
+      _allCountFuture = () async {
+        final page = await LocalDatabaseService.queryStockMovementsFromSqlite(
+          type: 'auto_correction',
+          limit: 1,
+          sortMode: 'newest',
+        );
+        if (page == null) return null;
+        return _StockMovementsQueryResult(
+          items: page.items,
+          totalCount: page.totalCount,
+        );
+      }();
+    }
+    return _allCountFuture!;
+  }
+
+  void _loadMoreCorrections(int totalCount) {
+    setState(() {
+      _visibleCorrectionCount =
+          math.min(totalCount, _visibleCorrectionCount + 100);
+      _correctionsFuture = null;
+    });
   }
 
   @override
@@ -1175,6 +1395,54 @@ class _AutoCorrectionsTabState extends State<_AutoCorrectionsTab> {
             'Auto correction review is not available for your current role.',
       );
     }
+    if (LocalDatabaseService.canQueryBusinessSqlite) {
+      final reviewed = showReviewed;
+      final limit = _visibleCorrectionCount.clamp(1, 500).toInt();
+      return FutureBuilder<_StockMovementsQueryResult?>(
+        future: _queryCorrectionsFromSqlite(
+          reviewed: reviewed,
+          limit: limit,
+        ),
+        builder: (context, snapshot) {
+          final result = snapshot.data;
+          if (result == null &&
+              snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator.adaptive());
+          }
+          if (result == null || snapshot.hasError) {
+            return _buildCorrectionsFromMemory(context, tr, canReview);
+          }
+          return FutureBuilder<List<_StockMovementsQueryResult?>>(
+            future: Future.wait(<Future<_StockMovementsQueryResult?>>[
+              _queryPendingCorrectionsCount(),
+              _queryAllCorrectionsCount(),
+            ]),
+            builder: (context, countSnapshot) {
+              final counts = countSnapshot.data;
+              final pendingCount = counts?[0]?.totalCount ?? result.totalCount;
+              final allCount = counts?[1]?.totalCount ?? result.totalCount;
+              return _buildCorrectionsView(context, tr,
+                  canReview: canReview,
+                  corrections: result.items,
+                  totalCount: result.totalCount,
+                  pendingCount: pendingCount,
+                  allCount: allCount,
+                  onLoadMore: result.hasMore
+                      ? () => _loadMoreCorrections(result.totalCount)
+                      : null);
+            },
+          );
+        },
+      );
+    }
+    return _buildCorrectionsFromMemory(context, tr, canReview);
+  }
+
+  Widget _buildCorrectionsFromMemory(
+    BuildContext context,
+    AppLocalizations tr,
+    bool canReview,
+  ) {
     final allCorrections = _allCache.getOrCompute(
       widget.store.stockMovementsRevision,
       widget.store.appIdentity.storeId,
@@ -1186,6 +1454,27 @@ class _AutoCorrectionsTabState extends State<_AutoCorrectionsTab> {
       () => widget.store.pendingAutoCorrectionMovements.toList(growable: false),
     );
     final corrections = showReviewed ? allCorrections : pending;
+    return _buildCorrectionsView(
+      context,
+      tr,
+      canReview: canReview,
+      corrections: corrections,
+      totalCount: corrections.length,
+      pendingCount: pending.length,
+      allCount: allCorrections.length,
+    );
+  }
+
+  Widget _buildCorrectionsView(
+    BuildContext context,
+    AppLocalizations tr, {
+    required bool canReview,
+    required List<StockMovement> corrections,
+    required int totalCount,
+    required int pendingCount,
+    required int allCount,
+    VoidCallback? onLoadMore,
+  }) {
     double totalQty = 0;
     double totalValue = 0;
     for (final item in corrections) {
@@ -1202,11 +1491,11 @@ class _AutoCorrectionsTabState extends State<_AutoCorrectionsTab> {
           children: [
             SummaryCard(
                 title: tr.text('pending_auto_corrections'),
-                value: '${pending.length}',
+                value: '$pendingCount',
                 icon: Icons.notifications_active_outlined),
             SummaryCard(
                 title: tr.text('auto_corrections'),
-                value: '${allCorrections.length}',
+                value: '$allCount',
                 icon: Icons.inventory_outlined),
             SummaryCard(
                 title: tr.text('quantity'),
@@ -1229,6 +1518,11 @@ class _AutoCorrectionsTabState extends State<_AutoCorrectionsTab> {
             subtitle: Text(tr.text('show_reviewed_corrections_desc')),
             secondary: const Icon(Icons.history_outlined),
           ),
+        ),
+        const SizedBox(height: 12),
+        PageDataLoadIndicator(
+          loadedCount: corrections.length,
+          totalCount: totalCount,
         ),
         const SizedBox(height: 12),
         Card(
@@ -1285,6 +1579,17 @@ class _AutoCorrectionsTabState extends State<_AutoCorrectionsTab> {
                   ],
                 ),
         ),
+        if (onLoadMore != null && corrections.length < totalCount) ...[
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.center,
+            child: OutlinedButton.icon(
+              onPressed: onLoadMore,
+              icon: const Icon(Icons.expand_more),
+              label: const Text('Load more'),
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -1324,6 +1629,8 @@ class _StockCountTabState extends State<_StockCountTab> {
       RevisionKeyCache<Map<String, InventoryCountLine>>();
   final RevisionKeyCache<Map<String, int>> _movementCountCache =
       RevisionKeyCache<Map<String, int>>();
+  Future<Map<String, int>?>? _movementCountsFuture;
+  String _movementCountsFutureKey = '';
 
   @override
   void didUpdateWidget(covariant _StockCountTab oldWidget) {
@@ -1332,7 +1639,94 @@ class _StockCountTabState extends State<_StockCountTab> {
       _productsCache.invalidate();
       _lineLookupCache.invalidate();
       _movementCountCache.invalidate();
+      _movementCountsFuture = null;
+      _movementCountsFutureKey = '';
     }
+  }
+
+  Map<String, DateTime> _countedAtByProduct(InventoryCountSession? active) {
+    final result = <String, DateTime>{};
+    if (active == null) return result;
+    for (final line in active.lines) {
+      final countedAt = line.countedAt;
+      if (countedAt == null) continue;
+      result[line.productId] = countedAt;
+    }
+    return result;
+  }
+
+  Map<String, int> _movementCountsFromMemory(
+    InventoryCountSession? active,
+    Map<String, DateTime> countedAtByProduct,
+  ) {
+    return _movementCountCache.getOrCompute(
+      widget.store.inventoryRevision,
+      active?.id ?? 'no_active',
+      () {
+        final counts = <String, int>{
+          for (final productId in countedAtByProduct.keys) productId: 0,
+        };
+        for (final movement in widget.store.stockMovements) {
+          final countedAt = countedAtByProduct[movement.productId];
+          if (countedAt == null) continue;
+          if (movement.type == 'count_adjustment' ||
+              !movement.date.isAfter(countedAt)) {
+            continue;
+          }
+          counts[movement.productId] = (counts[movement.productId] ?? 0) + 1;
+        }
+        return counts;
+      },
+    );
+  }
+
+  Future<Map<String, int>?> _movementCountsFromSqlite(
+    InventoryCountSession? active,
+    Map<String, DateTime> countedAtByProduct,
+  ) {
+    if (countedAtByProduct.isEmpty ||
+        !LocalDatabaseService.canQueryBusinessSqlite) {
+      return Future<Map<String, int>?>.value(null);
+    }
+    final key =
+        '${widget.store.inventoryRevision}|${active?.id ?? 'no_active'}|${countedAtByProduct.length}';
+    if (_movementCountsFuture == null || _movementCountsFutureKey != key) {
+      _movementCountsFutureKey = key;
+      _movementCountsFuture =
+          LocalDatabaseService.countStockMovementsAfterByProductFromSqlite(
+              countedAtByProduct);
+    }
+    return _movementCountsFuture!;
+  }
+
+  Widget _buildActiveStockCountCard(
+    AppLocalizations tr,
+    InventoryCountSession active,
+    List<Product> products,
+    Map<String, InventoryCountLine> lineLookup,
+    Map<String, int> movementCounts,
+  ) {
+    return Card(
+      child: Column(
+        children: [
+          ListTile(
+            leading:
+                const CircleAvatar(child: Icon(Icons.inventory_2_outlined)),
+            title:
+                Text('${tr.text('active_stock_count')} â€¢ ${active.countNo}'),
+            subtitle: Text(
+                '${tr.text('warehouse')}: ${active.warehouseName} â€¢ ${tr.text('started_at')}: ${active.createdAt.toLocal().toString().split('.').first}'),
+          ),
+          const Divider(height: 1),
+          for (final product in products.take(200))
+            _StockCountProductTile(
+                store: widget.store,
+                product: product,
+                line: lineLookup[product.id],
+                movementsAfter: movementCounts[product.id] ?? 0),
+        ],
+      ),
+    );
   }
 
   @override
@@ -1362,35 +1756,9 @@ class _StockCountTabState extends State<_StockCountTab> {
         return map;
       },
     );
-    final movementCounts = _movementCountCache.getOrCompute(
-      widget.store.inventoryRevision,
-      active?.id ?? 'no_active',
-      () {
-        final counts = <String, int>{};
-        if (active != null) {
-          final countedAtByProduct = <String, DateTime>{};
-          for (final line in active.lines) {
-            final countedAt = line.countedAt;
-            if (countedAt == null) continue;
-            countedAtByProduct[line.productId] = countedAt;
-            counts[line.productId] = 0;
-          }
-          if (countedAtByProduct.isNotEmpty) {
-            for (final movement in widget.store.stockMovements) {
-              final countedAt = countedAtByProduct[movement.productId];
-              if (countedAt == null) continue;
-              if (movement.type == 'count_adjustment' ||
-                  !movement.date.isAfter(countedAt)) {
-                continue;
-              }
-              counts[movement.productId] =
-                  (counts[movement.productId] ?? 0) + 1;
-            }
-          }
-        }
-        return counts;
-      },
-    );
+    final countedAtByProduct = _countedAtByProduct(active);
+    final fallbackMovementCounts =
+        _movementCountsFromMemory(active, countedAtByProduct);
     final needle = query.trim().toLowerCase();
     final products = _productsCache.getOrCompute(
       widget.store.inventoryRevision,
@@ -1474,6 +1842,19 @@ class _StockCountTabState extends State<_StockCountTab> {
             onChanged: (value) => setState(() => query = value),
           ),
           const SizedBox(height: 12),
+          FutureBuilder<Map<String, int>?>(
+            future: _movementCountsFromSqlite(active, countedAtByProduct),
+            builder: (context, snapshot) {
+              return _buildActiveStockCountCard(
+                tr,
+                active,
+                products,
+                lineLookup,
+                snapshot.data ?? fallbackMovementCounts,
+              );
+            },
+          ),
+          /*
           Card(
             child: Column(
               children: [
@@ -1495,6 +1876,7 @@ class _StockCountTabState extends State<_StockCountTab> {
               ],
             ),
           ),
+          */
         ],
         const SizedBox(height: 16),
         Card(
@@ -1568,7 +1950,8 @@ class _StockCountTabState extends State<_StockCountTab> {
                   child: Text(tr.text('cancel')),
                 ),
                 FilledButton(
-                  onPressed: () => Navigator.pop(dialogContext, selectedWarehouse),
+                  onPressed: () =>
+                      Navigator.pop(dialogContext, selectedWarehouse),
                   child: Text(tr.text('start')),
                 ),
               ],
@@ -1687,6 +2070,185 @@ class _StockCountProductTile extends StatelessWidget {
             .showSnackBar(SnackBar(content: Text(error.toString())));
       }
     }
+  }
+}
+
+class _WasteLossReportDb extends StatefulWidget {
+  const _WasteLossReportDb({required this.store});
+  final AppStore store;
+
+  @override
+  State<_WasteLossReportDb> createState() => _WasteLossReportDbState();
+}
+
+class _WasteLossReportDbState extends State<_WasteLossReportDb> {
+  Future<_StockMovementsQueryResult?>? _future;
+  String _futureKey = '';
+  int _visibleCount = 100;
+
+  Future<_StockMovementsQueryResult?> _queryWasteLossFromSqlite() {
+    final limit = _visibleCount.clamp(1, 500).toInt();
+    final key = '${widget.store.stockMovementsRevision}|$limit';
+    if (_future == null || _futureKey != key) {
+      _futureKey = key;
+      _future = () async {
+        final page = await LocalDatabaseService.queryWasteLossFromSqlite(
+          limit: limit,
+        );
+        if (page == null) return null;
+        return _StockMovementsQueryResult(
+          items: page.items,
+          totalCount: page.totalCount,
+        );
+      }();
+    }
+    return _future!;
+  }
+
+  void _loadMore(int totalCount) {
+    setState(() {
+      _visibleCount = math.min(totalCount, _visibleCount + 100);
+      _future = null;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.store.hasAnyPermission(<String>{
+      AppPermission.inventoryWasteView,
+      AppPermission.reportsView,
+      AppPermission.productsEdit,
+    })) {
+      return const _InventorySectionDenied(
+        title: 'Waste loss report',
+        message:
+            'Waste and loss reporting is not available for your current role.',
+      );
+    }
+    if (!LocalDatabaseService.canQueryBusinessSqlite) {
+      return _WasteLossReport(store: widget.store);
+    }
+    return FutureBuilder<_StockMovementsQueryResult?>(
+      future: _queryWasteLossFromSqlite(),
+      builder: (context, snapshot) {
+        final result = snapshot.data;
+        if (result == null &&
+            snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator.adaptive());
+        }
+        if (result == null || snapshot.hasError) {
+          return _WasteLossReport(store: widget.store);
+        }
+        return _WasteLossReportView(
+          store: widget.store,
+          movements: result.items,
+          totalCount: result.totalCount,
+          onLoadMore:
+              result.hasMore ? () => _loadMore(result.totalCount) : null,
+        );
+      },
+    );
+  }
+}
+
+class _WasteLossReportView extends StatelessWidget {
+  const _WasteLossReportView({
+    required this.store,
+    required this.movements,
+    required this.totalCount,
+    this.onLoadMore,
+  });
+
+  final AppStore store;
+  final List<StockMovement> movements;
+  final int totalCount;
+  final VoidCallback? onLoadMore;
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    final totals = <String, _WasteTotal>{};
+    double totalValue = 0;
+    double totalQty = 0;
+    for (final movement in movements) {
+      final key = movement.adjustmentCategory.isEmpty
+          ? 'other'
+          : movement.adjustmentCategory;
+      final current = totals[key] ?? _WasteTotal();
+      current.quantity += movement.quantity.abs();
+      current.value += movement.value;
+      current.count += 1;
+      totals[key] = current;
+      totalValue += movement.value;
+      totalQty += movement.quantity.abs();
+    }
+    return ListView(
+      padding: VentioResponsive.pageInsets(context),
+      children: [
+        Wrap(
+          spacing: 16,
+          runSpacing: 16,
+          children: [
+            SummaryCard(
+                title: tr.text('loss_movements'),
+                value: '$totalCount',
+                icon: Icons.report_problem_outlined),
+            SummaryCard(
+                title: tr.text('loss_quantity'),
+                value: totalQty.toStringAsFixed(
+                    totalQty.truncateToDouble() == totalQty ? 0 : 2),
+                icon: Icons.remove_circle_outline),
+            SummaryCard(
+                title: tr.text('loss_value'),
+                value: formatUsdReferenceAmount(totalValue, store.storeProfile),
+                icon: Icons.money_off_outlined),
+          ],
+        ),
+        const SizedBox(height: 20),
+        PageDataLoadIndicator(
+          loadedCount: movements.length,
+          totalCount: totalCount,
+        ),
+        const SizedBox(height: 12),
+        Card(
+          child: totals.isEmpty
+              ? Padding(
+                  padding: VentioResponsive.pageInsets(context),
+                  child: Text(tr.text('no_waste_loss_records')))
+              : Column(
+                  children: [
+                    ListTile(
+                        title: Text(tr.text('waste_loss_by_reason'),
+                            style: Theme.of(context).textTheme.titleMedium)),
+                    const Divider(height: 1),
+                    for (final entry in totals.entries) ...[
+                      ListTile(
+                        leading: const CircleAvatar(
+                            child: Icon(Icons.category_outlined)),
+                        title: Text(_adjustmentCategoryLabel(tr, entry.key)),
+                        subtitle: Text(
+                            '${tr.text('movements')}: ${entry.value.count} â€¢ ${tr.text('quantity')}: ${entry.value.quantity}'),
+                        trailing: Text(formatUsdReferenceAmount(
+                            entry.value.value, store.storeProfile)),
+                      ),
+                      const Divider(height: 1),
+                    ],
+                  ],
+                ),
+        ),
+        if (onLoadMore != null && movements.length < totalCount) ...[
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.center,
+            child: OutlinedButton.icon(
+              onPressed: onLoadMore,
+              icon: const Icon(Icons.expand_more),
+              label: const Text('Load more'),
+            ),
+          ),
+        ],
+      ],
+    );
   }
 }
 

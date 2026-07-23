@@ -96,6 +96,8 @@ class _SalesPageState extends State<SalesPage> {
   int _visibleInvoiceCount = 50;
   Future<_SalesQueryResult?>? _salesQueryFuture;
   String _salesQueryFutureKey = '';
+  Future<List<Product>?>? _visibleProductsFuture;
+  String _visibleProductsFutureKey = '';
   final Map<String, Future<Sale?>> _invoiceDetailsFutureById =
       <String, Future<Sale?>>{};
   final Set<String> _expandedInvoiceIds = <String>{};
@@ -176,6 +178,8 @@ class _SalesPageState extends State<SalesPage> {
       _invoiceSearchIndexCache.invalidate();
       _salesQueryFuture = null;
       _salesQueryFutureKey = '';
+      _visibleProductsFuture = null;
+      _visibleProductsFutureKey = '';
       _visibleInvoiceCount = 50;
       _invoiceSearchController.clear();
       _invoiceDetailsFutureById.clear();
@@ -421,6 +425,8 @@ class _SalesPageState extends State<SalesPage> {
   void _resetProductSearchReveal() {
     _productSearchRevealTimer?.cancel();
     _productSearchRevealTimer = null;
+    _visibleProductsFuture = null;
+    _visibleProductsFutureKey = '';
   }
 
   List<Product> _visibleProducts() {
@@ -443,6 +449,27 @@ class _SalesPageState extends State<SalesPage> {
             .toList(growable: false);
       },
     );
+  }
+
+  Future<List<Product>?> _visibleProductsFromSqlite() {
+    if (!LocalDatabaseService.canQueryBusinessSqlite) {
+      return Future<List<Product>?>.value(null);
+    }
+    final normalized = _search.trim().toLowerCase();
+    final limit = normalized.isEmpty ? 100 : 250;
+    final key = '${widget.store.productsRevision}|$normalized|$limit';
+    if (_visibleProductsFuture == null || _visibleProductsFutureKey != key) {
+      _visibleProductsFutureKey = key;
+      _visibleProductsFuture = () async {
+        final page = await LocalDatabaseService.queryProductsFromSqlite(
+          query: normalized,
+          limit: limit,
+          activeOnly: true,
+        );
+        return page?.items;
+      }();
+    }
+    return _visibleProductsFuture!;
   }
 
   bool _handleSaleHardwareShortcutKey(KeyEvent event) {
@@ -726,25 +753,29 @@ class _SalesPageState extends State<SalesPage> {
         if (snapshot.connectionState != ConnectionState.done) {
           return const Center(child: CircularProgressIndicator.adaptive());
         }
-        final products = _visibleProducts();
+        return FutureBuilder<List<Product>?>(
+          future: _visibleProductsFromSqlite(),
+          builder: (context, productSnapshot) {
+            final products = productSnapshot.data ?? _visibleProducts();
+            return Focus(
+              focusNode: _shortcutFocusNode,
+              autofocus: true,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final isWide = constraints.maxWidth > 980;
+                  final pagePadding = VentioResponsive.pagePadding(context);
 
-        return Focus(
-          focusNode: _shortcutFocusNode,
-          autofocus: true,
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final isWide = constraints.maxWidth > 980;
-              final pagePadding = VentioResponsive.pagePadding(context);
+                  if (!isWide) {
+                    return _buildMobileSalesLayout(
+                        context, tr, products, pagePadding);
+                  }
 
-              if (!isWide) {
-                return _buildMobileSalesLayout(
-                    context, tr, products, pagePadding);
-              }
-
-              return _buildDesktopSalesLayout(
-                  context, tr, products, pagePadding);
-            },
-          ),
+                  return _buildDesktopSalesLayout(
+                      context, tr, products, pagePadding);
+                },
+              ),
+            );
+          },
         );
       },
     );
@@ -1208,8 +1239,7 @@ class _SalesPageState extends State<SalesPage> {
                         ? null
                         : () => _openSaleDrawerDialog(status),
                     icon: const Icon(Icons.lock_open_outlined),
-                    label:
-                        Text(tr.isArabic ? 'فتح وردية' : 'Open shift'),
+                    label: Text(tr.isArabic ? 'فتح وردية' : 'Open shift'),
                   )
                 else
                   Wrap(
@@ -1220,9 +1250,8 @@ class _SalesPageState extends State<SalesPage> {
                             ? null
                             : () => _closeSaleDrawerDialog(openSession, status),
                         icon: const Icon(Icons.lock_outline),
-                        label: Text(tr.isArabic
-                            ? 'إغلاق / تسليم'
-                            : 'Close / Handover'),
+                        label: Text(
+                            tr.isArabic ? 'إغلاق / تسليم' : 'Close / Handover'),
                       ),
                     ],
                   ),
@@ -1234,7 +1263,8 @@ class _SalesPageState extends State<SalesPage> {
     );
   }
 
-  Widget _buildSalesWarehouseSelector(BuildContext context, AppLocalizations tr) {
+  Widget _buildSalesWarehouseSelector(
+      BuildContext context, AppLocalizations tr) {
     final activeWarehouses = widget.store.warehouses;
     final selectedWarehouse = activeWarehouses.firstWhere(
       (item) => item.id == _selectedWarehouseId,
@@ -1332,8 +1362,7 @@ class _SalesPageState extends State<SalesPage> {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, setDialogState) => AlertDialog(
-          title: Text(
-              tr.isArabic ? 'فتح وردية نقدية' : 'Open cash shift'),
+          title: Text(tr.isArabic ? 'فتح وردية نقدية' : 'Open cash shift'),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -1342,9 +1371,7 @@ class _SalesPageState extends State<SalesPage> {
                   initialValue:
                       selectedDrawerId.isEmpty ? null : selectedDrawerId,
                   decoration: InputDecoration(
-                      labelText: tr.isArabic
-                          ? 'درج النقدية'
-                          : 'Cash drawer'),
+                      labelText: tr.isArabic ? 'درج النقدية' : 'Cash drawer'),
                   items: drawers
                       .map((item) => DropdownMenuItem(
                             value: item.id,
@@ -1360,9 +1387,8 @@ class _SalesPageState extends State<SalesPage> {
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
                   decoration: InputDecoration(
-                      labelText: tr.isArabic
-                          ? 'مبلغ الافتتاح'
-                          : 'Opening amount'),
+                      labelText:
+                          tr.isArabic ? 'مبلغ الافتتاح' : 'Opening amount'),
                 ),
                 if (sources.isNotEmpty) ...[
                   const SizedBox(height: 12),
@@ -1380,9 +1406,8 @@ class _SalesPageState extends State<SalesPage> {
                       initialValue:
                           selectedFundingId.isEmpty ? null : selectedFundingId,
                       decoration: InputDecoration(
-                          labelText: tr.isArabic
-                              ? 'مصدر المبلغ'
-                              : 'Funding source'),
+                          labelText:
+                              tr.isArabic ? 'مصدر المبلغ' : 'Funding source'),
                       items: sources
                           .map((item) => DropdownMenuItem(
                                 value: item.id,
@@ -1468,9 +1493,8 @@ class _SalesPageState extends State<SalesPage> {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, setDialogState) => AlertDialog(
-          title: Text(tr.isArabic
-              ? 'إغلاق / تسليم الوردية'
-              : 'Close / handover shift'),
+          title: Text(
+              tr.isArabic ? 'إغلاق / تسليم الوردية' : 'Close / handover shift'),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -1484,17 +1508,15 @@ class _SalesPageState extends State<SalesPage> {
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
                   decoration: InputDecoration(
-                      labelText: tr.isArabic
-                          ? 'المبلغ المعدود'
-                          : 'Counted amount'),
+                      labelText:
+                          tr.isArabic ? 'المبلغ المعدود' : 'Counted amount'),
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
                   initialValue: closeMode,
                   decoration: InputDecoration(
-                      labelText: tr.isArabic
-                          ? 'طريقة الإغلاق'
-                          : 'Close action'),
+                      labelText:
+                          tr.isArabic ? 'طريقة الإغلاق' : 'Close action'),
                   items: [
                     DropdownMenuItem(
                       value: 'keep_drawer',
@@ -1607,8 +1629,7 @@ class _SalesPageState extends State<SalesPage> {
           notes.text.trim(),
           if (closeMode == 'transfer_location')
             'تحويل النقد بعد الإغلاق إلى $transferTargetName',
-          if (closeMode == 'handover_user')
-            'تسليم الوردية إلى $nextUserName',
+          if (closeMode == 'handover_user') 'تسليم الوردية إلى $nextUserName',
         ].where((part) => part.trim().isNotEmpty).join(' • ');
         await AccountingService.closeCashDrawer(
           sessionId: session.id,
@@ -1670,9 +1691,7 @@ class _SalesPageState extends State<SalesPage> {
                   onPressed:
                       widget.store.canSell ? _showSaleShiftQuickAction : null,
                   icon: const Icon(Icons.point_of_sale_outlined),
-                  label: Text(tr.isArabic
-                      ? 'إدارة الوردية'
-                      : 'Manage shift'),
+                  label: Text(tr.isArabic ? 'إدارة الوردية' : 'Manage shift'),
                 ),
                 OutlinedButton.icon(
                   onPressed: _showInvoicesSheet,
@@ -2909,7 +2928,7 @@ class _SalesPageState extends State<SalesPage> {
       _lastScannedCode = code;
       _lastScannedAt = now;
       _barcodeController.text = code;
-      _addByCode(code);
+      unawaited(_addByCode(code));
       return;
     }
   }
@@ -3077,10 +3096,10 @@ class _SalesPageState extends State<SalesPage> {
                 ],
               ),
             ),
-            onSubmitted: _addByCode,
+            onSubmitted: (value) => unawaited(_addByCode(value)),
           );
           final button = FilledButton.icon(
-              onPressed: () => _addByCode(_barcodeController.text),
+              onPressed: () => unawaited(_addByCode(_barcodeController.text)),
               icon: const Icon(Icons.add_shopping_cart),
               label: Text(tr.text('add_to_cart')));
           final preview = embedded
@@ -4778,14 +4797,30 @@ class _SalesPageState extends State<SalesPage> {
     return result;
   }
 
-  _BarcodeAddResult _addByCode(String code) {
+  Future<_BarcodeProductMatch?> _barcodeMatchFromSqlite(String code) async {
+    final row = await LocalDatabaseService.findSaleBarcodeProductFromSqlite(
+      code,
+    );
+    final productJson = row?['product'];
+    if (productJson is! Map) return null;
+    final product = Product.fromJson(Map<String, dynamic>.from(productJson));
+    final unitId = row?['unitId']?.toString() ?? 'base';
+    final unit = product.effectiveSaleUnits.firstWhere(
+      (item) => item.id == unitId,
+      orElse: () => product.effectiveSaleUnits.first,
+    );
+    return _BarcodeProductMatch(product: product, unit: unit);
+  }
+
+  Future<_BarcodeAddResult> _addByCode(String code) async {
     final cleanCode = code.trim();
     if (cleanCode.isEmpty) {
       _restoreScannerMode();
       return _BarcodeAddResult.empty;
     }
 
-    final match = _barcodeLookup()[cleanCode.toLowerCase()];
+    final match = await _barcodeMatchFromSqlite(cleanCode) ??
+        _barcodeLookup()[cleanCode.toLowerCase()];
     if (match == null) {
       _barcodeController.clear();
       _showBarcodeAddFeedback(_BarcodeAddResult.notFound);
@@ -5060,9 +5095,11 @@ class _SalesPageState extends State<SalesPage> {
                 cashReceivedAmount, _invoiceCurrency, _paymentCurrency)
             : _cashReceivedInPaymentCurrency,
         warehouseId: _selectedWarehouseId,
-        warehouseName: widget.store.resolveWarehouseForSale(
-          warehouseId: _selectedWarehouseId,
-        ).name,
+        warehouseName: widget.store
+            .resolveWarehouseForSale(
+              warehouseId: _selectedWarehouseId,
+            )
+            .name,
         items: _cart
             .map(
               (item) => SaleItem(

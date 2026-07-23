@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
+import '../../core/services/local_database_service.dart';
 import '../../data/app_store.dart';
 import '../../models/customer.dart';
 import '../../models/product.dart';
@@ -304,37 +305,60 @@ class _QuotationDialogState extends State<_QuotationDialog> {
   final TextEditingController _discountController = TextEditingController();
   final TextEditingController _noteController = TextEditingController();
   final List<SaleItem> _items = [];
-  late final List<Customer> _customers;
-  late final Map<String, Customer> _customerById;
-  late final List<DropdownMenuItem<String>> _customerItems;
-  late final List<Product> _products;
-  late final Map<String, Product> _productById;
-  late final List<DropdownMenuItem<String>> _productItems;
+  Future<void>? _optionsFuture;
+  List<Customer> _customers = const <Customer>[];
+  Map<String, Customer> _customerById = const <String, Customer>{};
+  List<DropdownMenuItem<String>> _customerItems =
+      const <DropdownMenuItem<String>>[];
+  List<Product> _products = const <Product>[];
+  Map<String, Product> _productById = const <String, Product>{};
+  List<DropdownMenuItem<String>> _productItems =
+      const <DropdownMenuItem<String>>[];
 
   @override
   void initState() {
     super.initState();
-    _customers = <Customer>[
-      widget.store.walkInCustomer,
-      ...widget.store.customers
-    ];
-    _customerById = {for (final customer in _customers) customer.id: customer};
-    _customerItems = [
-      for (final customer in _customers)
-        DropdownMenuItem(
-          value: customer.id,
-          child: Text(customer.name),
-        ),
-    ];
-    _products = widget.store.products;
-    _productById = {for (final product in _products) product.id: product};
-    _productItems = [
-      for (final product in _products)
-        DropdownMenuItem(
-          value: product.id,
-          child: Text(product.name),
-        ),
-    ];
+    _optionsFuture = _loadOptions();
+  }
+
+  Future<void> _loadOptions() async {
+    final sqliteCustomers = await LocalDatabaseService.queryCustomersFromSqlite(
+      limit: 250,
+      includeWalkIn: true,
+    );
+    final sqliteProducts = await LocalDatabaseService.queryProductsFromSqlite(
+      limit: 250,
+      activeOnly: true,
+    );
+    final customers = sqliteCustomers?.items ??
+        <Customer>[widget.store.walkInCustomer, ...widget.store.customers];
+    final products = sqliteProducts?.items ?? widget.store.products;
+    if (!mounted) return;
+    setState(() {
+      _customers = customers;
+      _customerById = {
+        for (final customer in _customers) customer.id: customer
+      };
+      if (!_customerById.containsKey(_customerId)) {
+        _customerId = AppStore.walkInCustomerId;
+      }
+      _customerItems = [
+        for (final customer in _customers)
+          DropdownMenuItem(
+            value: customer.id,
+            child: Text(customer.name),
+          ),
+      ];
+      _products = products;
+      _productById = {for (final product in _products) product.id: product};
+      _productItems = [
+        for (final product in _products)
+          DropdownMenuItem(
+            value: product.id,
+            child: Text(product.name),
+          ),
+      ];
+    });
   }
 
   @override
@@ -385,66 +409,18 @@ class _QuotationDialogState extends State<_QuotationDialog> {
     final tr = AppLocalizations.of(context);
     return AlertDialog(
       title: Text(tr.text('new_quotation')),
-      content: SizedBox(
-        width: 720,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              DropdownButtonFormField<String>(
-                initialValue: _customerId,
-                decoration: InputDecoration(labelText: tr.text('customer')),
-                items: _customerItems,
-                onChanged: (value) => setState(
-                    () => _customerId = value ?? AppStore.walkInCustomerId),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                initialValue: _invoiceCurrency,
-                decoration: InputDecoration(labelText: tr.text('currency')),
-                items: const [
-                  DropdownMenuItem(value: 'USD', child: Text('USD')),
-                  DropdownMenuItem(value: 'LBP', child: Text('LBP'))
-                ],
-                onChanged: (value) =>
-                    setState(() => _invoiceCurrency = value ?? 'USD'),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                decoration: InputDecoration(labelText: tr.text('add_product')),
-                items: _productItems,
-                onChanged: (value) {
-                  final product = value == null ? null : _productById[value];
-                  if (product != null) _addProduct(product);
-                },
-              ),
-              const SizedBox(height: 12),
-              ..._items.map((item) => ListTile(
-                    dense: true,
-                    title: Text(item.productName),
-                    subtitle: Text(
-                        '${item.quantity.toStringAsFixed(0)} x ${item.unitPrice.toStringAsFixed(2)}'),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.remove_circle_outline),
-                      onPressed: () => setState(() => _items.remove(item)),
-                    ),
-                  )),
-              TextField(
-                  controller: _discountController,
-                  keyboardType: TextInputType.number,
-                  decoration: InputDecoration(labelText: tr.text('discount')),
-                  onChanged: (_) => setState(() {})),
-              TextField(
-                  controller: _noteController,
-                  decoration: InputDecoration(labelText: tr.text('notes'))),
-              const SizedBox(height: 12),
-              Text(
-                  '${tr.text('total')}: ${_total.toStringAsFixed(2)} $_invoiceCurrency',
-                  style: Theme.of(context).textTheme.titleMedium),
-            ],
-          ),
-        ),
+      content: FutureBuilder<void>(
+        future: _optionsFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const SizedBox(
+              width: 420,
+              height: 160,
+              child: Center(child: CircularProgressIndicator.adaptive()),
+            );
+          }
+          return _buildFormContent(context, tr);
+        },
       ),
       actions: [
         TextButton(
@@ -469,6 +445,70 @@ class _QuotationDialogState extends State<_QuotationDialog> {
           child: Text(tr.text('save')),
         ),
       ],
+    );
+  }
+
+  Widget _buildFormContent(BuildContext context, AppLocalizations tr) {
+    return SizedBox(
+      width: 720,
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            DropdownButtonFormField<String>(
+              initialValue: _customerId,
+              decoration: InputDecoration(labelText: tr.text('customer')),
+              items: _customerItems,
+              onChanged: (value) => setState(
+                  () => _customerId = value ?? AppStore.walkInCustomerId),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              initialValue: _invoiceCurrency,
+              decoration: InputDecoration(labelText: tr.text('currency')),
+              items: const [
+                DropdownMenuItem(value: 'USD', child: Text('USD')),
+                DropdownMenuItem(value: 'LBP', child: Text('LBP'))
+              ],
+              onChanged: (value) =>
+                  setState(() => _invoiceCurrency = value ?? 'USD'),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              decoration: InputDecoration(labelText: tr.text('add_product')),
+              items: _productItems,
+              onChanged: (value) {
+                final product = value == null ? null : _productById[value];
+                if (product != null) _addProduct(product);
+              },
+            ),
+            const SizedBox(height: 12),
+            ..._items.map((item) => ListTile(
+                  dense: true,
+                  title: Text(item.productName),
+                  subtitle: Text(
+                      '${item.quantity.toStringAsFixed(0)} x ${item.unitPrice.toStringAsFixed(2)}'),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.remove_circle_outline),
+                    onPressed: () => setState(() => _items.remove(item)),
+                  ),
+                )),
+            TextField(
+                controller: _discountController,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(labelText: tr.text('discount')),
+                onChanged: (_) => setState(() {})),
+            TextField(
+                controller: _noteController,
+                decoration: InputDecoration(labelText: tr.text('notes'))),
+            const SizedBox(height: 12),
+            Text(
+                '${tr.text('total')}: ${_total.toStringAsFixed(2)} $_invoiceCurrency',
+                style: Theme.of(context).textTheme.titleMedium),
+          ],
+        ),
+      ),
     );
   }
 }

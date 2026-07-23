@@ -1320,17 +1320,25 @@ class _PurchasesPageState extends State<PurchasesPage> {
     final items = template == null
         ? <PurchaseItem>[]
         : List<PurchaseItem>.of(template.items);
-    var purchaseProducts = widget.store.products
-        .where((product) => product.trackStock && product.isActive)
-        .toList();
+    final sqliteProducts = await LocalDatabaseService.queryProductsFromSqlite(
+      limit: 250,
+      activeOnly: true,
+      stockTrackedOnly: true,
+    );
+    final sqliteSuppliers = await LocalDatabaseService.querySuppliersFromSqlite(
+      limit: 250,
+    );
+    if (!mounted) return;
+    var purchaseProducts = sqliteProducts?.items ??
+        widget.store.products
+            .where((product) => product.trackStock && product.isActive)
+            .toList();
+    var purchaseSuppliers = sqliteSuppliers?.items ??
+        widget.store.suppliers.toList(growable: false);
     String supplierId = template?.supplierId ??
-        (widget.store.suppliers.isNotEmpty
-            ? widget.store.suppliers.first.id
-            : '');
+        (purchaseSuppliers.isNotEmpty ? purchaseSuppliers.first.id : '');
     String supplierName = template?.supplierName ??
-        (widget.store.suppliers.isNotEmpty
-            ? widget.store.suppliers.first.name
-            : '');
+        (purchaseSuppliers.isNotEmpty ? purchaseSuppliers.first.name : '');
     final initialWarehouse = widget.store.resolveWarehouseForPurchase(
       warehouseId: template?.warehouseId ?? '',
     );
@@ -1339,13 +1347,11 @@ class _PurchasesPageState extends State<PurchasesPage> {
         ? template!.warehouseName
         : initialWarehouse.name;
     if (supplierId.isNotEmpty &&
-        !widget.store.suppliers.any((supplier) => supplier.id == supplierId)) {
-      supplierId = widget.store.suppliers.isNotEmpty
-          ? widget.store.suppliers.first.id
-          : '';
-      supplierName = widget.store.suppliers.isNotEmpty
-          ? widget.store.suppliers.first.name
-          : supplierName;
+        !purchaseSuppliers.any((supplier) => supplier.id == supplierId)) {
+      supplierId =
+          purchaseSuppliers.isNotEmpty ? purchaseSuppliers.first.id : '';
+      supplierName =
+          purchaseSuppliers.isNotEmpty ? purchaseSuppliers.first.name : '';
     }
     Product? selectedProduct =
         purchaseProducts.isNotEmpty ? purchaseProducts.first : null;
@@ -1552,6 +1558,13 @@ class _PurchasesPageState extends State<PurchasesPage> {
       if (created == null) return;
       try {
         await widget.store.addOrUpdateSupplier(created);
+        purchaseSuppliers = <Supplier>[created, ...purchaseSuppliers]
+            .fold<Map<String, Supplier>>(<String, Supplier>{}, (map, supplier) {
+              map[supplier.id] = supplier;
+              return map;
+            })
+            .values
+            .toList(growable: false);
         supplierId = created.id;
         supplierName = created.name;
         setDialogState(() {});
@@ -2242,6 +2255,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
           KeyEventResult.handled;
     }
 
+    if (!context.mounted) return;
     HardwareKeyboard.instance.addHandler(handlePurchaseDialogHardwareShortcut);
     try {
       await showModalBottomSheet<void>(
@@ -2388,7 +2402,7 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                                   decoration: InputDecoration(
                                                       labelText:
                                                           tr.text('supplier')),
-                                                  items: widget.store.suppliers
+                                                  items: purchaseSuppliers
                                                       .map((supplier) =>
                                                           DropdownMenuItem(
                                                               value:
@@ -2398,11 +2412,11 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                                                       .name)))
                                                       .toList(),
                                                   onChanged: (value) {
-                                                    final matches = widget
-                                                        .store.suppliers
-                                                        .where((s) =>
-                                                            s.id == value)
-                                                        .toList();
+                                                    final matches =
+                                                        purchaseSuppliers
+                                                            .where((s) =>
+                                                                s.id == value)
+                                                            .toList();
                                                     final supplier =
                                                         matches.isEmpty
                                                             ? null
@@ -2437,7 +2451,8 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                           DropdownButtonFormField<String>(
                                             initialValue: selectedWarehouseId,
                                             decoration: InputDecoration(
-                                                labelText: tr.text('warehouse')),
+                                                labelText:
+                                                    tr.text('warehouse')),
                                             items: widget.store.warehouses
                                                 .map(
                                                   (warehouse) =>
@@ -2448,9 +2463,8 @@ class _PurchasesPageState extends State<PurchasesPage> {
                                                 )
                                                 .toList(),
                                             onChanged: (value) {
-                                              final selected =
-                                                  widget.store
-                                                      .resolveWarehouseForPurchase(
+                                              final selected = widget.store
+                                                  .resolveWarehouseForPurchase(
                                                 warehouseId: value ?? '',
                                               );
                                               selectedWarehouseId = selected.id;

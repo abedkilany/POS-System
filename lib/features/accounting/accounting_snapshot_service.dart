@@ -1,7 +1,5 @@
-import 'dart:async';
 import 'dart:convert';
-
-import 'package:flutter/foundation.dart';
+import 'dart:async';
 
 import '../../core/services/local_database_service.dart';
 import '../../core/services/startup_timing_service.dart';
@@ -11,6 +9,7 @@ import '../../models/account_transaction.dart';
 class AccountingSnapshotService {
   const AccountingSnapshotService();
 
+  static const String _cacheKeyPrefix = 'accounting_metrics_summary_v1';
   static final Map<String, Future<Map<String, Object?>>> _summaryFutures =
       <String, Future<Map<String, Object?>>>{};
   static final Map<String, Map<String, Object?>> _summaryCache =
@@ -19,9 +18,18 @@ class AccountingSnapshotService {
   String _cacheKey(AppStore store, DateTime reference) =>
       '${store.appIdentity.storeId}:${store.accountingRevision}:${reference.year}-${reference.month}-${reference.day}';
 
+  String _sqliteCacheKey(AppStore store, DateTime reference) =>
+      '$_cacheKeyPrefix:${store.appIdentity.storeId}:${store.accountingRevision}:${reference.year}-${reference.month}-${reference.day}';
+
   Map<String, Object?>? peekMetrics(AppStore store, {DateTime? now}) {
     final reference = (now ?? DateTime.now()).toLocal();
-    return _summaryCache[_cacheKey(store, reference)];
+    final memoryCached = _summaryCache[_cacheKey(store, reference)];
+    if (memoryCached != null) return memoryCached;
+    final sqliteCached = _loadCachedMetrics(store, reference);
+    if (sqliteCached != null) {
+      _summaryCache[_cacheKey(store, reference)] = sqliteCached;
+    }
+    return sqliteCached;
   }
 
   Future<Map<String, Object?>> metricsFor(
@@ -52,15 +60,15 @@ class AccountingSnapshotService {
     AppStore store,
     DateTime reference,
   ) async {
-    if (store.isHeavyDataLoaded) {
-      final computed = await StartupTimingService.measure(
-        'accounting.snapshot_memory_metrics',
-        () async => _computeSnapshotFromStore(store, reference),
-        category: 'accounting',
-      );
-      _summaryCache[_cacheKey(store, reference)] = computed;
-      return computed;
+    final memoryCached = _summaryCache[_cacheKey(store, reference)];
+    if (memoryCached != null) return memoryCached;
+
+    final sqliteCached = _loadCachedMetrics(store, reference);
+    if (sqliteCached != null) {
+      _summaryCache[_cacheKey(store, reference)] = sqliteCached;
+      return sqliteCached;
     }
+
     if (LocalDatabaseService.canQueryBusinessSqlite) {
       try {
         final sqliteMetrics = await StartupTimingService.measure(
@@ -72,11 +80,12 @@ class AccountingSnapshotService {
         );
         if (sqliteMetrics != null) {
           _summaryCache[_cacheKey(store, reference)] = sqliteMetrics;
+          unawaited(_saveCachedMetrics(store, reference, sqliteMetrics));
           return sqliteMetrics;
         }
       } catch (_) {
-        // Keep the runtime SQLite-first. If the typed SQL path fails, use the
-        // already loaded in-memory store instead of falling back to raw JSON.
+        // Keep accounting DB-first; the in-memory store is only a safety net
+        // when typed SQL is unavailable or fails.
       }
     }
     final computed = await StartupTimingService.measure(
@@ -86,6 +95,38 @@ class AccountingSnapshotService {
     );
     _summaryCache[_cacheKey(store, reference)] = computed;
     return computed;
+  }
+
+  Map<String, Object?>? _loadCachedMetrics(AppStore store, DateTime reference) {
+    final cached =
+        LocalDatabaseService.getString(_sqliteCacheKey(store, reference));
+    if (cached == null || cached.trim().isEmpty) return null;
+    try {
+      final decoded = jsonDecode(cached);
+      if (decoded is! Map) return null;
+      return <String, Object?>{
+        for (final entry in decoded.entries)
+          entry.key.toString():
+              entry.value is num ? entry.value : entry.value?.toString(),
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _saveCachedMetrics(
+    AppStore store,
+    DateTime reference,
+    Map<String, Object?> metrics,
+  ) async {
+    try {
+      await LocalDatabaseService.setString(
+        _sqliteCacheKey(store, reference),
+        jsonEncode(metrics),
+      );
+    } catch (_) {
+      // Cache persistence is best-effort only.
+    }
   }
 }
 
@@ -152,83 +193,6 @@ Map<String, Object?> _computeSnapshotFromStore(
     'todayCashIn': todayCashIn,
     'todayCashOut': todayCashOut,
   };
-}
-
-Map<String, Object?> _computeSnapshot(Map<String, Object?> input) {
-  final reference = DateTime.parse(input['reference'].toString()).toLocal();
-  final today = DateTime(reference.year, reference.month, reference.day);
-  final transactions = _decodeList(
-    input['accountTransactionsJson'].toString(),
-    AccountTransaction.fromJson,
-  );
-
-  final accountBalances = <String, double>{};
-  var customerReceivables = 0.0;
-  var customerCredits = 0.0;
-  var supplierPayables = 0.0;
-  var supplierAdvances = 0.0;
-  var todayCashIn = 0.0;
-  var todayCashOut = 0.0;
-
-  for (final txn in transactions) {
-    if (txn.isDeleted) continue;
-    final type = txn.accountType.trim().toLowerCase();
-    final accountId = txn.accountId.trim();
-    if (accountId.isEmpty) continue;
-    if (type != 'customer' && type != 'supplier') continue;
-
-    final key = '$type|$accountId';
-    accountBalances[key] = (accountBalances[key] ?? 0) + txn.signedAmount;
-
-    final date = txn.date.toLocal();
-    if (date.year == today.year &&
-        date.month == today.month &&
-        date.day == today.day) {
-      if (_isCashIn(txn)) {
-        todayCashIn += _cashAmount(txn);
-      }
-      if (_isCashOut(txn)) {
-        todayCashOut += _cashAmount(txn);
-      }
-    }
-  }
-
-  for (final entry in accountBalances.entries) {
-    if (entry.key.startsWith('customer|')) {
-      if (entry.value > 0) {
-        customerReceivables += entry.value;
-      } else if (entry.value < 0) {
-        customerCredits += entry.value.abs();
-      }
-      continue;
-    }
-    if (entry.value < 0) {
-      supplierPayables += entry.value.abs();
-    } else if (entry.value > 0) {
-      supplierAdvances += entry.value;
-    }
-  }
-
-  return <String, Object?>{
-    'reference': reference.toIso8601String(),
-    'customerReceivables': customerReceivables,
-    'customerCredits': customerCredits,
-    'supplierPayables': supplierPayables,
-    'supplierAdvances': supplierAdvances,
-    'todayCashIn': todayCashIn,
-    'todayCashOut': todayCashOut,
-  };
-}
-
-List<T> _decodeList<T>(
-  String raw,
-  T Function(Map<String, dynamic>) fromJson,
-) {
-  if (raw.trim().isEmpty) return <T>[];
-  final decoded = jsonDecode(raw) as List<dynamic>;
-  return decoded
-      .map((item) => fromJson(Map<String, dynamic>.from(item as Map)))
-      .toList(growable: false);
 }
 
 bool _isCashIn(AccountTransaction txn) =>

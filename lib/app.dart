@@ -23,7 +23,6 @@ import 'core/services/page_timing_scope.dart';
 import 'core/services/startup_timing_service.dart';
 import 'data/app_store.dart';
 import 'features/dev_tools/stress_lab_coverage_manifest.dart';
-import 'features/accounting/accounting_snapshot_service.dart';
 import 'features/accounting/accounting_page.dart';
 import 'features/customers/customers_page.dart';
 import 'features/dashboard/dashboard_page.dart';
@@ -34,7 +33,6 @@ import 'features/inventory/manufacturing_page.dart';
 import 'features/maintenance/maintenance_page.dart';
 import 'features/products/products_page.dart';
 import 'features/purchases/purchases_page.dart';
-import 'features/reports/reports_snapshot_service.dart';
 import 'features/reports/reports_page.dart';
 import 'features/sales/sales_page.dart';
 import 'features/sales/quotations_page.dart';
@@ -84,7 +82,7 @@ class _VentioAppState extends State<VentioApp> {
   bool _syncStarted = false;
   bool _autoSnapshotProgressDialogOpen = false;
   bool _firstFrameMarked = false;
-  bool _cacheWarmStarted = false;
+  String _startupError = '';
 
   @override
   void initState() {
@@ -104,25 +102,32 @@ class _VentioAppState extends State<VentioApp> {
   }
 
   Future<void> _initializeApp() async {
-    await StartupTimingService.measure(
-      'ventio_app.initialize',
-      () async {
-        await _store.initialize();
-        final savedTheme = await _store.loadThemeMode();
-        final savedLocale = await _store.loadLocale();
-        if (mounted) {
-          setState(() {
-            _themeMode = savedTheme;
-            _locale = savedLocale;
-          });
-        }
-        if (_store.activeUser != null) {
-          unawaited(_startSyncAfterLogin());
-          unawaited(_primeDeferredPageCaches());
-        }
-      },
-      category: 'ui',
-    );
+    try {
+      await StartupTimingService.measure(
+        'ventio_app.initialize',
+        () async {
+          await _store.initialize();
+          final savedTheme = await _store.loadThemeMode();
+          final savedLocale = await _store.loadLocale();
+          if (mounted) {
+            setState(() {
+              _startupError = '';
+              _themeMode = savedTheme;
+              _locale = savedLocale;
+            });
+          }
+          if (_store.activeUser != null) {
+            unawaited(_startSyncAfterLogin());
+          }
+        },
+        category: 'ui',
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _startupError = error.toString();
+      });
+    }
   }
 
   Future<void> _startSyncAfterLogin() async {
@@ -135,25 +140,6 @@ class _VentioAppState extends State<VentioApp> {
         if (!mounted || _store.activeUser == null) return;
         unawaited(_autoSyncController.start());
         unawaited(_startCloudAndBackupAfterLogin());
-      },
-      category: 'app_store',
-    );
-  }
-
-  Future<void> _primeDeferredPageCaches() async {
-    if (_cacheWarmStarted || !_store.isReady || _store.activeUser == null) {
-      return;
-    }
-    _cacheWarmStarted = true;
-    await Future<void>.delayed(const Duration(seconds: 3));
-    if (!mounted || !_store.isReady || _store.activeUser == null) return;
-    await StartupTimingService.measure(
-      'ventio_app.prime_heavy_caches',
-      () async {
-        await Future.wait(<Future<void>>[
-          AccountingSnapshotService().prewarm(_store).catchError((_) {}),
-          ReportsSnapshotService().prewarm(_store).catchError((_) {}),
-        ]);
       },
       category: 'app_store',
     );
@@ -309,7 +295,39 @@ class _VentioAppState extends State<VentioApp> {
             GlobalWidgetsLocalizations.delegate,
             GlobalCupertinoLocalizations.delegate,
           ],
-          home: _store.isReady
+          home: _startupError.isNotEmpty
+              ? Scaffold(
+                  body: Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 560),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            Icon(Icons.error_outline,
+                                size: 56,
+                                color: Theme.of(context).colorScheme.error),
+                            const SizedBox(height: 16),
+                            Text(
+                              'تعذّر تشغيل التطبيق',
+                              textAlign: TextAlign.center,
+                              style: Theme.of(context).textTheme.headlineSmall,
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              _startupError,
+                              textAlign: TextAlign.center,
+                              style: Theme.of(context).textTheme.bodyMedium,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                )
+              : _store.isReady
               ? LoginGatePage(
                   store: _store,
                   onLocaleChanged: _changeLocale,

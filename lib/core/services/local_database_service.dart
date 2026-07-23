@@ -48,6 +48,7 @@ class LocalDatabaseService {
   static Map<String, String>? _webStore;
   static SharedPreferences? _webPreferences;
   static final Map<String, String> _sqliteMirror = <String, String>{};
+  static Future<void>? _initializeInFlight;
   static final Map<String, String> _pendingScalarWrites = <String, String>{};
   static final Set<String> _pendingScalarDeletes = <String>{};
   static final Map<String, List<_PendingBusinessEntityWrite>>
@@ -126,20 +127,48 @@ class LocalDatabaseService {
   static Future<void> initialize() async {
     if (_memoryStoreForTesting != null) return;
     if (_sqliteReady && SqliteMigrationManager.database != null) return;
-
-    if (kIsWeb) {
-      final prefs = await SharedPreferences.getInstance();
-      _webPreferences = prefs;
-      _webStore = <String, String>{
-        for (final key in prefs.getKeys())
-          if (prefs.getString(key) != null) key: prefs.getString(key)!,
-      };
+    final inFlight = _initializeInFlight;
+    if (inFlight != null) {
+      await inFlight;
       return;
     }
 
-    await StartupTimingService.measure(
+    final initFuture = _initializeInternal();
+    _initializeInFlight = initFuture;
+    try {
+      await initFuture;
+    } finally {
+      if (identical(_initializeInFlight, initFuture)) {
+        _initializeInFlight = null;
+      }
+    }
+  }
+
+  static Future<void> _initializeInternal() {
+    return StartupTimingService.measure(
       'local_database.sqlite_bootstrap',
       () async {
+        if (kIsWeb) {
+          try {
+            final prefs = await SharedPreferences.getInstance().timeout(
+              const Duration(seconds: 5),
+            );
+            _webPreferences = prefs;
+            _webStore = <String, String>{
+              for (final key in prefs.getKeys())
+                if (prefs.getString(key) != null) key: prefs.getString(key)!,
+            };
+          } catch (error, stackTrace) {
+            debugPrint(
+              'Web storage bootstrap fell back to in-memory mode: $error',
+            );
+            debugPrint('$stackTrace');
+            _webPreferences = null;
+            _webStore = <String, String>{};
+          }
+          return;
+        }
+
         final existingSqliteStatus = await StartupTimingService.measure(
           'sqlite_restore_or_validate',
           SqliteMigrationManager.initializeFromExistingSqliteIfValidated,
@@ -178,34 +207,52 @@ class LocalDatabaseService {
         _pendingSyncQueueItems.clear();
         _flushTimer?.cancel();
         _flushTimer = null;
-        await StartupTimingService.measure(
-          'migrate_complex_business_tables',
-          () => BusinessSqliteStore.migrateComplexTablesFromPayloadJson(
-            activeDb,
-          ),
-          category: 'database',
-        );
-        await StartupTimingService.measure(
-          'rebuild_business_tables_without_payload_json',
-          () => activeDb.rebuildBusinessTablesWithoutPayloadJson(),
-          category: 'database',
-        );
-        await StartupTimingService.measure(
-          'backfill_warehouse_inventory',
-          () => InventoryReconciliationRepository.backfillFromLegacyData(
-            activeDb,
-          ),
-          category: 'database',
-        );
         _sqliteReady = true;
-        await StartupTimingService.measure(
-          'hydrate_secure_scalars',
-          _hydrateAndMigrateSecureScalars,
-          category: 'database',
-        );
+        // Keep the app responsive on cold start. The deferred maintenance
+        // work is intentionally not kicked off automatically here anymore,
+        // because it can monopolize SQLite for several minutes on large data
+        // sets and block page navigation right after launch.
       },
       category: 'bootstrap',
     );
+  }
+
+  static Future<void> _runDeferredBootstrapMaintenance(
+    VentioDriftDatabase db,
+  ) async {
+    try {
+      await StartupTimingService.measure(
+        'local_database.sqlite_deferred_maintenance',
+        () async {
+          await StartupTimingService.measure(
+            'migrate_complex_business_tables',
+            () => BusinessSqliteStore.migrateComplexTablesFromPayloadJson(db),
+            category: 'database',
+          );
+          await StartupTimingService.measure(
+            'rebuild_business_tables_without_payload_json',
+            () => db.rebuildBusinessTablesWithoutPayloadJson(),
+            category: 'database',
+          );
+          await StartupTimingService.measure(
+            'backfill_warehouse_inventory',
+            () => InventoryReconciliationRepository.backfillFromLegacyData(db),
+            category: 'database',
+          );
+          await StartupTimingService.measure(
+            'hydrate_secure_scalars',
+            _hydrateAndMigrateSecureScalars,
+            category: 'database',
+          );
+        },
+        category: 'bootstrap',
+        details: 'deferred',
+      );
+    } catch (error, stackTrace) {
+      debugPrint(
+        '[STARTUP][bootstrap] deferred sqlite maintenance failed: $error\n$stackTrace',
+      );
+    }
   }
 
   static Map<String, String>? get _memoryStore => _memoryStoreForTesting;
@@ -375,7 +422,8 @@ class LocalDatabaseService {
     return InventoryRepository.getStockMovements();
   }
 
-  static Future<List<WarehouseInventory>?> getWarehouseInventoriesFromSqlite() async {
+  static Future<List<WarehouseInventory>?>
+      getWarehouseInventoriesFromSqlite() async {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
       return null;
     }
@@ -392,11 +440,13 @@ class LocalDatabaseService {
       ORDER BY store_id ASC, warehouse_id ASC, product_id ASC
     ''').get();
     return rows
-        .map((row) => WarehouseInventory.fromJson(Map<String, dynamic>.from(row.data)))
+        .map((row) =>
+            WarehouseInventory.fromJson(Map<String, dynamic>.from(row.data)))
         .toList(growable: false);
   }
 
-  static Future<List<InventoryReconciliation>?> getInventoryReconciliationsFromSqlite() async {
+  static Future<List<InventoryReconciliation>?>
+      getInventoryReconciliationsFromSqlite() async {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
       return null;
     }
@@ -414,11 +464,13 @@ class LocalDatabaseService {
       ORDER BY store_id ASC, warehouse_id ASC, product_id ASC
     ''').get();
     return rows
-        .map((row) => InventoryReconciliation.fromJson(Map<String, dynamic>.from(row.data)))
+        .map((row) => InventoryReconciliation.fromJson(
+            Map<String, dynamic>.from(row.data)))
         .toList(growable: false);
   }
 
-  static Future<List<Map<String, dynamic>>?> getStockOperationsFromSqlite() async {
+  static Future<List<Map<String, dynamic>>?>
+      getStockOperationsFromSqlite() async {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
       return null;
     }
@@ -441,7 +493,8 @@ class LocalDatabaseService {
         .toList(growable: false);
   }
 
-  static Future<List<Map<String, dynamic>>?> getInventoryMigrationAdjustmentsFromSqlite() async {
+  static Future<List<Map<String, dynamic>>?>
+      getInventoryMigrationAdjustmentsFromSqlite() async {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
       return null;
     }
@@ -541,6 +594,13 @@ class LocalDatabaseService {
     return SaleRepository.getById(id);
   }
 
+  static Future<List<Sale>?> queryEligibleDeliveryNoteSalesFromSqlite({
+    int limit = 100,
+  }) async {
+    if (!canQueryBusinessSqlite) return null;
+    return SaleRepository.queryEligibleDeliveryNoteSales(limit: limit);
+  }
+
   static Future<List<SaleQuotation>?> getSaleQuotationsFromSqlite() async {
     if (_memoryStore != null || _webStore != null || !_sqliteReady) {
       return null;
@@ -626,6 +686,54 @@ class LocalDatabaseService {
       return null;
     }
     return InventoryRepository.getInventoryCounts();
+  }
+
+  static Future<BusinessQueryPage<StockMovement>?>
+      queryStockMovementsFromSqlite({
+    String query = '',
+    String type = 'all',
+    String productId = '',
+    String warehouseId = '',
+    DateTime? from,
+    DateTime? to,
+    bool? reviewed,
+    int limit = 50,
+    int offset = 0,
+    String sortMode = 'newest',
+  }) async {
+    if (!canQueryBusinessSqlite) return null;
+    return InventoryRepository.queryStockMovementsPage(
+      query: query,
+      type: type,
+      productId: productId,
+      warehouseId: warehouseId,
+      from: from,
+      to: to,
+      reviewed: reviewed,
+      limit: limit,
+      offset: offset,
+      sortMode: sortMode,
+    );
+  }
+
+  static Future<BusinessQueryPage<StockMovement>?> queryWasteLossFromSqlite({
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    if (!canQueryBusinessSqlite) return null;
+    return InventoryRepository.queryWasteLossPage(
+      limit: limit,
+      offset: offset,
+    );
+  }
+
+  static Future<Map<String, int>?> countStockMovementsAfterByProductFromSqlite(
+    Map<String, DateTime> countedAtByProduct,
+  ) async {
+    if (!canQueryBusinessSqlite) return null;
+    return InventoryRepository.countStockMovementsAfterByProduct(
+      countedAtByProduct,
+    );
   }
 
   static Future<List<BillOfMaterials>?> getBillOfMaterialsFromSqlite() async {
@@ -777,6 +885,13 @@ class LocalDatabaseService {
     );
   }
 
+  static Future<Map<String, Object?>?> findSaleBarcodeProductFromSqlite(
+    String code,
+  ) async {
+    if (!canQueryBusinessSqlite) return null;
+    return ProductRepository.findSaleBarcodeProduct(code);
+  }
+
   static Future<List<String>?> queryProductCategoriesFromSqlite() async {
     if (!canQueryBusinessSqlite) return null;
     return ProductRepository.getCategories();
@@ -809,9 +924,36 @@ class LocalDatabaseService {
     );
   }
 
+  static Future<List<Map<String, Object?>>?>
+      queryAccountingAccountRowsFromSqlite({
+    required String accountType,
+    String query = '',
+    int limit = 200,
+  }) async {
+    if (!canQueryBusinessSqlite) return null;
+    return AccountingRepository.queryAccountRows(
+      accountType: accountType,
+      query: query,
+      limit: limit,
+    );
+  }
+
   static Future<void> upsertBusinessEntityJson(
       String key, Map<String, dynamic> payloadJson,
       {int? sortIndex}) async {
+    await upsertBusinessEntityJsons(
+      key,
+      <Map<String, dynamic>>[payloadJson],
+      sortIndices: <int?>[sortIndex],
+    );
+  }
+
+  static Future<void> upsertBusinessEntityJsons(
+    String key,
+    List<Map<String, dynamic>> payloadJsons, {
+    List<int?>? sortIndices,
+  }) async {
+    if (payloadJsons.isEmpty) return;
     final memory = _memoryStore;
     if (memory != null) {
       return;
@@ -824,13 +966,20 @@ class LocalDatabaseService {
     await BusinessSqliteStore.upsertEntityPayloads(
       db,
       key,
-      <Map<String, dynamic>>[Map<String, dynamic>.from(payloadJson)],
-      sortIndices: <int?>[sortIndex],
+      payloadJsons
+          .map((payload) => Map<String, dynamic>.from(payload))
+          .toList(growable: false),
+      sortIndices: sortIndices,
     );
     _sqliteMirror.remove(key);
   }
 
   static Future<void> upsertSyncChange(SyncChange change) async {
+    await upsertSyncChanges(<SyncChange>[change]);
+  }
+
+  static Future<void> upsertSyncChanges(List<SyncChange> changes) async {
+    if (changes.isEmpty) return;
     final memory = _memoryStore;
     if (memory != null) {
       return;
@@ -840,11 +989,16 @@ class LocalDatabaseService {
     }
     final db = SqliteMigrationManager.database;
     if (!_sqliteReady || db == null) return;
-    await SyncSqliteStore.upsertSyncChange(db, change);
+    await SyncSqliteStore.upsertSyncChanges(db, changes);
     _sqliteMirror.remove(SyncSqliteStore.syncChangesKey);
   }
 
   static Future<void> upsertSyncQueueItem(SyncQueueItem item) async {
+    await upsertSyncQueueItems(<SyncQueueItem>[item]);
+  }
+
+  static Future<void> upsertSyncQueueItems(List<SyncQueueItem> items) async {
+    if (items.isEmpty) return;
     final memory = _memoryStore;
     if (memory != null) {
       return;
@@ -854,7 +1008,7 @@ class LocalDatabaseService {
     }
     final db = SqliteMigrationManager.database;
     if (!_sqliteReady || db == null) return;
-    await SyncSqliteStore.upsertSyncQueueItem(db, item);
+    await SyncSqliteStore.upsertSyncQueueItems(db, items);
     _sqliteMirror.remove(SyncSqliteStore.syncQueueKey);
   }
 
@@ -1022,10 +1176,8 @@ class LocalDatabaseService {
   }
 
   static Future<void> replaceBusinessEntityJsonListImmediate(
-    String key,
-    List<Map<String, dynamic>> payloads,
-    {List<int?>? sortIndices}
-  ) async {
+      String key, List<Map<String, dynamic>> payloads,
+      {List<int?>? sortIndices}) async {
     var orderedPayloads = payloads;
     if (sortIndices != null && sortIndices.length == payloads.length) {
       final entries = <({Map<String, dynamic> payload, int? sortIndex})>[];
@@ -1077,17 +1229,34 @@ class LocalDatabaseService {
         ''',
         variables: <Variable<Object>>[
           Variable<String>(row['id']?.toString() ?? ''),
-          Variable<String>(row['storeId']?.toString() ?? row['store_id']?.toString() ?? ''),
-          Variable<String>(row['branchId']?.toString() ?? row['branch_id']?.toString() ?? 'main'),
-          Variable<String>(row['warehouseId']?.toString() ?? row['warehouse_id']?.toString() ?? ''),
-          Variable<String>(row['productId']?.toString() ?? row['product_id']?.toString() ?? ''),
+          Variable<String>(
+              row['storeId']?.toString() ?? row['store_id']?.toString() ?? ''),
+          Variable<String>(row['branchId']?.toString() ??
+              row['branch_id']?.toString() ??
+              'main'),
+          Variable<String>(row['warehouseId']?.toString() ??
+              row['warehouse_id']?.toString() ??
+              ''),
+          Variable<String>(row['productId']?.toString() ??
+              row['product_id']?.toString() ??
+              ''),
           Variable<double>(_doubleValue(row['quantity'], fallback: 0)),
           Variable<int>(_intValue(row['version'], fallback: 1)),
-          Variable<String>(row['createdAt']?.toString() ?? row['created_at']?.toString() ?? DateTime.now().toIso8601String()),
-          Variable<String>(row['updatedAt']?.toString() ?? row['updated_at']?.toString() ?? DateTime.now().toIso8601String()),
-          Variable<String>(row['deviceId']?.toString() ?? row['device_id']?.toString() ?? ''),
-          Variable<String>(row['syncStatus']?.toString() ?? row['sync_status']?.toString() ?? 'synced'),
-          Variable<String>(row['lastModifiedByDeviceId']?.toString() ?? row['last_modified_by_device_id']?.toString() ?? ''),
+          Variable<String>(row['createdAt']?.toString() ??
+              row['created_at']?.toString() ??
+              DateTime.now().toIso8601String()),
+          Variable<String>(row['updatedAt']?.toString() ??
+              row['updated_at']?.toString() ??
+              DateTime.now().toIso8601String()),
+          Variable<String>(row['deviceId']?.toString() ??
+              row['device_id']?.toString() ??
+              ''),
+          Variable<String>(row['syncStatus']?.toString() ??
+              row['sync_status']?.toString() ??
+              'synced'),
+          Variable<String>(row['lastModifiedByDeviceId']?.toString() ??
+              row['last_modified_by_device_id']?.toString() ??
+              ''),
         ],
       );
     }
@@ -1113,22 +1282,50 @@ class LocalDatabaseService {
         ''',
         variables: <Variable<Object>>[
           Variable<String>(row['id']?.toString() ?? ''),
-          Variable<String>(row['storeId']?.toString() ?? row['store_id']?.toString() ?? ''),
-          Variable<String>(row['branchId']?.toString() ?? row['branch_id']?.toString() ?? 'main'),
-          Variable<String>(row['operationType']?.toString() ?? row['operation_type']?.toString() ?? ''),
-          Variable<String>(row['documentType']?.toString() ?? row['document_type']?.toString() ?? ''),
-          Variable<String>(row['documentId']?.toString() ?? row['document_id']?.toString() ?? ''),
-          Variable<String>(row['movementGroupId']?.toString() ?? row['movement_group_id']?.toString() ?? ''),
-          Variable<String>(row['idempotencyKey']?.toString() ?? row['idempotency_key']?.toString() ?? ''),
+          Variable<String>(
+              row['storeId']?.toString() ?? row['store_id']?.toString() ?? ''),
+          Variable<String>(row['branchId']?.toString() ??
+              row['branch_id']?.toString() ??
+              'main'),
+          Variable<String>(row['operationType']?.toString() ??
+              row['operation_type']?.toString() ??
+              ''),
+          Variable<String>(row['documentType']?.toString() ??
+              row['document_type']?.toString() ??
+              ''),
+          Variable<String>(row['documentId']?.toString() ??
+              row['document_id']?.toString() ??
+              ''),
+          Variable<String>(row['movementGroupId']?.toString() ??
+              row['movement_group_id']?.toString() ??
+              ''),
+          Variable<String>(row['idempotencyKey']?.toString() ??
+              row['idempotency_key']?.toString() ??
+              ''),
           Variable<String>(row['status']?.toString() ?? 'pending'),
-          Variable<String>(row['createdAt']?.toString() ?? row['created_at']?.toString() ?? DateTime.now().toIso8601String()),
-          Variable<String>(row['startedAt']?.toString() ?? row['started_at']?.toString() ?? ''),
-          Variable<String>(row['updatedAt']?.toString() ?? row['updated_at']?.toString() ?? ''),
-          Variable<String>(row['completedAt']?.toString() ?? row['completed_at']?.toString() ?? ''),
-          Variable<String>(row['failureReason']?.toString() ?? row['failure_reason']?.toString() ?? ''),
-          Variable<int>(_intValue(row['attemptCount'] ?? row['attempt_count'], fallback: 0)),
-          Variable<String>(row['deviceId']?.toString() ?? row['device_id']?.toString() ?? ''),
-          Variable<String>(row['lastModifiedByDeviceId']?.toString() ?? row['last_modified_by_device_id']?.toString() ?? ''),
+          Variable<String>(row['createdAt']?.toString() ??
+              row['created_at']?.toString() ??
+              DateTime.now().toIso8601String()),
+          Variable<String>(row['startedAt']?.toString() ??
+              row['started_at']?.toString() ??
+              ''),
+          Variable<String>(row['updatedAt']?.toString() ??
+              row['updated_at']?.toString() ??
+              ''),
+          Variable<String>(row['completedAt']?.toString() ??
+              row['completed_at']?.toString() ??
+              ''),
+          Variable<String>(row['failureReason']?.toString() ??
+              row['failure_reason']?.toString() ??
+              ''),
+          Variable<int>(_intValue(row['attemptCount'] ?? row['attempt_count'],
+              fallback: 0)),
+          Variable<String>(row['deviceId']?.toString() ??
+              row['device_id']?.toString() ??
+              ''),
+          Variable<String>(row['lastModifiedByDeviceId']?.toString() ??
+              row['last_modified_by_device_id']?.toString() ??
+              ''),
         ],
       );
     }
@@ -1158,39 +1355,97 @@ class LocalDatabaseService {
         ''',
         variables: <Variable<Object>>[
           Variable<String>(row['id']?.toString() ?? ''),
-          Variable<String>(row['entityType']?.toString() ?? row['entity_type']?.toString() ?? 'stock_movement'),
-          Variable<String>(row['createdAt']?.toString() ?? row['created_at']?.toString() ?? DateTime.now().toIso8601String()),
-          Variable<String>(row['updatedAt']?.toString() ?? row['updated_at']?.toString() ?? DateTime.now().toIso8601String()),
-          Variable<String>(row['deletedAt']?.toString() ?? row['deleted_at']?.toString() ?? ''),
-          Variable<String>(row['deviceId']?.toString() ?? row['device_id']?.toString() ?? ''),
-          Variable<String>(row['syncStatus']?.toString() ?? row['sync_status']?.toString() ?? 'pending'),
-          Variable<String>(row['storeId']?.toString() ?? row['store_id']?.toString() ?? ''),
-          Variable<String>(row['branchId']?.toString() ?? row['branch_id']?.toString() ?? 'main'),
+          Variable<String>(row['entityType']?.toString() ??
+              row['entity_type']?.toString() ??
+              'stock_movement'),
+          Variable<String>(row['createdAt']?.toString() ??
+              row['created_at']?.toString() ??
+              DateTime.now().toIso8601String()),
+          Variable<String>(row['updatedAt']?.toString() ??
+              row['updated_at']?.toString() ??
+              DateTime.now().toIso8601String()),
+          Variable<String>(row['deletedAt']?.toString() ??
+              row['deleted_at']?.toString() ??
+              ''),
+          Variable<String>(row['deviceId']?.toString() ??
+              row['device_id']?.toString() ??
+              ''),
+          Variable<String>(row['syncStatus']?.toString() ??
+              row['sync_status']?.toString() ??
+              'pending'),
+          Variable<String>(
+              row['storeId']?.toString() ?? row['store_id']?.toString() ?? ''),
+          Variable<String>(row['branchId']?.toString() ??
+              row['branch_id']?.toString() ??
+              'main'),
           Variable<int>(_intValue(row['version'], fallback: 1)),
-          Variable<int>(_intValue(row['sortIndex'] ?? row['sort_index'], fallback: 0)),
-          Variable<String>(row['productId']?.toString() ?? row['product_id']?.toString() ?? ''),
-          Variable<String>(row['productName']?.toString() ?? row['product_name']?.toString() ?? ''),
-          Variable<String>(row['movementType']?.toString() ?? row['movement_type']?.toString() ?? row['type']?.toString() ?? 'adjustment'),
+          Variable<int>(
+              _intValue(row['sortIndex'] ?? row['sort_index'], fallback: 0)),
+          Variable<String>(row['productId']?.toString() ??
+              row['product_id']?.toString() ??
+              ''),
+          Variable<String>(row['productName']?.toString() ??
+              row['product_name']?.toString() ??
+              ''),
+          Variable<String>(row['movementType']?.toString() ??
+              row['movement_type']?.toString() ??
+              row['type']?.toString() ??
+              'adjustment'),
           Variable<double>(_doubleValue(row['quantity'], fallback: 0)),
-          Variable<String>(row['movementDate']?.toString() ?? row['movement_date']?.toString() ?? row['date']?.toString() ?? DateTime.now().toIso8601String()),
-          Variable<String>(row['referenceId']?.toString() ?? row['reference_id']?.toString() ?? ''),
-          Variable<String>(row['referenceNo']?.toString() ?? row['reference_no']?.toString() ?? ''),
+          Variable<String>(row['movementDate']?.toString() ??
+              row['movement_date']?.toString() ??
+              row['date']?.toString() ??
+              DateTime.now().toIso8601String()),
+          Variable<String>(row['referenceId']?.toString() ??
+              row['reference_id']?.toString() ??
+              ''),
+          Variable<String>(row['referenceNo']?.toString() ??
+              row['reference_no']?.toString() ??
+              ''),
           Variable<String>(row['reason']?.toString() ?? ''),
-          Variable<String>(row['adjustmentCategory']?.toString() ?? row['adjustment_category']?.toString() ?? ''),
+          Variable<String>(row['adjustmentCategory']?.toString() ??
+              row['adjustment_category']?.toString() ??
+              ''),
           Variable<String>(row['notes']?.toString() ?? ''),
-          Variable<String>(row['evidenceRef']?.toString() ?? row['evidence_ref']?.toString() ?? ''),
-          Variable<String>(row['warehouseId']?.toString() ?? row['warehouse_id']?.toString() ?? 'main'),
-          Variable<String>(row['warehouseName']?.toString() ?? row['warehouse_name']?.toString() ?? 'Main warehouse'),
-          Variable<String>(row['movementGroupId']?.toString() ?? row['movement_group_id']?.toString() ?? ''),
-          Variable<String>(row['documentLineId']?.toString() ?? row['document_line_id']?.toString() ?? ''),
-          Variable<String>(row['sourceMovementId']?.toString() ?? row['source_movement_id']?.toString() ?? ''),
-          Variable<String>(row['reversalOfMovementId']?.toString() ?? row['reversal_of_movement_id']?.toString() ?? ''),
-          Variable<String>(row['idempotencyKey']?.toString() ?? row['idempotency_key']?.toString() ?? ''),
-          Variable<double>(_doubleValue(row['unitCost'] ?? row['unit_cost'], fallback: 0)),
-          Variable<String>(row['lastModifiedByDeviceId']?.toString() ?? row['last_modified_by_device_id']?.toString() ?? row['device_id']?.toString() ?? ''),
-          Variable<String>(row['reviewedAt']?.toString() ?? row['reviewed_at']?.toString() ?? ''),
-          Variable<String>(row['reviewedBy']?.toString() ?? row['reviewed_by']?.toString() ?? ''),
-          Variable<String>(row['reviewNote']?.toString() ?? row['review_note']?.toString() ?? ''),
+          Variable<String>(row['evidenceRef']?.toString() ??
+              row['evidence_ref']?.toString() ??
+              ''),
+          Variable<String>(row['warehouseId']?.toString() ??
+              row['warehouse_id']?.toString() ??
+              'main'),
+          Variable<String>(row['warehouseName']?.toString() ??
+              row['warehouse_name']?.toString() ??
+              'Main warehouse'),
+          Variable<String>(row['movementGroupId']?.toString() ??
+              row['movement_group_id']?.toString() ??
+              ''),
+          Variable<String>(row['documentLineId']?.toString() ??
+              row['document_line_id']?.toString() ??
+              ''),
+          Variable<String>(row['sourceMovementId']?.toString() ??
+              row['source_movement_id']?.toString() ??
+              ''),
+          Variable<String>(row['reversalOfMovementId']?.toString() ??
+              row['reversal_of_movement_id']?.toString() ??
+              ''),
+          Variable<String>(row['idempotencyKey']?.toString() ??
+              row['idempotency_key']?.toString() ??
+              ''),
+          Variable<double>(
+              _doubleValue(row['unitCost'] ?? row['unit_cost'], fallback: 0)),
+          Variable<String>(row['lastModifiedByDeviceId']?.toString() ??
+              row['last_modified_by_device_id']?.toString() ??
+              row['device_id']?.toString() ??
+              ''),
+          Variable<String>(row['reviewedAt']?.toString() ??
+              row['reviewed_at']?.toString() ??
+              ''),
+          Variable<String>(row['reviewedBy']?.toString() ??
+              row['reviewed_by']?.toString() ??
+              ''),
+          Variable<String>(row['reviewNote']?.toString() ??
+              row['review_note']?.toString() ??
+              ''),
         ],
       );
     }
@@ -1215,19 +1470,38 @@ class LocalDatabaseService {
         ''',
         variables: <Variable<Object>>[
           Variable<String>(row['id']?.toString() ?? ''),
-          Variable<String>(row['storeId']?.toString() ?? row['store_id']?.toString() ?? ''),
-          Variable<String>(row['branchId']?.toString() ?? row['branch_id']?.toString() ?? 'main'),
-          Variable<String>(row['warehouseId']?.toString() ?? row['warehouse_id']?.toString() ?? ''),
-          Variable<String>(row['productId']?.toString() ?? row['product_id']?.toString() ?? ''),
-          Variable<double>(_doubleValue(row['legacyProductStock'] ?? row['legacy_product_stock'], fallback: 0)),
-          Variable<double>(_doubleValue(row['ledgerBalance'] ?? row['ledger_balance'], fallback: 0)),
-          Variable<double>(_doubleValue(row['warehouseBalance'] ?? row['warehouse_balance'], fallback: 0)),
+          Variable<String>(
+              row['storeId']?.toString() ?? row['store_id']?.toString() ?? ''),
+          Variable<String>(row['branchId']?.toString() ??
+              row['branch_id']?.toString() ??
+              'main'),
+          Variable<String>(row['warehouseId']?.toString() ??
+              row['warehouse_id']?.toString() ??
+              ''),
+          Variable<String>(row['productId']?.toString() ??
+              row['product_id']?.toString() ??
+              ''),
+          Variable<double>(_doubleValue(
+              row['legacyProductStock'] ?? row['legacy_product_stock'],
+              fallback: 0)),
+          Variable<double>(_doubleValue(
+              row['ledgerBalance'] ?? row['ledger_balance'],
+              fallback: 0)),
+          Variable<double>(_doubleValue(
+              row['warehouseBalance'] ?? row['warehouse_balance'],
+              fallback: 0)),
           Variable<double>(_doubleValue(row['difference'], fallback: 0)),
           Variable<String>(row['classification']?.toString() ?? ''),
           Variable<String>(row['status']?.toString() ?? 'open'),
-          Variable<String>(row['createdAt']?.toString() ?? row['created_at']?.toString() ?? DateTime.now().toIso8601String()),
-          Variable<String>(row['resolvedAt']?.toString() ?? row['resolved_at']?.toString() ?? ''),
-          Variable<String>(row['resolutionNote']?.toString() ?? row['resolution_note']?.toString() ?? ''),
+          Variable<String>(row['createdAt']?.toString() ??
+              row['created_at']?.toString() ??
+              DateTime.now().toIso8601String()),
+          Variable<String>(row['resolvedAt']?.toString() ??
+              row['resolved_at']?.toString() ??
+              ''),
+          Variable<String>(row['resolutionNote']?.toString() ??
+              row['resolution_note']?.toString() ??
+              ''),
         ],
       );
     }
@@ -1252,16 +1526,35 @@ class LocalDatabaseService {
         ''',
         variables: <Variable<Object>>[
           Variable<String>(row['id']?.toString() ?? ''),
-          Variable<String>(row['migrationBatchId']?.toString() ?? row['migration_batch_id']?.toString() ?? ''),
-          Variable<String>(row['storeId']?.toString() ?? row['store_id']?.toString() ?? ''),
-          Variable<String>(row['branchId']?.toString() ?? row['branch_id']?.toString() ?? 'main'),
-          Variable<String>(row['warehouseId']?.toString() ?? row['warehouse_id']?.toString() ?? ''),
-          Variable<String>(row['productId']?.toString() ?? row['product_id']?.toString() ?? ''),
-          Variable<double>(_doubleValue(row['legacyProductStock'] ?? row['legacy_product_stock'], fallback: 0)),
-          Variable<double>(_doubleValue(row['ledgerBalance'] ?? row['ledger_balance'], fallback: 0)),
-          Variable<double>(_doubleValue(row['appliedDelta'] ?? row['applied_delta'], fallback: 0)),
-          Variable<String>(row['createdAt']?.toString() ?? row['created_at']?.toString() ?? DateTime.now().toIso8601String()),
-          Variable<String>(row['updatedAt']?.toString() ?? row['updated_at']?.toString() ?? DateTime.now().toIso8601String()),
+          Variable<String>(row['migrationBatchId']?.toString() ??
+              row['migration_batch_id']?.toString() ??
+              ''),
+          Variable<String>(
+              row['storeId']?.toString() ?? row['store_id']?.toString() ?? ''),
+          Variable<String>(row['branchId']?.toString() ??
+              row['branch_id']?.toString() ??
+              'main'),
+          Variable<String>(row['warehouseId']?.toString() ??
+              row['warehouse_id']?.toString() ??
+              ''),
+          Variable<String>(row['productId']?.toString() ??
+              row['product_id']?.toString() ??
+              ''),
+          Variable<double>(_doubleValue(
+              row['legacyProductStock'] ?? row['legacy_product_stock'],
+              fallback: 0)),
+          Variable<double>(_doubleValue(
+              row['ledgerBalance'] ?? row['ledger_balance'],
+              fallback: 0)),
+          Variable<double>(_doubleValue(
+              row['appliedDelta'] ?? row['applied_delta'],
+              fallback: 0)),
+          Variable<String>(row['createdAt']?.toString() ??
+              row['created_at']?.toString() ??
+              DateTime.now().toIso8601String()),
+          Variable<String>(row['updatedAt']?.toString() ??
+              row['updated_at']?.toString() ??
+              DateTime.now().toIso8601String()),
           Variable<String>(row['notes']?.toString() ?? ''),
         ],
       );
@@ -1305,17 +1598,21 @@ class LocalDatabaseService {
       }
       final warehouseInventory = await getWarehouseInventoriesFromSqlite();
       if (warehouseInventory != null) {
-        entries['warehouse_inventory'] =
-            jsonEncode(warehouseInventory.map((item) => item.toJson()).toList(growable: false));
+        entries['warehouse_inventory'] = jsonEncode(warehouseInventory
+            .map((item) => item.toJson())
+            .toList(growable: false));
       }
       final stockOperations = await getStockOperationsFromSqlite();
       if (stockOperations != null) {
         entries['stock_operations'] = jsonEncode(stockOperations);
       }
-      final inventoryReconciliations = await getInventoryReconciliationsFromSqlite();
+      final inventoryReconciliations =
+          await getInventoryReconciliationsFromSqlite();
       if (inventoryReconciliations != null) {
         entries['inventory_reconciliations'] = jsonEncode(
-          inventoryReconciliations.map((item) => item.toJson()).toList(growable: false),
+          inventoryReconciliations
+              .map((item) => item.toJson())
+              .toList(growable: false),
         );
       }
       final inventoryMigrationAdjustments =

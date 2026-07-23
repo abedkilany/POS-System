@@ -82,7 +82,8 @@ class SettingsPage extends StatelessWidget {
               icon: Icons.store_outlined,
               label: tr.text('store_information'),
               description: tr.text('store_information_desc')),
-          page: _settingsList(context, _generalCards(context)),
+          pageBuilder: (context) =>
+              _settingsList(context, _generalCards(context)),
         ),
       if (canAccessGeneralSettings)
         _SettingsSection(
@@ -90,7 +91,8 @@ class SettingsPage extends StatelessWidget {
               icon: Icons.description_outlined,
               label: tr.text('document_settings'),
               description: tr.text('document_settings_desc')),
-          page: _settingsList(context, _documentCards(context)),
+          pageBuilder: (context) =>
+              _settingsList(context, _documentCards(context)),
         ),
       if (canAccessGeneralSettings)
         _SettingsSection(
@@ -98,7 +100,8 @@ class SettingsPage extends StatelessWidget {
               icon: Icons.account_tree_outlined,
               label: tr.text('branches'),
               description: tr.text('branches_desc')),
-          page: _settingsList(context, _branchCards(context)),
+          pageBuilder: (context) =>
+              _settingsList(context, _branchCards(context)),
         ),
       if (canAccessGeneralSettings)
         _SettingsSection(
@@ -106,7 +109,7 @@ class SettingsPage extends StatelessWidget {
               icon: Icons.receipt_long_outlined,
               label: tr.text('tax_settings'),
               description: tr.text('tax_settings_desc')),
-          page: _settingsList(context, _taxCards(context)),
+          pageBuilder: (context) => _settingsList(context, _taxCards(context)),
         ),
       if (canAccessGeneralSettings)
         _SettingsSection(
@@ -114,7 +117,8 @@ class SettingsPage extends StatelessWidget {
               icon: Icons.currency_exchange_outlined,
               label: tr.text('currencies'),
               description: tr.text('currencies_pricing_desc')),
-          page: _settingsList(context, _financialCards(context)),
+          pageBuilder: (context) =>
+              _settingsList(context, _financialCards(context)),
         ),
       if (canAccessGeneralSettings)
         _SettingsSection(
@@ -122,7 +126,8 @@ class SettingsPage extends StatelessWidget {
               icon: Icons.account_balance_wallet_outlined,
               label: tr.text('banks_cash_drawers'),
               description: tr.text('banks_cash_drawers_desc')),
-          page: _settingsList(context, _cashBankCards(context)),
+          pageBuilder: (context) =>
+              _settingsList(context, _cashBankCards(context)),
         ),
       if (canAccessSyncSettings)
         _SettingsSection(
@@ -130,7 +135,7 @@ class SettingsPage extends StatelessWidget {
               icon: Icons.sync_outlined,
               label: tr.text('sync'),
               description: tr.text('sync_nav_desc')),
-          page: _settingsList(context, _syncCards(context)),
+          pageBuilder: (context) => _settingsList(context, _syncCards(context)),
         ),
       if (canAccessBackupSettings)
         _SettingsSection(
@@ -138,7 +143,8 @@ class SettingsPage extends StatelessWidget {
               icon: Icons.backup_outlined,
               label: tr.text('backup_restore'),
               description: tr.text('backup_preview_desc')),
-          page: _settingsList(context, _backupCards(context)),
+          pageBuilder: (context) =>
+              _settingsList(context, _backupCards(context)),
         ),
       if (store.canManageUsers)
         _SettingsSection(
@@ -146,21 +152,23 @@ class SettingsPage extends StatelessWidget {
               icon: Icons.admin_panel_settings_outlined,
               label: tr.text('users_permissions'),
               description: tr.text('users_permissions_desc')),
-          page: _settingsList(context, _adminCards(context)),
+          pageBuilder: (context) =>
+              _settingsList(context, _adminCards(context)),
         ),
       _SettingsSection(
         nav: _SettingsNavData(
             icon: Icons.keyboard_command_key_outlined,
             label: tr.text('keyboard_shortcuts'),
             description: tr.text('keyboard_shortcuts_desc')),
-        page: _settingsList(context, _shortcutCards(context)),
+        pageBuilder: (context) =>
+            _settingsList(context, _shortcutCards(context)),
       ),
       _SettingsSection(
         nav: _SettingsNavData(
             icon: Icons.info_outline,
             label: tr.text('about_ventio'),
             description: tr.text('about_ventio_desc')),
-        page: _settingsList(context, _aboutCards(context)),
+        pageBuilder: (context) => _settingsList(context, _aboutCards(context)),
       ),
     ];
 
@@ -173,7 +181,11 @@ class SettingsPage extends StatelessWidget {
             return const SizedBox.shrink();
           }
           final navItems = sections.map((section) => section.nav).toList();
-          final pages = sections.map((section) => section.page).toList();
+          final pages = sections
+              .map((section) => _DeferredSettingsPage(
+                    builder: section.pageBuilder,
+                  ))
+              .toList();
 
           if (!isWide) {
             return Column(
@@ -234,12 +246,10 @@ class SettingsPage extends StatelessWidget {
   List<Widget> _generalCards(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final profile = store.storeProfile;
-    final displayName = profile.tradeName.trim().isNotEmpty
-        ? profile.tradeName
-        : profile.name;
-    final legalName = profile.legalName.trim().isNotEmpty
-        ? profile.legalName
-        : profile.name;
+    final displayName =
+        profile.tradeName.trim().isNotEmpty ? profile.tradeName : profile.name;
+    final legalName =
+        profile.legalName.trim().isNotEmpty ? profile.legalName : profile.name;
     return [
       _SectionCard(
         icon: Icons.business_outlined,
@@ -593,9 +603,10 @@ class SettingsPage extends StatelessWidget {
                       trailing: IconButton(
                         tooltip: tr.text('edit'),
                         icon: const Icon(Icons.edit_outlined),
-                        onPressed: store.hasPermission(AppPermission.settingsManage)
-                            ? () => _editBranch(context, profile, branch)
-                            : null,
+                        onPressed:
+                            store.hasPermission(AppPermission.settingsManage)
+                                ? () => _editBranch(context, profile, branch)
+                                : null,
                       ),
                     ),
                 ],
@@ -645,7 +656,8 @@ class SettingsPage extends StatelessWidget {
     ];
   }
 
-  String _costingMethodTitle(AppLocalizations tr, InventoryCostingMethod method) {
+  String _costingMethodTitle(
+      AppLocalizations tr, InventoryCostingMethod method) {
     switch (method) {
       case InventoryCostingMethod.fifo:
         return tr.text('fifo');
@@ -695,7 +707,8 @@ class SettingsPage extends StatelessWidget {
             },
           ),
           const SizedBox(height: 12),
-          Text('${tr.text('current_method')}: ${_costingMethodTitle(tr, method)}'),
+          Text(
+              '${tr.text('current_method')}: ${_costingMethodTitle(tr, method)}'),
           const SizedBox(height: 8),
           Text(
             tr.text('inventory_costing_method_note'),
@@ -703,14 +716,16 @@ class SettingsPage extends StatelessWidget {
           ),
           if (store.costingMethodHistory.isNotEmpty) ...[
             const SizedBox(height: 12),
-            Text(tr.text('history'), style: Theme.of(context).textTheme.titleSmall),
+            Text(tr.text('history'),
+                style: Theme.of(context).textTheme.titleSmall),
             for (final row in store.costingMethodHistory.reversed.take(5))
               ListTile(
                 dense: true,
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.timeline_outlined),
                 title: Text(_costingMethodTitle(tr, row.method)),
-                subtitle: Text('${DateFormat.yMd().add_Hm().format(row.effectiveFrom)}${row.effectiveTo == null ? ' → ${tr.text('active')}' : ' → ${DateFormat.yMd().add_Hm().format(row.effectiveTo!)}'}${row.reason.isEmpty ? '' : ' · ${row.reason}'}'),
+                subtitle: Text(
+                    '${DateFormat.yMd().add_Hm().format(row.effectiveFrom)}${row.effectiveTo == null ? ' → ${tr.text('active')}' : ' → ${DateFormat.yMd().add_Hm().format(row.effectiveTo!)}'}${row.reason.isEmpty ? '' : ' · ${row.reason}'}'),
               ),
           ],
         ],
@@ -748,8 +763,8 @@ class SettingsPage extends StatelessWidget {
     final activeCurrencies =
         profile.currencies.where((item) => item.isActive).toList();
     final base = profile.currencyByCode(profile.baseCurrency);
-    final usdLbpRate = profile.latestExchangeRate('USD', 'LBP')?.rate ??
-        profile.usdToLbpRate;
+    final usdLbpRate =
+        profile.latestExchangeRate('USD', 'LBP')?.rate ?? profile.usdToLbpRate;
 
     return [
       _SectionCard(
@@ -765,10 +780,8 @@ class SettingsPage extends StatelessWidget {
         ),
         child: _InfoGrid(
           items: [
-            _InfoGridItem(
-                Icons.account_balance_outlined,
-                tr.text('base_currency'),
-                '${base.code} · ${base.name}'),
+            _InfoGridItem(Icons.account_balance_outlined,
+                tr.text('base_currency'), '${base.code} · ${base.name}'),
             _InfoGridItem(
                 Icons.currency_exchange_outlined,
                 tr.text('usd_lbp_exchange_rate'),
@@ -793,9 +806,7 @@ class SettingsPage extends StatelessWidget {
                 Icons.payments_outlined,
                 tr.text('default_sale_payment_currency'),
                 profile.defaultSalePaymentCurrency),
-            _InfoGridItem(
-                Icons.tune_outlined,
-                tr.text('active_currencies'),
+            _InfoGridItem(Icons.tune_outlined, tr.text('active_currencies'),
                 activeCurrencies.map((item) => item.code).join(', ')),
           ],
         ),
@@ -817,7 +828,9 @@ class SettingsPage extends StatelessWidget {
             for (final currency in profile.currencies)
               ListTile(
                 contentPadding: EdgeInsets.zero,
-                leading: CircleAvatar(child: Text(currency.code.substring(0, currency.code.length >= 2 ? 2 : currency.code.length))),
+                leading: CircleAvatar(
+                    child: Text(currency.code.substring(0,
+                        currency.code.length >= 2 ? 2 : currency.code.length))),
                 title: Text('${currency.code} · ${currency.name}'),
                 subtitle: Text(
                     '${tr.text('symbol')}: ${currency.symbol} · ${tr.text('accounting_decimals')}: ${currency.decimalPlaces} · ${tr.text('cash_decimals')}: ${currency.cashDecimalPlaces}${currency.roundingStep > 0 ? ' · ${tr.text('cash_rounding')}: ${currency.roundingStep.toStringAsFixed(0)} (${tr.text('cash_rounding_${currency.roundingMethod}')})' : ''}'),
@@ -829,10 +842,11 @@ class SettingsPage extends StatelessWidget {
                     IconButton(
                       tooltip: tr.text('edit'),
                       icon: const Icon(Icons.edit_outlined),
-                      onPressed: store.hasPermission(AppPermission.settingsManage)
-                          ? () => _editCurrency(context, profile,
-                              currency: currency)
-                          : null,
+                      onPressed:
+                          store.hasPermission(AppPermission.settingsManage)
+                              ? () => _editCurrency(context, profile,
+                                  currency: currency)
+                              : null,
                     ),
                   ],
                 ),
@@ -861,7 +875,8 @@ class SettingsPage extends StatelessWidget {
                 title: Text(tr.text('no_exchange_rates')),
               ),
             for (final rate in (profile.exchangeRates.toList()
-              ..sort((a, b) => b.effectiveAt.compareTo(a.effectiveAt))).take(12))
+                  ..sort((a, b) => b.effectiveAt.compareTo(a.effectiveAt)))
+                .take(12))
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: Icon(rate.isActive
@@ -884,7 +899,6 @@ class SettingsPage extends StatelessWidget {
       ),
     ];
   }
-
 
   List<Widget> _shortcutCards(BuildContext context) => [
         const _KeyboardShortcutsSettingsCard(),
@@ -954,10 +968,12 @@ class SettingsPage extends StatelessWidget {
                         SizedBox(
                           width: itemWidth,
                           child: OutlinedButton.icon(
-                            onPressed: (hasStoreIdentity && !canRecoverStoreData) ||
-                                    !store.hasPermission(AppPermission.backupManage)
-                                ? null
-                                : () => _recoverExistingStore(context),
+                            onPressed:
+                                (hasStoreIdentity && !canRecoverStoreData) ||
+                                        !store.hasPermission(
+                                            AppPermission.backupManage)
+                                    ? null
+                                    : () => _recoverExistingStore(context),
                             icon: Icon(recoverIcon),
                             label: Text(tr.text(recoverLabelKey)),
                           ),
@@ -1096,7 +1112,8 @@ class SettingsPage extends StatelessWidget {
           child: ListTile(
             leading: const Icon(Icons.lock_outline),
             title: Text(tr.text('users_permissions')),
-            subtitle: const Text('You do not have access to user or role management.'),
+            subtitle: const Text(
+                'You do not have access to user or role management.'),
           ),
         ),
       ];
@@ -1158,21 +1175,24 @@ class SettingsPage extends StatelessWidget {
     String baseCurrency = activeCodes.contains(profile.baseCurrency)
         ? profile.baseCurrency
         : activeCodes.first;
-    String displayMode = {'default', 'selectable', 'multiple'}.contains(profile.priceDisplayMode)
-        ? profile.priceDisplayMode
-        : 'default';
+    String displayMode =
+        {'default', 'selectable', 'multiple'}.contains(profile.priceDisplayMode)
+            ? profile.priceDisplayMode
+            : 'default';
     final displayCurrencies = profile.priceDisplayCurrencies
         .where((code) => activeCodes.contains(code))
         .toSet()
         .toList();
     if (displayCurrencies.isEmpty) {
-      displayCurrencies.add(activeCodes.contains(profile.defaultSaleInvoiceCurrency)
-          ? profile.defaultSaleInvoiceCurrency
-          : baseCurrency);
+      displayCurrencies.add(
+          activeCodes.contains(profile.defaultSaleInvoiceCurrency)
+              ? profile.defaultSaleInvoiceCurrency
+              : baseCurrency);
     }
-    String defaultCurrency = activeCodes.contains(profile.defaultProductCurrency)
-        ? profile.defaultProductCurrency
-        : baseCurrency;
+    String defaultCurrency =
+        activeCodes.contains(profile.defaultProductCurrency)
+            ? profile.defaultProductCurrency
+            : baseCurrency;
     String defaultSaleInvoiceCurrency =
         activeCodes.contains(profile.defaultSaleInvoiceCurrency)
             ? profile.defaultSaleInvoiceCurrency
@@ -1218,8 +1238,8 @@ class SettingsPage extends StatelessWidget {
                         DropdownMenuItem(value: 5, child: Text('5')),
                         DropdownMenuItem(value: 6, child: Text('6')),
                       ],
-                      onChanged: (value) => setState(
-                          () => priceStorageDecimals = value ?? 4),
+                      onChanged: (value) =>
+                          setState(() => priceStorageDecimals = value ?? 4),
                     ),
                     const SizedBox(height: 16),
                     DropdownButtonFormField<String>(
@@ -1287,8 +1307,8 @@ class SettingsPage extends StatelessWidget {
                         for (final code in activeCodes)
                           DropdownMenuItem(value: code, child: Text(code)),
                       ],
-                      onChanged: (value) =>
-                          setState(() => defaultCurrency = value ?? baseCurrency),
+                      onChanged: (value) => setState(
+                          () => defaultCurrency = value ?? baseCurrency),
                     ),
                     const SizedBox(height: 16),
                     DropdownButtonFormField<String>(
@@ -1377,14 +1397,12 @@ class SettingsPage extends StatelessWidget {
   }) async {
     final tr = AppLocalizations.of(context);
     final isEditing = currency != null;
-    final codeController =
-        TextEditingController(text: currency?.code ?? '');
-    final nameController =
-        TextEditingController(text: currency?.name ?? '');
+    final codeController = TextEditingController(text: currency?.code ?? '');
+    final nameController = TextEditingController(text: currency?.name ?? '');
     final symbolController =
         TextEditingController(text: currency?.symbol ?? '');
-    final decimalsController = TextEditingController(
-        text: (currency?.decimalPlaces ?? 2).toString());
+    final decimalsController =
+        TextEditingController(text: (currency?.decimalPlaces ?? 2).toString());
     final cashDecimalsController = TextEditingController(
         text: (currency?.cashDecimalPlaces ?? currency?.decimalPlaces ?? 2)
             .toString());
@@ -1401,7 +1419,8 @@ class SettingsPage extends StatelessWidget {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
-          title: Text(isEditing ? tr.text('edit_currency') : tr.text('add_currency')),
+          title: Text(
+              isEditing ? tr.text('edit_currency') : tr.text('add_currency')),
           content: ResponsiveDialogBox(
             maxWidth: VentioResponsive.modalMaxWidth(context, 520),
             child: SingleChildScrollView(
@@ -1428,8 +1447,7 @@ class SettingsPage extends StatelessWidget {
                   const SizedBox(height: 12),
                   TextFormField(
                     controller: symbolController,
-                    decoration:
-                        InputDecoration(labelText: tr.text('symbol')),
+                    decoration: InputDecoration(labelText: tr.text('symbol')),
                   ),
                   const SizedBox(height: 12),
                   TextFormField(
@@ -1489,8 +1507,8 @@ class SettingsPage extends StatelessWidget {
                           child: Text(tr.text('cash_rounding_down')),
                         ),
                       ],
-                      onChanged: (value) => setState(
-                          () => roundingMethod = value ?? 'nearest'),
+                      onChanged: (value) =>
+                          setState(() => roundingMethod = value ?? 'nearest'),
                     ),
                   ],
                   SwitchListTile(
@@ -1583,10 +1601,10 @@ class SettingsPage extends StatelessWidget {
         .where((item) => item.isActive)
         .map((item) => item.code)
         .toList();
-    String fromCurrency = rate?.fromCurrency ??
-        (codes.contains('USD') ? 'USD' : codes.first);
-    String toCurrency = rate?.toCurrency ??
-        (codes.contains('LBP') ? 'LBP' : codes.last);
+    String fromCurrency =
+        rate?.fromCurrency ?? (codes.contains('USD') ? 'USD' : codes.first);
+    String toCurrency =
+        rate?.toCurrency ?? (codes.contains('LBP') ? 'LBP' : codes.last);
     final rateController =
         TextEditingController(text: rate?.rate.toString() ?? '');
     final noteController = TextEditingController(text: rate?.note ?? '');
@@ -1689,9 +1707,10 @@ class SettingsPage extends StatelessWidget {
       ...profile.exchangeRates.where((item) => item.id != result.id),
       result,
     ];
-    final legacyUsdLbp = result.fromCurrency == 'USD' && result.toCurrency == 'LBP'
-        ? result.rate
-        : profile.usdToLbpRate;
+    final legacyUsdLbp =
+        result.fromCurrency == 'USD' && result.toCurrency == 'LBP'
+            ? result.rate
+            : profile.usdToLbpRate;
     await store.updateStoreProfile(profile.copyWith(
       exchangeRates: nextRates,
       usdToLbpRate: legacyUsdLbp,
@@ -1704,7 +1723,8 @@ class SettingsPage extends StatelessWidget {
     final invoiceController = TextEditingController(text: docs.invoicePrefix);
     final quoteController = TextEditingController(text: docs.quotePrefix);
     final purchaseController = TextEditingController(text: docs.purchasePrefix);
-    final deliveryController = TextEditingController(text: docs.deliveryNotePrefix);
+    final deliveryController =
+        TextEditingController(text: docs.deliveryNotePrefix);
     final returnController = TextEditingController(text: docs.returnPrefix);
     final tr = AppLocalizations.of(context);
 
@@ -1721,27 +1741,32 @@ class SettingsPage extends StatelessWidget {
                 children: [
                   TextField(
                     controller: invoiceController,
-                    decoration: InputDecoration(labelText: tr.text('invoice_prefix')),
+                    decoration:
+                        InputDecoration(labelText: tr.text('invoice_prefix')),
                   ),
                   const SizedBox(height: 12),
                   TextField(
                     controller: quoteController,
-                    decoration: InputDecoration(labelText: tr.text('quote_prefix')),
+                    decoration:
+                        InputDecoration(labelText: tr.text('quote_prefix')),
                   ),
                   const SizedBox(height: 12),
                   TextField(
                     controller: purchaseController,
-                    decoration: InputDecoration(labelText: tr.text('purchase_prefix')),
+                    decoration:
+                        InputDecoration(labelText: tr.text('purchase_prefix')),
                   ),
                   const SizedBox(height: 12),
                   TextField(
                     controller: deliveryController,
-                    decoration: InputDecoration(labelText: tr.text('delivery_note_prefix')),
+                    decoration: InputDecoration(
+                        labelText: tr.text('delivery_note_prefix')),
                   ),
                   const SizedBox(height: 12),
                   TextField(
                     controller: returnController,
-                    decoration: InputDecoration(labelText: tr.text('return_prefix')),
+                    decoration:
+                        InputDecoration(labelText: tr.text('return_prefix')),
                   ),
                 ],
               ),
@@ -1792,7 +1817,8 @@ class SettingsPage extends StatelessWidget {
       OrganizationBranch? branch) async {
     final nameController = TextEditingController(text: branch?.name ?? '');
     final codeController = TextEditingController(text: branch?.code ?? '');
-    final addressController = TextEditingController(text: branch?.address ?? '');
+    final addressController =
+        TextEditingController(text: branch?.address ?? '');
     final phoneController = TextEditingController(text: branch?.phone ?? '');
     var isActive = branch?.isActive ?? true;
     final tr = AppLocalizations.of(context);
@@ -1813,12 +1839,14 @@ class SettingsPage extends StatelessWidget {
                   children: [
                     TextField(
                       controller: nameController,
-                      decoration: InputDecoration(labelText: tr.text('branch_name')),
+                      decoration:
+                          InputDecoration(labelText: tr.text('branch_name')),
                     ),
                     const SizedBox(height: 12),
                     TextField(
                       controller: codeController,
-                      decoration: InputDecoration(labelText: tr.text('branch_code')),
+                      decoration:
+                          InputDecoration(labelText: tr.text('branch_code')),
                     ),
                     const SizedBox(height: 12),
                     TextField(
@@ -1830,7 +1858,8 @@ class SettingsPage extends StatelessWidget {
                       controller: addressController,
                       minLines: 2,
                       maxLines: 4,
-                      decoration: InputDecoration(labelText: tr.text('address')),
+                      decoration:
+                          InputDecoration(labelText: tr.text('address')),
                     ),
                     const SizedBox(height: 12),
                     SwitchListTile(
@@ -2010,7 +2039,8 @@ class SettingsPage extends StatelessWidget {
                   const SizedBox(height: 12),
                   TextField(
                       controller: countryController,
-                      decoration: InputDecoration(labelText: tr.text('country'))),
+                      decoration:
+                          InputDecoration(labelText: tr.text('country'))),
                   const SizedBox(height: 12),
                   TextField(
                       controller: governorateController,
@@ -2135,7 +2165,6 @@ class SettingsPage extends StatelessWidget {
           SnackBar(content: Text(tr.text('store_profile_updated'))));
     }
   }
-
 
   Future<void> _downloadBackupFile(BuildContext context) async {
     await SettingsBackupActions.downloadBackupFile(context, store);
@@ -2671,8 +2700,9 @@ class _AutoLocalBackupSettingsCardState
     } catch (error) {
       if (!mounted) return;
       setState(() => _saving = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(tr.format('could_not_save_backup_settings', {'error': error.toString()}))));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(tr.format(
+              'could_not_save_backup_settings', {'error': error.toString()}))));
     }
   }
 
@@ -2698,8 +2728,9 @@ class _AutoLocalBackupSettingsCardState
           SnackBar(content: Text(tr.text('local_backup_completed'))));
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(tr.format('local_backup_failed', {'error': error.toString()}))));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+              tr.format('local_backup_failed', {'error': error.toString()}))));
     }
   }
 
@@ -2784,16 +2815,16 @@ class _AutoLocalBackupSettingsCardState
                   children: [
                     SizedBox(
                         width: itemWidth,
-                        child: _countField(
-                            _dailyController, tr.text('daily_copies'), disabled)),
+                        child: _countField(_dailyController,
+                            tr.text('daily_copies'), disabled)),
                     SizedBox(
                         width: itemWidth,
-                        child: _countField(
-                            _weeklyController, tr.text('weekly_copies'), disabled)),
+                        child: _countField(_weeklyController,
+                            tr.text('weekly_copies'), disabled)),
                     SizedBox(
                         width: itemWidth,
-                        child: _countField(
-                            _monthlyController, tr.text('monthly_copies'), disabled)),
+                        child: _countField(_monthlyController,
+                            tr.text('monthly_copies'), disabled)),
                   ],
                 );
               },
@@ -2954,14 +2985,15 @@ class _GoogleDriveBackupSettingsCardState
         _saving = false;
         _hasChanges = false;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(tr.text('google_drive_backup_settings_saved'))));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(tr.text('google_drive_backup_settings_saved'))));
       return next;
     } catch (error) {
       if (!mounted) return null;
       setState(() => _saving = false);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(tr.format('could_not_save_google_drive_settings', {'error': error.toString()}))));
+          content: Text(tr.format('could_not_save_google_drive_settings',
+              {'error': error.toString()}))));
       return null;
     }
   }
@@ -2987,8 +3019,9 @@ class _GoogleDriveBackupSettingsCardState
     } catch (error) {
       if (!mounted) return;
       setState(() => _saving = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(tr.format('google_drive_connection_failed', {'error': error.toString()}))));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(tr.format(
+              'google_drive_connection_failed', {'error': error.toString()}))));
     }
   }
 
@@ -3040,7 +3073,8 @@ class _GoogleDriveBackupSettingsCardState
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(tr.format('could_not_import_google_credentials', {'error': error.toString()}))));
+          content: Text(tr.format('could_not_import_google_credentials',
+              {'error': error.toString()}))));
     }
   }
 
@@ -3083,8 +3117,9 @@ class _GoogleDriveBackupSettingsCardState
       await _load();
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(tr.format('google_drive_backup_failed', {'error': error.toString()}))));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(tr.format(
+              'google_drive_backup_failed', {'error': error.toString()}))));
     }
   }
 
@@ -3099,8 +3134,8 @@ class _GoogleDriveBackupSettingsCardState
           await GoogleDriveBackupService.listBackupFiles(settings: settings);
       if (!mounted) return;
       if (files.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(tr.text('no_google_drive_backups_found'))));
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(tr.text('no_google_drive_backups_found'))));
         return;
       }
       final selected = await showDialog<GoogleDriveBackupFile>(
@@ -3148,7 +3183,8 @@ class _GoogleDriveBackupSettingsCardState
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(tr.format('google_drive_backup_download_failed', {'error': error.toString()}))));
+          content: Text(tr.format('google_drive_backup_download_failed',
+              {'error': error.toString()}))));
     }
   }
 
@@ -3250,16 +3286,16 @@ class _GoogleDriveBackupSettingsCardState
                   children: [
                     SizedBox(
                         width: itemWidth,
-                        child: _countField(
-                            _dailyController, tr.text('daily_copies'), disabled)),
+                        child: _countField(_dailyController,
+                            tr.text('daily_copies'), disabled)),
                     SizedBox(
                         width: itemWidth,
-                        child: _countField(
-                            _weeklyController, tr.text('weekly_copies'), disabled)),
+                        child: _countField(_weeklyController,
+                            tr.text('weekly_copies'), disabled)),
                     SizedBox(
                         width: itemWidth,
-                        child: _countField(
-                            _monthlyController, tr.text('monthly_copies'), disabled)),
+                        child: _countField(_monthlyController,
+                            tr.text('monthly_copies'), disabled)),
                   ],
                 );
               },
@@ -3458,7 +3494,6 @@ class _BackupSummaryDetails extends StatelessWidget {
   }
 }
 
-
 class _CurrentDeviceCashDrawerSettingsCard extends StatefulWidget {
   const _CurrentDeviceCashDrawerSettingsCard({required this.store});
 
@@ -3485,7 +3520,8 @@ class _CurrentDeviceCashDrawerSettingsCardState
   }
 
   Future<List<AdvancedAccountingItem>> _loadDrawers() async {
-    final items = await AccountingService.listActiveCashLocations(includeBank: false);
+    final items =
+        await AccountingService.listActiveCashLocations(includeBank: false);
     final drawers = items.where((item) => item.type == 'cash_drawer').toList();
     final current = drawers.where((item) => item.referenceId == _deviceId);
     _selectedDrawerId = current.isEmpty ? '' : current.first.id;
@@ -3548,13 +3584,15 @@ class _CurrentDeviceCashDrawerSettingsCardState
             );
           }
           final drawers = snapshot.data ?? const <AdvancedAccountingItem>[];
-          final currentDevice = _deviceId.isEmpty ? tr.text('unknown') : _deviceId;
+          final currentDevice =
+              _deviceId.isEmpty ? tr.text('unknown') : _deviceId;
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _InfoGrid(
                 items: [
-                  _InfoGridItem(Icons.devices_outlined, 'Device ID', currentDevice),
+                  _InfoGridItem(
+                      Icons.devices_outlined, 'Device ID', currentDevice),
                   _InfoGridItem(
                     Icons.storefront_outlined,
                     tr.text('branch'),
@@ -3564,7 +3602,8 @@ class _CurrentDeviceCashDrawerSettingsCardState
               ),
               const SizedBox(height: 16),
               DropdownButtonFormField<String>(
-                initialValue: _selectedDrawerId.isEmpty ? '' : _selectedDrawerId,
+                initialValue:
+                    _selectedDrawerId.isEmpty ? '' : _selectedDrawerId,
                 decoration: InputDecoration(
                   labelText: tr.text('linked_cash_drawer'),
                   border: const OutlineInputBorder(),
@@ -3587,7 +3626,8 @@ class _CurrentDeviceCashDrawerSettingsCardState
                 ],
                 onChanged: _saving
                     ? null
-                    : (value) => setState(() => _selectedDrawerId = value ?? ''),
+                    : (value) =>
+                        setState(() => _selectedDrawerId = value ?? ''),
               ),
               const SizedBox(height: 12),
               Text(
@@ -7726,10 +7766,19 @@ class _SettingsNavData {
 }
 
 class _SettingsSection {
-  const _SettingsSection({required this.nav, required this.page});
+  const _SettingsSection({required this.nav, required this.pageBuilder});
 
   final _SettingsNavData nav;
-  final Widget page;
+  final WidgetBuilder pageBuilder;
+}
+
+class _DeferredSettingsPage extends StatelessWidget {
+  const _DeferredSettingsPage({super.key, required this.builder});
+
+  final WidgetBuilder builder;
+
+  @override
+  Widget build(BuildContext context) => builder(context);
 }
 
 class _SettingsSideNav extends StatelessWidget {

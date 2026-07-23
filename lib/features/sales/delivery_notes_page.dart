@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
+import '../../core/services/local_database_service.dart';
 import '../../data/app_store.dart';
 import '../../models/delivery_note.dart';
 import '../../models/sale.dart';
@@ -62,13 +63,19 @@ class _DeliveryNotesPageState extends State<DeliveryNotesPage> {
 
   Future<void> _createFromSale() async {
     final tr = AppLocalizations.of(context);
-    final eligibleSales = widget.store.sales
-        .where(
-          (item) =>
-              !item.isCancelled &&
-              widget.store.deliveryNoteForSale(item.id) == null,
-        )
-        .toList(growable: false);
+    final eligibleSales =
+        await LocalDatabaseService.queryEligibleDeliveryNoteSalesFromSqlite(
+              limit: 100,
+            ) ??
+            widget.store.sales
+                .where(
+                  (item) =>
+                      !item.isCancelled &&
+                      widget.store.deliveryNoteForSale(item.id) == null,
+                )
+                .take(100)
+                .toList(growable: false);
+    if (!mounted) return;
     final sale = await showDialog<Sale>(
       context: context,
       builder: (context) {

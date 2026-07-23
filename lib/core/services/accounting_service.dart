@@ -21,6 +21,14 @@ class AccountingService {
   static void Function()? _mutationListener;
   static StoreProfile _moneyProfile = StoreProfile.defaults;
   static int? _entryNoCacheDbIdentity;
+  static int? _settingsCacheDbIdentity;
+  static Map<String, String>? _defaultAccountMapCache;
+  static double? _defaultVatRateCache;
+  static final Map<String, String> _paymentAccountByTypeCache =
+      <String, String>{};
+  static int? _accountSnapshotCacheDbIdentity;
+  static final Map<String, AccountingAccount> _accountSnapshotByIdCache =
+      <String, AccountingAccount>{};
   static final Map<int, int> _entryNoSequenceByYear = <int, int>{};
   static Future<void> _entryNoQueue = Future<void>.value();
 
@@ -32,10 +40,16 @@ class AccountingService {
     _mutationListener?.call();
   }
 
+  static void _clearAccountingSettingsCache() {
+    _settingsCacheDbIdentity = null;
+    _defaultAccountMapCache = null;
+    _defaultVatRateCache = null;
+    _paymentAccountByTypeCache.clear();
+  }
+
   static void configureMoneyPolicy(StoreProfile profile) {
     _moneyProfile = profile;
   }
-
 
   static VentioDriftDatabase get _db {
     final database = SqliteMigrationManager.database;
@@ -67,7 +81,8 @@ class AccountingService {
   }
 
   static Future<void> updateDefaultVatRatePercent(double ratePercent) async {
-    final normalized = ratePercent.isFinite ? ratePercent.clamp(0, 100).toDouble() : 0.0;
+    final normalized =
+        ratePercent.isFinite ? ratePercent.clamp(0, 100).toDouble() : 0.0;
     if (!isAvailable) return;
     final now = DateTime.now().toUtc().toIso8601String();
     await _db.customInsert(
@@ -83,17 +98,24 @@ class AccountingService {
         Variable<String>(now),
       ],
     );
+    _clearAccountingSettingsCache();
     _notifyMutation();
     await _writeAuditLog(
       action: 'update_setting',
       entityType: 'accounting_setting',
       entityId: 'default_vat_rate_percent',
-      details: 'تم ضبط نسبة ضريبة القيمة المضافة الافتراضية إلى ${_roundMoney(normalized)}%',
+      details:
+          'تم ضبط نسبة ضريبة القيمة المضافة الافتراضية إلى ${_roundMoney(normalized)}%',
     );
   }
 
   static Future<Map<String, String>> readDefaultAccountMap() async {
     if (!isAvailable) return const <String, String>{};
+    final dbIdentity = identityHashCode(_db);
+    if (_settingsCacheDbIdentity == dbIdentity &&
+        _defaultAccountMapCache != null) {
+      return _defaultAccountMapCache!;
+    }
     final rows = await _db.customSelect(
       '''
       SELECT key, account_id
@@ -102,12 +124,14 @@ class AccountingService {
       ORDER BY key
       ''',
     ).get();
-    return <String, String>{
+    final result = <String, String>{
       for (final row in rows)
         row.data['key'].toString(): row.data['account_id'].toString(),
     };
+    _settingsCacheDbIdentity = dbIdentity;
+    _defaultAccountMapCache = result;
+    return result;
   }
-
 
   static Future<void> updateDefaultAccount({
     required String key,
@@ -115,7 +139,9 @@ class AccountingService {
   }) async {
     final normalizedKey = key.trim();
     final normalizedAccountId = accountId.trim();
-    if (normalizedKey.isEmpty || !normalizedKey.startsWith('default_') || !normalizedKey.endsWith('_account_id')) {
+    if (normalizedKey.isEmpty ||
+        !normalizedKey.startsWith('default_') ||
+        !normalizedKey.endsWith('_account_id')) {
       throw ArgumentError('مفتاح إعداد محاسبي غير صالح: $key');
     }
     if (normalizedAccountId.isEmpty) {
@@ -138,6 +164,7 @@ class AccountingService {
         Variable<String>(now),
       ],
     );
+    _clearAccountingSettingsCache();
     _notifyMutation();
     await _writeAuditLog(
       action: 'update_setting',
@@ -167,24 +194,29 @@ class AccountingService {
       saleTotal,
       _roundMoney(_cleanAmount(rawPaid), currency: accountingCurrency),
     );
-    final balance =
-        _roundMoney(_cleanAmount(saleTotal - paid), currency: accountingCurrency);
+    final balance = _roundMoney(_cleanAmount(saleTotal - paid),
+        currency: accountingCurrency);
     final cogs = _roundMoney(
-      _cleanAmount(sale.items.fold<double>(0, (sum, item) => sum + item.lineCost)),
+      _cleanAmount(
+          sale.items.fold<double>(0, (sum, item) => sum + item.lineCost)),
       currency: accountingCurrency,
     );
     final lines = <JournalLineDraft>[];
 
-    final isCashSalePayment = paid > 0 && _isCashPaymentMethod(sale.paymentMethod);
+    final isCashSalePayment =
+        paid > 0 && _isCashPaymentMethod(sale.paymentMethod);
     final cashSaleLocation = isCashSalePayment
-        ? await _openCashDrawerLocationForDevice(deviceId: sale.deviceId, branchId: sale.branchId)
+        ? await _openCashDrawerLocationForDevice(
+            deviceId: sale.deviceId, branchId: sale.branchId)
         : null;
     if (isCashSalePayment && cashSaleLocation == null) {
-      throw StateError('لا توجد وردية نقدية مفتوحة لدرج هذا الجهاز. افتح وردية قبل قبول الدفع النقدي.');
+      throw StateError(
+          'لا توجد وردية نقدية مفتوحة لدرج هذا الجهاز. افتح وردية قبل قبول الدفع النقدي.');
     }
     if (paid > 0) {
       lines.add(JournalLineDraft(
-        accountId: cashSaleLocation?.accountId ?? await _paymentAccountId(accounts, sale.paymentMethod),
+        accountId: cashSaleLocation?.accountId ??
+            await _paymentAccountId(accounts, sale.paymentMethod),
         debit: paid,
         credit: 0,
         memo: 'دفعة مستلمة للمبيعة ${sale.invoiceNo}',
@@ -252,7 +284,9 @@ class AccountingService {
   }
 
   static Future<void> recordPurchase(Purchase purchase) async {
-    if (purchase.isDeleted || purchase.isCancelled || purchase.subtotal <= 0) return;
+    if (purchase.isDeleted || purchase.isCancelled || purchase.subtotal <= 0) {
+      return;
+    }
     if (!isAvailable) return;
     final accounts = await readDefaultAccountMap();
     final accountingCurrency = _moneyProfile.baseCurrency;
@@ -283,7 +317,8 @@ class AccountingService {
     ];
     if (tax.taxAmount > 0) {
       lines.add(JournalLineDraft(
-        accountId: _requiredAccount(accounts, 'default_purchase_tax_account_id'),
+        accountId:
+            _requiredAccount(accounts, 'default_purchase_tax_account_id'),
         debit: tax.taxAmount,
         credit: 0,
         memo: 'ضريبة المدخلات / ضريبة المشتريات ${purchase.purchaseNo}',
@@ -292,16 +327,20 @@ class AccountingService {
         partyName: purchase.supplierName,
       ));
     }
-    final isCashPurchasePayment = paid > 0 && _isCashPaymentMethod(purchase.paymentMethod);
+    final isCashPurchasePayment =
+        paid > 0 && _isCashPaymentMethod(purchase.paymentMethod);
     final cashPurchaseLocation = isCashPurchasePayment
-        ? await _openCashDrawerLocationForDevice(deviceId: purchase.deviceId, branchId: purchase.branchId)
+        ? await _openCashDrawerLocationForDevice(
+            deviceId: purchase.deviceId, branchId: purchase.branchId)
         : null;
     if (isCashPurchasePayment && cashPurchaseLocation == null) {
-      throw StateError('لا توجد وردية نقدية مفتوحة لدرج هذا الجهاز. افتح وردية قبل تسجيل دفع نقدي.');
+      throw StateError(
+          'لا توجد وردية نقدية مفتوحة لدرج هذا الجهاز. افتح وردية قبل تسجيل دفع نقدي.');
     }
     if (paid > 0) {
       lines.add(JournalLineDraft(
-        accountId: cashPurchaseLocation?.accountId ?? await _paymentAccountId(accounts, purchase.paymentMethod),
+        accountId: cashPurchaseLocation?.accountId ??
+            await _paymentAccountId(accounts, purchase.paymentMethod),
         debit: 0,
         credit: paid,
         memo: 'دفعة مدفوعة للمشتريات ${purchase.purchaseNo}',
@@ -333,7 +372,8 @@ class AccountingService {
       lines: lines,
     ));
     if (entryId.isNotEmpty && cashPurchaseLocation != null && paid > 0) {
-      await _moveCashLocationBalance(cashPurchaseLocation.id, -paid, purchase.date);
+      await _moveCashLocationBalance(
+          cashPurchaseLocation.id, -paid, purchase.date);
     }
   }
 
@@ -341,9 +381,11 @@ class AccountingService {
     if (expense.isDeleted || !expense.isPosted || expense.amount <= 0) return;
     if (!isAvailable) return;
     final accounts = await readDefaultAccountMap();
-    final cashExpenseLocation = await _openCashDrawerLocationForDevice(deviceId: expense.deviceId, branchId: expense.branchId);
+    final cashExpenseLocation = await _openCashDrawerLocationForDevice(
+        deviceId: expense.deviceId, branchId: expense.branchId);
     if (cashExpenseLocation == null) {
-      throw StateError('لا توجد وردية نقدية مفتوحة لدرج هذا الجهاز. افتح وردية قبل تسجيل مصروف نقدي.');
+      throw StateError(
+          'لا توجد وردية نقدية مفتوحة لدرج هذا الجهاز. افتح وردية قبل تسجيل مصروف نقدي.');
     }
     final entryId = await createPostedEntry(JournalEntryDraft(
       entryDate: expense.date,
@@ -370,34 +412,44 @@ class AccountingService {
       ],
     ));
     if (entryId.isNotEmpty) {
-      await _moveCashLocationBalance(cashExpenseLocation.id, -expense.amount, expense.date);
+      await _moveCashLocationBalance(
+          cashExpenseLocation.id, -expense.amount, expense.date);
     }
   }
 
-  static Future<void> recordAccountPayment(AccountTransaction transaction) async {
+  static Future<void> recordAccountPayment(
+      AccountTransaction transaction) async {
     if (transaction.isDeleted) return;
     if (!isAvailable) return;
     final accounts = await readDefaultAccountMap();
     final isCustomerPayment = transaction.isCustomer && transaction.credit > 0;
     final isSupplierPayment = transaction.isSupplier && transaction.debit > 0;
     if (!isCustomerPayment && !isSupplierPayment) return;
-    final amount = _cleanAmount(isCustomerPayment ? transaction.credit : transaction.debit);
+    final amount = _cleanAmount(
+        isCustomerPayment ? transaction.credit : transaction.debit);
     if (amount <= 0) return;
-    final isCashAccountPayment = _isCashPaymentMethod(transaction.paymentMethod);
+    final isCashAccountPayment =
+        _isCashPaymentMethod(transaction.paymentMethod);
     final cashPaymentLocation = isCashAccountPayment
-        ? await _openCashDrawerLocationForDevice(deviceId: transaction.deviceId, branchId: transaction.branchId)
+        ? await _openCashDrawerLocationForDevice(
+            deviceId: transaction.deviceId, branchId: transaction.branchId)
         : null;
     if (isCashAccountPayment && cashPaymentLocation == null) {
-      throw StateError('لا توجد وردية نقدية مفتوحة لدرج هذا الجهاز. افتح وردية قبل تسجيل حركة نقدية.');
+      throw StateError(
+          'لا توجد وردية نقدية مفتوحة لدرج هذا الجهاز. افتح وردية قبل تسجيل حركة نقدية.');
     }
-    final paymentAccount = cashPaymentLocation?.accountId ?? await _paymentAccountId(accounts, transaction.paymentMethod);
+    final paymentAccount = cashPaymentLocation?.accountId ??
+        await _paymentAccountId(accounts, transaction.paymentMethod);
     final controlAccount = _requiredAccount(
       accounts,
-      isCustomerPayment ? 'default_customers_account_id' : 'default_suppliers_account_id',
+      isCustomerPayment
+          ? 'default_customers_account_id'
+          : 'default_suppliers_account_id',
     );
     final entryId = await createPostedEntry(JournalEntryDraft(
       entryDate: transaction.date,
-      referenceType: isCustomerPayment ? 'customer_payment' : 'supplier_payment',
+      referenceType:
+          isCustomerPayment ? 'customer_payment' : 'supplier_payment',
       referenceId: transaction.id,
       referenceNo: transaction.referenceNo,
       description: isCustomerPayment
@@ -462,7 +514,8 @@ class AccountingService {
     _validateBalancedDraft(draft);
     await _assertDateNotInClosedPeriod(draft.entryDate, draft.branchId);
     final db = _db;
-    if (await _hasActiveEntryForReference(db, draft.referenceType, draft.referenceId)) {
+    if (await _hasActiveEntryForReference(
+        db, draft.referenceType, draft.referenceId)) {
       return '';
     }
     final now = DateTime.now().toUtc().toIso8601String();
@@ -647,7 +700,9 @@ class AccountingService {
     final entryNo = await _nextEntryNo(db, DateTime.now());
     final storeId = original['store_id']?.toString() ?? '';
     final branchId = original['branch_id']?.toString() ?? '';
-    final actor = createdBy.trim().isNotEmpty ? createdBy.trim() : (original['created_by']?.toString() ?? '');
+    final actor = createdBy.trim().isNotEmpty
+        ? createdBy.trim()
+        : (original['created_by']?.toString() ?? '');
     final originalEntryNo = original['entry_no']?.toString() ?? '';
     final description = reason.trim().isEmpty
         ? 'عكس قيد اليومية $originalEntryNo'
@@ -739,8 +794,6 @@ class AccountingService {
     });
   }
 
-
-
   static Future<List<GeneralLedgerAccountReport>> generalLedgerReport() async {
     if (!isAvailable) return const <GeneralLedgerAccountReport>[];
     final rows = await _db.customSelect(
@@ -777,8 +830,10 @@ class AccountingService {
         accountName: accountName,
         accountType: accountType,
         normalBalance: normalBalance,
-        totalDebit: _roundMoney(lines.fold<double>(0, (sum, line) => sum + line.debit)),
-        totalCredit: _roundMoney(lines.fold<double>(0, (sum, line) => sum + line.credit)),
+        totalDebit:
+            _roundMoney(lines.fold<double>(0, (sum, line) => sum + line.debit)),
+        totalCredit: _roundMoney(
+            lines.fold<double>(0, (sum, line) => sum + line.credit)),
         closingBalance: _roundMoney(runningBalance),
         lines: List<GeneralLedgerLineReport>.unmodifiable(lines),
       ));
@@ -803,7 +858,8 @@ class AccountingService {
 
       final debit = _num(row.data['debit']);
       final credit = _num(row.data['credit']);
-      runningBalance += normalBalance == 'credit' ? credit - debit : debit - credit;
+      runningBalance +=
+          normalBalance == 'credit' ? credit - debit : debit - credit;
       lines.add(GeneralLedgerLineReport(
         entryNo: row.data['entry_no']?.toString() ?? '',
         entryDate: _parseDate(row.data['entry_date']),
@@ -836,20 +892,20 @@ class AccountingService {
       ''',
     ).get();
     return rows.map((row) {
-        final debit = _num(row.data['debit']);
-        final credit = _num(row.data['credit']);
-        final normal = row.data['normal_balance']?.toString() ?? 'debit';
-        final balance = normal == 'credit' ? credit - debit : debit - credit;
-        return TrialBalanceRowReport(
-          accountId: row.data['id']?.toString() ?? '',
-          accountCode: row.data['code']?.toString() ?? '',
-          accountName: row.data['name']?.toString() ?? '',
-          accountType: row.data['type']?.toString() ?? '',
-          debit: _roundMoney(debit),
-          credit: _roundMoney(credit),
-          balance: _roundMoney(balance),
-        );
-      }).toList(growable: false);
+      final debit = _num(row.data['debit']);
+      final credit = _num(row.data['credit']);
+      final normal = row.data['normal_balance']?.toString() ?? 'debit';
+      final balance = normal == 'credit' ? credit - debit : debit - credit;
+      return TrialBalanceRowReport(
+        accountId: row.data['id']?.toString() ?? '',
+        accountCode: row.data['code']?.toString() ?? '',
+        accountName: row.data['name']?.toString() ?? '',
+        accountType: row.data['type']?.toString() ?? '',
+        debit: _roundMoney(debit),
+        credit: _roundMoney(credit),
+        balance: _roundMoney(balance),
+      );
+    }).toList(growable: false);
   }
 
   static Future<List<TrialBalanceRowReport>> trialBalanceReport() async {
@@ -955,8 +1011,8 @@ class AccountingService {
     }).toList();
   }
 
-
-  static Future<CashFlowStatementReport> cashFlowStatementReport({DateTime? from, DateTime? to}) async {
+  static Future<CashFlowStatementReport> cashFlowStatementReport(
+      {DateTime? from, DateTime? to}) async {
     if (!isAvailable) {
       final start = from ?? DateTime.now();
       return CashFlowStatementReport(
@@ -991,7 +1047,10 @@ class AccountingService {
     }
 
     final placeholders = List.filled(cashAccountIds.length, '?').join(',');
-    final dateConditions = <String>["je.deleted_at = ''", "je.status = 'posted'"];
+    final dateConditions = <String>[
+      "je.deleted_at = ''",
+      "je.status = 'posted'"
+    ];
     final dateVariables = <Variable<Object>>[];
     if (from != null) {
       dateConditions.add('datetime(je.entry_date) >= datetime(?)');
@@ -1003,7 +1062,11 @@ class AccountingService {
     }
 
     Future<double> cashBalanceBefore(DateTime? date) async {
-      final conditions = <String>["je.deleted_at = ''", "je.status = 'posted'", 'jl.account_id IN ($placeholders)'];
+      final conditions = <String>[
+        "je.deleted_at = ''",
+        "je.status = 'posted'",
+        'jl.account_id IN ($placeholders)'
+      ];
       final variables = <Variable<Object>>[
         for (final id in cashAccountIds) Variable<String>(id),
       ];
@@ -1102,7 +1165,8 @@ class AccountingService {
         currentEntryId = nextEntryId;
         currentEntryNo = entryRow.data['entry_no']?.toString() ?? '';
         currentEntryDate = _parseDate(entryRow.data['entry_date']);
-        currentReferenceType = entryRow.data['reference_type']?.toString() ?? '';
+        currentReferenceType =
+            entryRow.data['reference_type']?.toString() ?? '';
         currentReferenceNo = entryRow.data['reference_no']?.toString() ?? '';
         currentDescription = entryRow.data['description']?.toString() ?? '';
         cashMovement = 0;
@@ -1122,7 +1186,12 @@ class AccountingService {
     flushCurrentEntry();
 
     final openingCash = from == null ? 0.0 : await cashBalanceBefore(from);
-    final netChange = operatingInflows - operatingOutflows + investingInflows - investingOutflows + financingInflows - financingOutflows;
+    final netChange = operatingInflows -
+        operatingOutflows +
+        investingInflows -
+        investingOutflows +
+        financingInflows -
+        financingOutflows;
     return CashFlowStatementReport(
       operatingInflows: _roundMoney(operatingInflows),
       operatingOutflows: _roundMoney(operatingOutflows),
@@ -1138,28 +1207,40 @@ class AccountingService {
     );
   }
 
-  static CashFlowCategory _cashFlowCategory(String referenceType, Set<String> accountTypes) {
+  static CashFlowCategory _cashFlowCategory(
+      String referenceType, Set<String> accountTypes) {
     final ref = referenceType.toLowerCase();
-    if (ref.contains('asset') || ref.contains('fixed_asset') || ref.contains('investment')) {
+    if (ref.contains('asset') ||
+        ref.contains('fixed_asset') ||
+        ref.contains('investment')) {
       return CashFlowCategory.investing;
     }
-    if (ref.contains('capital') || ref.contains('loan') || ref.contains('owner') || ref.contains('equity')) {
+    if (ref.contains('capital') ||
+        ref.contains('loan') ||
+        ref.contains('owner') ||
+        ref.contains('equity')) {
       return CashFlowCategory.financing;
     }
     if (accountTypes.any((type) => type == 'equity')) {
       return CashFlowCategory.financing;
     }
     if (accountTypes.any((type) => type == 'liability') &&
-        !accountTypes.any((type) => type == 'revenue' || type == 'expense' || type == 'cost_of_sales')) {
+        !accountTypes.any((type) =>
+            type == 'revenue' ||
+            type == 'expense' ||
+            type == 'cost_of_sales')) {
       return CashFlowCategory.financing;
     }
     if (accountTypes.any((type) => type == 'asset') &&
-        !accountTypes.any((type) => type == 'revenue' || type == 'expense' || type == 'cost_of_sales' || type == 'liability')) {
+        !accountTypes.any((type) =>
+            type == 'revenue' ||
+            type == 'expense' ||
+            type == 'cost_of_sales' ||
+            type == 'liability')) {
       return CashFlowCategory.investing;
     }
     return CashFlowCategory.operating;
   }
-
 
   static Future<TaxReport> taxReport({DateTime? from, DateTime? to}) async {
     if (!isAvailable) {
@@ -1171,9 +1252,12 @@ class AccountingService {
       );
     }
     final accounts = await readDefaultAccountMap();
-    final salesTaxAccountId = accounts['default_sales_tax_account_id']?.trim() ?? '';
-    final purchaseTaxAccountId = accounts['default_purchase_tax_account_id']?.trim() ?? '';
-    final payableAccountId = accounts['default_tax_payable_account_id']?.trim() ?? salesTaxAccountId;
+    final salesTaxAccountId =
+        accounts['default_sales_tax_account_id']?.trim() ?? '';
+    final purchaseTaxAccountId =
+        accounts['default_purchase_tax_account_id']?.trim() ?? '';
+    final payableAccountId =
+        accounts['default_tax_payable_account_id']?.trim() ?? salesTaxAccountId;
     final conditions = <String>["je.deleted_at = ''", "je.status = 'posted'"];
     final variables = <Variable<Object>>[];
     if (from != null) {
@@ -1201,8 +1285,10 @@ class AccountingService {
       return _roundMoney(_num(row?.data['amount']));
     }
 
-    final outputTax = await sumAccount(salesTaxAccountId, 'jl.credit - jl.debit');
-    final inputTax = await sumAccount(purchaseTaxAccountId, 'jl.debit - jl.credit');
+    final outputTax =
+        await sumAccount(salesTaxAccountId, 'jl.credit - jl.debit');
+    final inputTax =
+        await sumAccount(purchaseTaxAccountId, 'jl.debit - jl.credit');
     final payableMovement = payableAccountId.trim().isEmpty
         ? outputTax - inputTax
         : await sumAccount(payableAccountId, 'jl.credit - jl.debit');
@@ -1251,16 +1337,19 @@ class AccountingService {
     return rows.map((row) => AdvancedAccountingItem.fromRow(row.data)).toList();
   }
 
-
-  static Future<bool> hasOpenCashDrawerForDevice({required String deviceId, String branchId = ''}) async {
+  static Future<bool> hasOpenCashDrawerForDevice(
+      {required String deviceId, String branchId = ''}) async {
     if (!isAvailable) return true;
-    final drawer = await _openCashDrawerLocationForDevice(deviceId: deviceId, branchId: branchId);
+    final drawer = await _openCashDrawerLocationForDevice(
+        deviceId: deviceId, branchId: branchId);
     return drawer != null;
   }
 
-  static Future<bool> hasOpenCashDrawer({String branchId = '', String cashLocationId = ''}) async {
+  static Future<bool> hasOpenCashDrawer(
+      {String branchId = '', String cashLocationId = ''}) async {
     if (!isAvailable) return false;
-    final locationFilter = cashLocationId.trim().isEmpty ? '' : 'AND cash_location_id = ?';
+    final locationFilter =
+        cashLocationId.trim().isEmpty ? '' : 'AND cash_location_id = ?';
     final branchFilter = branchId.trim().isEmpty ? '' : 'AND branch_id = ?';
     final row = await _db.customSelect(
       '''
@@ -1271,16 +1360,19 @@ class AccountingService {
       LIMIT 1
       ''',
       variables: <Variable<Object>>[
-        if (cashLocationId.trim().isNotEmpty) Variable<String>(cashLocationId.trim()),
+        if (cashLocationId.trim().isNotEmpty)
+          Variable<String>(cashLocationId.trim()),
         if (branchId.trim().isNotEmpty) Variable<String>(branchId.trim()),
       ],
     ).getSingleOrNull();
     return row != null;
   }
 
-  static Future<String> currentOpenCashDrawerSessionId({String branchId = '', String cashLocationId = ''}) async {
+  static Future<String> currentOpenCashDrawerSessionId(
+      {String branchId = '', String cashLocationId = ''}) async {
     if (!isAvailable) return '';
-    final locationFilter = cashLocationId.trim().isEmpty ? '' : 'AND cash_location_id = ?';
+    final locationFilter =
+        cashLocationId.trim().isEmpty ? '' : 'AND cash_location_id = ?';
     final branchFilter = branchId.trim().isEmpty ? '' : 'AND branch_id = ?';
     final row = await _db.customSelect(
       '''
@@ -1291,7 +1383,8 @@ class AccountingService {
       LIMIT 1
       ''',
       variables: <Variable<Object>>[
-        if (cashLocationId.trim().isNotEmpty) Variable<String>(cashLocationId.trim()),
+        if (cashLocationId.trim().isNotEmpty)
+          Variable<String>(cashLocationId.trim()),
         if (branchId.trim().isNotEmpty) Variable<String>(branchId.trim()),
       ],
     ).getSingleOrNull();
@@ -1377,7 +1470,8 @@ class AccountingService {
     return rows.map((row) => AdvancedAccountingItem.fromRow(row.data)).toList();
   }
 
-  static Future<List<AdvancedAccountingItem>> listOpenCashDrawersReport() async {
+  static Future<List<AdvancedAccountingItem>>
+      listOpenCashDrawersReport() async {
     if (!isAvailable) return const <AdvancedAccountingItem>[];
     final rows = await _db.customSelect(
       '''
@@ -1404,7 +1498,8 @@ class AccountingService {
     return rows.map((row) => AdvancedAccountingItem.fromRow(row.data)).toList();
   }
 
-  static Future<List<AdvancedAccountingItem>> listCashDrawerVarianceReport({int limit = 100}) async {
+  static Future<List<AdvancedAccountingItem>> listCashDrawerVarianceReport(
+      {int limit = 100}) async {
     if (!isAvailable) return const <AdvancedAccountingItem>[];
     final rows = await _db.customSelect(
       '''
@@ -1438,7 +1533,8 @@ class AccountingService {
     return rows.map((row) => AdvancedAccountingItem.fromRow(row.data)).toList();
   }
 
-  static Future<List<AdvancedAccountingItem>> listCashTransferAuditReport({int limit = 100}) async {
+  static Future<List<AdvancedAccountingItem>> listCashTransferAuditReport(
+      {int limit = 100}) async {
     if (!isAvailable) return const <AdvancedAccountingItem>[];
     final rows = await _db.customSelect(
       '''
@@ -1466,7 +1562,8 @@ class AccountingService {
     return rows.map((row) => AdvancedAccountingItem.fromRow(row.data)).toList();
   }
 
-  static Future<double> calculateCashDrawerExpectedCash(String sessionId) async {
+  static Future<double> calculateCashDrawerExpectedCash(
+      String sessionId) async {
     if (!isAvailable) return 0.0;
     final row = await _db.customSelect(
       """
@@ -1599,7 +1696,9 @@ class AccountingService {
 
     final now = DateTime.now().toUtc().toIso8601String();
     final assetId = _newId('asset');
-    final normalizedCode = code.trim().isEmpty ? 'FA-${DateTime.now().millisecondsSinceEpoch}' : code.trim().toUpperCase();
+    final normalizedCode = code.trim().isEmpty
+        ? 'FA-${DateTime.now().millisecondsSinceEpoch}'
+        : code.trim().toUpperCase();
     final normalizedName = name.trim().isEmpty ? 'أصل ثابت' : name.trim();
 
     await _db.transaction(() async {
@@ -1683,8 +1782,8 @@ class AccountingService {
       variables: <Variable<Object>>[Variable<String>(assetId)],
     ).getSingleOrNull();
     if (row == null) throw ArgumentError('الأصل الثابت غير موجود: $assetId');
-    final posted =
-        await _runDepreciationForAssetRow(row.data, throughDate: throughDate, createdBy: createdBy);
+    final posted = await _runDepreciationForAssetRow(row.data,
+        throughDate: throughDate, createdBy: createdBy);
     if (posted > 0) _notifyMutation();
     return posted;
   }
@@ -1704,7 +1803,8 @@ class AccountingService {
     ).get();
     var posted = 0;
     for (final row in rows) {
-      posted += await _runDepreciationForAssetRow(row.data, throughDate: throughDate, createdBy: createdBy);
+      posted += await _runDepreciationForAssetRow(row.data,
+          throughDate: throughDate, createdBy: createdBy);
     }
     if (posted > 0) _notifyMutation();
     return posted;
@@ -1719,14 +1819,25 @@ class AccountingService {
     final code = asset['code']?.toString() ?? '';
     final name = asset['name']?.toString() ?? '';
     final purchaseValue = _roundMoney(_num(asset['purchase_value']));
-    final usefulLifeMonths = (asset['useful_life_months'] as int?) ?? int.tryParse(asset['useful_life_months']?.toString() ?? '') ?? 0;
-    final acquisitionDate = DateTime.tryParse(asset['acquisition_date']?.toString() ?? '')?.toLocal();
-    if (id.isEmpty || acquisitionDate == null || purchaseValue <= 0 || usefulLifeMonths <= 0) return 0;
+    final usefulLifeMonths = (asset['useful_life_months'] as int?) ??
+        int.tryParse(asset['useful_life_months']?.toString() ?? '') ??
+        0;
+    final acquisitionDate =
+        DateTime.tryParse(asset['acquisition_date']?.toString() ?? '')
+            ?.toLocal();
+    if (id.isEmpty ||
+        acquisitionDate == null ||
+        purchaseValue <= 0 ||
+        usefulLifeMonths <= 0) {
+      return 0;
+    }
 
     final end = throughDate ?? DateTime.now();
     final endMonth = DateTime(end.year, end.month, 1);
     final firstMonth = DateTime(acquisitionDate.year, acquisitionDate.month, 1);
-    var elapsedMonths = ((endMonth.year - firstMonth.year) * 12) + (endMonth.month - firstMonth.month) + 1;
+    var elapsedMonths = ((endMonth.year - firstMonth.year) * 12) +
+        (endMonth.month - firstMonth.month) +
+        1;
     if (elapsedMonths < 1) return 0;
     if (elapsedMonths > usefulLifeMonths) elapsedMonths = usefulLifeMonths;
 
@@ -1740,28 +1851,37 @@ class AccountingService {
       variables: <Variable<Object>>[Variable<String>(id)],
     ).get();
     final existing = <String, double>{
-      for (final row in existingRows) row.data['period_key'].toString(): _num(row.data['amount']),
+      for (final row in existingRows)
+        row.data['period_key'].toString(): _num(row.data['amount']),
     };
-    final accumulatedBefore = existing.values.fold<double>(0, (sum, amount) => sum + amount);
+    final accumulatedBefore =
+        existing.values.fold<double>(0, (sum, amount) => sum + amount);
     var accumulated = _roundMoney(accumulatedBefore);
     var posted = 0;
     final monthly = _roundMoney(purchaseValue / usefulLifeMonths);
     final accounts = await readDefaultAccountMap();
-    final expenseAccount = _requiredAccount(accounts, 'default_depreciation_expense_account_id');
-    final accumulatedAccount = _requiredAccount(accounts, 'default_accumulated_depreciation_account_id');
+    final expenseAccount =
+        _requiredAccount(accounts, 'default_depreciation_expense_account_id');
+    final accumulatedAccount = _requiredAccount(
+        accounts, 'default_accumulated_depreciation_account_id');
     await _accountSnapshot(_db, expenseAccount);
     await _accountSnapshot(_db, accumulatedAccount);
 
     for (var i = 0; i < elapsedMonths; i++) {
       final period = DateTime(firstMonth.year, firstMonth.month + i, 1);
-      final periodKey = '${period.year.toString().padLeft(4, '0')}-${period.month.toString().padLeft(2, '0')}';
+      final periodKey =
+          '${period.year.toString().padLeft(4, '0')}-${period.month.toString().padLeft(2, '0')}';
       if (existing.containsKey(periodKey)) continue;
       final remaining = _roundMoney(purchaseValue - accumulated);
       if (remaining <= 0) break;
-      final amount = _roundMoney(remaining < monthly || i == usefulLifeMonths - 1 ? remaining : monthly);
+      final amount = _roundMoney(
+          remaining < monthly || i == usefulLifeMonths - 1
+              ? remaining
+              : monthly);
       if (amount <= 0) continue;
       final depreciationId = _newId('dep');
-      final depreciationDate = DateTime(period.year, period.month + 1, 0, 23, 59, 59);
+      final depreciationDate =
+          DateTime(period.year, period.month + 1, 0, 23, 59, 59);
       final entryId = await createPostedEntry(JournalEntryDraft(
         entryDate: depreciationDate,
         referenceType: 'fixed_asset_depreciation',
@@ -1828,7 +1948,8 @@ class AccountingService {
       referenceType: 'manual_journal',
       referenceId: _newId('manual'),
       referenceNo: 'يدوي',
-      description: description.trim().isEmpty ? 'قيد يومية يدوي' : description.trim(),
+      description:
+          description.trim().isEmpty ? 'قيد يومية يدوي' : description.trim(),
       source: 'manual',
       createdBy: createdBy,
       storeId: storeId,
@@ -1852,7 +1973,8 @@ class AccountingService {
     if (!isAvailable) return;
     final now = DateTime.now().toUtc().toIso8601String();
     final resolvedLocationId = cashLocationId.trim().isEmpty
-        ? await _defaultCashLocationId(type: 'cash_drawer', branchId: branchId, deviceId: deviceId)
+        ? await _defaultCashLocationId(
+            type: 'cash_drawer', branchId: branchId, deviceId: deviceId)
         : cashLocationId.trim();
     if (resolvedLocationId.trim().isEmpty) {
       throw StateError('لا يوجد درج نقد معرف لفتح وردية.');
@@ -1863,7 +1985,8 @@ class AccountingService {
       branchId: branchId,
       updatedAt: now,
     );
-    if (await hasOpenCashDrawer(branchId: branchId, cashLocationId: resolvedLocationId)) {
+    if (await hasOpenCashDrawer(
+        branchId: branchId, cashLocationId: resolvedLocationId)) {
       throw StateError('يوجد وردية مفتوحة بالفعل لهذا الدرج.');
     }
     final sessionId = _newId('drawer');
@@ -1877,7 +2000,8 @@ class AccountingService {
       ''',
       variables: <Variable<Object>>[
         Variable<String>(sessionId),
-        Variable<String>(drawerNo.trim().isEmpty ? 'درج النقد' : drawerNo.trim()),
+        Variable<String>(
+            drawerNo.trim().isEmpty ? 'درج النقد' : drawerNo.trim()),
         Variable<String>(resolvedLocationId),
         Variable<String>(now),
         Variable<double>(cleanOpening),
@@ -1889,13 +2013,16 @@ class AccountingService {
       ],
     );
     if (cleanOpening > 0) {
-      if (fundingLocationId.trim().isNotEmpty && fundingLocationId.trim() != resolvedLocationId) {
+      if (fundingLocationId.trim().isNotEmpty &&
+          fundingLocationId.trim() != resolvedLocationId) {
         await createCashTransfer(
           fromLocationId: fundingLocationId,
           toLocationId: resolvedLocationId,
           amount: cleanOpening,
-          transferDate: DateTime.parse(now).subtract(const Duration(microseconds: 1)),
-          notes: 'عهدة افتتاح وردية ${drawerNo.trim().isEmpty ? 'درج النقد' : drawerNo.trim()}',
+          transferDate:
+              DateTime.parse(now).subtract(const Duration(microseconds: 1)),
+          notes:
+              'عهدة افتتاح وردية ${drawerNo.trim().isEmpty ? 'درج النقد' : drawerNo.trim()}',
           createdBy: openedBy,
           storeId: storeId,
           branchId: branchId,
@@ -1906,7 +2033,14 @@ class AccountingService {
       }
     }
     _notifyMutation();
-    await _writeAuditLog(action: 'open_cash_drawer', entityType: 'cash_drawer', entityId: sessionId, details: drawerNo, createdBy: openedBy, storeId: storeId, branchId: branchId);
+    await _writeAuditLog(
+        action: 'open_cash_drawer',
+        entityType: 'cash_drawer',
+        entityId: sessionId,
+        details: drawerNo,
+        createdBy: openedBy,
+        storeId: storeId,
+        branchId: branchId);
   }
 
   static Future<void> closeCashDrawer({
@@ -1978,12 +2112,17 @@ class AccountingService {
     }
 
     final closedLocationId = data['cash_location_id']?.toString() ?? '';
-    if (depositToLocationId.trim().isNotEmpty && closedLocationId.trim().isNotEmpty && counted > 0 && depositToLocationId.trim() != closedLocationId.trim()) {
+    if (depositToLocationId.trim().isNotEmpty &&
+        closedLocationId.trim().isNotEmpty &&
+        counted > 0 &&
+        depositToLocationId.trim() != closedLocationId.trim()) {
       await createCashTransfer(
         fromLocationId: closedLocationId,
         toLocationId: depositToLocationId,
         amount: counted,
-        notes: notes.trim().isEmpty ? 'تسليم نقدية عند إغلاق الوردية' : notes.trim(),
+        notes: notes.trim().isEmpty
+            ? 'تسليم نقدية عند إغلاق الوردية'
+            : notes.trim(),
         createdBy: closedBy,
         storeId: storeId,
         branchId: branchId,
@@ -1991,13 +2130,18 @@ class AccountingService {
       );
     }
 
-    final type = difference < 0 ? 'shortage' : difference > 0 ? 'overage' : 'balanced';
+    final type = difference < 0
+        ? 'shortage'
+        : difference > 0
+            ? 'overage'
+            : 'balanced';
     _notifyMutation();
     await _writeAuditLog(
       action: 'close_cash_drawer',
       entityType: 'cash_drawer',
       entityId: sessionId,
-      details: 'تسوية نقدية $type. المتوقع: $expected، المعدود: $counted، الفرق: $difference',
+      details:
+          'تسوية نقدية $type. المتوقع: $expected، المعدود: $counted، الفرق: $difference',
       createdBy: closedBy,
       storeId: storeId,
       branchId: branchId,
@@ -2046,9 +2190,11 @@ class AccountingService {
   }) async {
     final accounts = await readDefaultAccountMap();
     final cashAccountId = await _cashLocationAccountId(cashLocationId);
-    final adjustmentAccountId = accounts['default_cash_over_short_account_id']?.trim().isNotEmpty == true
-        ? accounts['default_cash_over_short_account_id']!.trim()
-        : _requiredAccount(accounts, 'default_expense_account_id');
+    final adjustmentAccountId =
+        accounts['default_cash_over_short_account_id']?.trim().isNotEmpty ==
+                true
+            ? accounts['default_cash_over_short_account_id']!.trim()
+            : _requiredAccount(accounts, 'default_expense_account_id');
     final amount = _roundMoney(difference.abs());
     if (amount <= 0) return;
 
@@ -2057,20 +2203,38 @@ class AccountingService {
       entryDate: DateTime.now(),
       referenceType: 'cash_reconciliation',
       referenceId: sessionId,
-      referenceNo: drawerNo.trim().isEmpty ? 'إغلاق درج النقد' : drawerNo.trim(),
-      description: 'تسوية نقدية ${isOverage ? 'زيادة' : 'عجز'}: المتوقع $expectedCash، المعدود $countedCash',
+      referenceNo:
+          drawerNo.trim().isEmpty ? 'إغلاق درج النقد' : drawerNo.trim(),
+      description:
+          'تسوية نقدية ${isOverage ? 'زيادة' : 'عجز'}: المتوقع $expectedCash، المعدود $countedCash',
       source: 'system',
       createdBy: closedBy,
       storeId: storeId,
       branchId: branchId,
       lines: isOverage
           ? <JournalLineDraft>[
-              JournalLineDraft(accountId: cashAccountId, debit: amount, credit: 0, memo: 'زيادة درج النقد'),
-              JournalLineDraft(accountId: adjustmentAccountId, debit: 0, credit: amount, memo: 'مقابل زيادة درج النقد'),
+              JournalLineDraft(
+                  accountId: cashAccountId,
+                  debit: amount,
+                  credit: 0,
+                  memo: 'زيادة درج النقد'),
+              JournalLineDraft(
+                  accountId: adjustmentAccountId,
+                  debit: 0,
+                  credit: amount,
+                  memo: 'مقابل زيادة درج النقد'),
             ]
           : <JournalLineDraft>[
-              JournalLineDraft(accountId: adjustmentAccountId, debit: amount, credit: 0, memo: 'عجز درج النقد'),
-              JournalLineDraft(accountId: cashAccountId, debit: 0, credit: amount, memo: 'مقابل عجز درج النقد'),
+              JournalLineDraft(
+                  accountId: adjustmentAccountId,
+                  debit: amount,
+                  credit: 0,
+                  memo: 'عجز درج النقد'),
+              JournalLineDraft(
+                  accountId: cashAccountId,
+                  debit: 0,
+                  credit: amount,
+                  memo: 'مقابل عجز درج النقد'),
             ],
     ));
     await _moveCashLocationBalance(cashLocationId, difference, DateTime.now());
@@ -2104,10 +2268,17 @@ class AccountingService {
       ],
     );
     _notifyMutation();
-    await _writeAuditLog(action: 'create_period', entityType: 'accounting_period', details: name, createdBy: createdBy, storeId: storeId, branchId: branchId);
+    await _writeAuditLog(
+        action: 'create_period',
+        entityType: 'accounting_period',
+        details: name,
+        createdBy: createdBy,
+        storeId: storeId,
+        branchId: branchId);
   }
 
-  static Future<void> closeAccountingPeriod({required String periodId, String closedBy = ''}) async {
+  static Future<void> closeAccountingPeriod(
+      {required String periodId, String closedBy = ''}) async {
     if (!isAvailable) return;
     final row = await _db.customSelect(
       'SELECT start_date, end_date, status, store_id, branch_id FROM accounting_periods WHERE id = ? LIMIT 1',
@@ -2115,8 +2286,10 @@ class AccountingService {
     ).getSingleOrNull();
     if (row == null || row.data['status']?.toString() == 'closed') return;
     final trialBalance = await trialBalanceReport();
-    final totalDebit = trialBalance.fold<double>(0, (sum, row) => sum + row.debit);
-    final totalCredit = trialBalance.fold<double>(0, (sum, row) => sum + row.credit);
+    final totalDebit =
+        trialBalance.fold<double>(0, (sum, row) => sum + row.debit);
+    final totalCredit =
+        trialBalance.fold<double>(0, (sum, row) => sum + row.credit);
     if ((totalDebit - totalCredit).abs() > 0.0001) {
       throw StateError('لا يمكن إغلاق الفترة لأن ميزان المراجعة غير متوازن.');
     }
@@ -2135,9 +2308,15 @@ class AccountingService {
       ],
     );
     _notifyMutation();
-    await _writeAuditLog(action: 'close_period', entityType: 'accounting_period', entityId: periodId, details: 'تم إغلاق فترة محاسبية متوازنة', createdBy: closedBy, storeId: row.data['store_id']?.toString() ?? '', branchId: row.data['branch_id']?.toString() ?? '');
+    await _writeAuditLog(
+        action: 'close_period',
+        entityType: 'accounting_period',
+        entityId: periodId,
+        details: 'تم إغلاق فترة محاسبية متوازنة',
+        createdBy: closedBy,
+        storeId: row.data['store_id']?.toString() ?? '',
+        branchId: row.data['branch_id']?.toString() ?? '');
   }
-
 
   static Future<void> createCashLocation({
     required String name,
@@ -2178,7 +2357,10 @@ class AccountingService {
       if (isDefault) {
         await _db.customUpdate(
           "UPDATE cash_locations SET is_default = 0, updated_at = ? WHERE type = ? AND deleted_at = ''",
-          variables: <Variable<Object>>[Variable<String>(now), Variable<String>(normalizedType)],
+          variables: <Variable<Object>>[
+            Variable<String>(now),
+            Variable<String>(normalizedType)
+          ],
         );
       }
       await _db.customInsert(
@@ -2218,7 +2400,6 @@ class AccountingService {
       branchId: branchId,
     );
   }
-
 
   static Future<void> linkCashDrawerToDevice({
     required String cashLocationId,
@@ -2282,7 +2463,8 @@ class AccountingService {
     _notifyMutation();
   }
 
-  static Future<void> unlinkCashDrawerFromDevice({required String deviceId}) async {
+  static Future<void> unlinkCashDrawerFromDevice(
+      {required String deviceId}) async {
     if (!isAvailable) return;
     final cleanDeviceId = deviceId.trim();
     if (cleanDeviceId.isEmpty) return;
@@ -2309,10 +2491,14 @@ class AccountingService {
   }) async {
     if (!isAvailable) return;
     final cleanAmount = _roundMoney(amount);
-    if (cleanAmount <= 0) throw ArgumentError('مبلغ التحويل يجب أن يكون أكبر من صفر.');
+    if (cleanAmount <= 0) {
+      throw ArgumentError('مبلغ التحويل يجب أن يكون أكبر من صفر.');
+    }
     final fromLocation = await _cashLocationSnapshot(fromLocationId);
     final toLocation = await _cashLocationSnapshot(toLocationId);
-    if (fromLocation.id == toLocation.id) throw ArgumentError('لا يمكن التحويل إلى نفس موقع النقدية.');
+    if (fromLocation.id == toLocation.id) {
+      throw ArgumentError('لا يمكن التحويل إلى نفس موقع النقدية.');
+    }
     final id = _newId('cashtx');
     final date = transferDate ?? DateTime.now();
     final now = DateTime.now().toUtc().toIso8601String();
@@ -2328,8 +2514,16 @@ class AccountingService {
       storeId: storeId,
       branchId: branchId,
       lines: <JournalLineDraft>[
-        JournalLineDraft(accountId: toLocation.accountId, debit: cleanAmount, credit: 0, memo: 'استلام تحويل نقدية'),
-        JournalLineDraft(accountId: fromLocation.accountId, debit: 0, credit: cleanAmount, memo: 'إرسال تحويل نقدية'),
+        JournalLineDraft(
+            accountId: toLocation.accountId,
+            debit: cleanAmount,
+            credit: 0,
+            memo: 'استلام تحويل نقدية'),
+        JournalLineDraft(
+            accountId: fromLocation.accountId,
+            debit: 0,
+            credit: cleanAmount,
+            memo: 'إرسال تحويل نقدية'),
       ],
     ));
     await _db.transaction(() async {
@@ -2360,11 +2554,19 @@ class AccountingService {
       );
       await _db.customUpdate(
         'UPDATE cash_locations SET current_balance = current_balance - ?, updated_at = ? WHERE id = ?',
-        variables: <Variable<Object>>[Variable<double>(cleanAmount), Variable<String>(now), Variable<String>(fromLocation.id)],
+        variables: <Variable<Object>>[
+          Variable<double>(cleanAmount),
+          Variable<String>(now),
+          Variable<String>(fromLocation.id)
+        ],
       );
       await _db.customUpdate(
         'UPDATE cash_locations SET current_balance = current_balance + ?, updated_at = ? WHERE id = ?',
-        variables: <Variable<Object>>[Variable<double>(cleanAmount), Variable<String>(now), Variable<String>(toLocation.id)],
+        variables: <Variable<Object>>[
+          Variable<double>(cleanAmount),
+          Variable<String>(now),
+          Variable<String>(toLocation.id)
+        ],
       );
     });
     if (notifyChange) _notifyMutation();
@@ -2372,7 +2574,8 @@ class AccountingService {
       action: 'create_cash_transfer',
       entityType: 'cash_transfer',
       entityId: id,
-      details: '$transferNo: ${fromLocation.name} -> ${toLocation.name}: $cleanAmount',
+      details:
+          '$transferNo: ${fromLocation.name} -> ${toLocation.name}: $cleanAmount',
       createdBy: createdBy,
       storeId: storeId,
       branchId: branchId,
@@ -2395,7 +2598,10 @@ class AccountingService {
       if (isDefault) {
         await _db.customUpdate(
           "UPDATE payment_accounts SET is_default = 0, updated_at = ? WHERE type = ? AND deleted_at = ''",
-          variables: <Variable<Object>>[Variable<String>(now), Variable<String>(type)],
+          variables: <Variable<Object>>[
+            Variable<String>(now),
+            Variable<String>(type)
+          ],
         );
       }
       await _db.customInsert(
@@ -2419,7 +2625,12 @@ class AccountingService {
       );
     });
     _notifyMutation();
-    await _writeAuditLog(action: 'create_payment_account', entityType: 'payment_account', details: name, storeId: storeId, branchId: branchId);
+    await _writeAuditLog(
+        action: 'create_payment_account',
+        entityType: 'payment_account',
+        details: name,
+        storeId: storeId,
+        branchId: branchId);
   }
 
   static Future<void> createCheque({
@@ -2463,10 +2674,16 @@ class AccountingService {
       ],
     );
     _notifyMutation();
-    await _writeAuditLog(action: 'create_cheque', entityType: 'cheque', details: chequeNo, storeId: storeId, branchId: branchId);
+    await _writeAuditLog(
+        action: 'create_cheque',
+        entityType: 'cheque',
+        details: chequeNo,
+        storeId: storeId,
+        branchId: branchId);
   }
 
-  static Future<void> settleCheque({required String chequeId, String settledBy = ''}) async {
+  static Future<void> settleCheque(
+      {required String chequeId, String settledBy = ''}) async {
     if (!isAvailable) return;
     final row = await _db.customSelect(
       "SELECT * FROM cheques WHERE id = ? AND status = 'pending' LIMIT 1",
@@ -2477,13 +2694,24 @@ class AccountingService {
     final now = DateTime.now().toUtc().toIso8601String();
     await _db.customUpdate(
       "UPDATE cheques SET status = 'cleared', updated_at = ? WHERE id = ?",
-      variables: <Variable<Object>>[Variable<String>(now), Variable<String>(chequeId)],
+      variables: <Variable<Object>>[
+        Variable<String>(now),
+        Variable<String>(chequeId)
+      ],
     );
     _notifyMutation();
-    await _writeAuditLog(action: 'clear_cheque', entityType: 'cheque', entityId: chequeId, details: data['cheque_no']?.toString() ?? '', createdBy: settledBy, storeId: data['store_id']?.toString() ?? '', branchId: data['branch_id']?.toString() ?? '');
+    await _writeAuditLog(
+        action: 'clear_cheque',
+        entityType: 'cheque',
+        entityId: chequeId,
+        details: data['cheque_no']?.toString() ?? '',
+        createdBy: settledBy,
+        storeId: data['store_id']?.toString() ?? '',
+        branchId: data['branch_id']?.toString() ?? '');
   }
 
-  static Future<void> bounceCheque({required String chequeId, String reason = '', String actor = ''}) async {
+  static Future<void> bounceCheque(
+      {required String chequeId, String reason = '', String actor = ''}) async {
     if (!isAvailable) return;
     final row = await _db.customSelect(
       "SELECT cheque_no, store_id, branch_id FROM cheques WHERE id = ? AND status = 'pending' LIMIT 1",
@@ -2493,10 +2721,21 @@ class AccountingService {
     final now = DateTime.now().toUtc().toIso8601String();
     await _db.customUpdate(
       "UPDATE cheques SET status = 'bounced', notes = notes || ?, updated_at = ? WHERE id = ?",
-      variables: <Variable<Object>>[Variable<String>('\nBounced: $reason'), Variable<String>(now), Variable<String>(chequeId)],
+      variables: <Variable<Object>>[
+        Variable<String>('\nBounced: $reason'),
+        Variable<String>(now),
+        Variable<String>(chequeId)
+      ],
     );
     _notifyMutation();
-    await _writeAuditLog(action: 'bounce_cheque', entityType: 'cheque', entityId: chequeId, details: reason, createdBy: actor, storeId: row.data['store_id']?.toString() ?? '', branchId: row.data['branch_id']?.toString() ?? '');
+    await _writeAuditLog(
+        action: 'bounce_cheque',
+        entityType: 'cheque',
+        entityId: chequeId,
+        details: reason,
+        createdBy: actor,
+        storeId: row.data['store_id']?.toString() ?? '',
+        branchId: row.data['branch_id']?.toString() ?? '');
   }
 
   static Future<void> createSimpleMasterData({
@@ -2523,26 +2762,45 @@ class AccountingService {
       ],
     );
     _notifyMutation();
-    await _writeAuditLog(action: 'create_master_data', entityType: table, details: '$code - $name');
+    await _writeAuditLog(
+        action: 'create_master_data',
+        entityType: table,
+        details: '$code - $name');
   }
 
-
   static Future<double> _defaultVatRatePercent() async {
-    final row = await _db.customSelect(
-      "SELECT value FROM accounting_settings WHERE key = 'default_vat_rate_percent' LIMIT 1",
-    ).getSingleOrNull();
+    final dbIdentity = identityHashCode(_db);
+    if (_settingsCacheDbIdentity == dbIdentity &&
+        _defaultVatRateCache != null) {
+      return _defaultVatRateCache!;
+    }
+    final row = await _db
+        .customSelect(
+          "SELECT value FROM accounting_settings WHERE key = 'default_vat_rate_percent' LIMIT 1",
+        )
+        .getSingleOrNull();
     final value = _num(row?.data['value']);
-    if (!value.isFinite || value < 0) return 0;
-    return value.clamp(0, 100).toDouble();
+    final result =
+        !value.isFinite || value < 0 ? 0.0 : value.clamp(0, 100).toDouble();
+    _settingsCacheDbIdentity = dbIdentity;
+    _defaultVatRateCache = result;
+    return result;
   }
 
   static Future<_TaxBreakdown> _taxBreakdown(double grossAmount) async {
     final gross = _roundMoney(_cleanAmount(grossAmount));
     final rate = await _defaultVatRatePercent();
-    if (gross <= 0 || rate <= 0) return _TaxBreakdown(netAmount: gross, taxAmount: 0, grossAmount: gross, ratePercent: rate);
+    if (gross <= 0 || rate <= 0) {
+      return _TaxBreakdown(
+          netAmount: gross,
+          taxAmount: 0,
+          grossAmount: gross,
+          ratePercent: rate);
+    }
     final net = _roundMoney(gross / (1 + (rate / 100)));
     final tax = _roundMoney(gross - net);
-    return _TaxBreakdown(netAmount: net, taxAmount: tax, grossAmount: gross, ratePercent: rate);
+    return _TaxBreakdown(
+        netAmount: net, taxAmount: tax, grossAmount: gross, ratePercent: rate);
   }
 
   static Future<void> _writeAuditLog({
@@ -2612,7 +2870,9 @@ class AccountingService {
     String referenceType,
     String referenceId,
   ) async {
-    if (referenceType.trim().isEmpty || referenceId.trim().isEmpty) return false;
+    if (referenceType.trim().isEmpty || referenceId.trim().isEmpty) {
+      return false;
+    }
     final row = await db.customSelect(
       '''
       SELECT id
@@ -2641,7 +2901,6 @@ class AccountingService {
     return method.isEmpty || method == 'cash';
   }
 
-
   static Future<void> _ensureCashDrawerDeviceBinding({
     required String cashLocationId,
     required String deviceId,
@@ -2664,7 +2923,8 @@ class AccountingService {
     if (type != 'cash_drawer') return;
     final existingDeviceId = row.data['device_id']?.toString().trim() ?? '';
     if (existingDeviceId.isNotEmpty && existingDeviceId != cleanDeviceId) {
-      throw StateError('هذا الدرج مربوط بجهاز آخر ولا يمكن فتحه من الجهاز الحالي.');
+      throw StateError(
+          'هذا الدرج مربوط بجهاز آخر ولا يمكن فتحه من الجهاز الحالي.');
     }
     if (existingDeviceId.isEmpty) {
       await _db.customUpdate(
@@ -2718,7 +2978,8 @@ class AccountingService {
     );
   }
 
-  static Future<_CashLocationSnapshot?> _openCashDrawerLocationFallback(String branchId) async {
+  static Future<_CashLocationSnapshot?> _openCashDrawerLocationFallback(
+      String branchId) async {
     final branchFilter = branchId.trim().isEmpty ? '' : 'AND cds.branch_id = ?';
     final row = await _db.customSelect(
       '''
@@ -2747,7 +3008,8 @@ class AccountingService {
     );
   }
 
-  static Future<void> _moveCashLocationBalance(String cashLocationId, double delta, DateTime movementDate) async {
+  static Future<void> _moveCashLocationBalance(
+      String cashLocationId, double delta, DateTime movementDate) async {
     final id = cashLocationId.trim();
     if (id.isEmpty || delta.abs() < 0.01) return;
     await _db.customUpdate(
@@ -2760,7 +3022,8 @@ class AccountingService {
     );
   }
 
-  static Future<void> _setCashLocationBalance(String cashLocationId, double balance, String updatedAt) async {
+  static Future<void> _setCashLocationBalance(
+      String cashLocationId, double balance, String updatedAt) async {
     final id = cashLocationId.trim();
     if (id.isEmpty) return;
     await _db.customUpdate(
@@ -2783,7 +3046,8 @@ class AccountingService {
     return location.accountId;
   }
 
-  static Future<_CashLocationSnapshot> _cashLocationSnapshot(String cashLocationId) async {
+  static Future<_CashLocationSnapshot> _cashLocationSnapshot(
+      String cashLocationId) async {
     final row = await _db.customSelect(
       '''
       SELECT id, name, type, account_id, allow_negative
@@ -2793,7 +3057,9 @@ class AccountingService {
       ''',
       variables: <Variable<Object>>[Variable<String>(cashLocationId.trim())],
     ).getSingleOrNull();
-    if (row == null) throw ArgumentError('موقع النقدية غير موجود: $cashLocationId');
+    if (row == null) {
+      throw ArgumentError('موقع النقدية غير موجود: $cashLocationId');
+    }
     final data = row.data;
     return _CashLocationSnapshot(
       id: data['id']?.toString() ?? '',
@@ -2804,7 +3070,10 @@ class AccountingService {
     );
   }
 
-  static Future<String> _defaultCashLocationId({required String type, String branchId = '', String deviceId = ''}) async {
+  static Future<String> _defaultCashLocationId(
+      {required String type,
+      String branchId = '',
+      String deviceId = ''}) async {
     final normalizedType = _normalizeCashLocationType(type);
     final cleanBranchId = branchId.trim();
     final cleanDeviceId = deviceId.trim();
@@ -2870,7 +3139,8 @@ class AccountingService {
     final accountId = 'acc_$locationId';
     final accountCodePrefix = isBank ? '12' : '11';
     final codeDigits = DateTime.now().toUtc().millisecondsSinceEpoch.toString();
-    final accountCode = '$accountCodePrefix${codeDigits.substring(codeDigits.length - 6)}';
+    final accountCode =
+        '$accountCodePrefix${codeDigits.substring(codeDigits.length - 6)}';
     await _db.customInsert(
       '''
       INSERT OR IGNORE INTO accounts
@@ -2896,13 +3166,22 @@ class AccountingService {
 
   static Future<String> _accountForCashLocationType(String type) async {
     final accounts = await readDefaultAccountMap();
-    if (type == 'bank') return _requiredAccount(accounts, 'default_bank_account_id');
+    if (type == 'bank') {
+      return _requiredAccount(accounts, 'default_bank_account_id');
+    }
     return _requiredAccount(accounts, 'default_cash_account_id');
   }
 
   static String _normalizeCashLocationType(String type) {
     final normalized = type.trim().toLowerCase();
-    const allowed = <String>{'main_vault', 'branch_vault', 'cash_drawer', 'bank', 'wallet', 'other'};
+    const allowed = <String>{
+      'main_vault',
+      'branch_vault',
+      'cash_drawer',
+      'bank',
+      'wallet',
+      'other'
+    };
     if (allowed.contains(normalized)) return normalized;
     if (normalized == 'cash' || normalized == 'drawer') return 'cash_drawer';
     if (normalized == 'vault') return 'main_vault';
@@ -2919,7 +3198,8 @@ class AccountingService {
     return '$prefix${count.toString().padLeft(6, '0')}';
   }
 
-  static Future<String> _paymentAccountId(Map<String, String> accounts, String paymentMethod) async {
+  static Future<String> _paymentAccountId(
+      Map<String, String> accounts, String paymentMethod) async {
     final method = paymentMethod.trim().toLowerCase();
     final normalizedType = switch (method) {
       'cash' || 'credit' || '' => 'cash',
@@ -2928,6 +3208,8 @@ class AccountingService {
       'check' || 'cheque' => 'cheque',
       _ => 'other',
     };
+    final cached = _paymentAccountByTypeCache[normalizedType];
+    if (cached != null) return cached;
     final row = await _db.customSelect(
       '''
       SELECT account_id
@@ -2939,12 +3221,17 @@ class AccountingService {
       variables: <Variable<Object>>[Variable<String>(normalizedType)],
     ).getSingleOrNull();
     final accountId = row?.data['account_id']?.toString().trim() ?? '';
-    if (accountId.isNotEmpty) return accountId;
-    if (normalizedType == 'cash') return _requiredAccount(accounts, 'default_cash_account_id');
-    return _requiredAccount(accounts, 'default_bank_account_id');
+    final resolved = accountId.isNotEmpty
+        ? accountId
+        : normalizedType == 'cash'
+            ? _requiredAccount(accounts, 'default_cash_account_id')
+            : _requiredAccount(accounts, 'default_bank_account_id');
+    _paymentAccountByTypeCache[normalizedType] = resolved;
+    return resolved;
   }
 
-  static Future<void> _assertDateNotInClosedPeriod(DateTime entryDate, String branchId) async {
+  static Future<void> _assertDateNotInClosedPeriod(
+      DateTime entryDate, String branchId) async {
     final row = await _db.customSelect(
       '''
       SELECT name
@@ -2961,7 +3248,8 @@ class AccountingService {
       ],
     ).getSingleOrNull();
     if (row != null) {
-      throw StateError('لا يمكن ترحيل قيد محاسبي داخل فترة مغلقة: ${row.data['name']}.');
+      throw StateError(
+          'لا يمكن ترحيل قيد محاسبي داخل فترة مغلقة: ${row.data['name']}.');
     }
   }
 
@@ -2969,8 +3257,10 @@ class AccountingService {
     if (draft.lines.length < 2) {
       throw ArgumentError('يجب أن يحتوي قيد اليومية على سطرين على الأقل.');
     }
-    final debit = draft.lines.fold<double>(0, (sum, line) => sum + _cleanAmount(line.debit));
-    final credit = draft.lines.fold<double>(0, (sum, line) => sum + _cleanAmount(line.credit));
+    final debit = draft.lines
+        .fold<double>(0, (sum, line) => sum + _cleanAmount(line.debit));
+    final credit = draft.lines
+        .fold<double>(0, (sum, line) => sum + _cleanAmount(line.credit));
     if ((debit - credit).abs() > 0.0001 || debit <= 0) {
       throw ArgumentError('قيد اليومية غير متوازن.');
     }
@@ -2978,7 +3268,8 @@ class AccountingService {
       final hasDebit = _cleanAmount(line.debit) > 0;
       final hasCredit = _cleanAmount(line.credit) > 0;
       if (line.accountId.trim().isEmpty || hasDebit == hasCredit) {
-        throw ArgumentError('يجب أن يحتوي كل سطر في القيد على حساب واحد ومبلغ مدين أو دائن.');
+        throw ArgumentError(
+            'يجب أن يحتوي كل سطر في القيد على حساب واحد ومبلغ مدين أو دائن.');
       }
     }
   }
@@ -2987,6 +3278,14 @@ class AccountingService {
     VentioDriftDatabase db,
     String accountId,
   ) async {
+    final dbIdentity = identityHashCode(db);
+    if (_accountSnapshotCacheDbIdentity != dbIdentity) {
+      _accountSnapshotCacheDbIdentity = dbIdentity;
+      _accountSnapshotByIdCache.clear();
+    }
+    final normalizedAccountId = accountId.trim();
+    final cached = _accountSnapshotByIdCache[normalizedAccountId];
+    if (cached != null) return cached;
     final row = await db.customSelect(
       '''
       SELECT id, code, name, type, subtype, parent_id, normal_balance,
@@ -3000,7 +3299,9 @@ class AccountingService {
     if (row == null) {
       throw ArgumentError('الحساب المحاسبي غير موجود: $accountId');
     }
-    return AccountingAccount.fromRow(row.data);
+    final account = AccountingAccount.fromRow(row.data);
+    _accountSnapshotByIdCache[normalizedAccountId] = account;
+    return account;
   }
 
   static Future<String> _nextEntryNo(
@@ -3062,7 +3363,8 @@ class AccountingService {
   }
 
   static DateTime _parseDate(Object? value) =>
-      DateTime.tryParse(value?.toString() ?? '')?.toLocal() ?? DateTime.fromMillisecondsSinceEpoch(0);
+      DateTime.tryParse(value?.toString() ?? '')?.toLocal() ??
+      DateTime.fromMillisecondsSinceEpoch(0);
 
   static double _num(Object? value) {
     if (value is num) return value.toDouble();
@@ -3079,10 +3381,9 @@ class AccountingService {
   static String _newId(String prefix) =>
       '${prefix}_${DateTime.now().toUtc().microsecondsSinceEpoch}_${_random.nextInt(1 << 32)}';
 
-  static double _cleanAmount(double value) => value.isFinite && value > 0 ? value : 0;
+  static double _cleanAmount(double value) =>
+      value.isFinite && value > 0 ? value : 0;
 }
-
-
 
 class _CashLocationSnapshot {
   const _CashLocationSnapshot({
@@ -3136,11 +3437,14 @@ class AdvancedAccountingItem {
       if (value is num) return value.toDouble();
       return double.tryParse(value?.toString() ?? '') ?? 0;
     }
+
     bool toBool(Object? value) {
       if (value is bool) return value;
       if (value is num) return value != 0;
-      return value?.toString() == '1' || value?.toString().toLowerCase() == 'true';
+      return value?.toString() == '1' ||
+          value?.toString().toLowerCase() == 'true';
     }
+
     return AdvancedAccountingItem(
       id: row['id']?.toString() ?? '',
       name: row['name']?.toString() ?? '',
@@ -3261,7 +3565,6 @@ class BalanceSheetReport {
   final double difference;
 }
 
-
 enum CashFlowCategory { operating, investing, financing }
 
 class CashFlowStatementReport {
@@ -3340,7 +3643,11 @@ class TaxReport {
 }
 
 class _TaxBreakdown {
-  const _TaxBreakdown({required this.netAmount, required this.taxAmount, required this.grossAmount, required this.ratePercent});
+  const _TaxBreakdown(
+      {required this.netAmount,
+      required this.taxAmount,
+      required this.grossAmount,
+      required this.ratePercent});
 
   final double netAmount;
   final double taxAmount;

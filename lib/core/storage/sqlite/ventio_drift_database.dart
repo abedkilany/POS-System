@@ -135,9 +135,11 @@ class VentioDriftDatabase extends GeneratedDatabase {
     await _ensureStockOperationsTable();
     await _ensureInventoryMigrationAdjustmentsTable();
     await _ensureInventoryReconciliationsTable();
+    await _ensurePerformanceSupportTables();
     await _ensureOperationalBusinessColumns();
     await _ensureSimpleBusinessColumns();
     await _ensureComplexBusinessColumns();
+    await _ensureBusinessQueryIndexes();
     await _ensureIdentityBusinessColumns();
     await _ensureLastModifiedByDeviceIdColumns();
 
@@ -511,6 +513,47 @@ class VentioDriftDatabase extends GeneratedDatabase {
     await _ensureUserColumns();
   }
 
+  Future<void> _ensurePerformanceSupportTables() async {
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS daily_metrics (
+        metric_date TEXT PRIMARY KEY NOT NULL,
+        sales_total REAL NOT NULL DEFAULT 0,
+        sales_profit REAL NOT NULL DEFAULT 0,
+        sales_count INTEGER NOT NULL DEFAULT 0,
+        purchases_total REAL NOT NULL DEFAULT 0,
+        expenses_total REAL NOT NULL DEFAULT 0,
+        stock_in REAL NOT NULL DEFAULT 0,
+        stock_out REAL NOT NULL DEFAULT 0,
+        cash_in REAL NOT NULL DEFAULT 0,
+        cash_out REAL NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_daily_metrics_date ON daily_metrics(metric_date);');
+
+    await customStatement(r'''
+      CREATE TABLE IF NOT EXISTS search_index (
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        search_text TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (entity_type, entity_id)
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_search_index_type_text ON search_index(entity_type, search_text);');
+
+    try {
+      await customStatement(r'''
+        CREATE VIRTUAL TABLE IF NOT EXISTS search_index_fts
+        USING fts5(entity_type UNINDEXED, entity_id UNINDEXED, search_text);
+      ''');
+    } catch (_) {
+      // Some SQLite builds may omit FTS5; search_index remains the fallback.
+    }
+  }
+
   Future<void> _ensureLastModifiedByDeviceIdColumns() async {
     for (final table in <String>{
       'products',
@@ -669,7 +712,8 @@ class VentioDriftDatabase extends GeneratedDatabase {
     await _ensureColumn('sales', 'cash_received_amount_in_payment_currency',
         'REAL NOT NULL DEFAULT 0');
     await _ensureColumn('sales', 'note', "TEXT NOT NULL DEFAULT ''");
-    await _ensureColumn('sales', 'warehouse_id', "TEXT NOT NULL DEFAULT 'main'");
+    await _ensureColumn(
+        'sales', 'warehouse_id', "TEXT NOT NULL DEFAULT 'main'");
     await _ensureColumn(
         'sales', 'warehouse_name', "TEXT NOT NULL DEFAULT 'Main warehouse'");
     await customStatement(
@@ -945,14 +989,14 @@ class VentioDriftDatabase extends GeneratedDatabase {
         "TEXT NOT NULL DEFAULT ''");
     await _ensureColumn(
         'manufacturing_orders', 'quantity', 'REAL NOT NULL DEFAULT 0');
-    await _ensureColumn(
-        'manufacturing_orders', 'raw_materials_warehouse_id', "TEXT NOT NULL DEFAULT 'main'");
-    await _ensureColumn(
-        'manufacturing_orders', 'raw_materials_warehouse_name', "TEXT NOT NULL DEFAULT 'Main warehouse'");
-    await _ensureColumn(
-        'manufacturing_orders', 'finished_goods_warehouse_id', "TEXT NOT NULL DEFAULT 'main'");
-    await _ensureColumn(
-        'manufacturing_orders', 'finished_goods_warehouse_name', "TEXT NOT NULL DEFAULT 'Main warehouse'");
+    await _ensureColumn('manufacturing_orders', 'raw_materials_warehouse_id',
+        "TEXT NOT NULL DEFAULT 'main'");
+    await _ensureColumn('manufacturing_orders', 'raw_materials_warehouse_name',
+        "TEXT NOT NULL DEFAULT 'Main warehouse'");
+    await _ensureColumn('manufacturing_orders', 'finished_goods_warehouse_id',
+        "TEXT NOT NULL DEFAULT 'main'");
+    await _ensureColumn('manufacturing_orders', 'finished_goods_warehouse_name',
+        "TEXT NOT NULL DEFAULT 'Main warehouse'");
     await _ensureColumn(
         'manufacturing_orders', 'status', "TEXT NOT NULL DEFAULT 'completed'");
     await _ensureColumn(
@@ -1028,7 +1072,137 @@ class VentioDriftDatabase extends GeneratedDatabase {
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_stock_movements_idempotency_key ON stock_movements(idempotency_key) WHERE trim(idempotency_key) <> '';");
   }
 
+  Future<void> _ensureBusinessQueryIndexes() async {
+    // Older installs may carry a products table that predates the
+    // track_stock column. Re-assert the column here so any product indexes that
+    // depend on it cannot abort startup.
+    await _ensureProductColumns();
+
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_products_active_stock_name ON products(is_active, track_stock, name);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_products_category_name ON products(category, name);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_products_code ON products(code);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_products_deleted_track_lower_name_updated ON products(deleted_at, track_stock, lower(name), updated_at, id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_products_lower_code ON products(lower(code));');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_products_lower_barcode ON products(lower(barcode));');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_products_lower_name ON products(lower(name));');
+
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_customers_deleted_name ON customers(deleted_at, name);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone);');
+
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sales_status_date ON sales(status, document_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sales_date_updated ON sales(document_date, updated_at);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sales_deleted_status_date ON sales(deleted_at, lower(status), document_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sales_deleted_date_updated_id ON sales(deleted_at, document_date DESC, updated_at DESC, id DESC);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sales_invoice_no ON sales(invoice_no);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sales_customer_name ON sales(customer_name);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sales_lower_invoice_no ON sales(lower(invoice_no));');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sales_lower_customer_name ON sales(lower(customer_name));');
+
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sale_items_product_name ON sale_items(product_name);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sale_items_product_id ON sale_items(product_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sale_items_sale_product_name ON sale_items(sale_id, product_name);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sale_items_sale_lower_product_unit ON sale_items(sale_id, lower(product_name), lower(unit_name));');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_product_sale_units_product_lower_name_barcode ON product_sale_units(product_id, lower(name), lower(barcode));');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_product_purchase_units_product_lower_name_barcode ON product_purchase_units(product_id, lower(name), lower(barcode));');
+
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchases_status_date ON purchases(status, document_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchases_supplier_date ON purchases(supplier_id, document_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchases_date_updated ON purchases(document_date, updated_at);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchases_purchase_no ON purchases(purchase_no);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchases_supplier_name ON purchases(supplier_name);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchases_deleted_date_updated ON purchases(deleted_at, document_date, updated_at);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchases_deleted_status_date ON purchases(deleted_at, lower(status), document_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchases_lower_purchase_no ON purchases(lower(purchase_no));');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchases_lower_supplier_name ON purchases(lower(supplier_name));');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchases_lower_status ON purchases(lower(status));');
+
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchase_items_product_name ON purchase_items(product_name);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchase_items_product_id ON purchase_items(product_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchase_items_purchase_product_name ON purchase_items(purchase_id, lower(product_name));');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchase_items_purchase_cost_qty ON purchase_items(purchase_id, unit_cost, quantity);');
+
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_expenses_status_date ON expenses(expense_status, expense_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_expenses_category_date ON expenses(category, expense_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_expenses_title ON expenses(title);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_expenses_deleted_date_updated_id ON expenses(deleted_at, expense_date DESC, updated_at DESC, id ASC);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_expenses_deleted_status_date_updated ON expenses(deleted_at, lower(expense_status), expense_date DESC, updated_at DESC);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_expenses_deleted_status_amount ON expenses(deleted_at, lower(expense_status), amount);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_expenses_lower_title ON expenses(lower(title));');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_expenses_lower_category ON expenses(lower(category));');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_expenses_lower_status ON expenses(lower(expense_status));');
+
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_date_updated ON stock_movements(movement_date, updated_at);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_deleted_date_updated_id ON stock_movements(deleted_at, movement_date DESC, updated_at DESC, id ASC);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_deleted_type_date_updated ON stock_movements(deleted_at, movement_type, movement_date DESC, updated_at DESC);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_reference_no ON stock_movements(reference_no);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_product_name ON stock_movements(product_name);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_lower_product_name ON stock_movements(lower(product_name));');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_lower_reference_no ON stock_movements(lower(reference_no));');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_lower_type ON stock_movements(lower(movement_type));');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_lower_warehouse_name ON stock_movements(lower(warehouse_name));');
+  }
+
   Future<void> _ensureAccountTransactionColumns() async {
+    // Product query indexes below depend on track_stock. Some legacy installs
+    // reach this stage before the product column backfill has run, so make the
+    // column available here as well.
+    await _ensureProductColumns();
+
     await _ensureColumn(
         'account_transactions', 'account_type', "TEXT NOT NULL DEFAULT ''");
     await _ensureColumn(
@@ -1059,9 +1233,17 @@ class VentioDriftDatabase extends GeneratedDatabase {
     await customStatement(
         'CREATE INDEX IF NOT EXISTS idx_account_transactions_account_date ON account_transactions(account_type, account_id, transaction_date);');
     await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_account_transactions_lower_account ON account_transactions(lower(account_type), account_id);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_account_transactions_deleted_date ON account_transactions(deleted_at, transaction_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_account_transactions_deleted_lower_account_id ON account_transactions(deleted_at, lower(account_type), account_id);');
+    await customStatement(
         'CREATE INDEX IF NOT EXISTS idx_account_transactions_reference ON account_transactions(reference_id, reference_no);');
     await customStatement(
         'CREATE INDEX IF NOT EXISTS idx_account_transactions_type_date ON account_transactions(transaction_type, transaction_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_products_deleted_track_stock_stock_name ON products(deleted_at, track_stock, stock, lower(name));');
   }
 
   Future<void> _ensureCustomerColumns() async {
@@ -1136,6 +1318,8 @@ class VentioDriftDatabase extends GeneratedDatabase {
     await customStatement(
         'CREATE INDEX IF NOT EXISTS idx_warehouse_inventory_store_warehouse_product ON warehouse_inventory(store_id, warehouse_id, product_id);');
     await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_warehouse_inventory_store_product_quantity ON warehouse_inventory(store_id, product_id, quantity);');
+    await customStatement(
         'CREATE INDEX IF NOT EXISTS idx_warehouse_inventory_product ON warehouse_inventory(product_id);');
     await customStatement(
         'CREATE INDEX IF NOT EXISTS idx_warehouse_inventory_warehouse ON warehouse_inventory(warehouse_id);');
@@ -1170,10 +1354,14 @@ class VentioDriftDatabase extends GeneratedDatabase {
         UNIQUE(store_id, idempotency_key)
       );
     ''');
-    await _ensureColumn('stock_operations', 'started_at', "TEXT NOT NULL DEFAULT ''");
-    await _ensureColumn('stock_operations', 'updated_at', "TEXT NOT NULL DEFAULT ''");
-    await _ensureColumn('stock_operations', 'failure_reason', "TEXT NOT NULL DEFAULT ''");
-    await _ensureColumn('stock_operations', 'attempt_count', 'INTEGER NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'stock_operations', 'started_at', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'stock_operations', 'updated_at', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'stock_operations', 'failure_reason', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'stock_operations', 'attempt_count', 'INTEGER NOT NULL DEFAULT 0');
     await customStatement(
         'CREATE INDEX IF NOT EXISTS idx_stock_operations_document ON stock_operations(store_id, document_type, document_id);');
     await customStatement(
@@ -2786,5 +2974,3 @@ class VentioDriftDatabase extends GeneratedDatabase {
         'CREATE INDEX IF NOT EXISTS idx_${tableName}_sort_index ON $tableName(sort_index);');
   }
 }
-
-

@@ -58,6 +58,14 @@ class ProductRepository {
     if (db == null) return null;
     return BusinessSqliteStore.queryProductCategories(db);
   }
+
+  static Future<Map<String, Object?>?> findSaleBarcodeProduct(
+    String code,
+  ) async {
+    final db = _businessDb();
+    if (db == null) return null;
+    return BusinessSqliteStore.findSaleBarcodeProduct(db, code);
+  }
 }
 
 class CustomerRepository {
@@ -178,6 +186,17 @@ class SaleRepository {
     return results.isEmpty ? null : results.first;
   }
 
+  static Future<List<Sale>?> queryEligibleDeliveryNoteSales({
+    int limit = 100,
+  }) async {
+    final db = _businessDb();
+    if (db == null) return null;
+    return BusinessSqliteStore.queryEligibleDeliveryNoteSales(
+      db,
+      limit: limit,
+    );
+  }
+
   static Future<List<SaleQuotation>?> getQuotations() async {
     final db = _businessDb();
     if (db == null) return null;
@@ -287,6 +306,59 @@ class PurchaseRepository {
 
 class InventoryRepository {
   InventoryRepository._();
+
+  static Future<BusinessQueryPage<StockMovement>?> queryStockMovementsPage({
+    String query = '',
+    String type = 'all',
+    String productId = '',
+    String warehouseId = '',
+    DateTime? from,
+    DateTime? to,
+    bool? reviewed,
+    int limit = 50,
+    int offset = 0,
+    String sortMode = 'newest',
+  }) async {
+    final db = _businessDb();
+    if (db == null) return null;
+    return BusinessSqliteStore.queryStockMovements(
+      db,
+      query: query,
+      type: type,
+      productId: productId,
+      warehouseId: warehouseId,
+      from: from,
+      to: to,
+      reviewed: reviewed,
+      limit: limit,
+      offset: offset,
+      sortMode: sortMode,
+    );
+  }
+
+  static Future<BusinessQueryPage<StockMovement>?> queryWasteLossPage({
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    final db = _businessDb();
+    if (db == null) return null;
+    return BusinessSqliteStore.queryWasteLossMovements(
+      db,
+      limit: limit,
+      offset: offset,
+    );
+  }
+
+  static Future<Map<String, int>?> countStockMovementsAfterByProduct(
+    Map<String, DateTime> countedAtByProduct,
+  ) async {
+    final db = _businessDb();
+    if (db == null) return null;
+    return BusinessSqliteStore.countStockMovementsAfterByProduct(
+      db,
+      countedAtByProduct,
+    );
+  }
 
   static Future<List<StockMovement>?> getStockMovements() async {
     final db = _businessDb();
@@ -411,6 +483,21 @@ class AccountingRepository {
     return BusinessSqliteStore.buildAccountingMetrics(
       db,
       reference: reference,
+    );
+  }
+
+  static Future<List<Map<String, Object?>>?> queryAccountRows({
+    required String accountType,
+    String query = '',
+    int limit = 200,
+  }) async {
+    final db = _businessDb();
+    if (db == null) return null;
+    return BusinessSqliteStore.queryAccountingAccountRows(
+      db,
+      accountType: accountType,
+      query: query,
+      limit: limit,
     );
   }
 

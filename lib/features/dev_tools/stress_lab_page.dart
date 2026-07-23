@@ -22,6 +22,7 @@ import '../../core/services/lan_sync_service.dart';
 import '../../core/services/accounting_service.dart';
 import '../../core/services/sql_result_export_service.dart';
 import '../../core/sync_unified/sync_unified.dart';
+import '../../core/storage/sqlite/business_sqlite_store.dart';
 import '../../data/app_store.dart';
 import 'stress_lab_coverage_manifest.dart';
 import '../../models/app_identity.dart';
@@ -39,6 +40,7 @@ import '../../models/purchase_item.dart';
 import '../../models/sale_item.dart';
 import '../../models/sale.dart';
 import '../../models/store_profile.dart';
+import '../../models/stock_movement.dart';
 import '../../models/supplier.dart';
 import '../../models/supplier_product_price.dart';
 import '../../models/manufacturing.dart';
@@ -228,6 +230,36 @@ class _StressPerfStats {
       'count=$count failed=$failed total=${totalMs}ms avg=${avgMs.toStringAsFixed(2)}ms min=${minMs == (1 << 30) ? 0 : minMs}ms max=${maxMs}ms ops/s=${opsPerSecond.toStringAsFixed(1)} $curve';
 }
 
+class _PageReadinessProbeResult {
+  const _PageReadinessProbeResult({
+    required this.totalRows,
+    required this.searchRows,
+    required this.filterRows,
+    required this.pageRows,
+    required this.loadMs,
+    required this.searchMs,
+    required this.filterMs,
+    required this.sortMs,
+    required this.pageMs,
+  });
+
+  final int totalRows;
+  final int searchRows;
+  final int filterRows;
+  final int pageRows;
+  final int loadMs;
+  final int searchMs;
+  final int filterMs;
+  final int sortMs;
+  final int pageMs;
+
+  int get totalMs => loadMs + searchMs + filterMs + sortMs + pageMs;
+
+  String get details =>
+      'totalRows=$totalRows searchRows=$searchRows filterRows=$filterRows pageRows=$pageRows '
+      'loadMs=$loadMs searchMs=$searchMs filterMs=$filterMs sortMs=$sortMs pageMs=$pageMs totalMs=$totalMs';
+}
+
 class _StressTraceStat {
   _StressTraceStat(this.phase);
 
@@ -339,7 +371,7 @@ class _StressLabPageState extends State<StressLabPage> {
       'المخزون' => actual == 'Inventory',
       'المخزون المتقدم' => actual == 'Advanced Inventory',
       '??? ????????' =>
-          actual == 'Sales pressure' || actual.startsWith('Sales pressure '),
+        actual == 'Sales pressure' || actual.startsWith('Sales pressure '),
       'ملخص البيانات' => actual == 'Data Summary',
       'سلامة البيانات' => actual == 'Data Integrity',
       'صيانة التطبيق' => actual == 'App Maintenance',
@@ -378,10 +410,6 @@ class _StressLabPageState extends State<StressLabPage> {
 
   AppStore get store => widget.store;
 
-  void _resetStressLabAccess() {
-    unawaited(widget.store.setStressLabEnabled(false));
-  }
-
   @override
   void dispose() {
     _productsController.dispose();
@@ -391,7 +419,6 @@ class _StressLabPageState extends State<StressLabPage> {
     _progressEveryController.dispose();
     _pressureMultiplierController.dispose();
     _pressureProgressEveryController.dispose();
-    _resetStressLabAccess();
     super.dispose();
   }
 
@@ -587,7 +614,8 @@ class _StressLabPageState extends State<StressLabPage> {
     if (_performanceSnapshots.isEmpty) {
       _addLog('========== VENTIO PERFORMANCE WINDOW ==========');
       _addLog('No performance snapshots were captured.');
-      _addLog('Performance verdict: Bad | reason=no performance snapshots were captured');
+      _addLog(
+          'Performance verdict: Bad | reason=no performance snapshots were captured');
       _addLog('===============================================');
       return;
     }
@@ -600,7 +628,8 @@ class _StressLabPageState extends State<StressLabPage> {
     _addLog('Performance verdict: $verdict | reason=$reason');
     _addLog('Baseline: ${baseline.snapshotLine}');
     for (final snapshot in _performanceSnapshots) {
-      _addLog('[${snapshot.phase.name.toUpperCase()}] ${snapshot.snapshotLine}');
+      _addLog(
+          '[${snapshot.phase.name.toUpperCase()}] ${snapshot.snapshotLine}');
     }
     _addLog('Delta: ${_performanceDeltaLine(baseline, current)}');
     _addLog('===============================================');
@@ -794,7 +823,8 @@ class _StressLabPageState extends State<StressLabPage> {
           id: 'core-commerce',
           title: 'Core Commerce',
           kind: StressLabScenarioKind.commerce,
-          description: 'Seed the core commerce modules and drive live data flows.',
+          description:
+              'Seed the core commerce modules and drive live data flows.',
           execute: _runCoreCommerceScenario,
         ),
         _StressLabScenarioDefinition(
@@ -815,7 +845,8 @@ class _StressLabPageState extends State<StressLabPage> {
           id: 'system-audit',
           title: 'System Audit',
           kind: StressLabScenarioKind.system,
-          description: 'Run the one-button audit, pressure test, and final assertions.',
+          description:
+              'Run the one-button audit, pressure test, and final assertions.',
           execute: _runOneButtonSystemAudit,
         ),
         _StressLabScenarioDefinition(
@@ -839,23 +870,19 @@ class _StressLabPageState extends State<StressLabPage> {
     required Future<void> Function() body,
   }) async {
     _addLog(
-      '========== VENTIO SCENARIO START id=${scenario.id} title="${scenario.title}" kind=${scenario.kind.name} =========='
-    );
+        '========== VENTIO SCENARIO START id=${scenario.id} title="${scenario.title}" kind=${scenario.kind.name} ==========');
     final startedAt = DateTime.now();
     try {
       await body();
       _addLog(
-        'SCENARIO_DONE id=${scenario.id} elapsedMs=${DateTime.now().difference(startedAt).inMilliseconds}'
-      );
+          'SCENARIO_DONE id=${scenario.id} elapsedMs=${DateTime.now().difference(startedAt).inMilliseconds}');
     } catch (error) {
       _addLog(
-        'SCENARIO_FAILED id=${scenario.id} title="${scenario.title}" error=$error'
-      );
+          'SCENARIO_FAILED id=${scenario.id} title="${scenario.title}" error=$error');
       rethrow;
     } finally {
       _addLog(
-        '========== VENTIO SCENARIO END id=${scenario.id} title="${scenario.title}" =========='
-      );
+          '========== VENTIO SCENARIO END id=${scenario.id} title="${scenario.title}" ==========');
     }
   }
 
@@ -1441,8 +1468,7 @@ class _StressLabPageState extends State<StressLabPage> {
         id: 'daily-operations',
         title: 'Daily Operations',
         kind: StressLabScenarioKind.commerce,
-        description:
-            'Exercise the daily operational mix under medium load.',
+        description: 'Exercise the daily operational mix under medium load.',
         execute: _runDailyOperationsBody,
       ),
       body: _runDailyOperationsBody,
@@ -1586,8 +1612,7 @@ class _StressLabPageState extends State<StressLabPage> {
             'storeName': 'Ventio Platform',
             'loginName': 'admin@ventio',
             'accountType': 'platform_admin',
-            'trialEndsAt':
-                now.add(const Duration(days: 14)).toIso8601String(),
+            'trialEndsAt': now.add(const Duration(days: 14)).toIso8601String(),
             'devicesLimit': 9,
             'adminToken': 'adm_probe_login',
             'accountToken': 'acc_probe_login',
@@ -1606,8 +1631,7 @@ class _StressLabPageState extends State<StressLabPage> {
             'loginName':
                 '${decoded['username']?.toString() ?? 'owner'}@${decoded['storeName']?.toString() ?? 'stresslab'}',
             'accountType': 'store_owner',
-            'trialEndsAt':
-                now.add(const Duration(days: 14)).toIso8601String(),
+            'trialEndsAt': now.add(const Duration(days: 14)).toIso8601String(),
             'devicesLimit': 4,
             'adminToken': 'adm_probe_register',
             'accountToken': 'acc_probe_register',
@@ -1625,8 +1649,7 @@ class _StressLabPageState extends State<StressLabPage> {
             'storeName': 'Ventio Platform',
             'loginName': 'admin@ventio',
             'accountType': 'platform_admin',
-            'trialEndsAt':
-                now.add(const Duration(days: 7)).toIso8601String(),
+            'trialEndsAt': now.add(const Duration(days: 7)).toIso8601String(),
             'devicesLimit': 12,
             'adminToken': 'adm_probe_session',
             'accountToken': 'acc_probe_session',
@@ -1761,8 +1784,7 @@ class _StressLabPageState extends State<StressLabPage> {
         id: 'auth-surface',
         title: 'Auth Surface',
         kind: StressLabScenarioKind.admin,
-        description:
-            'Exercise login, shell, and account dashboard state.',
+        description: 'Exercise login, shell, and account dashboard state.',
         execute: _runAuthSurfaceBody,
       ),
       body: _runAuthSurfaceBody,
@@ -1828,10 +1850,10 @@ class _StressLabPageState extends State<StressLabPage> {
       _auditCheck(
         'AdminSubscribersPage',
         'Subscriber rows and filters',
-        subscribersResult.subscribers.any((item) => item.subscriptionStatus ==
-                'active') &&
-            subscribersResult.subscribers.any(
-                (item) => item.subscriptionStatus == 'trial'),
+        subscribersResult.subscribers
+                .any((item) => item.subscriptionStatus == 'active') &&
+            subscribersResult.subscribers
+                .any((item) => item.subscriptionStatus == 'trial'),
         'Admin subscribers page has active and trial records to filter and display.',
         'Admin subscribers page is missing the expected subscriber mix.',
       );
@@ -1960,8 +1982,7 @@ class _StressLabPageState extends State<StressLabPage> {
         id: 'device-tools',
         title: 'Device Tools',
         kind: StressLabScenarioKind.system,
-        description:
-            'Validate diagnostics and barcode scanner coverage.',
+        description: 'Validate diagnostics and barcode scanner coverage.',
         execute: _runDeviceToolsBody,
       ),
       body: _runDeviceToolsBody,
@@ -2082,8 +2103,8 @@ class _StressLabPageState extends State<StressLabPage> {
 
     if (availableRepairActions
         .contains(MaintenanceRepairAction.repairMissingCloudQueue)) {
-      final queueRepair =
-          await service.runRepair(MaintenanceRepairAction.repairMissingCloudQueue);
+      final queueRepair = await service
+          .runRepair(MaintenanceRepairAction.repairMissingCloudQueue);
       _auditCheck(
         'MaintenancePage',
         'Cloud queue repair path',
@@ -2422,7 +2443,8 @@ class _StressLabPageState extends State<StressLabPage> {
     await store.addOrUpdateRole(tempRole);
     await store.addOrUpdateUser(tempUser, password: 'stress-temp-123');
     final savedRole = store.roleById(tempRole.id);
-    final savedUser = store.users.where((user) => user.id == tempUser.id).toList();
+    final savedUser =
+        store.users.where((user) => user.id == tempUser.id).toList();
     _auditCheck(
       'UsersPermissionsPage',
       'Role and user creation',
@@ -3183,8 +3205,7 @@ class _StressLabPageState extends State<StressLabPage> {
         id: 'diagnostics',
         title: 'Diagnostics',
         kind: StressLabScenarioKind.maintenance,
-        description:
-            'Collect sequence, integrity, and maintenance evidence.',
+        description: 'Collect sequence, integrity, and maintenance evidence.',
         execute: _runAllDiagnosticsBody,
       ),
       body: _runAllDiagnosticsBody,
@@ -3347,6 +3368,63 @@ class _StressLabPageState extends State<StressLabPage> {
     _addLog('PERF_STEP $status [$section] $name $details');
   }
 
+  Future<void> _pressureBatchStep(
+    String section,
+    String name,
+    int count,
+    int batchSize,
+    Future<void> Function(int start, int length) action, {
+    double startProgress = 0.0,
+    double endProgress = 1.0,
+  }) async {
+    final stats = _StressPerfStats(section, name);
+    final tr = AppLocalizations.of(context);
+    _resetTraceCapture();
+    final swTotal = Stopwatch()..start();
+    String? firstError;
+    for (var start = 0; start < count; start += batchSize) {
+      final length = min(batchSize, count - start);
+      final sw = Stopwatch()..start();
+      try {
+        await action(start, length);
+        sw.stop();
+        final perItemMs =
+            max<int>(0, (sw.elapsedMilliseconds / length).round());
+        for (var i = 0; i < length; i += 1) {
+          stats.add(perItemMs);
+        }
+      } catch (error, stack) {
+        sw.stop();
+        firstError ??= error.toString();
+        for (var i = 0; i < length; i += 1) {
+          stats.addFail();
+        }
+        _addLog(
+            'PRESSURE_BATCH_FAIL [$section] $name start=$start length=$length error=$error');
+        _addLog(stack.toString().split('\n').take(3).join(' | '));
+      }
+      final ratio = count <= 1 ? 1.0 : (start + length - 1) / (count - 1);
+      _setStatus(
+          '${_reportLabel(section, tr)} / ${_reportLabel(name, tr)}: ${start + length}/$count',
+          progress: startProgress + (endProgress - startProgress) * ratio);
+      await Future<void>.delayed(Duration.zero);
+    }
+    swTotal.stop();
+    final status = stats.failed == 0
+        ? (stats.hasSlowdownWarning ? 'WARN' : 'PASS')
+        : 'FAIL';
+    final traceSummary = _traceSummaryForSection(section);
+    final details =
+        '${stats.summary} totalWall=${swTotal.elapsedMilliseconds}ms${firstError == null ? '' : ' firstError=$firstError'}${stats.hasSlowdownWarning ? ' slowdownWarning=true' : ''} batchSize=$batchSize ${traceSummary == 'trace=none' ? '' : traceSummary}';
+    _report.add(_StressAuditStep(
+        section: section,
+        name: name,
+        status: status,
+        details: details,
+        elapsedMs: swTotal.elapsedMilliseconds));
+    _addLog('PERF_STEP $status [$section] $name $details');
+  }
+
   Future<void> _runPressureAudit({
     required List<Product> baseProducts,
     required Customer? baseCustomer,
@@ -3372,63 +3450,84 @@ class _StressLabPageState extends State<StressLabPage> {
       }, successDetails: (value) => value);
 
       final pressureCustomers = <Customer>[];
-      await _pressureStep(
+      final contactBatchSize = min(250, max(25, progressEvery));
+      await _pressureBatchStep(
           _dual('ضغط العملاء', 'Customer pressure'),
           _dual('إنشاء $count عميل', 'Create $count customers'),
-          count, (i) async {
-        final customer = Customer(
-          id: '${_currentBatchId}_pc_$i',
-          name: '[PRESSURE] Customer $i $_currentBatchId',
-          phone: '+96171${i.toString().padLeft(6, '0')}',
-          address: 'Pressure customer address $i',
-        );
-        await store.addOrUpdateCustomer(customer);
-        if (i < 20) pressureCustomers.add(customer);
-      }, startProgress: 0.79, endProgress: 0.815, progressEvery: progressEvery);
+          count,
+          contactBatchSize, (start, length) async {
+        final batch = <Customer>[];
+        for (var offset = 0; offset < length; offset += 1) {
+          final i = start + offset;
+          final customer = Customer(
+            id: '${_currentBatchId}_pc_$i',
+            name: '[PRESSURE] Customer $i $_currentBatchId',
+            phone: '+96171${i.toString().padLeft(6, '0')}',
+            address: 'Pressure customer address $i',
+          );
+          batch.add(customer);
+          if (i < 20) pressureCustomers.add(customer);
+        }
+        await store.addOrUpdateCustomersBulk(batch);
+      }, startProgress: 0.79, endProgress: 0.815);
 
       final pressureSuppliers = <Supplier>[];
-      await _pressureStep(
+      await _pressureBatchStep(
           _dual('ضغط الموردين', 'Supplier pressure'),
           _dual('إنشاء $count مورد', 'Create $count suppliers'),
-          count, (i) async {
-        final supplier = Supplier(
-          id: '${_currentBatchId}_ps_$i',
-          name: '[PRESSURE] Supplier $i $_currentBatchId',
-          phone: '+96170${i.toString().padLeft(6, '0')}',
-          address: 'Pressure supplier address $i',
-          notes: 'Generated by Stress Lab pressure test',
-        );
-        await store.addOrUpdateSupplier(supplier);
-        if (i < 20) pressureSuppliers.add(supplier);
-      }, startProgress: 0.815, endProgress: 0.84, progressEvery: progressEvery);
+          count,
+          contactBatchSize, (start, length) async {
+        final batch = <Supplier>[];
+        for (var offset = 0; offset < length; offset += 1) {
+          final i = start + offset;
+          final supplier = Supplier(
+            id: '${_currentBatchId}_ps_$i',
+            name: '[PRESSURE] Supplier $i $_currentBatchId',
+            phone: '+96170${i.toString().padLeft(6, '0')}',
+            address: 'Pressure supplier address $i',
+            notes: 'Generated by Stress Lab pressure test',
+          );
+          batch.add(supplier);
+          if (i < 20) pressureSuppliers.add(supplier);
+        }
+        await store.addOrUpdateSuppliersBulk(batch);
+      }, startProgress: 0.815, endProgress: 0.84);
 
       final pressureProducts = <Product>[];
-      await _pressureStep(
+      final productBatchSize = min(250, max(25, progressEvery));
+      await _pressureBatchStep(
           _dual('ضغط المنتجات', 'Product pressure'),
           _dual('إنشاء $count منتج', 'Create $count products'),
-          count, (i) async {
-        final product = Product(
-          id: '${_currentBatchId}_pp_$i',
-          name: '[PRESSURE] Product $i $_currentBatchId',
-          nameEn: 'Pressure Product $i',
-          nameAr: 'منتج ضغط $i',
-          code: 'PRS-${DateTime.now().microsecondsSinceEpoch}-$i',
-          barcode: 'PRS${DateTime.now().microsecondsSinceEpoch}$i',
-          price: (10 + (i % 50)).toDouble(),
-          cost: (4 + (i % 20)).toDouble(),
-          usdCost: (4 + (i % 20)).toDouble(),
-          stock: 1000,
-          category: 'Stress Pressure',
-          brand: 'Stress Pressure',
-          supplier: baseSupplier?.name ?? '',
-          unit: 'pcs',
-          lowStockThreshold: 5,
-          trackStock: true,
-          isActive: true,
-        );
-        await store.addOrUpdateProduct(product);
-        if (i < 50) pressureProducts.add(product);
-      }, startProgress: 0.84, endProgress: 0.865, progressEvery: progressEvery);
+          count,
+          productBatchSize, (start, length) async {
+        final batch = <Product>[];
+        for (var offset = 0; offset < length; offset += 1) {
+          final i = start + offset;
+          final stamp = DateTime.now().microsecondsSinceEpoch;
+          final product = Product(
+            id: '${_currentBatchId}_pp_$i',
+            name: '[PRESSURE] Product $i $_currentBatchId',
+            nameEn: 'Pressure Product $i',
+            nameAr: 'منتج ضغط $i',
+            code: 'PRS-$stamp-$i',
+            barcode: 'PRS$stamp$i',
+            price: (10 + (i % 50)).toDouble(),
+            cost: (4 + (i % 20)).toDouble(),
+            usdCost: (4 + (i % 20)).toDouble(),
+            stock: 1000,
+            category: 'Stress Pressure',
+            brand: 'Stress Pressure',
+            supplier: baseSupplier?.name ?? '',
+            unit: 'pcs',
+            lowStockThreshold: 5,
+            trackStock: true,
+            isActive: true,
+          );
+          batch.add(product);
+          if (i < 50) pressureProducts.add(product);
+        }
+        await store.addOrUpdateProductsBulk(batch);
+      }, startProgress: 0.84, endProgress: 0.865);
 
       final salePool =
           pressureProducts.isNotEmpty ? pressureProducts : baseProducts;
@@ -3492,9 +3591,12 @@ class _StressLabPageState extends State<StressLabPage> {
 
       if (salePool.isNotEmpty) {
         final salesWarehouseId = store.resolveWarehouseForSale().id;
+        final salesPerProduct = (count / salePool.length).ceil();
+        final targetStock = max<double>(35.0, salesPerProduct + 5.0);
         await _pressureStep(
           _dual('تثبيت مخزون البيع', 'Sales stock buffer'),
-          _dual('رفع رصيد منتجات البيع إلى مستوى آمن قبل الضغط', 'Raise sale products to a safe stock buffer before pressure'),
+          _dual('رفع رصيد منتجات البيع إلى مستوى آمن قبل الضغط',
+              'Raise sale products to a safe stock buffer before pressure'),
           salePool.length,
           (i) async {
             final product = salePool[i];
@@ -3502,7 +3604,6 @@ class _StressLabPageState extends State<StressLabPage> {
               product.id,
               warehouseId: salesWarehouseId,
             );
-            const targetStock = 35.0;
             final needed = targetStock - current;
             if (needed > 0.000001) {
               await store.adjustStock(
@@ -3543,21 +3644,26 @@ class _StressLabPageState extends State<StressLabPage> {
             progressEvery: progressEvery);
       }
 
-      await _pressureStep(
+      await _pressureBatchStep(
           _dual('ضغط المصاريف', 'Expense pressure'),
           _dual('إنشاء وترحيل $count مصروف', 'Create and post $count expenses'),
-          count, (i) async {
-        final expense = Expense(
-          id: '${_currentBatchId}_pe_$i',
-          title: '[PRESSURE] Expense $i $_currentBatchId',
-          category: i % 2 == 0 ? 'Operations' : 'Maintenance',
-          amount: 1.0 + (i % 25),
-          date: DateTime.now(),
-          notes: 'Stress Lab pressure expense $i',
-        );
-        await store.addOrUpdateExpense(expense);
-        await store.postExpense(expense.id);
-      }, startProgress: 0.94, endProgress: 0.965, progressEvery: progressEvery);
+          count,
+          min(250, max(50, progressEvery)), (start, length) async {
+        final batch = <Expense>[];
+        for (var offset = 0; offset < length; offset += 1) {
+          final i = start + offset;
+          final expense = Expense(
+            id: '${_currentBatchId}_pe_$i',
+            title: '[PRESSURE] Expense $i $_currentBatchId',
+            category: i % 2 == 0 ? 'Operations' : 'Maintenance',
+            amount: 1.0 + (i % 25),
+            date: DateTime.now(),
+            notes: 'Stress Lab pressure expense $i',
+          );
+          batch.add(expense);
+        }
+        await store.createAndPostExpensesBulk(batch);
+      }, startProgress: 0.94, endProgress: 0.965);
     } finally {
       AppStore.setTraceSink(null);
     }
@@ -4181,6 +4287,8 @@ class _StressLabPageState extends State<StressLabPage> {
       await _runUsersPermissionsSurfaceBody();
       await _runDeepAccountingChecks();
       _runInventoryConsistencyChecks();
+      _runPageReadinessPerformanceChecks();
+      await _runSqlitePageReadinessPerformanceChecks();
       _runPerformanceHealthChecks();
       await _runMaintenanceHealthCheckIntegration();
       await _runReleaseAssertions();
@@ -4388,6 +4496,7 @@ class _StressLabPageState extends State<StressLabPage> {
   }
 
   Future<void> _runDeepAccountingChecks() async {
+    await store.waitForPendingAccounting(timeout: _accountingDrainTimeout());
     final batchSales = store.sales
         .where((sale) => sale.customerName.contains(_currentBatchId))
         .toList(growable: false);
@@ -4583,6 +4692,12 @@ class _StressLabPageState extends State<StressLabPage> {
           purchase.id.contains(_currentBatchId))
       .toList(growable: false);
 
+  Duration _accountingDrainTimeout() {
+    final minutes =
+        max<int>(2, min<int>(15, (_lastPressureMultiplier / 1000).ceil()));
+    return Duration(minutes: minutes);
+  }
+
   bool _transactionMatchesAny(AccountTransaction tx, Iterable<String> refs) {
     for (final ref in refs) {
       if (ref.trim().isEmpty) continue;
@@ -4634,6 +4749,7 @@ class _StressLabPageState extends State<StressLabPage> {
 
   Future<void> _runReleaseAssertions() async {
     _addLog('========== VENTIO RELEASE ASSERTIONS ==========');
+    await store.waitForPendingAccounting(timeout: _accountingDrainTimeout());
     final batchProducts = store.allProductsForDiagnostics
         .where((product) =>
             product.name.contains(_currentBatchId) ||
@@ -4795,8 +4911,7 @@ class _StressLabPageState extends State<StressLabPage> {
             batchBoms.any((bom) => bom.isActive && !bom.isDeleted) &&
             batchManufacturingOrders.isNotEmpty &&
             batchManufacturingOrders.any((order) =>
-                order.status.toLowerCase() == 'completed' &&
-                !order.isDeleted),
+                order.status.toLowerCase() == 'completed' && !order.isDeleted),
         'Batch BOMs and completed manufacturing orders were created.',
         'boms=${batchBoms.length} manufacturingOrders=${batchManufacturingOrders.length}');
     expect(
@@ -5290,14 +5405,373 @@ class _StressLabPageState extends State<StressLabPage> {
             'Orphan stock movements: products=$orphanStockProducts references=$orphanReferences.'));
   }
 
+  int _measureSync(void Function() action) {
+    final sw = Stopwatch()..start();
+    action();
+    sw.stop();
+    return sw.elapsedMilliseconds;
+  }
+
+  Future<int> _measureAsync(Future<void> Function() action) async {
+    final sw = Stopwatch()..start();
+    await action();
+    sw.stop();
+    return sw.elapsedMilliseconds;
+  }
+
+  _PageReadinessProbeResult _measurePageReadiness<T>({
+    required List<T> Function() load,
+    required bool Function(T item) search,
+    required bool Function(T item) filter,
+    required int Function(T a, T b) sort,
+    int pageSize = 50,
+  }) {
+    late List<T> loaded;
+    final loadMs = _measureSync(() {
+      loaded = load();
+    });
+    late List<T> searched;
+    final searchMs = _measureSync(() {
+      searched = loaded.where(search).toList(growable: false);
+    });
+    late List<T> filtered;
+    final filterMs = _measureSync(() {
+      filtered = loaded.where(filter).toList(growable: false);
+    });
+    late List<T> sorted;
+    final sortMs = _measureSync(() {
+      sorted = filtered.toList(growable: false)..sort(sort);
+    });
+    late List<T> page;
+    final pageMs = _measureSync(() {
+      page = sorted.take(pageSize).toList(growable: false);
+    });
+    return _PageReadinessProbeResult(
+      totalRows: loaded.length,
+      searchRows: searched.length,
+      filterRows: filtered.length,
+      pageRows: page.length,
+      loadMs: loadMs,
+      searchMs: searchMs,
+      filterMs: filterMs,
+      sortMs: sortMs,
+      pageMs: pageMs,
+    );
+  }
+
+  void _addPageReadinessProbe(
+    String name,
+    _PageReadinessProbeResult Function() probe, {
+    int warnMs = 120,
+    int failMs = 500,
+  }) {
+    final sw = Stopwatch()..start();
+    try {
+      final result = probe();
+      sw.stop();
+      final status = result.totalMs >= failMs
+          ? 'FAIL'
+          : result.totalMs >= warnMs
+              ? 'WARN'
+              : 'PASS';
+      final details =
+          '${result.details} thresholdWarnMs=$warnMs thresholdFailMs=$failMs source=AppStoreCache operation=load+search+filter+sort+page';
+      _report.add(_StressAuditStep(
+        section: _dual('أداء تجهيز الصفحات', 'Page Readiness Performance'),
+        name: name,
+        status: status,
+        details: details,
+        elapsedMs: sw.elapsedMilliseconds,
+      ));
+      _addLog('PAGE_READINESS $status $name $details');
+    } catch (error, stack) {
+      sw.stop();
+      _report.add(_StressAuditStep(
+        section: _dual('أداء تجهيز الصفحات', 'Page Readiness Performance'),
+        name: name,
+        status: 'FAIL',
+        details: error.toString(),
+        elapsedMs: sw.elapsedMilliseconds,
+      ));
+      _addLog('PAGE_READINESS FAIL $name $error');
+      _addLog(stack.toString().split('\n').take(3).join(' | '));
+    }
+  }
+
+  Future<void> _addSqlitePageReadinessProbe(
+    String name,
+    Future<_PageReadinessProbeResult> Function() probe, {
+    int warnMs = 120,
+    int failMs = 500,
+  }) async {
+    final sw = Stopwatch()..start();
+    try {
+      final result = await probe();
+      sw.stop();
+      final status = result.totalMs >= failMs
+          ? 'FAIL'
+          : result.totalMs >= warnMs
+              ? 'WARN'
+              : 'PASS';
+      final details =
+          '${result.details} thresholdWarnMs=$warnMs thresholdFailMs=$failMs source=SQLite operation=query+count+page';
+      _report.add(_StressAuditStep(
+        section: _dual(
+            'أداء تجهيز الصفحات SQLite', 'SQLite Page Readiness Performance'),
+        name: name,
+        status: status,
+        details: details,
+        elapsedMs: sw.elapsedMilliseconds,
+      ));
+      _addLog('SQLITE_PAGE_READINESS $status $name $details');
+    } catch (error, stack) {
+      sw.stop();
+      _report.add(_StressAuditStep(
+        section: _dual(
+            'أداء تجهيز الصفحات SQLite', 'SQLite Page Readiness Performance'),
+        name: name,
+        status: 'FAIL',
+        details: error.toString(),
+        elapsedMs: sw.elapsedMilliseconds,
+      ));
+      _addLog('SQLITE_PAGE_READINESS FAIL $name $error');
+      _addLog(stack.toString().split('\n').take(3).join(' | '));
+    }
+  }
+
+  Future<_PageReadinessProbeResult> _measureSqlitePageReadiness<T>({
+    required Future<BusinessQueryPage<T>?> Function() query,
+  }) async {
+    BusinessQueryPage<T>? page;
+    final queryMs = await _measureAsync(() async {
+      page = await query();
+    });
+    final result = page;
+    if (result == null) {
+      throw StateError('SQLite business query is not available.');
+    }
+    return _PageReadinessProbeResult(
+      totalRows: result.totalCount,
+      searchRows: result.totalCount,
+      filterRows: result.totalCount,
+      pageRows: result.items.length,
+      loadMs: queryMs,
+      searchMs: 0,
+      filterMs: 0,
+      sortMs: 0,
+      pageMs: 0,
+    );
+  }
+
+  void _runPageReadinessPerformanceChecks() {
+    final query = _currentBatchId.toLowerCase();
+    _addPageReadinessProbe(
+      'Products list/search/filter/sort/page',
+      () => _measurePageReadiness<Product>(
+        load: () => store.products.toList(growable: false),
+        search: (item) =>
+            item.name.toLowerCase().contains(query) ||
+            item.code.toLowerCase().contains(query) ||
+            item.category.toLowerCase().contains(query),
+        filter: (item) => !item.isDeleted && item.trackStock,
+        sort: (a, b) => a.name.compareTo(b.name),
+      ),
+    );
+    _addPageReadinessProbe(
+      'Sales list/search/filter/sort/page',
+      () => _measurePageReadiness<Sale>(
+        load: () => store.sales.toList(growable: false),
+        search: (item) =>
+            item.invoiceNo.toLowerCase().contains(query) ||
+            item.customerName.toLowerCase().contains(query),
+        filter: (item) => !item.isDeleted && !item.isCancelled,
+        sort: (a, b) => b.date.compareTo(a.date),
+      ),
+    );
+    _addPageReadinessProbe(
+      'Purchases list/search/filter/sort/page',
+      () => _measurePageReadiness<Purchase>(
+        load: () => store.purchases.toList(growable: false),
+        search: (item) =>
+            item.purchaseNo.toLowerCase().contains(query) ||
+            item.supplierName.toLowerCase().contains(query) ||
+            item.searchText.contains(query),
+        filter: (item) => !item.isDeleted && !item.isCancelled,
+        sort: (a, b) => b.date.compareTo(a.date),
+      ),
+    );
+    _addPageReadinessProbe(
+      'Inventory list/search/filter/sort/page',
+      () => _measurePageReadiness<Product>(
+        load: () => store.stockTrackedProducts.toList(growable: false),
+        search: (item) =>
+            item.name.toLowerCase().contains(query) ||
+            item.code.toLowerCase().contains(query),
+        filter: (item) => !item.isDeleted && item.stock.isFinite,
+        sort: (a, b) => a.stock.compareTo(b.stock),
+      ),
+    );
+    _addPageReadinessProbe(
+      'Customers list/search/filter/sort/page',
+      () => _measurePageReadiness<Customer>(
+        load: () => store.customers.toList(growable: false),
+        search: (item) =>
+            item.name.toLowerCase().contains(query) ||
+            item.phone.toLowerCase().contains(query),
+        filter: (item) => !item.isDeleted,
+        sort: (a, b) => a.name.compareTo(b.name),
+      ),
+    );
+    _addPageReadinessProbe(
+      'Expenses list/search/filter/sort/page',
+      () => _measurePageReadiness<Expense>(
+        load: () => store.expenses.toList(growable: false),
+        search: (item) =>
+            item.title.toLowerCase().contains(query) ||
+            item.category.toLowerCase().contains(query) ||
+            item.searchText.contains(query),
+        filter: (item) => !item.isDeleted && !item.isCancelled,
+        sort: (a, b) => b.date.compareTo(a.date),
+      ),
+    );
+    _addPageReadinessProbe(
+      'Reports overview calculation',
+      () => _measurePageReadiness<String>(
+        load: () {
+          final purchases = store.purchasesOverview;
+          final expenses = store.expensesOverview;
+          return <String>[
+            'purchases:${purchases.totalCount}:${purchases.totalPurchasesAmount}',
+            'expenses:${expenses.totalCount}:${expenses.totalExpensesAmount}',
+            'inventory:${store.inventoryCostValue}:${store.inventoryRetailValue}',
+          ];
+        },
+        search: (item) => item.contains(':'),
+        filter: (item) => item.isNotEmpty,
+        sort: (a, b) => a.compareTo(b),
+      ),
+      warnMs: 80,
+      failMs: 350,
+    );
+  }
+
+  Future<void> _runSqlitePageReadinessPerformanceChecks() async {
+    if (!LocalDatabaseService.canQueryBusinessSqlite) {
+      _auditCheck(
+          _dual('الأداء', 'Performance'),
+          'SQLite page readiness availability',
+          false,
+          'SQLite page readiness probes are available.',
+          'SQLite page readiness probes were skipped because business SQLite is not queryable.',
+          warning: true);
+      return;
+    }
+    final query = _currentBatchId.toLowerCase();
+    await _addSqlitePageReadinessProbe(
+      'Products SQLite query/count/page',
+      () => _measureSqlitePageReadiness<Product>(
+        query: () => LocalDatabaseService.queryProductsFromSqlite(
+          query: query,
+          stockTrackedOnly: true,
+          limit: 50,
+          offset: 0,
+        ),
+      ),
+    );
+    await _addSqlitePageReadinessProbe(
+      'Sales SQLite query/count/page',
+      () => _measureSqlitePageReadiness<Sale>(
+        query: () => LocalDatabaseService.querySalesFromSqlite(
+          query: query,
+          status: 'all',
+          limit: 50,
+          offset: 0,
+          sortMode: 'newest',
+        ),
+      ),
+    );
+    await _addSqlitePageReadinessProbe(
+      'Purchases SQLite query/count/page',
+      () => _measureSqlitePageReadiness<Purchase>(
+        query: () => LocalDatabaseService.queryPurchasesFromSqlite(
+          query: query,
+          status: 'all',
+          limit: 50,
+          offset: 0,
+          sortMode: 'newest',
+        ),
+      ),
+    );
+    await _addSqlitePageReadinessProbe(
+      'Stock movements SQLite query/count/page',
+      () => _measureSqlitePageReadiness<StockMovement>(
+        query: () => LocalDatabaseService.queryStockMovementsFromSqlite(
+          query: query,
+          limit: 50,
+          offset: 0,
+          sortMode: 'newest',
+        ),
+      ),
+    );
+    await _addSqlitePageReadinessProbe(
+      'Customers SQLite query/count/page',
+      () => _measureSqlitePageReadiness<Customer>(
+        query: () => LocalDatabaseService.queryCustomersFromSqlite(
+          query: query,
+          limit: 50,
+          offset: 0,
+        ),
+      ),
+    );
+    await _addSqlitePageReadinessProbe(
+      'Expenses SQLite query/count/page',
+      () => _measureSqlitePageReadiness<Expense>(
+        query: () => LocalDatabaseService.queryExpensesFromSqlite(
+          query: query,
+          status: 'all',
+          limit: 50,
+          offset: 0,
+        ),
+      ),
+    );
+    await _addSqlitePageReadinessProbe(
+      'Reports SQLite summary calculation',
+      () async {
+        Map<String, Object?>? summary;
+        final queryMs = await _measureAsync(() async {
+          summary = await LocalDatabaseService.buildReportsSummaryFromSqlite(
+            reference: DateTime.now(),
+          );
+        });
+        if (summary == null) {
+          throw StateError('SQLite reports summary is not available.');
+        }
+        return _PageReadinessProbeResult(
+          totalRows: summary!.length,
+          searchRows: summary!.length,
+          filterRows: summary!.length,
+          pageRows: summary!.length,
+          loadMs: queryMs,
+          searchMs: 0,
+          filterMs: 0,
+          sortMs: 0,
+          pageMs: 0,
+        );
+      },
+      warnMs: 80,
+      failMs: 350,
+    );
+  }
+
   void _runPerformanceHealthChecks() {
     final perfRows = _report
         .where((item) => _sectionMatches(item.section, 'ضغط'))
         .toList(growable: false);
     final slowRows = perfRows.where((item) => item.isWarn).length;
     final failedRows = perfRows.where((item) => item.isFail).length;
-    final hasSalesPerf =
-        perfRows.any((item) => _sectionMatches(item.section, 'ضغط المبيعات'));
+    final hasSalesPerf = perfRows.any(
+      (item) => _sectionMatches(item.section, 'Sales pressure'),
+    );
     _auditCheck(
         _dual('الأداء', 'Performance'),
         _dual('منحنى التباطؤ', 'Slowdown curve'),
@@ -5316,6 +5790,27 @@ class _StressLabPageState extends State<StressLabPage> {
             'Sales performance was measured under $_lastPressureMultiplier-operation pressure.'),
         _dual('لم يتم العثور على قياس ضغط للمبيعات.',
             'No sales pressure measurement was found.'),
+        warning: true);
+    final pageRows = _report
+        .where((item) =>
+            item.section ==
+            _dual('أداء تجهيز الصفحات', 'Page Readiness Performance'))
+        .toList(growable: false);
+    final slowPageRows = pageRows.where((item) => item.isWarn).length;
+    final failedPageRows = pageRows.where((item) => item.isFail).length;
+    _auditCheck(
+        _dual('Ø§Ù„Ø£Ø¯Ø§Ø¡', 'Performance'),
+        'Page readiness measurement coverage',
+        pageRows.length >= 6,
+        'Page readiness probes captured ${pageRows.length} heavy page preparation measurements.',
+        'Only ${pageRows.length} page readiness probes were captured.',
+        warning: true);
+    _auditCheck(
+        _dual('Ø§Ù„Ø£Ø¯Ø§Ø¡', 'Performance'),
+        'Heavy page readiness time',
+        slowPageRows == 0 && failedPageRows == 0,
+        'No heavy page readiness probe crossed the configured warning threshold.',
+        'There are $slowPageRows slow and $failedPageRows failed page readiness probes.',
         warning: true);
   }
 

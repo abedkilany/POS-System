@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/services/accounting_aging_service.dart';
@@ -623,20 +622,6 @@ class DashboardSnapshotService {
     AppStore store,
     DateTime reference,
   ) async {
-    if (store.isHeavyDataLoaded) {
-      final computed = await StartupTimingService.measure(
-        'dashboard.snapshot_memory_summary',
-        () async => _computeSnapshotFromStore(store, reference),
-        category: 'dashboard',
-      );
-      await _saveCachedSummary(
-        computed,
-        storeId: store.appIdentity.storeId,
-        dashboardRevision: store.dashboardRevision,
-        reference: reference,
-      );
-      return computed;
-    }
     if (LocalDatabaseService.canQueryBusinessSqlite) {
       try {
         final sqliteSummary = await StartupTimingService.measure(
@@ -656,8 +641,8 @@ class DashboardSnapshotService {
           return sqliteSummary;
         }
       } catch (_) {
-        // Keep the runtime SQLite-first. If the typed SQL path fails, use the
-        // already loaded in-memory store instead of raw JSON.
+        // Keep dashboard DB-first; the in-memory store is only a safety net
+        // when typed SQL is unavailable or fails.
       }
     }
     final computed = await StartupTimingService.measure(

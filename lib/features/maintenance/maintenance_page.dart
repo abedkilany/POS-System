@@ -73,7 +73,6 @@ class _MaintenancePageState extends State<MaintenancePage> {
   void _hideStressLabButton() {
     _advancedToolsTapCount = 0;
     _stressLabUnlocked = false;
-    unawaited(widget.store.setStressLabEnabled(false));
   }
 
   String _formatBytes(int bytes) {

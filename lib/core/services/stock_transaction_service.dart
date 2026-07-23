@@ -144,6 +144,7 @@ class StockTransactionService {
   final String defaultBranchId;
   final String defaultSyncTarget;
   final NegativeStockPolicyResolver? allowNegativeStockResolver;
+  static final Map<int, int> _nextSyncSequenceByDb = <int, int>{};
 
   Future<double> getBalance({
     required String storeId,
@@ -234,10 +235,14 @@ class StockTransactionService {
     String branchId = '',
     String deviceId = '',
     String syncTarget = 'cloud',
+    bool skipExistingMovementLookup = false,
   }) async {
-    final resolvedStoreId = storeId.trim().isEmpty ? defaultStoreId : storeId.trim();
-    final resolvedBranchId = branchId.trim().isEmpty ? defaultBranchId : branchId.trim();
-    final resolvedDeviceId = deviceId.trim().isEmpty ? this.deviceId : deviceId.trim();
+    final resolvedStoreId =
+        storeId.trim().isEmpty ? defaultStoreId : storeId.trim();
+    final resolvedBranchId =
+        branchId.trim().isEmpty ? defaultBranchId : branchId.trim();
+    final resolvedDeviceId =
+        deviceId.trim().isEmpty ? this.deviceId : deviceId.trim();
     final now = DateTime.now().toUtc();
     final acquisition = await _acquireOperationRecord(
       storeId: resolvedStoreId,
@@ -271,6 +276,7 @@ class StockTransactionService {
           branchId: resolvedBranchId,
           deviceId: resolvedDeviceId,
           syncTarget: syncTarget,
+          skipExistingMovementLookup: skipExistingMovementLookup,
         ),
       );
       await _markOperationCompleted(
@@ -309,6 +315,7 @@ class StockTransactionService {
     String branchId = '',
     String deviceId = '',
     String syncTarget = 'cloud',
+    bool skipExistingMovementLookup = false,
   }) async {
     if (idempotencyKey.trim().isEmpty) {
       throw ArgumentError('idempotencyKey is required.');
@@ -320,10 +327,14 @@ class StockTransactionService {
       throw ArgumentError('At least one movement is required.');
     }
 
-    final resolvedStoreId = storeId.trim().isEmpty ? defaultStoreId : storeId.trim();
-    final resolvedBranchId = branchId.trim().isEmpty ? defaultBranchId : branchId.trim();
-    final resolvedDeviceId = deviceId.trim().isEmpty ? this.deviceId : deviceId.trim();
-    final target = syncTarget.trim().isEmpty ? defaultSyncTarget : syncTarget.trim();
+    final resolvedStoreId =
+        storeId.trim().isEmpty ? defaultStoreId : storeId.trim();
+    final resolvedBranchId =
+        branchId.trim().isEmpty ? defaultBranchId : branchId.trim();
+    final resolvedDeviceId =
+        deviceId.trim().isEmpty ? this.deviceId : deviceId.trim();
+    final target =
+        syncTarget.trim().isEmpty ? defaultSyncTarget : syncTarget.trim();
     final movementIds = <String>[];
     var sequence = await _nextSyncSequence();
     final now = DateTime.now().toUtc();
@@ -345,6 +356,7 @@ class StockTransactionService {
         documentId: documentId,
         target: target,
         sequence: sequence,
+        skipExistingLookup: skipExistingMovementLookup,
       );
       movementIds.add(appliedMovementId);
       sequence += 1;
@@ -483,7 +495,8 @@ class StockTransactionService {
   Future<StockIntegrityReport> checkIntegrity({
     String storeId = '',
   }) async {
-    final resolvedStoreId = storeId.trim().isEmpty ? defaultStoreId : storeId.trim();
+    final resolvedStoreId =
+        storeId.trim().isEmpty ? defaultStoreId : storeId.trim();
     final backfillCompleted = await _warehouseInventoryBackfillCompleted();
     final products = await db.customSelect('''
       SELECT id, name, stock
@@ -521,8 +534,7 @@ class StockTransactionService {
         ): (row.data['quantity'] as num? ?? 0).toDouble(),
     };
     final productById = <String, Map<String, dynamic>>{
-      for (final row in products)
-        row.read<String>('id'): row.data,
+      for (final row in products) row.read<String>('id'): row.data,
     };
     final coveredProducts = <String>{};
 
@@ -537,7 +549,8 @@ class StockTransactionService {
       coveredProducts.add(productId);
       final warehouseBalance = (row.data['quantity'] as num? ?? 0).toDouble();
       final ledgerBalance = movementByIdentity[key] ?? 0;
-      final legacyStock = (productById[productId]?['stock'] as num? ?? 0).toDouble();
+      final legacyStock =
+          (productById[productId]?['stock'] as num? ?? 0).toDouble();
       final productName = productById[productId]?['name']?.toString() ?? '';
       final difference = warehouseBalance - ledgerBalance;
       final classification = ledgerBalance == 0 && legacyStock > 0
@@ -574,7 +587,8 @@ class StockTransactionService {
       if (seenKeys.contains(key)) continue;
       coveredProducts.add(productId);
       final ledgerBalance = (row.data['quantity'] as num? ?? 0).toDouble();
-      final legacyStock = (productById[productId]?['stock'] as num? ?? 0).toDouble();
+      final legacyStock =
+          (productById[productId]?['stock'] as num? ?? 0).toDouble();
       final productName = productById[productId]?['name']?.toString() ?? '';
       issues.add(
         StockIntegrityIssue(
@@ -678,7 +692,8 @@ class StockTransactionService {
       final startedAt = _parseDate(row.read<String>('started_at')) ??
           _parseDate(row.read<String>('updated_at')) ??
           DateTime.now();
-      if (DateTime.now().toUtc().difference(startedAt) <= _operationPendingTimeout) {
+      if (DateTime.now().toUtc().difference(startedAt) <=
+          _operationPendingTimeout) {
         continue;
       }
       issues.add(
@@ -808,14 +823,20 @@ class StockTransactionService {
     required String documentId,
     required String target,
     required int sequence,
+    bool skipExistingLookup = false,
   }) async {
     final now = movement.updatedAt.toUtc();
-    final existingMovementId = await _existingMovementId(movement);
-    if (existingMovementId != null) {
-      return existingMovementId;
+    if (!skipExistingLookup) {
+      final existingMovementId = await _existingMovementId(movement);
+      if (existingMovementId != null) {
+        return existingMovementId;
+      }
     }
 
-    final insertedMovement = await _insertStockMovementAppendOnly(movement);
+    final insertedMovement = await _insertStockMovementAppendOnly(
+      movement,
+      skipExistingCheck: true,
+    );
     if (!insertedMovement.inserted) {
       return insertedMovement.movementId;
     }
@@ -909,11 +930,14 @@ class StockTransactionService {
   }
 
   Future<_MovementInsertResult> _insertStockMovementAppendOnly(
-    StockMovement movement,
-  ) async {
-    final existing = await _existingMovementId(movement);
-    if (existing != null) {
-      return _MovementInsertResult(movementId: existing, inserted: false);
+    StockMovement movement, {
+    bool skipExistingCheck = false,
+  }) async {
+    if (!skipExistingCheck) {
+      final existing = await _existingMovementId(movement);
+      if (existing != null) {
+        return _MovementInsertResult(movementId: existing, inserted: false);
+      }
     }
     try {
       await db.customInsert(
@@ -957,7 +981,8 @@ class StockTransactionService {
           Variable<String>(movement.idempotencyKey),
           Variable<double>(movement.unitCost),
           Variable<String>(movement.lastModifiedByDeviceId),
-          Variable<String>(movement.reviewedAt?.toUtc().toIso8601String() ?? ''),
+          Variable<String>(
+              movement.reviewedAt?.toUtc().toIso8601String() ?? ''),
           Variable<String>(movement.reviewedBy),
           Variable<String>(movement.reviewNote),
         ],
@@ -1265,10 +1290,19 @@ class StockTransactionService {
   }
 
   Future<int> _nextSyncSequence() async {
+    final dbIdentity = identityHashCode(db);
+    final cached = _nextSyncSequenceByDb[dbIdentity];
+    if (cached != null) {
+      _nextSyncSequenceByDb[dbIdentity] = cached + 1;
+      return cached;
+    }
     final rows = await db
-        .customSelect('SELECT COALESCE(MAX(sequence), 0) AS value FROM sync_events')
+        .customSelect(
+            'SELECT COALESCE(MAX(sequence), 0) AS value FROM sync_events')
         .get();
-    return rows.isEmpty ? 1 : rows.first.read<int>('value') + 1;
+    final next = rows.isEmpty ? 1 : rows.first.read<int>('value') + 1;
+    _nextSyncSequenceByDb[dbIdentity] = next + 1;
+    return next;
   }
 
   StockMovement _normalizeMovement(
