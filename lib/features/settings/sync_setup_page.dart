@@ -9,6 +9,7 @@ import '../../core/utils/responsive.dart';
 import '../../core/services/cloud_sync_service.dart';
 import '../../core/services/lan_sync_service.dart';
 import '../../core/sync_unified/sync_unified.dart';
+import '../../core/sync_unified/unified_auto_sync_controller.dart';
 import '../../core/snapshot/unified_snapshot_progress.dart';
 import '../../data/app_store.dart';
 import '../../core/services/page_timing_scope.dart';
@@ -18,7 +19,14 @@ enum _ConnectMode { lan, cloud }
 
 enum _SetupStatus { idle, info, success, warning, error }
 
-enum _ClientPairingState { noCode, ready, connecting, connected, failed, expired }
+enum _ClientPairingState {
+  noCode,
+  ready,
+  connecting,
+  connected,
+  failed,
+  expired
+}
 
 class SyncSetupPage extends StatefulWidget {
   const SyncSetupPage({super.key, required this.store, required this.onDone});
@@ -31,37 +39,35 @@ class SyncSetupPage extends StatefulWidget {
 }
 
 class _SyncSetupPageState extends State<SyncSetupPage> {
-  final _hostController = TextEditingController(text: LanSyncSettings.load().host);
-  final _portController = TextEditingController(text: LanSyncSettings.load().port.toString());
+  final _hostController =
+      TextEditingController(text: LanSyncSettings.load().host);
+  final _portController =
+      TextEditingController(text: LanSyncSettings.load().port.toString());
   final _lanTokenController = TextEditingController(
     text: LanSyncSettings.load().secret.trim(),
   );
 
-  final _cloudApiController = TextEditingController(text: CloudSyncSettings.load().apiBaseUrl);
+  final _cloudApiController =
+      TextEditingController(text: CloudSyncSettings.load().apiBaseUrl);
   final _cloudPairingCodeController = TextEditingController();
 
-  late final LanSyncService _lanSyncService = LanSyncService(widget.store);
-  late final CloudSyncService _cloudSyncService = CloudSyncService(widget.store);
-
-  UnifiedSyncEngine _lanEngine() => UnifiedSyncEngine(
-        LanSyncTransportAdapter(
-          service: _lanSyncService,
-          settings: LanSyncSettings.load().copyWith(
-            host: _hostController.text.trim(),
-            port: _port,
-            secret: _lanTokenController.text.trim(),
-            mode: LanSyncDeviceMode.client,
-            setupComplete: true,
-            hostModeEnabled: false,
-          ),
+  UnifiedSyncEngine _lanEngine() => UnifiedSyncFactory.lanEngine(
+        widget.store,
+        settings: LanSyncSettings.load().copyWith(
+          host: _hostController.text.trim(),
+          port: _port,
+          secret: _lanTokenController.text.trim(),
+          mode: LanSyncDeviceMode.client,
+          setupComplete: true,
+          hostModeEnabled: false,
         ),
       );
 
-  UnifiedSyncEngine _cloudEngine(CloudSyncSettings settings) => UnifiedSyncEngine(
-        CloudSyncTransportAdapter(
-          service: _cloudSyncService,
-          settings: settings,
-        ),
+  UnifiedSyncEngine _cloudEngine(CloudSyncSettings settings) =>
+      UnifiedSyncFactory.cloudEngine(
+        widget.store,
+        settings: settings,
+        enabled: settings.enabled,
       );
 
   _ConnectMode _mode = _ConnectMode.cloud;
@@ -76,13 +82,17 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
 
   int get _port => int.tryParse(_portController.text.trim()) ?? 8787;
 
-  String get _activePairingCode => _mode == _ConnectMode.cloud ? _cloudPairingCodeController.text.trim() : _lanTokenController.text.trim();
+  String get _activePairingCode => _mode == _ConnectMode.cloud
+      ? _cloudPairingCodeController.text.trim()
+      : _lanTokenController.text.trim();
 
   void _startQrCountdownTimer() {
     _qrCountdownTimer?.cancel();
     _qrCountdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
-      if (_qrStatus == _ClientPairingState.ready && _qrExpiresAt != null && !_qrExpiresAt!.isAfter(DateTime.now())) {
+      if (_qrStatus == _ClientPairingState.ready &&
+          _qrExpiresAt != null &&
+          !_qrExpiresAt!.isAfter(DateTime.now())) {
         setState(() => _qrStatus = _ClientPairingState.expired);
         return;
       }
@@ -97,7 +107,8 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       _qrExpiresAt = null;
       return;
     }
-    if (_qrStatus == _ClientPairingState.connected || _qrStatus == _ClientPairingState.connecting) return;
+    if (_qrStatus == _ClientPairingState.connected ||
+        _qrStatus == _ClientPairingState.connecting) return;
     if (_qrExpiresAt != null && !_qrExpiresAt!.isAfter(DateTime.now())) {
       _qrStatus = _ClientPairingState.expired;
       return;
@@ -111,9 +122,14 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
 
   void _markQrFailed(String message) {
     final lower = message.toLowerCase();
-    final expiredOrUsed = lower.contains('expired') || lower.contains('already used') || lower.contains('410') || lower.contains('409');
+    final expiredOrUsed = lower.contains('expired') ||
+        lower.contains('already used') ||
+        lower.contains('410') ||
+        lower.contains('409');
     if (!mounted) return;
-    setState(() => _qrStatus = expiredOrUsed ? _ClientPairingState.expired : _ClientPairingState.failed);
+    setState(() => _qrStatus = expiredOrUsed
+        ? _ClientPairingState.expired
+        : _ClientPairingState.failed);
   }
 
   void _setStatus(String message, {_SetupStatus type = _SetupStatus.info}) {
@@ -141,7 +157,6 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       _statusType = _SetupStatus.idle;
     });
   }
-
 
   void _beginConnectionAttempt(String message) {
     setState(() {
@@ -177,14 +192,19 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
     }
   }
 
-
   String _friendlyErrorMessage(Object error, {required String fallback}) {
     final raw = error.toString();
     final lower = raw.toLowerCase();
-    if (lower.contains('pairing code expired') || lower.contains('already used') || lower.contains('410') || lower.contains('409')) {
+    if (lower.contains('pairing code expired') ||
+        lower.contains('already used') ||
+        lower.contains('410') ||
+        lower.contains('409')) {
       return AppLocalizations.of(context).text('pairing_code_expired_or_used');
     }
-    if (lower.contains('socketexception') || lower.contains('clientexception') || lower.contains('timeoutexception') || lower.contains('failed host lookup')) {
+    if (lower.contains('socketexception') ||
+        lower.contains('clientexception') ||
+        lower.contains('timeoutexception') ||
+        lower.contains('failed host lookup')) {
       return fallback;
     }
     if (lower.contains('null check operator used on a null value')) {
@@ -235,17 +255,31 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
     try {
       final decoded = jsonDecode(raw);
       if (decoded is Map<String, dynamic>) {
-        final transport = (decoded['transport'] ?? decoded['syncType'] ?? decoded['type'] ?? '').toString().toLowerCase();
+        final transport = (decoded['transport'] ??
+                decoded['syncType'] ??
+                decoded['type'] ??
+                '')
+            .toString()
+            .toLowerCase();
         if (transport.contains('lan')) {
           _mode = _ConnectMode.lan;
         } else if (transport.contains('cloud')) {
           _mode = _ConnectMode.cloud;
         }
 
-        final host = (decoded['host'] ?? decoded['hostIp'] ?? decoded['ip'] ?? '').toString();
+        final host =
+            (decoded['host'] ?? decoded['hostIp'] ?? decoded['ip'] ?? '')
+                .toString();
         final port = (decoded['port'] ?? '').toString();
-        final token = (decoded['pairingCode'] ?? decoded['pairing_code'] ?? decoded['code'] ?? decoded['token'] ?? decoded['pairingToken'] ?? '').toString();
-        final expiresAtRaw = (decoded['expiresAt'] ?? decoded['expires_at'] ?? '').toString();
+        final token = (decoded['pairingCode'] ??
+                decoded['pairing_code'] ??
+                decoded['code'] ??
+                decoded['token'] ??
+                decoded['pairingToken'] ??
+                '')
+            .toString();
+        final expiresAtRaw =
+            (decoded['expiresAt'] ?? decoded['expires_at'] ?? '').toString();
         _qrExpiresAt = DateTime.tryParse(expiresAtRaw);
 
         if (host.trim().isNotEmpty) _hostController.text = host.trim();
@@ -269,9 +303,11 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
     });
     Future.microtask(() async {
       if (!mounted || _busy) return;
-      if (_mode == _ConnectMode.cloud && _cloudPairingCodeController.text.trim().isNotEmpty) {
+      if (_mode == _ConnectMode.cloud &&
+          _cloudPairingCodeController.text.trim().isNotEmpty) {
         await _connectCloud();
-      } else if (_mode == _ConnectMode.lan && _lanTokenController.text.trim().isNotEmpty) {
+      } else if (_mode == _ConnectMode.lan &&
+          _lanTokenController.text.trim().isNotEmpty) {
         await _connectLan();
       }
     });
@@ -302,7 +338,8 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       }
 
       _setStatus(claimingLanPairing);
-      final result = await _lanEngine().claimPairingCode(secret, onProgress: _setSnapshotProgress);
+      final result = await _lanEngine()
+          .claimPairingCode(secret, onProgress: _setSnapshotProgress);
       if (!result.ok) {
         _markQrFailed(result.message);
         _setStatus(result.message, type: _SetupStatus.error);
@@ -312,7 +349,8 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       await _finishSuccessfulConnection(connectedLanSignIn);
     } catch (error) {
       _markQrFailed(error.toString());
-      _setStatus(_friendlyErrorMessage(error, fallback: lanConnectionFailed), type: _SetupStatus.error);
+      _setStatus(_friendlyErrorMessage(error, fallback: lanConnectionFailed),
+          type: _SetupStatus.error);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -348,7 +386,8 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       await settings.save();
 
       _setStatus(verifyingPairingCode);
-      final result = await _cloudEngine(settings).claimPairingCode(code, onProgress: _setSnapshotProgress);
+      final result = await _cloudEngine(settings)
+          .claimPairingCode(code, onProgress: _setSnapshotProgress);
       if (!result.ok) {
         _markQrFailed(result.message);
         _setStatus(result.message, type: _SetupStatus.error);
@@ -361,7 +400,8 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       _setStatus(cloudConnectionFailed, type: _SetupStatus.error);
     } catch (error) {
       _markQrFailed(error.toString());
-      _setStatus(_friendlyErrorMessage(error, fallback: cloudConnectionFailed), type: _SetupStatus.error);
+      _setStatus(_friendlyErrorMessage(error, fallback: cloudConnectionFailed),
+          type: _SetupStatus.error);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -402,11 +442,13 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
                   child: Padding(
                     padding: VentioResponsive.pageInsets(context),
                     child: ListView(
-                      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+                      keyboardDismissBehavior:
+                          ScrollViewKeyboardDismissBehavior.onDrag,
                       children: [
                         _buildHeader(context, tr, color),
                         SizedBox(height: isMobile ? 18 : 24),
-                        _buildSectionTitle(context, tr.text('connection_method'), Icons.hub_outlined),
+                        _buildSectionTitle(context,
+                            tr.text('connection_method'), Icons.hub_outlined),
                         const SizedBox(height: 12),
                         _buildModeSelector(context, tr),
                         const SizedBox(height: 16),
@@ -414,9 +456,15 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
                         const SizedBox(height: 16),
                         _buildQrCard(context, tr),
                         const SizedBox(height: 16),
-                        _buildSectionTitle(context, tr.text(_mode == _ConnectMode.cloud ? 'cloud_setup' : 'lan_setup'), Icons.tune_outlined),
+                        _buildSectionTitle(
+                            context,
+                            tr.text(_mode == _ConnectMode.cloud
+                                ? 'cloud_setup'
+                                : 'lan_setup'),
+                            Icons.tune_outlined),
                         const SizedBox(height: 12),
-                        if (_mode == _ConnectMode.cloud) ..._buildCloudFields(tr),
+                        if (_mode == _ConnectMode.cloud)
+                          ..._buildCloudFields(tr),
                         if (_mode == _ConnectMode.lan) ..._buildLanFields(tr),
                         const SizedBox(height: 16),
                         SizedBox(
@@ -424,7 +472,8 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
                           child: FilledButton.icon(
                             onPressed: _busy ? null : _connect,
                             icon: const Icon(Icons.check_circle_outline),
-                            label: Text(tr.text('connect_to_store'), overflow: TextOverflow.ellipsis),
+                            label: Text(tr.text('connect_to_store'),
+                                overflow: TextOverflow.ellipsis),
                           ),
                         ),
                         const SizedBox(height: 12),
@@ -442,7 +491,8 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
                 color: Colors.black.withValues(alpha: 0.24),
                 child: Center(
                   child: ConstrainedBox(
-                    constraints: BoxConstraints(maxWidth: VentioResponsive.modalMaxWidth(context, 520)),
+                    constraints: BoxConstraints(
+                        maxWidth: VentioResponsive.modalMaxWidth(context, 520)),
                     child: Card(
                       margin: EdgeInsets.all(outerPadding),
                       child: Padding(
@@ -450,7 +500,9 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
                         child: UnifiedSnapshotProgressView(
                           value: _snapshotProgressValue,
                           label: _snapshotProgressLabel.isEmpty
-                              ? (_status.isEmpty ? tr.text('connecting_downloading_store_data') : _status)
+                              ? (_status.isEmpty
+                                  ? tr.text('connecting_downloading_store_data')
+                                  : _status)
                               : _snapshotProgressLabel,
                         ),
                       ),
@@ -478,8 +530,14 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
     }
 
     final segments = [
-      ButtonSegment(value: _ConnectMode.cloud, label: Text(tr.text('connection_cloud')), icon: const Icon(Icons.cloud_outlined)),
-      ButtonSegment(value: _ConnectMode.lan, label: Text(tr.text('connection_lan')), icon: const Icon(Icons.wifi_outlined)),
+      ButtonSegment(
+          value: _ConnectMode.cloud,
+          label: Text(tr.text('connection_cloud')),
+          icon: const Icon(Icons.cloud_outlined)),
+      ButtonSegment(
+          value: _ConnectMode.lan,
+          label: Text(tr.text('connection_lan')),
+          icon: const Icon(Icons.wifi_outlined)),
     ];
 
     if (!VentioResponsive.isMobile(context)) {
@@ -504,29 +562,39 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       return SizedBox(
         width: double.infinity,
         child: selected
-            ? FilledButton(onPressed: _busy ? null : () => selectMode(mode), child: buttonChild)
-            : OutlinedButton(onPressed: _busy ? null : () => selectMode(mode), child: buttonChild),
+            ? FilledButton(
+                onPressed: _busy ? null : () => selectMode(mode),
+                child: buttonChild)
+            : OutlinedButton(
+                onPressed: _busy ? null : () => selectMode(mode),
+                child: buttonChild),
       );
     }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        mobileButton(_ConnectMode.cloud, Icons.cloud_outlined, tr.text('connection_cloud')),
+        mobileButton(_ConnectMode.cloud, Icons.cloud_outlined,
+            tr.text('connection_cloud')),
         const SizedBox(height: 8),
-        mobileButton(_ConnectMode.lan, Icons.wifi_outlined, tr.text('connection_lan')),
+        mobileButton(
+            _ConnectMode.lan, Icons.wifi_outlined, tr.text('connection_lan')),
       ],
     );
   }
 
-  Widget _buildHeader(BuildContext context, AppLocalizations tr, ColorScheme color) {
+  Widget _buildHeader(
+      BuildContext context, AppLocalizations tr, ColorScheme color) {
     return Column(
       children: [
         Icon(Icons.sync_alt_rounded, size: 56, color: color.primary),
         const SizedBox(height: 16),
-        Text(tr.text('connect_device_to_store'), style: Theme.of(context).textTheme.headlineSmall, textAlign: TextAlign.center),
+        Text(tr.text('connect_device_to_store'),
+            style: Theme.of(context).textTheme.headlineSmall,
+            textAlign: TextAlign.center),
         const SizedBox(height: 8),
-        Text(tr.text('connect_device_to_store_desc'), textAlign: TextAlign.center),
+        Text(tr.text('connect_device_to_store_desc'),
+            textAlign: TextAlign.center),
       ],
     );
   }
@@ -539,7 +607,10 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
         Expanded(
           child: Text(
             title,
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            style: Theme.of(context)
+                .textTheme
+                .titleMedium
+                ?.copyWith(fontWeight: FontWeight.w700),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
           ),
@@ -548,16 +619,46 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
     );
   }
 
-
-  ({String label, IconData icon, Color background, Color foreground}) _qrStatusData(BuildContext context, AppLocalizations tr) {
+  ({String label, IconData icon, Color background, Color foreground})
+      _qrStatusData(BuildContext context, AppLocalizations tr) {
     final color = Theme.of(context).colorScheme;
     return switch (_qrStatus) {
-      _ClientPairingState.ready => (label: tr.text('connection_state_pending'), icon: Icons.check_circle_outline, background: Colors.green.withValues(alpha: 0.12), foreground: Colors.green.shade700),
-      _ClientPairingState.connecting => (label: tr.text('connection_state_connecting'), icon: Icons.sync_rounded, background: color.primaryContainer, foreground: color.onPrimaryContainer),
-      _ClientPairingState.expired => (label: tr.text('pairing_status_expired'), icon: Icons.timer_off_outlined, background: Colors.orange.withValues(alpha: 0.14), foreground: Colors.orange.shade800),
-      _ClientPairingState.connected => (label: tr.text('connection_state_active'), icon: Icons.done_all_outlined, background: Colors.green.withValues(alpha: 0.12), foreground: Colors.green.shade700),
-      _ClientPairingState.failed => (label: tr.text('connection_state_error'), icon: Icons.error_outline, background: color.errorContainer, foreground: color.onErrorContainer),
-      _ClientPairingState.noCode => (label: tr.text('pairing_status_no_code_entered'), icon: Icons.edit_note_outlined, background: Colors.grey.withValues(alpha: 0.16), foreground: color.onSurfaceVariant),
+      _ClientPairingState.ready => (
+          label: tr.text('connection_state_pending'),
+          icon: Icons.check_circle_outline,
+          background: Colors.green.withValues(alpha: 0.12),
+          foreground: Colors.green.shade700
+        ),
+      _ClientPairingState.connecting => (
+          label: tr.text('connection_state_connecting'),
+          icon: Icons.sync_rounded,
+          background: color.primaryContainer,
+          foreground: color.onPrimaryContainer
+        ),
+      _ClientPairingState.expired => (
+          label: tr.text('pairing_status_expired'),
+          icon: Icons.timer_off_outlined,
+          background: Colors.orange.withValues(alpha: 0.14),
+          foreground: Colors.orange.shade800
+        ),
+      _ClientPairingState.connected => (
+          label: tr.text('connection_state_active'),
+          icon: Icons.done_all_outlined,
+          background: Colors.green.withValues(alpha: 0.12),
+          foreground: Colors.green.shade700
+        ),
+      _ClientPairingState.failed => (
+          label: tr.text('connection_state_error'),
+          icon: Icons.error_outline,
+          background: color.errorContainer,
+          foreground: color.onErrorContainer
+        ),
+      _ClientPairingState.noCode => (
+          label: tr.text('pairing_status_no_code_entered'),
+          icon: Icons.edit_note_outlined,
+          background: Colors.grey.withValues(alpha: 0.16),
+          foreground: color.onSurfaceVariant
+        ),
     };
   }
 
@@ -565,13 +666,16 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
     final data = _qrStatusData(context, tr);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(color: data.background, borderRadius: BorderRadius.circular(999)),
+      decoration: BoxDecoration(
+          color: data.background, borderRadius: BorderRadius.circular(999)),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(data.icon, size: 16, color: data.foreground),
           const SizedBox(width: 6),
-          Text(data.label, style: TextStyle(color: data.foreground, fontWeight: FontWeight.w700)),
+          Text(data.label,
+              style: TextStyle(
+                  color: data.foreground, fontWeight: FontWeight.w700)),
         ],
       ),
     );
@@ -605,7 +709,9 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
             : _statusType == _SetupStatus.success
                 ? tr.text('connection_state_active')
                 : tr.text('connection_state_pending');
-    final subtitle = _mode == _ConnectMode.cloud ? tr.text('cloud_pairing_code_helper') : tr.text('lan_pairing_code_helper');
+    final subtitle = _mode == _ConnectMode.cloud
+        ? tr.text('cloud_pairing_code_helper')
+        : tr.text('lan_pairing_code_helper');
     return Card.outlined(
       margin: EdgeInsets.zero,
       child: ListTile(
@@ -626,8 +732,10 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
     final borderColor = _qrBorderColor(context);
     final helper = switch (_qrStatus) {
       _ClientPairingState.noCode => tr.text('scan_or_enter_host_pairing_code'),
-      _ClientPairingState.ready => tr.text('pairing_code_ready_to_connect_help'),
-      _ClientPairingState.connecting => tr.text('connecting_downloading_store_data'),
+      _ClientPairingState.ready =>
+        tr.text('pairing_code_ready_to_connect_help'),
+      _ClientPairingState.connecting =>
+        tr.text('connecting_downloading_store_data'),
       _ClientPairingState.connected => tr.text('connected_store_sign_in'),
       _ClientPairingState.expired => tr.text('pairing_code_expired_or_used'),
       _ClientPairingState.failed => tr.text('connection_failed_check_code'),
@@ -636,7 +744,8 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: borderColor.withValues(alpha: 0.65), width: 1.2),
+        side:
+            BorderSide(color: borderColor.withValues(alpha: 0.65), width: 1.2),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -651,13 +760,18 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
                   children: [
                     Text(
                       tr.text('scan_host_qr_code'),
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w700),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      hasCode ? tr.text('pairing_code_ready_to_connect_help') : tr.text('scan_or_enter_host_pairing_code'),
+                      hasCode
+                          ? tr.text('pairing_code_ready_to_connect_help')
+                          : tr.text('scan_or_enter_host_pairing_code'),
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
                   ],
@@ -669,7 +783,8 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
                     color: color.secondaryContainer,
                     borderRadius: BorderRadius.circular(16),
                   ),
-                  child: Icon(Icons.qr_code_2_rounded, color: color.onSecondaryContainer),
+                  child: Icon(Icons.qr_code_2_rounded,
+                      color: color.onSecondaryContainer),
                 );
 
                 if (compactHeader) {
@@ -685,7 +800,9 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
                         ],
                       ),
                       const SizedBox(height: 10),
-                      Align(alignment: AlignmentDirectional.centerStart, child: _qrStatusBadge(context, tr)),
+                      Align(
+                          alignment: AlignmentDirectional.centerStart,
+                          child: _qrStatusBadge(context, tr)),
                     ],
                   );
                 }
@@ -696,7 +813,10 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
                     const SizedBox(width: 12),
                     Expanded(child: titleColumn),
                     const SizedBox(width: 12),
-                    Flexible(child: Align(alignment: AlignmentDirectional.centerEnd, child: _qrStatusBadge(context, tr))),
+                    Flexible(
+                        child: Align(
+                            alignment: AlignmentDirectional.centerEnd,
+                            child: _qrStatusBadge(context, tr))),
                   ],
                 );
               },
@@ -712,9 +832,13 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
                 ),
                 child: Row(
                   children: [
-                    Icon(_qrStatusData(context, tr).icon, color: _qrStatusData(context, tr).foreground),
+                    Icon(_qrStatusData(context, tr).icon,
+                        color: _qrStatusData(context, tr).foreground),
                     const SizedBox(width: 10),
-                    Expanded(child: Text(helper, style: TextStyle(color: _qrStatusData(context, tr).foreground))),
+                    Expanded(
+                        child: Text(helper,
+                            style: TextStyle(
+                                color: _qrStatusData(context, tr).foreground))),
                   ],
                 ),
               ),
@@ -737,10 +861,26 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
   Widget _buildStatusBanner(BuildContext context) {
     final color = Theme.of(context).colorScheme;
     final data = switch (_statusType) {
-      _SetupStatus.success => (Icons.check_circle_outline, color.primaryContainer, color.onPrimaryContainer),
-      _SetupStatus.warning => (Icons.warning_amber_rounded, color.tertiaryContainer, color.onTertiaryContainer),
-      _SetupStatus.error => (Icons.error_outline, color.errorContainer, color.onErrorContainer),
-      _ => (Icons.info_outline, color.surfaceContainerHighest, color.onSurfaceVariant),
+      _SetupStatus.success => (
+          Icons.check_circle_outline,
+          color.primaryContainer,
+          color.onPrimaryContainer
+        ),
+      _SetupStatus.warning => (
+          Icons.warning_amber_rounded,
+          color.tertiaryContainer,
+          color.onTertiaryContainer
+        ),
+      _SetupStatus.error => (
+          Icons.error_outline,
+          color.errorContainer,
+          color.onErrorContainer
+        ),
+      _ => (
+          Icons.info_outline,
+          color.surfaceContainerHighest,
+          color.onSurfaceVariant
+        ),
     };
     return Container(
       padding: const EdgeInsets.all(12),
@@ -778,7 +918,8 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
           controller: _portController,
           enabled: !_busy,
           keyboardType: TextInputType.number,
-          decoration: InputDecoration(labelText: tr.text('port'), border: const OutlineInputBorder()),
+          decoration: InputDecoration(
+              labelText: tr.text('port'), border: const OutlineInputBorder()),
         ),
         const SizedBox(height: 12),
         TextField(

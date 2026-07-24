@@ -419,6 +419,26 @@ class SyncDeviceStateStore {
     );
   }
 
+  /// Records the unified sync outcome for the current device using the same
+  /// cursor/ACK semantics for LAN and Cloud.
+  static Future<void> recordUnifiedSyncResult(
+    AppIdentity identity, {
+    required String transport,
+    DateTime? cursor,
+    int? sequence,
+    bool online = true,
+  }) {
+    return recordSyncResult(
+      identity,
+      transport: transport,
+      appliedCursor: cursor,
+      ackCursor: cursor,
+      appliedSequence: sequence,
+      ackSequence: sequence,
+      online: online,
+    );
+  }
+
   /// Returns the cursor that should seed a legacy transport before a sync run.
   /// Cloud and LAN keep their own progress markers, but still reuse the same
   /// sync semantics and fallback cursor wiring.

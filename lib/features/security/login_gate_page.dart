@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
 import '../../core/services/account_auth_service.dart';
+import '../../core/services/cloud_sync_admin_service.dart';
 import '../../core/services/cloud_sync_service.dart';
 import '../../core/services/sync_diagnostics_log.dart';
 import '../../core/services/page_timing_scope.dart';
@@ -51,6 +52,9 @@ class _LoginGatePageState extends State<LoginGatePage> {
   bool _firstReadyMarked = false;
   String _onlineSessionPassword = '';
   late final VoidCallback _storeListener;
+
+  CloudSyncAdminService get _cloudAdminService =>
+      CloudSyncAdminService(widget.store);
 
   void _handleStoreChanged() {
     if (!mounted) return;
@@ -156,11 +160,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
     final messenger = ScaffoldMessenger.of(context);
     setState(() => _checkingSuspension = true);
     try {
-      final identity = widget.store.appIdentity;
-      final active = identity.activeSyncTransportNormalized;
-      final result = active == 'cloud'
-          ? await UnifiedSyncFactory.cloudEngine(widget.store).syncNow()
-          : await UnifiedSyncFactory.lanEngine(widget.store).syncNow();
+      final result = await UnifiedSyncFactory.activeEngine(widget.store)
+          .syncNow();
       if (!mounted) return;
       if (result.ok && !widget.store.isSuspendedByHost) {
         messenger.showSnackBar(
@@ -289,7 +290,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
         clearLastPullCursor: true,
       );
       await recoverySettings.save();
-      final result = await CloudSyncService(widget.store)
+      final result = await _cloudAdminService
           .recoverExistingStoreIdentityFromCloud(
         recoverySettings,
         storeId: storeId,
@@ -499,8 +500,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
         clearLastPullCursor: true,
       );
       await recoverySettings.save();
-      final result =
-          await CloudSyncService(widget.store).recoverExistingStoreFromCloud(
+      final result = await _cloudAdminService.recoverExistingStoreFromCloud(
         recoverySettings,
         storeId: storeId,
         branchId: branchId,

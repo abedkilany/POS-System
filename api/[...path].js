@@ -28,15 +28,9 @@ import hostTransferRequest from '../server_api/sync/host-transfer/request.js';
 import pairingClaim from '../server_api/sync/pairing/claim.js';
 import pairingCreate from '../server_api/sync/pairing/create.js';
 import pairingStatus from '../server_api/sync/pairing/status.js';
-import pull from '../server_api/sync/pull.js';
-import push from '../server_api/sync/push.js';
 import signal from '../server_api/sync/signal.js';
 import { realtimeTicketHandler } from '../server_api/sync/realtime.js';
 import recoveryClaim from '../server_api/sync/recovery/claim.js';
-import requestsAck from '../server_api/sync/requests/ack.js';
-import requestsPull from '../server_api/sync/requests/pull.js';
-import requestsStatus from '../server_api/sync/requests/status.js';
-import requestsPush from '../server_api/sync/requests/push.js';
 import maintenance from '../server_api/sync/maintenance.js';
 import bootstrapSnapshot from '../server_api/sync/bootstrap-snapshot.js';
 import googleDriveAuthStart from '../server_api/google-drive/auth-start.js';
@@ -67,8 +61,6 @@ const routes = new Map([
   ['sync/pairing/claim', pairingClaim],
   ['sync/pairing/create', pairingCreate],
   ['sync/pairing/status', pairingStatus],
-  ['sync/pull', pull],
-  ['sync/push', push],
   ['sync/signal', signal],
   ['sync/realtime-ticket', realtimeTicketHandler],
   ['sync/maintenance', maintenance],
@@ -78,10 +70,6 @@ const routes = new Map([
   ['google-drive/status', googleDriveStatus],
   ['google-drive/refresh', googleDriveRefresh],
   ['sync/recovery/claim', recoveryClaim],
-  ['sync/requests/ack', requestsAck],
-  ['sync/requests/pull', requestsPull],
-  ['sync/requests/status', requestsStatus],
-  ['sync/requests/push', requestsPush],
 ]);
 
 function normalizePath(req) {

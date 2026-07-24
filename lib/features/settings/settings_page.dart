@@ -12,6 +12,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../../core/app_brand.dart';
 import '../../core/services/backup_download_service.dart';
 import '../../core/services/barcode_feedback_service.dart';
+import '../../core/services/cloud_sync_admin_service.dart';
 import '../../core/services/cloud_sync_service.dart';
 import '../../core/services/account_auth_service.dart';
 import '../../core/services/accounting_service.dart';
@@ -2245,11 +2246,9 @@ class SettingsPage extends StatelessWidget {
           identity.syncMode == SyncMode.marketplaceEnabled) {
         progress.value = _OperationProgress(
             0.40, tr.text('contacting_cloud_host_snapshot_percent'));
-        final result = await UnifiedSyncEngine(
-          CloudSyncTransportAdapter(
-            service: CloudSyncService(store),
-            settings: CloudSyncSettings.load(),
-          ),
+        final result = await UnifiedSyncFactory.cloudEngine(
+          store,
+          settings: CloudSyncSettings.load(),
         ).rebuildFromHostSnapshot(
           onProgress: (value, label) => progress.value =
               _OperationProgress(value, '$label ${(value * 100).round()}%'),
@@ -2265,11 +2264,9 @@ class SettingsPage extends StatelessWidget {
         final settings = LanSyncSettings.load();
         progress.value =
             _OperationProgress(0.40, tr.text('contacting_lan_host_percent'));
-        final result = await UnifiedSyncEngine(
-          LanSyncTransportAdapter(
-            service: LanSyncService(store),
-            settings: settings,
-          ),
+        final result = await UnifiedSyncFactory.lanEngine(
+          store,
+          settings: settings,
         ).rebuildFromHostSnapshot(
           onProgress: (value, label) => progress.value =
               _OperationProgress(value, '$label ${(value * 100).round()}%'),
@@ -3866,8 +3863,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       // still has valid store/device credentials. Ask the server directly for
       // this store's Cloud Sync entitlement using device auth.
       if (planAllowed != true) {
-        final fallbackAllowed = await CloudSyncService(widget.store)
-            .checkCloudSyncPlanAccess(CloudSyncSettings.load());
+        final fallbackAllowed =
+            await _cloudAdminService().checkPlanAccess(CloudSyncSettings.load());
         SyncDiagnosticsLog.add(
           '[SYNC_TRACE] cloudPlanAccess:fallback '
           'allowed=$fallbackAllowed '
@@ -4116,20 +4113,21 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     );
   }
 
-  UnifiedSyncEngine _cloudEngine({bool enabled = true}) => UnifiedSyncEngine(
-        CloudSyncTransportAdapter(
-          service: CloudSyncService(widget.store),
-          settings: _cloudSettings(enabled: enabled),
-        ),
+  UnifiedSyncEngine _cloudEngine({bool enabled = true}) =>
+      UnifiedSyncFactory.cloudEngine(
+        widget.store,
+        settings: _cloudSettings(enabled: enabled),
+        enabled: enabled,
       );
 
   UnifiedSyncEngine _lanEngine([LanSyncSettings? settings]) =>
-      UnifiedSyncEngine(
-        LanSyncTransportAdapter(
-          service: LanSyncService(widget.store),
-          settings: settings ?? LanSyncSettings.load(),
-        ),
+      UnifiedSyncFactory.lanEngine(
+        widget.store,
+        settings: settings ?? LanSyncSettings.load(),
       );
+
+  CloudSyncAdminService _cloudAdminService() =>
+      CloudSyncAdminService(widget.store);
 
   Future<void> _refreshHostIpAddresses() async {
     if (_detectingHostIp) return;
@@ -4297,8 +4295,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     if (code.isEmpty || !widget.store.appIdentity.isHost) return;
     final settings = _cloudSettings(enabled: true);
     if (!settings.isConfigured) return;
-    final result =
-        await CloudSyncService(widget.store).pairingCodeStatus(settings, code);
+    final result = await _cloudAdminService().pairingCodeStatus(settings, code);
     if (!mounted || !result.ok) return;
     if (result.status == 'consumed') {
       await _adoptConsumedCloudPairingDevice(result);
@@ -4349,7 +4346,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       return;
     }
     try {
-      final devices = await CloudSyncService(widget.store)
+      final devices = await _cloudAdminService()
           .listDevicesWithLimit(_cloudSettings(enabled: true));
       if (devices.limit?.limitReached == true) {
         setState(() => _status = tr.text('device_limit_reached'));
@@ -4384,7 +4381,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
             reason: tr.text('user_requested_host_role_reason'));
         final cloud = _cloudSettings(enabled: true);
         if (cloud.apiBaseUrl.trim().isNotEmpty) {
-          await CloudSyncService(widget.store).requestHostTransfer(cloud,
+          await _cloudAdminService().requestHostTransfer(cloud,
               reason: tr.text('user_requested_host_role_reason'));
         }
         if (mounted) {
@@ -4420,8 +4417,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         if (confirmed != true) return;
         final cloud = _cloudSettings(enabled: true);
         if (cloud.isConfigured) {
-          final cloudResult = await CloudSyncService(widget.store)
-              .approveHostTransfer(cloud, deviceId);
+          final cloudResult =
+              await _cloudAdminService().approveHostTransfer(cloud, deviceId);
           if (!cloudResult.ok) {
             throw StateError(localizeRuntimeMessage(cloudResult.message, tr));
           }
@@ -4438,7 +4435,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   Future<void> _activateApprovedHostTransferFromUi() => _run(() async {
         final cloud = _cloudSettings(enabled: true);
         if (cloud.apiBaseUrl.trim().isNotEmpty) {
-          await CloudSyncService(widget.store).activateHostTransfer(cloud);
+          await _cloudAdminService().activateHostTransfer(cloud);
         }
         await widget.store.activateApprovedHostTransfer();
         if (mounted) {
@@ -4841,13 +4838,13 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         var cloudProblem = '';
         var cloudDevices = const <CloudDeviceStatus>[];
         if ((_cloudEnabled || identity.isCloudEnabled) && cloud.isConfigured) {
-          final service = CloudSyncService(widget.store);
-          final cloudConnection = await service.testConnection(cloud);
+          final cloudConnection =
+              await _cloudEngine(enabled: true).testConnection();
           cloudReachable = cloudConnection.ok;
           cloudProblem = cloudConnection.ok ? '' : cloudConnection.message;
           if (cloudReachable) {
             try {
-              cloudDevices = await service.listDevices(cloud);
+              cloudDevices = await _cloudAdminService().listDevices(cloud);
             } catch (error) {
               cloudReachable = false;
               cloudProblem = error.toString();
@@ -5541,11 +5538,17 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                               final previousIdentity = widget.store.appIdentity;
                               final previousActive = previousIdentity
                                   .activeSyncTransportNormalized;
-                              final result = await LanSyncService(widget.store)
-                                  .claimPairingCode(
-                                host,
-                                port: _lanPort,
-                                code: token,
+                              final result = await _lanEngine(
+                                LanSyncSettings.load().copyWith(
+                                  host: host,
+                                  port: _lanPort,
+                                  secret: token,
+                                  mode: LanSyncDeviceMode.client,
+                                  setupComplete: true,
+                                  hostModeEnabled: false,
+                                ),
+                              ).claimPairingCode(
+                                token,
                                 onProgress: dialogProgress,
                               );
                               if (!result.ok) throw Exception(result.message);
@@ -5573,10 +5576,11 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                                 autoSyncEnabled: previousActive == 'cloud',
                               );
                               await settings.save();
-                              final result =
-                                  await CloudSyncService(widget.store)
-                                      .claimPairingCode(settings, code,
-                                          onProgress: dialogProgress);
+                              final result = await _cloudEngine(enabled: true)
+                                  .claimPairingCode(
+                                code,
+                                onProgress: dialogProgress,
+                              );
                               if (!result.ok) throw Exception(result.message);
                               final claimedIdentity =
                                   result.identity ?? widget.store.appIdentity;
@@ -6796,6 +6800,9 @@ class _AdvancedSyncDebugCard extends StatefulWidget {
 class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
   Future<_CloudMonitoringSnapshot>? _cloudMonitoringFuture;
 
+  CloudSyncAdminService _cloudAdminService() =>
+      CloudSyncAdminService(widget.store);
+
   @override
   void initState() {
     super.initState();
@@ -6826,7 +6833,7 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
 
   Future<_CloudMonitoringSnapshot> _loadAndAdoptCloudDevices(
       CloudSyncSettings cloudSettings) async {
-    final service = CloudSyncService(widget.store);
+    final service = _cloudAdminService();
     var result = await service.listDevicesWithLimit(cloudSettings);
     var devices = result.devices;
     final repaired = await _repairLegacyCloudDeviceLinks(
@@ -6844,7 +6851,7 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
   }
 
   Future<bool> _repairLegacyCloudDeviceLinks(
-    CloudSyncService service,
+    CloudSyncAdminService service,
     CloudSyncSettings cloudSettings,
     List<CloudDeviceStatus> devices,
   ) async {
@@ -6964,7 +6971,7 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
 
     final cloudSettings = CloudSyncSettings.load();
     if (cloudSettings.isConfigured) {
-      await CloudSyncService(widget.store).setDeviceSuspended(
+      await _cloudAdminService().setDeviceSuspended(
         cloudSettings,
         deviceId,
         suspended: !shouldResume,
@@ -7041,8 +7048,7 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
 
     final cloudSettings = CloudSyncSettings.load();
     if (cloudSettings.isConfigured) {
-      await CloudSyncService(widget.store)
-          .revokeDevice(cloudSettings, deviceId);
+      await _cloudAdminService().revokeDevice(cloudSettings, deviceId);
     }
 
     if (!mounted) return;
@@ -7073,8 +7079,7 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
     await _permanentlyDeleteDeviceRecord(deviceId);
     final cloudSettings = CloudSyncSettings.load();
     if (cloudSettings.isConfigured) {
-      await CloudSyncService(widget.store)
-          .deleteDeviceRecord(cloudSettings, deviceId);
+      await _cloudAdminService().deleteDeviceRecord(cloudSettings, deviceId);
     }
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -9079,6 +9084,9 @@ class _SystemIdentityCard extends StatefulWidget {
 }
 
 class _SystemIdentityCardState extends State<_SystemIdentityCard> {
+  CloudSyncAdminService _cloudAdminService() =>
+      CloudSyncAdminService(widget.store);
+
   Future<void> _editDeviceName() async {
     final tr = AppLocalizations.of(context);
     final controller =
@@ -9141,7 +9149,7 @@ class _SystemIdentityCardState extends State<_SystemIdentityCard> {
       await widget.store.updateDeviceName(result);
       final cloud = CloudSyncSettings.load();
       if (widget.store.appIdentity.isCloudEnabled && cloud.isConfigured) {
-        await CloudSyncService(widget.store).registerCurrentDevice(
+        await _cloudAdminService().registerCurrentDevice(
           cloud,
           transport:
               widget.store.appIdentity.activeSyncTransportNormalized == 'lan'

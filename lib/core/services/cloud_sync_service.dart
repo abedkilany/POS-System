@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
-import 'package:archive/archive.dart';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -13,7 +12,12 @@ import '../../models/sync_change.dart';
 import 'local_database_service.dart';
 import 'sync_diagnostics_log.dart';
 import 'unified_sync_core_service.dart';
+import '../sync_unified/unified_pairing_lifecycle.dart';
+import '../sync_unified/unified_cloud_snapshot_retry_flow.dart';
+import '../sync_unified/unified_pairing_snapshot_flow.dart';
 import '../sync_unified/sync_device_state.dart';
+import '../sync_unified/unified_snapshot_lifecycle.dart';
+import '../sync_unified/unified_sync_policy.dart';
 import '../snapshot/unified_snapshot_transfer.dart';
 
 class CloudSyncSettings {
@@ -688,7 +692,6 @@ class CloudSyncService {
   final AppStore store;
   final http.Client _client;
   late final UnifiedSyncCoreService _syncCore = UnifiedSyncCoreService(store);
-  static final Set<String> _activeSnapshotGenerationRebuilds = <String>{};
   static int _relayRequestCounter = 0;
   static final Map<String, _CloudSnapshotRelayJob> _relaySnapshotJobs =
       <String, _CloudSnapshotRelayJob>{};
@@ -697,16 +700,14 @@ class CloudSyncService {
   static const String _clientCloudRebuildBlockedMessage =
       'Cloud rebuild is paused until the Client finishes sending its pending changes to the Host.';
 
+  http.Client get client => _client;
+  UnifiedSyncCoreService get syncCore => _syncCore;
+
   Future<bool> _clientCloudHostWorkNeedsDrain() async {
     if (!store.appIdentity.isClient) return false;
 
     // Cloud Client now uses the LAN-style direct Host relay contract:
     // Client -> Cloud relay -> Host -> final Host ACK in the same request.
-    // The legacy Cloud inbox contract left rows in `submitted` and then waited
-    // for /api/sync/requests/status. That is intentionally disabled for the
-    // direct relay mode because it can block pull/rebuild forever when no
-    // legacy cloud_change_requests row exists.
-    //
     // If an older build left cloud_host rows as submitted, recover them to
     // pending so the next relay push sends them again. Until that happens,
     // any pull or rebuild must stay paused.
@@ -714,13 +715,112 @@ class CloudSyncService {
     return store.hasOutstandingSyncWorkForTarget('cloud_host');
   }
 
+  Future<CloudSyncResult?> _cloudClientNeedsDrainResult() async {
+    if (!await _clientCloudHostWorkNeedsDrain()) return null;
+    return const CloudSyncResult(
+      ok: true,
+      message: _clientCloudDrainMessage,
+      syncDeferred: true,
+    );
+  }
+
+  Future<CloudSyncResult> _runCloudHostRelaySync(
+    CloudSyncSettings settings, {
+    CloudSyncProgressCallback? onProgress,
+    bool compactHistory = false,
+  }) async {
+    onProgress?.call(0.10, 'Preparing Host cloud snapshot queue...');
+    await store.ensureHostCloudBootstrapSnapshotQueued();
+    final repairedCloudQueue =
+        await store.repairMissingHostCloudQueueForPendingChanges();
+    if (repairedCloudQueue > 0) {
+      onProgress?.call(0.18,
+          '$repairedCloudQueue missing Host cloud snapshot queue item(s) were repaired...');
+    }
+    onProgress?.call(0.25, 'Sending Host heartbeat...');
+    await sendHostHeartbeat(settings);
+    onProgress?.call(0.40, 'Registering Host device...');
+    await registerCurrentDevice(settings, transport: 'cloud');
+    final hostPendingCount = _syncCore.pendingChangesForTarget('cloud').length;
+    onProgress?.call(0.55, 'Publishing Host changes through Cloud relay...');
+    final relayPublished = await _broadcastHostAuthorityViaRelay(settings);
+    if (!relayPublished) {
+      return const CloudSyncResult(
+        ok: false,
+        message:
+            'Host cloud relay failed. Legacy Cloud fallback is disabled; retry when the relay is available.',
+      );
+    }
+    if (compactHistory) {
+      onProgress?.call(0.90, 'Running safe local sync history maintenance...');
+      await store.compactSyncedSyncHistoryForMaintenance();
+      onProgress?.call(0.96, 'Running safe Cloud maintenance...');
+      await runCloudMaintenance(settings);
+      onProgress?.call(1.0, 'Host Cloud sync completed.');
+    }
+    return CloudSyncResult(
+      ok: true,
+      pushed: hostPendingCount,
+      message: compactHistory
+          ? 'Host Cloud sync completed through relay. Broadcast $hostPendingCount authoritative change(s).'
+          : 'Host cloud relay completed. Broadcast $hostPendingCount authoritative change(s).',
+    );
+  }
+
+  Future<CloudSyncResult> _runCloudClientRelayPush(
+    CloudSyncSettings settings, {
+    CloudSyncProgressCallback? onProgress,
+  }) async {
+    onProgress?.call(0.12, 'Registering Client device...');
+    await registerCurrentDevice(settings, transport: 'cloud');
+    onProgress?.call(0.28, 'Sending Client requests to Host relay...');
+    final pushed = await _pushPendingViaRelay(settings, target: 'cloud_host');
+    return CloudSyncResult(
+      ok: true,
+      pushed: pushed,
+      message:
+          'Client cloud push completed. Sent $pushed request(s) to Host relay and received Host ACK.',
+    );
+  }
+
+  Future<CloudSyncResult> _runCloudClientAuthoritativeSync(
+    CloudSyncSettings settings, {
+    DateTime? minSnapshotUpdatedAt,
+    CloudSyncProgressCallback? onProgress,
+  }) async {
+    final baseLastAppliedSequence =
+        SyncDeviceStateStore.lastAppliedSequenceForTransport(
+            store.appIdentity, 'cloud');
+    if (baseLastAppliedSequence <= 0) {
+      onProgress?.call(
+          0.32, 'Rebuilding this device data from the Cloud relay snapshot...');
+      return rebuildFromCloudHostSnapshot(
+        settings.copyWith(clearLastPullCursor: true),
+        onProgress: onProgress,
+        requestFreshSnapshot: false,
+      );
+    }
+
+    final relayResult = await _pullAuthoritativeChangesViaRelay(
+      settings,
+      minSnapshotUpdatedAt: minSnapshotUpdatedAt,
+      onProgress: onProgress,
+    );
+    if (relayResult != null) return relayResult;
+    return const CloudSyncResult(
+      ok: false,
+      message:
+          'Cloud relay pull failed. Please retry when the relay is available.',
+    );
+  }
 
   Future<CloudSyncResult> _drainClientPendingChangesBeforeRebuild(
     CloudSyncSettings settings, {
     CloudSyncProgressCallback? onProgress,
   }) async {
     if (!store.appIdentity.isClient) {
-      return const CloudSyncResult(ok: true, message: 'No Client drain needed.');
+      return const CloudSyncResult(
+          ok: true, message: 'No Client drain needed.');
     }
     if (await _clientCloudHostWorkNeedsDrain()) {
       return const CloudSyncResult(
@@ -738,7 +838,8 @@ class CloudSyncService {
       return CloudSyncResult(
         ok: false,
         pushed: pushed,
-        message: 'Cloud rebuild is waiting: pending Client changes could not be sent to the Host. $error',
+        message:
+            'Cloud rebuild is waiting: pending Client changes could not be sent to the Host. $error',
         syncDeferred: true,
       );
     }
@@ -908,9 +1009,6 @@ class CloudSyncService {
   String _restoreCommandInProgressKey(String transport) =>
       'in_progress_host_restore_command_${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}';
 
-  String _snapshotGenerationLockId(String transport, String generation) =>
-      '${transport}_${store.appIdentity.storeId}_${store.appIdentity.branchId}_$generation';
-
   String _remoteHostSnapshotGeneration(Map<String, dynamic> decoded) {
     return (decoded['hostSnapshotGeneration'] ??
             decoded['snapshotGeneration'] ??
@@ -933,77 +1031,12 @@ class CloudSyncService {
         .trim();
   }
 
-  String _restoreCommandIdFromChanges(List<SyncChange> changes) {
-    for (final change in changes) {
-      if (change.entityType == 'system' &&
-          change.operation == 'cloud_restore_snapshot_ready') {
-        return _remoteHostRestoreCommandId(change.payload);
-      }
-    }
-    return '';
-  }
-
   bool _restoreCommandAlreadyExecuted(String transport, String commandId) {
     if (commandId.trim().isEmpty) return false;
     final executed =
         LocalDatabaseService.getString(_restoreCommandExecutedKey(transport)) ??
             '';
     return executed.trim() == commandId.trim();
-  }
-
-  bool _needsHostSnapshotGenerationRebuild(
-      String transport, Map<String, dynamic> decoded) {
-    if (!store.appIdentity.isClient) return false;
-    final remote = _remoteHostSnapshotGeneration(decoded);
-    if (remote.isEmpty) return false;
-    final commandId = _remoteHostRestoreCommandId(decoded);
-    final commandExecuted =
-        _restoreCommandAlreadyExecuted(transport, commandId);
-    if (commandExecuted) return false;
-    final applied =
-        LocalDatabaseService.getString(_snapshotGenerationKey(transport)) ?? '';
-    if (applied.trim() == remote && commandId.isEmpty) return false;
-
-    final lockId = _snapshotGenerationLockId(transport, remote);
-    if (_activeSnapshotGenerationRebuilds.contains(lockId)) return false;
-
-    final inProgress = LocalDatabaseService.getString(
-            _snapshotGenerationInProgressKey(transport)) ??
-        '';
-    final inProgressAtRaw = LocalDatabaseService.getString(
-            _snapshotGenerationInProgressAtKey(transport)) ??
-        '';
-    final inProgressAt = DateTime.tryParse(inProgressAtRaw);
-    if (inProgress.trim() == remote &&
-        inProgressAt != null &&
-        DateTime.now().difference(inProgressAt) < const Duration(minutes: 10)) {
-      return false;
-    }
-
-    final failed = LocalDatabaseService.getString(
-            _snapshotGenerationFailedKey(transport)) ??
-        '';
-    final failedAtRaw = LocalDatabaseService.getString(
-            _snapshotGenerationFailedAtKey(transport)) ??
-        '';
-    final failedAt = DateTime.tryParse(failedAtRaw);
-    if (failed.trim() == remote &&
-        failedAt != null &&
-        DateTime.now().difference(failedAt) < const Duration(minutes: 2)) {
-      return false;
-    }
-    return true;
-  }
-
-  Future<void> _markRestoreCommandExecuted(
-      String transport, dynamic source) async {
-    if (source is! Map<String, dynamic>) return;
-    final commandId = _remoteHostRestoreCommandId(source);
-    if (commandId.isEmpty) return;
-    await LocalDatabaseService.setString(
-        _restoreCommandExecutedKey(transport), commandId);
-    await LocalDatabaseService.deleteString(
-        _restoreCommandInProgressKey(transport));
   }
 
   Future<void> _markHostSnapshotGenerationApplied(
@@ -1016,8 +1049,14 @@ class CloudSyncService {
     if (generation.isEmpty) return;
     await LocalDatabaseService.setString(
         _snapshotGenerationKey(transport), generation);
-    if (markRestoreCommandExecuted) {
-      await _markRestoreCommandExecuted(transport, source);
+    if (markRestoreCommandExecuted && source is Map<String, dynamic>) {
+      final commandId = _remoteHostRestoreCommandId(source);
+      if (commandId.isNotEmpty) {
+        await LocalDatabaseService.setString(
+            _restoreCommandExecutedKey(transport), commandId);
+        await LocalDatabaseService.deleteString(
+            _restoreCommandInProgressKey(transport));
+      }
     }
     await LocalDatabaseService.deleteString(
         _snapshotGenerationInProgressKey(transport));
@@ -1029,122 +1068,8 @@ class CloudSyncService {
         _snapshotGenerationFailedAtKey(transport));
   }
 
-  Future<bool> _beginHostSnapshotGenerationRebuild(
-    String transport,
-    String generation, {
-    String commandId = '',
-  }) async {
-    if (generation.isEmpty) return false;
-    final applied =
-        LocalDatabaseService.getString(_snapshotGenerationKey(transport)) ?? '';
-    if (applied.trim() == generation && commandId.trim().isEmpty) {
-      return false;
-    }
-    final lockId = _snapshotGenerationLockId(transport, generation);
-    if (!_activeSnapshotGenerationRebuilds.add(lockId)) return false;
-    await LocalDatabaseService.setString(
-        _snapshotGenerationInProgressKey(transport), generation);
-    final effectiveCommandId =
-        commandId.trim().isEmpty ? generation : commandId.trim();
-    if (effectiveCommandId.isNotEmpty) {
-      await LocalDatabaseService.setString(
-          _restoreCommandInProgressKey(transport), effectiveCommandId);
-    }
-    await LocalDatabaseService.setString(
-        _snapshotGenerationInProgressAtKey(transport),
-        DateTime.now().toIso8601String());
-    return true;
-  }
-
-  Future<void> _finishHostSnapshotGenerationRebuild(
-    String transport,
-    String generation, {
-    required bool success,
-  }) async {
-    if (generation.isEmpty) return;
-    final lockId = _snapshotGenerationLockId(transport, generation);
-    _activeSnapshotGenerationRebuilds.remove(lockId);
-    if (success) {
-      await LocalDatabaseService.setString(
-          _snapshotGenerationKey(transport), generation);
-      final inProgressCommand = LocalDatabaseService.getString(
-              _restoreCommandInProgressKey(transport)) ??
-          '';
-      if (inProgressCommand.trim().isNotEmpty) {
-        await LocalDatabaseService.setString(
-            _restoreCommandExecutedKey(transport), inProgressCommand.trim());
-        await LocalDatabaseService.deleteString(
-            _restoreCommandInProgressKey(transport));
-      }
-      await LocalDatabaseService.deleteString(
-          _snapshotGenerationInProgressKey(transport));
-      await LocalDatabaseService.deleteString(
-          _snapshotGenerationInProgressAtKey(transport));
-      await LocalDatabaseService.deleteString(
-          _snapshotGenerationFailedKey(transport));
-      await LocalDatabaseService.deleteString(
-          _snapshotGenerationFailedAtKey(transport));
-    } else {
-      await LocalDatabaseService.deleteString(
-          _snapshotGenerationInProgressKey(transport));
-      await LocalDatabaseService.deleteString(
-          _snapshotGenerationInProgressAtKey(transport));
-      await LocalDatabaseService.setString(
-          _snapshotGenerationFailedKey(transport), generation);
-      await LocalDatabaseService.setString(
-          _snapshotGenerationFailedAtKey(transport),
-          DateTime.now().toIso8601String());
-      await LocalDatabaseService.deleteString(
-          _restoreCommandInProgressKey(transport));
-    }
-  }
-
-  Future<CloudSyncResult?> _rebuildIfHostSnapshotGenerationChanged(
-    CloudSyncSettings settings,
-    Map<String, dynamic> decodedPull, {
-    CloudSyncProgressCallback? onProgress,
-  }) async {
-    if (!_needsHostSnapshotGenerationRebuild('cloud', decodedPull)) return null;
-    final generation = _remoteHostSnapshotGeneration(decodedPull);
-    final commandId = _remoteHostRestoreCommandId(decodedPull);
-    if (!await _beginHostSnapshotGenerationRebuild(
-      'cloud',
-      generation,
-      commandId: commandId,
-    )) {
-      return null;
-    }
-    CloudSyncResult result;
-    try {
-      onProgress?.call(0.50,
-          'A newer Host restore was detected. Rebuilding this device data...');
-      result = await rebuildFromCloudHostSnapshot(
-        settings.copyWith(clearLastPullCursor: true),
-        onProgress: onProgress,
-        requestFreshSnapshot: false,
-        expectedSnapshotGeneration: generation,
-        expectedRestoreCommandId: commandId,
-      );
-      await _finishHostSnapshotGenerationRebuild(
-        'cloud',
-        generation,
-        success: result.ok,
-      );
-    } catch (_) {
-      await _finishHostSnapshotGenerationRebuild(
-        'cloud',
-        generation,
-        success: false,
-      );
-      rethrow;
-    }
-    return result;
-  }
-
   bool _cloudAllowedForIdentity(AppIdentity identity) {
-    if (identity.isHost) return identity.isCloudEnabled;
-    if (!identity.isClient) return false;
-    return identity.activeSyncTransportNormalized == 'cloud';
+    return UnifiedSyncPolicy.isCloudAllowedForCurrentRole(identity);
   }
 
   Future<void> _recordDeviceSyncState(
@@ -1155,14 +1080,19 @@ class CloudSyncService {
   }) async {
     final effectiveSequence =
         sequence > 0 ? sequence : store.latestStoredAuthoritativeSequence;
-    await SyncDeviceStateStore.recordSyncResult(
-      store.appIdentity,
-      transport: transport,
-      appliedCursor: cursor,
-      ackCursor: cursor,
-      appliedSequence: effectiveSequence,
-      ackSequence: effectiveSequence,
-    );
+    if (cursor != null) {
+      await _syncCore.saveCursorAndRecordTransportState(
+        store,
+        transport: transport,
+        cursor: cursor,
+        sequence: effectiveSequence,
+        saveTransportState: () async {
+          if (settings != null) {
+            await settings.copyWith(lastPullCursor: cursor).save();
+          }
+        },
+      );
+    }
 
     // Authoritative ACK: update the Host-visible device state only after the
     // Client has successfully applied the pulled data locally. Pull itself must
@@ -1172,14 +1102,31 @@ class CloudSyncService {
     }
   }
 
+  Future<void> recordDeviceSyncState(
+    String transport, {
+    DateTime? cursor,
+    int? sequence,
+  }) {
+    return _syncCore.recordTransportSyncState(
+      store,
+      transport: transport,
+      cursor: cursor,
+      sequence: sequence,
+    );
+  }
+
+  Future<void> compactAfterSuccessfulSync() {
+    return _syncCore.compactAfterSuccessfulSync();
+  }
+
   Future<CloudPairingCodeResult> createPairingCode(CloudSyncSettings settings,
       {String transport = 'cloud', int ttlMinutes = 5}) async {
     final identity = store.appIdentity;
-    if (!identity.isHost) {
-      return const CloudPairingCodeResult(
-          ok: false, message: 'Only the Host can create pairing codes.');
-    }
-    if (settings.apiBaseUrl.trim().isEmpty) {
+    if (!UnifiedSyncPolicy.canCreateCloudPairingCode(
+      identity,
+      settingsEnabled: settings.enabled,
+      hasApiBaseUrl: settings.apiBaseUrl.trim().isNotEmpty,
+    )) {
       return const CloudPairingCodeResult(
           ok: false, message: 'Cloud Sync is not ready yet.');
     }
@@ -1268,7 +1215,7 @@ class CloudSyncService {
   Future<CloudPairingStatusResult> pairingCodeStatus(
       CloudSyncSettings settings, String code) async {
     final identity = store.appIdentity;
-    if (!identity.isHost) {
+    if (!UnifiedSyncPolicy.canCheckCloudPairingStatus(identity)) {
       return const CloudPairingStatusResult(
           ok: false,
           status: 'invalid',
@@ -1338,73 +1285,11 @@ class CloudSyncService {
     }
   }
 
-  // ignore: unused_element
-  Future<CloudSyncResult> _pullLoginBootstrap(CloudSyncSettings settings,
-      {DateTime? minSnapshotUpdatedAt}) async {
-    final identity = store.appIdentity;
-    try {
-      await registerCurrentDevice(settings, transport: 'cloud');
-      var pageCursor = '';
-      var pulled = 0;
-      const maxPages = 10;
-      for (var page = 0; page < maxPages; page += 1) {
-        final query = <String, String>{
-          'store_id': identity.storeId,
-          'branch_id': identity.branchId,
-          'limit': '250',
-          'bootstrap': 'login',
-        };
-        if (minSnapshotUpdatedAt != null) {
-          query['min_snapshot_updated_at'] =
-              minSnapshotUpdatedAt.toIso8601String();
-        }
-        if (pageCursor.isNotEmpty) query['cursor'] = pageCursor;
-
-        final pull = await _client
-            .get(settings.endpoint('/api/sync/pull', query),
-                headers: _headers(settings))
-            .timeout(const Duration(seconds: 30));
-        if (pull.statusCode < 200 || pull.statusCode >= 300) {
-          return CloudSyncResult(
-              ok: false,
-              message:
-                  'Cloud login provisioning failed: ${pull.statusCode} ${pull.body}');
-        }
-        final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
-        final changes = _syncCore.filterOutLocalEchoes(
-          _syncCore
-              .decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
-        );
-        pulled += await _syncCore.applyAuthoritativeChanges(changes);
-        final hasMore = decodedPull['hasMore'] == true;
-        pageCursor = (decodedPull['nextCursor'] ?? '').toString();
-        if (!hasMore) break;
-        if (pageCursor.isEmpty) {
-          return const CloudSyncResult(
-              ok: false,
-              message:
-                  'Cloud login provisioning pagination failed: missing next cursor.');
-        }
-      }
-      // Do not save the global Cloud pull cursor here. This is only a partial
-      // login bootstrap; leaving the cursor empty lets the post-login
-      // provisioning sync download the complete snapshot from the beginning.
-      return CloudSyncResult(
-          ok: true,
-          pulled: pulled,
-          restoredSnapshot: pulled > 0,
-          message: 'Pulled $pulled login provisioning record(s).');
-    } catch (error) {
-      return CloudSyncResult(
-          ok: false, message: 'Cloud login provisioning failed: $error');
-    }
-  }
-
   Future<CloudPairingClaimResult> claimPairingCode(
       CloudSyncSettings settings, String code,
       {CloudSyncProgressCallback? onProgress}) async {
     final current = store.appIdentity;
-    if (current.isHost) {
+    if (!UnifiedSyncPolicy.canClaimCloudPairingCode(current)) {
       return const CloudPairingClaimResult(
           ok: false,
           message:
@@ -1448,44 +1333,32 @@ class CloudSyncService {
             message:
                 'Pairing code expired or already used. Ask the Host device for a new code.');
       }
-      final claimedStoreId = decoded['storeId']?.toString() ?? current.storeId;
-      final claimedBranchId =
-          decoded['branchId']?.toString() ?? current.branchId;
-      final claimedHostDeviceId =
-          decoded['hostDeviceId']?.toString() ?? current.hostDeviceId;
-      if (current.isClient && current.hostDeviceId.trim().isNotEmpty) {
-        final mismatches = <String>[];
-        if (current.storeId.trim().toUpperCase() !=
-            claimedStoreId.trim().toUpperCase()) {
-          mismatches.add('Store ID');
-        }
-        if (current.branchId.trim().toUpperCase() !=
-            claimedBranchId.trim().toUpperCase()) {
-          mismatches.add('Branch ID');
-        }
-        if (current.hostDeviceId.trim().toUpperCase() !=
-            claimedHostDeviceId.trim().toUpperCase()) {
-          mismatches.add('Host ID');
-        }
-        if (mismatches.isNotEmpty) {
-          return CloudPairingClaimResult(
-              ok: false,
-              message:
-                  'Pairing code belongs to a different Store (${mismatches.join(', ')}). Use the current Host pairing code.');
-        }
+      final claim = UnifiedPairingClaimPayload(
+        storeId: decoded['storeId']?.toString() ?? current.storeId,
+        branchId: decoded['branchId']?.toString() ?? current.branchId,
+        hostDeviceId:
+            decoded['hostDeviceId']?.toString() ?? current.hostDeviceId,
+        deviceToken: decoded['deviceToken']?.toString() ?? current.deviceToken,
+        transport: decoded['transport']?.toString() ?? 'cloud',
+      );
+      final mismatch = UnifiedPairingLifecycle.validateSameStoreClaim(
+        current,
+        claim,
+      );
+      if (mismatch != null) {
+        return CloudPairingClaimResult(
+          ok: false,
+          message: mismatch,
+        );
       }
       final transport = decoded['transport']?.toString() == 'lan'
           ? SyncMode.lanOnly
           : SyncMode.cloudConnected;
-      final identity = current.copyWith(
-        storeId: claimedStoreId,
-        branchId: claimedBranchId,
-        hostDeviceId: claimedHostDeviceId,
-        deviceRole: DeviceRole.client,
+      final identity = UnifiedPairingLifecycle.buildClientIdentity(
+        current,
+        claim: claim,
         syncMode: transport,
-        activeSyncTransport: transport == SyncMode.lanOnly ? 'lan' : 'cloud',
-        deviceToken: decoded['deviceToken']?.toString() ?? current.deviceToken,
-        updatedAt: DateTime.now(),
+        activeTransport: transport == SyncMode.lanOnly ? 'lan' : 'cloud',
       );
       onProgress?.call(0.22, 'Registering this device...');
       await store.updateAppIdentityDuringSetup(identity);
@@ -1509,13 +1382,17 @@ class CloudSyncService {
           message: 'The latest available Cloud snapshot will be used.',
         );
 
-        for (var attempt = 0; attempt < 6; attempt += 1) {
-          if (attempt > 0) {
-            onProgress?.call(0.28, 'Waiting for Host full snapshot...');
-            await Future<void>.delayed(const Duration(seconds: 3));
-          }
-          await CloudProvisioningStatus.markAttempted(DateTime.now().toUtc());
-          try {
+        final retryResult = await UnifiedCloudSnapshotRetryFlow.pollUntilReady<
+            UnifiedPairingSnapshotSuccess>(
+          maxAttempts: 6,
+          retryDelay: const Duration(seconds: 3),
+          beforeAttempt: (attempt) async {
+            if (attempt > 0) {
+              onProgress?.call(0.28, 'Waiting for Host full snapshot...');
+            }
+            await CloudProvisioningStatus.markAttempted(DateTime.now().toUtc());
+          },
+          attempt: (attempt) async {
             final envelope = await _downloadCloudSnapshotEnvelope(
               settings.copyWith(clearLastPullCursor: true),
               force: attempt == 0,
@@ -1527,48 +1404,54 @@ class CloudSyncService {
             );
             onProgress?.call(
                 0.78, 'Importing Cloud snapshot chunks locally...');
-            await store.importSyncSnapshotJson(jsonEncode(envelope));
-            await _markHostSnapshotGenerationApplied('cloud', envelope);
-            onProgress?.call(0.88, 'Verifying local store data...');
-            final verified = await store.verifyLocalBusinessDataIntegrity();
-            if (store.needsInitialAdminSetup) {
-              throw StateError(verified.message);
-            }
-            // Verification warnings should not restart pairing after a
-            // successful import; retrying would just ask for the same snapshot
-            // again and can loop forever.
-            if (!verified.ok) {
-              debugPrint(
-                  'Cloud pairing completed with verification warnings: ${verified.message}');
-            }
-            final cursor =
-                store.syncSnapshotGeneratedAtFromJson(jsonEncode(envelope));
-            final sequence = store
-                .syncSnapshotGeneratedSequenceFromJson(jsonEncode(envelope));
-            await SyncDeviceStateStore.recordSyncResult(
-              store.appIdentity,
-              transport: 'cloud',
-              appliedCursor: cursor,
-              ackCursor: cursor,
-              appliedSequence: sequence,
-              ackSequence: sequence,
+            return UnifiedPairingSnapshotFlow.applyForCloud(
+              store: store,
+              envelope: envelope,
+              markSnapshotApplied: () => _markHostSnapshotGenerationApplied(
+                'cloud',
+                envelope,
+              ),
+              markProvisioningComplete: () =>
+                  CloudProvisioningStatus.markComplete(
+                message: 'Full Store data downloaded.',
+              ),
             );
-            await CloudProvisioningStatus.markComplete(
-              message: 'Full Store data downloaded.',
+          },
+        );
+
+        final applied = retryResult.value;
+        if (applied != null) {
+          onProgress?.call(0.88, 'Verifying local store data...');
+          if (!applied.verificationOk) {
+            debugPrint(
+                'Cloud pairing completed with verification warnings: ${applied.verificationMessage}');
+          }
+          onProgress?.call(1.0, 'Cloud snapshot is ready.');
+          final successMessage = applied.verificationOk
+              ? 'Device paired successfully. Full Store data downloaded. You can sign in now.'
+              : 'Device paired successfully. Full Store data downloaded. You can sign in now. Verification warnings: ${applied.verificationMessage}';
+          return CloudPairingClaimResult(
+            ok: true,
+            message: successMessage,
+            identity: store.appIdentity,
+          );
+        }
+
+        if (retryResult.lastFailure != null) {
+          request = await requestFreshHostSnapshot(
+            settings,
+            requestedAt: requestedAt,
+          );
+          if (!request.ok) {
+            await CloudProvisioningStatus.markPending(
+              requestedAt: requestedAt,
+              message: 'The full Store snapshot is not complete yet.',
             );
-            onProgress?.call(1.0, 'Cloud snapshot is ready.');
-            final successMessage = verified.ok
-                ? 'Device paired successfully. Full Store data downloaded. You can sign in now.'
-                : 'Device paired successfully. Full Store data downloaded. You can sign in now. Verification warnings: ${verified.message}';
             return CloudPairingClaimResult(
-              ok: true,
-              message: successMessage,
+              ok: false,
+              message: request.message,
               identity: store.appIdentity,
             );
-          } catch (_) {
-            request = await requestFreshHostSnapshot(settings,
-                requestedAt: requestedAt);
-            if (!request.ok) break;
           }
         }
 
@@ -1698,82 +1581,39 @@ class CloudSyncService {
       await settings.copyWith(enabled: true, clearLastPullCursor: true).save();
       await CloudSyncSettings.clearSavedPullCursor();
 
-      onProgress?.call(0.45, 'Downloading the latest Cloud snapshot...');
-      var pageCursor = '';
-      var pulled = 0;
-      var restoredSnapshot = false;
-      var allSnapshotSectionsComplete = true;
-      const maxPages = 200;
-      for (var page = 0; page < maxPages; page += 1) {
-        final query = <String, String>{
-          'store_id': cleanStoreId,
-          'branch_id': recoveredBranchId,
-          'limit': '1000',
-        };
-        if (pageCursor.isNotEmpty) query['cursor'] = pageCursor;
-        final pull = await _client
-            .get(settings.endpoint('/api/sync/pull', query),
-                headers: _headers(settings))
-            .timeout(const Duration(seconds: 20));
-        if (pull.statusCode < 200 || pull.statusCode >= 300) {
-          return CloudStoreRecoveryResult(
-              ok: false,
-              message:
-                  'Store identity recovered, but snapshot download failed: ${pull.statusCode} ${pull.body}',
-              identity: store.appIdentity);
-        }
-        final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
-        if ((decodedPull['source'] ?? '').toString() == 'entity_snapshots') {
-          final pageAllSectionsComplete =
-              decodedPull['allSnapshotSectionsComplete'] == true;
-          allSnapshotSectionsComplete =
-              allSnapshotSectionsComplete && pageAllSectionsComplete;
-          await CloudProvisioningStatus.updateSnapshotSections(
-            decodedPull['snapshotSections'] is Map<String, dynamic>
-                ? decodedPull['snapshotSections'] as Map<String, dynamic>
-                : null,
-            allComplete: pageAllSectionsComplete,
+      onProgress?.call(
+          0.45, 'Downloading the latest Cloud snapshot through the relay...');
+      final envelope = await _downloadCloudSnapshotEnvelopeViaRelay(
+        settings.copyWith(clearLastPullCursor: true),
+        force: true,
+        onProgress: (value, label) {
+          onProgress?.call(
+            (0.45 + value * 0.40).clamp(0.45, 0.88).toDouble(),
+            label,
           );
-        }
-        if (decodedPull['needsSnapshot'] == true) {
-          await CloudSyncSettings.clearSavedPullCursor();
-          return CloudStoreRecoveryResult(
-            ok: false,
-            message:
-                'Cloud event log gap detected. Snapshot repair is required.',
-            identity: store.appIdentity,
-            restoredSnapshot: true,
-            pulled: pulled,
-          );
-        }
-        final changes = _syncCore.filterOutLocalEchoes(
-          _syncCore
-              .decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
+        },
+      );
+      final applied = await _applyCloudSnapshotEnvelope(
+        envelope,
+        settings: settings,
+        onProgress: onProgress,
+        expectedSnapshotGeneration:
+            (claim['snapshotGeneration'] ?? claim['snapshot_generation'] ?? '')
+                .toString(),
+        expectedRestoreCommandId:
+            (claim['restoreCommandId'] ?? claim['restore_command_id'] ?? '')
+                .toString(),
+      );
+      if (!applied.ok) {
+        return CloudStoreRecoveryResult(
+          ok: false,
+          message:
+              'Store identity recovered, but snapshot restore failed: ${applied.message}',
+          identity: store.appIdentity,
         );
-        restoredSnapshot = restoredSnapshot ||
-            changes.isNotEmpty ||
-            decodedPull['source'] == 'entity_snapshots';
-        pulled += await _syncCore.applyAuthoritativeChanges(changes);
-        onProgress?.call(
-            (0.45 + (page + 1) * 0.04).clamp(0.45, 0.88).toDouble(),
-            'Applied $pulled recovered record(s)...');
-        if (decodedPull['hasMore'] != true) {
-          final generatedAt =
-              DateTime.tryParse(decodedPull['generatedAt']?.toString() ?? '');
-          if (generatedAt != null) {
-            await settings.copyWith(lastPullCursor: generatedAt).save();
-          }
-          break;
-        }
-        pageCursor = (decodedPull['nextCursor'] ?? '').toString();
-        if (pageCursor.isEmpty) {
-          return CloudStoreRecoveryResult(
-              ok: false,
-              message: 'Store recovery pagination failed.',
-              identity: store.appIdentity,
-              pulled: pulled);
-        }
       }
+      final pulled = applied.pulled;
+      final restoredSnapshot = applied.restoredSnapshot;
 
       final deviceLimit = claim['deviceLimit'] is Map
           ? CloudDeviceLimitStatus.fromJson(
@@ -1784,7 +1624,7 @@ class CloudSyncService {
       onProgress?.call(0.90, 'Publishing recovered Host snapshot...');
       await publishBootstrapSnapshotToCloud(settings,
           force: true, onProgress: onProgress);
-      await _pushPendingToEndpoint(settings, 'cloud', '/api/sync/push');
+      await _broadcastHostAuthorityViaRelay(settings);
       await sendHostHeartbeat(settings);
       onProgress?.call(1.0, 'Store recovered.');
       await _restorePreviousSyncMode(previousIdentity);
@@ -1979,7 +1819,10 @@ class CloudSyncService {
       return const CloudSyncResult(
           ok: true, message: 'Host can publish its snapshot directly.');
     }
-    if (!settings.isConfigured) {
+    if (!UnifiedSyncPolicy.canRequestCloudSnapshot(
+      identity,
+      isConfigured: settings.isConfigured,
+    )) {
       return const CloudSyncResult(
           ok: false, message: 'Cloud Sync is not ready yet.');
     }
@@ -2012,7 +1855,10 @@ class CloudSyncService {
           ok: false,
           message: 'Host rebuild is only available for Client devices.');
     }
-    if (!settings.isConfigured) {
+    if (!UnifiedSyncPolicy.canRebuildFromCloudSnapshot(
+      identity,
+      isConfigured: settings.isConfigured,
+    )) {
       return const CloudSyncResult(
           ok: false,
           message: 'Cloud API URL and paired device token are required.');
@@ -2038,8 +1884,8 @@ class CloudSyncService {
     CloudSyncResult? freshSnapshotRequest;
     final snapshotRequestedAt = DateTime.now().toUtc();
     if (requestFreshSnapshot) {
-      onProgress?.call(
-          0.24, 'Requesting a fresh Host snapshot after Client changes were confirmed...');
+      onProgress?.call(0.24,
+          'Requesting a fresh Host snapshot after Client changes were confirmed...');
       freshSnapshotRequest = await requestFreshHostSnapshot(
         settings,
         requestedAt: snapshotRequestedAt,
@@ -2060,6 +1906,47 @@ class CloudSyncService {
           'Waiting for the fresh Host snapshot that matches the rebuild request...');
     }
 
+    final freshEnvelope = await _waitForFreshCloudRebuildSnapshot(
+      settings,
+      rebuildRequestId: rebuildRequestId,
+      minimumSnapshotSequence: minimumSnapshotSequence,
+      requestedAt: snapshotRequestedAt,
+      onProgress: onProgress,
+    );
+    if (freshEnvelope == null) {
+      return CloudSyncResult(
+        ok: false,
+        pushed: drain.pushed,
+        message:
+            'Cloud rebuild sent pending Client changes and requested a fresh Host snapshot, but no matching fresh snapshot was available yet. Keep the Host online and retry. ${freshSnapshotRequest?.message ?? ''}',
+        syncDeferred: true,
+      );
+    }
+
+    final applied = await _applyCloudSnapshotEnvelope(
+      freshEnvelope,
+      settings: settings,
+      onProgress: onProgress,
+      expectedSnapshotGeneration: expectedSnapshotGeneration,
+      expectedRestoreCommandId: expectedRestoreCommandId,
+    );
+    return CloudSyncResult(
+      ok: applied.ok,
+      pushed: drain.pushed + applied.pushed,
+      pulled: applied.pulled,
+      restoredSnapshot: applied.restoredSnapshot,
+      syncDeferred: applied.syncDeferred,
+      message: applied.message,
+    );
+  }
+
+  Future<Map<String, dynamic>?> _waitForFreshCloudRebuildSnapshot(
+    CloudSyncSettings settings, {
+    required String rebuildRequestId,
+    required int minimumSnapshotSequence,
+    required DateTime requestedAt,
+    CloudSyncProgressCallback? onProgress,
+  }) async {
     onProgress?.call(
         0.30, 'Waiting for fresh Host snapshot through the relay...');
     for (var attempt = 0; attempt < 8; attempt += 1) {
@@ -2075,32 +1962,17 @@ class CloudSyncService {
             onProgress?.call(scaled, label);
           },
         );
-        if (!_cloudSnapshotEnvelopeMatchesFreshRebuild(
+        if (_cloudSnapshotEnvelopeMatchesFreshRebuild(
           envelope,
           minimumSequence: minimumSnapshotSequence,
           rebuildRequestId: rebuildRequestId,
-          requestedAt: snapshotRequestedAt,
+          requestedAt: requestedAt,
         )) {
-          onProgress?.call(
-            (0.34 + attempt * 0.05).clamp(0.34, 0.74).toDouble(),
-            'Ignoring older Host snapshot and waiting for the fresh rebuild snapshot (${attempt + 1}/8)...',
-          );
-          continue;
+          return envelope;
         }
-        final applied = await _applyCloudSnapshotEnvelope(
-          envelope,
-          settings: settings,
-          onProgress: onProgress,
-          expectedSnapshotGeneration: expectedSnapshotGeneration,
-          expectedRestoreCommandId: expectedRestoreCommandId,
-        );
-        return CloudSyncResult(
-          ok: applied.ok,
-          pushed: drain.pushed + applied.pushed,
-          pulled: applied.pulled,
-          restoredSnapshot: applied.restoredSnapshot,
-          syncDeferred: applied.syncDeferred,
-          message: applied.message,
+        onProgress?.call(
+          (0.34 + attempt * 0.05).clamp(0.34, 0.74).toDouble(),
+          'Ignoring older Host snapshot and waiting for the fresh rebuild snapshot (${attempt + 1}/8)...',
         );
       } catch (_) {
         onProgress?.call(
@@ -2109,14 +1981,7 @@ class CloudSyncService {
         );
       }
     }
-
-    return CloudSyncResult(
-      ok: false,
-      pushed: drain.pushed,
-      message:
-          'Cloud rebuild sent pending Client changes and requested a fresh Host snapshot, but no matching fresh snapshot was available yet. Keep the Host online and retry. ${freshSnapshotRequest?.message ?? ''}',
-      syncDeferred: true,
-    );
+    return null;
   }
 
   Future<CloudSyncResult?> checkCurrentDeviceAccess(
@@ -2181,7 +2046,7 @@ class CloudSyncService {
       CloudSyncSettings settings, String deviceId,
       {required bool suspended}) async {
     final identity = store.appIdentity;
-    if (!identity.isHost) {
+    if (!UnifiedSyncPolicy.canSuspendCloudDevices(identity)) {
       return const CloudSyncResult(
           ok: false, message: 'Only the Host can suspend devices.');
     }
@@ -2219,7 +2084,7 @@ class CloudSyncService {
   Future<CloudSyncResult> revokeDevice(
       CloudSyncSettings settings, String deviceId) async {
     final identity = store.appIdentity;
-    if (!identity.isHost) {
+    if (!UnifiedSyncPolicy.canRevokeCloudDevices(identity)) {
       return const CloudSyncResult(
           ok: false, message: 'Only the Host can revoke devices.');
     }
@@ -2254,7 +2119,7 @@ class CloudSyncService {
   Future<CloudSyncResult> deleteDeviceRecord(
       CloudSyncSettings settings, String deviceId) async {
     final identity = store.appIdentity;
-    if (!identity.isHost) {
+    if (!UnifiedSyncPolicy.canRemoveCloudDevices(identity)) {
       return const CloudSyncResult(
           ok: false, message: 'Only the Host can remove devices.');
     }
@@ -2303,6 +2168,8 @@ class CloudSyncService {
       'X-Branch-Id': identity.branchId,
     };
   }
+
+  Map<String, String> headers(CloudSyncSettings settings) => _headers(settings);
 
   String _newRelayRequestId() {
     _relayRequestCounter += 1;
@@ -2541,7 +2408,8 @@ class CloudSyncService {
         final generatedSequence = int.tryParse(
                 (job.envelope['syncGeneratedSequence'] ?? 0).toString()) ??
             0;
-        if (requiredMinSequence > 0 && generatedSequence < requiredMinSequence) {
+        if (requiredMinSequence > 0 &&
+            generatedSequence < requiredMinSequence) {
           _releaseRelaySnapshotJob(job.jobId);
           channel.sink.add(jsonEncode({
             'type': 'relay_response',
@@ -2780,7 +2648,8 @@ class CloudSyncService {
     final lastAckCursor =
         SyncDeviceStateStore.lastAckCursorForTransport(identity, transport);
     final lastAppliedSequence =
-        SyncDeviceStateStore.lastAppliedSequenceForTransport(identity, transport);
+        SyncDeviceStateStore.lastAppliedSequenceForTransport(
+            identity, transport);
     final lastAckSequence =
         SyncDeviceStateStore.lastAckSequenceForTransport(identity, transport);
     final appliedSnapshotGeneration =
@@ -2789,7 +2658,8 @@ class CloudSyncService {
         transport == 'cloud' &&
         lastAppliedSequence <= 0 &&
         lastAckSequence <= 0 &&
-        (lastAppliedCursor != null || appliedSnapshotGeneration.trim().isNotEmpty)) {
+        (lastAppliedCursor != null ||
+            appliedSnapshotGeneration.trim().isNotEmpty)) {
       SyncDiagnosticsLog.add(
         '[SYNC_TRACE] cloudRegister:skipZeroAckPublish '
         'device=${identity.deviceId} appliedGeneration=$appliedSnapshotGeneration',
@@ -2844,7 +2714,7 @@ class CloudSyncService {
   Future<CloudSyncResult> requestHostTransfer(CloudSyncSettings settings,
       {String reason = ''}) async {
     final identity = store.appIdentity;
-    if (!identity.isClient) {
+    if (!UnifiedSyncPolicy.canRequestCloudHostTransfer(identity)) {
       return const CloudSyncResult(
           ok: false, message: 'Only Clients can request Host transfer.');
     }
@@ -2881,7 +2751,7 @@ class CloudSyncService {
   Future<CloudSyncResult> approveHostTransfer(
       CloudSyncSettings settings, String requestingDeviceId) async {
     final identity = store.appIdentity;
-    if (!identity.isHost) {
+    if (!UnifiedSyncPolicy.canApproveCloudHostTransfer(identity)) {
       return const CloudSyncResult(
           ok: false, message: 'Only Hosts can approve Host transfer.');
     }
@@ -2986,7 +2856,7 @@ class CloudSyncService {
     required Iterable<String> clientDeviceIds,
   }) async {
     final identity = store.appIdentity;
-    if (!identity.isHost) {
+    if (!UnifiedSyncPolicy.canRepairCloudDeviceLinks(identity)) {
       return const CloudSyncResult(
           ok: false, message: 'Only the Host can repair Cloud device links.');
     }
@@ -3093,29 +2963,6 @@ class CloudSyncService {
       if (!hostStatus.hostReachable) {
         return CloudSyncResult(
             ok: false, message: 'Host Offline: ${hostStatus.message}');
-      }
-
-      final state = SyncDeviceStateStore.load(identity);
-      final query = <String, String>{
-        'store_id': identity.storeId,
-        'branch_id': identity.branchId,
-        'limit': '1',
-      };
-      if (state.lastAppliedSequence > 0) {
-        query['since_sequence'] = state.lastAppliedSequence.toString();
-      } else if (settings.lastPullCursor != null) {
-        query['since'] = settings.lastPullCursor!.toIso8601String();
-      }
-
-      final ping = await _client
-          .get(settings.endpoint('/api/sync/pull', query),
-              headers: _headers(settings))
-          .timeout(const Duration(seconds: 10));
-      if (ping.statusCode < 200 || ping.statusCode >= 300) {
-        final message = ping.statusCode == 401 || ping.statusCode == 403
-            ? 'Unauthorized/Token invalid: Cloud Sync rejected this device. Pair this device again.'
-            : 'Sync Not Ready: Cloud sync check failed with status ${ping.statusCode}: ${ping.body}';
-        return CloudSyncResult(ok: false, message: message);
       }
 
       return const CloudSyncResult(
@@ -3374,21 +3221,12 @@ class CloudSyncService {
     CloudSyncSettings settings, {
     bool force = false,
     CloudSyncProgressCallback? onProgress,
-  }) {
-    final identity = store.appIdentity;
-    return const UnifiedSnapshotTransferService().downloadEnvelope(
-      _CloudSnapshotPullTransport(
-        settings: settings,
-        headers: _headers(settings),
-        client: _client,
-        storeId: identity.storeId,
-        branchId: identity.branchId,
-      ),
-      force: force,
-      labelPrefix: 'Cloud snapshot',
-      onProgress: onProgress,
-    );
-  }
+  }) =>
+      _downloadCloudSnapshotEnvelopeViaRelay(
+        settings,
+        force: force,
+        onProgress: onProgress,
+      );
 
   Future<Map<String, dynamic>> _downloadCloudSnapshotEnvelopeViaRelay(
     CloudSyncSettings settings, {
@@ -3442,37 +3280,39 @@ class CloudSyncService {
     await CloudSyncSettings.clearSavedPullCursor();
     await SyncDeviceStateStore.resetClientProgress(store.appIdentity,
         transport: 'cloud');
-    await store.importSyncSnapshotJson(jsonEncode(envelope));
-    await _markHostSnapshotGenerationApplied('cloud', envelope,
-        markRestoreCommandExecuted: true);
+    final applied = await UnifiedSnapshotLifecycle.applyEnvelope(
+      store: store,
+      envelope: envelope,
+      afterImport: (_) => _markHostSnapshotGenerationApplied(
+        'cloud',
+        envelope,
+        markRestoreCommandExecuted: true,
+      ),
+      verifyLocalData: true,
+      cleanupSoftDeleted: true,
+    );
     onProgress?.call(0.90, 'Verifying rebuilt local data...');
-    final repaired = await store.verifyLocalBusinessDataIntegrity();
-    if (!repaired.ok) {
+    if (!applied.verificationOk) {
       debugPrint(
-          'Cloud rebuild completed with verification warnings: ${repaired.message}');
+          'Cloud rebuild completed with verification warnings: ${applied.verificationMessage}');
     }
     onProgress?.call(0.96, 'Cleaning up local records...');
-    await store.cleanupSoftDeletedRecords();
     await CloudProvisioningStatus.markComplete(
         message: 'Initial Store data downloaded.');
-    final cursor = store.syncSnapshotGeneratedAtFromJson(jsonEncode(envelope));
-    final sequence =
-        store.syncSnapshotGeneratedSequenceFromJson(jsonEncode(envelope));
-    await settings.copyWith(lastPullCursor: cursor).save();
     await _recordDeviceSyncState(
       'cloud',
-      cursor,
-      sequence: sequence,
-      settings: settings.copyWith(lastPullCursor: cursor),
+      applied.cursor,
+      sequence: applied.sequence,
+      settings: settings,
     );
     onProgress?.call(1.0, 'Cloud rebuild completed.');
     return CloudSyncResult(
       ok: true,
-      pulled: (envelope['totalChunks'] as num?)?.toInt() ?? 0,
+      pulled: applied.transferredChunks,
       restoredSnapshot: true,
-      message: repaired.ok
+      message: applied.verificationOk
           ? 'Cloud rebuild completed from unified snapshot chunks.'
-          : 'Unified snapshot chunks downloaded, but local verification found problems: ${repaired.message}',
+          : 'Unified snapshot chunks downloaded, but local verification found problems: ${applied.verificationMessage}',
     );
   }
 
@@ -3536,110 +3376,6 @@ class CloudSyncService {
     );
   }
 
-  Future<int> _pushPendingToEndpoint(
-      CloudSyncSettings settings, String target, String path) async {
-    final identity = store.appIdentity;
-    const transport = 'cloud';
-    var totalPushed = 0;
-    var batchNumber = 0;
-
-    // Keep pending pushes closer to snapshot transport: send larger compressed
-    // chunks so network overhead and server round trips stay low even when the
-    // queue contains tens of thousands of rows. The server still ACKs each
-    // compressed chunk, so a timeout never marks unsent data as synced.
-    const batchSize = 1500;
-
-    while (true) {
-      await store.recoverStaleInProgressSyncQueue(target: target);
-      await store.retryFailedSyncQueue(target: target);
-      final pending = _syncCore
-          .pendingChangesForTarget(target)
-          .take(batchSize)
-          .toList(growable: false);
-      final pendingIds = _syncCore.changeIds(pending);
-      if (pending.isEmpty) break;
-      batchNumber += 1;
-
-      await _syncCore.markPushInProgress(pendingIds);
-      try {
-        final push = await _client
-            .post(
-              settings.endpoint(path),
-              headers: _headers(settings),
-              body: jsonEncode(_buildCompressedPendingPushBody(
-                identity: identity,
-                transport: transport,
-                batchNumber: batchNumber,
-                pending: pending,
-              )),
-            )
-            .timeout(const Duration(seconds: 60));
-        if (push.statusCode < 200 || push.statusCode >= 300) {
-          final message =
-              'Cloud push failed in batch $batchNumber: ${push.statusCode} ${push.body}';
-          await _syncCore.markPushFailed(pendingIds, message);
-          throw StateError(message);
-        }
-        final decoded = jsonDecode(push.body) as Map<String, dynamic>;
-        final ackIds = (decoded['ackIds'] as List<dynamic>? ?? [])
-            .map((item) => '$item')
-            .toList();
-        final rejected = _decodeRejectedSyncRequests(decoded['rejected']);
-        if (rejected.isNotEmpty) await _syncCore.markPushRejected(rejected);
-        await _syncCore.markPushAcknowledged(ackIds, fallbackIds: pendingIds);
-        totalPushed += pending.length;
-      } catch (error) {
-        // Keep the affected batch retryable. Already acknowledged previous
-        // batches remain synced; unsent later batches were never touched.
-        await _syncCore.markPushFailed(
-            pendingIds, 'Cloud push failed in batch $batchNumber: $error');
-        rethrow;
-      }
-    }
-
-    return totalPushed;
-  }
-
-  Map<String, dynamic> _buildCompressedPendingPushBody({
-    required AppIdentity identity,
-    required String transport,
-    required int batchNumber,
-    required List<SyncChange> pending,
-  }) {
-    final changesJson = pending.map((item) => item.toJson()).toList();
-    final rawJson = jsonEncode(changesJson);
-    final compressed = GZipEncoder().encode(utf8.encode(rawJson));
-    final encodedPayload = base64Encode(compressed);
-    return {
-      'deviceId': store.deviceId,
-      'storeId': identity.storeId,
-      'branchId': identity.branchId,
-      'sequence': SyncDeviceStateStore.lastAppliedSequenceForTransport(
-          identity, transport),
-      'lastAppliedSequence': SyncDeviceStateStore.lastAppliedSequenceForTransport(
-          identity, transport),
-      'batchNumber': batchNumber,
-      'batchSize': pending.length,
-      'changesEncoding': 'gzip+base64+json',
-      'changesPayload': encodedPayload,
-    };
-  }
-
-  Map<String, String> _decodeRejectedSyncRequests(dynamic raw) {
-    final output = <String, String>{};
-    if (raw is List) {
-      for (final item in raw) {
-        if (item is Map) {
-          final id = (item['id'] ?? '').toString();
-          if (id.isNotEmpty) {
-            output[id] = (item['reason'] ?? 'Rejected by Host.').toString();
-          }
-        }
-      }
-    }
-    return output;
-  }
-
   Future<int> _pushPendingViaRelay(
     CloudSyncSettings settings, {
     required String target,
@@ -3696,15 +3432,21 @@ class CloudSyncService {
               .map((item) => '$item')
               .where((item) => item.trim().isNotEmpty)
               .toList();
-          final rejected = _decodeRejectedSyncRequests(response['rejected']);
+          final rejected = <String, String>{};
+          final rawRejected = response['rejected'];
+          if (rawRejected is List) {
+            for (final item in rawRejected) {
+              if (item is Map) {
+                final id = (item['id'] ?? '').toString().trim();
+                if (id.isNotEmpty) {
+                  rejected[id] =
+                      (item['reason'] ?? 'Rejected by Host.').toString();
+                }
+              }
+            }
+          }
           if (rejected.isNotEmpty) await _syncCore.markPushRejected(rejected);
           if (target == 'cloud_host') {
-            // Realtime relay responses come directly from the Host. Unlike the
-            // legacy /api/sync/requests/push endpoint, this ACK is the final
-            // Host decision, not just Cloud inbox delivery. Keeping these rows
-            // as `submitted` leaves the Client waiting for /requests/status,
-            // but no cloud_change_requests row exists for direct relay ACKs;
-            // the Client then intermittently stays pending and skips pull.
             await _syncCore.markPushAcknowledged(ackIds,
                 fallbackIds: pendingIds);
           } else {
@@ -3801,16 +3543,16 @@ class CloudSyncService {
         return null;
       }
 
-      if (response['needsSnapshot'] == true) {
+      if (_syncCore.shouldHandlePulledSnapshotAsRepair(
+        response,
+        isClient: store.appIdentity.isClient,
+      )) {
         final generation = _remoteHostSnapshotGeneration(response);
         final commandId = _remoteHostRestoreCommandId(response);
         if (_restoreCommandAlreadyExecuted('cloud', commandId)) {
-          final generatedAt =
-              DateTime.tryParse(response['generatedAt']?.toString() ?? '') ??
-                  DateTime.now();
-          final generatedSequence =
-              int.tryParse(response['generatedSequence']?.toString() ?? '') ??
-                  0;
+          final metadata = _syncCore.parsePullMetadata(response);
+          final generatedAt = metadata.generatedAt;
+          final generatedSequence = metadata.generatedSequence;
           await settings.copyWith(lastPullCursor: generatedAt).save();
           await _recordDeviceSyncState('cloud', generatedAt,
               sequence: generatedSequence, settings: settings);
@@ -3846,26 +3588,10 @@ class CloudSyncService {
         );
       }
 
-      final decodedChanges = _syncCore.decodeRemoteChanges(rawChanges);
-      final changes = _syncCore.filterOutLocalEchoes(decodedChanges);
-      final restoreMarker = changes.any((item) =>
-          item.entityType == 'system' &&
-          item.operation == 'cloud_restore_snapshot_ready');
-      if (restoreMarker && store.appIdentity.isClient) {
-        final commandId = _restoreCommandIdFromChanges(changes);
-        if (!_restoreCommandAlreadyExecuted('cloud', commandId)) {
-          onProgress?.call(0.50,
-              'A new Host restore was found. Rebuilding device data from a full snapshot...');
-          return rebuildFromCloudHostSnapshot(
-            settings.copyWith(clearLastPullCursor: true),
-            onProgress: onProgress,
-            requestFreshSnapshot: false,
-            expectedRestoreCommandId: commandId,
-          );
-        }
-      }
+      final changes = _syncCore.normalizePulledChanges(rawChanges);
 
-      final source = (response['source'] ?? '').toString();
+      final metadata = _syncCore.parsePullMetadata(response);
+      final source = metadata.source;
       final restoredSnapshot =
           changes.any((item) => item.operation == 'restore_snapshot') ||
               (initialCursor == null &&
@@ -3876,12 +3602,8 @@ class CloudSyncService {
           0.72, 'Applying ${changes.length} Cloud change(s) from relay...');
       final applied = await _syncCore.applyAuthoritativeChanges(changes);
 
-      final finalPullCursor =
-          DateTime.tryParse((response['generatedAt'] ?? '').toString()) ??
-              DateTime.now().toUtc();
-      final finalPullSequence =
-          int.tryParse((response['generatedSequence'] ?? '0').toString()) ?? 0;
-      await settings.copyWith(lastPullCursor: finalPullCursor).save();
+      final finalPullCursor = metadata.generatedAt;
+      final finalPullSequence = metadata.generatedSequence;
       await _recordDeviceSyncState('cloud', finalPullCursor,
           sequence: finalPullSequence, settings: settings);
 
@@ -3925,13 +3647,8 @@ class CloudSyncService {
           ok: false, message: 'Cloud API URL and token are required.');
     }
 
-    if (await _clientCloudHostWorkNeedsDrain()) {
-      return const CloudSyncResult(
-        ok: true,
-        message: _clientCloudDrainMessage,
-        syncDeferred: true,
-      );
-    }
+    final drain = await _cloudClientNeedsDrainResult();
+    if (drain != null) return drain;
 
     try {
       var pushed = 0;
@@ -3985,70 +3702,6 @@ class CloudSyncService {
     }
   }
 
-  Future<bool> _cloudSnapshotIsNewerThanLocal(
-    CloudSyncSettings settings,
-  ) async {
-    if (!store.appIdentity.isClient) return false;
-    try {
-      final localCursor = SyncDeviceStateStore.lastAppliedCursorForTransport(
-              store.appIdentity, 'cloud') ??
-          settings.lastPullCursor;
-      UnifiedSnapshotManifestResponse? manifest;
-      try {
-        manifest = await _CloudRelaySnapshotPullTransport(
-          service: this,
-          settings: settings,
-        ).requestManifest();
-      } catch (_) {
-        manifest = await _CloudSnapshotPullTransport(
-          settings: settings,
-          headers: _headers(settings),
-          client: _client,
-          storeId: store.appIdentity.storeId,
-          branchId: store.appIdentity.branchId,
-        ).requestManifest();
-      }
-      final remoteSequence = manifest.syncGeneratedSequence ?? 0;
-      final lastAppliedSequence =
-          SyncDeviceStateStore.lastAppliedSequenceForTransport(
-              store.appIdentity, 'cloud');
-      if (remoteSequence > 0 && lastAppliedSequence >= remoteSequence) {
-        return false;
-      }
-      final commandId =
-          (manifest.hostRestoreCommandId ?? manifest.restoreCommandId ?? '')
-              .trim();
-      if (_restoreCommandAlreadyExecuted('cloud', commandId)) return false;
-      final generation =
-          (manifest.hostSnapshotGeneration ?? manifest.snapshotGeneration ?? '')
-              .trim();
-      if (generation.isNotEmpty) {
-        if (!_needsHostSnapshotGenerationRebuild('cloud', <String, dynamic>{
-          'hostSnapshotGeneration': generation,
-          'snapshotGeneration': generation,
-          'hostRestoreCommandId': commandId,
-          'restoreCommandId': commandId,
-        })) {
-          return false;
-        }
-        return true;
-      }
-      final remoteGeneratedAt =
-          DateTime.tryParse(manifest.syncGeneratedAt ?? '');
-      if (remoteGeneratedAt == null) return false;
-      if (localCursor == null) return true;
-      // Add a small tolerance so re-reading the same materialized snapshot does
-      // not trigger repeated rebuilds due to clock precision differences.
-      return remoteGeneratedAt.toUtc().isAfter(
-            localCursor.toUtc().add(const Duration(seconds: 2)),
-          );
-    } catch (_) {
-      // Snapshot freshness is a safety net. If the manifest is temporarily not
-      // reachable, keep the normal incremental pull path alive.
-      return false;
-    }
-  }
-
   Future<CloudSyncResult> pullAuthoritativeChangesForUnifiedEngine(
     CloudSyncSettings settings, {
     DateTime? minSnapshotUpdatedAt,
@@ -4072,261 +3725,14 @@ class CloudSyncService {
           ok: false, message: 'Cloud API URL and token are required.');
     }
 
-    if (await _clientCloudHostWorkNeedsDrain()) {
-      return const CloudSyncResult(
-        ok: true,
-        message: _clientCloudDrainMessage,
-        syncDeferred: true,
-      );
-    }
+    final drain = await _cloudClientNeedsDrainResult();
+    if (drain != null) return drain;
 
     try {
-      // Freeze the sequence watermark for the whole paginated pull. Reading
-      // lastAppliedSequence after every page can skip pages: page 1 advances the
-      // local state, then page 2 asks Cloud for sequence > the new value while
-      // also passing the old page cursor. That combination can silently miss
-      // events, which showed up as product count differences across devices.
-      final baseLastAppliedSequence =
-          SyncDeviceStateStore.lastAppliedSequenceForTransport(
-              store.appIdentity, 'cloud');
-      final relayResult = baseLastAppliedSequence > 0
-          ? await _pullAuthoritativeChangesViaRelay(
-              settings,
-              minSnapshotUpdatedAt: minSnapshotUpdatedAt,
-              onProgress: onProgress,
-            )
-          : null;
-      if (relayResult != null) return relayResult;
-      var pulled = 0;
-      // Sequence is the authoritative Cloud watermark. Never combine it
-      // with the legacy timestamp cursor: a newer local timestamp can filter out
-      // older-but-unapplied Host events and leave the Client stuck behind the
-      // Host (for example Host latest=32206 while Client ACK=32187). Only use
-      // the legacy cursor for pre-sequence clients.
-      final initialCursor =
-          baseLastAppliedSequence > 0 ? null : settings.lastPullCursor;
-      final shouldUseSnapshotBootstrap = baseLastAppliedSequence <= 0;
-      if (shouldUseSnapshotBootstrap &&
-          await _cloudSnapshotIsNewerThanLocal(settings)) {
-        onProgress?.call(0.32,
-            'A newer Host snapshot was found. Rebuilding this device data...');
-        return rebuildFromCloudHostSnapshot(
-          settings.copyWith(clearLastPullCursor: true),
-          onProgress: onProgress,
-          requestFreshSnapshot: false,
-        );
-      }
-      var pageCursor = '';
-      DateTime? finalPullCursor;
-      var finalPullSequence = 0;
-      var pageCount = 0;
-      var restoredSnapshot = false;
-      var allSnapshotSectionsComplete = true;
-      const maxPagesPerRun = 200;
-
-      while (true) {
-        pageCount += 1;
-        if (pageCount > maxPagesPerRun) {
-          return CloudSyncResult(
-              ok: false,
-              message:
-                  'Cloud pull stopped after $maxPagesPerRun pages to avoid an infinite loop. Please retry sync.');
-        }
-
-        final query = <String, String>{
-          'store_id': identity.storeId,
-          'branch_id': identity.branchId,
-          'limit': '1000',
-        };
-        if (baseLastAppliedSequence > 0) {
-          query['since_sequence'] = baseLastAppliedSequence.toString();
-        }
-        if (initialCursor != null) {
-          query['since'] = initialCursor.toIso8601String();
-        }
-        if (initialCursor == null && minSnapshotUpdatedAt != null) {
-          query['min_snapshot_updated_at'] =
-              minSnapshotUpdatedAt.toIso8601String();
-        }
-        if (pageCursor.isNotEmpty) query['cursor'] = pageCursor;
-        final endpoint = settings.endpoint('/api/sync/pull', query);
-
-        final pullProgress =
-            (0.35 + (pageCount - 1) * 0.08).clamp(0.35, 0.82).toDouble();
-        onProgress?.call(
-            pullProgress, 'Pulling Cloud changes page $pageCount...');
-        final pull = await _client
-            .get(endpoint, headers: _headers(settings))
-            .timeout(const Duration(seconds: 20));
-        if (pull.statusCode < 200 || pull.statusCode >= 300) {
-          return CloudSyncResult(
-              ok: false,
-              message: 'Cloud pull failed: ${pull.statusCode} ${pull.body}');
-        }
-
-        final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
-        final rawChanges =
-            decodedPull['changes'] as List<dynamic>? ?? const <dynamic>[];
-        SyncDiagnosticsLog.add(
-          '[SYNC_TRACE] cloudPull:decoded page=$pageCount '
-          'source=${decodedPull['source']} '
-          'changes=${rawChanges.length} '
-          'hasMore=${decodedPull['hasMore']} '
-          'generatedAt=${decodedPull['generatedAt']} '
-          'generatedSequence=${decodedPull['generatedSequence']}',
-        );
-        for (final raw in rawChanges.take(40)) {
-          final change =
-              SyncChange.fromJson(Map<String, dynamic>.from(raw as Map));
-          SyncDiagnosticsLog.add(
-            '[SYNC_TRACE] cloudPull:rawChange ${SyncDiagnosticsLog.summarizeChange(change)}',
-          );
-        }
-        final generationRebuild = await _rebuildIfHostSnapshotGenerationChanged(
-          settings,
-          decodedPull,
-          onProgress: onProgress,
-        );
-        if (generationRebuild != null) return generationRebuild;
-        if ((decodedPull['source'] ?? '').toString() == 'entity_snapshots') {
-          final pageAllSectionsComplete =
-              decodedPull['allSnapshotSectionsComplete'] == true;
-          allSnapshotSectionsComplete =
-              allSnapshotSectionsComplete && pageAllSectionsComplete;
-          await CloudProvisioningStatus.updateSnapshotSections(
-            decodedPull['snapshotSections'] is Map<String, dynamic>
-                ? decodedPull['snapshotSections'] as Map<String, dynamic>
-                : null,
-            allComplete: pageAllSectionsComplete,
-          );
-        }
-        if (decodedPull['needsSnapshot'] == true) {
-          await CloudSyncSettings.clearSavedPullCursor();
-          final generation = _remoteHostSnapshotGeneration(decodedPull);
-          final commandId = _remoteHostRestoreCommandId(decodedPull);
-          if (_restoreCommandAlreadyExecuted('cloud', commandId)) {
-            final generatedAt = DateTime.tryParse(
-                    decodedPull['generatedAt']?.toString() ?? '') ??
-                DateTime.now();
-            final generatedSequence = int.tryParse(
-                    decodedPull['generatedSequence']?.toString() ?? '') ??
-                0;
-            await settings.copyWith(lastPullCursor: generatedAt).save();
-            await _recordDeviceSyncState('cloud', generatedAt,
-                sequence: generatedSequence, settings: settings);
-            return CloudSyncResult(
-              ok: true,
-              message:
-                  'A previously executed rebuild command was ignored and the sync cursor was updated.',
-              pulled: pulled,
-            );
-          }
-          return rebuildFromCloudHostSnapshot(
-            settings.copyWith(clearLastPullCursor: true),
-            onProgress: onProgress,
-            requestFreshSnapshot: false,
-            expectedSnapshotGeneration: generation,
-            expectedRestoreCommandId: commandId,
-          );
-        }
-        final decodedChanges = _syncCore.decodeRemoteChanges(rawChanges);
-        final changes = _syncCore.filterOutLocalEchoes(decodedChanges);
-        SyncDiagnosticsLog.add(
-          '[SYNC_TRACE] cloudPull:filtered page=$pageCount '
-          'decoded=${decodedChanges.length} afterEchoFilter=${changes.length} '
-          'localDevice=${store.deviceId}',
-        );
-        final source = (decodedPull['source'] ?? '').toString();
-        final restoreMarker = changes.any((item) =>
-            item.entityType == 'system' &&
-            item.operation == 'cloud_restore_snapshot_ready');
-        if (restoreMarker && store.appIdentity.isClient) {
-          final commandId = _restoreCommandIdFromChanges(changes);
-          if (_restoreCommandAlreadyExecuted('cloud', commandId)) {
-            restoredSnapshot = false;
-          } else {
-            onProgress?.call(0.50,
-                'A new Host restore was found. Rebuilding device data from a full snapshot...');
-            // A Host Restore is a full replacement, not an incremental change.
-            // Do not depend on timestamp filters here: old backup rows can carry
-            // historical updatedAt values, and the marker time may be newer than
-            // some rows. Force the unified snapshot downloader/importer to rebuild
-            // the Client from the currently published Host snapshot.
-            return rebuildFromCloudHostSnapshot(
-              settings.copyWith(clearLastPullCursor: true),
-              onProgress: onProgress,
-              requestFreshSnapshot: false,
-              expectedRestoreCommandId: commandId,
-            );
-          }
-        }
-        restoredSnapshot = restoredSnapshot ||
-            changes.any((item) => item.operation == 'restore_snapshot') ||
-            (initialCursor == null &&
-                source == 'entity_snapshots' &&
-                changes.isNotEmpty);
-        onProgress?.call(
-            (0.42 + (pageCount - 1) * 0.08).clamp(0.42, 0.86).toDouble(),
-            'Applying ${changes.length} Cloud change(s) from page $pageCount...');
-        final applied = await _syncCore.applyAuthoritativeChanges(changes);
-        pulled += applied;
-        SyncDiagnosticsLog.add(
-          '[SYNC_TRACE] cloudPull:applied page=$pageCount '
-          'decodedChanges=${changes.length} applied=$applied totalPulled=$pulled',
-        );
-
-        final hasMore = decodedPull['hasMore'] == true;
-        pageCursor = (decodedPull['nextCursor'] ?? '').toString();
-        if (!hasMore) {
-          finalPullCursor =
-              DateTime.tryParse(decodedPull['generatedAt']?.toString() ?? '');
-          finalPullSequence = int.tryParse(
-                  decodedPull['generatedSequence']?.toString() ?? '') ??
-              finalPullSequence;
-          break;
-        }
-        if (pageCursor.isEmpty) {
-          return const CloudSyncResult(
-              ok: false,
-              message: 'Cloud pull pagination failed: missing next cursor.');
-        }
-      }
-
-      final initialSnapshotStillUploading = initialCursor == null &&
-          restoredSnapshot &&
-          !allSnapshotSectionsComplete;
-      if (initialSnapshotStillUploading) {
-        onProgress?.call(
-            0.90, 'Waiting for Host to finish uploading Store sections...');
-        await CloudProvisioningStatus.markPending(
-            message:
-                'Host is still uploading store data. Download will continue automatically.');
-      } else {
-        onProgress?.call(0.90, 'Saving Cloud sync cursor...');
-        if (finalPullCursor != null) {
-          await settings.copyWith(lastPullCursor: finalPullCursor).save();
-          await _recordDeviceSyncState('cloud', finalPullCursor,
-              sequence: finalPullSequence, settings: settings);
-        }
-      }
-
-      if (pulled > 0) {
-        onProgress?.call(0.96, 'Cleaning up after Cloud sync...');
-        await store.cleanupSoftDeletedRecords();
-      }
-      if (store.appIdentity.isClient &&
-          (restoredSnapshot || pulled > 0) &&
-          !store.needsInitialAdminSetup &&
-          !initialSnapshotStillUploading) {
-        await CloudProvisioningStatus.markComplete(
-            message: 'Initial Store data downloaded.');
-      }
-      return CloudSyncResult(
-        ok: true,
-        pulled: pulled,
-        restoredSnapshot: restoredSnapshot,
-        message:
-            'Cloud pull completed. Pulled $pulled authoritative change(s).',
+      return _runCloudClientAuthoritativeSync(
+        settings,
+        minSnapshotUpdatedAt: minSnapshotUpdatedAt,
+        onProgress: onProgress,
       );
     } catch (error) {
       return CloudSyncResult(ok: false, message: 'Cloud pull failed: $error');
@@ -4352,390 +3758,40 @@ class CloudSyncService {
 
     try {
       var pushed = 0;
-      var pulled = 0;
 
       if (identity.isHost) {
-        onProgress?.call(0.10, 'Preparing Host cloud snapshot queue...');
-        await store.ensureHostCloudBootstrapSnapshotQueued();
-        final repairedCloudQueue =
-            await store.repairMissingHostCloudQueueForPendingChanges();
-        if (repairedCloudQueue > 0) {
-          onProgress?.call(0.18,
-              '$repairedCloudQueue missing Host cloud snapshot queue item(s) were repaired...');
-        }
-        onProgress?.call(0.25, 'Sending Host heartbeat...');
-        await sendHostHeartbeat(settings);
-        onProgress?.call(0.40, 'Registering Host device...');
-        await registerCurrentDevice(settings, transport: 'cloud');
-        final hostPendingCount =
-            _syncCore.pendingChangesForTarget('cloud').length;
-        onProgress?.call(0.55, 'Publishing Host changes through Cloud relay...');
-        final relayPublished = await _broadcastHostAuthorityViaRelay(settings);
-        if (!relayPublished) {
-          return const CloudSyncResult(
-            ok: false,
-            message:
-                'Host cloud relay failed. Legacy Cloud fallback is disabled; retry when the relay is available.',
-          );
-        }
-        pushed = hostPendingCount;
-        onProgress?.call(
-            0.90, 'Running safe local sync history maintenance...');
-        await store.compactSyncedSyncHistoryForMaintenance();
-        onProgress?.call(0.96, 'Running safe Cloud maintenance...');
-        await runCloudMaintenance(settings);
-        onProgress?.call(1.0, 'Host Cloud sync completed.');
-        return CloudSyncResult(
-          ok: true,
-          pushed: pushed,
-          pulled: 0,
-          message:
-              'Host Cloud sync completed through relay. Broadcast $pushed authoritative change(s).',
-        );
-      } else {
-        // Any cloud-enabled Client that has local draft changes should send
-        // them to the Host relay. LAN Clients normally queue to target "host",
-        // so this only affects Web or remote desktop/mobile Clients whose
-        // pending changes target "cloud_host".
-        onProgress?.call(0.12, 'Registering Client device...');
-        await registerCurrentDevice(settings, transport: 'cloud');
-        onProgress?.call(0.28, 'Sending Client requests to Host relay...');
-        pushed += await _pushPendingViaRelay(settings, target: 'cloud_host');
-      }
-
-      // Freeze the sequence watermark for the whole paginated pull. Reading
-      // lastAppliedSequence after every page can skip pages: page 1 advances the
-      // local state, then page 2 asks Cloud for sequence > the new value while
-      // also passing the old page cursor. That combination can silently miss
-      // events, which showed up as product count differences across devices.
-      final baseLastAppliedSequence =
-          SyncDeviceStateStore.lastAppliedSequenceForTransport(
-              store.appIdentity, 'cloud');
-      // Sequence is the authoritative Cloud watermark. Never combine it
-      // with the legacy timestamp cursor: a newer local timestamp can filter out
-      // older-but-unapplied Host events and leave the Client stuck behind the
-      // Host. Only use the legacy cursor for pre-sequence clients.
-      final initialCursor =
-          baseLastAppliedSequence > 0 ? null : settings.lastPullCursor;
-      final shouldUseSnapshotBootstrap = baseLastAppliedSequence <= 0;
-      if (shouldUseSnapshotBootstrap &&
-          await _cloudSnapshotIsNewerThanLocal(settings)) {
-        onProgress?.call(0.32,
-            'A newer Host snapshot was found. Rebuilding this device data...');
-        return rebuildFromCloudHostSnapshot(
-          settings.copyWith(clearLastPullCursor: true),
-          onProgress: onProgress,
-          requestFreshSnapshot: false,
-        );
-      }
-      var pageCursor = '';
-      DateTime? finalPullCursor;
-      var finalPullSequence = 0;
-      var pageCount = 0;
-      var restoredSnapshot = false;
-      var allSnapshotSectionsComplete = true;
-      const maxPagesPerRun = 200;
-
-      while (true) {
-        pageCount += 1;
-        if (pageCount > maxPagesPerRun) {
-          return CloudSyncResult(
-              ok: false,
-              message:
-                  'Cloud pull stopped after $maxPagesPerRun pages to avoid an infinite loop. Please retry sync.');
-        }
-
-        final query = <String, String>{
-          'store_id': identity.storeId,
-          'branch_id': identity.branchId,
-          'limit': '1000',
-        };
-        if (baseLastAppliedSequence > 0) {
-          query['since_sequence'] = baseLastAppliedSequence.toString();
-        }
-        if (initialCursor != null) {
-          query['since'] = initialCursor.toIso8601String();
-        }
-        if (initialCursor == null && minSnapshotUpdatedAt != null) {
-          query['min_snapshot_updated_at'] =
-              minSnapshotUpdatedAt.toIso8601String();
-        }
-        if (pageCursor.isNotEmpty) query['cursor'] = pageCursor;
-
-        final pullProgress =
-            (0.35 + (pageCount - 1) * 0.08).clamp(0.35, 0.82).toDouble();
-        onProgress?.call(
-            pullProgress, 'Pulling Cloud changes page $pageCount...');
-        final pull = await _client
-            .get(settings.endpoint('/api/sync/pull', query),
-                headers: _headers(settings))
-            .timeout(const Duration(seconds: 20));
-        if (pull.statusCode < 200 || pull.statusCode >= 300) {
-          final message = 'Cloud pull failed: ${pull.statusCode} ${pull.body}';
-          return CloudSyncResult(ok: false, message: message);
-        }
-
-        final decodedPull = jsonDecode(pull.body) as Map<String, dynamic>;
-        final rawChanges =
-            decodedPull['changes'] as List<dynamic>? ?? const <dynamic>[];
-        SyncDiagnosticsLog.add(
-          '[SYNC_TRACE] cloudSyncNow:decoded page=$pageCount '
-          'source=${decodedPull['source']} '
-          'changes=${rawChanges.length} '
-          'hasMore=${decodedPull['hasMore']} '
-          'generatedAt=${decodedPull['generatedAt']} '
-          'generatedSequence=${decodedPull['generatedSequence']}',
-        );
-        for (final raw in rawChanges.take(40)) {
-          final change =
-              SyncChange.fromJson(Map<String, dynamic>.from(raw as Map));
-          SyncDiagnosticsLog.add(
-            '[SYNC_TRACE] cloudSyncNow:rawChange ${SyncDiagnosticsLog.summarizeChange(change)}',
-          );
-        }
-        final generationRebuild = await _rebuildIfHostSnapshotGenerationChanged(
+        final hostResult = await _runCloudHostRelaySync(
           settings,
-          decodedPull,
           onProgress: onProgress,
+          compactHistory: true,
         );
-        if (generationRebuild != null) return generationRebuild;
-        if ((decodedPull['source'] ?? '').toString() == 'entity_snapshots') {
-          final pageAllSectionsComplete =
-              decodedPull['allSnapshotSectionsComplete'] == true;
-          allSnapshotSectionsComplete =
-              allSnapshotSectionsComplete && pageAllSectionsComplete;
-          await CloudProvisioningStatus.updateSnapshotSections(
-            decodedPull['snapshotSections'] is Map<String, dynamic>
-                ? decodedPull['snapshotSections'] as Map<String, dynamic>
-                : null,
-            allComplete: pageAllSectionsComplete,
-          );
-        }
-        if (decodedPull['needsSnapshot'] == true) {
-          await CloudSyncSettings.clearSavedPullCursor();
-          final generation = _remoteHostSnapshotGeneration(decodedPull);
-          final commandId = _remoteHostRestoreCommandId(decodedPull);
-          if (_restoreCommandAlreadyExecuted('cloud', commandId)) {
-            final generatedAt = DateTime.tryParse(
-                    decodedPull['generatedAt']?.toString() ?? '') ??
-                DateTime.now();
-            final generatedSequence = int.tryParse(
-                    decodedPull['generatedSequence']?.toString() ?? '') ??
-                0;
-            await settings.copyWith(lastPullCursor: generatedAt).save();
-            await _recordDeviceSyncState('cloud', generatedAt,
-                sequence: generatedSequence, settings: settings);
-            return CloudSyncResult(
-              ok: true,
-              message:
-                  'A previously executed rebuild command was ignored and the sync cursor was updated.',
-              pushed: pushed,
-              pulled: pulled,
-            );
-          }
-          return rebuildFromCloudHostSnapshot(
-            settings.copyWith(clearLastPullCursor: true),
-            onProgress: onProgress,
-            requestFreshSnapshot: false,
-            expectedSnapshotGeneration: generation,
-            expectedRestoreCommandId: commandId,
-          );
-        }
-        final decodedChanges = _syncCore.decodeRemoteChanges(rawChanges);
-        final changes = _syncCore.filterOutLocalEchoes(decodedChanges);
-        SyncDiagnosticsLog.add(
-          '[SYNC_TRACE] cloudSyncNow:filtered page=$pageCount '
-          'decoded=${decodedChanges.length} afterEchoFilter=${changes.length} '
-          'localDevice=${store.deviceId}',
-        );
-        final source = (decodedPull['source'] ?? '').toString();
-        final restoreMarker = changes.any((item) =>
-            item.entityType == 'system' &&
-            item.operation == 'cloud_restore_snapshot_ready');
-        if (restoreMarker && store.appIdentity.isClient) {
-          final commandId = _restoreCommandIdFromChanges(changes);
-          if (_restoreCommandAlreadyExecuted('cloud', commandId)) {
-            restoredSnapshot = false;
-          } else {
-            onProgress?.call(0.50,
-                'A new Host restore was found. Rebuilding device data from a full snapshot...');
-            // A Host Restore is a full replacement, not an incremental change.
-            // Do not depend on timestamp filters here: old backup rows can carry
-            // historical updatedAt values, and the marker time may be newer than
-            // some rows. Force the unified snapshot downloader/importer to rebuild
-            // the Client from the currently published Host snapshot.
-            return rebuildFromCloudHostSnapshot(
-              settings.copyWith(clearLastPullCursor: true),
-              onProgress: onProgress,
-              requestFreshSnapshot: false,
-              expectedRestoreCommandId: commandId,
-            );
-          }
-        }
-        restoredSnapshot = restoredSnapshot ||
-            changes.any((item) => item.operation == 'restore_snapshot') ||
-            (initialCursor == null &&
-                source == 'entity_snapshots' &&
-                changes.isNotEmpty);
-        onProgress?.call(
-            (0.42 + (pageCount - 1) * 0.08).clamp(0.42, 0.86).toDouble(),
-            'Applying ${changes.length} Cloud change(s) from page $pageCount...');
-        final applied = await _syncCore.applyAuthoritativeChanges(changes);
-        pulled += applied;
-        SyncDiagnosticsLog.add(
-          '[SYNC_TRACE] cloudSyncNow:applied page=$pageCount '
-          'decodedChanges=${changes.length} applied=$applied totalPulled=$pulled',
-        );
-
-        final hasMore = decodedPull['hasMore'] == true;
-        pageCursor = (decodedPull['nextCursor'] ?? '').toString();
-        if (!hasMore) {
-          finalPullCursor =
-              DateTime.tryParse(decodedPull['generatedAt']?.toString() ?? '');
-          finalPullSequence = int.tryParse(
-                  decodedPull['generatedSequence']?.toString() ?? '') ??
-              finalPullSequence;
-          break;
-        }
-        if (pageCursor.isEmpty) {
-          return const CloudSyncResult(
-              ok: false,
-              message: 'Cloud pull pagination failed: missing next cursor.');
-        }
+        return hostResult;
       }
 
-      final initialSnapshotStillUploading = initialCursor == null &&
-          restoredSnapshot &&
-          !allSnapshotSectionsComplete;
-      if (initialSnapshotStillUploading) {
-        onProgress?.call(
-            0.90, 'Waiting for Host to finish uploading Store sections...');
-        await CloudProvisioningStatus.markPending(
-            message:
-                'Host is still uploading store data. Download will continue automatically.');
-      } else {
-        onProgress?.call(0.90, 'Saving Cloud sync cursor...');
-        if (finalPullCursor != null) {
-          await settings.copyWith(lastPullCursor: finalPullCursor).save();
-          await _recordDeviceSyncState('cloud', finalPullCursor,
-              sequence: finalPullSequence, settings: settings);
-        }
-      }
+      // Any cloud-enabled Client that has local draft changes should send
+      // them to the Host relay. LAN Clients normally queue to target "host",
+      // so this only affects Web or remote desktop/mobile Clients whose
+      // pending changes target "cloud_host".
+      final clientPush =
+          await _runCloudClientRelayPush(settings, onProgress: onProgress);
+      pushed += clientPush.pushed;
 
-      if (pulled > 0) {
-        onProgress?.call(0.94, 'Cleaning up after Cloud sync...');
-        await store.cleanupSoftDeletedRecords();
-      }
-      if (store.appIdentity.isClient) {
-        onProgress?.call(0.97, 'Running Client sync history maintenance...');
-        await store.compactClientSyncedSyncHistoryForMaintenance();
-      }
-      if (store.appIdentity.isClient &&
-          (restoredSnapshot || pulled > 0) &&
-          !store.needsInitialAdminSetup &&
-          !initialSnapshotStillUploading) {
-        await CloudProvisioningStatus.markComplete(
-            message: 'Initial Store data downloaded.');
-      }
+      final relayResult = await _runCloudClientAuthoritativeSync(
+        settings,
+        minSnapshotUpdatedAt: minSnapshotUpdatedAt,
+        onProgress: onProgress,
+      );
       return CloudSyncResult(
-        ok: true,
-        pushed: pushed,
-        pulled: pulled,
-        restoredSnapshot: restoredSnapshot,
-        message:
-            'Cloud sync completed. Sent $pushed request(s) to Host relay, pulled $pulled authoritative change(s).',
+        ok: relayResult.ok,
+        pushed: pushed + relayResult.pushed,
+        pulled: relayResult.pulled,
+        restoredSnapshot: relayResult.restoredSnapshot,
+        syncDeferred: relayResult.syncDeferred,
+        message: relayResult.message,
       );
     } catch (error) {
       return CloudSyncResult(ok: false, message: 'Cloud sync failed: $error');
     }
-  }
-}
-
-class _CloudSnapshotPullTransport implements UnifiedSnapshotChunkPullTransport {
-  _CloudSnapshotPullTransport({
-    required this.settings,
-    required this.headers,
-    required this.client,
-    required this.storeId,
-    required this.branchId,
-  });
-
-  final CloudSyncSettings settings;
-  final Map<String, String> headers;
-  final http.Client client;
-  final String storeId;
-  final String branchId;
-  String _jobId = '';
-
-  @override
-  Future<UnifiedSnapshotManifestResponse> requestManifest(
-      {bool force = false}) async {
-    final response = await client
-        .get(
-          settings.endpoint('/api/sync/bootstrap-snapshot', {
-            'mode': 'manifest',
-            'store_id': storeId,
-            'branch_id': branchId,
-          }),
-          headers: headers,
-        )
-        .timeout(const Duration(seconds: 30));
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw StateError(
-          'Cloud snapshot manifest failed: ${response.statusCode} ${response.body}');
-    }
-    final decoded = Map<String, dynamic>.from(jsonDecode(response.body) as Map);
-    _jobId = (decoded['jobId'] ?? '').toString();
-    return UnifiedSnapshotManifestResponse(
-      manifest: Map<String, dynamic>.from(
-          (decoded['snapshotManifest'] as Map?) ?? const <String, dynamic>{}),
-      totalChunks: (decoded['totalChunks'] as num?)?.toInt() ?? 0,
-      snapshotFormat: decoded['snapshotFormat']?.toString(),
-      snapshotVersion: decoded['snapshotVersion'],
-      snapshotKind: decoded['snapshotKind']?.toString(),
-      syncGeneratedAt: decoded['syncGeneratedAt']?.toString(),
-      syncGeneratedSequence:
-          (decoded['syncGeneratedSequence'] as num?)?.toInt(),
-      hostSnapshotGeneration: decoded['hostSnapshotGeneration']?.toString(),
-      snapshotGeneration: decoded['snapshotGeneration']?.toString(),
-      hostRestoreCommandId: decoded['hostRestoreCommandId']?.toString(),
-      restoreCommandId: decoded['restoreCommandId']?.toString(),
-    );
-  }
-
-  @override
-  Future<UnifiedSnapshotChunkResponse> requestChunk(int ordinal) async {
-    final query = <String, String>{
-      'mode': 'chunk',
-      'store_id': storeId,
-      'branch_id': branchId,
-      'ordinal': ordinal.toString(),
-    };
-    if (_jobId.trim().isNotEmpty) query['job_id'] = _jobId;
-    final response = await client
-        .get(settings.endpoint('/api/sync/bootstrap-snapshot', query),
-            headers: headers)
-        .timeout(const Duration(seconds: 30));
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw StateError(
-          'Cloud snapshot chunk ${ordinal + 1} failed: ${response.statusCode} ${response.body}');
-    }
-    final decoded = Map<String, dynamic>.from(jsonDecode(response.body) as Map);
-    final chunk = decoded['chunk'];
-    if (chunk is! Map) {
-      throw StateError('Cloud snapshot chunk ${ordinal + 1} is invalid.');
-    }
-    return UnifiedSnapshotChunkResponse(
-      chunk: Map<String, dynamic>.from(chunk),
-      ordinal: (decoded['ordinal'] as num?)?.toInt() ?? ordinal,
-      totalChunks: (decoded['totalChunks'] as num?)?.toInt() ?? 0,
-    );
-  }
-
-  @override
-  Future<void> ackChunk(int ordinal) async {
-    // Cloud snapshot chunk ACK is currently client-local; the unified transfer
-    // engine still calls this hook so Cloud and LAN share the same pipeline.
   }
 }
 
@@ -4824,8 +3880,7 @@ class _CloudRelaySnapshotPullTransport
       'force': force,
       if (_rebuildRequestId.trim().isNotEmpty)
         'rebuildRequestId': _rebuildRequestId.trim(),
-      if (_requiredMinSequence > 0)
-        'requiredMinSequence': _requiredMinSequence,
+      if (_requiredMinSequence > 0) 'requiredMinSequence': _requiredMinSequence,
     });
     _jobId = (response['jobId'] ?? '').toString().trim();
     return UnifiedSnapshotManifestResponse(
@@ -4843,8 +3898,7 @@ class _CloudRelaySnapshotPullTransport
       hostRestoreCommandId: response['hostRestoreCommandId']?.toString(),
       restoreCommandId: response['restoreCommandId']?.toString(),
       rebuildRequestId: response['rebuildRequestId']?.toString(),
-      requiredMinSequence:
-          (response['requiredMinSequence'] as num?)?.toInt(),
+      requiredMinSequence: (response['requiredMinSequence'] as num?)?.toInt(),
     );
   }
 

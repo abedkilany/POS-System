@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 
 import '../../core/localization/app_localizations.dart';
 import '../../core/services/account_auth_service.dart';
+import '../../core/services/cloud_sync_admin_service.dart';
 import '../../core/services/cloud_sync_service.dart';
 import '../../core/services/lan_sync_service.dart';
 import '../../core/sync_unified/sync_device_state.dart';
@@ -24,6 +25,7 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
   Future<_CloudMonitoringSnapshot>? _cloudMonitoringFuture;
 
   AppStore get store => widget.store;
+  CloudSyncAdminService get _cloudAdminService => CloudSyncAdminService(store);
 
   @override
   void initState() {
@@ -63,7 +65,7 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
 
   Future<_CloudMonitoringSnapshot> _loadAndAdoptCloudDevices(
       CloudSyncSettings cloudSettings) async {
-    final service = CloudSyncService(store);
+    final service = _cloudAdminService;
     var result = await service.listDevicesWithLimit(cloudSettings);
     var devices = result.devices;
     final repaired =
@@ -81,7 +83,7 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
   }
 
   Future<bool> _repairLegacyCloudDeviceLinks(
-    CloudSyncService service,
+    CloudSyncAdminService service,
     CloudSyncSettings cloudSettings,
     List<CloudDeviceStatus> devices,
   ) async {
@@ -187,7 +189,7 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
 
     final cloudSettings = CloudSyncSettings.load();
     if (cloudSettings.isConfigured) {
-      await CloudSyncService(store).setDeviceSuspended(
+      await _cloudAdminService.setDeviceSuspended(
         cloudSettings,
         deviceId,
         suspended: !shouldResume,
@@ -257,7 +259,7 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
 
     final cloudSettings = CloudSyncSettings.load();
     if (cloudSettings.isConfigured) {
-      await CloudSyncService(store).revokeDevice(cloudSettings, deviceId);
+      await _cloudAdminService.revokeDevice(cloudSettings, deviceId);
     }
 
     if (!mounted) return;
@@ -288,7 +290,7 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
     await _permanentlyDeleteDeviceRecord(deviceId);
     final cloudSettings = CloudSyncSettings.load();
     if (cloudSettings.isConfigured) {
-      await CloudSyncService(store).deleteDeviceRecord(cloudSettings, deviceId);
+      await _cloudAdminService.deleteDeviceRecord(cloudSettings, deviceId);
     }
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(

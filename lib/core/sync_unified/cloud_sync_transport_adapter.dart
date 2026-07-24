@@ -1,7 +1,10 @@
 import '../services/cloud_sync_service.dart';
+import 'unified_sync_orchestration.dart';
+import 'unified_sync_policy.dart';
 import 'sync_contracts.dart';
 import 'sync_device_state.dart';
 import 'sync_transport_adapter.dart';
+import 'unified_sync_transport_helpers.dart';
 
 /// Cloud adapter shell for Fix 10A.
 ///
@@ -17,33 +20,8 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
   final CloudSyncService _service;
   final CloudSyncSettings _settings;
 
-  UnifiedSyncError _errorFor(bool ok, String message) {
-    if (ok) return UnifiedSyncError.none;
-    final lower = message.toLowerCase();
-    final code = lower.contains('socketexception') ||
-            lower.contains('timeoutexception') ||
-            lower.contains('connection refused') ||
-            lower.contains('failed host lookup') ||
-            lower.contains('network is unreachable') ||
-            lower.contains('no route to host') ||
-            lower.contains('connection reset by peer') ||
-            lower.contains('broken pipe') ||
-            lower.contains('econnrefused') ||
-            lower.contains('connection closed') ||
-            lower.contains('host offline')
-        ? UnifiedSyncErrorCode.networkUnavailable
-        : lower.contains('expired') || lower.contains('already used')
-            ? UnifiedSyncErrorCode.expiredPairingCode
-            : lower.contains('host snapshot') || lower.contains('snapshot')
-                ? UnifiedSyncErrorCode.snapshotUnavailable
-                : lower.contains('forbidden') || lower.contains('cannot')
-                    ? UnifiedSyncErrorCode.forbiddenRole
-                    : lower.contains('required') || lower.contains('invalid')
-                        ? UnifiedSyncErrorCode.validationFailed
-                        : UnifiedSyncErrorCode.unknown;
-    return UnifiedSyncError(
-        code: code, userMessage: message, debugMessage: message);
-  }
+  UnifiedSyncError _errorFor(bool ok, String message) =>
+      UnifiedSyncTransportHelpers.classifyError(ok, message);
 
   DateTime? get _unifiedCursor => SyncDeviceStateStore.cursorForTransport(
         _service.store.appIdentity,
@@ -60,8 +38,61 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
     );
   }
 
-  Future<CloudSyncSettings> _settingsForPull() async {
+  DateTime? _cursorFromRequest(UnifiedSyncCursor cursor) {
+    if (cursor.generatedAt != null) return cursor.generatedAt;
+    final value = cursor.value.trim();
+    if (value.isEmpty) return null;
+    return DateTime.tryParse(value);
+  }
+
+  CloudSyncSettings _settingsWithCursor(DateTime? cursor) {
+    if (cursor == null || cursor == _settings.lastPullCursor) return _settings;
+    return _settings.copyWith(lastPullCursor: cursor);
+  }
+
+  UnifiedSyncResult _resultFromService(
+    CloudSyncResult result, {
+    required UnifiedCursorEnvelope cursor,
+    required bool includeDeferredFlag,
+  }) {
+    final isDeferred = includeDeferredFlag && result.syncDeferred;
+    if (isDeferred) {
+      return UnifiedSyncResultFactory.deferred(
+        label: 'Cloud',
+        pushed: result.pushed,
+        pulled: result.pulled,
+        cursor: cursor,
+        reason: result.message,
+      );
+    }
+    const data = <String, dynamic>{};
+    if (!result.ok) {
+      return UnifiedSyncResult(
+        ok: false,
+        message: result.message,
+        pushed: result.pushed,
+        pulled: result.pulled,
+        restoredSnapshot: result.restoredSnapshot,
+        data: data,
+        error: _errorFor(result.ok, result.message),
+        cursor: cursor,
+      );
+    }
+    return UnifiedSyncResultFactory.success(
+      label: 'Cloud',
+      pushed: result.pushed,
+      pulled: result.pulled,
+      restoredSnapshot: result.restoredSnapshot,
+      data: data,
+      message: result.message,
+      cursor: cursor,
+    );
+  }
+
+  Future<CloudSyncSettings> _settingsForPull(
+      UnifiedSyncPullRequest request) async {
     final identity = _service.store.appIdentity;
+    final requestCursor = _cursorFromRequest(request.cursor);
     final baseSequence = SyncDeviceStateStore.lastAppliedSequenceForTransport(
       identity,
       'cloud',
@@ -72,36 +103,41 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
     // Cloud baseline yet. Once a rebuild/import has already stored a cursor,
     // keep it even if the sequence is still 0 so the next pull does not loop
     // back into bootstrap again.
-    if (identity.isClient && baseSequence <= 0 && appliedCursor == null) {
+    if (identity.isClient &&
+        baseSequence <= 0 &&
+        appliedCursor == null &&
+        requestCursor == null) {
       // Do not reset ACK/sequence while merely preparing pull settings. A real
       // reset is safe only inside the snapshot apply path, after a valid Host
       // snapshot has been downloaded.
       await CloudSyncSettings.clearSavedPullCursor();
       return _settings.copyWith(clearLastPullCursor: true);
     }
-    final cursor = _unifiedCursor;
-    if (cursor == null || cursor == _settings.lastPullCursor) return _settings;
-    return _settings.copyWith(lastPullCursor: cursor);
+    return _settingsWithCursor(requestCursor ?? _unifiedCursor);
   }
 
-  CloudSyncSettings _settingsWithUnifiedCursor() {
-    final cursor = _unifiedCursor;
-    if (cursor == null || cursor == _settings.lastPullCursor) return _settings;
-    return _settings.copyWith(lastPullCursor: cursor);
+  CloudSyncSettings _settingsForPush(UnifiedSyncPushRequest request) {
+    return _settingsWithCursor(
+        _cursorFromRequest(request.cursor) ?? _unifiedCursor);
   }
 
-  Future<void> _recordCloudResult(
-    DateTime? cursor, {
-    int? sequence,
-  }) =>
-      SyncDeviceStateStore.recordSyncResult(
-        _service.store.appIdentity,
-        transport: 'cloud',
-        appliedCursor: cursor,
-        ackCursor: cursor,
-        appliedSequence: sequence,
-        ackSequence: sequence,
-      );
+  Future<UnifiedSyncResult> _runUnifiedCloudSync({
+    void Function(double value, String label)? onProgress,
+    String pullFailureMessage = 'Cloud pull failed.',
+  }) {
+    return runUnifiedSyncOrchestration(
+      label: 'Cloud',
+      pushRequest:
+          UnifiedSyncPushRequest(deviceId: deviceId, deviceToken: deviceToken),
+      pushPending: pushPending,
+      pullChanges: pullChanges,
+      rebuildFromHostSnapshot: rebuildFromHostSnapshot,
+      compactAfterSuccessfulSync: compactAfterSuccessfulSync,
+      onProgress: onProgress,
+      deferPullResult: (pull) => pull.data['syncDeferred'] == true,
+      pullFailureMessage: pullFailureMessage,
+    );
+  }
 
   @override
   UnifiedSyncTransportKind get kind => UnifiedSyncTransportKind.cloud;
@@ -114,6 +150,11 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   String get deviceToken => _service.store.appIdentity.deviceToken;
+
+  @override
+  Future<bool> waitForRealtimeSignal() {
+    return _service.waitForRealtimeSignal(_settings);
+  }
 
   @override
   Future<UnifiedSyncResult> testConnection() async {
@@ -158,27 +199,20 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
   }) async {
     await _service.publishBootstrapSnapshotToCloud(_settings,
         force: true, onProgress: onProgress);
-    final effectiveSettings = _settingsWithUnifiedCursor();
-    final result = await _service.syncNow(
-      effectiveSettings,
-      minSnapshotUpdatedAt: minSnapshotUpdatedAt,
+    return _runUnifiedCloudSync(
       onProgress: onProgress,
-    );
-    return UnifiedSyncResult(
-      ok: result.ok,
-      message: result.message,
-      pushed: result.pushed,
-      pulled: result.pulled,
-      restoredSnapshot: result.restoredSnapshot,
-      error: _errorFor(result.ok, result.message),
-      cursor: _cursor(),
+      pullFailureMessage: 'Cloud pull failed.',
     );
   }
 
   @override
   Future<UnifiedPairingCodeResult> createPairingCode(
       {int ttlMinutes = 5}) async {
-    if (!_settings.enabled) {
+    if (!UnifiedSyncPolicy.canCreateCloudPairingCode(
+      _service.store.appIdentity,
+      settingsEnabled: _settings.enabled,
+      hasApiBaseUrl: _settings.apiBaseUrl.trim().isNotEmpty,
+    )) {
       const message =
           'Enable Cloud Sync and save settings before generating a pairing code.';
       return const UnifiedPairingCodeResult(
@@ -233,179 +267,91 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<UnifiedSyncResult> pushPending(UnifiedSyncPushRequest request) async {
-    final effectiveSettings = _settingsWithUnifiedCursor();
+    final effectiveSettings = _settingsForPush(request);
     final result =
         await _service.pushPendingForUnifiedEngine(effectiveSettings);
-    await _recordCloudResult(
-      _unifiedCursor,
+    await _service.recordDeviceSyncState(
+      'cloud',
+      cursor: effectiveSettings.lastPullCursor ?? _unifiedCursor,
       sequence: _service.store.latestStoredAuthoritativeSequence,
     );
-    return UnifiedSyncResult(
-      ok: result.ok,
-      message: result.message,
-      pushed: result.pushed,
-      pulled: result.pulled,
-      restoredSnapshot: result.restoredSnapshot,
-      error: _errorFor(result.ok, result.message),
+    return _resultFromService(
+      result,
       cursor: _cursor(),
+      includeDeferredFlag: true,
     );
   }
 
   @override
   Future<UnifiedSyncResult> pullChanges(UnifiedSyncPullRequest request) async {
-    final effectiveSettings = await _settingsForPull();
+    final effectiveSettings = await _settingsForPull(request);
     final result = await _service
         .pullAuthoritativeChangesForUnifiedEngine(effectiveSettings);
     final current = CloudSyncSettings.load();
-    await _recordCloudResult(
-      current.lastPullCursor,
+    await _service.recordDeviceSyncState(
+      'cloud',
+      cursor: current.lastPullCursor ??
+          effectiveSettings.lastPullCursor ??
+          _unifiedCursor,
       sequence: SyncDeviceStateStore.lastAppliedSequenceForTransport(
         _service.store.appIdentity,
         'cloud',
       ),
     );
-    return UnifiedSyncResult(
-      ok: result.ok,
-      message: result.message,
-      pushed: result.pushed,
-      pulled: result.pulled,
-      restoredSnapshot: result.restoredSnapshot,
-      data: result.syncDeferred
-          ? const {'syncDeferred': true}
-          : const <String, dynamic>{},
-      error: _errorFor(result.ok, result.message),
+    return _resultFromService(
+      result,
       cursor: UnifiedCursorEnvelope(
         value: current.lastPullCursor?.toIso8601String() ?? '',
         generatedAt: current.lastPullCursor,
         source: 'device',
       ),
+      includeDeferredFlag: true,
     );
   }
 
   @override
   Future<UnifiedSyncResult> rebuildFromHostSnapshot(
       {void Function(double value, String label)? onProgress}) async {
-    final effectiveSettings = _settingsWithUnifiedCursor();
+    final effectiveSettings = _settingsWithCursor(_unifiedCursor);
     final result = await _service.rebuildFromCloudHostSnapshot(
         effectiveSettings,
         onProgress: onProgress);
-    await _recordCloudResult(
-      _unifiedCursor,
+    await _service.recordDeviceSyncState(
+      'cloud',
+      cursor: effectiveSettings.lastPullCursor ?? _unifiedCursor,
       sequence: SyncDeviceStateStore.lastAppliedSequenceForTransport(
         _service.store.appIdentity,
         'cloud',
       ),
     );
-    return UnifiedSyncResult(
-      ok: result.ok,
-      message: result.message,
-      data: result.syncDeferred
-          ? const {'syncDeferred': true}
-          : const <String, dynamic>{},
-      pushed: result.pushed,
-      pulled: result.pulled,
-      restoredSnapshot: result.restoredSnapshot,
-      error: _errorFor(result.ok, result.message),
+    return _resultFromService(
+      result,
       cursor: _cursor(),
+      includeDeferredFlag: true,
     );
   }
 
   @override
   Future<void> compactAfterSuccessfulSync() async {
-    try {
-      final identity = _service.store.appIdentity;
-      if (identity.isHost) {
-        await _service.store.compactSyncedSyncHistoryForMaintenance();
-      } else if (identity.isClient) {
-        await _service.store.compactClientSyncedSyncHistoryForMaintenance();
-      }
-    } catch (_) {
-      // Best-effort maintenance: never fail a successful sync because local
-      // compaction failed.
-    }
+    await _service.compactAfterSuccessfulSync();
   }
+
+  @override
+  Future<void> requestFreshHostSnapshotIfSupported({
+    DateTime? requestedAt,
+  }) async {
+    await _service.requestFreshHostSnapshot(
+      _settings,
+      requestedAt: requestedAt,
+    );
+  }
+
+  @override
+  Future<void> stopHostIfSupported() async {}
 
   @override
   Future<UnifiedSyncResult> syncNow(
       {void Function(double value, String label)? onProgress}) async {
-    onProgress?.call(0.08, 'Preparing Cloud sync...');
-    final push = await pushPending(
-        UnifiedSyncPushRequest(deviceId: deviceId, deviceToken: deviceToken));
-    if (!push.ok) {
-      onProgress?.call(1.0, 'Cloud sync failed while sending local changes.');
-      return push;
-    }
-
-    onProgress?.call(0.55, 'Pulling authoritative Cloud changes...');
-    final pull = await pullChanges(
-      UnifiedSyncPullRequest(
-        deviceId: deviceId,
-        deviceToken: deviceToken,
-        cursor: UnifiedSyncCursor(
-          value: push.cursor.value,
-          generatedAt: push.cursor.generatedAt,
-          source: push.cursor.source,
-        ),
-      ),
-    );
-    if (pull.data['syncDeferred'] == true) {
-      onProgress?.call(1.0, pull.message);
-      return UnifiedSyncResult(
-        ok: true,
-        message: pull.message,
-        pushed: push.pushed,
-        pulled: 0,
-        restoredSnapshot: false,
-        data: const {'syncDeferred': true},
-        cursor: pull.cursor,
-      );
-    }
-    if (pull.ok) {
-      await compactAfterSuccessfulSync();
-      onProgress?.call(1.0, 'Cloud sync completed.');
-      return UnifiedSyncResult(
-        ok: true,
-        message:
-            'Cloud sync completed. Pushed ${push.pushed} change(s), pulled ${pull.pulled} change(s).',
-        pushed: push.pushed,
-        pulled: pull.pulled,
-        restoredSnapshot: pull.restoredSnapshot,
-        cursor: pull.cursor,
-      );
-    }
-
-    if (!pull.shouldAttemptSnapshotRepair) {
-      onProgress?.call(1.0, 'Cloud pull failed.');
-      return UnifiedSyncResult(
-        ok: false,
-        message: pull.message,
-        pushed: push.pushed,
-        pulled: pull.pulled,
-        error: pull.error,
-        cursor: pull.cursor,
-      );
-    }
-
-    onProgress?.call(0.78, 'Cloud pull failed. Trying snapshot repair...');
-    final repair = await rebuildFromHostSnapshot(onProgress: onProgress);
-    if (repair.ok) {
-      await compactAfterSuccessfulSync();
-      return UnifiedSyncResult(
-        ok: true,
-        message: '${pull.message}. ${repair.message}',
-        pushed: push.pushed,
-        pulled: repair.pulled,
-        restoredSnapshot: true,
-        cursor: repair.cursor,
-      );
-    }
-    return UnifiedSyncResult(
-      ok: false,
-      message: '${pull.message}. ${repair.message}',
-      pushed: push.pushed,
-      pulled: pull.pulled,
-      error: pull.error.hasError ? pull.error : repair.error,
-      cursor: pull.cursor,
-    );
+    return _runUnifiedCloudSync(onProgress: onProgress);
   }
 }

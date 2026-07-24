@@ -2351,16 +2351,14 @@ class _StressLabPageState extends State<StressLabPage> {
         jsonEncode(probeIdentity.toJson()),
       );
       await store.refreshAfterDatabaseChange('app_identity_v1');
-      final cloudClaim = await CloudSyncService(
+      final cloudClaim = await UnifiedSyncFactory.cloudEngine(
         store,
-        client: _buildCloudProbeClient(),
-      ).claimPairingCode(
-        CloudSyncSettings(
+        settings: const CloudSyncSettings(
           enabled: true,
           apiBaseUrl: 'https://sync-probe.ventio.test',
         ),
-        'PAIR-12345',
-      );
+        client: _buildCloudProbeClient(),
+      ).claimPairingCode('PAIR-12345');
 
       _auditCheck(
         'SyncSetupPage',

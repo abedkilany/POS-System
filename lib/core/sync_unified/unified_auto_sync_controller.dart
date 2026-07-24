@@ -1,27 +1,99 @@
 import 'dart:async';
 
+import 'package:http/http.dart' as http;
+
 import '../../data/app_store.dart';
-import '../services/local_database_service.dart';
 import '../services/cloud_sync_service.dart';
+import '../services/local_database_service.dart';
 import '../services/lan_sync_service.dart';
 import '../services/sync_diagnostics_log.dart';
 import 'cloud_sync_transport_adapter.dart';
 import 'lan_sync_transport_adapter.dart';
+import 'unified_sync_policy.dart';
 import 'sync_device_state.dart';
 import 'unified_sync_engine.dart';
 
 typedef AutoSnapshotProgressPresenter = void Function(
     String transport, double value, String label);
 
+typedef _SignalLoopWaitResult = ({
+  bool changed,
+  String? debugLabel,
+});
+
+Future<void> _runUnifiedRealtimeSignalLoop<TSettings>({
+  required bool Function() isDisposed,
+  required TSettings Function() loadSettings,
+  required bool Function(TSettings settings) isReady,
+  required Future<_SignalLoopWaitResult> Function(TSettings settings)
+      waitForSignal,
+  required Future<void> Function() onWake,
+  Future<void> Function()? onFirstReady,
+  void Function(Object error)? onError,
+  Duration idleDelay = const Duration(seconds: 5),
+  Duration postWakeDelay = Duration.zero,
+}) async {
+  var wasReady = false;
+  while (!isDisposed()) {
+    final settings = loadSettings();
+    if (!isReady(settings)) {
+      wasReady = false;
+      await Future<void>.delayed(idleDelay);
+      continue;
+    }
+    try {
+      if (!wasReady) {
+        wasReady = true;
+        if (onFirstReady != null) {
+          await onFirstReady();
+        }
+      }
+      final result = await waitForSignal(settings);
+      if (result.changed && !isDisposed()) {
+        if ((result.debugLabel ?? '').trim().isNotEmpty) {
+          SyncDiagnosticsLog.add(result.debugLabel!);
+        }
+        await onWake();
+      }
+      if (!isDisposed() && postWakeDelay > Duration.zero) {
+        await Future<void>.delayed(postWakeDelay);
+      }
+    } catch (error) {
+      onError?.call(error);
+      if (!isDisposed()) {
+        await Future<void>.delayed(idleDelay);
+      }
+    }
+  }
+}
+
+Future<void> _recoverSyncQueues(
+  AppStore store,
+  List<String> targets,
+) async {
+  for (final target in targets) {
+    await store.recoverStaleInProgressSyncQueue(target: target);
+    await store.retryFailedSyncQueue(target: target);
+  }
+}
+
+Future<void> _recoverClientSyncQueue(AppStore store) =>
+    _recoverSyncQueues(store, const ['host']);
+
+Future<void> _recoverCloudSyncQueues(AppStore store) =>
+    _recoverSyncQueues(store, const ['cloud', 'cloud_host']);
+
 class UnifiedSyncFactory {
   const UnifiedSyncFactory._();
 
   static UnifiedSyncEngine cloudEngine(AppStore store,
-      {CloudSyncSettings? settings, bool enabled = true}) {
+      {CloudSyncSettings? settings,
+      bool enabled = true,
+      http.Client? client}) {
     final current = settings ?? CloudSyncSettings.load();
     return UnifiedSyncEngine(
       CloudSyncTransportAdapter(
-        service: CloudSyncService(store),
+        service: CloudSyncService(store, client: client),
         settings: current.copyWith(enabled: enabled),
       ),
     );
@@ -37,16 +109,31 @@ class UnifiedSyncFactory {
     );
   }
 
+  static UnifiedSyncEngine activeEngine(
+    AppStore store, {
+    bool cloudEnabled = true,
+    CloudSyncSettings? cloudSettings,
+    LanSyncSettings? lanSettings,
+  }) {
+    final identity = store.appIdentity;
+    if (identity.activeSyncTransportNormalized == 'cloud') {
+      return cloudEngine(
+        store,
+        settings: cloudSettings ?? CloudSyncSettings.load(),
+        enabled: cloudEnabled,
+      );
+    }
+    return lanEngine(store, settings: lanSettings ?? LanSyncSettings.load());
+  }
+
   static bool get isLanSetupComplete => LanSyncSettings.load().setupComplete;
   static bool get isLanHost => LanSyncSettings.load().isHost;
   static bool get isCloudConfigured => CloudSyncSettings.load().isConfigured;
   static bool cloudCanCheck(AppStore store) {
-    final identity = store.appIdentity;
     final settings = CloudSyncSettings.load();
-    final allowed = identity.isHost
-        ? identity.isCloudEnabled
-        : identity.isClient &&
-            identity.activeSyncTransportNormalized == 'cloud';
+    final allowed = UnifiedSyncPolicy.isCloudAllowedForCurrentRole(
+      store.appIdentity,
+    );
     return allowed && settings.isConfigured;
   }
 }
@@ -86,14 +173,12 @@ class UnifiedAutoLanSyncController {
   }
 
   bool _lanAllowedForCurrentRole(LanSyncSettings settings) {
-    final identity = store.appIdentity;
-    if (identity.isHost) return settings.setupComplete && settings.isHost;
-    if (identity.isClient) {
-      return identity.activeSyncTransportNormalized == 'lan' &&
-          settings.setupComplete &&
-          settings.isClient;
-    }
-    return false;
+    return UnifiedSyncPolicy.isLanAllowedForCurrentRole(
+      store.appIdentity,
+      setupComplete: settings.setupComplete,
+      isHostModeEnabled: settings.isHost,
+      isClientModeEnabled: settings.isClient,
+    );
   }
 
   Future<void> start() async {
@@ -110,7 +195,7 @@ class UnifiedAutoLanSyncController {
     );
     if (!allowed) {
       await UnifiedSyncFactory.lanEngine(store, settings: settings)
-          .transportStopHostIfSupported();
+          .stopHostIfSupported();
     } else if (store.appIdentity.isHost && settings.isHost) {
       await UnifiedSyncFactory.lanEngine(store, settings: settings)
           .registerCurrentHost(transportName: 'lan');
@@ -134,37 +219,30 @@ class UnifiedAutoLanSyncController {
     store.removeListener(_onStoreChanged);
     _periodicTimer?.cancel();
     _debounceTimer?.cancel();
-    await UnifiedSyncFactory.lanEngine(store).transportStopHostIfSupported();
+    await UnifiedSyncFactory.lanEngine(store).stopHostIfSupported();
   }
 
   Future<void> _signalLoop() async {
     if (_signalLoopRunning) return;
     _signalLoopRunning = true;
     try {
-      while (!_disposed) {
-        final settings = LanSyncSettings.load();
-        if (!_lanAllowedForCurrentRole(settings) ||
-            !settings.autoSyncEnabled ||
-            !settings.isClient ||
-            settings.host.trim().isEmpty) {
-          await Future<void>.delayed(const Duration(seconds: 5));
-          continue;
-        }
-        try {
-          final changed = await LanSyncService(store).waitForRealtimeSignal(
-            settings.host,
-            port: settings.port,
-            token: settings.secret,
-          );
-          if (changed && !_disposed) {
-            await _runClientSync();
-          }
-        } catch (_) {
-          if (!_disposed) {
-            await Future<void>.delayed(const Duration(seconds: 5));
-          }
-        }
-      }
+      await _runUnifiedRealtimeSignalLoop<LanSyncSettings>(
+        isDisposed: () => _disposed,
+        loadSettings: LanSyncSettings.load,
+        isReady: (settings) =>
+            _lanAllowedForCurrentRole(settings) &&
+            settings.autoSyncEnabled &&
+            settings.isClient &&
+            settings.host.trim().isNotEmpty,
+        waitForSignal: (settings) async {
+          final changed = await UnifiedSyncFactory.lanEngine(
+            store,
+            settings: settings,
+          ).waitForRealtimeSignal();
+          return (changed: changed, debugLabel: null);
+        },
+        onWake: _runClientSync,
+      );
     } finally {
       _signalLoopRunning = false;
     }
@@ -223,7 +301,7 @@ class UnifiedAutoLanSyncController {
     }
     if (!_lanAllowedForCurrentRole(settings)) {
       unawaited(UnifiedSyncFactory.lanEngine(store, settings: settings)
-          .transportStopHostIfSupported());
+          .stopHostIfSupported());
       return;
     }
     if (store.appIdentity.isHost && settings.isHost) {
@@ -234,7 +312,7 @@ class UnifiedAutoLanSyncController {
     if (!settings.autoSyncEnabled) {
       return;
     }
-    unawaited(store.retryFailedSyncQueue(target: 'host'));
+    unawaited(_recoverClientSyncQueue(store));
     unawaited(_runClientSync());
   }
 
@@ -242,7 +320,7 @@ class UnifiedAutoLanSyncController {
     if (_disposed) return;
     final engine = UnifiedSyncFactory.lanEngine(store, settings: settings);
     if (!_lanAllowedForCurrentRole(settings) || !settings.isHost) {
-      await engine.transportStopHostIfSupported();
+      await engine.stopHostIfSupported();
     } else {
       await engine.registerCurrentHost(transportName: 'lan');
     }
@@ -250,7 +328,7 @@ class UnifiedAutoLanSyncController {
         _lanAllowedForCurrentRole(settings) &&
         settings.autoSyncEnabled &&
         settings.isClient) {
-      await store.retryFailedSyncQueue(target: 'host');
+      await _recoverClientSyncQueue(store);
       await _runClientSync();
     }
   }
@@ -318,12 +396,7 @@ class UnifiedAutoCloudSyncController {
   final AutoSnapshotProgressPresenter? onSnapshotProgress;
 
   bool _cloudAllowedForCurrentRole() {
-    final identity = store.appIdentity;
-    if (identity.isHost) {
-      return identity.isCloudEnabled;
-    }
-    if (!identity.isClient) return false;
-    return identity.activeSyncTransportNormalized == 'cloud';
+    return UnifiedSyncPolicy.isCloudAllowedForCurrentRole(store.appIdentity);
   }
 
   Timer? _timer;
@@ -393,55 +466,32 @@ class UnifiedAutoCloudSyncController {
   Future<void> _signalLoop() async {
     if (_signalLoopRunning) return;
     _signalLoopRunning = true;
-    var wasReady = false;
     try {
-      while (!_disposed) {
-        final settings = CloudSyncSettings.load();
-        final ready = _cloudReady(settings);
-        if (!ready) {
-          wasReady = false;
-          await Future<void>.delayed(const Duration(seconds: 5));
-          continue;
-        }
-        try {
-          if (!wasReady) {
-            wasReady = true;
-            await _tick();
-          }
-          await for (final signal
-              in CloudSyncService(store).watchRealtimeSignals(settings)) {
-            if (_disposed) break;
-            final current = CloudSyncSettings.load();
-            if (!_cloudReady(current) ||
-                _settingsSignature(current) != _settingsSignature(settings)) {
-              break;
-            }
-            SyncDiagnosticsLog.add(
-              '[SYNC_TRACE] autoCloud:realtimeWake type=${signal.type} '
-              'latestSequence=${signal.latestSequence} '
-              'pendingRequests=${signal.pendingRequests}',
-            );
-            await _tick();
-          }
-          if (!_disposed) {
-            await Future<void>.delayed(const Duration(seconds: 2));
-          }
-        } catch (error) {
+      await _runUnifiedRealtimeSignalLoop<CloudSyncSettings>(
+        isDisposed: () => _disposed,
+        loadSettings: CloudSyncSettings.load,
+        isReady: _cloudReady,
+        onFirstReady: _tick,
+        waitForSignal: (settings) async {
+          final changed = await UnifiedSyncFactory.cloudEngine(
+            store,
+            settings: settings,
+          ).waitForRealtimeSignal();
+          return (
+            changed: changed,
+            debugLabel: changed
+                ? '[SYNC_TRACE] autoCloud:realtimeWake transport=cloud'
+                : null,
+          );
+        },
+        onWake: _tick,
+        onError: (error) {
           SyncDiagnosticsLog.add(
             '[SYNC_TRACE] autoCloud:realtimeFallback error=$error',
           );
-          try {
-            final changed =
-                await CloudSyncService(store).waitForRealtimeSignal(settings);
-            if (changed && !_disposed) {
-              await _tick();
-            }
-          } catch (_) {}
-          if (!_disposed) {
-            await Future<void>.delayed(const Duration(seconds: 5));
-          }
-        }
-      }
+        },
+        postWakeDelay: const Duration(seconds: 2),
+      );
     } finally {
       _signalLoopRunning = false;
     }
@@ -571,8 +621,12 @@ class UnifiedAutoCloudSyncController {
             if (shouldRequest) {
               await CloudProvisioningStatus.markAttempted(now);
               final requestedAt = CloudProvisioningStatus.requestedAt ?? now;
-              await CloudSyncService(store)
-                  .requestFreshHostSnapshot(settings, requestedAt: requestedAt);
+              await UnifiedSyncFactory.cloudEngine(
+                store,
+                settings: settings,
+              ).requestFreshHostSnapshotIfSupported(
+                requestedAt: requestedAt,
+              );
               settings = settings.copyWith(clearLastPullCursor: true);
             }
           }
@@ -583,10 +637,7 @@ class UnifiedAutoCloudSyncController {
             !hasAppliedCloudBaseline &&
             cursor != null &&
             now.difference(cursor.toUtc()) > const Duration(days: 7);
-        await store.recoverStaleInProgressSyncQueue(target: 'cloud');
-        await store.recoverStaleInProgressSyncQueue(target: 'cloud_host');
-        await store.retryFailedSyncQueue(target: 'cloud');
-        await store.retryFailedSyncQueue(target: 'cloud_host');
+        await _recoverCloudSyncQueues(store);
         final engine =
             UnifiedSyncFactory.cloudEngine(store, settings: settings);
         if (staleClient && !hasOutgoingWork) {
@@ -619,15 +670,6 @@ class UnifiedAutoCloudSyncController {
     } finally {
       SyncDiagnosticsLog.add('[SYNC_TRACE] autoCloud:tick end');
       _running = false;
-    }
-  }
-}
-
-extension UnifiedLanHostServerControl on UnifiedSyncEngine {
-  Future<void> transportStopHostIfSupported() async {
-    final currentTransport = transport;
-    if (currentTransport is LanSyncTransportAdapter) {
-      await currentTransport.stopHostIfSupported();
     }
   }
 }

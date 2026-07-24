@@ -10,7 +10,11 @@ import '../../models/sync_change.dart';
 import 'account_auth_service.dart';
 import 'local_database_service.dart';
 import 'unified_sync_core_service.dart';
+import '../sync_unified/unified_pairing_lifecycle.dart';
+import '../sync_unified/unified_pairing_snapshot_flow.dart';
 import '../sync_unified/sync_device_state.dart';
+import '../sync_unified/unified_snapshot_lifecycle.dart';
+import '../sync_unified/unified_sync_policy.dart';
 import '../snapshot/unified_snapshot_transfer.dart';
 
 typedef LanSyncProgressCallback = void Function(double value, String label);
@@ -552,7 +556,10 @@ class LanSyncService {
 
   bool _needsHostSnapshotGenerationRebuild(
       String transport, Map<String, dynamic> decoded) {
-    if (!store.appIdentity.isClient) return false;
+    if (!UnifiedSyncPolicy.shouldTrackRemoteSnapshotGeneration(
+        store.appIdentity)) {
+      return false;
+    }
     final remote = _remoteHostSnapshotGeneration(decoded);
     if (remote.isEmpty) return false;
     final commandId = _remoteHostRestoreCommandId(decoded);
@@ -837,7 +844,8 @@ class LanSyncService {
     await request.response.close();
   }
 
-  Future<Map<String, dynamic>> _currentLanSnapshotEnvelope({bool force = false}) async {
+  Future<Map<String, dynamic>> _currentLanSnapshotEnvelope(
+      {bool force = false}) async {
     final now = DateTime.now();
     final cached = _snapshotTransferCache;
     final age = _snapshotTransferCacheAt == null
@@ -855,7 +863,8 @@ class LanSyncService {
     return envelope;
   }
 
-  Future<Map<String, dynamic>> _snapshotManifestResponse({bool force = false}) async {
+  Future<Map<String, dynamic>> _snapshotManifestResponse(
+      {bool force = false}) async {
     final envelope = await _currentLanSnapshotEnvelope(force: force);
     return <String, dynamic>{
       'ok': true,
@@ -1261,7 +1270,7 @@ class LanSyncService {
       required String code,
       LanSyncProgressCallback? onProgress}) async {
     final identity = store.appIdentity;
-    if (identity.isHost) {
+    if (!UnifiedSyncPolicy.canClaimLanPairingCode(identity)) {
       return const LanSyncResult(
           ok: false,
           message:
@@ -1297,79 +1306,69 @@ class LanSyncService {
             ok: false,
             message: decoded['error']?.toString() ?? 'LAN pairing failed.');
       }
-      final claimedStoreId = decoded['storeId']?.toString() ?? identity.storeId;
-      final claimedBranchId =
-          decoded['branchId']?.toString() ?? identity.branchId;
-      final claimedHostDeviceId =
-          decoded['hostDeviceId']?.toString() ?? identity.hostDeviceId;
-      if (identity.isClient && identity.hostDeviceId.trim().isNotEmpty) {
-        final mismatches = <String>[];
-        if (identity.storeId.trim().toUpperCase() !=
-            claimedStoreId.trim().toUpperCase()) {
-          mismatches.add('Store ID');
-        }
-        if (identity.branchId.trim().toUpperCase() !=
-            claimedBranchId.trim().toUpperCase()) {
-          mismatches.add('Branch ID');
-        }
-        if (identity.hostDeviceId.trim().toUpperCase() !=
-            claimedHostDeviceId.trim().toUpperCase()) {
-          mismatches.add('Host ID');
-        }
-        if (mismatches.isNotEmpty) {
-          return LanSyncResult(
-              ok: false,
-              message:
-                  'LAN pairing belongs to a different Store (${mismatches.join(', ')}). Use the current Host pairing code.');
-        }
+      final claim = UnifiedPairingClaimPayload(
+        storeId: decoded['storeId']?.toString() ?? identity.storeId,
+        branchId: decoded['branchId']?.toString() ?? identity.branchId,
+        hostDeviceId:
+            decoded['hostDeviceId']?.toString() ?? identity.hostDeviceId,
+        deviceId: decoded['deviceId']?.toString() ?? identity.deviceId,
+        deviceToken: decoded['deviceToken']?.toString() ?? identity.deviceToken,
+        transport: 'lan',
+      );
+      final mismatch = UnifiedPairingLifecycle.validateSameStoreClaim(
+        identity,
+        claim,
+        label: 'LAN pairing',
+      );
+      if (mismatch != null) {
+        return LanSyncResult(ok: false, message: mismatch);
       }
 
       final current = store.appIdentity;
-      final pairedDeviceId =
-          decoded['deviceId']?.toString() ?? current.deviceId;
-      final pairedDeviceToken =
-          decoded['deviceToken']?.toString() ?? current.deviceToken;
       onProgress?.call(0.22, 'Registering this device...');
-      await store.updateAppIdentityDuringSetup(current.copyWith(
-        storeId: claimedStoreId,
-        branchId: claimedBranchId,
-        deviceId: pairedDeviceId,
-        deviceRole: DeviceRole.client,
+      final clientIdentity = UnifiedPairingLifecycle.buildClientIdentity(
+        current,
+        claim: claim,
         syncMode: SyncMode.lanOnly,
-        activeSyncTransport: 'lan',
-        hostDeviceId: claimedHostDeviceId,
-        deviceToken: pairedDeviceToken,
-      ));
+        activeTransport: 'lan',
+      );
+      await store.updateAppIdentityDuringSetup(clientIdentity);
       final snapshotEnvelope = await _downloadLanSnapshotEnvelope(
         host,
         port: port,
-        token: pairedDeviceToken,
-        deviceId: pairedDeviceId,
+        token: clientIdentity.deviceToken,
+        deviceId: clientIdentity.deviceId,
         force: false,
         onProgress: onProgress,
       );
-      final snapshot = jsonEncode(snapshotEnvelope);
       onProgress?.call(0.74, 'Importing LAN snapshot chunks locally...');
-      await store.importSyncSnapshotJson(snapshot);
-      await _markHostSnapshotGenerationApplied('lan', snapshotEnvelope);
-      final hostCursor = store.syncSnapshotGeneratedAtFromJson(snapshot);
       final settings = LanSyncSettings.load();
-      await settings
-          .copyWith(
-            host: host.trim(),
-            port: port,
-            mode: LanSyncDeviceMode.client,
-            hostModeEnabled: false,
-            setupComplete: true,
-            autoSyncEnabled: true,
-            secret: '',
-            lastPullCursor: hostCursor,
-            lastConnectionAt: DateTime.now(),
-            lastSyncAt: DateTime.now(),
-          )
-          .save();
-      await SyncDeviceStateStore.recordSyncResult(store.appIdentity,
-          transport: 'lan', appliedCursor: hostCursor, ackCursor: hostCursor);
+      await UnifiedPairingSnapshotFlow.applyForLan(
+        store: store,
+        envelope: snapshotEnvelope,
+        host: host,
+        port: port,
+        markSnapshotApplied: () => _markHostSnapshotGenerationApplied(
+          'lan',
+          snapshotEnvelope,
+        ),
+        saveLanSettings: (cursor) => settings
+            .copyWith(
+              host: host.trim(),
+              port: port,
+              mode: LanSyncDeviceMode.client,
+              hostModeEnabled: false,
+              setupComplete: true,
+              autoSyncEnabled: true,
+              secret: '',
+              lastPullCursor: cursor,
+              lastConnectionAt: DateTime.now(),
+              lastSyncAt: DateTime.now(),
+            )
+            .save(),
+        saveCursorAndState: (cursor, sequence) =>
+            _saveCursorAndRecordState(settings, cursor, sequence: sequence),
+      );
       onProgress?.call(1.0, 'LAN snapshot is ready.');
       return const LanSyncResult(ok: true, message: 'LAN pairing completed.');
     } catch (error) {
@@ -1432,27 +1431,21 @@ class LanSyncService {
         force: true,
         onProgress: onProgress,
       );
-      final snapshot = jsonEncode(snapshotEnvelope);
       onProgress?.call(0.72, 'Applying LAN snapshot chunks locally...');
-      await store.importSyncSnapshotJson(snapshot);
-      await _markHostSnapshotGenerationApplied('lan', snapshotEnvelope);
-      final hostCursor = store.syncSnapshotGeneratedAtFromJson(snapshot);
+      final applied = await UnifiedSnapshotLifecycle.applyEnvelope(
+        store: store,
+        envelope: snapshotEnvelope,
+        afterImport: (_) => _markHostSnapshotGenerationApplied(
+          'lan',
+          snapshotEnvelope,
+        ),
+      );
+      final hostCursor = applied.cursor;
       final settings = LanSyncSettings.load();
       onProgress?.call(0.94, 'Saving LAN sync cursor...');
-      await settings
-          .copyWith(
-              lastPullCursor: hostCursor,
-              lastConnectionAt: DateTime.now(),
-              lastSyncAt: DateTime.now())
-          .save();
-      final hostSequence =
-          store.syncSnapshotGeneratedSequenceFromJson(snapshot);
-      await SyncDeviceStateStore.recordSyncResult(store.appIdentity,
-          transport: 'lan',
-          appliedCursor: hostCursor,
-          ackCursor: hostCursor,
-          appliedSequence: hostSequence,
-          ackSequence: hostSequence);
+      final hostSequence = applied.sequence;
+      await _saveCursorAndRecordState(settings, hostCursor,
+          sequence: hostSequence);
       await _sendLanAck(host,
           port: port, token: token, cursor: hostCursor, sequence: hostSequence);
       return const LanSyncResult(
@@ -1472,10 +1465,15 @@ class LanSyncService {
         token: token,
         force: true,
       );
-      final snapshot = jsonEncode(snapshotEnvelope);
-      await store.importSyncSnapshotJson(snapshot);
-      await _markHostSnapshotGenerationApplied('lan', snapshotEnvelope);
-      final hostCursor = store.syncSnapshotGeneratedAtFromJson(snapshot);
+      final applied = await UnifiedSnapshotLifecycle.applyEnvelope(
+        store: store,
+        envelope: snapshotEnvelope,
+        afterImport: (_) => _markHostSnapshotGenerationApplied(
+          'lan',
+          snapshotEnvelope,
+        ),
+      );
+      final hostCursor = applied.cursor;
       final settings = LanSyncSettings.load();
       await settings
           .copyWith(
@@ -1495,7 +1493,7 @@ class LanSyncService {
       {int port = 8787,
       String token = '',
       LanSyncProgressCallback? onProgress}) async {
-    if (store.appIdentity.isHost) {
+    if (!UnifiedSyncPolicy.canRebuildFromLanSnapshot(store.appIdentity)) {
       return const LanSyncResult(
           ok: false,
           message:
@@ -1510,28 +1508,23 @@ class LanSyncService {
         force: true,
         onProgress: onProgress,
       );
-      final snapshot = jsonEncode(snapshotEnvelope);
       onProgress?.call(0.72, 'Applying LAN snapshot chunks locally...');
-      await store.importSyncSnapshotJson(snapshot);
-      await _markHostSnapshotGenerationApplied('lan', snapshotEnvelope);
+      final applied = await UnifiedSnapshotLifecycle.applyEnvelope(
+        store: store,
+        envelope: snapshotEnvelope,
+        afterImport: (_) => _markHostSnapshotGenerationApplied(
+          'lan',
+          snapshotEnvelope,
+        ),
+        markAllSyncChangesSynced: true,
+        cleanupSoftDeleted: false,
+      );
       onProgress?.call(0.86, 'Marking rebuilt data as synced...');
-      await store.markAllSyncChangesSynced();
-      final hostCursor = store.syncSnapshotGeneratedAtFromJson(snapshot);
+      final hostCursor = applied.cursor;
       final settings = LanSyncSettings.load();
-      await settings
-          .copyWith(
-              lastPullCursor: hostCursor,
-              lastConnectionAt: DateTime.now(),
-              lastSyncAt: DateTime.now())
-          .save();
-      final hostSequence =
-          store.syncSnapshotGeneratedSequenceFromJson(snapshot);
-      await SyncDeviceStateStore.recordSyncResult(store.appIdentity,
-          transport: 'lan',
-          appliedCursor: hostCursor,
-          ackCursor: hostCursor,
-          appliedSequence: hostSequence,
-          ackSequence: hostSequence);
+      final hostSequence = applied.sequence;
+      await _saveCursorAndRecordState(settings, hostCursor,
+          sequence: hostSequence);
       await _sendLanAck(host,
           port: port, token: token, cursor: hostCursor, sequence: hostSequence);
       onProgress?.call(0.94, 'Running Client sync log maintenance...');
@@ -1574,6 +1567,51 @@ class LanSyncService {
       }
     }
     return output;
+  }
+
+  Future<void> _saveCursorAndRecordState(
+    LanSyncSettings settings,
+    DateTime cursor, {
+    int sequence = 0,
+  }) async {
+    await settings
+        .copyWith(
+          lastPullCursor: cursor,
+          lastConnectionAt: DateTime.now(),
+          lastSyncAt: DateTime.now(),
+        )
+        .save();
+    await _syncCore.saveCursorAndRecordTransportState(
+      store,
+      transport: 'lan',
+      cursor: cursor,
+      sequence: sequence,
+      saveTransportState: () async {},
+    );
+  }
+
+  Future<void> recordDeviceSyncState(
+    String transport, {
+    DateTime? cursor,
+    int? sequence,
+  }) {
+    return _syncCore.recordTransportSyncState(
+      store,
+      transport: transport,
+      cursor: cursor,
+      sequence: sequence,
+    );
+  }
+
+  bool shouldBypassTransportSyncForHost() {
+    return _syncCore.shouldBypassTransportSyncForHost(
+      isHost: store.appIdentity.isHost || isHosting,
+      transportHasNativeHostMode: true,
+    );
+  }
+
+  Future<void> compactAfterSuccessfulSync() {
+    return _syncCore.compactAfterSuccessfulSync();
   }
 
   Future<LanSyncResult?> _handleLanAccessResponse(int statusCode, String body,
@@ -1794,7 +1832,10 @@ class LanSyncService {
         onProgress: onProgress,
       );
       if (generationRebuild != null) return generationRebuild;
-      if (decodedPull['needsSnapshot'] == true) {
+      if (_syncCore.shouldHandlePulledSnapshotAsRepair(
+        decodedPull,
+        isClient: store.appIdentity.isClient,
+      )) {
         final repair = await repairFromHostSnapshot(host,
             port: port, token: token, onProgress: onProgress);
         return repair.ok
@@ -1806,13 +1847,12 @@ class LanSyncService {
                 message:
                     'LAN event log gap detected and repair failed. ${repair.message}');
       }
-      final changes = _syncCore.filterOutLocalEchoes(
-        _syncCore.decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
-      );
-      final restoreMarker = changes.any((item) =>
-          item.entityType == 'system' &&
-          item.operation == 'cloud_restore_snapshot_ready');
-      if (restoreMarker && store.appIdentity.isClient) {
+      final changes = _syncCore
+          .normalizePulledChanges(decodedPull['changes'] as List<dynamic>?);
+      if (_syncCore.shouldRebuildClientFromRestoreMarker(
+        changes,
+        isClient: store.appIdentity.isClient,
+      )) {
         final commandId = _restoreCommandIdFromChanges(changes);
         if (_restoreCommandAlreadyExecuted('lan', commandId)) {
           onProgress?.call(0.72,
@@ -1841,12 +1881,8 @@ class LanSyncService {
               lastConnectionAt: DateTime.now(),
               lastSyncAt: DateTime.now())
           .save();
-      await SyncDeviceStateStore.recordSyncResult(store.appIdentity,
-          transport: 'lan',
-          appliedCursor: generatedAt,
-          ackCursor: generatedAt,
-          appliedSequence: generatedSequence,
-          ackSequence: generatedSequence);
+      await _saveCursorAndRecordState(settings, generatedAt,
+          sequence: generatedSequence);
       await _sendLanAck(host,
           port: port,
           token: token,
@@ -1961,7 +1997,10 @@ class LanSyncService {
         onProgress: onProgress,
       );
       if (generationRebuild != null) return generationRebuild;
-      if (decodedPull['needsSnapshot'] == true) {
+      if (_syncCore.shouldHandlePulledSnapshotAsRepair(
+        decodedPull,
+        isClient: store.appIdentity.isClient,
+      )) {
         final repair = await repairFromHostSnapshot(host,
             port: port, token: token, onProgress: onProgress);
         return repair.ok
@@ -1973,13 +2012,12 @@ class LanSyncService {
                 message:
                     'LAN event log gap detected and repair failed. ${repair.message}');
       }
-      final changes = _syncCore.filterOutLocalEchoes(
-        _syncCore.decodeRemoteChanges(decodedPull['changes'] as List<dynamic>?),
-      );
-      final restoreMarker = changes.any((item) =>
-          item.entityType == 'system' &&
-          item.operation == 'cloud_restore_snapshot_ready');
-      if (restoreMarker && store.appIdentity.isClient) {
+      final changes = _syncCore
+          .normalizePulledChanges(decodedPull['changes'] as List<dynamic>?);
+      if (_syncCore.shouldRebuildClientFromRestoreMarker(
+        changes,
+        isClient: store.appIdentity.isClient,
+      )) {
         final commandId = _restoreCommandIdFromChanges(changes);
         if (_restoreCommandAlreadyExecuted('lan', commandId)) {
           onProgress?.call(0.72,
@@ -1997,24 +2035,12 @@ class LanSyncService {
       onProgress?.call(
           0.78, 'Applying ${changes.length} LAN change(s) locally...');
       await _syncCore.applyAuthoritativeChanges(changes);
-      final generatedAt =
-          DateTime.tryParse(decodedPull['generatedAt'] as String? ?? '') ??
-              DateTime.now();
-      final generatedSequence =
-          int.tryParse(decodedPull['generatedSequence']?.toString() ?? '') ?? 0;
+      final metadata = _syncCore.parsePullMetadata(decodedPull);
+      final generatedAt = metadata.generatedAt;
+      final generatedSequence = metadata.generatedSequence;
       onProgress?.call(0.92, 'Saving LAN sync cursor...');
-      await settings
-          .copyWith(
-              lastPullCursor: generatedAt,
-              lastConnectionAt: DateTime.now(),
-              lastSyncAt: DateTime.now())
-          .save();
-      await SyncDeviceStateStore.recordSyncResult(store.appIdentity,
-          transport: 'lan',
-          appliedCursor: generatedAt,
-          ackCursor: generatedAt,
-          appliedSequence: generatedSequence,
-          ackSequence: generatedSequence);
+      await _saveCursorAndRecordState(settings, generatedAt,
+          sequence: generatedSequence);
       await _sendLanAck(host,
           port: port,
           token: token,

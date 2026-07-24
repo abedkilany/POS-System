@@ -1,3 +1,4 @@
+import 'unified_sync_orchestration.dart';
 import 'sync_transport_adapter.dart';
 
 /// Transport-agnostic sync engine.
@@ -52,78 +53,29 @@ class UnifiedSyncEngine {
   }) =>
       transport.rebuildFromHostSnapshot(onProgress: onProgress);
 
+  Future<bool> waitForRealtimeSignal() => transport.waitForRealtimeSignal();
+
+  Future<void> stopHostIfSupported() => transport.stopHostIfSupported();
+
+  Future<void> requestFreshHostSnapshotIfSupported({
+    DateTime? requestedAt,
+  }) =>
+      transport.requestFreshHostSnapshotIfSupported(requestedAt: requestedAt);
+
   Future<UnifiedSyncResult> syncNow({
     void Function(double value, String label)? onProgress,
-  }) async {
-    final request = UnifiedSyncPushRequest(
-        deviceId: transport.deviceId, deviceToken: transport.deviceToken);
-
-    onProgress?.call(0.08, 'Preparing $label sync...');
-    final push = await transport.pushPending(request);
-    if (!push.ok) {
-      onProgress?.call(1.0, '$label sync failed while sending local changes.');
-      return push;
-    }
-
-    onProgress?.call(0.55, 'Pulling authoritative $label changes...');
-    final pull = await transport.pullChanges(
-      UnifiedSyncPullRequest(
-        deviceId: transport.deviceId,
-        deviceToken: transport.deviceToken,
-        cursor: UnifiedSyncCursor(
-          value: push.cursor.value,
-          generatedAt: push.cursor.generatedAt,
-          source: push.cursor.source,
+  }) =>
+      runUnifiedSyncOrchestration(
+        label: label,
+        pushRequest: UnifiedSyncPushRequest(
+          deviceId: transport.deviceId,
+          deviceToken: transport.deviceToken,
         ),
-      ),
-    );
-
-    if (!pull.ok) {
-      if (!pull.shouldAttemptSnapshotRepair) {
-        onProgress?.call(1.0, '$label pull failed.');
-        return UnifiedSyncResult(
-          ok: false,
-          message: pull.message,
-          pushed: push.pushed,
-          pulled: pull.pulled,
-          error: pull.error,
-          cursor: pull.cursor,
-        );
-      }
-      onProgress?.call(0.78, '$label pull failed. Trying snapshot repair...');
-      final repair =
-          await transport.rebuildFromHostSnapshot(onProgress: onProgress);
-      if (repair.ok) {
-        await transport.compactAfterSuccessfulSync();
-        return UnifiedSyncResult(
-          ok: true,
-          message: '${pull.message}. ${repair.message}',
-          pushed: push.pushed,
-          pulled: repair.pulled,
-          restoredSnapshot: true,
-          cursor: repair.cursor,
-        );
-      }
-      return UnifiedSyncResult(
-        ok: false,
-        message: '${pull.message}. ${repair.message}',
-        pushed: push.pushed,
-        pulled: pull.pulled,
-        error: pull.error.hasError ? pull.error : repair.error,
-        cursor: pull.cursor,
+        pushPending: transport.pushPending,
+        pullChanges: transport.pullChanges,
+        rebuildFromHostSnapshot: transport.rebuildFromHostSnapshot,
+        compactAfterSuccessfulSync: transport.compactAfterSuccessfulSync,
+        onProgress: onProgress,
+        pullFailureMessage: '$label pull failed.',
       );
-    }
-
-    await transport.compactAfterSuccessfulSync();
-    onProgress?.call(1.0, '$label sync completed.');
-    return UnifiedSyncResult(
-      ok: true,
-      message:
-          '$label sync completed. Pushed ${push.pushed} change(s), pulled ${pull.pulled} change(s).',
-      pushed: push.pushed,
-      pulled: pull.pulled,
-      restoredSnapshot: pull.restoredSnapshot,
-      cursor: pull.cursor,
-    );
-  }
 }

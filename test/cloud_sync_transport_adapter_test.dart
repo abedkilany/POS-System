@@ -401,7 +401,8 @@ void main() {
 
       expect(result.ok, isTrue);
       expect(result.data['syncDeferred'], isTrue);
-      expect(result.message, contains('paused'));
+      expect(result.message, contains('deferred'));
+      expect(result.deferredReason, contains('paused'));
       expect(service.pushCallCount, 1);
       expect(service.pullCallCount, 1);
       expect(service.rebuildCallCount, 0);
@@ -410,8 +411,7 @@ void main() {
       expect(pendingStore.syncQueue.single.status, 'pending');
     });
 
-    test(
-        'resumes rebuild after the client clears cloud_host work queued',
+    test('resumes rebuild after the client clears cloud_host work queued',
         () async {
       final pendingStore = await _buildClientStoreWithPendingCloudHostWork();
       final service = _DrainAwareCloudSyncService(pendingStore);
@@ -425,9 +425,10 @@ void main() {
 
       final blocked = await pendingAdapter.rebuildFromHostSnapshot();
 
-      expect(blocked.ok, isFalse);
+      expect(blocked.ok, isTrue);
       expect(blocked.data['syncDeferred'], isTrue);
-      expect(blocked.message, contains('paused'));
+      expect(blocked.message, contains('deferred'));
+      expect(blocked.deferredReason, contains('paused'));
       expect(service.rebuildCallCount, 1);
 
       await pendingStore.clearPendingSyncQueue();
@@ -573,6 +574,29 @@ void main() {
 
       expect(result.ok, isTrue);
       expect(fakeService.lastPullCursorSeen, baselineCursor);
+    });
+
+    test('uses the request cursor when pulling cloud changes', () async {
+      final requestCursor = DateTime.utc(2026, 1, 3, 15);
+      final fakeService = _FakeCloudSyncService(store);
+      final adapter = CloudSyncTransportAdapter(
+        service: fakeService,
+        settings: const CloudSyncSettings(
+          enabled: true,
+          apiBaseUrl: 'https://sync.test',
+        ),
+      );
+
+      final result = await adapter.pullChanges(
+        UnifiedSyncPullRequest(
+          deviceId: store.deviceId,
+          deviceToken: store.appIdentity.deviceToken,
+          cursor: UnifiedSyncCursor(generatedAt: requestCursor),
+        ),
+      );
+
+      expect(result.ok, isTrue);
+      expect(fakeService.lastPullCursorSeen, requestCursor);
     });
   });
 }

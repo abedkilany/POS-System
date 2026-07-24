@@ -1,9 +1,12 @@
 import '../services/local_database_service.dart';
 import '../services/account_auth_service.dart';
 import '../services/lan_sync_service.dart';
+import 'unified_sync_orchestration.dart';
+import 'unified_sync_policy.dart';
 import 'sync_contracts.dart';
 import 'sync_device_state.dart';
 import 'sync_transport_adapter.dart';
+import 'unified_sync_transport_helpers.dart';
 
 /// LAN adapter shell for Fix 10A.
 ///
@@ -19,35 +22,8 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
   final LanSyncService _service;
   final LanSyncSettings _settings;
 
-  UnifiedSyncError _errorFor(bool ok, String message) {
-    if (ok) return UnifiedSyncError.none;
-    final lower = message.toLowerCase();
-    final code = lower.contains('socketexception') ||
-            lower.contains('timeoutexception') ||
-            lower.contains('connection refused') ||
-            lower.contains('failed host lookup') ||
-            lower.contains('network is unreachable') ||
-            lower.contains('no route to host') ||
-            lower.contains('connection reset by peer') ||
-            lower.contains('broken pipe') ||
-            lower.contains('econnrefused') ||
-            lower.contains('connection closed') ||
-            lower.contains('host offline')
-        ? UnifiedSyncErrorCode.networkUnavailable
-        : lower.contains('expired') || lower.contains('already used')
-            ? UnifiedSyncErrorCode.expiredPairingCode
-            : lower.contains('snapshot')
-                ? UnifiedSyncErrorCode.snapshotUnavailable
-                : lower.contains('host devices cannot') ||
-                        lower.contains('already a cloud client')
-                    ? UnifiedSyncErrorCode.forbiddenRole
-                    : lower.contains('not supported') ||
-                            lower.contains('handled by the existing')
-                        ? UnifiedSyncErrorCode.unsupported
-                        : UnifiedSyncErrorCode.unknown;
-    return UnifiedSyncError(
-        code: code, userMessage: message, debugMessage: message);
-  }
+  UnifiedSyncError _errorFor(bool ok, String message) =>
+      UnifiedSyncTransportHelpers.classifyError(ok, message);
 
   DateTime? get _unifiedCursor => SyncDeviceStateStore.cursorForTransport(
         _service.store.appIdentity,
@@ -70,6 +46,31 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
     return _settings.copyWith(lastPullCursor: cursor);
   }
 
+  UnifiedSyncResult _resultFromService(
+    LanSyncResult result, {
+    required UnifiedCursorEnvelope cursor,
+    required int pushed,
+    required int pulled,
+  }) {
+    if (!result.ok) {
+      return UnifiedSyncResult(
+        ok: false,
+        message: result.message,
+        pushed: pushed,
+        pulled: pulled,
+        error: _errorFor(result.ok, result.message),
+        cursor: cursor,
+      );
+    }
+    return UnifiedSyncResultFactory.success(
+      label: 'LAN',
+      pushed: pushed,
+      pulled: pulled,
+      message: result.message,
+      cursor: cursor,
+    );
+  }
+
   bool _clientDeviceLimitReached(LanSyncSettings settings) {
     final allowed = AccountAuthCache.load()?.devicesLimit;
     if (allowed == null) return false;
@@ -83,14 +84,6 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
     return linked >= normalizedAllowed;
   }
 
-  Future<void> _recordLanResult(DateTime? cursor) =>
-      SyncDeviceStateStore.recordSyncResult(
-        _service.store.appIdentity,
-        transport: 'lan',
-        appliedCursor: cursor,
-        ackCursor: cursor,
-      );
-
   @override
   UnifiedSyncTransportKind get kind => UnifiedSyncTransportKind.lan;
 
@@ -103,7 +96,17 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
   @override
   String get deviceToken => _service.store.appIdentity.deviceToken;
 
+  @override
   Future<void> stopHostIfSupported() => _service.stopHost();
+
+  @override
+  Future<bool> waitForRealtimeSignal() {
+    return _service.waitForRealtimeSignal(
+      _settings.host,
+      port: _settings.port,
+      token: _settings.secret,
+    );
+  }
 
   @override
   Future<UnifiedSyncResult> testConnection() async {
@@ -112,7 +115,7 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
       port: _settings.port,
       token: _settings.secret,
     );
-    await _recordLanResult(_unifiedCursor);
+    await _service.recordDeviceSyncState('lan', cursor: _unifiedCursor);
     return UnifiedSyncResult(
         ok: result.ok,
         message: result.message,
@@ -186,9 +189,11 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
   Future<UnifiedPairingCodeResult> createPairingCode(
       {int ttlMinutes = 5}) async {
     final savedSettings = LanSyncSettings.load();
-    final lanEnabled = _service.store.appIdentity.isHost &&
-        savedSettings.setupComplete &&
-        savedSettings.isHost;
+    final lanEnabled = UnifiedSyncPolicy.canCreateLanPairingCode(
+      _service.store.appIdentity,
+      setupComplete: savedSettings.setupComplete,
+      isHostModeEnabled: savedSettings.isHost,
+    );
     if (!lanEnabled) {
       const message =
           'Enable LAN Sync and save settings before generating a pairing code.';
@@ -284,12 +289,19 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
       port: effectiveSettings.port,
       token: effectiveSettings.secret,
     );
-    return UnifiedSyncResult(
-      ok: result.ok,
-      message: result.message,
-      pushed: result.ok ? pendingCount : 0,
-      error: _errorFor(result.ok, result.message),
+    await _service.recordDeviceSyncState(
+      'lan',
+      cursor: effectiveSettings.lastPullCursor ?? _unifiedCursor,
+      sequence: SyncDeviceStateStore.lastAppliedSequenceForTransport(
+        _service.store.appIdentity,
+        'lan',
+      ),
+    );
+    return _resultFromService(
+      result,
       cursor: _cursor(),
+      pushed: result.ok ? pendingCount : 0,
+      pulled: 0,
     );
   }
 
@@ -304,18 +316,24 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
     );
     final afterSettings = LanSyncSettings.load();
     final after = afterSettings.lastPullCursor;
-    await _recordLanResult(after);
+    await _service.recordDeviceSyncState(
+      'lan',
+      cursor: after ?? effectiveSettings.lastPullCursor ?? _unifiedCursor,
+      sequence: SyncDeviceStateStore.lastAppliedSequenceForTransport(
+        _service.store.appIdentity,
+        'lan',
+      ),
+    );
     final pulled = result.ok && after != null && after != before ? 1 : 0;
-    return UnifiedSyncResult(
-      ok: result.ok,
-      message: result.message,
-      pulled: pulled,
-      error: _errorFor(result.ok, result.message),
+    return _resultFromService(
+      result,
       cursor: UnifiedCursorEnvelope(
         value: after?.toIso8601String() ?? '',
         generatedAt: after,
         source: 'device',
       ),
+      pushed: 0,
+      pulled: pulled,
     );
   }
 
@@ -329,89 +347,55 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
       token: effectiveSettings.secret,
       onProgress: onProgress,
     );
-    return UnifiedSyncResult(
-        ok: result.ok,
-        message: result.message,
-        error: _errorFor(result.ok, result.message),
-        cursor: _cursor());
+    await _service.recordDeviceSyncState(
+      'lan',
+      cursor: effectiveSettings.lastPullCursor ?? _unifiedCursor,
+      sequence: SyncDeviceStateStore.lastAppliedSequenceForTransport(
+        _service.store.appIdentity,
+        'lan',
+      ),
+    );
+    return _resultFromService(
+      result,
+      cursor: _cursor(),
+      pushed: 0,
+      pulled: 0,
+    );
   }
 
   @override
   Future<void> compactAfterSuccessfulSync() async {
-    try {
-      final identity = _service.store.appIdentity;
-      if (identity.isHost) {
-        await _service.store.compactSyncedSyncHistoryForMaintenance();
-      } else if (identity.isClient) {
-        await _service.store.compactClientSyncedSyncHistoryForMaintenance();
-      }
-    } catch (_) {
-      // Best-effort maintenance: never fail a successful sync because local
-      // compaction failed.
-    }
+    await _service.compactAfterSuccessfulSync();
   }
+
+  @override
+  Future<void> requestFreshHostSnapshotIfSupported({
+    DateTime? requestedAt,
+  }) async {}
 
   @override
   Future<UnifiedSyncResult> syncNow(
       {void Function(double value, String label)? onProgress}) async {
-    if (_service.store.appIdentity.isHost || _settings.isHost) {
-      onProgress?.call(
-          1.0, 'LAN Host is active. Host devices do not run LAN client sync.');
-      try {
-        await _service.startHost(port: _settings.port);
-      } catch (_) {
-        // Keep this guard non-fatal: the caller may only be trying to avoid the
-        // invalid Host-as-client pull flow. Host start errors are shown by the
-        // dedicated LAN setup/status actions.
-      }
-      return const UnifiedSyncResult(
-        ok: true,
-        message: 'LAN Host active. Skipped LAN client push/pull on Host.',
+    if (_service.shouldBypassTransportSyncForHost()) {
+      final hostBypass = await UnifiedSyncTransportHelpers.hostSyncBypassResult(
+        isHost: true,
+        label: 'LAN',
+        ensureHostReady: () => _service.startHost(port: _settings.port),
+        onProgress: onProgress,
       );
+      if (hostBypass != null) return hostBypass;
     }
 
-    onProgress?.call(0.08, 'Preparing LAN sync...');
-    final push = await pushPending(
-        UnifiedSyncPushRequest(deviceId: deviceId, deviceToken: deviceToken));
-    if (!push.ok) {
-      onProgress?.call(1.0, 'LAN sync failed while sending local changes.');
-      return push;
-    }
-
-    onProgress?.call(0.55, 'Pulling authoritative LAN changes...');
-    final pull = await pullChanges(
-      UnifiedSyncPullRequest(
-        deviceId: deviceId,
-        deviceToken: deviceToken,
-        cursor: UnifiedSyncCursor(
-          value: push.cursor.value,
-          generatedAt: push.cursor.generatedAt,
-          source: push.cursor.source,
-        ),
-      ),
-    );
-    if (pull.ok) {
-      await compactAfterSuccessfulSync();
-      onProgress?.call(1.0, 'LAN sync completed.');
-      return UnifiedSyncResult(
-        ok: true,
-        message:
-            'LAN sync completed. Pushed ${push.pushed} change(s), pulled ${pull.pulled} change(s).',
-        pushed: push.pushed,
-        pulled: pull.pulled,
-        restoredSnapshot: pull.restoredSnapshot,
-        cursor: pull.cursor,
-      );
-    }
-
-    onProgress?.call(1.0, 'LAN pull failed. Host may be offline.');
-    return UnifiedSyncResult(
-      ok: false,
-      message: pull.message,
-      pushed: push.pushed,
-      pulled: pull.pulled,
-      error: pull.error,
-      cursor: pull.cursor,
+    return runUnifiedSyncOrchestration(
+      label: 'LAN',
+      pushRequest:
+          UnifiedSyncPushRequest(deviceId: deviceId, deviceToken: deviceToken),
+      pushPending: pushPending,
+      pullChanges: pullChanges,
+      rebuildFromHostSnapshot: rebuildFromHostSnapshot,
+      compactAfterSuccessfulSync: compactAfterSuccessfulSync,
+      onProgress: onProgress,
+      pullFailureMessage: 'LAN pull failed. Host may be offline.',
     );
   }
 }

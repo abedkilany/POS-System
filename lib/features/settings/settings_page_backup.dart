@@ -99,7 +99,7 @@ class SettingsBackupActions {
       SyncDiagnosticsLog.add(
         '[SYNC_TRACE] backupImport:publishHostSnapshot store=${identity.storeId} branch=${identity.branchId}',
       );
-      final service = CloudSyncService(store);
+      final service = CloudSyncAdminService(store);
       await service.publishBootstrapSnapshotToCloud(settings, force: true);
       await service.pushPendingForUnifiedEngine(settings);
       SyncDiagnosticsLog.add(
@@ -282,8 +282,8 @@ class SettingsBackupActions {
         clearLastPullCursor: true,
       );
       await recoverySettings.save();
-      final result =
-          await CloudSyncService(store).recoverExistingStoreIdentityFromCloud(
+      final result = await CloudSyncAdminService(store)
+          .recoverExistingStoreIdentityFromCloud(
         recoverySettings,
         storeId: storeId,
         branchId: branchId,
@@ -391,8 +391,8 @@ class SettingsBackupActions {
         clearLastPullCursor: true,
       );
       await recoverySettings.save();
-      final result =
-          await CloudSyncService(store).recoverExistingStoreFromCloud(
+      final result = await CloudSyncAdminService(store)
+          .recoverExistingStoreFromCloud(
         recoverySettings,
         storeId: storeId,
         branchId: branchId,
@@ -546,11 +546,9 @@ class SettingsBackupActions {
           identity.syncMode == SyncMode.marketplaceEnabled) {
         progress.value = _OperationProgress(
             0.40, tr.text('contacting_cloud_host_snapshot_percent'));
-        final result = await UnifiedSyncEngine(
-          CloudSyncTransportAdapter(
-            service: CloudSyncService(store),
-            settings: CloudSyncSettings.load(),
-          ),
+        final result = await UnifiedSyncFactory.cloudEngine(
+          store,
+          settings: CloudSyncSettings.load(),
         ).rebuildFromHostSnapshot(
           onProgress: (value, label) => progress.value =
               _OperationProgress(value, '$label ${(value * 100).round()}%'),
@@ -566,11 +564,9 @@ class SettingsBackupActions {
         final settings = LanSyncSettings.load();
         progress.value =
             _OperationProgress(0.40, tr.text('contacting_lan_host_percent'));
-        final result = await UnifiedSyncEngine(
-          LanSyncTransportAdapter(
-            service: LanSyncService(store),
-            settings: settings,
-          ),
+        final result = await UnifiedSyncFactory.lanEngine(
+          store,
+          settings: settings,
         ).rebuildFromHostSnapshot(
           onProgress: (value, label) => progress.value =
               _OperationProgress(value, '$label ${(value * 100).round()}%'),

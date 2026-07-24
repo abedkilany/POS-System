@@ -1,5 +1,6 @@
 import '../../data/app_store.dart';
 import '../../models/sync_change.dart';
+import '../sync_unified/sync_device_state.dart';
 import 'sync_diagnostics_log.dart';
 
 /// Transport-independent Host-authority sync logic.
@@ -56,6 +57,10 @@ class UnifiedSyncCoreService {
         .toList();
   }
 
+  List<SyncChange> normalizePulledChanges(List<dynamic>? raw) {
+    return filterOutLocalEchoes(decodeRemoteChanges(raw));
+  }
+
   List<SyncChange> filterOutLocalEchoes(Iterable<SyncChange> changes) {
     final list = changes.toList();
     final filtered =
@@ -80,19 +85,17 @@ class UnifiedSyncCoreService {
         item.entityType == 'system' && item.operation == 'reset_store_data');
   }
 
-  /// Applies Client drafts on the Host using the same acceptance rules for LAN
-  /// and Cloud relay requests.
-  Future<HostAcceptedChanges> acceptClientChangesOnHost(
-    Iterable<SyncChange> remoteChanges, {
-    required bool mirrorToCloud,
-    bool verifyApplied = false,
-  }) async {
+  HostClientAcceptancePlan evaluateClientChangesOnHost(
+    Iterable<SyncChange> remoteChanges,
+  ) {
     final received = filterOutLocalEchoes(remoteChanges);
     if (received.isEmpty) {
-      return const HostAcceptedChanges(
-          ackIds: <String>[],
-          accepted: <SyncChange>[],
-          discardedBecauseOfReset: 0);
+      return const HostClientAcceptancePlan(
+        received: <SyncChange>[],
+        accepted: <SyncChange>[],
+        rejected: <String, String>{},
+        discardedBecauseOfReset: 0,
+      );
     }
 
     final latestResetAt = store.latestResetSyncAt;
@@ -114,23 +117,47 @@ class UnifiedSyncCoreService {
       applicable.add(item.copyWith(createdAt: hostReceivedAt));
     }
 
-    if (applicable.isNotEmpty) {
+    return HostClientAcceptancePlan(
+      received: received,
+      accepted: applicable,
+      rejected: rejected,
+      discardedBecauseOfReset:
+          rejected.values.where((item) => item.contains('reset')).length,
+    );
+  }
+
+  /// Applies Client drafts on the Host using the same acceptance rules for LAN
+  /// and Cloud relay requests.
+  Future<HostAcceptedChanges> acceptClientChangesOnHost(
+    Iterable<SyncChange> remoteChanges, {
+    required bool mirrorToCloud,
+    bool verifyApplied = false,
+  }) async {
+    final plan = evaluateClientChangesOnHost(remoteChanges);
+    if (plan.received.isEmpty) {
+      return const HostAcceptedChanges(
+        ackIds: <String>[],
+        accepted: <SyncChange>[],
+        discardedBecauseOfReset: 0,
+      );
+    }
+
+    if (plan.accepted.isNotEmpty) {
       await store.applyRemoteSyncChanges(
-        applicable,
+        plan.accepted,
         markAppliedAsSynced: true,
         mirrorToCloud: mirrorToCloud,
       );
     }
     if (verifyApplied) {
-      await store.assertRemoteSyncChangesApplied(applicable);
+      await store.assertRemoteSyncChangesApplied(plan.accepted);
     }
 
     return HostAcceptedChanges(
-      ackIds: applicable.map((item) => item.id).toList(),
-      accepted: applicable,
-      discardedBecauseOfReset:
-          rejected.values.where((item) => item.contains('reset')).length,
-      rejected: rejected,
+      ackIds: plan.accepted.map((item) => item.id).toList(),
+      accepted: plan.accepted,
+      discardedBecauseOfReset: plan.discardedBecauseOfReset,
+      rejected: plan.rejected,
     );
   }
 
@@ -177,6 +204,111 @@ class UnifiedSyncCoreService {
     );
     return changes.length;
   }
+
+  Future<void> saveCursorAndRecordTransportState(
+    AppStore store, {
+    required String transport,
+    required DateTime cursor,
+    int sequence = 0,
+    required Future<void> Function() saveTransportState,
+  }) async {
+    await saveTransportState();
+    await SyncDeviceStateStore.recordUnifiedSyncResult(
+      store.appIdentity,
+      transport: transport,
+      cursor: cursor,
+      sequence: sequence,
+    );
+  }
+
+  Future<void> recordTransportSyncState(
+    AppStore store, {
+    required String transport,
+    DateTime? cursor,
+    int? sequence,
+  }) {
+    return SyncDeviceStateStore.recordUnifiedSyncResult(
+      store.appIdentity,
+      transport: transport,
+      cursor: cursor,
+      sequence: sequence,
+    );
+  }
+
+  bool shouldBypassTransportSyncForHost({
+    required bool isHost,
+    required bool transportHasNativeHostMode,
+  }) {
+    return isHost && transportHasNativeHostMode;
+  }
+
+  bool shouldRebuildClientFromRestoreMarker(
+    Iterable<SyncChange> changes, {
+    required bool isClient,
+  }) {
+    if (!isClient) return false;
+    return hasRestoreMarker(changes);
+  }
+
+  bool shouldHandlePulledSnapshotAsRepair(
+    Map<String, dynamic> decodedPull, {
+    required bool isClient,
+  }) {
+    if (decodedPull['needsSnapshot'] == true) return true;
+    final changes = normalizePulledChanges(
+      decodedPull['changes'] as List<dynamic>?,
+    );
+    return shouldRebuildClientFromRestoreMarker(
+      changes,
+      isClient: isClient,
+    );
+  }
+
+  UnifiedSyncPullMetadata parsePullMetadata(Map<String, dynamic> decoded) {
+    final generatedAt = DateTime.tryParse(
+          decoded['generatedAt']?.toString() ?? '',
+        ) ??
+        DateTime.now();
+    final generatedSequence =
+        int.tryParse(decoded['generatedSequence']?.toString() ?? '') ?? 0;
+    final source = (decoded['source'] ?? '').toString();
+    final needsSnapshot = decoded['needsSnapshot'] == true;
+    return UnifiedSyncPullMetadata(
+      generatedAt: generatedAt,
+      generatedSequence: generatedSequence,
+      source: source,
+      needsSnapshot: needsSnapshot,
+    );
+  }
+
+  Future<void> compactAfterSuccessfulSync() async {
+    final identity = store.appIdentity;
+    if (identity.isHost) {
+      await store.compactSyncedSyncHistoryForMaintenance();
+    } else if (identity.isClient) {
+      await store.compactClientSyncedSyncHistoryForMaintenance();
+    }
+  }
+
+  bool hasRestoreMarker(Iterable<SyncChange> changes) {
+    return changes.any((item) =>
+        item.entityType == 'system' &&
+        item.operation == 'cloud_restore_snapshot_ready');
+  }
+}
+
+class HostClientAcceptancePlan {
+  const HostClientAcceptancePlan({
+    required this.received,
+    required this.accepted,
+    required this.rejected,
+    required this.discardedBecauseOfReset,
+  });
+
+  final List<SyncChange> received;
+  final List<SyncChange> accepted;
+  final Map<String, String> rejected;
+  final int discardedBecauseOfReset;
 }
 
 class HostAcceptedChanges {
@@ -191,4 +323,18 @@ class HostAcceptedChanges {
   final List<SyncChange> accepted;
   final int discardedBecauseOfReset;
   final Map<String, String> rejected;
+}
+
+class UnifiedSyncPullMetadata {
+  const UnifiedSyncPullMetadata({
+    required this.generatedAt,
+    required this.generatedSequence,
+    required this.source,
+    required this.needsSnapshot,
+  });
+
+  final DateTime generatedAt;
+  final int generatedSequence;
+  final String source;
+  final bool needsSnapshot;
 }

@@ -51,6 +51,82 @@ class UnifiedSyncResult {
   );
 }
 
+extension UnifiedSyncResultSemantics on UnifiedSyncResult {
+  bool get isDeferred => data['syncDeferred'] == true;
+  String get deferredReason => data['deferredReason']?.toString() ?? '';
+}
+
+extension UnifiedSyncResultRepairDecision on UnifiedSyncResult {
+  bool shouldRepairAfterPullFailure() {
+    return error.code == UnifiedSyncErrorCode.snapshotUnavailable;
+  }
+}
+
+class UnifiedSyncResultFactory {
+  const UnifiedSyncResultFactory._();
+
+  static UnifiedSyncResult success({
+    required String label,
+    required int pushed,
+    required int pulled,
+    required UnifiedCursorEnvelope cursor,
+    bool restoredSnapshot = false,
+    Map<String, dynamic> data = const <String, dynamic>{},
+    String? message,
+  }) {
+    final deferred = data['syncDeferred'] == true;
+    return UnifiedSyncResult(
+      ok: true,
+      message: message ??
+          (deferred
+              ? '$label sync deferred.'
+              : '$label sync completed. Pushed $pushed change(s), pulled $pulled change(s).'),
+      pushed: pushed,
+      pulled: deferred ? 0 : pulled,
+      restoredSnapshot: restoredSnapshot,
+      data: data,
+      cursor: cursor,
+    );
+  }
+
+  static UnifiedSyncResult deferred({
+    required String label,
+    required int pushed,
+    required int pulled,
+    required UnifiedCursorEnvelope cursor,
+    String reason = '',
+  }) {
+    return UnifiedSyncResult(
+      ok: true,
+      message: '$label sync deferred.',
+      pushed: pushed,
+      pulled: 0,
+      data: <String, dynamic>{
+        'syncDeferred': true,
+        if (reason.trim().isNotEmpty) 'deferredReason': reason,
+      },
+      cursor: cursor,
+    );
+  }
+
+  static UnifiedSyncResult failure({
+    required String message,
+    required int pushed,
+    required int pulled,
+    required UnifiedCursorEnvelope cursor,
+    required UnifiedSyncError error,
+  }) {
+    return UnifiedSyncResult(
+      ok: false,
+      message: message,
+      pushed: pushed,
+      pulled: pulled,
+      error: error,
+      cursor: cursor,
+    );
+  }
+}
+
 class UnifiedPairingCodeResult extends UnifiedSyncResult {
   const UnifiedPairingCodeResult({
     required super.ok,
@@ -79,15 +155,6 @@ class UnifiedPairingClaimResult extends UnifiedSyncResult {
 
   final AppIdentity? identity;
   final UnifiedPairingClaimContract? contract;
-}
-
-/// Only explicit snapshot gaps should trigger a rebuild.
-///
-/// Network, auth, and other transport errors must surface as failures instead
-/// of entering a repair flow that depends on the Host being online.
-extension UnifiedSyncResultRepairPolicy on UnifiedSyncResult {
-  bool get shouldAttemptSnapshotRepair =>
-      error.code == UnifiedSyncErrorCode.snapshotUnavailable;
 }
 
 class UnifiedHostStatus {
@@ -173,6 +240,20 @@ abstract class SyncTransportAdapter {
   /// Runs local post-sync maintenance after a successful sync orchestration.
   /// Implementations should keep this best-effort and non-fatal.
   Future<void> compactAfterSuccessfulSync() async {}
+
+  /// Waits for a transport-specific realtime wakeup signal.
+  ///
+  /// Returns `true` when new remote activity should trigger a sync tick.
+  Future<bool> waitForRealtimeSignal() async => false;
+
+  /// Best-effort host shutdown for transports that expose a local Host server.
+  Future<void> stopHostIfSupported() async {}
+
+  /// Requests a fresh Host snapshot when the transport supports explicit
+  /// provisioning/bootstrap refresh.
+  Future<void> requestFreshHostSnapshotIfSupported({
+    DateTime? requestedAt,
+  }) async {}
 
   Future<UnifiedSyncResult> syncNow({
     void Function(double value, String label)? onProgress,

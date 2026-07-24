@@ -462,6 +462,13 @@ class LanSyncService {
           ok: false,
           message:
               'LAN repair is not available in the web build. Use Cloud Sync/API instead.');
+  Future<void> recordDeviceSyncState(
+    String transport, {
+    DateTime? cursor,
+    int? sequence,
+  }) async {}
+  bool shouldBypassTransportSyncForHost() => false;
+  Future<void> compactAfterSuccessfulSync() async {}
   Future<LanSyncResult> syncNow(String host,
           {int port = 8787,
           String token = '',

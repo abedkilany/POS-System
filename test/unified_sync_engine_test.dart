@@ -16,6 +16,9 @@ class _FakeTransport implements SyncTransportAdapter {
   int pullCalls = 0;
   int rebuildCalls = 0;
   int compactCalls = 0;
+  int waitCalls = 0;
+  int stopCalls = 0;
+  int freshSnapshotCalls = 0;
 
   final UnifiedCursorEnvelope _pushCursor = UnifiedCursorEnvelope(
     value: 'push-cursor',
@@ -96,6 +99,24 @@ class _FakeTransport implements SyncTransportAdapter {
   @override
   Future<void> compactAfterSuccessfulSync() async {
     compactCalls += 1;
+  }
+
+  @override
+  Future<bool> waitForRealtimeSignal() async {
+    waitCalls += 1;
+    return true;
+  }
+
+  @override
+  Future<void> stopHostIfSupported() async {
+    stopCalls += 1;
+  }
+
+  @override
+  Future<void> requestFreshHostSnapshotIfSupported({
+    DateTime? requestedAt,
+  }) async {
+    freshSnapshotCalls += 1;
   }
 
   @override
@@ -181,6 +202,26 @@ void main() {
       expect(transport.pullCalls, 1);
       expect(transport.rebuildCalls, 1);
       expect(transport.compactCalls, 1);
+    });
+
+    test('forwards transport lifecycle helpers through the unified engine',
+        () async {
+      final transport = _FakeTransport(
+        pullResult: const UnifiedSyncResult(ok: true, message: 'pull ok'),
+        rebuildResult: const UnifiedSyncResult(ok: true, message: 'rebuild ok'),
+      );
+
+      final engine = UnifiedSyncEngine(transport);
+      final changed = await engine.waitForRealtimeSignal();
+      await engine.stopHostIfSupported();
+      await engine.requestFreshHostSnapshotIfSupported(
+        requestedAt: DateTime.utc(2026, 1, 2),
+      );
+
+      expect(changed, isTrue);
+      expect(transport.waitCalls, 1);
+      expect(transport.stopCalls, 1);
+      expect(transport.freshSnapshotCalls, 1);
     });
   });
 }
