@@ -2387,6 +2387,13 @@ class CloudSyncService {
               '')
           .toString()
           .trim();
+      // The relay routes Host responses back to the requesting Client by
+      // sourceDeviceId. The incoming relay request already carries the
+      // Client identity; every Host response must preserve it.
+      final sourceDeviceId =
+          (decoded['sourceDeviceId'] ?? decoded['source_device_id'] ?? '')
+              .toString()
+              .trim();
       if (requestId.isEmpty) return null;
 
       if (requestKind == 'cloud_snapshot_manifest') {
@@ -2416,6 +2423,7 @@ class CloudSyncService {
           channel.sink.add(jsonEncode({
             'type': 'relay_response',
             'requestId': requestId,
+            'sourceDeviceId': sourceDeviceId,
             'ok': false,
             'error': 'Host snapshot could not be prepared.',
             'serverTime': DateTime.now().toIso8601String(),
@@ -2431,6 +2439,7 @@ class CloudSyncService {
           channel.sink.add(jsonEncode({
             'type': 'relay_response',
             'requestId': requestId,
+            'sourceDeviceId': sourceDeviceId,
             'ok': false,
             'error':
                 'Host snapshot is older than the confirmed Client changes. Retry after Host finishes applying requests.',
@@ -2441,6 +2450,7 @@ class CloudSyncService {
         channel.sink.add(jsonEncode({
           'type': 'relay_response',
           'requestId': requestId,
+          'sourceDeviceId': sourceDeviceId,
           'ok': true,
           'jobId': job.jobId,
           'snapshotFormat': job.envelope['snapshotFormat'],
@@ -2475,6 +2485,7 @@ class CloudSyncService {
           channel.sink.add(jsonEncode({
             'type': 'relay_response',
             'requestId': requestId,
+            'sourceDeviceId': sourceDeviceId,
             'ok': false,
             'error': 'Snapshot chunk is unavailable.',
             'serverTime': DateTime.now().toIso8601String(),
@@ -2484,6 +2495,7 @@ class CloudSyncService {
         channel.sink.add(jsonEncode({
           'type': 'relay_response',
           'requestId': requestId,
+          'sourceDeviceId': sourceDeviceId,
           'ok': true,
           'jobId': job.jobId,
           'ordinal': ordinal,
@@ -2501,6 +2513,7 @@ class CloudSyncService {
         channel.sink.add(jsonEncode({
           'type': 'relay_response',
           'requestId': requestId,
+          'sourceDeviceId': sourceDeviceId,
           'ok': true,
           'released': true,
           'serverTime': DateTime.now().toIso8601String(),
@@ -2522,6 +2535,7 @@ class CloudSyncService {
         final response = <String, dynamic>{
           'type': 'relay_response',
           'requestId': requestId,
+          'sourceDeviceId': sourceDeviceId,
           'ok': true,
           'ackIds': accepted.ackIds,
           'rejected': accepted.rejected.entries
@@ -2574,6 +2588,7 @@ class CloudSyncService {
         );
         response['type'] = 'relay_response';
         response['requestId'] = requestId;
+        response['sourceDeviceId'] = sourceDeviceId;
         response['ok'] = true;
         response['source'] = 'relay';
         response['hasMore'] = false;
@@ -2590,6 +2605,7 @@ class CloudSyncService {
       channel.sink.add(jsonEncode({
         'type': 'relay_response',
         'requestId': requestId,
+        'sourceDeviceId': sourceDeviceId,
         'ok': false,
         'error': 'Unknown relay request kind: $requestKind',
         'serverTime': DateTime.now().toIso8601String(),
