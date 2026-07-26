@@ -129,6 +129,11 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
 
   void _setStatus(String message, {_SetupStatus type = _SetupStatus.info}) {
     if (!mounted) return;
+    if (message.trim().isNotEmpty &&
+        (_connectionLog.isEmpty || !_connectionLog.last.endsWith(message))) {
+      _connectionLog
+          .add('[${DateTime.now().toIso8601String()}] STATUS: $message');
+    }
     setState(() {
       _status = message;
       _statusType = message.trim().isEmpty ? _SetupStatus.idle : type;
@@ -982,6 +987,19 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
           Icon(data.$1, color: data.$3),
           const SizedBox(width: 10),
           Expanded(child: Text(_status, style: TextStyle(color: data.$3))),
+          if (_connectionLog.isNotEmpty)
+            IconButton(
+              tooltip: 'Copy connection log',
+              onPressed: () async {
+                await Clipboard.setData(
+                    ClipboardData(text: _connectionLogText));
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Connection log copied')));
+                }
+              },
+              icon: Icon(Icons.copy_outlined, color: data.$3),
+            ),
           IconButton(
             tooltip: MaterialLocalizations.of(context).closeButtonTooltip,
             onPressed: _busy ? null : _clearStatus,
