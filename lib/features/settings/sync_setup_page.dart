@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../core/localization/app_localizations.dart';
@@ -69,6 +70,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
   _SetupStatus _statusType = _SetupStatus.idle;
   double? _snapshotProgressValue;
   String _snapshotProgressLabel = '';
+  final List<String> _connectionLog = <String>[];
   Timer? _qrCountdownTimer;
   DateTime? _qrExpiresAt;
   _ClientPairingState _qrStatus = _ClientPairingState.noCode;
@@ -152,6 +154,9 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
   }
 
   void _beginConnectionAttempt(String message) {
+    _connectionLog
+      ..clear()
+      ..add('[${DateTime.now().toIso8601String()}] START $message');
     setState(() {
       _busy = true;
       _qrStatus = _ClientPairingState.connecting;
@@ -161,6 +166,14 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       _snapshotProgressLabel = message;
     });
   }
+
+  void _addConnectionLog(String message) {
+    if (!mounted) return;
+    setState(() =>
+        _connectionLog.add('[${DateTime.now().toIso8601String()}] $message'));
+  }
+
+  String get _connectionLogText => _connectionLog.join('\n');
 
   Future<void> _finishSuccessfulConnection(String message) async {
     if (!mounted) return;
@@ -331,16 +344,22 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       }
 
       _setStatus(claimingLanPairing);
-      final result = await _lanEngine()
-          .claimPairingCode(secret, onProgress: _setSnapshotProgress);
+      final result = await _lanEngine().claimPairingCode(secret,
+          onProgress: (value, label) {
+        _addConnectionLog('LAN progress ${(value * 100).round()}%: $label');
+        _setSnapshotProgress(value, label);
+      });
       if (!result.ok) {
+        _addConnectionLog('FAILED: ${result.message}');
         _markQrFailed(result.message);
         _setStatus(result.message, type: _SetupStatus.error);
         return;
       }
 
       await _finishSuccessfulConnection(connectedLanSignIn);
+      _addConnectionLog('SUCCESS: LAN pairing completed');
     } catch (error) {
+      _addConnectionLog('EXCEPTION: $error');
       _markQrFailed(error.toString());
       _setStatus(_friendlyErrorMessage(error, fallback: lanConnectionFailed),
           type: _SetupStatus.error);
@@ -387,10 +406,15 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       late final bool resultOk;
       late final String resultMessage;
       if (existingIdentity.isClient && CloudProvisioningStatus.isPending) {
+        _addConnectionLog(
+            'RESUME: device already registered; requesting Host snapshot');
         final result = await cloudService.rebuildFromCloudHostSnapshot(
           settings,
           requestFreshSnapshot: false,
-          onProgress: _setSnapshotProgress,
+          onProgress: (value, label) {
+            _addConnectionLog('SNAPSHOT ${(value * 100).round()}%: $label');
+            _setSnapshotProgress(value, label);
+          },
         );
         resultOk = result.ok;
         resultMessage = result.message;
@@ -398,22 +422,30 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
         final result = await cloudService.claimPairingCode(
           settings,
           code,
-          onProgress: _setSnapshotProgress,
+          onProgress: (value, label) {
+            _addConnectionLog('CLOUD ${(value * 100).round()}%: $label');
+            _setSnapshotProgress(value, label);
+          },
         );
         resultOk = result.ok;
         resultMessage = result.message;
       }
       if (!resultOk) {
+        _addConnectionLog('FAILED: $resultMessage');
         _markQrFailed(resultMessage);
         _setStatus(resultMessage, type: _SetupStatus.error);
         return;
       }
 
       await _finishSuccessfulConnection(connectedStoreSignIn);
+      _addConnectionLog('SUCCESS: Cloud pairing and snapshot completed');
     } on FormatException catch (_) {
+      _addConnectionLog(
+          'FORMAT ERROR: invalid server response or snapshot JSON');
       _markQrFailed(cloudConnectionFailed);
       _setStatus(cloudConnectionFailed, type: _SetupStatus.error);
     } catch (error) {
+      _addConnectionLog('EXCEPTION: $error');
       _markQrFailed(error.toString());
       _setStatus(_friendlyErrorMessage(error, fallback: cloudConnectionFailed),
           type: _SetupStatus.error);
@@ -493,6 +525,8 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
                         ),
                         const SizedBox(height: 12),
                         if (_status.isNotEmpty) _buildStatusBanner(context),
+                        if (_connectionLog.isNotEmpty)
+                          _buildConnectionLogCard(context),
                       ],
                     ),
                   ),
@@ -527,6 +561,46 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
               ),
             ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildConnectionLogCard(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      color: theme.colorScheme.surfaceContainerHighest,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(children: [
+              const Icon(Icons.bug_report_outlined),
+              const SizedBox(width: 8),
+              const Expanded(child: Text('Connection diagnostics')),
+              IconButton(
+                tooltip: 'Copy log',
+                onPressed: () async {
+                  await Clipboard.setData(
+                      ClipboardData(text: _connectionLogText));
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Connection log copied')));
+                  }
+                },
+                icon: const Icon(Icons.copy_outlined),
+              ),
+            ]),
+            const SizedBox(height: 8),
+            SelectableText(
+              _connectionLogText,
+              style: theme.textTheme.bodySmall?.copyWith(
+                fontFamily: 'monospace',
+                height: 1.35,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

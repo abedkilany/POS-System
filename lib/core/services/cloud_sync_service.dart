@@ -1489,11 +1489,13 @@ class CloudSyncService {
           message: 'Device paired successfully. Please sign in.',
           identity: identity);
     } catch (error) {
+      SyncDiagnosticsLog.add(
+          '[CLOUD_PAIRING] failed afterDeviceRegistered=$deviceRegistered error=$error');
       if (deviceRegistered) {
         return CloudPairingClaimResult(
           ok: false,
           message:
-              'Device registered, but the full Store snapshot is not complete. Keep the Host online and try again.',
+              'Device registered, but the full Store snapshot is not complete. Keep the Host online and try again. Details: $error',
           identity: store.appIdentity,
         );
       }
