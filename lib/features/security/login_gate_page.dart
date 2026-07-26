@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
+import '../../core/app_brand.dart';
 import '../../core/services/account_auth_service.dart';
 import '../../core/services/cloud_sync_admin_service.dart';
 import '../../core/services/cloud_sync_service.dart';
@@ -38,8 +39,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _confirmPasswordController =
       TextEditingController();
-  final TextEditingController _storeNameController =
-      TextEditingController();
+  final TextEditingController _storeNameController = TextEditingController();
   AccountAuthCache? _authCache;
 
   bool _savingSetup = false;
@@ -160,8 +160,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
     final messenger = ScaffoldMessenger.of(context);
     setState(() => _checkingSuspension = true);
     try {
-      final result = await UnifiedSyncFactory.activeEngine(widget.store)
-          .syncNow();
+      final result =
+          await UnifiedSyncFactory.activeEngine(widget.store).syncNow();
       if (!mounted) return;
       if (result.ok && !widget.store.isSuspendedByHost) {
         messenger.showSnackBar(
@@ -290,8 +290,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
         clearLastPullCursor: true,
       );
       await recoverySettings.save();
-      final result = await _cloudAdminService
-          .recoverExistingStoreIdentityFromCloud(
+      final result =
+          await _cloudAdminService.recoverExistingStoreIdentityFromCloud(
         recoverySettings,
         storeId: storeId,
         branchId: branchId,
@@ -1125,6 +1125,15 @@ class _LoginGatePageState extends State<LoginGatePage> {
                             );
                           },
                         ),
+                      const SizedBox(height: 20),
+                      Text(
+                        'Version ${AppBrand.versionName} (build ${AppBrand.buildNumber})',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant,
+                            ),
+                      ),
                     ],
                   ),
                 ),
