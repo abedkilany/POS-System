@@ -1893,6 +1893,7 @@ class CloudSyncService {
   Future<CloudSyncResult> rebuildFromCloudHostSnapshot(
       CloudSyncSettings settings,
       {CloudSyncProgressCallback? onProgress,
+      void Function(String message)? onDiagnostic,
       bool requestFreshSnapshot = true,
       String expectedSnapshotGeneration = '',
       String expectedRestoreCommandId = ''}) async {
@@ -1959,6 +1960,7 @@ class CloudSyncService {
       minimumSnapshotSequence: minimumSnapshotSequence,
       requestedAt: snapshotRequestedAt,
       onProgress: onProgress,
+      onDiagnostic: onDiagnostic,
     );
     if (freshEnvelope == null) {
       return CloudSyncResult(
@@ -1974,6 +1976,7 @@ class CloudSyncService {
       freshEnvelope,
       settings: settings,
       onProgress: onProgress,
+      onDiagnostic: onDiagnostic,
       expectedSnapshotGeneration: expectedSnapshotGeneration,
       expectedRestoreCommandId: expectedRestoreCommandId,
     );
@@ -1993,6 +1996,7 @@ class CloudSyncService {
     required int minimumSnapshotSequence,
     required DateTime requestedAt,
     CloudSyncProgressCallback? onProgress,
+    void Function(String message)? onDiagnostic,
   }) async {
     onProgress?.call(
         0.30, 'Waiting for fresh Host snapshot through the relay...');
@@ -2021,7 +2025,9 @@ class CloudSyncService {
           (0.34 + attempt * 0.05).clamp(0.34, 0.74).toDouble(),
           'Ignoring older Host snapshot and waiting for the fresh rebuild snapshot (${attempt + 1}/8)...',
         );
-      } catch (_) {
+      } catch (error, stackTrace) {
+        onDiagnostic?.call(
+            '[CLOUD_REBUILD] snapshot relay attempt=${attempt + 1} failed error=$error stack=${stackTrace.toString().split('\n').take(2).join(' | ')}');
         onProgress?.call(
           (0.34 + attempt * 0.05).clamp(0.34, 0.74).toDouble(),
           'Waiting for fresh Cloud snapshot relay (${attempt + 1}/8)...',
@@ -3383,6 +3389,7 @@ class CloudSyncService {
     Map<String, dynamic> envelope, {
     required CloudSyncSettings settings,
     required CloudSyncProgressCallback? onProgress,
+    void Function(String message)? onDiagnostic,
     required String expectedSnapshotGeneration,
     required String expectedRestoreCommandId,
   }) async {
@@ -3404,17 +3411,26 @@ class CloudSyncService {
     await CloudSyncSettings.clearSavedPullCursor();
     await SyncDeviceStateStore.resetClientProgress(store.appIdentity,
         transport: 'cloud');
-    final applied = await UnifiedSnapshotLifecycle.applyEnvelope(
-      store: store,
-      envelope: envelope,
-      afterImport: (_) => _markHostSnapshotGenerationApplied(
-        'cloud',
-        envelope,
-        markRestoreCommandExecuted: true,
-      ),
-      verifyLocalData: true,
-      cleanupSoftDeleted: true,
-    );
+    late final UnifiedSnapshotApplyResult applied;
+    try {
+      applied = await UnifiedSnapshotLifecycle.applyEnvelope(
+        store: store,
+        envelope: envelope,
+        afterImport: (_) => _markHostSnapshotGenerationApplied(
+          'cloud',
+          envelope,
+          markRestoreCommandExecuted: true,
+        ),
+        verifyLocalData: true,
+        cleanupSoftDeleted: true,
+      );
+    } catch (error, stackTrace) {
+      onDiagnostic?.call(
+          '[CLOUD_REBUILD] snapshot apply failed error=$error stack=${stackTrace.toString().split('\n').take(3).join(' | ')}');
+      rethrow;
+    }
+    onDiagnostic?.call(
+        '[CLOUD_REBUILD] snapshot applied verificationOk=${applied.verificationOk} verification=${applied.verificationMessage} sequence=${applied.sequence}');
     onProgress?.call(0.90, 'Verifying rebuilt local data...');
     if (!applied.verificationOk) {
       debugPrint(

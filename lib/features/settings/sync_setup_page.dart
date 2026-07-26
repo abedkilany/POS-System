@@ -416,6 +416,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
         final result = await cloudService.rebuildFromCloudHostSnapshot(
           settings,
           requestFreshSnapshot: false,
+          onDiagnostic: _addConnectionLog,
           onProgress: (value, label) {
             _addConnectionLog('SNAPSHOT ${(value * 100).round()}%: $label');
             _setSnapshotProgress(value, label);
