@@ -161,6 +161,16 @@ async function upsertSnapshot({ storeId, branchId, entityType, entityId, operati
 }
 
 export default async function handler(req, res) {
+  return res.status(410).json({
+    ok: false,
+    error: 'Cloud snapshot storage is disabled. Snapshots are served by the Host relay.',
+  });
+
+  /* Legacy Cloud snapshot storage implementation intentionally disabled.
+   * Cloud is a transport relay only; the Host owns snapshot generation and
+   * serves manifests/chunks over the realtime relay.
+   */
+  /* istanbul ignore next */
   try {
     await ensureTables();
 

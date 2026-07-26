@@ -1,4 +1,3 @@
-import { createHash } from 'crypto';
 import {
   sql,
   assertAccountOrDevice,
@@ -8,16 +7,6 @@ import {
 
 function asIso(value) {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
-}
-
-function normalizeRecoveryKey(value) {
-  return String(value || '').trim().toUpperCase();
-}
-
-function hashRecoveryKey(value) {
-  return createHash('sha256')
-    .update(normalizeRecoveryKey(value), 'utf8')
-    .digest('hex');
 }
 
 async function ensureHeartbeatTable() {
@@ -40,24 +29,34 @@ async function ensureHeartbeatTable() {
     create index if not exists idx_store_host_heartbeats_latest
     on store_host_heartbeats (store_id, branch_id, last_seen_at desc)
   `;
-
-  await sql`
-    create table if not exists store_recovery_keys (
-      store_id text not null,
-      branch_id text not null default 'main',
-      recovery_key_hash text not null,
-      latest_host_device_id text default '',
-      cloud_tenant_id text default '',
-      created_at timestamptz not null default now(),
-      updated_at timestamptz not null default now(),
-      primary key (store_id, branch_id)
-    )
-  `;
 }
 
 export default async function handler(req, res) {
   try {
     await ensureHeartbeatTable();
+
+    if (req.method === 'DELETE') {
+      const storeId = String(req.query.store_id || req.query.storeId || req.headers['x-store-id'] || '').trim();
+      const branchId = String(req.query.branch_id || req.query.branchId || req.headers['x-branch-id'] || 'main').trim() || 'main';
+      const hostDeviceId = String(req.query.host_device_id || req.query.hostDeviceId || req.headers['x-device-id'] || '').trim();
+      if (!storeId || !hostDeviceId) {
+        return res.status(400).json({ ok: false, error: 'storeId and hostDeviceId are required.' });
+      }
+      assertStoreAllowed(storeId);
+      await assertAccountOrDevice(req, {
+        storeId,
+        branchId,
+        allowedRoles: ['host'],
+        allowedTransports: ['cloud'],
+      });
+      await sql`
+        delete from store_host_heartbeats
+        where store_id = ${storeId}
+          and branch_id = ${branchId}
+          and host_device_id = ${hostDeviceId}
+      `;
+      return res.status(200).json({ ok: true, stopped: true, storeId, branchId, hostDeviceId });
+    }
 
     if (req.method === 'POST') {
       const body = req.body || {};
@@ -86,8 +85,6 @@ export default async function handler(req, res) {
       const platform = String(body.platform || '').trim();
       const appVersion = String(body.appVersion || body.app_version || '').trim();
       const syncMode = String(body.syncMode || body.sync_mode || '').trim();
-      const recoveryKey = normalizeRecoveryKey(body.recoveryKey || body.recovery_key);
-
       const activeRows = await sql`
         select host_device_id, host_device_name, last_seen_at
         from store_host_heartbeats
@@ -149,29 +146,6 @@ export default async function handler(req, res) {
           sync_mode,
           last_seen_at
       `;
-
-      if (recoveryKey) {
-        await sql`
-          insert into store_recovery_keys (
-            store_id,
-            branch_id,
-            recovery_key_hash,
-            latest_host_device_id,
-            updated_at
-          )
-          values (
-            ${storeId},
-            ${branchId},
-            ${hashRecoveryKey(recoveryKey)},
-            ${hostDeviceId},
-            now()
-          )
-          on conflict (store_id, branch_id) do update set
-            recovery_key_hash = excluded.recovery_key_hash,
-            latest_host_device_id = excluded.latest_host_device_id,
-            updated_at = now()
-        `;
-      }
 
       const row = rows[0];
 

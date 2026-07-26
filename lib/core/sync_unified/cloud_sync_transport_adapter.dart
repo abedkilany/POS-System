@@ -179,6 +179,14 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<UnifiedSyncResult> registerCurrentHost({String transport = ''}) async {
+    final relay = await _service.ensureHostRelayReady(_settings);
+    if (!relay.ok) {
+      return UnifiedSyncResult(
+        ok: false,
+        message: relay.message,
+        error: _errorFor(false, relay.message),
+      );
+    }
     final result = await _service.registerCurrentDevice(_settings,
         transport: transport.trim().isEmpty ? 'cloud' : transport);
     return UnifiedSyncResult(
@@ -197,8 +205,9 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
     DateTime? minSnapshotUpdatedAt,
     void Function(double value, String label)? onProgress,
   }) async {
-    await _service.publishBootstrapSnapshotToCloud(_settings,
-        force: true, onProgress: onProgress);
+    // Cloud uses the same Host-authoritative relay protocol as LAN. The Host
+    // keeps the snapshot locally and serves it through the realtime relay;
+    // no snapshot is uploaded to the Cloud database.
     return _runUnifiedCloudSync(
       onProgress: onProgress,
       pullFailureMessage: 'Cloud pull failed.',
@@ -239,6 +248,9 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
               code: result.code,
               expiresAt: result.expiresAt!,
               transport: 'cloud',
+              storeId: result.storeId,
+              branchId: result.branchId,
+              hostDeviceId: result.hostDeviceId,
               apiBaseUrl: _settings.apiBaseUrl,
             ),
     );
@@ -347,7 +359,9 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
   }
 
   @override
-  Future<void> stopHostIfSupported() async {}
+  Future<void> stopHostIfSupported() async {
+    await _service.stopHost(_settings);
+  }
 
   @override
   Future<UnifiedSyncResult> syncNow(

@@ -18,6 +18,7 @@ import '../sync_unified/unified_pairing_snapshot_flow.dart';
 import '../sync_unified/sync_device_state.dart';
 import '../sync_unified/unified_snapshot_lifecycle.dart';
 import '../sync_unified/unified_sync_policy.dart';
+import '../sync_unified/sync_contracts.dart';
 import '../snapshot/unified_snapshot_transfer.dart';
 
 class CloudSyncSettings {
@@ -267,6 +268,8 @@ class _RealtimeChannelSession {
 
 class _RealtimeRelaySession {
   _RealtimeRelaySession._(this._service, this._channelSession) {
+    // The server is only a transport bridge here. The Host is the only side
+    // that decides whether a change is accepted and what ACK comes back.
     _subscription = _channelSession.channel.stream.listen(
       _handlePacket,
       onError: _handleError,
@@ -623,11 +626,19 @@ class CloudPairingCodeResult {
       {required this.ok,
       required this.message,
       this.code = '',
-      this.expiresAt});
+      this.expiresAt,
+      this.storeId = '',
+      this.branchId = 'main',
+      this.hostDeviceId = '',
+      this.transport = 'cloud'});
   final bool ok;
   final String message;
   final String code;
   final DateTime? expiresAt;
+  final String storeId;
+  final String branchId;
+  final String hostDeviceId;
+  final String transport;
 }
 
 class CloudPairingStatusResult {
@@ -711,8 +722,10 @@ class CloudSyncService {
     // If an older build left cloud_host rows as submitted, recover them to
     // pending so the next relay push sends them again. Until that happens,
     // any pull or rebuild must stay paused.
-    await store.recoverSubmittedSyncQueue(target: 'cloud_host');
-    return store.hasOutstandingSyncWorkForTarget('cloud_host');
+    await store.recoverSubmittedSyncQueue(
+        target: UnifiedSyncQueueTarget.cloudHost);
+    return store
+        .hasOutstandingSyncWorkForTarget(UnifiedSyncQueueTarget.cloudHost);
   }
 
   Future<CloudSyncResult?> _cloudClientNeedsDrainResult() async {
@@ -729,19 +742,16 @@ class CloudSyncService {
     CloudSyncProgressCallback? onProgress,
     bool compactHistory = false,
   }) async {
-    onProgress?.call(0.10, 'Preparing Host cloud snapshot queue...');
-    await store.ensureHostCloudBootstrapSnapshotQueued();
-    final repairedCloudQueue =
-        await store.repairMissingHostCloudQueueForPendingChanges();
-    if (repairedCloudQueue > 0) {
-      onProgress?.call(0.18,
-          '$repairedCloudQueue missing Host cloud snapshot queue item(s) were repaired...');
-    }
+    onProgress?.call(0.10, 'Preparing Host relay connection...');
+    final relayReady = await ensureHostRelayReady(settings);
+    if (!relayReady.ok) return relayReady;
     onProgress?.call(0.25, 'Sending Host heartbeat...');
     await sendHostHeartbeat(settings);
     onProgress?.call(0.40, 'Registering Host device...');
     await registerCurrentDevice(settings, transport: 'cloud');
-    final hostPendingCount = _syncCore.pendingChangesForTarget('cloud').length;
+    final hostPendingCount = _syncCore
+        .pendingChangesForTarget(UnifiedSyncQueueTarget.cloudAuthority)
+        .length;
     onProgress?.call(0.55, 'Publishing Host changes through Cloud relay...');
     final relayPublished = await _broadcastHostAuthorityViaRelay(settings);
     if (!relayPublished) {
@@ -754,8 +764,6 @@ class CloudSyncService {
     if (compactHistory) {
       onProgress?.call(0.90, 'Running safe local sync history maintenance...');
       await store.compactSyncedSyncHistoryForMaintenance();
-      onProgress?.call(0.96, 'Running safe Cloud maintenance...');
-      await runCloudMaintenance(settings);
       onProgress?.call(1.0, 'Host Cloud sync completed.');
     }
     return CloudSyncResult(
@@ -774,7 +782,8 @@ class CloudSyncService {
     onProgress?.call(0.12, 'Registering Client device...');
     await registerCurrentDevice(settings, transport: 'cloud');
     onProgress?.call(0.28, 'Sending Client requests to Host relay...');
-    final pushed = await _pushPendingViaRelay(settings, target: 'cloud_host');
+    final pushed = await _pushPendingViaRelay(settings,
+        target: UnifiedSyncQueueTarget.cloudHost);
     return CloudSyncResult(
       ok: true,
       pushed: pushed,
@@ -833,7 +842,8 @@ class CloudSyncService {
     await registerCurrentDevice(settings, transport: 'cloud');
     var pushed = 0;
     try {
-      pushed += await _pushPendingViaRelay(settings, target: 'cloud_host');
+      pushed += await _pushPendingViaRelay(settings,
+          target: UnifiedSyncQueueTarget.cloudHost);
     } catch (error) {
       return CloudSyncResult(
         ok: false,
@@ -1189,6 +1199,10 @@ class CloudSyncService {
             : (decoded['error']?.toString() ?? 'Pairing code failed.'),
         code: decoded['code']?.toString() ?? '',
         expiresAt: DateTime.tryParse(decoded['expiresAt']?.toString() ?? ''),
+        storeId: decoded['storeId']?.toString() ?? identity.storeId,
+        branchId: decoded['branchId']?.toString() ?? identity.branchId,
+        hostDeviceId: decoded['hostDeviceId']?.toString() ?? identity.deviceId,
+        transport: decoded['transport']?.toString() ?? transport,
       );
     } catch (error) {
       return CloudPairingCodeResult(
@@ -1199,10 +1213,8 @@ class CloudSyncService {
   Future<void> _publishPairingBootstrapInBackground(
       CloudSyncSettings settings) async {
     try {
-      // Pairing must make the full Cloud bootstrap snapshot available before a
-      // Client can finish Connect to Store. Start that publish in the
-      // background so the Host UI still returns immediately.
-      await publishBootstrapSnapshotToCloud(settings, force: true);
+      // Pairing only announces the Host. The Client obtains its initial
+      // snapshot from the Host through the realtime relay after pairing.
       await sendHostHeartbeat(settings);
       await registerCurrentDevice(settings, transport: 'cloud');
       await _broadcastHostAuthorityViaRelay(settings);
@@ -1384,7 +1396,12 @@ class CloudSyncService {
 
         final retryResult = await UnifiedCloudSnapshotRetryFlow.pollUntilReady<
             UnifiedPairingSnapshotSuccess>(
-          maxAttempts: 6,
+          // Pairing consumes the one-time code before the Host has necessarily
+          // answered the snapshot request. Give the relay enough time to wake
+          // the Host and build a large snapshot; otherwise the user is left
+          // with a registered Client and a consumed code that cannot be used
+          // for a second attempt.
+          maxAttempts: 12,
           retryDelay: const Duration(seconds: 3),
           beforeAttempt: (attempt) async {
             if (attempt > 0) {
@@ -1621,9 +1638,7 @@ class CloudSyncService {
             )
           : null;
 
-      onProgress?.call(0.90, 'Publishing recovered Host snapshot...');
-      await publishBootstrapSnapshotToCloud(settings,
-          force: true, onProgress: onProgress);
+      onProgress?.call(0.90, 'Announcing recovered Host through relay...');
       await _broadcastHostAuthorityViaRelay(settings);
       await sendHostHeartbeat(settings);
       onProgress?.call(1.0, 'Store recovered.');
@@ -2972,6 +2987,35 @@ class CloudSyncService {
     }
   }
 
+  /// Verifies that a Cloud Host can establish the same realtime transport
+  /// that will carry Client requests. A healthy HTTP API alone is not enough:
+  /// the Host must also be reachable through the Relay WebSocket.
+  Future<CloudSyncResult> ensureHostRelayReady(
+      CloudSyncSettings settings) async {
+    final identity = store.appIdentity;
+    if (!identity.isHost) {
+      return const CloudSyncResult(
+          ok: false, message: 'Only a Cloud Host can open the Host relay.');
+    }
+    if (!settings.isConfigured) {
+      return const CloudSyncResult(
+          ok: false, message: 'Cloud API URL and token are required.');
+    }
+    _RealtimeChannelSession? session;
+    try {
+      session =
+          await _openRealtimeChannel(settings, includeSequenceHint: false);
+      await session.channel.stream.first.timeout(const Duration(seconds: 8));
+      return const CloudSyncResult(
+          ok: true, message: 'Cloud Host relay is ready.');
+    } catch (error) {
+      return CloudSyncResult(
+          ok: false, message: 'Cloud Host relay is not ready: $error');
+    } finally {
+      await session?.channel.sink.close();
+    }
+  }
+
   Future<CloudSyncResult> validateSingleHost(CloudSyncSettings settings) async {
     final identity = store.appIdentity;
     if (!settings.isConfigured) {
@@ -3017,7 +3061,6 @@ class CloudSyncService {
               'platform': identity.platform.name,
               'appVersion': AppBrand.cloudAppVersion,
               'syncMode': identity.syncMode.name,
-              'recoveryKey': identity.recoveryKey,
             }),
           )
           .timeout(const Duration(seconds: 10));
@@ -3030,6 +3073,35 @@ class CloudSyncService {
     } catch (error) {
       return CloudSyncResult(
           ok: false, message: 'Host heartbeat failed: $error');
+    }
+  }
+
+  Future<CloudSyncResult> stopHost(CloudSyncSettings settings) async {
+    final identity = store.appIdentity;
+    if (!identity.isHost || !settings.isConfigured) {
+      return const CloudSyncResult(
+          ok: true, message: 'Cloud Host is already stopped.');
+    }
+    try {
+      final response = await _client
+          .delete(
+            settings.endpoint('/api/sync/host-heartbeat', {
+              'store_id': identity.storeId,
+              'branch_id': identity.branchId,
+              'host_device_id': store.deviceId,
+            }),
+            headers: _headers(settings),
+          )
+          .timeout(const Duration(seconds: 10));
+      return CloudSyncResult(
+        ok: response.statusCode >= 200 && response.statusCode < 300,
+        message: response.statusCode >= 200 && response.statusCode < 300
+            ? 'Cloud Host stopped.'
+            : 'Cloud Host stop failed: ${response.statusCode} ${response.body}',
+      );
+    } catch (error) {
+      return CloudSyncResult(
+          ok: false, message: 'Cloud Host stop failed: $error');
     }
   }
 
@@ -3183,7 +3255,10 @@ class CloudSyncService {
 
   Future<Map<String, dynamic>?> runCloudMaintenance(CloudSyncSettings settings,
       {int eventRetentionDays = 30}) async {
-    final identity = store.appIdentity;
+    // Cloud is a relay only. Sync history and snapshots are maintained by the
+    // Host's local database, so there is no remote maintenance operation.
+    return null;
+    /* Legacy remote maintenance call intentionally disabled.
     if (!identity.isHost ||
         !identity.isCloudEnabled ||
         !settings.isConfigured) {
@@ -3215,6 +3290,7 @@ class CloudSyncService {
       debugPrint('Cloud maintenance failed: $error');
       return null;
     }
+    */
   }
 
   Future<Map<String, dynamic>> _downloadCloudSnapshotEnvelope(
@@ -3349,6 +3425,10 @@ class CloudSyncService {
     bool force = false,
     void Function(double value, String label)? onProgress,
   }) async {
+    // Kept as a compatibility shim for older callers. Cloud snapshots are
+    // never uploaded; the Host serves them through the realtime relay.
+    return 0;
+    /* Legacy upload implementation intentionally disabled.
     final identity = store.appIdentity;
     if (!identity.isHost ||
         !identity.isCloudEnabled ||
@@ -3374,6 +3454,7 @@ class CloudSyncService {
       labelPrefix: 'Cloud snapshot',
       onProgress: onProgress,
     );
+    */
   }
 
   Future<int> _pushPendingViaRelay(
@@ -3473,7 +3554,8 @@ class CloudSyncService {
     CloudSyncSettings settings,
   ) async {
     final identity = store.appIdentity;
-    final pending = _syncCore.pendingChangesForTarget('cloud');
+    final pending = _syncCore
+        .pendingChangesForTarget(UnifiedSyncQueueTarget.cloudAuthority);
     if (pending.isEmpty) return true;
     final pendingIds = _syncCore.changeIds(pending);
     final latestSequence = store.latestStoredAuthoritativeSequence;
@@ -3654,20 +3736,15 @@ class CloudSyncService {
       var pushed = 0;
 
       if (identity.isHost) {
-        onProgress?.call(0.10, 'Preparing Host cloud snapshot queue...');
-        await store.ensureHostCloudBootstrapSnapshotQueued();
-        final repairedCloudQueue =
-            await store.repairMissingHostCloudQueueForPendingChanges();
-        if (repairedCloudQueue > 0) {
-          onProgress?.call(0.18,
-              '$repairedCloudQueue missing Host cloud snapshot queue item(s) were repaired...');
-        }
+        final relayReady = await ensureHostRelayReady(settings);
+        if (!relayReady.ok) return relayReady;
         onProgress?.call(0.25, 'Sending Host heartbeat...');
         await sendHostHeartbeat(settings);
         onProgress?.call(0.40, 'Registering Host device...');
         await registerCurrentDevice(settings, transport: 'cloud');
-        final hostPendingCount =
-            _syncCore.pendingChangesForTarget('cloud').length;
+        final hostPendingCount = _syncCore
+            .pendingChangesForTarget(UnifiedSyncQueueTarget.cloudAuthority)
+            .length;
         onProgress?.call(
             0.55, 'Publishing Host changes through Cloud relay...');
         final relayPublished = await _broadcastHostAuthorityViaRelay(settings);
@@ -3679,7 +3756,6 @@ class CloudSyncService {
           );
         }
         pushed = hostPendingCount;
-        await runCloudMaintenance(settings);
         return CloudSyncResult(
           ok: true,
           pushed: pushed,
@@ -3691,7 +3767,8 @@ class CloudSyncService {
       onProgress?.call(0.12, 'Registering Client device...');
       await registerCurrentDevice(settings, transport: 'cloud');
       onProgress?.call(0.22, 'Sending Client requests to Host relay...');
-      pushed += await _pushPendingViaRelay(settings, target: 'cloud_host');
+      pushed += await _pushPendingViaRelay(settings,
+          target: UnifiedSyncQueueTarget.cloudHost);
       return CloudSyncResult(
           ok: true,
           pushed: pushed,
@@ -3768,10 +3845,8 @@ class CloudSyncService {
         return hostResult;
       }
 
-      // Any cloud-enabled Client that has local draft changes should send
-      // them to the Host relay. LAN Clients normally queue to target "host",
-      // so this only affects Web or remote desktop/mobile Clients whose
-      // pending changes target "cloud_host".
+      // Cloud follows the same business rules as LAN. The only difference is
+      // that the connection to the Host goes through the external gateway.
       final clientPush =
           await _runCloudClientRelayPush(settings, onProgress: onProgress);
       pushed += clientPush.pushed;

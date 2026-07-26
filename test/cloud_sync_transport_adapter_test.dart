@@ -461,7 +461,7 @@ void main() {
     });
 
     test(
-        'publishes the full Cloud bootstrap snapshot when creating a pairing code',
+        'announces the Host through the relay when creating a pairing code',
         () async {
       final hostIdentity = AppIdentity.defaults(
         deviceId: 'DV-HOST',
@@ -514,8 +514,7 @@ void main() {
       await Future<void>.delayed(Duration.zero);
 
       expect(result.ok, isTrue);
-      expect(service.publishCalls, 1);
-      expect(service.lastPublishForce, isTrue);
+      expect(service.publishCalls, 0);
       expect(service.heartbeatCalls, 1);
       expect(service.registerCalls, 1);
     });

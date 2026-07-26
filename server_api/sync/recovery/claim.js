@@ -1,6 +1,5 @@
 import { randomBytes } from 'crypto';
 import { sql, assertStoreAllowed, accountTokenFromRequest, sendError, getClientDeviceLimitStatus } from '../../_db.js';
-import { notifySyncChanged } from '../realtime.js';
 
 function asIso(value) {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
@@ -12,10 +11,6 @@ function normalize(value) {
 
 function makeDeviceToken() {
   return `device_${Date.now()}_${randomBytes(24).toString('base64url')}`;
-}
-
-function makeEventId() {
-  return `host_changed_${Date.now()}_${randomBytes(8).toString('hex')}`;
 }
 
 async function ensureRecoveryTables() {
@@ -63,45 +58,6 @@ async function ensureRecoveryTables() {
     )
   `;
   await sql`alter table store_recovery_keys alter column recovery_key_hash set default ''`;
-  await sql`
-    create table if not exists cloud_sync_sequences (
-      store_id text not null,
-      branch_id text not null default 'main',
-      last_sequence bigint not null default 0,
-      updated_at timestamptz not null default now(),
-      primary key (store_id, branch_id)
-    )
-  `;
-  await sql`
-    create table if not exists sync_events (
-      id text primary key,
-      store_id text not null,
-      branch_id text not null default 'main',
-      device_id text not null,
-      entity_type text not null,
-      entity_id text not null,
-      operation text not null,
-      payload jsonb not null default '{}'::jsonb,
-      created_at timestamptz not null default now()
-    )
-  `;
-  await sql`alter table sync_events add column if not exists store_epoch integer not null default 1`;
-  await sql`alter table sync_events add column if not exists sequence bigint not null default 0`;
-  await sql`alter table sync_events add column if not exists event_id text default ''`;
-  await sql`alter table sync_events add column if not exists request_id text default ''`;
-  await sql`alter table sync_events add column if not exists source_command_id text default ''`;
-}
-
-async function allocateServerSequence(storeId, branchId) {
-  const rows = await sql`
-    insert into cloud_sync_sequences (store_id, branch_id, last_sequence, updated_at)
-    values (${storeId}, ${branchId || 'main'}, 1, now())
-    on conflict (store_id, branch_id) do update set
-      last_sequence = cloud_sync_sequences.last_sequence + 1,
-      updated_at = now()
-    returning last_sequence
-  `;
-  return Number(rows[0]?.last_sequence || 0);
 }
 
 async function storeForAccount({ accountId, storeId, branchId }) {
@@ -233,26 +189,10 @@ export default async function handler(req, res) {
         updated_at = now()
     `;
 
-    const eventId = makeEventId();
-    const sequence = await allocateServerSequence(storeId, recoveredBranchId);
-    const payload = {
-      storeId,
-      branchId: recoveredBranchId,
-      oldHostDeviceId,
-      newHostDeviceId: deviceId,
-      activatedAt: asIso(new Date()),
-      reason: 'store_recovery_promote_host',
-      _syncV2: { kind: 'hostChanged', eventId },
-    };
-    await sql`
-      insert into sync_events (
-        id, store_id, branch_id, device_id, entity_type, entity_id, operation, payload, created_at, store_epoch, sequence, event_id, request_id, source_command_id
-      ) values (
-        ${eventId}, ${storeId}, ${recoveredBranchId}, ${deviceId}, 'host_transfer', ${deviceId}, 'HOST_CHANGED', ${JSON.stringify(payload)}, now(), 1, ${sequence}, ${eventId}, '', ''
-      )
-      on conflict (id) do nothing
-    `;
-    notifySyncChanged({ storeId, branchId: recoveredBranchId, latestSequence: sequence });
+    // Host recovery is control-plane state. The Cloud server must not create
+    // a sync event or sequence here; the newly promoted Host owns and emits
+    // its authoritative local history through the Relay.
+    const eventId = `host_changed_${Date.now()}_${randomBytes(8).toString('hex')}`;
 
     return res.status(200).json({
       ok: true,

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import '../../data/app_store.dart';
+import '../../models/app_identity.dart';
 import 'local_database_service.dart';
 
 typedef LanSyncProgressCallback = void Function(double value, String label);
@@ -157,6 +158,7 @@ class LanSyncSettings {
     this.setupComplete = false,
     this.mode = LanSyncDeviceMode.unconfigured,
     this.secret = '',
+    this.pairingCodeExpiresAt,
     this.lastPullCursor,
     this.lastConnectionAt,
     this.lastSyncAt,
@@ -177,6 +179,7 @@ class LanSyncSettings {
   final bool setupComplete;
   final LanSyncDeviceMode mode;
   final String secret;
+  final DateTime? pairingCodeExpiresAt;
   final DateTime? lastPullCursor;
   final DateTime? lastConnectionAt;
   final DateTime? lastSyncAt;
@@ -201,6 +204,7 @@ class LanSyncSettings {
     bool? setupComplete,
     LanSyncDeviceMode? mode,
     String? secret,
+    DateTime? pairingCodeExpiresAt,
     DateTime? lastPullCursor,
     DateTime? lastConnectionAt,
     DateTime? lastSyncAt,
@@ -219,6 +223,7 @@ class LanSyncSettings {
         setupComplete: setupComplete ?? this.setupComplete,
         mode: mode ?? this.mode,
         secret: secret ?? this.secret,
+        pairingCodeExpiresAt: pairingCodeExpiresAt ?? this.pairingCodeExpiresAt,
         lastPullCursor: clearLastPullCursor
             ? null
             : (lastPullCursor ?? this.lastPullCursor),
@@ -239,6 +244,7 @@ class LanSyncSettings {
         'setupComplete': setupComplete,
         'mode': mode.name,
         'secret': secret,
+        'pairingCodeExpiresAt': pairingCodeExpiresAt?.toIso8601String(),
         'lastPullCursor': lastPullCursor?.toIso8601String(),
         'lastConnectionAt': lastConnectionAt?.toIso8601String(),
         'lastSyncAt': lastSyncAt?.toIso8601String(),
@@ -275,6 +281,8 @@ class LanSyncSettings {
       setupComplete: json['setupComplete'] as bool? ?? false,
       mode: mode,
       secret: json['secret'] as String? ?? '',
+      pairingCodeExpiresAt:
+          DateTime.tryParse(json['pairingCodeExpiresAt']?.toString() ?? ''),
       lastPullCursor:
           DateTime.tryParse(json['lastPullCursor'] as String? ?? ''),
       lastConnectionAt:
@@ -400,9 +408,10 @@ class LanSyncSettings {
 }
 
 class LanSyncResult {
-  const LanSyncResult({required this.ok, required this.message});
+  const LanSyncResult({required this.ok, required this.message, this.identity});
   final bool ok;
   final String message;
+  final AppIdentity? identity;
 }
 
 class LanSyncService {

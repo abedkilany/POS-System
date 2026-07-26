@@ -49,6 +49,13 @@ New-Item -ItemType Directory -Force -Path $installerOutDir | Out-Null
 New-Item -ItemType Directory -Force -Path $manifestOutDir | Out-Null
 
 if (-not $SkipFlutterBuild) {
+  # flutter clean removes .dart_tool and the generated plugin symlinks. Rebuild
+  # those links before using --no-pub, otherwise CMake receives stale plugin
+  # paths and fails in generated_plugins.cmake.
+  flutter pub get
+  if ($LASTEXITCODE -ne 0) {
+    throw "Flutter package resolution failed. Run flutter pub get and retry the Windows build."
+  }
   flutter build windows --release --no-pub --dart-define "APP_VERSION=$fullVersion"
   if ($LASTEXITCODE -ne 0) {
     throw "Flutter Windows build failed. Close any running Ventio windows and try again. If package resolution is needed, run flutter pub get when network access is available."

@@ -45,6 +45,13 @@ async function assertHostDevice({ storeId, branchId, hostDeviceId }) {
 }
 
 export default async function handler(req, res) {
+  return res.status(410).json({
+    ok: false,
+    error: 'Cloud sync maintenance is disabled. Sync history is owned by the Host.',
+  });
+
+  /* Legacy Cloud sync database maintenance intentionally disabled. */
+  /* istanbul ignore next */
   try {
     await ensureMaintenanceIndexes();
     if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Method not allowed' });

@@ -81,6 +81,9 @@ class UnifiedSnapshotTransferService {
     onProgress?.call(0.12, '$labelPrefix: requesting manifest...');
     final manifest = await transport.requestManifest(force: force);
     final totalChunks = manifest.totalChunks;
+    if (totalChunks <= 0) {
+      throw StateError('$labelPrefix manifest contains no chunks.');
+    }
     final chunks = <Map<String, dynamic>>[];
 
     for (var ordinal = resumeFromOrdinal; ordinal < totalChunks; ordinal += 1) {
@@ -111,6 +114,10 @@ class UnifiedSnapshotTransferService {
       if (response.ordinal != ordinal) {
         throw StateError(
             '$labelPrefix returned chunk ${response.ordinal}, expected $ordinal.');
+      }
+      if (response.totalChunks > 0 && response.totalChunks != totalChunks) {
+        throw StateError(
+            '$labelPrefix chunk ${ordinal + 1} reports ${response.totalChunks} chunks; expected $totalChunks.');
       }
       chunks.add(response.chunk);
       await transport.ackChunk(ordinal);

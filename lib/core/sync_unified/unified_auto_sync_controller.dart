@@ -12,6 +12,7 @@ import 'lan_sync_transport_adapter.dart';
 import 'unified_sync_policy.dart';
 import 'sync_device_state.dart';
 import 'unified_sync_engine.dart';
+import 'sync_contracts.dart';
 
 typedef AutoSnapshotProgressPresenter = void Function(
     String transport, double value, String label);
@@ -87,9 +88,7 @@ class UnifiedSyncFactory {
   const UnifiedSyncFactory._();
 
   static UnifiedSyncEngine cloudEngine(AppStore store,
-      {CloudSyncSettings? settings,
-      bool enabled = true,
-      http.Client? client}) {
+      {CloudSyncSettings? settings, bool enabled = true, http.Client? client}) {
     final current = settings ?? CloudSyncSettings.load();
     return UnifiedSyncEngine(
       CloudSyncTransportAdapter(
@@ -373,7 +372,7 @@ class UnifiedAutoLanSyncController {
         '[SYNC_TRACE] autoLan:runClientSync start device=${store.deviceId} '
         'queue=${await LocalDatabaseService.pendingSyncQueueCountForTarget('host', readyOnly: false)}',
       );
-      await store.retryFailedSyncQueue(target: 'host');
+      await store.retryFailedSyncQueue(target: UnifiedSyncQueueTarget.host);
       final result =
           await UnifiedSyncFactory.lanEngine(store, settings: settings).syncNow(
         onProgress: _snapshotOnlyProgress('LAN'),

@@ -14,13 +14,6 @@ function asIso(value) {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }
 
-function safeIso(value) {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return date.toISOString();
-}
-
 function normalizeTransport(value) {
   const v = String(value || '').trim().toLowerCase();
   return v === 'lan' || v === 'cloud' ? v : '';
@@ -115,10 +108,6 @@ export default async function handler(req, res) {
       const hostDeviceId = String(body.hostDeviceId || body.host_device_id || '').trim();
       const deviceToken = String(body.deviceToken || body.device_token || req.headers['x-device-token'] || '').trim();
       const storeEpoch = Number(body.storeEpoch || body.store_epoch || 1);
-      const lastAppliedCursor = safeIso(body.lastAppliedCursor || body.last_applied_cursor);
-      const lastAckCursor = safeIso(body.lastAckCursor || body.last_ack_cursor || lastAppliedCursor);
-      const lastAppliedSequence = Math.max(Number(body.lastAppliedSequence || body.last_applied_sequence || 0), 0);
-      const lastAckSequence = Math.max(Number(body.lastAckSequence || body.last_ack_sequence || lastAppliedSequence || 0), 0);
 
       // Hosts can register with their account session. Paired Clients update
       // only themselves with their device-scoped token.
@@ -156,10 +145,10 @@ export default async function handler(req, res) {
       const rows = await sql`
         insert into store_devices (
           store_id, branch_id, device_id, device_name, platform, role, transport, active_transport, last_sync_transport,
-          app_version, store_epoch, device_token, host_device_id, last_applied_cursor, last_ack_cursor, last_applied_sequence, last_ack_sequence, last_ack_at, online, last_seen_at, updated_at
+          app_version, store_epoch, device_token, host_device_id, online, last_seen_at, updated_at
         ) values (
           ${storeId}, ${branchId}, ${deviceId}, ${deviceName}, ${platform}, ${role}, ${transport}, ${activeTransport}, ${lastSyncTransport},
-          ${appVersion}, ${storeEpoch}, ${deviceToken}, ${hostDeviceId}, ${lastAppliedCursor}::timestamptz, ${lastAckCursor}::timestamptz, ${lastAppliedSequence}, ${lastAckSequence}, now(), true, now(), now()
+          ${appVersion}, ${storeEpoch}, ${deviceToken}, ${hostDeviceId}, true, now(), now()
         )
         on conflict (store_id, branch_id, device_id) do update set
           device_name = excluded.device_name,
@@ -172,11 +161,6 @@ export default async function handler(req, res) {
           store_epoch = greatest(store_devices.store_epoch, excluded.store_epoch),
           device_token = case when excluded.device_token <> '' then excluded.device_token else store_devices.device_token end,
           host_device_id = case when excluded.host_device_id <> '' then excluded.host_device_id else store_devices.host_device_id end,
-          last_applied_cursor = greatest(coalesce(store_devices.last_applied_cursor, 'epoch'::timestamptz), coalesce(excluded.last_applied_cursor, store_devices.last_applied_cursor, 'epoch'::timestamptz)),
-          last_ack_cursor = greatest(coalesce(store_devices.last_ack_cursor, 'epoch'::timestamptz), coalesce(excluded.last_ack_cursor, store_devices.last_ack_cursor, 'epoch'::timestamptz)),
-          last_applied_sequence = greatest(coalesce(store_devices.last_applied_sequence, 0), coalesce(excluded.last_applied_sequence, 0)),
-          last_ack_sequence = greatest(coalesce(store_devices.last_ack_sequence, 0), coalesce(excluded.last_ack_sequence, 0)),
-          last_ack_at = case when excluded.last_ack_cursor is not null then now() else store_devices.last_ack_at end,
           online = true,
           last_seen_at = now(),
           updated_at = now()

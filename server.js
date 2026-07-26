@@ -87,6 +87,6 @@ const server = http.createServer(async (req, res) => {
 });
 attachRealtimeServer(server);
 
-server.listen(port, '127.0.0.1', () => {
-  console.log(`Ventio API listening on 127.0.0.1:${port}`);
+server.listen(port, '0.0.0.0', () => {
+  console.log(`Ventio API listening on 0.0.0.0:${port}`);
 });

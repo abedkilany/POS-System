@@ -227,7 +227,9 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
       await _service.startHost(port: _settings.port);
       final migratedSettings =
           savedSettings.withMigratedHostRegistry(_service.store.deviceId);
-      await migratedSettings.copyWith(secret: code).save();
+      await migratedSettings
+          .copyWith(secret: code, pairingCodeExpiresAt: expiresAt)
+          .save();
       return UnifiedPairingCodeResult(
         ok: true,
         message: 'LAN pairing code created.',
@@ -271,8 +273,16 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
     return UnifiedPairingClaimResult(
       ok: result.ok,
       message: result.message,
+      identity: result.identity,
       error: _errorFor(result.ok, result.message),
-      contract: UnifiedPairingClaimContract(snapshotAvailable: result.ok),
+      contract: UnifiedPairingClaimContract(
+        identity: result.identity,
+        storeId: result.identity?.storeId ?? '',
+        branchId: result.identity?.branchId ?? '',
+        hostDeviceId: result.identity?.hostDeviceId ?? '',
+        deviceToken: result.identity?.deviceToken ?? '',
+        snapshotAvailable: result.ok,
+      ),
     );
   }
 
@@ -281,7 +291,7 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
     final effectiveSettings = _settingsWithUnifiedCursor();
     final pendingCount =
         await LocalDatabaseService.pendingSyncQueueCountForTarget(
-      'host',
+      UnifiedSyncQueueTarget.host,
       readyOnly: false,
     );
     final result = await _service.pushPendingOnly(

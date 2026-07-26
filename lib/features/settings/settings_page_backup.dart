@@ -100,7 +100,7 @@ class SettingsBackupActions {
         '[SYNC_TRACE] backupImport:publishHostSnapshot store=${identity.storeId} branch=${identity.branchId}',
       );
       final service = CloudSyncAdminService(store);
-      await service.publishBootstrapSnapshotToCloud(settings, force: true);
+      // Snapshot data remains on the Host and is served through the relay.
       await service.pushPendingForUnifiedEngine(settings);
       SyncDiagnosticsLog.add(
         '[SYNC_TRACE] backupImport:publishHostSnapshotDone store=${identity.storeId} branch=${identity.branchId}',
@@ -391,8 +391,8 @@ class SettingsBackupActions {
         clearLastPullCursor: true,
       );
       await recoverySettings.save();
-      final result = await CloudSyncAdminService(store)
-          .recoverExistingStoreFromCloud(
+      final result =
+          await CloudSyncAdminService(store).recoverExistingStoreFromCloud(
         recoverySettings,
         storeId: storeId,
         branchId: branchId,
@@ -893,9 +893,12 @@ class SettingsBackupActions {
               ? Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(child: group(tr.text('business_data'), businessSections)),
+                    Expanded(
+                        child:
+                            group(tr.text('business_data'), businessSections)),
                     const SizedBox(width: 24),
-                    Expanded(child: group(tr.text('system_data'), systemSections)),
+                    Expanded(
+                        child: group(tr.text('system_data'), systemSections)),
                   ],
                 )
               : Column(

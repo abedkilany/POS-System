@@ -1,5 +1,14 @@
 import '../../models/app_identity.dart';
 
+/// Canonical local queue targets. The transport name is intentionally kept
+/// separate from the queue target so LAN and Cloud use the same Host-facing
+/// semantics while Cloud still routes through its Relay.
+abstract final class UnifiedSyncQueueTarget {
+  static const host = 'host';
+  static const cloudHost = 'cloud_host';
+  static const cloudAuthority = 'cloud';
+}
+
 /// Fix 10B canonical sync contracts.
 ///
 /// These contracts intentionally sit above the existing LAN and Cloud services.
@@ -54,11 +63,14 @@ class UnifiedSyncError {
         if (httpStatus != null) 'httpStatus': httpStatus,
       };
 
-  factory UnifiedSyncError.fromJson(Map<String, dynamic> json) => UnifiedSyncError(
+  factory UnifiedSyncError.fromJson(Map<String, dynamic> json) =>
+      UnifiedSyncError(
         code: UnifiedSyncErrorCodeWire.fromWire(json['code']?.toString()),
         userMessage: json['userMessage']?.toString() ?? '',
         debugMessage: json['debugMessage']?.toString() ?? '',
-        httpStatus: json['httpStatus'] is int ? json['httpStatus'] as int : int.tryParse('${json['httpStatus']}'),
+        httpStatus: json['httpStatus'] is int
+            ? json['httpStatus'] as int
+            : int.tryParse('${json['httpStatus']}'),
       );
 
   static const none = UnifiedSyncError();
@@ -110,7 +122,8 @@ class UnifiedCursorEnvelope {
         if (source.trim().isNotEmpty) 'source': source,
       };
 
-  factory UnifiedCursorEnvelope.fromJson(Map<String, dynamic> json) => UnifiedCursorEnvelope(
+  factory UnifiedCursorEnvelope.fromJson(Map<String, dynamic> json) =>
+      UnifiedCursorEnvelope(
         value: json['value']?.toString() ?? '',
         generatedAt: DateTime.tryParse(json['generatedAt']?.toString() ?? ''),
         source: json['source']?.toString() ?? '',
@@ -152,15 +165,19 @@ class UnifiedPairingContract {
         if (apiBaseUrl.trim().isNotEmpty) 'apiBaseUrl': apiBaseUrl,
       };
 
-  factory UnifiedPairingContract.fromJson(Map<String, dynamic> json) => UnifiedPairingContract(
+  factory UnifiedPairingContract.fromJson(Map<String, dynamic> json) =>
+      UnifiedPairingContract(
         code: json['code']?.toString() ?? '',
-        expiresAt: DateTime.tryParse(json['expiresAt']?.toString() ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0),
+        expiresAt: DateTime.tryParse(json['expiresAt']?.toString() ?? '') ??
+            DateTime.fromMillisecondsSinceEpoch(0),
         transport: json['transport']?.toString() ?? '',
         storeId: json['storeId']?.toString() ?? '',
         branchId: json['branchId']?.toString() ?? '',
         hostDeviceId: json['hostDeviceId']?.toString() ?? '',
         host: json['host']?.toString() ?? '',
-        port: json['port'] is int ? json['port'] as int : int.tryParse('${json['port']}'),
+        port: json['port'] is int
+            ? json['port'] as int
+            : int.tryParse('${json['port']}'),
         apiBaseUrl: json['apiBaseUrl']?.toString() ?? '',
       );
 }
@@ -218,17 +235,29 @@ class UnifiedSnapshotContract {
         'snapshot': snapshot,
       };
 
-  factory UnifiedSnapshotContract.fromJson(Map<String, dynamic> json) => UnifiedSnapshotContract(
-        snapshot: Map<String, dynamic>.from((json['snapshot'] as Map?) ?? const <String, dynamic>{}),
-        generatedAt: DateTime.tryParse(json['generatedAt']?.toString() ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0),
+  factory UnifiedSnapshotContract.fromJson(Map<String, dynamic> json) =>
+      UnifiedSnapshotContract(
+        snapshot: Map<String, dynamic>.from(
+            (json['snapshot'] as Map?) ?? const <String, dynamic>{}),
+        generatedAt: DateTime.tryParse(json['generatedAt']?.toString() ?? '') ??
+            DateTime.fromMillisecondsSinceEpoch(0),
         storeId: json['storeId']?.toString() ?? '',
         branchId: json['branchId']?.toString() ?? '',
         hostDeviceId: json['hostDeviceId']?.toString() ?? '',
-        schemaVersion: json['schemaVersion'] is int ? json['schemaVersion'] as int : int.tryParse('${json['schemaVersion']}') ?? 1,
+        schemaVersion: json['schemaVersion'] is int
+            ? json['schemaVersion'] as int
+            : int.tryParse('${json['schemaVersion']}') ?? 1,
       );
 }
 
-enum UnifiedSyncCommandType { push, pull, rebuild, repair, heartbeat, hostTransfer }
+enum UnifiedSyncCommandType {
+  push,
+  pull,
+  rebuild,
+  repair,
+  heartbeat,
+  hostTransfer
+}
 
 class UnifiedSyncCommandContract {
   const UnifiedSyncCommandContract({

@@ -63,13 +63,6 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
         ),
       );
 
-  UnifiedSyncEngine _cloudEngine(CloudSyncSettings settings) =>
-      UnifiedSyncFactory.cloudEngine(
-        widget.store,
-        settings: settings,
-        enabled: settings.enabled,
-      );
-
   _ConnectMode _mode = _ConnectMode.cloud;
   bool _busy = false;
   String _status = '';
@@ -386,11 +379,33 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       await settings.save();
 
       _setStatus(verifyingPairingCode);
-      final result = await _cloudEngine(settings)
-          .claimPairingCode(code, onProgress: _setSnapshotProgress);
-      if (!result.ok) {
-        _markQrFailed(result.message);
-        _setStatus(result.message, type: _SetupStatus.error);
+      // The pairing code is single-use. If the previous attempt already
+      // registered this device but timed out while downloading the snapshot,
+      // retry the snapshot directly instead of claiming the consumed code.
+      final cloudService = CloudSyncService(widget.store);
+      final existingIdentity = widget.store.appIdentity;
+      late final bool resultOk;
+      late final String resultMessage;
+      if (existingIdentity.isClient && CloudProvisioningStatus.isPending) {
+        final result = await cloudService.rebuildFromCloudHostSnapshot(
+          settings,
+          requestFreshSnapshot: false,
+          onProgress: _setSnapshotProgress,
+        );
+        resultOk = result.ok;
+        resultMessage = result.message;
+      } else {
+        final result = await cloudService.claimPairingCode(
+          settings,
+          code,
+          onProgress: _setSnapshotProgress,
+        );
+        resultOk = result.ok;
+        resultMessage = result.message;
+      }
+      if (!resultOk) {
+        _markQrFailed(resultMessage);
+        _setStatus(resultMessage, type: _SetupStatus.error);
         return;
       }
 

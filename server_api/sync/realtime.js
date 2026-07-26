@@ -4,16 +4,10 @@ import { assertAccountOrDevice, assertStoreAllowed, sendError } from '../_db.js'
 
 const clientsByScope = new Map();
 const tickets = new Map();
-const relayRequests = new Map();
 const ticketTtlMs = 60000;
-const relayRequestTtlMs = 30000;
 
 function scopeKey(storeId, branchId) {
   return `${storeId}::${branchId || 'main'}`;
-}
-
-function requestKey(storeId, branchId, requestId) {
-  return `${scopeKey(storeId, branchId)}::${requestId}`;
 }
 
 function oppositeRole(role) {
@@ -65,21 +59,6 @@ function pruneTickets() {
   }
 }
 
-function pruneRelayRequests() {
-  const now = Date.now();
-  for (const [key, value] of relayRequests.entries()) {
-    if (value.expiresAt <= now) relayRequests.delete(key);
-  }
-}
-
-function removeRelayRequestsForClient(client) {
-  for (const [key, value] of relayRequests.entries()) {
-    if (value.source === client) {
-      relayRequests.delete(key);
-    }
-  }
-}
-
 function decodePacket(raw) {
   try {
     const decoded = JSON.parse(raw.toString());
@@ -98,14 +77,6 @@ function forwardRelayRequest(client, packet) {
   const targetRole = String(
     packet.targetRole || packet.target_role || oppositeRole(client.role),
   ).trim().toLowerCase() || oppositeRole(client.role);
-  const key = requestKey(client.storeId, client.branchId, requestId);
-  relayRequests.set(key, {
-    source: client,
-    requestId,
-    targetRole,
-    expiresAt: Date.now() + relayRequestTtlMs,
-  });
-
   const delivered = broadcast({
     storeId: client.storeId,
     branchId: client.branchId,
@@ -122,7 +93,6 @@ function forwardRelayRequest(client, packet) {
   });
 
   if (!delivered) {
-    relayRequests.delete(key);
     send(client, {
       type: 'relay_response',
       requestId,
@@ -135,18 +105,22 @@ function forwardRelayRequest(client, packet) {
 function forwardRelayResponse(client, packet) {
   const requestId = String(packet.requestId || packet.request_id || '').trim();
   if (!requestId) return;
-  pruneRelayRequests();
-  const key = requestKey(client.storeId, client.branchId, requestId);
-  const pending = relayRequests.get(key);
-  if (!pending) return;
-  relayRequests.delete(key);
-  send(pending.source, {
-    ...packet,
-    type: 'relay_response',
-    requestId,
-    sourceDeviceId: client.deviceId || '',
-    sourceRole: client.role,
-  });
+  const sourceDeviceId = String(
+    packet.sourceDeviceId || packet.source_device_id || '',
+  ).trim();
+  const clients = clientsByScope.get(scopeKey(client.storeId, client.branchId));
+  if (!clients) return;
+  for (const item of clients) {
+    if (item.deviceId !== sourceDeviceId) continue;
+    send(item, {
+      ...packet,
+      type: 'relay_response',
+      requestId,
+      sourceDeviceId: client.deviceId || '',
+      sourceRole: client.role,
+    });
+    return;
+  }
 }
 
 function forwardSignal(client, packet) {
@@ -263,7 +237,6 @@ export function attachRealtimeServer(server) {
         ws.on('message', (raw) => {
           const packet = decodePacket(raw);
           if (!packet) return;
-          pruneRelayRequests();
           const type = String(packet.type || '').trim();
           if (!type) return;
           if (type === 'relay_request') {
@@ -285,11 +258,9 @@ export function attachRealtimeServer(server) {
         });
         ws.on('close', () => {
           removeClient(client);
-          removeRelayRequestsForClient(client);
         });
         ws.on('error', () => {
           removeClient(client);
-          removeRelayRequestsForClient(client);
         });
       });
     } catch (error) {
@@ -299,18 +270,15 @@ export function attachRealtimeServer(server) {
   });
 
   const heartbeat = setInterval(() => {
-    pruneRelayRequests();
     for (const clients of clientsByScope.values()) {
       for (const client of clients) {
         if (client.socket.readyState !== WebSocket.OPEN) {
           removeClient(client);
-          removeRelayRequestsForClient(client);
           continue;
         }
         if (!client.alive) {
           client.socket.terminate();
           removeClient(client);
-          removeRelayRequestsForClient(client);
           continue;
         }
         client.alive = false;
