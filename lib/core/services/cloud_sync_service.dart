@@ -1421,18 +1421,39 @@ class CloudSyncService {
             );
             onProgress?.call(
                 0.78, 'Importing Cloud snapshot chunks locally...');
-            return UnifiedPairingSnapshotFlow.applyForCloud(
-              store: store,
-              envelope: envelope,
-              markSnapshotApplied: () => _markHostSnapshotGenerationApplied(
-                'cloud',
-                envelope,
-              ),
-              markProvisioningComplete: () =>
-                  CloudProvisioningStatus.markComplete(
-                message: 'Full Store data downloaded.',
-              ),
+            SyncDiagnosticsLog.add(
+              '[CLOUD_PAIRING] snapshot received attempt=$attempt '
+              'format=${envelope['snapshotFormat']} '
+              'version=${envelope['snapshotVersion']} '
+              'storeId=${envelope['storeId'] ?? envelope['store_id'] ?? ''} '
+              'branchId=${envelope['branchId'] ?? envelope['branch_id'] ?? ''} '
+              'collections=${(envelope['collections'] as Map?)?.length ?? 0}',
             );
+            try {
+              final applied = await UnifiedPairingSnapshotFlow.applyForCloud(
+                store: store,
+                envelope: envelope,
+                markSnapshotApplied: () =>
+                    _markHostSnapshotGenerationApplied('cloud', envelope),
+                markProvisioningComplete: () =>
+                    CloudProvisioningStatus.markComplete(
+                  message: 'Full Store data downloaded.',
+                ),
+              );
+              SyncDiagnosticsLog.add(
+                '[CLOUD_PAIRING] snapshot applied attempt=$attempt '
+                'verificationOk=${applied.verificationOk} '
+                'verification=${applied.verificationMessage} '
+                'sequence=${applied.sequence} cursor=${applied.cursor.toIso8601String()}',
+              );
+              return applied;
+            } catch (error, stackTrace) {
+              SyncDiagnosticsLog.add(
+                '[CLOUD_PAIRING] snapshot apply failed attempt=$attempt '
+                'error=$error stack=${stackTrace.toString().split('\n').take(3).join(' | ')}',
+              );
+              rethrow;
+            }
           },
         );
 
@@ -1455,6 +1476,9 @@ class CloudSyncService {
         }
 
         if (retryResult.lastFailure != null) {
+          final failure = retryResult.lastFailure.toString();
+          SyncDiagnosticsLog.add(
+              '[CLOUD_PAIRING] all snapshot attempts failed lastFailure=$failure');
           request = await requestFreshHostSnapshot(
             settings,
             requestedAt: requestedAt,
@@ -1466,7 +1490,7 @@ class CloudSyncService {
             );
             return CloudPairingClaimResult(
               ok: false,
-              message: request.message,
+              message: '${request.message} Snapshot error: $failure',
               identity: store.appIdentity,
             );
           }
@@ -1479,8 +1503,8 @@ class CloudSyncService {
         return CloudPairingClaimResult(
           ok: false,
           message: request.ok
-              ? 'Device registered, but the full Store snapshot is not complete yet. Keep the Host online and try again.'
-              : request.message,
+              ? 'Device registered, but the full Store snapshot is not complete yet. Keep the Host online and try again. Snapshot error: ${retryResult.lastFailure ?? 'unknown'}'
+              : '${request.message} Snapshot error: ${retryResult.lastFailure ?? 'unknown'}',
           identity: store.appIdentity,
         );
       }
