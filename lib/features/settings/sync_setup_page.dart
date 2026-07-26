@@ -431,6 +431,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
             _addConnectionLog('CLOUD ${(value * 100).round()}%: $label');
             _setSnapshotProgress(value, label);
           },
+          onDiagnostic: _addConnectionLog,
         );
         resultOk = result.ok;
         resultMessage = result.message;

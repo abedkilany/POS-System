@@ -1299,7 +1299,8 @@ class CloudSyncService {
 
   Future<CloudPairingClaimResult> claimPairingCode(
       CloudSyncSettings settings, String code,
-      {CloudSyncProgressCallback? onProgress}) async {
+      {CloudSyncProgressCallback? onProgress,
+      void Function(String message)? onDiagnostic}) async {
     final current = store.appIdentity;
     if (!UnifiedSyncPolicy.canClaimCloudPairingCode(current)) {
       return const CloudPairingClaimResult(
@@ -1421,14 +1422,15 @@ class CloudSyncService {
             );
             onProgress?.call(
                 0.78, 'Importing Cloud snapshot chunks locally...');
-            SyncDiagnosticsLog.add(
-              '[CLOUD_PAIRING] snapshot received attempt=$attempt '
-              'format=${envelope['snapshotFormat']} '
-              'version=${envelope['snapshotVersion']} '
-              'storeId=${envelope['storeId'] ?? envelope['store_id'] ?? ''} '
-              'branchId=${envelope['branchId'] ?? envelope['branch_id'] ?? ''} '
-              'collections=${(envelope['collections'] as Map?)?.length ?? 0}',
-            );
+            final snapshotReceivedMessage =
+                '[CLOUD_PAIRING] snapshot received attempt=$attempt '
+                'format=${envelope['snapshotFormat']} '
+                'version=${envelope['snapshotVersion']} '
+                'storeId=${envelope['storeId'] ?? envelope['store_id'] ?? ''} '
+                'branchId=${envelope['branchId'] ?? envelope['branch_id'] ?? ''} '
+                'collections=${(envelope['collections'] as Map?)?.length ?? 0}';
+            SyncDiagnosticsLog.add(snapshotReceivedMessage);
+            onDiagnostic?.call(snapshotReceivedMessage);
             try {
               final applied = await UnifiedPairingSnapshotFlow.applyForCloud(
                 store: store,
@@ -1440,18 +1442,20 @@ class CloudSyncService {
                   message: 'Full Store data downloaded.',
                 ),
               );
-              SyncDiagnosticsLog.add(
-                '[CLOUD_PAIRING] snapshot applied attempt=$attempt '
-                'verificationOk=${applied.verificationOk} '
-                'verification=${applied.verificationMessage} '
-                'sequence=${applied.sequence} cursor=${applied.cursor.toIso8601String()}',
-              );
+              final snapshotAppliedMessage =
+                  '[CLOUD_PAIRING] snapshot applied attempt=$attempt '
+                  'verificationOk=${applied.verificationOk} '
+                  'verification=${applied.verificationMessage} '
+                  'sequence=${applied.sequence} cursor=${applied.cursor.toIso8601String()}';
+              SyncDiagnosticsLog.add(snapshotAppliedMessage);
+              onDiagnostic?.call(snapshotAppliedMessage);
               return applied;
             } catch (error, stackTrace) {
-              SyncDiagnosticsLog.add(
-                '[CLOUD_PAIRING] snapshot apply failed attempt=$attempt '
-                'error=$error stack=${stackTrace.toString().split('\n').take(3).join(' | ')}',
-              );
+              final snapshotFailureMessage =
+                  '[CLOUD_PAIRING] snapshot apply failed attempt=$attempt '
+                  'error=$error stack=${stackTrace.toString().split('\n').take(3).join(' | ')}';
+              SyncDiagnosticsLog.add(snapshotFailureMessage);
+              onDiagnostic?.call(snapshotFailureMessage);
               rethrow;
             }
           },
@@ -1478,6 +1482,8 @@ class CloudSyncService {
         if (retryResult.lastFailure != null) {
           final failure = retryResult.lastFailure.toString();
           SyncDiagnosticsLog.add(
+              '[CLOUD_PAIRING] all snapshot attempts failed lastFailure=$failure');
+          onDiagnostic?.call(
               '[CLOUD_PAIRING] all snapshot attempts failed lastFailure=$failure');
           request = await requestFreshHostSnapshot(
             settings,

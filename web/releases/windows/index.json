@@ -5,9 +5,9 @@
                          "url":  "/releases/windows/VentioSetup-1.0.44-build44.exe",
                          "version":  "1.0.44",
                          "build":  44,
-                         "size":  17862468,
-                         "sha256":  "615673773a93a13fc4d193f40d76de40e135a9fe9816e17a243cec1613385df9",
-                         "publishedAt":  "2026-07-26T17:09:44Z"
+                         "size":  17860610,
+                         "sha256":  "36b188b48ac569c26960594b282e0696cecacdacad877733ee1cb181d7a0979e",
+                         "publishedAt":  "2026-07-26T17:27:40Z"
                      }
                  ]
 }
