@@ -403,6 +403,7 @@ class UnifiedAutoCloudSyncController {
   bool _running = false;
   bool _disposed = false;
   bool _signalLoopRunning = false;
+  bool _hostRealtimeLoopRunning = false;
   bool _workRefreshInFlight = false;
   String _lastSettingsSignature = '';
 
@@ -447,7 +448,13 @@ class UnifiedAutoCloudSyncController {
     store.addListener(_onStoreChanged);
 
     _restartPeriodicTimer(settings);
-    unawaited(_signalLoop());
+    // A Cloud Host must keep a realtime channel open. The heartbeat only
+    // marks the Host online; snapshot requests are delivered over this stream.
+    if (store.appIdentity.isHost) {
+      unawaited(_hostRealtimeLoop());
+    } else {
+      unawaited(_signalLoop());
+    }
     if (_cloudReady(settings)) {
       await _tick();
     }
@@ -460,6 +467,43 @@ class UnifiedAutoCloudSyncController {
     _debounceTimer?.cancel();
     _timer = null;
     _debounceTimer = null;
+  }
+
+  Future<void> _hostRealtimeLoop() async {
+    if (_hostRealtimeLoopRunning) return;
+    _hostRealtimeLoopRunning = true;
+    var retrySeconds = 1;
+    try {
+      while (!_disposed && store.appIdentity.isHost) {
+        final settings = CloudSyncSettings.load();
+        if (!_cloudReady(settings)) {
+          await Future<void>.delayed(const Duration(seconds: 5));
+          continue;
+        }
+        try {
+          SyncDiagnosticsLog.add(
+              '[SYNC_TRACE] autoCloud:hostRealtime connecting');
+          final service = CloudSyncService(store);
+          await for (final _ in service.watchRealtimeSignals(settings)) {
+            if (_disposed || !store.appIdentity.isHost) break;
+          }
+          if (!_disposed) {
+            SyncDiagnosticsLog.add(
+                '[SYNC_TRACE] autoCloud:hostRealtime closed; reconnecting');
+          }
+          retrySeconds = 1;
+        } catch (error) {
+          SyncDiagnosticsLog.add(
+              '[SYNC_TRACE] autoCloud:hostRealtime error=$error retry=${retrySeconds}s');
+          if (!_disposed) {
+            await Future<void>.delayed(Duration(seconds: retrySeconds));
+            retrySeconds = (retrySeconds * 2).clamp(1, 30);
+          }
+        }
+      }
+    } finally {
+      _hostRealtimeLoopRunning = false;
+    }
   }
 
   Future<void> _signalLoop() async {
