@@ -34,7 +34,12 @@ class UnifiedPairingSnapshotFlow {
       afterImport: (_) => markSnapshotApplied(),
       verifyLocalData: true,
     );
-    if (store.needsInitialAdminSetup) {
+    // A Client may legitimately have no local admin yet after importing the
+    // Host snapshot. That is a setup state, not a snapshot failure. Only fail
+    // the pairing when the imported business data actually failed integrity
+    // verification; the previous needsInitialAdminSetup check rejected the
+    // successful message "Business data integrity check passed.".
+    if (!applied.verificationOk) {
       throw StateError(applied.verificationMessage);
     }
     await SyncDeviceStateStore.recordSyncResult(
