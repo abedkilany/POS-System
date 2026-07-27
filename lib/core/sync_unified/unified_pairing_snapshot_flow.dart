@@ -46,6 +46,10 @@ class UnifiedPairingSnapshotFlow {
       ackSequence: applied.sequence,
     );
     await markProvisioningComplete();
+    // Pairing may be completed from Settings while the user is already
+    // logged in. Saving the transport settings alone does not notify the
+    // running auto-sync controller, so publish the new client state now.
+    store.refreshUi();
     return UnifiedPairingSnapshotSuccess(
       identity: store.appIdentity,
       cursor: applied.cursor,
@@ -72,6 +76,10 @@ class UnifiedPairingSnapshotFlow {
     );
     await saveLanSettings(applied.cursor);
     await saveCursorAndState(applied.cursor, applied.sequence);
+    // The LAN settings are persisted inside the pairing flow. Notify the
+    // existing app/controller so it starts using the new Client transport
+    // immediately instead of leaving subsequent changes pending locally.
+    store.refreshUi();
     return UnifiedPairingSnapshotSuccess(
       identity: store.appIdentity,
       cursor: applied.cursor,
