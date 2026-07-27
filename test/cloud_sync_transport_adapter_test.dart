@@ -55,6 +55,7 @@ class _FakeCloudSyncService extends CloudSyncService {
   Future<CloudSyncResult> rebuildFromCloudHostSnapshot(
     CloudSyncSettings settings, {
     CloudSyncProgressCallback? onProgress,
+    void Function(String message)? onDiagnostic,
     bool requestFreshSnapshot = true,
     String expectedSnapshotGeneration = '',
     String expectedRestoreCommandId = '',
@@ -105,6 +106,7 @@ class _SpyCloudSyncService extends CloudSyncService {
   Future<CloudSyncResult> rebuildFromCloudHostSnapshot(
     CloudSyncSettings settings, {
     CloudSyncProgressCallback? onProgress,
+    void Function(String message)? onDiagnostic,
     bool requestFreshSnapshot = true,
     String expectedSnapshotGeneration = '',
     String expectedRestoreCommandId = '',
@@ -113,6 +115,7 @@ class _SpyCloudSyncService extends CloudSyncService {
     return super.rebuildFromCloudHostSnapshot(
       settings,
       onProgress: onProgress,
+      onDiagnostic: onDiagnostic,
       requestFreshSnapshot: requestFreshSnapshot,
       expectedSnapshotGeneration: expectedSnapshotGeneration,
       expectedRestoreCommandId: expectedRestoreCommandId,
@@ -153,6 +156,7 @@ class _OfflineCloudSyncService extends CloudSyncService {
   Future<CloudSyncResult> rebuildFromCloudHostSnapshot(
     CloudSyncSettings settings, {
     CloudSyncProgressCallback? onProgress,
+    void Function(String message)? onDiagnostic,
     bool requestFreshSnapshot = true,
     String expectedSnapshotGeneration = '',
     String expectedRestoreCommandId = '',
@@ -175,6 +179,7 @@ class _DrainAwareCloudSyncService extends CloudSyncService {
   Future<CloudSyncResult> rebuildFromCloudHostSnapshot(
     CloudSyncSettings settings, {
     CloudSyncProgressCallback? onProgress,
+    void Function(String message)? onDiagnostic,
     bool requestFreshSnapshot = true,
     String expectedSnapshotGeneration = '',
     String expectedRestoreCommandId = '',
@@ -460,8 +465,7 @@ void main() {
       expect(offlineService.rebuildCallCount, 0);
     });
 
-    test(
-        'announces the Host through the relay when creating a pairing code',
+    test('announces the Host through the relay when creating a pairing code',
         () async {
       final hostIdentity = AppIdentity.defaults(
         deviceId: 'DV-HOST',

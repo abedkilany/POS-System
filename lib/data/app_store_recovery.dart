@@ -932,17 +932,41 @@ class AppStoreRecoveryService {
   }
 
   AppIdentity _identityForLanSnapshotImport(Map<String, dynamic> decoded) {
+    final local = store.appIdentity;
     final raw = decoded['appIdentity'];
-    if (raw is Map) {
-      final imported = AppIdentity.fromJson(Map<String, dynamic>.from(raw));
-      return imported.copyWith(
+    if (raw is! Map) {
+      return local.copyWith(
         deviceId: store._deviceId,
         platform: store._detectPlatform(),
       );
     }
-    return store.appIdentity.copyWith(
+
+    final imported = AppIdentity.fromJson(Map<String, dynamic>.from(raw));
+
+    // A LAN snapshot contains the Host identity. It must never replace the
+    // live Client identity, otherwise the Client can inherit the Host's role,
+    // sync mode, or active Cloud transport immediately after pairing.
+    return local.copyWith(
+      storeId: imported.storeId.isNotEmpty ? imported.storeId : local.storeId,
+      branchId:
+          imported.branchId.isNotEmpty ? imported.branchId : local.branchId,
       deviceId: store._deviceId,
       platform: store._detectPlatform(),
+      deviceRole: DeviceRole.client,
+      appRole: imported.appRole,
+      syncMode: local.syncMode == SyncMode.localOnly
+          ? SyncMode.lanOnly
+          : local.syncMode,
+      hostDeviceId:
+          imported.deviceId.isNotEmpty ? imported.deviceId : local.hostDeviceId,
+      cloudTenantId: imported.cloudTenantId.isNotEmpty
+          ? imported.cloudTenantId
+          : local.cloudTenantId,
+      deviceToken: local.deviceToken.trim().isNotEmpty
+          ? local.deviceToken
+          : imported.deviceToken,
+      // Deliberately preserve local.activeSyncTransport. The transport was
+      // selected by the pairing flow and is not part of Host snapshot data.
     );
   }
 
