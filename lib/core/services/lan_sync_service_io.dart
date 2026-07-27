@@ -863,6 +863,13 @@ class LanSyncService {
     if (!force && cached != null && age < const Duration(minutes: 5)) {
       return cached;
     }
+
+    // Snapshot export reads the in-memory business collections. The Host can
+    // start with these collections unloaded while SQLite already contains the
+    // real data, which would produce an apparently successful but empty
+    // Client bootstrap. Always hydrate the data before building a fresh
+    // snapshot (pairing uses force=true).
+    await store.ensureHeavyDataLoaded();
     final envelope = await store.exportUnifiedSnapshotEnvelope(
       kind: 'full_store',
       maxItemsPerChunk: 300,
@@ -1384,7 +1391,14 @@ class LanSyncService {
             )
             .save(),
         saveCursorAndState: (cursor, sequence) =>
-            _saveCursorAndRecordState(settings, cursor, sequence: sequence),
+            // saveLanSettings runs immediately before this callback. Reload
+            // the persisted settings so cursor bookkeeping cannot overwrite
+            // the newly saved client/setup state with the pre-pairing object.
+            _saveCursorAndRecordState(
+          LanSyncSettings.load(),
+          cursor,
+          sequence: sequence,
+        ),
       );
       onProgress?.call(1.0, 'LAN snapshot is ready.');
       return LanSyncResult(
