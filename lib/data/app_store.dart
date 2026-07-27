@@ -14507,6 +14507,18 @@ class AppStore extends ChangeNotifier {
   Future<Map<String, List<dynamic>>> _unifiedSnapshotCollectionPayloads({
     Set<String>? sectionIds,
   }) async {
+    // Snapshots are DB-first. The in-memory user/role lists may still be
+    // stale after a direct SQLite write or a lazy startup, so never export
+    // login data from memory without refreshing it from the authoritative DB.
+    final persistedRoles = await _loadRoles();
+    final persistedUsers = await _loadUsers();
+    _roles
+      ..clear()
+      ..addAll(persistedRoles);
+    _users
+      ..clear()
+      ..addAll(persistedUsers);
+
     final warehouseInventory =
         await LocalDatabaseService.getWarehouseInventoriesFromSqlite();
     final stockOperations =

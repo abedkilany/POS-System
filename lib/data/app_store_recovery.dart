@@ -40,7 +40,8 @@ class AppStoreRecoveryService {
     final importedSyncChanges = restoreFullDeviceBackup
         ? (decoded['syncChanges'] as List<dynamic>? ?? const <dynamic>[])
             .map(
-              (item) => SyncChange.fromJson(Map<String, dynamic>.from(item as Map)),
+              (item) =>
+                  SyncChange.fromJson(Map<String, dynamic>.from(item as Map)),
             )
             .toList(growable: false)
         : const <SyncChange>[];
@@ -79,8 +80,7 @@ class AppStoreRecoveryService {
             await LocalDatabaseService.replaceBusinessEntityJsonListImmediate(
               storageKey,
               rows,
-              sortIndices:
-                  List<int?>.generate(rows.length, (index) => index),
+              sortIndices: List<int?>.generate(rows.length, (index) => index),
             );
           }
 
@@ -98,7 +98,8 @@ class AppStoreRecoveryService {
           }
 
           await replaceSection('products', AppStore._productsKey, 'products');
-          await replaceSection('customers', AppStore._customersKey, 'customers');
+          await replaceSection(
+              'customers', AppStore._customersKey, 'customers');
           await replaceSection('sales', AppStore._salesKey, 'sales');
           await replaceSection(
             'saleQuotations',
@@ -121,13 +122,15 @@ class AppStoreRecoveryService {
               _snapshotListMaps(decoded, 'manufacturingOrders'),
             );
           }
-          await replaceSection('suppliers', AppStore._suppliersKey, 'suppliers');
+          await replaceSection(
+              'suppliers', AppStore._suppliersKey, 'suppliers');
           await replaceSection(
             'supplierProductPrices',
             AppStore._supplierProductPricesKey,
             'supplierProductPrices',
           );
-          await replaceSection('priceLists', AppStore._priceListsKey, 'priceLists');
+          await replaceSection(
+              'priceLists', AppStore._priceListsKey, 'priceLists');
           await replaceSection(
             'productPrices',
             AppStore._productPricesKey,
@@ -153,34 +156,43 @@ class AppStoreRecoveryService {
             AppStore._inventoryCostLayersKey,
             'inventoryCostLayers',
           );
-          await replaceSection('categories', AppStore._categoriesKey, 'categories');
+          await replaceSection(
+              'categories', AppStore._categoriesKey, 'categories');
           await replaceSection('brands', AppStore._brandsKey, 'brands');
           await replaceSection('units', AppStore._unitsKey, 'units');
           await replaceSection('expenses', AppStore._expensesKey, 'expenses');
-          await replaceSection('purchases', AppStore._purchasesKey, 'purchases');
+          await replaceSection(
+              'purchases', AppStore._purchasesKey, 'purchases');
           await replaceSection(
             'stockMovements',
             AppStore._stockMovementsKey,
             'stockMovements',
           );
           await LocalDatabaseService.replaceWarehouseInventoryRowsImmediate(
-            _snapshotListMaps(decoded, 'warehouseInventory', aliases: <String>['warehouse_inventory']),
+            _snapshotListMaps(decoded, 'warehouseInventory',
+                aliases: <String>['warehouse_inventory']),
           );
           await LocalDatabaseService.replaceStockOperationsRowsImmediate(
-            _snapshotListMaps(decoded, 'stockOperations', aliases: <String>['stock_operations']),
+            _snapshotListMaps(decoded, 'stockOperations',
+                aliases: <String>['stock_operations']),
           );
-          await LocalDatabaseService.replaceInventoryReconciliationsRowsImmediate(
-            _snapshotListMaps(decoded, 'inventoryReconciliations', aliases: <String>['inventory_reconciliations']),
+          await LocalDatabaseService
+              .replaceInventoryReconciliationsRowsImmediate(
+            _snapshotListMaps(decoded, 'inventoryReconciliations',
+                aliases: <String>['inventory_reconciliations']),
           );
-          await LocalDatabaseService.replaceInventoryMigrationAdjustmentsRowsImmediate(
-            _snapshotListMaps(decoded, 'inventoryMigrationAdjustments', aliases: <String>['inventory_migration_adjustments']),
+          await LocalDatabaseService
+              .replaceInventoryMigrationAdjustmentsRowsImmediate(
+            _snapshotListMaps(decoded, 'inventoryMigrationAdjustments',
+                aliases: <String>['inventory_migration_adjustments']),
           );
           await replaceSection(
             'inventoryCounts',
             AppStore._inventoryCountsKey,
             'inventoryCounts',
           );
-          await replaceSection('warehouses', AppStore._warehousesKey, 'warehouses');
+          await replaceSection(
+              'warehouses', AppStore._warehousesKey, 'warehouses');
           await replaceSection(
             'accountTransactions',
             AppStore._accountTransactionsKey,
@@ -220,7 +232,8 @@ class AppStoreRecoveryService {
 
           if (wants('counters')) {
             final importedCounter =
-                (decoded['invoiceCounter'] as num?)?.toInt() ?? store._invoiceCounter;
+                (decoded['invoiceCounter'] as num?)?.toInt() ??
+                    store._invoiceCounter;
             final importedPurchaseCounter =
                 (decoded['purchaseCounter'] as num?)?.toInt() ??
                     store._purchaseCounter;
@@ -254,13 +267,15 @@ class AppStoreRecoveryService {
 
           if (wants('appIdentity')) {
             final importedStoreId = decoded['storeId']?.toString().trim() ?? '';
-            final importedBranchId = decoded['branchId']?.toString().trim() ?? '';
+            final importedBranchId =
+                decoded['branchId']?.toString().trim() ?? '';
             if (restoreFullDeviceBackup &&
                 decoded['appIdentity'] is Map &&
                 !preservePairedHostIdentity) {
               store._appIdentity = AppIdentity.fromJson(
                 Map<String, dynamic>.from(decoded['appIdentity'] as Map),
-              ).copyWith(deviceId: store._deviceId, platform: store._detectPlatform());
+              ).copyWith(
+                  deviceId: store._deviceId, platform: store._detectPlatform());
             } else {
               store._appIdentity = currentIdentityBeforeImport.copyWith(
                 storeId: preservePairedHostIdentity
@@ -313,7 +328,8 @@ class AppStoreRecoveryService {
               ..addAll(importedSyncQueue);
             await LocalDatabaseService.setString(
               AppStore._syncQueueKey,
-              jsonEncode(importedSyncQueue.map((item) => item.toJson()).toList()),
+              jsonEncode(
+                  importedSyncQueue.map((item) => item.toJson()).toList()),
             );
           }
 
@@ -427,33 +443,43 @@ class AppStoreRecoveryService {
             await LocalDatabaseService.replaceBusinessEntityJsonListImmediate(
               storageKey,
               merged,
-              sortIndices:
-                  List<int?>.generate(merged.length, (index) => index),
+              sortIndices: List<int?>.generate(merged.length, (index) => index),
             );
           }
 
-          await mergeRows(AppStore._productsKey, _snapshotListMaps(decoded, 'products'));
-          await mergeRows(AppStore._customersKey, _snapshotListMaps(decoded, 'customers'));
-          await mergeRows(AppStore._salesKey, _snapshotListMaps(decoded, 'sales'));
+          await mergeRows(
+              AppStore._productsKey, _snapshotListMaps(decoded, 'products'));
+          await mergeRows(
+              AppStore._customersKey, _snapshotListMaps(decoded, 'customers'));
+          await mergeRows(
+              AppStore._salesKey, _snapshotListMaps(decoded, 'sales'));
           await mergeRows(
             AppStore._saleQuotationsKey,
-            _snapshotListMaps(decoded, 'saleQuotations', aliases: <String>['quotations']),
+            _snapshotListMaps(decoded, 'saleQuotations',
+                aliases: <String>['quotations']),
           );
-          await mergeRows(AppStore._deliveryNotesKey, _snapshotListMaps(decoded, 'deliveryNotes'));
-          await mergeRows(AppStore._billsOfMaterialsKey, _snapshotListMaps(decoded, 'billsOfMaterials'));
-          await mergeRows(AppStore._manufacturingOrdersKey, _snapshotListMaps(decoded, 'manufacturingOrders'));
-          await mergeRows(AppStore._suppliersKey, _snapshotListMaps(decoded, 'suppliers'));
+          await mergeRows(AppStore._deliveryNotesKey,
+              _snapshotListMaps(decoded, 'deliveryNotes'));
+          await mergeRows(AppStore._billsOfMaterialsKey,
+              _snapshotListMaps(decoded, 'billsOfMaterials'));
+          await mergeRows(AppStore._manufacturingOrdersKey,
+              _snapshotListMaps(decoded, 'manufacturingOrders'));
+          await mergeRows(
+              AppStore._suppliersKey, _snapshotListMaps(decoded, 'suppliers'));
           await mergeRows(
             AppStore._supplierProductPricesKey,
             _snapshotListMaps(decoded, 'supplierProductPrices'),
           );
-          await mergeRows(AppStore._priceListsKey, _snapshotListMaps(decoded, 'priceLists'));
-          await mergeRows(AppStore._productPricesKey, _snapshotListMaps(decoded, 'productPrices'));
+          await mergeRows(AppStore._priceListsKey,
+              _snapshotListMaps(decoded, 'priceLists'));
+          await mergeRows(AppStore._productPricesKey,
+              _snapshotListMaps(decoded, 'productPrices'));
           await mergeRows(
             AppStore._productPriceOverridesKey,
             _snapshotListMaps(decoded, 'productPriceOverrides'),
           );
-          await mergeRows(AppStore._productCostsKey, _snapshotListMaps(decoded, 'productCosts'));
+          await mergeRows(AppStore._productCostsKey,
+              _snapshotListMaps(decoded, 'productCosts'));
           await mergeRows(
             AppStore._costingMethodHistoryKey,
             _snapshotListMaps(decoded, 'costingMethodHistory'),
@@ -462,36 +488,52 @@ class AppStoreRecoveryService {
             AppStore._inventoryCostLayersKey,
             _snapshotListMaps(decoded, 'inventoryCostLayers'),
           );
-          await mergeRows(AppStore._categoriesKey, _snapshotListMaps(decoded, 'categories'));
-          await mergeRows(AppStore._brandsKey, _snapshotListMaps(decoded, 'brands'));
-          await mergeRows(AppStore._unitsKey, _snapshotListMaps(decoded, 'units'));
-          await mergeRows(AppStore._expensesKey, _snapshotListMaps(decoded, 'expenses'));
-          await mergeRows(AppStore._purchasesKey, _snapshotListMaps(decoded, 'purchases'));
-          await mergeRows(AppStore._stockMovementsKey, _snapshotListMaps(decoded, 'stockMovements'));
+          await mergeRows(AppStore._categoriesKey,
+              _snapshotListMaps(decoded, 'categories'));
+          await mergeRows(
+              AppStore._brandsKey, _snapshotListMaps(decoded, 'brands'));
+          await mergeRows(
+              AppStore._unitsKey, _snapshotListMaps(decoded, 'units'));
+          await mergeRows(
+              AppStore._expensesKey, _snapshotListMaps(decoded, 'expenses'));
+          await mergeRows(
+              AppStore._purchasesKey, _snapshotListMaps(decoded, 'purchases'));
+          await mergeRows(AppStore._stockMovementsKey,
+              _snapshotListMaps(decoded, 'stockMovements'));
           await LocalDatabaseService.replaceWarehouseInventoryRowsImmediate(
-            _snapshotListMaps(decoded, 'warehouseInventory', aliases: <String>['warehouse_inventory']),
+            _snapshotListMaps(decoded, 'warehouseInventory',
+                aliases: <String>['warehouse_inventory']),
           );
           await LocalDatabaseService.replaceStockOperationsRowsImmediate(
-            _snapshotListMaps(decoded, 'stockOperations', aliases: <String>['stock_operations']),
+            _snapshotListMaps(decoded, 'stockOperations',
+                aliases: <String>['stock_operations']),
           );
-          await LocalDatabaseService.replaceInventoryReconciliationsRowsImmediate(
-            _snapshotListMaps(decoded, 'inventoryReconciliations', aliases: <String>['inventory_reconciliations']),
+          await LocalDatabaseService
+              .replaceInventoryReconciliationsRowsImmediate(
+            _snapshotListMaps(decoded, 'inventoryReconciliations',
+                aliases: <String>['inventory_reconciliations']),
           );
-          await LocalDatabaseService.replaceInventoryMigrationAdjustmentsRowsImmediate(
-            _snapshotListMaps(decoded, 'inventoryMigrationAdjustments', aliases: <String>['inventory_migration_adjustments']),
+          await LocalDatabaseService
+              .replaceInventoryMigrationAdjustmentsRowsImmediate(
+            _snapshotListMaps(decoded, 'inventoryMigrationAdjustments',
+                aliases: <String>['inventory_migration_adjustments']),
           );
-          await mergeRows(AppStore._warehousesKey, _snapshotListMaps(decoded, 'warehouses'));
+          await mergeRows(AppStore._warehousesKey,
+              _snapshotListMaps(decoded, 'warehouses'));
           await mergeRows(
             AppStore._accountTransactionsKey,
             _snapshotListMaps(decoded, 'accountTransactions'),
           );
-          await mergeRows(AppStore._rolesKey, _snapshotListMaps(decoded, 'roles'));
-          await mergeRows(AppStore._usersKey, _snapshotListMaps(decoded, 'users'));
+          await mergeRows(
+              AppStore._rolesKey, _snapshotListMaps(decoded, 'roles'));
+          await mergeRows(
+              AppStore._usersKey, _snapshotListMaps(decoded, 'users'));
 
           if (decoded['storeProfile'] is Map) {
             await LocalDatabaseService.setString(
               AppStore._storeProfileKey,
-              jsonEncode(Map<String, dynamic>.from(decoded['storeProfile'] as Map)),
+              jsonEncode(
+                  Map<String, dynamic>.from(decoded['storeProfile'] as Map)),
             );
           }
           if (decoded['inventoryCostingMethod'] != null) {
@@ -523,20 +565,22 @@ class AppStoreRecoveryService {
           }
 
           final mergedSyncChanges = <SyncChange>[...store.syncChanges];
-          final incomingSyncChanges = (decoded['syncChanges'] as List<dynamic>? ?? const <dynamic>[])
-              .map(
-                (item) => SyncChange.fromJson(
-                  Map<String, dynamic>.from(item as Map),
-                ),
-              )
-              .toList(growable: false);
+          final incomingSyncChanges =
+              (decoded['syncChanges'] as List<dynamic>? ?? const <dynamic>[])
+                  .map(
+                    (item) => SyncChange.fromJson(
+                      Map<String, dynamic>.from(item as Map),
+                    ),
+                  )
+                  .toList(growable: false);
           for (final incoming in incomingSyncChanges) {
             final normalized = markSynced
                 ? incoming.copyWith(isSynced: true, syncedAt: now)
                 : incoming.deviceId == store.deviceId || incoming.isSynced
                     ? incoming
                     : incoming.copyWith(isSynced: true, syncedAt: now);
-            final index = mergedSyncChanges.indexWhere((item) => item.id == normalized.id);
+            final index = mergedSyncChanges
+                .indexWhere((item) => item.id == normalized.id);
             if (index == -1) {
               mergedSyncChanges.add(normalized);
             } else if (_syncChangeUpdatedAt(normalized)
@@ -560,27 +604,30 @@ class AppStoreRecoveryService {
           if (decoded['appIdentity'] is Map) {
             store._appIdentity = AppIdentity.fromJson(
               Map<String, dynamic>.from(decoded['appIdentity'] as Map),
-            ).copyWith(deviceId: store._deviceId, platform: store._detectPlatform());
+            ).copyWith(
+                deviceId: store._deviceId, platform: store._detectPlatform());
             await LocalDatabaseService.setString(
               AppStore._appIdentityKey,
               jsonEncode(store._appIdentity!.toJson()),
             );
           }
 
-          final incomingSyncQueue = (decoded['syncQueue'] as List<dynamic>? ?? const <dynamic>[])
-              .map(
-                (item) => SyncQueueItem.fromJson(
-                  Map<String, dynamic>.from(item as Map),
-                ),
-              )
-              .toList(growable: false);
+          final incomingSyncQueue =
+              (decoded['syncQueue'] as List<dynamic>? ?? const <dynamic>[])
+                  .map(
+                    (item) => SyncQueueItem.fromJson(
+                      Map<String, dynamic>.from(item as Map),
+                    ),
+                  )
+                  .toList(growable: false);
           if (incomingSyncQueue.isNotEmpty) {
             store._syncQueue
               ..clear()
               ..addAll(incomingSyncQueue);
             await LocalDatabaseService.setString(
               AppStore._syncQueueKey,
-              jsonEncode(incomingSyncQueue.map((item) => item.toJson()).toList()),
+              jsonEncode(
+                  incomingSyncQueue.map((item) => item.toJson()).toList()),
             );
           }
         });
@@ -641,8 +688,7 @@ class AppStoreRecoveryService {
             await LocalDatabaseService.replaceBusinessEntityJsonListImmediate(
               storageKey,
               rows,
-              sortIndices:
-                  List<int?>.generate(rows.length, (index) => index),
+              sortIndices: List<int?>.generate(rows.length, (index) => index),
             );
           }
 
@@ -671,28 +717,39 @@ class AppStoreRecoveryService {
               : _snapshotListMaps(decoded, 'syncQueue');
 
           final writes = <Future<void>>[
-            replaceRows(AppStore._productsKey, _snapshotListMaps(decoded, 'products')),
-            replaceRows(AppStore._customersKey, _snapshotListMaps(decoded, 'customers')),
-            replaceRows(AppStore._salesKey, _snapshotListMaps(decoded, 'sales')),
+            replaceRows(
+                AppStore._productsKey, _snapshotListMaps(decoded, 'products')),
+            replaceRows(AppStore._customersKey,
+                _snapshotListMaps(decoded, 'customers')),
+            replaceRows(
+                AppStore._salesKey, _snapshotListMaps(decoded, 'sales')),
             replaceRows(
               AppStore._saleQuotationsKey,
-              _snapshotListMaps(decoded, 'saleQuotations', aliases: <String>['quotations']),
+              _snapshotListMaps(decoded, 'saleQuotations',
+                  aliases: <String>['quotations']),
             ),
-            replaceRows(AppStore._deliveryNotesKey, _snapshotListMaps(decoded, 'deliveryNotes')),
-            replaceRows(AppStore._billsOfMaterialsKey, _snapshotListMaps(decoded, 'billsOfMaterials')),
-            replaceRows(AppStore._manufacturingOrdersKey, _snapshotListMaps(decoded, 'manufacturingOrders')),
-            replaceRows(AppStore._suppliersKey, _snapshotListMaps(decoded, 'suppliers')),
+            replaceRows(AppStore._deliveryNotesKey,
+                _snapshotListMaps(decoded, 'deliveryNotes')),
+            replaceRows(AppStore._billsOfMaterialsKey,
+                _snapshotListMaps(decoded, 'billsOfMaterials')),
+            replaceRows(AppStore._manufacturingOrdersKey,
+                _snapshotListMaps(decoded, 'manufacturingOrders')),
+            replaceRows(AppStore._suppliersKey,
+                _snapshotListMaps(decoded, 'suppliers')),
             replaceRows(
               AppStore._supplierProductPricesKey,
               _snapshotListMaps(decoded, 'supplierProductPrices'),
             ),
-            replaceRows(AppStore._priceListsKey, _snapshotListMaps(decoded, 'priceLists')),
-            replaceRows(AppStore._productPricesKey, _snapshotListMaps(decoded, 'productPrices')),
+            replaceRows(AppStore._priceListsKey,
+                _snapshotListMaps(decoded, 'priceLists')),
+            replaceRows(AppStore._productPricesKey,
+                _snapshotListMaps(decoded, 'productPrices')),
             replaceRows(
               AppStore._productPriceOverridesKey,
               _snapshotListMaps(decoded, 'productPriceOverrides'),
             ),
-            replaceRows(AppStore._productCostsKey, _snapshotListMaps(decoded, 'productCosts')),
+            replaceRows(AppStore._productCostsKey,
+                _snapshotListMaps(decoded, 'productCosts')),
             replaceRows(
               AppStore._costingMethodHistoryKey,
               _snapshotListMaps(decoded, 'costingMethodHistory'),
@@ -701,11 +758,16 @@ class AppStoreRecoveryService {
               AppStore._inventoryCostLayersKey,
               _snapshotListMaps(decoded, 'inventoryCostLayers'),
             ),
-            replaceRows(AppStore._categoriesKey, _snapshotListMaps(decoded, 'categories')),
-            replaceRows(AppStore._brandsKey, _snapshotListMaps(decoded, 'brands')),
-            replaceRows(AppStore._unitsKey, _snapshotListMaps(decoded, 'units')),
-            replaceRows(AppStore._expensesKey, _snapshotListMaps(decoded, 'expenses')),
-            replaceRows(AppStore._purchasesKey, _snapshotListMaps(decoded, 'purchases')),
+            replaceRows(AppStore._categoriesKey,
+                _snapshotListMaps(decoded, 'categories')),
+            replaceRows(
+                AppStore._brandsKey, _snapshotListMaps(decoded, 'brands')),
+            replaceRows(
+                AppStore._unitsKey, _snapshotListMaps(decoded, 'units')),
+            replaceRows(
+                AppStore._expensesKey, _snapshotListMaps(decoded, 'expenses')),
+            replaceRows(AppStore._purchasesKey,
+                _snapshotListMaps(decoded, 'purchases')),
             replaceRows(AppStore._stockMovementsKey, importedStockMovements),
             LocalDatabaseService.replaceWarehouseInventoryRowsImmediate(
               _snapshotListMaps(
@@ -728,21 +790,26 @@ class AppStoreRecoveryService {
                 aliases: <String>['inventory_reconciliations'],
               ),
             ),
-            LocalDatabaseService.replaceInventoryMigrationAdjustmentsRowsImmediate(
+            LocalDatabaseService
+                .replaceInventoryMigrationAdjustmentsRowsImmediate(
               _snapshotListMaps(
                 decoded,
                 'inventoryMigrationAdjustments',
                 aliases: <String>['inventory_migration_adjustments'],
               ),
             ),
-            replaceRows(AppStore._inventoryCountsKey, _snapshotListMaps(decoded, 'inventoryCounts')),
-            replaceRows(AppStore._warehousesKey, _snapshotListMaps(decoded, 'warehouses')),
+            replaceRows(AppStore._inventoryCountsKey,
+                _snapshotListMaps(decoded, 'inventoryCounts')),
+            replaceRows(AppStore._warehousesKey,
+                _snapshotListMaps(decoded, 'warehouses')),
             replaceRows(
               AppStore._accountTransactionsKey,
               _snapshotListMaps(decoded, 'accountTransactions'),
             ),
-            replaceRows(AppStore._rolesKey, _snapshotListMaps(decoded, 'roles')),
-            replaceRows(AppStore._usersKey, _snapshotListMaps(decoded, 'users')),
+            replaceRows(
+                AppStore._rolesKey, _snapshotListMaps(decoded, 'roles')),
+            replaceRows(
+                AppStore._usersKey, _snapshotListMaps(decoded, 'users')),
             LocalDatabaseService.setString(
               AppStore._inventoryCostingMethodKey,
               _snapshotScalarString(
@@ -761,12 +828,14 @@ class AppStoreRecoveryService {
             ),
             LocalDatabaseService.setString(
               AppStore._invoiceCounterKey,
-              ((decoded['invoiceCounter'] as num?)?.toInt() ?? store._invoiceCounter)
+              ((decoded['invoiceCounter'] as num?)?.toInt() ??
+                      store._invoiceCounter)
                   .toString(),
             ),
             LocalDatabaseService.setString(
               AppStore._purchaseCounterKey,
-              ((decoded['purchaseCounter'] as num?)?.toInt() ?? store._purchaseCounter)
+              ((decoded['purchaseCounter'] as num?)?.toInt() ??
+                      store._purchaseCounter)
                   .toString(),
             ),
             LocalDatabaseService.setString(
@@ -803,7 +872,8 @@ class AppStoreRecoveryService {
           } else if (decoded['appIdentity'] is Map) {
             store._appIdentity = AppIdentity.fromJson(
               Map<String, dynamic>.from(decoded['appIdentity'] as Map),
-            ).copyWith(deviceId: store._deviceId, platform: store._detectPlatform());
+            ).copyWith(
+                deviceId: store._deviceId, platform: store._detectPlatform());
             writes.add(
               LocalDatabaseService.setString(
                 AppStore._appIdentityKey,
@@ -907,8 +977,10 @@ class AppStoreRecoveryService {
   Future<List<Map<String, dynamic>>> _readRows(String storageKey) async {
     final db = SqliteMigrationManager.database;
     if (db == null) return const <Map<String, dynamic>>[];
-    final raw = await BusinessSqliteStore.readEntityListJsonByKey(db, storageKey);
-    if (raw == null || raw.trim().isEmpty) return const <Map<String, dynamic>>[];
+    final raw =
+        await BusinessSqliteStore.readEntityListJsonByKey(db, storageKey);
+    if (raw == null || raw.trim().isEmpty)
+      return const <Map<String, dynamic>>[];
     try {
       final decoded = jsonDecode(raw);
       if (decoded is! List) return const <Map<String, dynamic>>[];
@@ -947,7 +1019,8 @@ class AppStoreRecoveryService {
       final id = idReader(row);
       if (id.isEmpty) continue;
       final current = byId[id];
-      if (current == null || _rowUpdatedAt(row).isAfter(_rowUpdatedAt(current))) {
+      if (current == null ||
+          _rowUpdatedAt(row).isAfter(_rowUpdatedAt(current))) {
         byId[id] = Map<String, dynamic>.from(row);
       }
     }
@@ -966,6 +1039,16 @@ class AppStoreRecoveryService {
     }
     store._rememberLogin =
         LocalDatabaseService.getString(AppStore._rememberLoginKey) == 'true';
+    // Snapshot imports write the authoritative users/roles directly to
+    // SQLite. Reload them before restoring the session; otherwise Login
+    // continues to validate against the pre-import in-memory list (usually
+    // the default local admin) and the synced user appears to be missing.
+    store._roles
+      ..clear()
+      ..addAll(await store._loadRoles());
+    store._users
+      ..clear()
+      ..addAll(await store._loadUsers());
     await store._loadSessionPermissionsFromStorage();
     await store._restoreActiveUserFromStorage();
     await store._refreshAuthFlags();

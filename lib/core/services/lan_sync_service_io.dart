@@ -1352,7 +1352,10 @@ class LanSyncService {
         port: port,
         token: clientIdentity.deviceToken,
         deviceId: clientIdentity.deviceId,
-        force: false,
+        // A new Client must never bootstrap from the Host's short-lived
+        // snapshot cache; the Host may have just created users or changed
+        // roles since that cache was built.
+        force: true,
         onProgress: onProgress,
       );
       onProgress?.call(0.74, 'Importing LAN snapshot chunks locally...');
