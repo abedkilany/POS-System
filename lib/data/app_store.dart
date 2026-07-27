@@ -535,6 +535,7 @@ class AppStore extends ChangeNotifier {
   final Map<String, Future<void>> _deferredGroupLoadFutures =
       <String, Future<void>>{};
   final Set<String> _deferredGroupLoadCompleted = <String>{};
+  final Map<String, Object> _deferredGroupLoadErrors = <String, Object>{};
 
   bool get isReady => _isReady;
   int get productsRevision => _productsRevision;
@@ -680,12 +681,18 @@ class AppStore extends ChangeNotifier {
       action,
       category: 'app_store',
       details: 'deferred_group',
-    ).catchError((error, stackTrace) {
-      debugPrint('Deferred group load failed for $key: $error');
-      debugPrint('$stackTrace');
-    }).whenComplete(() {
+    ).then<void>(
+      (_) {
+        _deferredGroupLoadErrors.remove(key);
+        _deferredGroupLoadCompleted.add(key);
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        _deferredGroupLoadErrors[key] = error;
+        debugPrint('Deferred group load failed for $key: $error');
+        debugPrint('$stackTrace');
+      },
+    ).whenComplete(() {
       _deferredGroupLoadFutures.remove(key);
-      _deferredGroupLoadCompleted.add(key);
     });
     _deferredGroupLoadFutures[key] = future;
     return future;
@@ -953,7 +960,7 @@ class AppStore extends ChangeNotifier {
     await ensureWarehousesLoaded();
   }
 
-  Future<void> ensureHeavyDataLoaded() async {
+  Future<void> ensureHeavyDataLoaded({bool failOnError = false}) async {
     await ensureProductsLoaded();
     await ensureCustomersLoaded();
     await ensureSalesLoaded();
@@ -979,6 +986,12 @@ class AppStore extends ChangeNotifier {
     _heavyDataLoadCompleted = true;
     _ledgerDataLoadCompleted = true;
     _syncDataLoadCompleted = true;
+    if (failOnError && _deferredGroupLoadErrors.isNotEmpty) {
+      final details = _deferredGroupLoadErrors.entries
+          .map((entry) => '${entry.key}: ${entry.value}')
+          .join(' | ');
+      throw StateError('Snapshot data loading failed: $details');
+    }
   }
 
   List<Product> get products {
@@ -14632,6 +14645,9 @@ class AppStore extends ChangeNotifier {
     int maxItemsPerChunk = 250,
     int maxEncodedPayloadBytes = 900 * 1024,
   }) async {
+    if (kind != 'login_bootstrap') {
+      await ensureHeavyDataLoaded(failOnError: true);
+    }
     final identity = appIdentity;
     final generatedAt = DateTime.now().toIso8601String();
     final jobId = '${DateTime.now().microsecondsSinceEpoch}-$_deviceId-$kind';
