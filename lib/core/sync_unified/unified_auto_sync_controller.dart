@@ -185,6 +185,10 @@ class UnifiedAutoLanSyncController {
     final settings = LanSyncSettings.load();
     _lastSettingsSignature = _settingsSignature(settings);
 
+    // A LAN-only Host is the authority; it must not retain legacy queue rows
+    // that were incorrectly targeted back to the Host itself.
+    await store.settleLegacyLanHostQueue();
+
     final allowed = _lanAllowedForCurrentRole(settings);
     SyncDiagnosticsLog.add(
       '[SYNC_TRACE] autoLan:start device=${store.deviceId} '

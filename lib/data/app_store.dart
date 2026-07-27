@@ -8056,19 +8056,16 @@ class AppStore extends ChangeNotifier {
     // - Web/remote desktop clients cannot reach LAN directly, so they send drafts
     //   to a Cloud relay inbox. The Host later pulls that inbox, applies the
     //   changes, and republishes them as authoritative sync_events.
-    final isLanHost = _isLanHostConfigured;
     final target = identity.isHost && identity.isCloudEnabled
         ? 'cloud'
-        : isLanHost
+        : isLanClient
             ? 'host'
-            : isLanClient
-                ? 'host'
-                : (identity.isClient && activeTransport == 'cloud')
+            : (identity.isClient && activeTransport == 'cloud')
+                ? 'cloud_host'
+                : (identity.platform == AppPlatformType.web &&
+                        activeTransport == 'cloud')
                     ? 'cloud_host'
-                    : (identity.platform == AppPlatformType.web &&
-                            activeTransport == 'cloud')
-                        ? 'cloud_host'
-                        : 'local';
+                    : 'local';
     if (target == 'local') return null;
     final item = SyncQueueItem(
       id: '$changeId-$target',
@@ -18147,6 +18144,22 @@ class AppStore extends ChangeNotifier {
     }
     await _saveSyncStateOnly();
     notifyListeners();
+  }
+
+  /// LAN-only Hosts are already the authority for their local changes. Older
+  /// builds incorrectly queued those changes toward `host`, where no client
+  /// push loop runs, leaving a permanent pending row on the Host.
+  Future<void> settleLegacyLanHostQueue() async {
+    await ensureSyncDataLoaded();
+    if (!appIdentity.isHost || appIdentity.isCloudEnabled) return;
+    final ids = _syncQueue
+        .where((item) => item.target == 'host' && item.status != 'synced')
+        .map((item) => item.changeId)
+        .where((changeId) => _syncChanges.any(
+              (change) => change.id == changeId && change.deviceId == _deviceId,
+            ))
+        .toList(growable: false);
+    if (ids.isNotEmpty) await markSyncChangesSyncedByIds(ids);
   }
 
   Future<void> markSyncQueueChangesInProgress(
