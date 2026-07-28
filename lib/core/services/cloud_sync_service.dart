@@ -3843,9 +3843,6 @@ class CloudSyncService {
           ok: false, message: 'Cloud API URL and token are required.');
     }
 
-    final drain = await _cloudClientNeedsDrainResult();
-    if (drain != null) return drain;
-
     try {
       var pushed = 0;
 
