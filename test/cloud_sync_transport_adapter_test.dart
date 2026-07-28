@@ -347,6 +347,27 @@ void main() {
       );
     });
 
+    test('does not upload a login bootstrap snapshot to Cloud', () async {
+      var requestCount = 0;
+      final service = CloudSyncService(
+        store,
+        client: MockClient((request) async {
+          requestCount += 1;
+          return http.Response('{}', 200);
+        }),
+      );
+
+      final uploaded = await service.publishLoginBootstrapSnapshotToCloud(
+        const CloudSyncSettings(
+          enabled: true,
+          apiBaseUrl: 'https://sync.test',
+        ),
+      );
+
+      expect(uploaded, 0);
+      expect(requestCount, 0);
+    });
+
     test('preserves the cloud sequence after a rebuild', () async {
       final result = await adapter.rebuildFromHostSnapshot();
 
@@ -493,6 +514,8 @@ void main() {
         hostStore,
         client: MockClient((request) async {
           expect(request.url.path, '/api/sync/pairing/create');
+          final requestBody = jsonDecode(request.body) as Map<String, dynamic>;
+          expect(requestBody['code'], matches(RegExp(r'^[A-Za-z0-9]{16}$')));
           return http.Response(
             jsonEncode({
               'ok': true,

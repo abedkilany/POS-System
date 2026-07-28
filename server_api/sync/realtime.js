@@ -74,9 +74,10 @@ function decodePacket(raw) {
 function forwardRelayRequest(client, packet) {
   const requestId = String(packet.requestId || packet.request_id || '').trim();
   if (!requestId) return;
-  const targetRole = String(
-    packet.targetRole || packet.target_role || oppositeRole(client.role),
-  ).trim().toLowerCase() || oppositeRole(client.role);
+  // Relay requests are always peer-to-peer across the Host/Client boundary.
+  // Do not let a connected device select an arbitrary role or use the relay
+  // as a same-role broadcast channel.
+  const targetRole = oppositeRole(client.role);
   const delivered = broadcast({
     storeId: client.storeId,
     branchId: client.branchId,
@@ -206,7 +207,12 @@ export function notifyHostRequests({ storeId, branchId = 'main', pendingRequests
 }
 
 export function attachRealtimeServer(server) {
-  const wss = new WebSocketServer({ noServer: true });
+  // Payloads are streamed through memory only. Keep a bounded frame size so
+  // an oversized relay message cannot consume unbounded server memory.
+  const wss = new WebSocketServer({
+    noServer: true,
+    maxPayload: 25 * 1024 * 1024,
+  });
 
   server.on('upgrade', async (request, socket, head) => {
     const url = new URL(request.url || '/', 'http://localhost');
@@ -235,6 +241,9 @@ export function attachRealtimeServer(server) {
         addClient(client);
         send(client, { type: 'realtime_welcome', changed: false });
         ws.on('message', (raw) => {
+          // The server intentionally does not persist or inspect business
+          // payloads. It only routes the already-authenticated frame to the
+          // opposite peer in the same store/branch scope.
           const packet = decodePacket(raw);
           if (!packet) return;
           const type = String(packet.type || '').trim();

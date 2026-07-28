@@ -194,7 +194,9 @@ export default async function handler(req, res) {
     });
 
     await sql`delete from device_pairing_codes where expires_at < now() or claimed_at is not null`;
-    let code = makeCode();
+    const requestedCode = String(body.code || '').trim();
+    const codePattern = /^[A-Za-z0-9]{16}$/;
+    let code = codePattern.test(requestedCode) ? requestedCode : makeCode();
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const existing = await sql`select code from device_pairing_codes where code = ${code} limit 1`;
       if (!existing.length) break;

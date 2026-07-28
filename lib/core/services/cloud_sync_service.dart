@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -43,6 +44,13 @@ class CloudSyncSettings {
   }
 
   static const _autoSyncKey = 'cloud_auto_sync_enabled';
+
+  static String generatePairingCode() {
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+    final random = Random.secure();
+    return List.generate(16, (_) => alphabet[random.nextInt(alphabet.length)])
+        .join();
+  }
   static const _intervalKey = 'cloud_auto_sync_interval_seconds';
   static const int defaultIntervalSeconds = 30;
   static const int minIntervalSeconds = 5;
@@ -1145,6 +1153,10 @@ class CloudSyncService {
           ok: false, message: 'Cloud Sync is not ready yet.');
     }
     try {
+      // Generate the one-time code on the Host, like LAN. The Cloud API only
+      // brokers the short-lived pairing claim; it must not invent or own the
+      // Host's pairing secret.
+      final localPairingCode = CloudSyncSettings.generatePairingCode();
       // Local Host devices are allowed to request a Cloud pairing code without
       // an online account session. The platform permission is enforced by the
       // server from app_stores.cloud_sync_enabled, so the local app must not
@@ -1159,6 +1171,7 @@ class CloudSyncService {
               'hostDeviceId': store.deviceId,
               'hostDeviceName': identity.deviceName,
               'transport': transport,
+              'code': localPairingCode,
               'ttlMinutes': ttlMinutes,
               'recoveryKey': identity.recoveryKey,
             }),
@@ -2597,7 +2610,12 @@ class CloudSyncService {
         );
         final accepted = await _syncCore.acceptClientChangesOnHost(
           changes,
-          mirrorToCloud: false,
+          // Cloud is a transport relay only. Once the Host accepts a Client
+          // draft, enqueue the new Host-authoritative event for the normal
+          // Cloud publish path just like LAN does for a Cloud-enabled Host.
+          // The relay ACK alone only confirms receipt of the draft; it must
+          // not be the point at which the Client considers the change final.
+          mirrorToCloud: true,
           verifyApplied: true,
         );
         // Keep Cloud peer progress consistent with LAN. The sequence here is
@@ -3505,27 +3523,11 @@ class CloudSyncService {
     bool force = false,
     void Function(double value, String label)? onProgress,
   }) async {
-    final identity = store.appIdentity;
-    if (!identity.isHost ||
-        !identity.isCloudEnabled ||
-        !settings.isConfigured) {
-      return 0;
-    }
-    await store.removeLegacyCloudBootstrapSnapshotQueue();
-    final chunks = await store.exportCloudLoginBootstrapSnapshotChunks();
-    if (chunks.isEmpty) return 0;
-    return const UnifiedSnapshotTransferService().uploadChunks(
-      _CloudSnapshotPushTransport(
-        settings: settings,
-        headers: _headers(settings),
-        client: _client,
-      ),
-      chunks,
-      force: force,
-      preserveExisting: true,
-      labelPrefix: 'Cloud login snapshot',
-      onProgress: onProgress,
-    );
+    // Cloud is a transport relay only. The Host must never upload business
+    // snapshots to the Cloud API, including the old login bootstrap path.
+    // New Clients obtain their snapshot from the Host through the realtime
+    // relay in `_CloudSnapshotRelayPullTransport`.
+    return 0;
   }
 
   Future<int> publishBootstrapSnapshotToCloud(
@@ -4114,55 +4116,5 @@ class _CloudRelaySnapshotPullTransport
     // Relay snapshot chunks are retrieved directly from the Host memory cache.
     // The transfer service keeps this hook so the relay transport still fits
     // the same shared pipeline as LAN and HTTP.
-  }
-}
-
-class _CloudSnapshotPushTransport implements UnifiedSnapshotChunkPushTransport {
-  _CloudSnapshotPushTransport({
-    required this.settings,
-    required this.headers,
-    required this.client,
-  });
-
-  final CloudSyncSettings settings;
-  final Map<String, String> headers;
-  final http.Client client;
-
-  @override
-  Future<void> uploadChunk(Map<String, dynamic> chunk,
-      {required bool force, required bool preserveExisting}) async {
-    final body = Map<String, dynamic>.from(chunk);
-    body['force'] = force;
-    body['preserveExisting'] = preserveExisting;
-    http.Response? response;
-    Object? lastError;
-    for (var attempt = 1; attempt <= 3; attempt += 1) {
-      try {
-        response = await client
-            .post(
-              settings.endpoint('/api/sync/bootstrap-snapshot'),
-              headers: headers,
-              body: jsonEncode(body),
-            )
-            .timeout(const Duration(seconds: 30));
-        if (response.statusCode != 429 && response.statusCode < 500) break;
-      } catch (error) {
-        lastError = error;
-      }
-      if (attempt < 3) {
-        await Future<void>.delayed(Duration(milliseconds: 500 * attempt));
-      }
-    }
-    if (response == null) {
-      throw StateError('Failed to upload snapshot chunk: $lastError');
-    }
-    if (response.statusCode == 409 && !force) {
-      throw StateError(
-          'A Cloud provisioning snapshot is already running. Try again after it finishes or use force rebuild.');
-    }
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw StateError(
-          'Failed to upload snapshot chunk: ${response.statusCode} ${response.body}');
-    }
   }
 }
