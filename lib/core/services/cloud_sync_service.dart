@@ -3592,9 +3592,13 @@ class CloudSyncService {
           }
           if (rejected.isNotEmpty) await _syncCore.markPushRejected(rejected);
           if (target == 'cloud_host') {
-            await _syncCore.markPushAcknowledged(ackIds,
-                fallbackIds: pendingIds);
+            // The relay ACK only confirms that the Host accepted the draft.
+            // The change becomes final after the Client pulls the Host's
+            // authoritative event. Marking it synced here can lose a change
+            // when the following pull is interrupted or returns no data.
+            await _syncCore.markPushSubmitted(ackIds);
           } else {
+            // Host-originated Cloud changes are already authoritative locally.
             await _syncCore.markPushAcknowledged(ackIds,
                 fallbackIds: pendingIds);
           }
