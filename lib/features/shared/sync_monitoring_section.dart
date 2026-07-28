@@ -566,30 +566,49 @@ String _pendingChangesForHostPeer(
   required HostPeerSyncState? state,
   required CloudDeviceStatus? cloudDevice,
 }) {
-  final ackSequence =
-      state?.lastAckSequence ?? cloudDevice?.lastAckSequence ?? 0;
+  final ackSequence = _hostPeerAckSequence(state, cloudDevice);
   final ackCursor = state?.lastAckCursor ??
       cloudDevice?.lastAckCursor ??
       cloudDevice?.lastAckAt;
   var count = 0;
   for (final change in store.syncChanges) {
     if (change.deviceId == deviceId) continue;
-    final sequencePending = change.sequence > ackSequence;
-    final cursorPending =
-        ackCursor == null || change.createdAt.isAfter(ackCursor);
-    if (sequencePending || cursorPending) count++;
+    final pending = ackSequence > 0 && change.sequence > 0
+        ? change.sequence > ackSequence
+        : ackCursor == null || change.createdAt.isAfter(ackCursor);
+    if (pending) count++;
   }
   return '$count';
+}
+
+int _hostPeerAckSequence(
+  HostPeerSyncState? state,
+  CloudDeviceStatus? cloudDevice,
+) {
+  final local = state?.lastAckSequence ?? 0;
+  final cloud = cloudDevice?.lastAckSequence ?? 0;
+  return local > cloud ? local : cloud;
+}
+
+DateTime? _latestSyncDate(DateTime? current, DateTime? candidate) {
+  if (current == null) return candidate;
+  if (candidate == null) return current;
+  return candidate.isAfter(current) ? candidate : current;
 }
 
 DateTime? _lastSuccessfulSyncForHostPeer({
   required HostPeerSyncState? state,
   required CloudDeviceStatus? cloudDevice,
 }) {
-  return state?.lastAckCursor ??
-      state?.lastAppliedHostCursor ??
-      cloudDevice?.lastAckAt ??
-      cloudDevice?.lastAckCursor;
+  DateTime? latest;
+  latest = _latestSyncDate(latest, state?.lastAckCursor);
+  latest = _latestSyncDate(latest, state?.lastAppliedHostCursor);
+  latest = _latestSyncDate(latest, cloudDevice?.lastAckAt);
+  latest = _latestSyncDate(latest, cloudDevice?.lastAckCursor);
+  if (latest == null && _hostPeerAckSequence(state, cloudDevice) > 0) {
+    latest = _latestSyncDate(state?.updatedAt, cloudDevice?.lastSeenAt);
+  }
+  return latest;
 }
 
 DateTime? _lastSeenForHostPeer({
@@ -961,8 +980,7 @@ DataRow _hostPeerRow(
           deviceId: deviceId,
           state: state,
           cloudDevice: cloudDevice))),
-      DataCell(Text(
-          '${state?.lastAckSequence ?? cloudDevice?.lastAckSequence ?? 0}')),
+      DataCell(Text('${_hostPeerAckSequence(state, cloudDevice)}')),
       DataCell(Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -1154,8 +1172,7 @@ class _HostPeerMonitoringCard extends StatelessWidget {
                   cloudDevice: cloudDevice)),
           _Line(
               title: tr.text('last_ack_sequence'),
-              value:
-                  '${state?.lastAckSequence ?? cloudDevice?.lastAckSequence ?? 0}'),
+              value: '${_hostPeerAckSequence(state, cloudDevice)}'),
           const SizedBox(height: 8),
           LayoutBuilder(
             builder: (context, constraints) {

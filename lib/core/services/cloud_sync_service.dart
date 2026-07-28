@@ -1472,6 +1472,27 @@ class CloudSyncService {
             debugPrint(
                 'Cloud pairing completed with verification warnings: ${applied.verificationMessage}');
           }
+          onProgress?.call(0.94, 'Publishing this device sync state...');
+          final registration =
+              await registerCurrentDevice(settings, transport: 'cloud');
+          if (!registration.ok) {
+            final registrationFailure =
+                '[CLOUD_PAIRING] final device state publish failed '
+                'sequence=${applied.sequence} message=${registration.message}';
+            SyncDiagnosticsLog.add(registrationFailure);
+            onDiagnostic?.call(registrationFailure);
+            await CloudProvisioningStatus.markPending(
+              requestedAt: requestedAt,
+              message:
+                  'Store data is installed, but the final Cloud sync state is still pending.',
+            );
+            return CloudPairingClaimResult(
+              ok: false,
+              message:
+                  'Store data was downloaded, but Cloud could not confirm this device sync state. Keep the Host online and try again. ${registration.message}',
+              identity: store.appIdentity,
+            );
+          }
           onProgress?.call(1.0, 'Cloud snapshot is ready.');
           final successMessage = applied.verificationOk
               ? 'Device paired successfully. Full Store data downloaded. You can sign in now.'
