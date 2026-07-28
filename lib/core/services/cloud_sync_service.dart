@@ -722,10 +722,14 @@ class CloudSyncService {
     // block the pull immediately following the push; otherwise the unified
     // push -> pull cycle deadlocks forever. The next push recovers submitted
     // rows if the authoritative pull was interrupted.
-    return store
-        .pendingSyncChangesForTarget(UnifiedSyncQueueTarget.cloudHost,
-            readyOnly: false)
-        .isNotEmpty;
+    final outstanding = store.syncQueue.where((item) =>
+        item.target == UnifiedSyncQueueTarget.cloudHost &&
+        item.status != 'synced' &&
+        item.status != 'rejected');
+    // Pending/in-progress/failed work must pause a rebuild or pull. A
+    // submitted row is the result of the push immediately before the pull
+    // and must not block that pull.
+    return outstanding.any((item) => item.status != 'submitted');
   }
 
   Future<CloudSyncResult?> _cloudClientNeedsDrainResult() async {
@@ -2560,6 +2564,13 @@ class CloudSyncService {
       if (requestKind == 'cloud_client_push') {
         final rawChanges =
             decoded['changes'] as List<dynamic>? ?? const <dynamic>[];
+        final clientDeviceId = (decoded['deviceId'] ?? sourceDeviceId)
+            .toString()
+            .trim();
+        final clientSequence = int.tryParse(
+                (decoded['lastAppliedSequence'] ?? decoded['sequence'] ?? 0)
+                    .toString()) ??
+            0;
         final changes = _syncCore.filterOutLocalEchoes(
           _syncCore.decodeRemoteChanges(rawChanges),
         );
@@ -2568,6 +2579,18 @@ class CloudSyncService {
           mirrorToCloud: false,
           verifyApplied: true,
         );
+        // Keep Cloud peer progress consistent with LAN. The sequence here is
+        // the Client's last applied Host sequence, so it records what the
+        // Client has confirmed without pretending that the just-pushed draft
+        // is authoritative before the Client pulls it back from the Host.
+        if (clientDeviceId.isNotEmpty) {
+          await SyncDeviceStateStore.recordPeerSyncResult(
+            deviceId: clientDeviceId,
+            transport: 'cloud',
+            appliedSequence: clientSequence,
+            ackSequence: clientSequence,
+          );
+        }
         final response = <String, dynamic>{
           'type': 'relay_response',
           'requestId': requestId,
