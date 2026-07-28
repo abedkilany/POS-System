@@ -717,15 +717,15 @@ class CloudSyncService {
   Future<bool> _clientCloudHostWorkNeedsDrain() async {
     if (!store.appIdentity.isClient) return false;
 
-    // Cloud Client now uses the LAN-style direct Host relay contract:
-    // Client -> Cloud relay -> Host -> final Host ACK in the same request.
-    // If an older build left cloud_host rows as submitted, recover them to
-    // pending so the next relay push sends them again. Until that happens,
-    // any pull or rebuild must stay paused.
-    await store.recoverSubmittedSyncQueue(
-        target: UnifiedSyncQueueTarget.cloudHost);
+    // A relay ACK means that the Host accepted the draft, not that the Client
+    // has applied the Host's authoritative event yet. Submitted rows must not
+    // block the pull immediately following the push; otherwise the unified
+    // push -> pull cycle deadlocks forever. The next push recovers submitted
+    // rows if the authoritative pull was interrupted.
     return store
-        .hasOutstandingSyncWorkForTarget(UnifiedSyncQueueTarget.cloudHost);
+        .pendingSyncChangesForTarget(UnifiedSyncQueueTarget.cloudHost,
+            readyOnly: false)
+        .isNotEmpty;
   }
 
   Future<CloudSyncResult?> _cloudClientNeedsDrainResult() async {

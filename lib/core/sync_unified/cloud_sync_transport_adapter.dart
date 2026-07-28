@@ -282,11 +282,16 @@ class CloudSyncTransportAdapter implements SyncTransportAdapter {
     final effectiveSettings = _settingsForPush(request);
     final result =
         await _service.pushPendingForUnifiedEngine(effectiveSettings);
-    await _service.recordDeviceSyncState(
-      'cloud',
-      cursor: effectiveSettings.lastPullCursor ?? _unifiedCursor,
-      sequence: _service.store.latestStoredAuthoritativeSequence,
-    );
+    // Pushing a Client draft does not advance applied/ACK progress. The
+    // Host's authoritative event is recorded only after pullChanges applies
+    // it locally. Host-originated Cloud changes are already authoritative.
+    if (_service.store.appIdentity.isHost) {
+      await _service.recordDeviceSyncState(
+        'cloud',
+        cursor: effectiveSettings.lastPullCursor ?? _unifiedCursor,
+        sequence: _service.store.latestStoredAuthoritativeSequence,
+      );
+    }
     return _resultFromService(
       result,
       cursor: _cursor(),
