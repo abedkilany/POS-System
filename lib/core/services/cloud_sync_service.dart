@@ -3682,6 +3682,17 @@ class CloudSyncService {
   Future<bool> _broadcastHostAuthorityViaRelay(
     CloudSyncSettings settings,
   ) async {
+    // Recover queue rows left behind by older Cloud builds or an interrupted
+    // relay call before selecting the Host events to publish. Without this,
+    // the event can remain locally unsynced while pendingChangesForTarget()
+    // sees no ready row, so the Client stays at an older ACK sequence forever.
+    await store.repairMissingHostCloudQueueForPendingChanges();
+    await store.recoverSubmittedSyncQueue(
+        target: UnifiedSyncQueueTarget.cloudAuthority);
+    await store.recoverStaleInProgressSyncQueue(
+        target: UnifiedSyncQueueTarget.cloudAuthority);
+    await store.retryFailedSyncQueue(
+        target: UnifiedSyncQueueTarget.cloudAuthority);
     final identity = store.appIdentity;
     final pending = _syncCore
         .pendingChangesForTarget(UnifiedSyncQueueTarget.cloudAuthority);
