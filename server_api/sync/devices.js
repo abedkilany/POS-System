@@ -19,6 +19,13 @@ function normalizeTransport(value) {
   return v === 'lan' || v === 'cloud' ? v : '';
 }
 
+function asNullableDate(value) {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  const parsed = new Date(text);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 async function ensureDeviceTable() {
   await sql`
     create table if not exists store_devices (
@@ -108,6 +115,20 @@ export default async function handler(req, res) {
       const hostDeviceId = String(body.hostDeviceId || body.host_device_id || '').trim();
       const deviceToken = String(body.deviceToken || body.device_token || req.headers['x-device-token'] || '').trim();
       const storeEpoch = Number(body.storeEpoch || body.store_epoch || 1);
+      const lastAppliedCursor = asNullableDate(
+        body.lastAppliedCursor || body.last_applied_cursor,
+      );
+      const lastAckCursor = asNullableDate(
+        body.lastAckCursor || body.last_ack_cursor,
+      );
+      const lastAppliedSequence = Math.max(
+        0,
+        Number(body.lastAppliedSequence || body.last_applied_sequence || 0) || 0,
+      );
+      const lastAckSequence = Math.max(
+        0,
+        Number(body.lastAckSequence || body.last_ack_sequence || 0) || 0,
+      );
 
       // Hosts can register with their account session. Paired Clients update
       // only themselves with their device-scoped token.
@@ -145,10 +166,15 @@ export default async function handler(req, res) {
       const rows = await sql`
         insert into store_devices (
           store_id, branch_id, device_id, device_name, platform, role, transport, active_transport, last_sync_transport,
-          app_version, store_epoch, device_token, host_device_id, online, last_seen_at, updated_at
+          app_version, store_epoch, device_token, host_device_id,
+          last_applied_cursor, last_ack_cursor, last_applied_sequence,
+          last_ack_sequence, last_ack_at, online, last_seen_at, updated_at
         ) values (
           ${storeId}, ${branchId}, ${deviceId}, ${deviceName}, ${platform}, ${role}, ${transport}, ${activeTransport}, ${lastSyncTransport},
-          ${appVersion}, ${storeEpoch}, ${deviceToken}, ${hostDeviceId}, true, now(), now()
+          ${appVersion}, ${storeEpoch}, ${deviceToken}, ${hostDeviceId},
+          ${lastAppliedCursor}, ${lastAckCursor}, ${lastAppliedSequence},
+          ${lastAckSequence}, case when ${lastAckSequence} > 0 then now() else null end,
+          true, now(), now()
         )
         on conflict (store_id, branch_id, device_id) do update set
           device_name = excluded.device_name,
@@ -161,6 +187,26 @@ export default async function handler(req, res) {
           store_epoch = greatest(store_devices.store_epoch, excluded.store_epoch),
           device_token = case when excluded.device_token <> '' then excluded.device_token else store_devices.device_token end,
           host_device_id = case when excluded.host_device_id <> '' then excluded.host_device_id else store_devices.host_device_id end,
+          last_applied_cursor = case
+            when excluded.last_applied_cursor is not null then greatest(
+              coalesce(store_devices.last_applied_cursor, excluded.last_applied_cursor),
+              excluded.last_applied_cursor
+            )
+            else store_devices.last_applied_cursor
+          end,
+          last_ack_cursor = case
+            when excluded.last_ack_cursor is not null then greatest(
+              coalesce(store_devices.last_ack_cursor, excluded.last_ack_cursor),
+              excluded.last_ack_cursor
+            )
+            else store_devices.last_ack_cursor
+          end,
+          last_applied_sequence = greatest(store_devices.last_applied_sequence, excluded.last_applied_sequence),
+          last_ack_sequence = greatest(store_devices.last_ack_sequence, excluded.last_ack_sequence),
+          last_ack_at = case
+            when excluded.last_ack_sequence > store_devices.last_ack_sequence then coalesce(excluded.last_ack_at, now())
+            else store_devices.last_ack_at
+          end,
           online = true,
           last_seen_at = now(),
           updated_at = now()

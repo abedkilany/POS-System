@@ -3974,7 +3974,14 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     if (lower.contains('null check operator used on a null value')) {
       return tr.text('pairing_state_refresh_failed');
     }
-    return fallback;
+    final readable = raw
+        .replaceFirst(RegExp(r'^Bad state:\s*'), '')
+        .replaceFirst(RegExp(r'^Exception:\s*'), '')
+        .trim();
+    // Keep the actual Cloud/LAN failure visible. The old fallback hid relay
+    // errors behind a generic message, making it impossible to distinguish a
+    // missing Host, rejected request, or failed pull from the UI.
+    return readable.isEmpty ? fallback : localizeRuntimeMessage(readable, tr);
   }
 
   Future<void> _saveSyncSettings() => _run(() async {

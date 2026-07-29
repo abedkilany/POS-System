@@ -1,9 +1,9 @@
 #ifndef AppVersion
-  #define AppVersion "1.0.60"
+  #define AppVersion "1.0.61"
 #endif
 
 #ifndef AppBuild
-  #define AppBuild "60"
+  #define AppBuild "61"
 #endif
 
 #ifndef SourceDir
