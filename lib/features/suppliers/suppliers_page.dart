@@ -5,9 +5,11 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/localization/app_localizations.dart';
 import '../../core/services/local_database_service.dart';
+import '../../core/services/sync_diagnostics_log.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/utils/revision_cache.dart';
 import '../../data/app_store.dart';
@@ -508,13 +510,64 @@ class _SuppliersPageState extends State<SuppliersPage> {
       builder: (_) => _SupplierDialog(supplier: supplier),
     );
     if (result != null) {
+      final isCloud =
+          widget.store.appIdentity.activeSyncTransportNormalized == 'cloud';
+      if (isCloud) SyncDiagnosticsLog.clear();
       await widget.store.addOrUpdateSupplier(result);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(AppLocalizations.of(context).text(
                 supplier == null ? 'supplier_saved' : 'supplier_updated'))));
+        if (isCloud) {
+          await _showCloudSupplierTrace(context, result);
+        }
       }
     }
+  }
+
+  Future<void> _showCloudSupplierTrace(
+    BuildContext context,
+    Supplier supplier,
+  ) async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Cloud sync trace: ${supplier.name}'),
+        content: SizedBox(
+          width: 760,
+          height: 440,
+          child: ValueListenableBuilder<List<String>>(
+            valueListenable: SyncDiagnosticsLog.lines,
+            builder: (context, lines, _) {
+              final text = lines.isEmpty
+                  ? 'Waiting for Cloud sync trace...'
+                  : lines.join('\n');
+              return SingleChildScrollView(
+                child: SelectableText(
+                  text,
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                ),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: SyncDiagnosticsLog.dump()));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Trace copied.')),
+              );
+            },
+            child: const Text('Copy trace'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
   }
 }
 

@@ -3630,6 +3630,12 @@ class CloudSyncService {
     var totalPushed = 0;
     var batchNumber = 0;
     const batchSize = 500;
+    // Recover rows left in `submitted` by a previous sync attempt once at the
+    // start of this push operation. Do not recover them inside the batch loop:
+    // Client pushes intentionally remain `submitted` until the following Pull
+    // applies the Host-authoritative event. Recovering them on every iteration
+    // would turn the same push into an endless resend loop.
+    await store.recoverSubmittedSyncQueue(target: target);
     final relaySession = await _RealtimeRelaySession.open(
       this,
       settings,
@@ -3638,7 +3644,6 @@ class CloudSyncService {
 
     try {
       while (true) {
-        await store.recoverSubmittedSyncQueue(target: target);
         await store.recoverStaleInProgressSyncQueue(target: target);
         await store.retryFailedSyncQueue(target: target);
         final pending = _syncCore
