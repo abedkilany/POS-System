@@ -2715,6 +2715,45 @@ class CloudSyncService {
         return null;
       }
 
+      if (requestKind == 'cloud_client_ack') {
+        final clientDeviceId =
+            (decoded['deviceId'] ?? sourceDeviceId).toString().trim();
+        final appliedSequence = int.tryParse(
+                (decoded['appliedSequence'] ?? decoded['applied_sequence'] ?? 0)
+                    .toString()) ??
+            0;
+        final ackSequence = int.tryParse(
+                (decoded['ackSequence'] ?? decoded['ack_sequence'] ?? 0)
+                    .toString()) ??
+            appliedSequence;
+        final appliedCursor = DateTime.tryParse(
+            (decoded['appliedCursor'] ?? decoded['applied_cursor'] ?? '')
+                .toString());
+        final ackCursor = DateTime.tryParse(
+            (decoded['ackCursor'] ?? decoded['ack_cursor'] ?? '').toString());
+
+        if (clientDeviceId.isNotEmpty) {
+          await SyncDeviceStateStore.recordPeerSyncResult(
+            deviceId: clientDeviceId,
+            transport: 'cloud',
+            appliedSequence: appliedSequence,
+            ackSequence: ackSequence,
+            appliedCursor: appliedCursor,
+            ackCursor: ackCursor,
+          );
+        }
+        channel.sink.add(jsonEncode({
+          'type': 'relay_response',
+          'requestId': requestId,
+          'sourceDeviceId': sourceDeviceId,
+          'ok': true,
+          'appliedSequence': appliedSequence,
+          'ackSequence': ackSequence,
+          'serverTime': DateTime.now().toIso8601String(),
+        }));
+        return null;
+      }
+
       channel.sink.add(jsonEncode({
         'type': 'relay_response',
         'requestId': requestId,
@@ -3885,6 +3924,35 @@ class CloudSyncService {
       final finalPullSequence = metadata.generatedSequence;
       await _recordDeviceSyncState('cloud', finalPullCursor,
           sequence: finalPullSequence, settings: settings);
+
+      // Cloud notifications are only a wake-up optimization. The actual
+      // delivery contract is Client pull -> apply -> ACK, just like LAN. The
+      // Host must learn about the sequence after the Client has successfully
+      // applied it so history retention and peer progress are based on a real
+      // pull, not on the transient sync_changed notification.
+      try {
+        await _sendRealtimeRequest(
+          settings,
+          requestKind: 'cloud_client_ack',
+          payload: {
+            'deviceId': store.deviceId,
+            'storeId': identity.storeId,
+            'branchId': identity.branchId,
+            'appliedSequence': finalPullSequence,
+            'ackSequence': finalPullSequence,
+            'appliedCursor': finalPullCursor.toIso8601String(),
+            'ackCursor': finalPullCursor.toIso8601String(),
+          },
+        );
+      } catch (error) {
+        // Applying the pulled data already succeeded. A transient ACK failure
+        // must not turn a successful pull into a snapshot-repair request; the
+        // next periodic pull will retry the ACK with the same sequence.
+        SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] cloudRelayPull:ackFailed '
+          'sequence=$finalPullSequence error=$error',
+        );
+      }
 
       if (applied > 0) {
         onProgress?.call(0.92, 'Cleaning up after Cloud sync...');
