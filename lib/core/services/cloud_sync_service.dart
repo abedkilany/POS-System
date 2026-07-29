@@ -46,11 +46,13 @@ class CloudSyncSettings {
   static const _autoSyncKey = 'cloud_auto_sync_enabled';
 
   static String generatePairingCode() {
-    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+    const alphabet =
+        'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
     final random = Random.secure();
     return List.generate(16, (_) => alphabet[random.nextInt(alphabet.length)])
         .join();
   }
+
   static const _intervalKey = 'cloud_auto_sync_interval_seconds';
   static const int defaultIntervalSeconds = 30;
   static const int minIntervalSeconds = 5;
@@ -2598,9 +2600,8 @@ class CloudSyncService {
       if (requestKind == 'cloud_client_push') {
         final rawChanges =
             decoded['changes'] as List<dynamic>? ?? const <dynamic>[];
-        final clientDeviceId = (decoded['deviceId'] ?? sourceDeviceId)
-            .toString()
-            .trim();
+        final clientDeviceId =
+            (decoded['deviceId'] ?? sourceDeviceId).toString().trim();
         final clientSequence = int.tryParse(
                 (decoded['lastAppliedSequence'] ?? decoded['sequence'] ?? 0)
                     .toString()) ??
@@ -2618,6 +2619,20 @@ class CloudSyncService {
           mirrorToCloud: true,
           verifyApplied: true,
         );
+        // Publish the newly restamped Host-authoritative events immediately.
+        // Waiting for the next periodic Host tick leaves the Client with an
+        // ACK for its draft but no prompt to pull the authoritative event.
+        // The relay still carries only the notification; the event data stays
+        // on the Host and is fetched by the Client in cloud_client_pull.
+        if (accepted.accepted.isNotEmpty) {
+          final published = await _broadcastHostAuthorityViaRelay(settings);
+          if (!published) {
+            SyncDiagnosticsLog.add(
+              '[SYNC_TRACE] cloudRelay:acceptedClientChangesPublishFailed '
+              'accepted=${accepted.accepted.length}',
+            );
+          }
+        }
         // Keep Cloud peer progress consistent with LAN. The sequence here is
         // the Client's last applied Host sequence, so it records what the
         // Client has confirmed without pretending that the just-pushed draft
@@ -3673,6 +3688,10 @@ class CloudSyncService {
     if (pending.isEmpty) return true;
     final pendingIds = _syncCore.changeIds(pending);
     final latestSequence = store.latestStoredAuthoritativeSequence;
+    SyncDiagnosticsLog.add(
+      '[SYNC_TRACE] cloudRelay:hostBroadcastStart '
+      'pending=${pending.length} latestSequence=$latestSequence',
+    );
     try {
       await _sendRealtimeBroadcast(
         settings,
@@ -3688,6 +3707,10 @@ class CloudSyncService {
         },
       );
       await _syncCore.markPushAcknowledged(pendingIds, fallbackIds: pendingIds);
+      SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] cloudRelay:hostBroadcastDone '
+        'published=${pending.length} latestSequence=$latestSequence',
+      );
       return true;
     } catch (error) {
       SyncDiagnosticsLog.add(
@@ -3718,25 +3741,32 @@ class CloudSyncService {
     final initialCursor = settings.lastPullCursor;
     try {
       onProgress?.call(0.35, 'Pulling Cloud changes through the relay...');
-      final response = await _sendRealtimeRequest(
+      final pullPayload = <String, dynamic>{
+        'deviceId': store.deviceId,
+        'storeId': identity.storeId,
+        'branchId': identity.branchId,
+        'sinceSequence': baseLastAppliedSequence,
+        if (initialCursor != null) 'since': initialCursor.toIso8601String(),
+        if (minSnapshotUpdatedAt != null)
+          'minSnapshotUpdatedAt': minSnapshotUpdatedAt.toIso8601String(),
+        'limit': 1000,
+      };
+      var response = await _sendRealtimeRequest(
         settings,
         requestKind: 'cloud_client_pull',
-        payload: {
-          'deviceId': store.deviceId,
-          'storeId': identity.storeId,
-          'branchId': identity.branchId,
-          'sinceSequence': baseLastAppliedSequence,
-          if (initialCursor != null) 'since': initialCursor.toIso8601String(),
-          if (minSnapshotUpdatedAt != null)
-            'minSnapshotUpdatedAt': minSnapshotUpdatedAt.toIso8601String(),
-          'limit': 1000,
-        },
+        payload: pullPayload,
       );
       if (response['ok'] != true) {
+        final errorMessage =
+            (response['error'] ?? response['message'] ?? 'unknown error')
+                .toString();
         SyncDiagnosticsLog.add(
-          '[SYNC_TRACE] cloudRelayPull:serverRejected error=${response['error'] ?? response['message'] ?? 'unknown error'}',
+          '[SYNC_TRACE] cloudRelayPull:serverRejected error=$errorMessage',
         );
-        return null;
+        return CloudSyncResult(
+          ok: false,
+          message: 'Cloud relay pull rejected by Host: $errorMessage',
+        );
       }
 
       if (_syncCore.shouldHandlePulledSnapshotAsRepair(
@@ -3768,14 +3798,56 @@ class CloudSyncService {
         );
       }
 
-      final rawChanges =
+      var rawChanges =
           response['changes'] as List<dynamic>? ?? const <dynamic>[];
+      var latestSequence = int.tryParse(
+            (response['latestSequence'] ?? response['generatedSequence'] ?? 0)
+                .toString(),
+          ) ??
+          0;
+      // A Host can be finishing the same write that triggered the relay
+      // notification. Retry once when the Host advertises a newer sequence but
+      // the first pull frame is empty. This keeps the Cloud path deterministic
+      // without storing the event on the server.
+      if (rawChanges.isEmpty &&
+          latestSequence > baseLastAppliedSequence &&
+          response['needsSnapshot'] != true) {
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+        final retry = await _sendRealtimeRequest(
+          settings,
+          requestKind: 'cloud_client_pull',
+          payload: pullPayload,
+        );
+        if (retry['ok'] == true) {
+          response = retry;
+          rawChanges =
+              response['changes'] as List<dynamic>? ?? const <dynamic>[];
+          latestSequence = int.tryParse(
+                (response['latestSequence'] ??
+                        response['generatedSequence'] ??
+                        0)
+                    .toString(),
+              ) ??
+              0;
+        }
+      }
       SyncDiagnosticsLog.add(
         '[SYNC_TRACE] cloudRelayPull:decoded source=${response['source']} '
         'changes=${rawChanges.length} '
+        'requestedSince=$baseLastAppliedSequence latestSequence=$latestSequence '
+        'needsSnapshot=${response['needsSnapshot'] == true} '
         'generatedAt=${response['generatedAt']} '
         'generatedSequence=${response['generatedSequence']}',
       );
+      if (rawChanges.isEmpty &&
+          latestSequence > baseLastAppliedSequence &&
+          response['needsSnapshot'] != true) {
+        return CloudSyncResult(
+          ok: false,
+          message:
+              'Cloud relay reported Host sequence $latestSequence, but returned no changes. Snapshot repair is required.',
+        );
+      }
       for (final raw in rawChanges.take(40)) {
         final change =
             SyncChange.fromJson(Map<String, dynamic>.from(raw as Map));
@@ -3824,7 +3896,10 @@ class CloudSyncService {
       SyncDiagnosticsLog.add(
         '[SYNC_TRACE] cloudRelayPull:error $error',
       );
-      return null;
+      return CloudSyncResult(
+        ok: false,
+        message: 'Cloud relay pull failed: $error',
+      );
     }
   }
 
