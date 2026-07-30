@@ -26,6 +26,23 @@ class DirectSyncSettings {
           <String, dynamic>{'urls': stunServer.trim()},
         ];
 
+  /// Uses the API host as the runtime STUN host when no explicit STUN value
+  /// was bundled or saved. This keeps Windows and other native builds free of
+  /// build-time deployment data.
+  List<Map<String, dynamic>> iceServersForApiBaseUrl(String apiBaseUrl) {
+    if (iceServers.isNotEmpty) return iceServers;
+    final base = apiBaseUrl.trim();
+    if (base.isEmpty) return const <Map<String, dynamic>>[];
+    final uri = Uri.tryParse(base);
+    final host = uri?.host.trim() ?? '';
+    if (host.isEmpty || host == 'localhost' || host == '127.0.0.1') {
+      return const <Map<String, dynamic>>[];
+    }
+    return <Map<String, dynamic>>[
+      <String, dynamic>{'urls': 'stun:$host:3478'},
+    ];
+  }
+
   bool get isConfigured =>
       setupComplete &&
       apiBaseUrl.trim().isNotEmpty &&

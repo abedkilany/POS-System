@@ -47,7 +47,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
         apiBaseUrl: _settings.apiBaseUrl,
       ),
       hostDeviceId: _settings.peerDeviceId,
-      iceServers: _settings.iceServers,
+      iceServers: _settings.iceServersForApiBaseUrl(_settings.apiBaseUrl),
     );
     final session = DirectPeerRequestSession(connection);
     _session = session;
@@ -244,7 +244,9 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
           signalingSettings: DirectPeerSignalingSettings(
             apiBaseUrl: _signalingSettings.apiBaseUrl,
           ),
-          iceServers: _settings.iceServers,
+          iceServers: _settings.iceServersForApiBaseUrl(
+            _signalingSettings.apiBaseUrl,
+          ),
         );
         _hostEndpoint = DirectPeerHostEndpoint(
           connection,
