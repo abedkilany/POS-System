@@ -274,7 +274,15 @@ class DirectPeerConnectionService {
         signaling: signaling,
         dataChannel: channel,
       );
+      SyncDiagnosticsLog.add(
+          '[DIRECT_WEBRTC] host data channel received state=${channel.state}');
+      if (channel.state == RTCDataChannelState.RTCDataChannelOpen &&
+          !connection.isCompleted) {
+        connection.complete(result!);
+      }
       channel.onDataChannelState = (state) {
+        SyncDiagnosticsLog.add(
+            '[DIRECT_WEBRTC] host data channel state=$state');
         if (state == RTCDataChannelState.RTCDataChannelOpen &&
             !connection.isCompleted) {
           connection.complete(result!);
@@ -290,42 +298,48 @@ class DirectPeerConnectionService {
     };
 
     final subscription = signaling.signals.listen((signal) async {
-      final signalSource = signal['sourceDeviceId']?.toString().trim() ?? '';
-      if (signalSource.isEmpty ||
-          (sourceDeviceId.isNotEmpty && signalSource != sourceDeviceId)) {
-        return;
-      }
-      sourceDeviceId = signalSource;
-      final kind = signal['kind']?.toString();
-      if (kind == 'offer') {
-        final description = Map<String, dynamic>.from(
-            (signal['description'] as Map?) ?? const <String, dynamic>{});
-        await peer.setRemoteDescription(
-          RTCSessionDescription(
-            description['sdp']?.toString(),
-            description['type']?.toString(),
-          ),
-        );
-        remoteDescriptionSet = true;
-        for (final candidate in pendingCandidates) {
-          await peer.addCandidate(candidate);
+      try {
+        final signalSource = signal['sourceDeviceId']?.toString().trim() ?? '';
+        if (signalSource.isEmpty ||
+            (sourceDeviceId.isNotEmpty && signalSource != sourceDeviceId)) {
+          return;
         }
-        pendingCandidates.clear();
-        final answer = await peer.createAnswer({});
-        await peer.setLocalDescription(answer);
-        signaling.send({
-          'kind': 'answer',
-          'targetDeviceId': sourceDeviceId,
-          'description': answer.toMap(),
-        });
-      } else if (kind == 'candidate') {
-        final candidate = _candidateFromJson(signal['candidate']);
-        if (candidate == null) return;
-        if (remoteDescriptionSet) {
-          await peer.addCandidate(candidate);
-        } else {
-          pendingCandidates.add(candidate);
+        sourceDeviceId = signalSource;
+        final kind = signal['kind']?.toString();
+        SyncDiagnosticsLog.add('[DIRECT_WEBRTC] host signal kind=$kind');
+        if (kind == 'offer') {
+          final description = Map<String, dynamic>.from(
+              (signal['description'] as Map?) ?? const <String, dynamic>{});
+          await peer.setRemoteDescription(
+            RTCSessionDescription(
+              description['sdp']?.toString(),
+              description['type']?.toString(),
+            ),
+          );
+          remoteDescriptionSet = true;
+          for (final candidate in pendingCandidates) {
+            await peer.addCandidate(candidate);
+          }
+          pendingCandidates.clear();
+          final answer = await peer.createAnswer({});
+          await peer.setLocalDescription(answer);
+          signaling.send({
+            'kind': 'answer',
+            'targetDeviceId': sourceDeviceId,
+            'description': answer.toMap(),
+          });
+        } else if (kind == 'candidate') {
+          final candidate = _candidateFromJson(signal['candidate']);
+          if (candidate == null) return;
+          if (remoteDescriptionSet) {
+            await peer.addCandidate(candidate);
+          } else {
+            pendingCandidates.add(candidate);
+          }
         }
+      } catch (error) {
+        SyncDiagnosticsLog.add('[DIRECT_WEBRTC] host signal error=$error');
+        if (!connection.isCompleted) connection.completeError(error);
       }
     });
 
