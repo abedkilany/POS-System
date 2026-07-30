@@ -251,6 +251,7 @@ export function attachRealtimeServer(server) {
           storeId,
           branchId,
           role,
+          transport: ticketData.transport || 'cloud',
           deviceId: ticketData.deviceId || '',
           alive: true,
         };
