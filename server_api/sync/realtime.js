@@ -10,6 +10,12 @@ function scopeKey(storeId, branchId) {
   return `${storeId}::${branchId || 'main'}`;
 }
 
+function shortId(value) {
+  const text = String(value || '').trim();
+  if (text.length <= 10) return text || '-';
+  return `${text.slice(0, 4)}…${text.slice(-4)}`;
+}
+
 function oppositeRole(role) {
   return role === 'host' ? 'client' : 'host';
 }
@@ -132,7 +138,8 @@ function forwardSignal(client, packet) {
     packet.targetDeviceId || packet.target_device_id || '',
   ).trim();
   const clients = clientsByScope.get(scopeKey(client.storeId, client.branchId));
-  if (!clients) return;
+  if (!clients) return 0;
+  let delivered = 0;
   for (const target of clients) {
     if (target.socket === client.socket || target.role !== targetRole) continue;
     if (targetDeviceId && target.deviceId !== targetDeviceId) continue;
@@ -141,7 +148,9 @@ function forwardSignal(client, packet) {
       sourceDeviceId: client.deviceId || '',
       sourceRole: client.role,
     });
+    delivered += 1;
   }
+  return delivered;
 }
 
 export async function realtimeTicketHandler(req, res) {
@@ -175,6 +184,12 @@ export async function realtimeTicketHandler(req, res) {
       transport,
       expiresAt: Date.now() + ticketTtlMs,
     });
+    if (transport === 'direct') {
+      console.log(
+        `[DIRECT_SIGNAL] ticket role=${role} device=${shortId(deviceId)} ` +
+        `store=${shortId(storeId)}`,
+      );
+    }
     res.status(200).json({
       ok: true,
       ticket,
@@ -256,6 +271,12 @@ export function attachRealtimeServer(server) {
           alive: true,
         };
         addClient(client);
+        if (client.transport === 'direct') {
+          console.log(
+            `[DIRECT_SIGNAL] websocket-open role=${client.role} ` +
+            `device=${shortId(client.deviceId)} store=${shortId(client.storeId)}`,
+          );
+        }
         send(client, { type: 'realtime_welcome', changed: false });
         ws.on('message', (raw) => {
           // The server intentionally does not persist or inspect business
@@ -274,7 +295,12 @@ export function attachRealtimeServer(server) {
             return;
           }
           if (type === 'direct_signal' && client.transport === 'direct') {
-            forwardSignal(client, packet);
+            const delivered = forwardSignal(client, packet);
+            console.log(
+              `[DIRECT_SIGNAL] kind=${String(packet.kind || '-')} ` +
+              `from=${shortId(client.deviceId)} toRole=${oppositeRole(client.role)} ` +
+              `target=${shortId(packet.targetDeviceId)} delivered=${delivered}`,
+            );
             return;
           }
           if (type === 'sync_changed' ||
@@ -288,6 +314,12 @@ export function attachRealtimeServer(server) {
         });
         ws.on('close', () => {
           removeClient(client);
+          if (client.transport === 'direct') {
+            console.log(
+              `[DIRECT_SIGNAL] websocket-close role=${client.role} ` +
+              `device=${shortId(client.deviceId)}`,
+            );
+          }
         });
         ws.on('error', () => {
           removeClient(client);

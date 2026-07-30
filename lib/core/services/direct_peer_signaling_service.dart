@@ -6,6 +6,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../../data/app_store.dart';
 import '../../models/app_identity.dart';
+import 'sync_diagnostics_log.dart';
 
 /// Settings used only to reach Ventio's coordination service.
 ///
@@ -41,13 +42,20 @@ class DirectPeerSignalingSession {
   final String ticket;
 
   Stream<Map<String, dynamic>> get signals => channel.stream
-      .where((raw) => raw != null)
-      .map((raw) => jsonDecode(raw.toString()))
-      .where((packet) => packet is Map)
-      .map((packet) => Map<String, dynamic>.from(packet))
-      .where((packet) => packet['type']?.toString() == 'direct_signal');
+          .where((raw) => raw != null)
+          .map((raw) => jsonDecode(raw.toString()))
+          .where((packet) => packet is Map)
+          .map((packet) => Map<String, dynamic>.from(packet))
+          .where((packet) => packet['type']?.toString() == 'direct_signal')
+          .map((packet) {
+        SyncDiagnosticsLog.add(
+            '[DIRECT_SIGNAL] received kind=${packet['kind'] ?? '-'}');
+        return packet;
+      });
 
   void send(Map<String, dynamic> signal) {
+    SyncDiagnosticsLog.add(
+        '[DIRECT_SIGNAL] sent kind=${signal['kind'] ?? '-'} target=${signal['targetDeviceId'] ?? '-'}');
     channel.sink.add(jsonEncode({
       'type': 'direct_signal',
       ...signal,
@@ -94,6 +102,9 @@ class DirectPeerSignalingService {
         )
         .timeout(const Duration(seconds: 8));
 
+    SyncDiagnosticsLog.add(
+        '[DIRECT_SIGNAL] ticket status=${response.statusCode} role=${identity.deviceRole.name}');
+
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw StateError(
         'Direct signaling ticket failed: ${response.statusCode} ${response.body}',
@@ -109,6 +120,7 @@ class DirectPeerSignalingService {
     final channel = WebSocketChannel.connect(
       settings.realtimeEndpoint('/api/sync/realtime', {'ticket': ticket}),
     );
+    SyncDiagnosticsLog.add('[DIRECT_SIGNAL] websocket connecting');
     return DirectPeerSignalingSession(channel: channel, ticket: ticket);
   }
 

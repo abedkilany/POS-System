@@ -5,6 +5,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import '../../data/app_store.dart';
 import 'direct_peer_signaling_service.dart';
+import 'sync_diagnostics_log.dart';
 
 /// A direct, encrypted data connection between one Host and one Client.
 ///
@@ -111,6 +112,7 @@ class DirectPeerConnectionService {
       });
     };
     peer.onConnectionState = (state) {
+      SyncDiagnosticsLog.add('[DIRECT_WEBRTC] host state=$state');
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected &&
           !connection.isCompleted) {
         connection.complete(result);
@@ -191,6 +193,7 @@ class DirectPeerConnectionService {
       };
     };
     peer.onConnectionState = (state) {
+      SyncDiagnosticsLog.add('[DIRECT_WEBRTC] client state=$state');
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed &&
           !connection.isCompleted) {
         connection.completeError(StateError('Direct connection failed.'));
@@ -279,6 +282,7 @@ class DirectPeerConnectionService {
       };
     };
     peer.onConnectionState = (state) {
+      SyncDiagnosticsLog.add('[DIRECT_WEBRTC] host-listener state=$state');
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed &&
           !connection.isCompleted) {
         connection.completeError(StateError('Direct Host connection failed.'));
