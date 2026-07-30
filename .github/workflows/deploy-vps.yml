@@ -26,6 +26,8 @@ jobs:
           cache: true
 
       - name: Build web
+        env:
+          VENTIO_STUN_SERVER: ${{ secrets.VENTIO_STUN_SERVER }}
         run: |
           set -euo pipefail
           APP_VERSION="$(awk '/^version:/ {print $2; exit}' pubspec.yaml)"
@@ -36,7 +38,13 @@ jobs:
           flutter --version
           flutter config --enable-web
           flutter pub get
-          flutter build web --release --dart-define=APP_VERSION="$APP_VERSION"
+          if [ -z "${VENTIO_STUN_SERVER:-}" ]; then
+            echo "VENTIO_STUN_SERVER secret is required" >&2
+            exit 1
+          fi
+          flutter build web --release \
+            --dart-define=APP_VERSION="$APP_VERSION" \
+            --dart-define=VENTIO_STUN_SERVER="$VENTIO_STUN_SERVER"
           grep -q "$APP_VERSION" build/web/main.dart.js
           printf '{"version":"%s","commit":"%s","builtAt":"%s"}\n' \
             "$APP_VERSION" "$GITHUB_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -64,7 +72,7 @@ jobs:
           VPS_WEB_DIR: ${{ secrets.VPS_WEB_DIR }}
         run: |
           set -euo pipefail
-          api_items=(api server_api package.json scripts)
+          api_items=(api server_api package.json server.js scripts)
           if [ -f package-lock.json ]; then
             api_items+=(package-lock.json)
           fi
