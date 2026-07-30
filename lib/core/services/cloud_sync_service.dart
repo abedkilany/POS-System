@@ -12,6 +12,7 @@ import '../../models/app_identity.dart';
 import '../../models/sync_change.dart';
 import 'local_database_service.dart';
 import 'sync_diagnostics_log.dart';
+import 'direct_sync_settings.dart';
 import 'unified_sync_core_service.dart';
 import '../sync_unified/unified_pairing_lifecycle.dart';
 import '../sync_unified/unified_cloud_snapshot_retry_flow.dart';
@@ -1383,21 +1384,34 @@ class CloudSyncService {
           message: mismatch,
         );
       }
-      final transport = decoded['transport']?.toString() == 'lan'
+      final claimedTransport =
+          decoded['transport']?.toString().trim().toLowerCase() ?? 'cloud';
+      final isDirect = claimedTransport == 'direct';
+      final transport = claimedTransport == 'lan'
           ? SyncMode.lanOnly
           : SyncMode.cloudConnected;
       final identity = UnifiedPairingLifecycle.buildClientIdentity(
         current,
         claim: claim,
         syncMode: transport,
-        activeTransport: transport == SyncMode.lanOnly ? 'lan' : 'cloud',
+        activeTransport:
+            claimedTransport == 'lan' ? 'lan' : (isDirect ? 'direct' : 'cloud'),
       );
       onProgress?.call(0.22, 'Registering this device...');
       await store.updateAppIdentityDuringSetup(identity);
       deviceRegistered = true;
+      if (isDirect) {
+        await DirectSyncSettings(
+          apiBaseUrl: settings.apiBaseUrl,
+          peerDeviceId: claim.hostDeviceId,
+          setupComplete: true,
+          stunServer: DirectSyncSettings.load().stunServer,
+        ).save();
+      }
 
-      if (identity.syncMode == SyncMode.cloudConnected ||
-          identity.syncMode == SyncMode.marketplaceEnabled) {
+      if (!isDirect &&
+          (identity.syncMode == SyncMode.cloudConnected ||
+              identity.syncMode == SyncMode.marketplaceEnabled)) {
         // Phase 3: Connect to Store is not considered complete until the same
         // unified Snapshot used by LAN is fully downloaded, imported and
         // verified. Cloud may still transfer through the server, but the

@@ -10,13 +10,12 @@ import '../../core/utils/responsive.dart';
 import '../../core/services/cloud_sync_service.dart';
 import '../../core/services/lan_sync_service.dart';
 import '../../core/sync_unified/sync_unified.dart';
-import '../../core/sync_unified/unified_auto_sync_controller.dart';
 import '../../core/snapshot/unified_snapshot_progress.dart';
 import '../../data/app_store.dart';
 import '../../core/services/page_timing_scope.dart';
 import '../barcode/barcode_scanner_page.dart';
 
-enum _ConnectMode { lan, cloud }
+enum _ConnectMode { lan, cloud, direct }
 
 enum _SetupStatus { idle, info, success, warning, error }
 
@@ -103,7 +102,9 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       return;
     }
     if (_qrStatus == _ClientPairingState.connected ||
-        _qrStatus == _ClientPairingState.connecting) return;
+        _qrStatus == _ClientPairingState.connecting) {
+      return;
+    }
     if (_qrExpiresAt != null && !_qrExpiresAt!.isAfter(DateTime.now())) {
       _qrStatus = _ClientPairingState.expired;
       return;
@@ -276,6 +277,8 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
           _mode = _ConnectMode.lan;
         } else if (transport.contains('cloud')) {
           _mode = _ConnectMode.cloud;
+        } else if (transport.contains('direct')) {
+          _mode = _ConnectMode.direct;
         }
 
         final host =
@@ -320,6 +323,9 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       } else if (_mode == _ConnectMode.lan &&
           _lanTokenController.text.trim().isNotEmpty) {
         await _connectLan();
+      } else if (_mode == _ConnectMode.direct &&
+          _cloudPairingCodeController.text.trim().isNotEmpty) {
+        await _connectDirect();
       }
     });
   }
@@ -461,8 +467,53 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
     }
   }
 
+  Future<void> _connectDirect() async {
+    _beginConnectionAttempt('Connecting directly to Host...');
+    try {
+      final code = _cloudPairingCodeController.text.trim();
+      if (code.isEmpty) {
+        setState(() => _qrStatus = _ClientPairingState.noCode);
+        _setStatus('Direct pairing code is required.',
+            type: _SetupStatus.warning);
+        return;
+      }
+      final pairingEngine = UnifiedSyncFactory.directEngine(widget.store);
+      final claim = await pairingEngine.claimPairingCode(code,
+          onProgress: (value, label) {
+        _addConnectionLog('DIRECT ${(value * 100).round()}%: $label');
+        _setSnapshotProgress(value, label);
+      });
+      if (!claim.ok) {
+        _markQrFailed(claim.message);
+        _setStatus(claim.message, type: _SetupStatus.error);
+        return;
+      }
+      final syncEngine = UnifiedSyncFactory.directEngine(widget.store);
+      final snapshot = await syncEngine.rebuildFromHostSnapshot(
+        onProgress: (value, label) {
+          _addConnectionLog(
+              'DIRECT SNAPSHOT ${(value * 100).round()}%: $label');
+          _setSnapshotProgress(value, label);
+        },
+      );
+      if (!snapshot.ok) {
+        _markQrFailed(snapshot.message);
+        _setStatus(snapshot.message, type: _SetupStatus.error);
+        return;
+      }
+      await _finishSuccessfulConnection('Direct connection completed.');
+    } catch (error) {
+      _markQrFailed(error.toString());
+      _setStatus('Direct connection failed: $error', type: _SetupStatus.error);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _connect() {
-    return _mode == _ConnectMode.lan ? _connectLan() : _connectCloud();
+    if (_mode == _ConnectMode.lan) return _connectLan();
+    if (_mode == _ConnectMode.direct) return _connectDirect();
+    return _connectCloud();
   }
 
   @override
@@ -514,10 +565,14 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
                             context,
                             tr.text(_mode == _ConnectMode.cloud
                                 ? 'cloud_setup'
-                                : 'lan_setup'),
+                                : _mode == _ConnectMode.direct
+                                    ? 'Direct connection'
+                                    : 'lan_setup'),
                             Icons.tune_outlined),
                         const SizedBox(height: 12),
                         if (_mode == _ConnectMode.cloud)
+                          ..._buildCloudFields(tr),
+                        if (_mode == _ConnectMode.direct)
                           ..._buildCloudFields(tr),
                         if (_mode == _ConnectMode.lan) ..._buildLanFields(tr),
                         const SizedBox(height: 16),
@@ -634,6 +689,10 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
           value: _ConnectMode.lan,
           label: Text(tr.text('connection_lan')),
           icon: const Icon(Icons.wifi_outlined)),
+      const ButtonSegment(
+          value: _ConnectMode.direct,
+          label: Text('Direct'),
+          icon: Icon(Icons.link_outlined)),
     ];
 
     if (!VentioResponsive.isMobile(context)) {
@@ -675,6 +734,8 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
         const SizedBox(height: 8),
         mobileButton(
             _ConnectMode.lan, Icons.wifi_outlined, tr.text('connection_lan')),
+        const SizedBox(height: 8),
+        mobileButton(_ConnectMode.direct, Icons.link_outlined, 'Direct'),
       ],
     );
   }

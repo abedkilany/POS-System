@@ -1,6 +1,7 @@
 import http from 'http';
 import apiHandler from './api/[...path].js';
 import { attachRealtimeServer } from './server_api/sync/realtime.js';
+import { attachStunServer } from './server_api/sync/stun.js';
 
 const port = Number(process.env.PORT || 3000);
 const maxBodyBytes = 25 * 1024 * 1024;
@@ -86,7 +87,10 @@ const server = http.createServer(async (req, res) => {
   }
 });
 attachRealtimeServer(server);
+const stunServer = attachStunServer();
 
 server.listen(port, '0.0.0.0', () => {
   console.log(`Ventio API listening on 0.0.0.0:${port}`);
 });
+
+server.on('close', () => stunServer.close());

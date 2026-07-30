@@ -29,7 +29,7 @@ import pairingClaim from '../server_api/sync/pairing/claim.js';
 import pairingCreate from '../server_api/sync/pairing/create.js';
 import pairingStatus from '../server_api/sync/pairing/status.js';
 import signal from '../server_api/sync/signal.js';
-import { realtimeTicketHandler } from '../server_api/sync/realtime.js';
+import { directRealtimeTicketHandler, realtimeTicketHandler } from '../server_api/sync/realtime.js';
 import recoveryClaim from '../server_api/sync/recovery/claim.js';
 import maintenance from '../server_api/sync/maintenance.js';
 import bootstrapSnapshot from '../server_api/sync/bootstrap-snapshot.js';
@@ -63,6 +63,7 @@ const routes = new Map([
   ['sync/pairing/status', pairingStatus],
   ['sync/signal', signal],
   ['sync/realtime-ticket', realtimeTicketHandler],
+  ['sync/direct-ticket', directRealtimeTicketHandler],
   ['sync/maintenance', maintenance],
   ['sync/bootstrap-snapshot', bootstrapSnapshot],
   ['google-drive/auth-start', googleDriveAuthStart],

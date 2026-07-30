@@ -79,6 +79,8 @@ class _VentioAppState extends State<VentioApp> {
     _store,
     onSnapshotProgress: _handleAutoSnapshotProgress,
   );
+  late final UnifiedAutoDirectSyncController _autoDirectSyncController =
+      UnifiedAutoDirectSyncController(_store);
   bool _syncStarted = false;
   bool _autoSnapshotProgressDialogOpen = false;
   bool _firstFrameMarked = false;
@@ -139,6 +141,7 @@ class _VentioAppState extends State<VentioApp> {
         await Future<void>.delayed(const Duration(milliseconds: 500));
         if (!mounted || _store.activeUser == null) return;
         unawaited(_autoSyncController.start());
+        unawaited(_autoDirectSyncController.start());
         unawaited(_startCloudAndBackupAfterLogin());
       },
       category: 'app_store',
@@ -168,6 +171,7 @@ class _VentioAppState extends State<VentioApp> {
   Future<void> _stopSyncForLogout() async {
     _syncStarted = false;
     await _autoSyncController.stop();
+    _autoDirectSyncController.stop();
     _autoCloudSyncController.stop();
   }
 
@@ -328,28 +332,28 @@ class _VentioAppState extends State<VentioApp> {
                   ),
                 )
               : _store.isReady
-              ? LoginGatePage(
-                  store: _store,
-                  onLocaleChanged: _changeLocale,
-                  child: PageTimingScope(
-                    key: const ValueKey('MainShellScope'),
-                    pageKey: 'MainShell',
-                    pageLabel: 'Main shell',
-                    child: MainShell(
+                  ? LoginGatePage(
                       store: _store,
-                      onLogout: _stopSyncForLogout,
                       onLocaleChanged: _changeLocale,
-                      onThemeModeChanged: _changeThemeMode,
-                      themeMode: _themeMode,
-                      onSyncSettingsChanged: () async {
-                        _syncStarted = false;
-                        unawaited(_startSyncAfterLogin());
-                      },
-                    ),
-                  ),
-                )
-              : const Scaffold(
-                  body: Center(child: CircularProgressIndicator())),
+                      child: PageTimingScope(
+                        key: const ValueKey('MainShellScope'),
+                        pageKey: 'MainShell',
+                        pageLabel: 'Main shell',
+                        child: MainShell(
+                          store: _store,
+                          onLogout: _stopSyncForLogout,
+                          onLocaleChanged: _changeLocale,
+                          onThemeModeChanged: _changeThemeMode,
+                          themeMode: _themeMode,
+                          onSyncSettingsChanged: () async {
+                            _syncStarted = false;
+                            unawaited(_startSyncAfterLogin());
+                          },
+                        ),
+                      ),
+                    )
+                  : const Scaffold(
+                      body: Center(child: CircularProgressIndicator())),
         );
       },
     );

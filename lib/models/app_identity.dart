@@ -40,30 +40,39 @@ class AppIdentity {
   final DateTime updatedAt;
   final String hostDeviceId;
   final String cloudTenantId;
+
   /// Per-device token assigned during pairing. It is intentionally device-scoped
   /// so Clients no longer share a single master sync token.
   final String deviceToken;
   final int storeEpoch;
   final String recoveryKey;
+
   /// Selected delivery method for sync. Sync progress is device-scoped and
   /// transport-independent; this chooses only which transport is active now.
   final String activeSyncTransport;
 
   bool get isHost => deviceRole == DeviceRole.host;
   bool get isClient => deviceRole == DeviceRole.client;
-  bool get isCloudEnabled => syncMode == SyncMode.cloudConnected || syncMode == SyncMode.marketplaceEnabled;
+  bool get isCloudEnabled =>
+      syncMode == SyncMode.cloudConnected ||
+      syncMode == SyncMode.marketplaceEnabled;
   bool get isMarketplaceEnabled => syncMode == SyncMode.marketplaceEnabled;
   String get activeSyncTransportNormalized {
     final normalized = activeSyncTransport.trim().toLowerCase();
-    if (normalized == 'lan' || normalized == 'cloud' || normalized == 'local') return normalized;
+    if (normalized == 'lan' ||
+        normalized == 'cloud' ||
+        normalized == 'direct' ||
+        normalized == 'local') {
+      return normalized;
+    }
     // LAN must be enabled by the current Sync settings, not inferred from the
     // legacy syncMode value. An old Host/Client identity may still carry
     // syncMode=lanOnly after LAN was disabled, so never treat lanOnly alone as
     // an active transport.
     return isCloudEnabled ? 'cloud' : 'local';
   }
-  String get transportType => activeSyncTransportNormalized;
 
+  String get transportType => activeSyncTransportNormalized;
 
   AppIdentity copyWith({
     String? storeId,
@@ -133,32 +142,45 @@ class AppIdentity {
     }
 
     final recoveryRaw = (json['recoveryKey']?.toString() ?? '').trim();
-    final activeRaw = (json['activeSyncTransport']?.toString() ?? '').trim().toLowerCase();
-    final transportRaw = (json['transportType']?.toString() ?? '').trim().toLowerCase();
+    final activeRaw =
+        (json['activeSyncTransport']?.toString() ?? '').trim().toLowerCase();
+    final transportRaw =
+        (json['transportType']?.toString() ?? '').trim().toLowerCase();
 
     return AppIdentity(
       storeId: json['storeId']?.toString() ?? '',
       branchId: json['branchId']?.toString() ?? 'main',
       deviceId: json['deviceId']?.toString() ?? '',
       deviceName: json['deviceName']?.toString() ?? '',
-      platform: enumByName(AppPlatformType.values, json['platform']?.toString(), AppPlatformType.unknown),
-      deviceRole: enumByName(DeviceRole.values, json['deviceRole']?.toString(), DeviceRole.standalone),
-      appRole: enumByName(AppRole.values, json['appRole']?.toString(), AppRole.store),
-      syncMode: enumByName(SyncMode.values, json['syncMode']?.toString(), SyncMode.localOnly),
+      platform: enumByName(AppPlatformType.values, json['platform']?.toString(),
+          AppPlatformType.unknown),
+      deviceRole: enumByName(DeviceRole.values, json['deviceRole']?.toString(),
+          DeviceRole.standalone),
+      appRole: enumByName(
+          AppRole.values, json['appRole']?.toString(), AppRole.store),
+      syncMode: enumByName(
+          SyncMode.values, json['syncMode']?.toString(), SyncMode.localOnly),
       createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? '') ?? now,
       updatedAt: DateTime.tryParse(json['updatedAt']?.toString() ?? '') ?? now,
       hostDeviceId: json['hostDeviceId']?.toString() ?? '',
       cloudTenantId: json['cloudTenantId']?.toString() ?? '',
-      deviceToken: json['deviceToken']?.toString() ?? json['device_token']?.toString() ?? '',
+      deviceToken: json['deviceToken']?.toString() ??
+          json['device_token']?.toString() ??
+          '',
       storeEpoch: (json['storeEpoch'] as num?)?.toInt() ?? 1,
-      recoveryKey: recoveryRaw.isNotEmpty ? recoveryRaw.toUpperCase() : _recoveryKey(),
+      recoveryKey:
+          recoveryRaw.isNotEmpty ? recoveryRaw.toUpperCase() : _recoveryKey(),
       activeSyncTransport: activeRaw.isNotEmpty ? activeRaw : transportRaw,
     );
   }
 
-  static AppIdentity defaults({required String deviceId, required AppPlatformType platform, String? detectedDeviceName}) {
+  static AppIdentity defaults(
+      {required String deviceId,
+      required AppPlatformType platform,
+      String? detectedDeviceName}) {
     final now = DateTime.now();
-    final normalizedDeviceId = deviceId.isEmpty ? _withPrefix('DV') : _normalizeDeviceId(deviceId);
+    final normalizedDeviceId =
+        deviceId.isEmpty ? _withPrefix('DV') : _normalizeDeviceId(deviceId);
     final initialDeviceName = (detectedDeviceName ?? '').trim().isNotEmpty
         ? detectedDeviceName!.trim()
         : normalizedDeviceId;
@@ -171,23 +193,28 @@ class AppIdentity {
       // A fresh native device must not start as Host automatically.
       // Register creates the Host; Connect to Store turns this device into a Client.
       // Web remains Client-only.
-      deviceRole: platform == AppPlatformType.web ? DeviceRole.client : DeviceRole.standalone,
+      deviceRole: platform == AppPlatformType.web
+          ? DeviceRole.client
+          : DeviceRole.standalone,
       appRole: AppRole.store,
-      syncMode: platform == AppPlatformType.web ? SyncMode.cloudConnected : SyncMode.localOnly,
+      syncMode: platform == AppPlatformType.web
+          ? SyncMode.cloudConnected
+          : SyncMode.localOnly,
       createdAt: now,
       updatedAt: now,
-      deviceToken: 'device_${now.microsecondsSinceEpoch}_${deviceId.hashCode.abs()}',
+      deviceToken:
+          'device_${now.microsecondsSinceEpoch}_${deviceId.hashCode.abs()}',
       storeEpoch: 1,
       recoveryKey: _recoveryKey(),
       activeSyncTransport: platform == AppPlatformType.web ? 'cloud' : 'local',
     );
   }
 
-
   static String _recoveryKey() {
     const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     final random = Random.secure();
-    String block() => List<String>.generate(4, (_) => alphabet[random.nextInt(alphabet.length)]).join();
+    String block() => List<String>.generate(
+        4, (_) => alphabet[random.nextInt(alphabet.length)]).join();
     return 'RK-${block()}-${block()}-${block()}';
   }
 
@@ -196,7 +223,8 @@ class AppIdentity {
     if (trimmed.isEmpty) return _withPrefix('DV');
     final parts = trimmed.split('-');
     if (parts.length == 2) {
-      final prefix = parts.first.toUpperCase() == 'DEV' ? 'DV' : parts.first.toUpperCase();
+      final prefix =
+          parts.first.toUpperCase() == 'DEV' ? 'DV' : parts.first.toUpperCase();
       return '$prefix-${parts.last.toUpperCase()}';
     }
     return trimmed.toUpperCase();
@@ -205,7 +233,8 @@ class AppIdentity {
   static String _withPrefix(String prefix) {
     const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     final random = Random.secure();
-    final body = List<String>.generate(6, (_) => alphabet[random.nextInt(alphabet.length)]).join();
+    final body = List<String>.generate(
+        6, (_) => alphabet[random.nextInt(alphabet.length)]).join();
     return '${prefix.toUpperCase()}-$body';
   }
 }

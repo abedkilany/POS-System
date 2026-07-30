@@ -16,7 +16,7 @@ function asIso(value) {
 
 function normalizeTransport(value) {
   const v = String(value || '').trim().toLowerCase();
-  return v === 'lan' || v === 'cloud' ? v : '';
+  return v === 'lan' || v === 'cloud' || v === 'direct' ? v : '';
 }
 
 function asNullableDate(value) {

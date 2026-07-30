@@ -3705,6 +3705,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   String _status = '';
   double? _statusProgress;
   String _latestCloudPairingCode = '';
+  String _latestPairingTransport = 'cloud';
   DateTime? _latestCloudPairingExpiresAt;
   List<String> _hostIpAddresses = const <String>[];
   bool _detectingHostIp = false;
@@ -3863,8 +3864,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       // still has valid store/device credentials. Ask the server directly for
       // this store's Cloud Sync entitlement using device auth.
       if (planAllowed != true) {
-        final fallbackAllowed =
-            await _cloudAdminService().checkPlanAccess(CloudSyncSettings.load());
+        final fallbackAllowed = await _cloudAdminService()
+            .checkPlanAccess(CloudSyncSettings.load());
         SyncDiagnosticsLog.add(
           '[SYNC_TRACE] cloudPlanAccess:fallback '
           'allowed=$fallbackAllowed '
@@ -4696,12 +4697,42 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         await LocalDatabaseService.setString(
             _cloudPairingExpiryStorageKey, expiresAt.toIso8601String());
         setState(() {
+          _latestPairingTransport = 'cloud';
           _latestCloudPairingCode = result.code;
           _latestCloudPairingExpiresAt = expiresAt;
           _latestCloudPairingConsumed = false;
           _latestCloudPairingInvalid = false;
           _showCloudPairingCode = true;
           _status = tr.text('cloud_pairing_code_created');
+        });
+      });
+
+  Future<void> _createDirectPairingCode() => _run(() async {
+        final identity = widget.store.appIdentity;
+        final settings = CloudSyncSettings.load();
+        if (!identity.isHost || settings.apiBaseUrl.trim().isEmpty) {
+          throw StateError('Direct pairing needs the Ventio server address.');
+        }
+        final result = await UnifiedSyncFactory.directEngine(widget.store)
+            .createPairingCode(ttlMinutes: _pairingCodeLifetime.inMinutes);
+        if (!result.ok) {
+          throw StateError(result.message);
+        }
+        final expiresAt =
+            result.expiresAt ?? DateTime.now().add(_pairingCodeLifetime);
+        await LocalDatabaseService.setString(
+            _cloudPairingCodeStorageKey, result.code);
+        await LocalDatabaseService.setString(
+            _cloudPairingExpiryStorageKey, expiresAt.toIso8601String());
+        if (!mounted) return;
+        setState(() {
+          _latestPairingTransport = 'direct';
+          _latestCloudPairingCode = result.code;
+          _latestCloudPairingExpiresAt = expiresAt;
+          _latestCloudPairingConsumed = false;
+          _latestCloudPairingInvalid = false;
+          _showCloudPairingCode = true;
+          _status = 'Direct pairing code created.';
         });
       });
 
@@ -6179,6 +6210,10 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                   onPressed: _busy ? null : _handleCloudPairingButton,
                   icon: const Icon(Icons.cloud_queue_outlined),
                   label: Text(_cloudPairingButtonLabel)),
+              OutlinedButton.icon(
+                  onPressed: _busy ? null : _createDirectPairingCode,
+                  icon: const Icon(Icons.link_outlined),
+                  label: const Text('Direct pairing code')),
             ],
           ),
           if (_showLanPairingCode) ...[
@@ -6716,7 +6751,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
               ),
               child: QrImageView(
                 data: jsonEncode({
-                  'transport': 'cloud',
+                  'transport': _latestPairingTransport,
                   'pairingCode': code,
                   'storeId': widget.store.appIdentity.storeId,
                   'branchId': widget.store.appIdentity.branchId,
@@ -6738,7 +6773,9 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           ),
           const SizedBox(height: 12),
           _manualPairingValueTile(
-              label: tr.text('cloud_pairing_code'),
+              label: _latestPairingTransport == 'direct'
+                  ? 'Direct pairing code'
+                  : tr.text('cloud_pairing_code'),
               value: code,
               copiedMessage: tr.text('cloud_pairing_code_copied')),
         ],

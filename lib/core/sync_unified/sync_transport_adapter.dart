@@ -6,7 +6,7 @@ import 'sync_contracts.dart';
 /// Fix 10A intentionally introduces this contract without replacing the
 /// existing LAN/Cloud services yet. Later phases can move each service behind
 /// this adapter without changing UI flows again.
-enum UnifiedSyncTransportKind { lan, cloud }
+enum UnifiedSyncTransportKind { lan, cloud, direct }
 
 /// Normalized result envelope used by the unified sync layer.
 class UnifiedSyncResult {

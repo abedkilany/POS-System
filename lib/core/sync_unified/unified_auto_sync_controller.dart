@@ -9,6 +9,7 @@ import '../services/lan_sync_service.dart';
 import '../services/sync_diagnostics_log.dart';
 import 'cloud_sync_transport_adapter.dart';
 import 'lan_sync_transport_adapter.dart';
+import 'direct_sync_transport_adapter.dart';
 import 'unified_sync_policy.dart';
 import 'sync_device_state.dart';
 import 'unified_sync_engine.dart';
@@ -108,6 +109,12 @@ class UnifiedSyncFactory {
     );
   }
 
+  static UnifiedSyncEngine directEngine(AppStore store) {
+    return UnifiedSyncEngine(
+      DirectSyncTransportAdapter(store),
+    );
+  }
+
   static UnifiedSyncEngine activeEngine(
     AppStore store, {
     bool cloudEnabled = true,
@@ -115,6 +122,9 @@ class UnifiedSyncFactory {
     LanSyncSettings? lanSettings,
   }) {
     final identity = store.appIdentity;
+    if (identity.activeSyncTransportNormalized == 'direct') {
+      return directEngine(store);
+    }
     if (identity.activeSyncTransportNormalized == 'cloud') {
       return cloudEngine(
         store,
@@ -399,6 +409,9 @@ class UnifiedAutoCloudSyncController {
   final AutoSnapshotProgressPresenter? onSnapshotProgress;
 
   bool _cloudAllowedForCurrentRole() {
+    if (store.appIdentity.activeSyncTransportNormalized == 'direct') {
+      return false;
+    }
     return UnifiedSyncPolicy.isCloudAllowedForCurrentRole(store.appIdentity);
   }
 
@@ -716,6 +729,45 @@ class UnifiedAutoCloudSyncController {
       }
     } finally {
       SyncDiagnosticsLog.add('[SYNC_TRACE] autoCloud:tick end');
+      _running = false;
+    }
+  }
+}
+
+/// Auto-sync loop for the Direct transport. It deliberately does not reuse
+/// the Cloud loop: a Direct device must never wake or contact the Cloud sync
+/// path just because it has Cloud credentials.
+class UnifiedAutoDirectSyncController {
+  UnifiedAutoDirectSyncController(this.store);
+
+  final AppStore store;
+  Timer? _timer;
+  bool _running = false;
+  bool _disposed = false;
+
+  Future<void> start() async {
+    stop();
+    _disposed = false;
+    _timer = Timer.periodic(const Duration(seconds: 15), (_) => _tick());
+    await _tick();
+  }
+
+  void stop() {
+    _disposed = true;
+    _timer?.cancel();
+    _timer = null;
+  }
+
+  Future<void> _tick() async {
+    if (_disposed ||
+        _running ||
+        store.appIdentity.activeSyncTransportNormalized != 'direct') {
+      return;
+    }
+    _running = true;
+    try {
+      await UnifiedSyncFactory.directEngine(store).syncNow();
+    } finally {
       _running = false;
     }
   }

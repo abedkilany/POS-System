@@ -128,17 +128,20 @@ function forwardSignal(client, packet) {
   const targetRole = String(
     packet.targetRole || packet.target_role || oppositeRole(client.role),
   ).trim().toLowerCase() || oppositeRole(client.role);
-  broadcast({
-    storeId: client.storeId,
-    branchId: client.branchId,
-    role: targetRole,
-    payload: {
+  const targetDeviceId = String(
+    packet.targetDeviceId || packet.target_device_id || '',
+  ).trim();
+  const clients = clientsByScope.get(scopeKey(client.storeId, client.branchId));
+  if (!clients) return;
+  for (const target of clients) {
+    if (target.socket === client.socket || target.role !== targetRole) continue;
+    if (targetDeviceId && target.deviceId !== targetDeviceId) continue;
+    send(target, {
       ...packet,
       sourceDeviceId: client.deviceId || '',
       sourceRole: client.role,
-    },
-    excludeSocket: client.socket,
-  });
+    });
+  }
 }
 
 export async function realtimeTicketHandler(req, res) {
@@ -148,6 +151,10 @@ export async function realtimeTicketHandler(req, res) {
     const storeId = String(req.query.store_id || req.query.storeId || '').trim();
     const branchId = String(req.query.branch_id || req.query.branchId || 'main').trim() || 'main';
     const role = String(req.query.role || req.headers['x-device-role'] || '').trim().toLowerCase();
+    const requestedTransport = String(
+      req.query.transport || req.headers['x-sync-transport'] || 'cloud',
+    ).trim().toLowerCase();
+    const transport = requestedTransport === 'direct' ? 'direct' : 'cloud';
     const deviceId = String(req.headers['x-device-id'] || req.query.device_id || req.query.deviceId || '').trim();
     if (!storeId || (role !== 'host' && role !== 'client')) {
       return res.status(400).json({ ok: false, error: 'Invalid realtime ticket request.' });
@@ -157,7 +164,7 @@ export async function realtimeTicketHandler(req, res) {
       storeId,
       branchId,
       allowedRoles: role === 'host' ? ['host'] : ['client'],
-      allowedTransports: ['cloud'],
+      allowedTransports: [transport],
     });
     const ticket = crypto.randomUUID();
     tickets.set(ticket, {
@@ -165,6 +172,7 @@ export async function realtimeTicketHandler(req, res) {
       branchId,
       role,
       deviceId,
+      transport,
       expiresAt: Date.now() + ticketTtlMs,
     });
     res.status(200).json({
@@ -176,6 +184,14 @@ export async function realtimeTicketHandler(req, res) {
   } catch (error) {
     sendError(res, error);
   }
+}
+
+export async function directRealtimeTicketHandler(req, res) {
+  req.query = {
+    ...(req.query || {}),
+    transport: 'direct',
+  };
+  return realtimeTicketHandler(req, res);
 }
 
 export function notifySyncChanged({ storeId, branchId = 'main', latestSequence = 0 }) {
@@ -254,6 +270,10 @@ export function attachRealtimeServer(server) {
           }
           if (type === 'relay_response') {
             forwardRelayResponse(client, packet);
+            return;
+          }
+          if (type === 'direct_signal' && client.transport === 'direct') {
+            forwardSignal(client, packet);
             return;
           }
           if (type === 'sync_changed' ||

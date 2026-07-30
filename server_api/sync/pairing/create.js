@@ -104,7 +104,7 @@ async function authorizeLocalHostOrAccount(req, {
   }
 
   if (!recoveryKey) {
-    const err = new Error('Recovery Key is required to create a Cloud pairing code from a local Host.');
+    const err = new Error('Recovery Key is required to create a remote pairing code from a local Host.');
     err.statusCode = 401;
     throw err;
   }
@@ -135,15 +135,15 @@ async function authorizeLocalHostOrAccount(req, {
       store_id, branch_id, device_id, device_name, role, transport, active_transport,
       last_sync_transport, device_token, host_device_id, online, last_seen_at, updated_at
     ) values (
-      ${storeId}, ${branchId}, ${hostDeviceId}, ${hostDeviceName}, 'host', 'cloud', 'cloud',
-      'cloud', ${deviceToken}, ${hostDeviceId}, true, now(), now()
+      ${storeId}, ${branchId}, ${hostDeviceId}, ${hostDeviceName}, 'host', ${transport}, ${transport},
+      ${transport}, ${deviceToken}, ${hostDeviceId}, true, now(), now()
     )
     on conflict (store_id, branch_id, device_id) do update set
       device_name = excluded.device_name,
       role = 'host',
-      transport = 'cloud',
-      active_transport = 'cloud',
-      last_sync_transport = 'cloud',
+      transport = excluded.transport,
+      active_transport = excluded.active_transport,
+      last_sync_transport = excluded.last_sync_transport,
       device_token = case when excluded.device_token <> '' then excluded.device_token else store_devices.device_token end,
       host_device_id = excluded.host_device_id,
       revoked = false,
@@ -174,7 +174,10 @@ export default async function handler(req, res) {
     const branchId = String(body.branchId || body.branch_id || 'main').trim() || 'main';
     const hostDeviceId = String(body.hostDeviceId || body.host_device_id || body.deviceId || '').trim();
     const hostDeviceName = String(body.hostDeviceName || body.host_device_name || '').trim();
-    const transport = String(body.transport || 'cloud').trim() === 'lan' ? 'lan' : 'cloud';
+    const requestedTransport = String(body.transport || 'cloud').trim().toLowerCase();
+    const transport = requestedTransport === 'lan' || requestedTransport === 'direct'
+      ? requestedTransport
+      : 'cloud';
     const ttlMinutes = Math.min(Math.max(Number(body.ttlMinutes || body.ttl_minutes || 5), 1), 30);
     const recoveryKey = normalizeRecoveryKey(body.recoveryKey || body.recovery_key);
     if (!storeId) return res.status(400).json({ ok: false, error: 'storeId is required.' });

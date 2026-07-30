@@ -803,6 +803,8 @@ class SyncDeviceAccessStore {
 
 String _normalizeTransport(String? value) {
   final normalized = (value ?? '').trim().toLowerCase();
-  if (normalized == 'lan' || normalized == 'cloud') return normalized;
+  if (normalized == 'lan' || normalized == 'cloud' || normalized == 'direct') {
+    return normalized;
+  }
   return 'local';
 }
