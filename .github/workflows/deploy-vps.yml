@@ -27,7 +27,7 @@ jobs:
 
       - name: Build web
         env:
-          VENTIO_STUN_SERVER: ${{ secrets.VENTIO_STUN_SERVER || 'stun:139.185.35.173:3478' }}
+          VENTIO_STUN_SERVER: ${{ secrets.VENTIO_STUN_SERVER }}
         run: |
           set -euo pipefail
           APP_VERSION="$(awk '/^version:/ {print $2; exit}' pubspec.yaml)"
@@ -38,6 +38,10 @@ jobs:
           flutter --version
           flutter config --enable-web
           flutter pub get
+          if [ -z "${VENTIO_STUN_SERVER:-}" ]; then
+            echo "VENTIO_STUN_SERVER secret is required" >&2
+            exit 1
+          fi
           flutter build web --release \
             --dart-define=APP_VERSION="$APP_VERSION" \
             --dart-define=VENTIO_STUN_SERVER="$VENTIO_STUN_SERVER"
