@@ -10,6 +10,7 @@ import '../../core/utils/responsive.dart';
 import '../../core/services/cloud_sync_service.dart';
 import '../../core/services/lan_sync_service.dart';
 import '../../core/sync_unified/sync_unified.dart';
+import '../../core/services/sync_diagnostics_log.dart';
 import '../../core/snapshot/unified_snapshot_progress.dart';
 import '../../data/app_store.dart';
 import '../../core/services/page_timing_scope.dart';
@@ -160,6 +161,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
   }
 
   void _beginConnectionAttempt(String message) {
+    SyncDiagnosticsLog.clear();
     _connectionLog
       ..clear()
       ..add('[${DateTime.now().toIso8601String()}] START $message');
@@ -629,41 +631,50 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
 
   Widget _buildConnectionLogCard(BuildContext context) {
     final theme = Theme.of(context);
-    return Card(
-      color: theme.colorScheme.surfaceContainerHighest,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(children: [
-              const Icon(Icons.bug_report_outlined),
-              const SizedBox(width: 8),
-              const Expanded(child: Text('Connection diagnostics')),
-              IconButton(
-                tooltip: 'Copy log',
-                onPressed: () async {
-                  await Clipboard.setData(
-                      ClipboardData(text: _connectionLogText));
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Connection log copied')));
-                  }
-                },
-                icon: const Icon(Icons.copy_outlined),
-              ),
-            ]),
-            const SizedBox(height: 8),
-            SelectableText(
-              _connectionLogText,
-              style: theme.textTheme.bodySmall?.copyWith(
-                fontFamily: 'monospace',
-                height: 1.35,
-              ),
+    return ValueListenableBuilder<List<String>>(
+      valueListenable: SyncDiagnosticsLog.lines,
+      builder: (context, diagnosticLines, _) {
+        final directLines =
+            diagnosticLines.where((line) => line.contains('[DIRECT_')).toList();
+        final combined = <String>[..._connectionLog, ...directLines].join('\n');
+        return Card(
+          color: theme.colorScheme.surfaceContainerHighest,
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(children: [
+                  const Icon(Icons.bug_report_outlined),
+                  const SizedBox(width: 8),
+                  const Expanded(child: Text('Connection diagnostics')),
+                  IconButton(
+                    tooltip: 'Copy log',
+                    onPressed: () async {
+                      await Clipboard.setData(
+                          ClipboardData(text: _connectionLogText));
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                                content: Text('Connection log copied')));
+                      }
+                    },
+                    icon: const Icon(Icons.copy_outlined),
+                  ),
+                ]),
+                const SizedBox(height: 8),
+                SelectableText(
+                  combined,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontFamily: 'monospace',
+                    height: 1.35,
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 

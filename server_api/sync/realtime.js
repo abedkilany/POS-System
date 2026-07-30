@@ -173,7 +173,10 @@ export async function realtimeTicketHandler(req, res) {
       storeId,
       branchId,
       allowedRoles: role === 'host' ? ['host'] : ['client'],
-      allowedTransports: [transport],
+      // A Host may have been registered previously as Cloud or LAN. Direct
+      // signaling is a connection capability, not a replacement for the
+      // Host's stored sync transport. Clients remain restricted to Direct.
+      allowedTransports: role === 'host' ? [] : [transport],
     });
     const ticket = crypto.randomUUID();
     tickets.set(ticket, {
