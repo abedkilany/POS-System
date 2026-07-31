@@ -14,6 +14,7 @@ import '../../core/services/backup_download_service.dart';
 import '../../core/services/barcode_feedback_service.dart';
 import '../../core/services/cloud_sync_admin_service.dart';
 import '../../core/services/cloud_sync_service.dart';
+import '../../core/services/direct_sync_settings.dart';
 import '../../core/services/account_auth_service.dart';
 import '../../core/services/accounting_service.dart';
 import '../../core/services/google_drive_backup_service.dart';
@@ -4298,6 +4299,11 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       ? tr.text('regenerate_new_cloud_code')
       : tr.text('generate_cloud_code');
 
+  String get _directPairingButtonLabel =>
+      _hasActiveCloudPairingCode && _latestPairingTransport == 'direct'
+          ? 'Regenerate Direct Code'
+          : 'Direct pairing code';
+
   Future<void> _refreshCloudPairingStatus() async {
     final code = _latestCloudPairingCode.trim();
     if (code.isEmpty || !widget.store.appIdentity.isHost) return;
@@ -4713,6 +4719,14 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         if (!identity.isHost || settings.apiBaseUrl.trim().isEmpty) {
           throw StateError('Direct pairing needs the Ventio server address.');
         }
+        final existingDirect = DirectSyncSettings.load();
+        await DirectSyncSettings(
+          apiBaseUrl: settings.apiBaseUrl.trim(),
+          peerDeviceId: identity.deviceId,
+          setupComplete: true,
+          autoSyncEnabled: existingDirect.autoSyncEnabled,
+          stunServer: existingDirect.stunServer,
+        ).save();
         final result = await UnifiedSyncFactory.directEngine(widget.store)
             .createPairingCode(ttlMinutes: _pairingCodeLifetime.inMinutes);
         if (!result.ok) {
@@ -6213,7 +6227,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
               OutlinedButton.icon(
                   onPressed: _busy ? null : _createDirectPairingCode,
                   icon: const Icon(Icons.link_outlined),
-                  label: const Text('Direct pairing code')),
+                  label: Text(_directPairingButtonLabel)),
             ],
           ),
           if (_showLanPairingCode) ...[
@@ -6646,7 +6660,9 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         children: [
           Row(
             children: [
-              const Icon(Icons.qr_code_2_outlined),
+              Icon(_latestPairingTransport == 'direct'
+                  ? Icons.link_outlined
+                  : Icons.qr_code_2_outlined),
               const SizedBox(width: 8),
               Expanded(
                   child: Text(tr.text('lan_one_time_pairing_code'),
@@ -6736,7 +6752,9 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
               const Icon(Icons.qr_code_2_outlined),
               const SizedBox(width: 8),
               Expanded(
-                  child: Text(tr.text('cloud_pairing_code'),
+                  child: Text(_latestPairingTransport == 'direct'
+                      ? 'Direct Pairing Code'
+                      : tr.text('cloud_pairing_code'),
                       style: Theme.of(context).textTheme.titleMedium)),
               _pairingStatusBadge(context, status),
             ],
@@ -6753,6 +6771,10 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                 data: jsonEncode({
                   'transport': _latestPairingTransport,
                   'pairingCode': code,
+                  if (_latestPairingTransport == 'direct')
+                    'apiBaseUrl': DirectSyncSettings.load().apiBaseUrl.trim().isNotEmpty
+                        ? DirectSyncSettings.load().apiBaseUrl.trim()
+                        : CloudSyncSettings.load().apiBaseUrl,
                   'storeId': widget.store.appIdentity.storeId,
                   'branchId': widget.store.appIdentity.branchId,
                   'hostDeviceId': widget.store.deviceId,

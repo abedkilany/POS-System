@@ -1147,13 +1147,16 @@ class CloudSyncService {
   Future<CloudPairingCodeResult> createPairingCode(CloudSyncSettings settings,
       {String transport = 'cloud', int ttlMinutes = 5}) async {
     final identity = store.appIdentity;
-    if (!UnifiedSyncPolicy.canCreateCloudPairingCode(
-      identity,
-      settingsEnabled: settings.enabled,
-      hasApiBaseUrl: settings.apiBaseUrl.trim().isNotEmpty,
-    )) {
+    final canCreate = transport == 'direct'
+        ? identity.isHost && settings.apiBaseUrl.trim().isNotEmpty
+        : UnifiedSyncPolicy.canCreateCloudPairingCode(
+            identity,
+            settingsEnabled: settings.enabled,
+            hasApiBaseUrl: settings.apiBaseUrl.trim().isNotEmpty,
+          );
+    if (!canCreate) {
       return const CloudPairingCodeResult(
-          ok: false, message: 'Cloud Sync is not ready yet.');
+          ok: false, message: 'Pairing service is not ready yet.');
     }
     try {
       // Generate the one-time code on the Host, like LAN. The Cloud API only

@@ -8,6 +8,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../core/localization/app_localizations.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/services/cloud_sync_service.dart';
+import '../../core/services/direct_sync_settings.dart';
 import '../../core/services/lan_sync_service.dart';
 import '../../core/sync_unified/sync_unified.dart';
 import '../../core/services/sync_diagnostics_log.dart';
@@ -266,6 +267,8 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
 
   void _applyScannedPayload(String raw) {
     String code = raw;
+    String apiBaseUrl = '';
+    String peerDeviceId = '';
     try {
       final decoded = jsonDecode(raw);
       if (decoded is Map<String, dynamic>) {
@@ -292,8 +295,15 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
                 decoded['code'] ??
                 decoded['token'] ??
                 decoded['pairingToken'] ??
-                '')
+            '')
             .toString();
+        apiBaseUrl = (decoded['apiBaseUrl'] ??
+                decoded['apiUrl'] ??
+                decoded['cloudApiUrl'] ??
+                '')
+            .toString()
+            .trim();
+        peerDeviceId = (decoded['hostDeviceId'] ?? '').toString().trim();
         final expiresAtRaw =
             (decoded['expiresAt'] ?? decoded['expires_at'] ?? '').toString();
         _qrExpiresAt = DateTime.tryParse(expiresAtRaw);
@@ -305,6 +315,15 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       }
     } catch (_) {
       // Plain pairing code. Keep it as-is.
+    }
+
+    if (_mode == _ConnectMode.direct && apiBaseUrl.isNotEmpty) {
+      unawaited(DirectSyncSettings(
+        apiBaseUrl: apiBaseUrl,
+        peerDeviceId: peerDeviceId,
+        setupComplete: peerDeviceId.isNotEmpty,
+        stunServer: DirectSyncSettings.load().stunServer,
+      ).save());
     }
 
     setState(() {

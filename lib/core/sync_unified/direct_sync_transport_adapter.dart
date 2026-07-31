@@ -34,7 +34,17 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
   @override
   String get deviceToken => store.appIdentity.deviceToken;
 
-  CloudSyncSettings get _signalingSettings => CloudSyncSettings.load();
+  String get _apiBaseUrl {
+    final directUrl = _settings.apiBaseUrl.trim();
+    if (directUrl.isNotEmpty) return directUrl;
+    final savedUrl = CloudSyncSettings.load().apiBaseUrl.trim();
+    return savedUrl.isNotEmpty ? savedUrl : CloudSyncSettings.bundledApiBaseUrl;
+  }
+
+  CloudSyncSettings get _signalingSettings => CloudSyncSettings(
+        enabled: true,
+        apiBaseUrl: _apiBaseUrl,
+      );
 
   Future<DirectPeerRequestSession> _clientSession() async {
     final existing = _session;
