@@ -163,6 +163,9 @@ class DirectPeerSignalingService {
         )
         .timeout(const Duration(seconds: 8));
     if (response.statusCode == 404 || response.statusCode == 503)
+      SyncDiagnosticsLog.add(
+          '[DIRECT_ICE] config status=${response.statusCode} servers=0');
+    if (response.statusCode == 404 || response.statusCode == 503)
       return const [];
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw StateError(
@@ -173,10 +176,26 @@ class DirectPeerSignalingService {
     final raw = decoded is Map && decoded['servers'] is List
         ? decoded['servers'] as List
         : const <dynamic>[];
-    return raw
-        .whereType<Map>()
-        .map((item) => Map<String, dynamic>.from(item))
-        .toList();
+    final servers = <Map<String, dynamic>>[];
+    for (final item in raw.whereType<Map>()) {
+      final server = Map<String, dynamic>.from(item);
+      final rawUrls = server['urls'];
+      final serverUrls = <String>[];
+      if (rawUrls is List) {
+        serverUrls.addAll(rawUrls
+            .map((url) => url.toString().trim())
+            .where((url) => url.isNotEmpty));
+      } else {
+        final url = rawUrls?.toString().trim() ?? '';
+        if (url.isNotEmpty) serverUrls.add(url);
+      }
+      for (final url in serverUrls) {
+        servers.add({...server, 'urls': url});
+      }
+    }
+    SyncDiagnosticsLog.add(
+        '[DIRECT_ICE] config status=${response.statusCode} servers=${servers.length}');
+    return servers;
   }
 
   void dispose() => _client.close();

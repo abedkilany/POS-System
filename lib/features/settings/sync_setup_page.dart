@@ -182,7 +182,11 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
         _connectionLog.add('[${DateTime.now().toIso8601String()}] $message'));
   }
 
-  String get _connectionLogText => _connectionLog.join('\n');
+  String get _fullConnectionLogText {
+    final directLines = SyncDiagnosticsLog.lines.value
+        .where((line) => line.contains('[DIRECT_'));
+    return <String>[..._connectionLog, ...directLines].join('\n');
+  }
 
   Future<void> _finishSuccessfulConnection(String message) async {
     if (!mounted) return;
@@ -614,7 +618,9 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
                         ),
                         const SizedBox(height: 12),
                         if (_status.isNotEmpty) _buildStatusBanner(context),
-                        if (_connectionLog.isNotEmpty)
+                        if (_connectionLog.isNotEmpty ||
+                            SyncDiagnosticsLog.lines.value
+                                .any((line) => line.contains('[DIRECT_')))
                           _buildConnectionLogCard(context),
                       ],
                     ),
@@ -677,8 +683,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
                   IconButton(
                     tooltip: 'Copy log',
                     onPressed: () async {
-                      await Clipboard.setData(
-                          ClipboardData(text: _connectionLogText));
+                      await Clipboard.setData(ClipboardData(text: combined));
                       if (mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
@@ -1119,7 +1124,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
               tooltip: 'Copy connection log',
               onPressed: () async {
                 await Clipboard.setData(
-                    ClipboardData(text: _connectionLogText));
+                    ClipboardData(text: _fullConnectionLogText));
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(content: Text('Connection log copied')));

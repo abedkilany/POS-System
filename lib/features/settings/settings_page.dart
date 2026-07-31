@@ -6689,6 +6689,10 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
               ),
             ),
           ),
+          if (_latestPairingTransport == 'direct') ...[
+            const SizedBox(height: 12),
+            _temporaryDirectDiagnostics(),
+          ],
           const SizedBox(height: 12),
           Text(
             status == _PairingCodeVisualStatus.active
@@ -6718,6 +6722,60 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
               copiedMessage: tr.text('lan_pairing_code_copied')),
         ],
       ),
+    );
+  }
+
+  Widget _temporaryDirectDiagnostics() {
+    return ValueListenableBuilder<List<String>>(
+      valueListenable: SyncDiagnosticsLog.lines,
+      builder: (context, lines, _) {
+        final directLines =
+            lines.where((line) => line.contains('[DIRECT_')).toList();
+        final text = directLines.join('\n');
+        return Card(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.bug_report_outlined),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                        child: Text('Direct diagnostics (temporary)')),
+                    IconButton(
+                      tooltip: 'Copy diagnostics',
+                      onPressed: text.isEmpty
+                          ? null
+                          : () async {
+                              await Clipboard.setData(
+                                  ClipboardData(text: text));
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                      content: Text('Diagnostics copied')),
+                                );
+                              }
+                            },
+                      icon: const Icon(Icons.copy_outlined),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                SelectableText(
+                  text.isEmpty ? 'No Direct diagnostics yet.' : text,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontFamily: 'monospace',
+                        height: 1.35,
+                      ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -6793,6 +6851,10 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
               ),
             ),
           ),
+          if (_latestPairingTransport == 'direct') ...[
+            const SizedBox(height: 12),
+            _temporaryDirectDiagnostics(),
+          ],
           const SizedBox(height: 12),
           Text(
             expiresText,

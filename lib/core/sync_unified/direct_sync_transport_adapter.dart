@@ -61,10 +61,12 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       final dynamicIceServers = await _coordination.fetchIceServers(
         DirectPeerSignalingSettings(apiBaseUrl: _apiBaseUrl),
       );
+      SyncDiagnosticsLog.add(
+          '[DIRECT_ICE] client configured=${_settings.iceServersForApiBaseUrl(_apiBaseUrl).length} dynamic=${dynamicIceServers.length}');
       final connection =
           await DirectPeerConnectionService(store).connectAsClient(
         signalingSettings: DirectPeerSignalingSettings(
-          apiBaseUrl: _settings.apiBaseUrl,
+          apiBaseUrl: _apiBaseUrl,
         ),
         hostDeviceId: _settings.peerDeviceId,
         iceServers: [
@@ -309,6 +311,8 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
           final dynamicIceServers = await _coordination.fetchIceServers(
             DirectPeerSignalingSettings(apiBaseUrl: _apiBaseUrl),
           );
+          SyncDiagnosticsLog.add(
+              '[DIRECT_ICE] host configured=${_settings.iceServersForApiBaseUrl(_apiBaseUrl).length} dynamic=${dynamicIceServers.length}');
           final connection =
               await DirectPeerConnectionService(store).acceptAsHost(
             signalingSettings: DirectPeerSignalingSettings(
