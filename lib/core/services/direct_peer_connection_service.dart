@@ -105,6 +105,8 @@ class DirectPeerConnectionService {
     );
 
     peer.onIceCandidate = (candidate) {
+      SyncDiagnosticsLog.add(
+          '[DIRECT_WEBRTC] client ice candidate=${candidate.candidate?.isNotEmpty == true}');
       signaling.send({
         'kind': 'candidate',
         'targetDeviceId': clientDeviceId,
@@ -199,6 +201,9 @@ class DirectPeerConnectionService {
         connection.completeError(StateError('Direct connection failed.'));
       }
     };
+    peer.onIceGatheringState = (state) {
+      SyncDiagnosticsLog.add('[DIRECT_WEBRTC] client ice gathering=$state');
+    };
 
     final subscription = signaling.signals.listen((signal) async {
       if (signal['sourceDeviceId']?.toString() != hostDeviceId) return;
@@ -261,6 +266,8 @@ class DirectPeerConnectionService {
     DirectPeerConnection? result;
 
     peer.onIceCandidate = (candidate) {
+      SyncDiagnosticsLog.add(
+          '[DIRECT_WEBRTC] host-listener ice candidate=${candidate.candidate?.isNotEmpty == true}');
       if (sourceDeviceId.isEmpty) return;
       signaling.send({
         'kind': 'candidate',
@@ -295,6 +302,10 @@ class DirectPeerConnectionService {
           !connection.isCompleted) {
         connection.completeError(StateError('Direct Host connection failed.'));
       }
+    };
+    peer.onIceGatheringState = (state) {
+      SyncDiagnosticsLog.add(
+          '[DIRECT_WEBRTC] host-listener ice gathering=$state');
     };
 
     final subscription = signaling.signals.listen((signal) async {
