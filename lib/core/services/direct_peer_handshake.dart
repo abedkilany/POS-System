@@ -54,7 +54,9 @@ class DirectPeerHandshake {
       identity: identity,
       expectedNonce: clientNonce,
     );
-    final hostNonce = challenge['peerNonce']?.toString().trim() ?? '';
+    // The Host challenge carries its own nonce in `nonce`; `peerNonce` is
+    // the Client nonce echoed back for scope validation.
+    final hostNonce = challenge['nonce']?.toString().trim() ?? '';
     final hostPublicKey = challenge['publicKey']?.toString().trim() ?? '';
     if (hostNonce.isEmpty)
       throw StateError('Direct handshake host nonce missing.');
@@ -69,7 +71,7 @@ class DirectPeerHandshake {
     )) {
       throw StateError('Direct Host public key changed unexpectedly.');
     }
-    await session.send('direct_handshake_ack', {
+    final ack = {
       ..._packet(
         role: 'client',
         deviceId: identity.deviceId,
@@ -80,13 +82,13 @@ class DirectPeerHandshake {
         publicKey: local.publicKeyEncoded,
         expiresAtMs: expiresAtMs,
       ),
-      'signature': local.sign(_canonical({
-        ...hello,
-        'peerNonce': hostNonce,
-        'type': 'direct_handshake_ack',
-      })),
+      'type': 'direct_handshake_ack',
+    };
+    await session.send('direct_handshake_ack', {
+      ...ack,
+      'signature': local.sign(_canonical(ack)),
     });
-    SyncDiagnosticsLog.add('[DIRECT_HANDSHAKE] client ack sent success');
+    SyncDiagnosticsLog.add('[DIRECT_HANDSHAKE] client ack sent');
     return _material(
       clientNonce: clientNonce,
       hostNonce: hostNonce,
@@ -158,16 +160,28 @@ class DirectPeerHandshake {
     final ack = await _next(session, 'direct_handshake_ack');
     SyncDiagnosticsLog.add('[DIRECT_HANDSHAKE] host ack received');
     _validatePacketScope(ack, identity);
-    if (ack['deviceId']?.toString().trim() != expectedClientDeviceId ||
-        ack['nonce']?.toString().trim() != clientNonce ||
-        ack['peerNonce']?.toString().trim() != hostNonce ||
-        ack['expiresAtMs']?.toString() != expiresAtMs.toString() ||
-        ack['publicKey']?.toString().trim() != clientPublicKey ||
-        !DirectDeviceIdentity.verify(
-          message: _canonical(ack),
-          signatureEncoded: ack['signature']?.toString() ?? '',
-          publicKeyEncoded: clientPublicKey,
-        )) {
+    final deviceMatches =
+        ack['deviceId']?.toString().trim() == expectedClientDeviceId;
+    final nonceMatches = ack['nonce']?.toString().trim() == clientNonce;
+    final peerNonceMatches = ack['peerNonce']?.toString().trim() == hostNonce;
+    final expiryMatches =
+        ack['expiresAtMs']?.toString() == expiresAtMs.toString();
+    final keyMatches = ack['publicKey']?.toString().trim() == clientPublicKey;
+    final signatureValid = DirectDeviceIdentity.verify(
+      message: _canonical(ack),
+      signatureEncoded: ack['signature']?.toString() ?? '',
+      publicKeyEncoded: clientPublicKey,
+    );
+    if (!deviceMatches ||
+        !nonceMatches ||
+        !peerNonceMatches ||
+        !expiryMatches ||
+        !keyMatches ||
+        !signatureValid) {
+      SyncDiagnosticsLog.add(
+          '[DIRECT_HANDSHAKE] host ack rejected device=$deviceMatches '
+          'nonce=$nonceMatches peerNonce=$peerNonceMatches '
+          'expiry=$expiryMatches key=$keyMatches signature=$signatureValid');
       throw StateError('Direct client handshake acknowledgement is invalid.');
     }
     SyncDiagnosticsLog.add('[DIRECT_HANDSHAKE] host success');

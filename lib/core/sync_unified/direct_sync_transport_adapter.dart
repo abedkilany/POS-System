@@ -192,7 +192,8 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       onProgress: onProgress,
     );
     SyncDiagnosticsLog.add(
-        '[DIRECT_PAIRING] claim result ok=${result.ok} transport=direct');
+        '[DIRECT_PAIRING] claim result ok=${result.ok} transport=direct '
+        'message=${result.message.replaceAll(RegExp(r'\s+'), ' ').trim()}');
     return UnifiedPairingClaimResult(
       ok: result.ok,
       message: result.message,

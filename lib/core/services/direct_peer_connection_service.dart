@@ -252,6 +252,29 @@ class DirectPeerConnectionService {
     var iceRestartAttempts = 0;
     var lastIceRestartAt = DateTime.fromMillisecondsSinceEpoch(0);
 
+    // The Client must create the data channel before creating the offer.
+    // Otherwise the SDP has no m=application section and libwebrtc has no
+    // transport to negotiate, which results in zero ICE candidates.
+    final localChannel = await peer.createDataChannel(
+      'ventio-sync',
+      RTCDataChannelInit()..ordered = true,
+    );
+    result = DirectPeerConnection(
+      peerConnection: peer,
+      signaling: signaling,
+      dataChannel: localChannel,
+    );
+    SyncDiagnosticsLog.add(
+        '[DIRECT_WEBRTC] client data channel created state=${localChannel.state}');
+    localChannel.onDataChannelState = (state) {
+      SyncDiagnosticsLog.add(
+          '[DIRECT_WEBRTC] client data channel state=$state');
+      if (state == RTCDataChannelState.RTCDataChannelOpen &&
+          !connection.isCompleted) {
+        authenticateClient();
+      }
+    };
+
     Future<void> restartIceOffer() async {
       if (iceRestartInFlight || !remoteDescriptionSet) {
         return;
@@ -305,11 +328,10 @@ class DirectPeerConnectionService {
       });
     };
     peer.onDataChannel = (channel) {
+      SyncDiagnosticsLog.add(
+          '[DIRECT_WEBRTC] client remote data channel state=${channel.state}');
       result ??= DirectPeerConnection(
-        peerConnection: peer,
-        signaling: signaling,
-        dataChannel: channel,
-      );
+          peerConnection: peer, signaling: signaling, dataChannel: channel);
       if (channel.state == RTCDataChannelState.RTCDataChannelOpen &&
           !connection.isCompleted) authenticateClient();
       channel.onDataChannelState = (state) {

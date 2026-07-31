@@ -1364,6 +1364,8 @@ class CloudSyncService {
           )
           .timeout(const Duration(seconds: 10));
       if (response.statusCode < 200 || response.statusCode >= 300) {
+        SyncDiagnosticsLog.add(
+            '[DIRECT_PAIRING] claim http status=${response.statusCode}');
         return const CloudPairingClaimResult(
             ok: false,
             message:
@@ -1371,6 +1373,12 @@ class CloudSyncService {
       }
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
       if (decoded['ok'] != true) {
+        final reason = (decoded['error'] ?? decoded['message'] ?? '')
+            .toString()
+            .replaceAll(RegExp(r'\s+'), ' ')
+            .trim();
+        SyncDiagnosticsLog.add(
+            '[DIRECT_PAIRING] claim rejected reason=${reason.isEmpty ? 'unknown' : reason}');
         return const CloudPairingClaimResult(
             ok: false,
             message:
