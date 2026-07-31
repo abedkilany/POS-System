@@ -4,6 +4,7 @@ import '../services/direct_peer_protocol.dart';
 import '../services/direct_peer_signaling_service.dart';
 import '../services/direct_sync_protocol_service.dart';
 import '../services/direct_sync_settings.dart';
+import '../services/sync_diagnostics_log.dart';
 import '../../data/app_store.dart';
 import 'sync_contracts.dart';
 import 'sync_device_state.dart';
@@ -20,6 +21,8 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
   static final Map<String, Future<DirectPeerHostEndpoint>> _hostListeners =
       <String, Future<DirectPeerHostEndpoint>>{};
   final DirectSyncSettings _settings;
+  late final DirectPeerSignalingService _coordination =
+      DirectPeerSignalingService(store);
   DirectPeerRequestSession? _session;
   DirectPeerHostEndpoint? _hostEndpoint;
   bool _hostListenerStarting = false;
@@ -54,16 +57,39 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
     if (!_settings.isConfigured) {
       throw StateError('Direct pairing is not configured.');
     }
-    final connection = await DirectPeerConnectionService(store).connectAsClient(
-      signalingSettings: DirectPeerSignalingSettings(
-        apiBaseUrl: _settings.apiBaseUrl,
-      ),
-      hostDeviceId: _settings.peerDeviceId,
-      iceServers: _settings.iceServersForApiBaseUrl(_settings.apiBaseUrl),
-    );
-    final session = DirectPeerRequestSession(connection);
-    _session = session;
-    return session;
+    try {
+      final dynamicIceServers = await _coordination.fetchIceServers(
+        DirectPeerSignalingSettings(apiBaseUrl: _apiBaseUrl),
+      );
+      final connection =
+          await DirectPeerConnectionService(store).connectAsClient(
+        signalingSettings: DirectPeerSignalingSettings(
+          apiBaseUrl: _settings.apiBaseUrl,
+        ),
+        hostDeviceId: _settings.peerDeviceId,
+        iceServers: [
+          ..._settings.iceServersForApiBaseUrl(_apiBaseUrl),
+          ...dynamicIceServers,
+        ],
+        iceTransportPolicy: _settings.iceTransportPolicy,
+        iceCandidatePoolSize: _settings.iceCandidatePoolSize,
+      );
+      final session = DirectPeerRequestSession(connection);
+      _session = session;
+      return session;
+    } catch (error) {
+      SyncDiagnosticsLog.add(
+          '[DIRECT_WEBRTC] client session start failed=$error');
+      _session = null;
+      rethrow;
+    }
+  }
+
+  Future<void> _invalidateClientSession(Object error) async {
+    SyncDiagnosticsLog.add('[DIRECT_WEBRTC] client session invalidated=$error');
+    final session = _session;
+    _session = null;
+    await session?.close();
   }
 
   @override
@@ -180,24 +206,40 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<UnifiedSyncResult> pushPending(UnifiedSyncPushRequest request) async {
-    final session = await _clientSession();
-    return DirectClientSyncService(store, session).pushPending();
+    try {
+      final session = await _clientSession();
+      return await DirectClientSyncService(store, session).pushPending();
+    } catch (error) {
+      await _invalidateClientSession(error);
+      rethrow;
+    }
   }
 
   @override
   Future<UnifiedSyncResult> pullChanges(UnifiedSyncPullRequest request) async {
-    final session = await _clientSession();
-    return DirectClientSyncService(store, session).pullChanges();
+    try {
+      final session = await _clientSession();
+      return await DirectClientSyncService(store, session).pullChanges();
+    } catch (error) {
+      await _invalidateClientSession(error);
+      rethrow;
+    }
   }
 
   @override
   Future<UnifiedSyncResult> rebuildFromHostSnapshot({
     void Function(double value, String label)? onProgress,
   }) async {
-    final session = await _clientSession();
-    return DirectClientSyncService(store, session).rebuildFromHostSnapshot(
-      onProgress: onProgress,
-    );
+    try {
+      final session = await _clientSession();
+      return await DirectClientSyncService(store, session)
+          .rebuildFromHostSnapshot(
+        onProgress: onProgress,
+      );
+    } catch (error) {
+      await _invalidateClientSession(error);
+      rethrow;
+    }
   }
 
   @override
@@ -210,6 +252,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
     _hostEndpoint = null;
     await _session?.close();
     _session = null;
+    _coordination.dispose();
   }
 
   @override
@@ -249,8 +292,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       return;
     }
     _hostListenerStarting = true;
-    final listenerKey =
-        '${store.appIdentity.storeId}:${store.deviceId}';
+    final listenerKey = '${store.appIdentity.storeId}:${store.deviceId}';
     final existingListener = _hostListeners[listenerKey];
     if (existingListener != null) {
       existingListener.then((endpoint) {
@@ -260,19 +302,42 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       return;
     }
     final listener = () async {
-      final connection =
-          await DirectPeerConnectionService(store).acceptAsHost(
-        signalingSettings: DirectPeerSignalingSettings(
-          apiBaseUrl: _signalingSettings.apiBaseUrl,
-        ),
-        iceServers: _settings.iceServersForApiBaseUrl(
-          _signalingSettings.apiBaseUrl,
-        ),
-      );
-      return DirectPeerHostEndpoint(
-        connection,
-        onRequest: DirectHostSyncEndpoint(store).handleRequest,
-      );
+      // Keep one Host listener alive. A temporary WebSocket or WebRTC failure
+      // must not make a still-running Host disappear until the next app tick.
+      while (store.appIdentity.isHost) {
+        try {
+          final dynamicIceServers = await _coordination.fetchIceServers(
+            DirectPeerSignalingSettings(apiBaseUrl: _apiBaseUrl),
+          );
+          final connection =
+              await DirectPeerConnectionService(store).acceptAsHost(
+            signalingSettings: DirectPeerSignalingSettings(
+              apiBaseUrl: _signalingSettings.apiBaseUrl,
+            ),
+            iceServers: [
+              ..._settings.iceServersForApiBaseUrl(_apiBaseUrl),
+              ...dynamicIceServers,
+            ],
+            iceTransportPolicy: _settings.iceTransportPolicy,
+            iceCandidatePoolSize: _settings.iceCandidatePoolSize,
+          );
+          return DirectPeerHostEndpoint(
+            connection,
+            onRequest: DirectHostSyncEndpoint(store).handleRequest,
+            onClosed: () {
+              if (_hostEndpoint?.connection == connection) {
+                _hostEndpoint = null;
+                _hostListenerStarting = false;
+                _startHostListener();
+              }
+            },
+          );
+        } catch (error) {
+          SyncDiagnosticsLog.add('[DIRECT_WEBRTC] host listener retry=$error');
+          await Future<void>.delayed(const Duration(seconds: 1));
+        }
+      }
+      throw StateError('Direct Host listener stopped.');
     }();
     _hostListeners[listenerKey] = listener;
     listener.then((endpoint) {

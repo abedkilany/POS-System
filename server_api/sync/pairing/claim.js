@@ -40,6 +40,7 @@ async function ensureDeviceTable() {
   `;
   await ensureDeviceAuthColumns();
   await sql`alter table store_devices add column if not exists host_device_id text default ''`;
+  await sql`alter table store_devices add column if not exists device_public_key text default ''`;
 }
 
 function makeDeviceToken() {
@@ -59,6 +60,7 @@ export default async function handler(req, res) {
     const deviceName = String(body.deviceName || body.device_name || '').trim();
     const platform = String(body.platform || '').trim();
     const appVersion = String(body.appVersion || body.app_version || '').trim();
+    const devicePublicKey = String(body.devicePublicKey || body.device_public_key || '').trim();
     if (!code) return res.status(400).json({ ok: false, error: 'Pairing code is required.' });
     if (!deviceId) return res.status(400).json({ ok: false, error: 'deviceId is required.' });
 
@@ -94,8 +96,8 @@ export default async function handler(req, res) {
 
     const deviceToken = makeDeviceToken();
     await sql`
-      insert into store_devices (store_id, branch_id, device_id, device_name, platform, role, transport, active_transport, last_sync_transport, app_version, device_token, host_device_id, revoked, online, last_seen_at, updated_at)
-      values (${pairing.store_id}, ${pairing.branch_id}, ${deviceId}, ${deviceName}, ${platform}, 'client', ${pairing.transport}, ${pairing.transport}, ${pairing.transport}, ${appVersion}, ${deviceToken}, ${pairing.host_device_id}, false, true, now(), now())
+      insert into store_devices (store_id, branch_id, device_id, device_name, platform, role, transport, active_transport, last_sync_transport, app_version, device_token, host_device_id, device_public_key, revoked, online, last_seen_at, updated_at)
+      values (${pairing.store_id}, ${pairing.branch_id}, ${deviceId}, ${deviceName}, ${platform}, 'client', ${pairing.transport}, ${pairing.transport}, ${pairing.transport}, ${appVersion}, ${deviceToken}, ${pairing.host_device_id}, ${devicePublicKey}, false, true, now(), now())
       on conflict (store_id, branch_id, device_id) do update set
         device_name = excluded.device_name,
         platform = excluded.platform,
@@ -106,10 +108,19 @@ export default async function handler(req, res) {
         app_version = excluded.app_version,
         device_token = excluded.device_token,
         host_device_id = excluded.host_device_id,
+        device_public_key = case when excluded.device_public_key <> '' then excluded.device_public_key else store_devices.device_public_key end,
         revoked = false,
         online = true,
         last_seen_at = now(),
         updated_at = now()
+    `;
+    const hostRows = await sql`
+      select device_public_key
+      from store_devices
+      where store_id = ${pairing.store_id}
+        and branch_id = ${pairing.branch_id}
+        and device_id = ${pairing.host_device_id}
+      limit 1
     `;
     return res.status(200).json({
       ok: true,
@@ -121,6 +132,7 @@ export default async function handler(req, res) {
       deviceToken,
       role: 'client',
       transport: pairing.transport,
+      hostDevicePublicKey: hostRows[0]?.device_public_key || '',
     });
   } catch (error) {
     sendError(res, error);

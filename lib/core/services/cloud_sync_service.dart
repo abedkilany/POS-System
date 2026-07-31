@@ -13,6 +13,7 @@ import '../../models/sync_change.dart';
 import 'local_database_service.dart';
 import 'sync_diagnostics_log.dart';
 import 'direct_sync_settings.dart';
+import 'direct_device_identity.dart';
 import 'unified_sync_core_service.dart';
 import '../sync_unified/unified_pairing_lifecycle.dart';
 import '../sync_unified/unified_cloud_snapshot_retry_flow.dart';
@@ -1163,6 +1164,9 @@ class CloudSyncService {
       // brokers the short-lived pairing claim; it must not invent or own the
       // Host's pairing secret.
       final localPairingCode = CloudSyncSettings.generatePairingCode();
+      final directIdentity = transport == 'direct'
+          ? await DirectDeviceIdentity.loadOrCreate()
+          : null;
       // Local Host devices are allowed to request a Cloud pairing code without
       // an online account session. The platform permission is enforced by the
       // server from app_stores.cloud_sync_enabled, so the local app must not
@@ -1180,6 +1184,7 @@ class CloudSyncService {
               'code': localPairingCode,
               'ttlMinutes': ttlMinutes,
               'recoveryKey': identity.recoveryKey,
+              'devicePublicKey': directIdentity?.publicKeyEncoded ?? '',
             }),
           )
           .timeout(const Duration(seconds: 10));
@@ -1341,6 +1346,7 @@ class CloudSyncService {
           ok: false, message: 'Cloud API URL is required.');
     }
     var deviceRegistered = false;
+    final directIdentity = await DirectDeviceIdentity.loadOrCreate();
     onProgress?.call(0.08, 'Connecting to Cloud pairing service...');
     try {
       final response = await _client
@@ -1353,6 +1359,7 @@ class CloudSyncService {
               'deviceName': current.deviceName,
               'platform': current.platform.name,
               'appVersion': AppBrand.cloudAppVersion,
+              'devicePublicKey': directIdentity.publicKeyEncoded,
             }),
           )
           .timeout(const Duration(seconds: 10));
@@ -1390,6 +1397,20 @@ class CloudSyncService {
       final claimedTransport =
           decoded['transport']?.toString().trim().toLowerCase() ?? 'cloud';
       final isDirect = claimedTransport == 'direct';
+      final hostPublicKey =
+          decoded['hostDevicePublicKey']?.toString().trim() ?? '';
+      if (isDirect && hostPublicKey.isNotEmpty) {
+        final trusted = await DirectDeviceIdentity.verifyOrTrustPeer(
+          deviceId: claim.hostDeviceId,
+          publicKeyEncoded: hostPublicKey,
+        );
+        if (!trusted) {
+          return const CloudPairingClaimResult(
+            ok: false,
+            message: 'The Host device identity changed unexpectedly.',
+          );
+        }
+      }
       final transport = claimedTransport == 'lan'
           ? SyncMode.lanOnly
           : SyncMode.cloudConnected;
@@ -1404,11 +1425,16 @@ class CloudSyncService {
       await store.updateAppIdentityDuringSetup(identity);
       deviceRegistered = true;
       if (isDirect) {
+        final existingDirect = DirectSyncSettings.load();
         await DirectSyncSettings(
           apiBaseUrl: settings.apiBaseUrl,
           peerDeviceId: claim.hostDeviceId,
           setupComplete: true,
-          stunServer: DirectSyncSettings.load().stunServer,
+          stunServer: existingDirect.stunServer,
+          stunServers: existingDirect.stunServers,
+          turnServers: existingDirect.turnServers,
+          iceTransportPolicy: existingDirect.iceTransportPolicy,
+          iceCandidatePoolSize: existingDirect.iceCandidatePoolSize,
         ).save();
       }
 

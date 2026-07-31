@@ -4726,6 +4726,10 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           setupComplete: true,
           autoSyncEnabled: existingDirect.autoSyncEnabled,
           stunServer: existingDirect.stunServer,
+          stunServers: existingDirect.stunServers,
+          turnServers: existingDirect.turnServers,
+          iceTransportPolicy: existingDirect.iceTransportPolicy,
+          iceCandidatePoolSize: existingDirect.iceCandidatePoolSize,
         ).save();
         final result = await UnifiedSyncFactory.directEngine(widget.store)
             .createPairingCode(ttlMinutes: _pairingCodeLifetime.inMinutes);
@@ -6752,9 +6756,10 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
               const Icon(Icons.qr_code_2_outlined),
               const SizedBox(width: 8),
               Expanded(
-                  child: Text(_latestPairingTransport == 'direct'
-                      ? 'Direct Pairing Code'
-                      : tr.text('cloud_pairing_code'),
+                  child: Text(
+                      _latestPairingTransport == 'direct'
+                          ? 'Direct Pairing Code'
+                          : tr.text('cloud_pairing_code'),
                       style: Theme.of(context).textTheme.titleMedium)),
               _pairingStatusBadge(context, status),
             ],
@@ -6772,9 +6777,10 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                   'transport': _latestPairingTransport,
                   'pairingCode': code,
                   if (_latestPairingTransport == 'direct')
-                    'apiBaseUrl': DirectSyncSettings.load().apiBaseUrl.trim().isNotEmpty
-                        ? DirectSyncSettings.load().apiBaseUrl.trim()
-                        : CloudSyncSettings.load().apiBaseUrl,
+                    'apiBaseUrl':
+                        DirectSyncSettings.load().apiBaseUrl.trim().isNotEmpty
+                            ? DirectSyncSettings.load().apiBaseUrl.trim()
+                            : CloudSyncSettings.load().apiBaseUrl,
                   'storeId': widget.store.appIdentity.storeId,
                   'branchId': widget.store.appIdentity.branchId,
                   'hostDeviceId': widget.store.deviceId,

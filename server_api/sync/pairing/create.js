@@ -47,6 +47,7 @@ async function ensureRecoveryTable() {
       primary key (store_id, branch_id)
     )
   `;
+  await sql`alter table store_devices add column if not exists device_public_key text default ''`;
 }
 
 
@@ -88,6 +89,7 @@ async function authorizeLocalHostOrAccount(req, {
   branchId,
   hostDeviceId,
   hostDeviceName,
+  hostDevicePublicKey,
   recoveryKey,
   transport,
 }) {
@@ -133,10 +135,10 @@ async function authorizeLocalHostOrAccount(req, {
   await sql`
     insert into store_devices (
       store_id, branch_id, device_id, device_name, role, transport, active_transport,
-      last_sync_transport, device_token, host_device_id, online, last_seen_at, updated_at
+      last_sync_transport, device_token, host_device_id, device_public_key, online, last_seen_at, updated_at
     ) values (
       ${storeId}, ${branchId}, ${hostDeviceId}, ${hostDeviceName}, 'host', ${transport}, ${transport},
-      ${transport}, ${deviceToken}, ${hostDeviceId}, true, now(), now()
+      ${transport}, ${deviceToken}, ${hostDeviceId}, ${hostDevicePublicKey}, true, now(), now()
     )
     on conflict (store_id, branch_id, device_id) do update set
       device_name = excluded.device_name,
@@ -146,6 +148,7 @@ async function authorizeLocalHostOrAccount(req, {
       last_sync_transport = excluded.last_sync_transport,
       device_token = case when excluded.device_token <> '' then excluded.device_token else store_devices.device_token end,
       host_device_id = excluded.host_device_id,
+      device_public_key = case when excluded.device_public_key <> '' then excluded.device_public_key else store_devices.device_public_key end,
       revoked = false,
       suspended = false,
       online = true,
@@ -174,6 +177,7 @@ export default async function handler(req, res) {
     const branchId = String(body.branchId || body.branch_id || 'main').trim() || 'main';
     const hostDeviceId = String(body.hostDeviceId || body.host_device_id || body.deviceId || '').trim();
     const hostDeviceName = String(body.hostDeviceName || body.host_device_name || '').trim();
+    const hostDevicePublicKey = String(body.devicePublicKey || body.device_public_key || '').trim();
     const requestedTransport = String(body.transport || 'cloud').trim().toLowerCase();
     const transport = requestedTransport === 'lan' || requestedTransport === 'direct'
       ? requestedTransport
@@ -192,6 +196,7 @@ export default async function handler(req, res) {
       branchId,
       hostDeviceId,
       hostDeviceName,
+      hostDevicePublicKey,
       recoveryKey,
       transport,
     });

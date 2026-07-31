@@ -124,6 +124,61 @@ class DirectPeerSignalingService {
     return DirectPeerSignalingSession(channel: channel, ticket: ticket);
   }
 
+  Future<String> fetchPeerPublicKey(
+    DirectPeerSignalingSettings settings,
+    String peerDeviceId,
+  ) async {
+    final identity = store.appIdentity;
+    final response = await _client
+        .get(
+          settings.endpoint('/api/sync/device-key', {
+            'store_id': identity.storeId,
+            'branch_id': identity.branchId,
+            'device_id': peerDeviceId,
+          }),
+          headers: _headers(),
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode == 404) return '';
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw StateError(
+        'Direct peer key lookup failed: ${response.statusCode} ${response.body}',
+      );
+    }
+    final decoded = jsonDecode(response.body);
+    return decoded is Map ? decoded['publicKey']?.toString().trim() ?? '' : '';
+  }
+
+  Future<List<Map<String, dynamic>>> fetchIceServers(
+    DirectPeerSignalingSettings settings,
+  ) async {
+    final identity = store.appIdentity;
+    final response = await _client
+        .get(
+          settings.endpoint('/api/sync/ice-config', {
+            'store_id': identity.storeId,
+            'branch_id': identity.branchId,
+          }),
+          headers: _headers(),
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode == 404 || response.statusCode == 503)
+      return const [];
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw StateError(
+        'Direct ICE config lookup failed: ${response.statusCode} ${response.body}',
+      );
+    }
+    final decoded = jsonDecode(response.body);
+    final raw = decoded is Map && decoded['servers'] is List
+        ? decoded['servers'] as List
+        : const <dynamic>[];
+    return raw
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
+  }
+
   void dispose() => _client.close();
 }
 

@@ -295,7 +295,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
                 decoded['code'] ??
                 decoded['token'] ??
                 decoded['pairingToken'] ??
-            '')
+                '')
             .toString();
         apiBaseUrl = (decoded['apiBaseUrl'] ??
                 decoded['apiUrl'] ??
@@ -318,11 +318,17 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
     }
 
     if (_mode == _ConnectMode.direct && apiBaseUrl.isNotEmpty) {
+      final existingDirect = DirectSyncSettings.load();
       unawaited(DirectSyncSettings(
         apiBaseUrl: apiBaseUrl,
         peerDeviceId: peerDeviceId,
         setupComplete: peerDeviceId.isNotEmpty,
-        stunServer: DirectSyncSettings.load().stunServer,
+        autoSyncEnabled: existingDirect.autoSyncEnabled,
+        stunServer: existingDirect.stunServer,
+        stunServers: existingDirect.stunServers,
+        turnServers: existingDirect.turnServers,
+        iceTransportPolicy: existingDirect.iceTransportPolicy,
+        iceCandidatePoolSize: existingDirect.iceCandidatePoolSize,
       ).save());
     }
 
@@ -655,6 +661,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       builder: (context, diagnosticLines, _) {
         final directLines =
             diagnosticLines.where((line) => line.contains('[DIRECT_')).toList();
+        final summary = SyncDiagnosticsLog.directSummary();
         final combined = <String>[..._connectionLog, ...directLines].join('\n');
         return Card(
           color: theme.colorScheme.surfaceContainerHighest,
@@ -682,6 +689,8 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
                   ),
                 ]),
                 const SizedBox(height: 8),
+                _buildDirectSummary(theme, summary),
+                const SizedBox(height: 8),
                 SelectableText(
                   combined,
                   style: theme.textTheme.bodySmall?.copyWith(
@@ -694,6 +703,31 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildDirectSummary(
+      ThemeData theme, DirectDiagnosticsSummary summary) {
+    final status = summary.hasConnection ? 'Ready' : 'Waiting for connection';
+    final statusColor = summary.hasConnection
+        ? Colors.green.shade700
+        : theme.colorScheme.onSurfaceVariant;
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Wrap(
+        spacing: 18,
+        runSpacing: 6,
+        children: [
+          Text('Direct: $status', style: TextStyle(color: statusColor)),
+          Text('ICE: ${summary.iceState.isEmpty ? '-' : summary.iceState}'),
+          Text('Path: ${summary.path.isEmpty ? '-' : summary.path}'),
+          Text('Restarts: ${summary.restartAttempts}'),
+        ],
+      ),
     );
   }
 

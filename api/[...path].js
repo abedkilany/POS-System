@@ -18,6 +18,8 @@ import deviceRevoke from '../server_api/sync/device-revoke.js';
 import deviceWipeAck from '../server_api/sync/device-wipe-ack.js';
 import deviceSuspend from '../server_api/sync/device-suspend.js';
 import deviceAccess from '../server_api/sync/device-access.js';
+import deviceKey from '../server_api/sync/device-key.js';
+import iceConfig from '../server_api/sync/ice-config.js';
 import cloudAccess from '../server_api/sync/cloud-access.js';
 import devices from '../server_api/sync/devices.js';
 import hostHeartbeat from '../server_api/sync/host-heartbeat.js';
@@ -51,6 +53,8 @@ const routes = new Map([
   ['sync/device-wipe-ack', deviceWipeAck],
   ['sync/device-suspend', deviceSuspend],
   ['sync/device-access', deviceAccess],
+  ['sync/device-key', deviceKey],
+  ['sync/ice-config', iceConfig],
   ['sync/cloud-access', cloudAccess],
   ['sync/devices', devices],
   ['sync/host-heartbeat', hostHeartbeat],

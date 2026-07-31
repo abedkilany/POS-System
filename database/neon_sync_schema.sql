@@ -118,6 +118,7 @@ alter table store_devices add column if not exists last_applied_sequence bigint 
 alter table store_devices add column if not exists last_ack_sequence bigint not null default 0;
 alter table store_devices add column if not exists last_ack_at timestamptz;
 alter table store_devices add column if not exists online boolean not null default false;
+alter table store_devices add column if not exists device_public_key text default '';
 
 create index if not exists idx_store_devices_latest
   on store_devices (store_id, branch_id, last_seen_at desc);

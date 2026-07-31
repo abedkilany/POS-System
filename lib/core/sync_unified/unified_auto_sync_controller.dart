@@ -145,6 +145,13 @@ class UnifiedSyncFactory {
     );
     return allowed && settings.isConfigured;
   }
+
+  static bool cloudFallbackCanCheck(AppStore store) {
+    final settings = CloudSyncSettings.load();
+    final identity = store.appIdentity;
+    final allowed = identity.isHost || identity.isClient;
+    return allowed && identity.isCloudEnabled && settings.isConfigured;
+  }
 }
 
 class UnifiedAutoLanSyncController {
@@ -767,6 +774,19 @@ class UnifiedAutoDirectSyncController {
     _running = true;
     try {
       await UnifiedSyncFactory.directEngine(store).syncNow();
+    } catch (error) {
+      SyncDiagnosticsLog.add('[DIRECT_FALLBACK] direct sync failed=$error');
+      if (UnifiedSyncFactory.cloudFallbackCanCheck(store)) {
+        try {
+          SyncDiagnosticsLog.add('[DIRECT_FALLBACK] trying cloud transport');
+          final result = await UnifiedSyncFactory.cloudEngine(store).syncNow();
+          SyncDiagnosticsLog.add(
+              '[DIRECT_FALLBACK] cloud result ok=${result.ok} message=${result.message}');
+        } catch (fallbackError) {
+          SyncDiagnosticsLog.add(
+              '[DIRECT_FALLBACK] cloud sync failed=$fallbackError');
+        }
+      }
     } finally {
       _running = false;
     }

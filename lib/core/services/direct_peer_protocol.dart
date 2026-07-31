@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 
-import 'direct_peer_connection_service.dart';
+import 'secure_peer_session.dart';
 
 typedef DirectPeerRequestHandler = Future<Map<String, dynamic>> Function(
   String requestKind,
@@ -13,7 +13,7 @@ class DirectPeerRequestSession {
     _subscription = connection.messages.listen(_handleMessage);
   }
 
-  final DirectPeerConnection connection;
+  final SecurePeerSession connection;
   final Map<String, Completer<Map<String, dynamic>>> _pending =
       <String, Completer<Map<String, dynamic>>>{};
   late final StreamSubscription<Map<String, dynamic>> _subscription;
@@ -75,12 +75,19 @@ class DirectPeerHostEndpoint {
   DirectPeerHostEndpoint(
     this.connection, {
     required this.onRequest,
+    this.onClosed,
   }) {
-    _subscription = connection.messages.listen(_handleMessage);
+    _subscription = connection.messages.listen(
+      _handleMessage,
+      onDone: () {
+        if (!_closed) onClosed?.call();
+      },
+    );
   }
 
-  final DirectPeerConnection connection;
+  final SecurePeerSession connection;
   final DirectPeerRequestHandler onRequest;
+  final void Function()? onClosed;
   late final StreamSubscription<Map<String, dynamic>> _subscription;
   bool _closed = false;
 

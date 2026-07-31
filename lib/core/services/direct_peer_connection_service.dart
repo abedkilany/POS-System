@@ -4,7 +4,10 @@ import 'dart:convert';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import '../../data/app_store.dart';
+import 'authenticated_peer_session.dart';
+import 'direct_peer_handshake.dart';
 import 'direct_peer_signaling_service.dart';
+import 'secure_peer_session.dart';
 import 'sync_diagnostics_log.dart';
 
 /// A direct, encrypted data connection between one Host and one Client.
@@ -12,7 +15,7 @@ import 'sync_diagnostics_log.dart';
 /// The signaling WebSocket is used only for offer/answer/candidate messages.
 /// Application sync frames are sent through the WebRTC data channel after it
 /// becomes connected.
-class DirectPeerConnection {
+class DirectPeerConnection implements SecurePeerSession {
   DirectPeerConnection({
     required this.peerConnection,
     required this.signaling,
@@ -30,8 +33,13 @@ class DirectPeerConnection {
   StreamSubscription<Map<String, dynamic>>? _signalSubscription;
   bool _closed = false;
 
+  @override
+  String get transportType => 'direct';
+
+  @override
   Stream<Map<String, dynamic>> get messages => _messages.stream;
 
+  @override
   Future<void> send(String type, Map<String, dynamic> payload) async {
     final channel = dataChannel;
     if (channel == null ||
@@ -66,6 +74,7 @@ class DirectPeerConnection {
     _signalSubscription = subscription;
   }
 
+  @override
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
@@ -85,14 +94,22 @@ class DirectPeerConnectionService {
   final AppStore store;
   final DirectPeerSignalingService _signaling;
 
-  Future<DirectPeerConnection> connectAsHost({
+  Future<SecurePeerSession> connectAsHost({
     required DirectPeerSignalingSettings signalingSettings,
     required String clientDeviceId,
     List<Map<String, dynamic>> iceServers = const <Map<String, dynamic>>[],
+    String iceTransportPolicy = 'all',
+    int iceCandidatePoolSize = 0,
   }) async {
     final signaling = await _signaling.open(signalingSettings);
-    final peer = await createPeerConnection({'iceServers': iceServers});
-    final connection = Completer<DirectPeerConnection>();
+    final peer = await createPeerConnection({
+      'iceServers': iceServers,
+      'iceTransportPolicy': iceTransportPolicy,
+      'iceCandidatePoolSize': iceCandidatePoolSize.clamp(0, 16),
+    });
+    final connection = Completer<SecurePeerSession>();
+    var authenticationStarted = false;
+    late Future<void> Function() authenticateHost;
     late final DirectPeerConnection result;
     final channel = await peer.createDataChannel(
       'ventio-sync',
@@ -103,6 +120,10 @@ class DirectPeerConnectionService {
       signaling: signaling,
       dataChannel: channel,
     );
+    channel.onDataChannelState = (state) {
+      if (state == RTCDataChannelState.RTCDataChannelOpen &&
+          !connection.isCompleted) authenticateHost();
+    };
 
     peer.onIceCandidate = (candidate) {
       SyncDiagnosticsLog.add(
@@ -117,11 +138,42 @@ class DirectPeerConnectionService {
       SyncDiagnosticsLog.add('[DIRECT_WEBRTC] host state=$state');
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected &&
           !connection.isCompleted) {
-        connection.complete(result);
+        unawaited(_logIcePath(peer, 'host'));
+        authenticateHost();
       }
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed &&
           !connection.isCompleted) {
         connection.completeError(StateError('Direct connection failed.'));
+      }
+    };
+    peer.onIceConnectionState = (state) {
+      SyncDiagnosticsLog.add('[DIRECT_WEBRTC] host ice state=$state');
+    };
+    authenticateHost = () async {
+      if (authenticationStarted || connection.isCompleted) return;
+      authenticationStarted = true;
+      try {
+        final material = await DirectPeerHandshake.authenticateHost(
+          session: result,
+          identity: store.appIdentity,
+          expectedClientDeviceId: clientDeviceId,
+          expectedClientPublicKey: await _signaling.fetchPeerPublicKey(
+            signalingSettings,
+            clientDeviceId,
+          ),
+        );
+        if (!connection.isCompleted) {
+          connection.complete(AuthenticatedPeerSession(
+            inner: result,
+            sessionId: material.sessionId,
+            sessionKey: material.sessionKey,
+            expiresAt: material.expiresAt,
+          ));
+        }
+      } catch (error, stackTrace) {
+        if (!connection.isCompleted) {
+          connection.completeError(error, stackTrace);
+        }
       }
     };
 
@@ -151,24 +203,78 @@ class DirectPeerConnectionService {
       'description': offer.toMap(),
     });
 
-    return connection.future.timeout(
+    final connected = await connection.future.timeout(
       const Duration(seconds: 30),
       onTimeout: () =>
           throw TimeoutException('Direct Host connection timed out.'),
     );
+    result.attachSignalSubscription(subscription);
+    return connected;
   }
 
-  Future<DirectPeerConnection> connectAsClient({
+  Future<SecurePeerSession> connectAsClient({
     required DirectPeerSignalingSettings signalingSettings,
     required String hostDeviceId,
     List<Map<String, dynamic>> iceServers = const <Map<String, dynamic>>[],
+    String iceTransportPolicy = 'all',
+    int iceCandidatePoolSize = 0,
   }) async {
     final signaling = await _signaling.open(signalingSettings);
-    final peer = await createPeerConnection({'iceServers': iceServers});
-    final connection = Completer<DirectPeerConnection>();
+    final peer = await createPeerConnection({
+      'iceServers': iceServers,
+      'iceTransportPolicy': iceTransportPolicy,
+      'iceCandidatePoolSize': iceCandidatePoolSize.clamp(0, 16),
+    });
+    final connection = Completer<SecurePeerSession>();
     final pendingCandidates = <RTCIceCandidate>[];
     var remoteDescriptionSet = false;
     DirectPeerConnection? result;
+    var authenticationStarted = false;
+    late Future<void> Function() authenticateClient;
+    var iceRestartInFlight = false;
+    var iceRestartAttempts = 0;
+    var lastIceRestartAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+    Future<void> restartIceOffer() async {
+      if (iceRestartInFlight || !remoteDescriptionSet) {
+        return;
+      }
+      final now = DateTime.now();
+      if (now.difference(lastIceRestartAt) < const Duration(seconds: 2)) {
+        return;
+      }
+      if (iceRestartAttempts >= 3) {
+        SyncDiagnosticsLog.add(
+            '[DIRECT_WEBRTC] client ice restart exhausted attempts=$iceRestartAttempts');
+        return;
+      }
+      iceRestartInFlight = true;
+      lastIceRestartAt = now;
+      iceRestartAttempts += 1;
+      try {
+        await Future<void>.delayed(Duration(seconds: iceRestartAttempts * 2));
+        await peer.restartIce();
+        final offer = await peer.createOffer(<String, dynamic>{
+          'iceRestart': true,
+        });
+        await peer.setLocalDescription(offer);
+        await _waitForIceGatheringComplete(peer);
+        final localOffer = await peer.getLocalDescription() ?? offer;
+        signaling.send({
+          'kind': 'offer',
+          'targetDeviceId': hostDeviceId,
+          'description': localOffer.toMap(),
+          'iceRestart': true,
+        });
+        SyncDiagnosticsLog.add(
+            '[DIRECT_WEBRTC] client ice restart offer sent attempt=$iceRestartAttempts');
+      } catch (error) {
+        SyncDiagnosticsLog.add(
+            '[DIRECT_WEBRTC] client ice restart failed=$error');
+      } finally {
+        iceRestartInFlight = false;
+      }
+    }
 
     peer.onIceCandidate = (candidate) {
       signaling.send({
@@ -184,21 +290,62 @@ class DirectPeerConnectionService {
         dataChannel: channel,
       );
       if (channel.state == RTCDataChannelState.RTCDataChannelOpen &&
-          !connection.isCompleted) {
-        connection.complete(result!);
-      }
+          !connection.isCompleted) authenticateClient();
       channel.onDataChannelState = (state) {
         if (state == RTCDataChannelState.RTCDataChannelOpen &&
-            !connection.isCompleted) {
-          connection.complete(result!);
-        }
+            !connection.isCompleted) authenticateClient();
       };
     };
+    authenticateClient = () async {
+      if (authenticationStarted || result == null || connection.isCompleted) {
+        return;
+      }
+      authenticationStarted = true;
+      try {
+        final material = await DirectPeerHandshake.authenticateClient(
+          session: result!,
+          identity: store.appIdentity,
+          expectedHostDeviceId: hostDeviceId,
+          expectedHostPublicKey: await _signaling.fetchPeerPublicKey(
+            signalingSettings,
+            hostDeviceId,
+          ),
+        );
+        if (!connection.isCompleted) {
+          connection.complete(AuthenticatedPeerSession(
+            inner: result!,
+            sessionId: material.sessionId,
+            sessionKey: material.sessionKey,
+            expiresAt: material.expiresAt,
+          ));
+        }
+      } catch (error, stackTrace) {
+        if (!connection.isCompleted)
+          connection.completeError(error, stackTrace);
+      }
+    };
+
     peer.onConnectionState = (state) {
       SyncDiagnosticsLog.add('[DIRECT_WEBRTC] client state=$state');
-      if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed &&
-          !connection.isCompleted) {
-        connection.completeError(StateError('Direct connection failed.'));
+      if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
+        iceRestartAttempts = 0;
+        unawaited(_logIcePath(peer, 'client'));
+      } else if (state ==
+              RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
+          state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
+        unawaited(restartIceOffer());
+        if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed &&
+            !connection.isCompleted &&
+            iceRestartAttempts >= 3) {
+          connection.completeError(StateError('Direct connection failed.'));
+        }
+      }
+    };
+    peer.onIceConnectionState = (state) {
+      SyncDiagnosticsLog.add('[DIRECT_WEBRTC] client ice state=$state');
+      if (state == RTCIceConnectionState.RTCIceConnectionStateDisconnected ||
+          state == RTCIceConnectionState.RTCIceConnectionStateFailed) {
+        unawaited(restartIceOffer());
       }
     };
     peer.onIceGatheringState = (state) {
@@ -249,7 +396,7 @@ class DirectPeerConnectionService {
         onTimeout: () =>
             throw TimeoutException('Direct Client connection timed out.'),
       );
-      connected.attachSignalSubscription(subscription);
+      result?.attachSignalSubscription(subscription);
       return connected;
     } catch (_) {
       await subscription.cancel();
@@ -261,18 +408,26 @@ class DirectPeerConnectionService {
 
   /// Waits for one Client offer and completes the Host side of the direct
   /// connection. The signaling channel carries no sync data.
-  Future<DirectPeerConnection> acceptAsHost({
+  Future<SecurePeerSession> acceptAsHost({
     required DirectPeerSignalingSettings signalingSettings,
     String clientDeviceId = '',
     List<Map<String, dynamic>> iceServers = const <Map<String, dynamic>>[],
+    String iceTransportPolicy = 'all',
+    int iceCandidatePoolSize = 0,
   }) async {
     final signaling = await _signaling.open(signalingSettings);
-    final peer = await createPeerConnection({'iceServers': iceServers});
-    final connection = Completer<DirectPeerConnection>();
+    final peer = await createPeerConnection({
+      'iceServers': iceServers,
+      'iceTransportPolicy': iceTransportPolicy,
+      'iceCandidatePoolSize': iceCandidatePoolSize.clamp(0, 16),
+    });
+    final connection = Completer<SecurePeerSession>();
     final pendingCandidates = <RTCIceCandidate>[];
     var remoteDescriptionSet = false;
     var sourceDeviceId = clientDeviceId.trim();
     DirectPeerConnection? result;
+    var authenticationStarted = false;
+    late Future<void> Function() authenticateHost;
 
     peer.onIceCandidate = (candidate) {
       SyncDiagnosticsLog.add(
@@ -293,24 +448,49 @@ class DirectPeerConnectionService {
       SyncDiagnosticsLog.add(
           '[DIRECT_WEBRTC] host data channel received state=${channel.state}');
       if (channel.state == RTCDataChannelState.RTCDataChannelOpen &&
-          !connection.isCompleted) {
-        connection.complete(result!);
-      }
+          !connection.isCompleted) authenticateHost();
       channel.onDataChannelState = (state) {
         SyncDiagnosticsLog.add(
             '[DIRECT_WEBRTC] host data channel state=$state');
         if (state == RTCDataChannelState.RTCDataChannelOpen &&
-            !connection.isCompleted) {
-          connection.complete(result!);
-        }
+            !connection.isCompleted) authenticateHost();
       };
     };
+    authenticateHost = () async {
+      if (authenticationStarted ||
+          result == null ||
+          sourceDeviceId.isEmpty ||
+          connection.isCompleted) return;
+      authenticationStarted = true;
+      try {
+        final material = await DirectPeerHandshake.authenticateHost(
+          session: result!,
+          identity: store.appIdentity,
+          expectedClientDeviceId: sourceDeviceId,
+        );
+        if (!connection.isCompleted) {
+          connection.complete(AuthenticatedPeerSession(
+            inner: result!,
+            sessionId: material.sessionId,
+            sessionKey: material.sessionKey,
+            expiresAt: material.expiresAt,
+          ));
+        }
+      } catch (error, stackTrace) {
+        if (!connection.isCompleted)
+          connection.completeError(error, stackTrace);
+      }
+    };
+
     peer.onConnectionState = (state) {
       SyncDiagnosticsLog.add('[DIRECT_WEBRTC] host-listener state=$state');
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed &&
           !connection.isCompleted) {
         connection.completeError(StateError('Direct Host connection failed.'));
       }
+    };
+    peer.onIceConnectionState = (state) {
+      SyncDiagnosticsLog.add('[DIRECT_WEBRTC] host-listener ice state=$state');
     };
     peer.onIceGatheringState = (state) {
       SyncDiagnosticsLog.add(
@@ -350,6 +530,11 @@ class DirectPeerConnectionService {
             'targetDeviceId': sourceDeviceId,
             'description': localAnswer.toMap(),
           });
+          if (result?.dataChannel?.state ==
+                  RTCDataChannelState.RTCDataChannelOpen &&
+              !connection.isCompleted) {
+            authenticateHost();
+          }
         } else if (kind == 'candidate') {
           final candidate = _candidateFromJson(signal['candidate']);
           if (candidate == null) return;
@@ -363,15 +548,20 @@ class DirectPeerConnectionService {
         SyncDiagnosticsLog.add('[DIRECT_WEBRTC] host signal error=$error');
         if (!connection.isCompleted) connection.completeError(error);
       }
+    }, onError: (Object error, StackTrace stackTrace) {
+      if (!connection.isCompleted) connection.completeError(error, stackTrace);
+    }, onDone: () {
+      if (!connection.isCompleted) {
+        connection.completeError(
+            StateError('Direct Host signaling channel was closed.'));
+      }
     });
 
     try {
-      final connected = await connection.future.timeout(
-        const Duration(seconds: 30),
-        onTimeout: () =>
-            throw TimeoutException('Direct Host connection timed out.'),
-      );
-      connected.attachSignalSubscription(subscription);
+      // A pairing code remains valid for several minutes. The Host must keep
+      // listening for the whole period instead of closing after 30 seconds.
+      final connected = await connection.future;
+      result?.attachSignalSubscription(subscription);
       return connected;
     } catch (_) {
       await subscription.cancel();
@@ -410,6 +600,33 @@ class DirectPeerConnectionService {
     } on TimeoutException {
       // Trickle candidates remain enabled. A peer may still connect with the
       // candidates already emitted before the gathering timeout.
+    }
+  }
+
+  static Future<void> _logIcePath(
+    RTCPeerConnection peer,
+    String role,
+  ) async {
+    try {
+      final reports = await peer.getStats();
+      final pairs = reports.where((report) => report.type == 'candidate-pair');
+      final selected = pairs.firstWhere(
+        (report) =>
+            report.values['nominated'] == true ||
+            report.values['selected'] == true ||
+            report.values['state']?.toString() == 'succeeded',
+        orElse: () => pairs.isEmpty ? reports.first : pairs.first,
+      );
+      final values = selected.values;
+      SyncDiagnosticsLog.add(
+        '[DIRECT_WEBRTC] $role path state=${values['state'] ?? '-'} '
+        'localType=${values['localCandidateType'] ?? '-'} '
+        'remoteType=${values['remoteCandidateType'] ?? '-'} '
+        'protocol=${values['protocol'] ?? '-'}',
+      );
+    } catch (error) {
+      SyncDiagnosticsLog.add(
+          '[DIRECT_WEBRTC] $role path stats unavailable=$error');
     }
   }
 

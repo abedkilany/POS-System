@@ -23,6 +23,40 @@ class SyncDiagnosticsLog {
 
   static String dump() => lines.value.join('\n');
 
+  static DirectDiagnosticsSummary directSummary() {
+    var state = '';
+    var iceState = '';
+    var path = '';
+    var restartAttempts = 0;
+    for (final line in lines.value.reversed) {
+      if (state.isEmpty) {
+        final match = RegExp(r'\[DIRECT_WEBRTC\] (?:client|host) state=([^ ]+)')
+            .firstMatch(line);
+        if (match != null) state = match.group(1)!;
+      }
+      if (iceState.isEmpty) {
+        final match =
+            RegExp(r'\[DIRECT_WEBRTC\] (?:client|host) ice state=([^ ]+)')
+                .firstMatch(line);
+        if (match != null) iceState = match.group(1)!;
+      }
+      if (path.isEmpty && line.contains(' path state=')) {
+        path = line.substring(line.indexOf(' path ') + 1);
+      }
+      final restart =
+          RegExp(r'ice restart offer sent attempt=(\d+)').firstMatch(line);
+      if (restart != null && restartAttempts == 0) {
+        restartAttempts = int.tryParse(restart.group(1)!) ?? 0;
+      }
+    }
+    return DirectDiagnosticsSummary(
+      connectionState: state,
+      iceState: iceState,
+      path: path,
+      restartAttempts: restartAttempts,
+    );
+  }
+
   static String summarizeChange(dynamic change) {
     try {
       final payload = change.payload is Map
@@ -45,4 +79,22 @@ class SyncDiagnosticsLog {
       return 'changeSummaryError=$error change=$change';
     }
   }
+}
+
+class DirectDiagnosticsSummary {
+  const DirectDiagnosticsSummary({
+    required this.connectionState,
+    required this.iceState,
+    required this.path,
+    required this.restartAttempts,
+  });
+
+  final String connectionState;
+  final String iceState;
+  final String path;
+  final int restartAttempts;
+
+  bool get hasConnection =>
+      connectionState.toLowerCase().contains('connected') ||
+      iceState.toLowerCase().contains('completed');
 }

@@ -153,6 +153,7 @@ async function ensureStoreDevicesTableForLimits() {
       primary key (store_id, branch_id, device_id)
     )
   `;
+  await sql`alter table store_devices add column if not exists device_public_key text default ''`;
 }
 
 export async function getClientDeviceLimitStatus(storeId, { excludeDeviceId = '' } = {}) {
@@ -214,6 +215,7 @@ export async function assertClientDeviceSlotAvailable(storeId, { excludeDeviceId
 
 export async function ensureDeviceAuthColumns() {
   await sql`alter table store_devices add column if not exists device_token text default ''`;
+  await sql`alter table store_devices add column if not exists device_public_key text default ''`;
   await sql`alter table store_devices add column if not exists host_device_id text default ''`;
   await sql`alter table store_devices add column if not exists revoked boolean not null default false`;
   await sql`alter table store_devices add column if not exists suspended boolean not null default false`;
