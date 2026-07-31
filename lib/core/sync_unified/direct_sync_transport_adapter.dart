@@ -152,6 +152,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
   @override
   Future<UnifiedPairingCodeResult> createPairingCode(
       {int ttlMinutes = 5}) async {
+    SyncDiagnosticsLog.add('[DIRECT_PAIRING] create start ttl=$ttlMinutes');
     if (store.appIdentity.isHost) {
       _startHostListener();
     }
@@ -160,6 +161,8 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       transport: 'direct',
       ttlMinutes: ttlMinutes,
     );
+    SyncDiagnosticsLog.add(
+        '[DIRECT_PAIRING] create result ok=${result.ok} transport=direct');
     return UnifiedPairingCodeResult(
       ok: result.ok,
       message: result.message,
@@ -182,11 +185,14 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
   @override
   Future<UnifiedPairingClaimResult> claimPairingCode(String code,
       {void Function(double value, String label)? onProgress}) async {
+    SyncDiagnosticsLog.add('[DIRECT_PAIRING] claim start');
     final result = await CloudSyncService(store).claimPairingCode(
       _signalingSettings,
       code,
       onProgress: onProgress,
     );
+    SyncDiagnosticsLog.add(
+        '[DIRECT_PAIRING] claim result ok=${result.ok} transport=direct');
     return UnifiedPairingClaimResult(
       ok: result.ok,
       message: result.message,

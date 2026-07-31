@@ -8,6 +8,7 @@ import 'package:crypto/crypto.dart';
 import '../../models/app_identity.dart';
 import 'direct_device_identity.dart';
 import 'secure_peer_session.dart';
+import 'sync_diagnostics_log.dart';
 
 /// Authenticates the two already-signaled WebRTC peers before sync traffic is
 /// allowed. The signaling server supplies the expected peer device ID; the
@@ -22,6 +23,7 @@ class DirectPeerHandshake {
     required String expectedHostDeviceId,
     String expectedHostPublicKey = '',
   }) async {
+    SyncDiagnosticsLog.add('[DIRECT_HANDSHAKE] client start');
     final local = await DirectDeviceIdentity.loadOrCreate();
     final clientNonce = _nonce();
     final expiresAtMs = _sessionExpiryMs();
@@ -41,8 +43,10 @@ class DirectPeerHandshake {
       ...hello,
       'signature': local.sign(_canonical(hello)),
     });
+    SyncDiagnosticsLog.add('[DIRECT_HANDSHAKE] client hello sent');
 
     final challenge = await _next(session, 'direct_handshake_challenge');
+    SyncDiagnosticsLog.add('[DIRECT_HANDSHAKE] client challenge received');
     _validatePeerPacket(
       challenge,
       role: 'host',
@@ -82,6 +86,7 @@ class DirectPeerHandshake {
         'type': 'direct_handshake_ack',
       })),
     });
+    SyncDiagnosticsLog.add('[DIRECT_HANDSHAKE] client ack sent success');
     return _material(
       clientNonce: clientNonce,
       hostNonce: hostNonce,
@@ -97,8 +102,10 @@ class DirectPeerHandshake {
     required String expectedClientDeviceId,
     String expectedClientPublicKey = '',
   }) async {
+    SyncDiagnosticsLog.add('[DIRECT_HANDSHAKE] host start');
     final local = await DirectDeviceIdentity.loadOrCreate();
     final hello = await _next(session, 'direct_handshake_hello');
+    SyncDiagnosticsLog.add('[DIRECT_HANDSHAKE] host hello received');
     _validatePacketScope(hello, identity);
     final clientId = hello['deviceId']?.toString().trim() ?? '';
     if (clientId != expectedClientDeviceId) {
@@ -146,8 +153,10 @@ class DirectPeerHandshake {
       ...challenge,
       'signature': local.sign(_canonical(challenge)),
     });
+    SyncDiagnosticsLog.add('[DIRECT_HANDSHAKE] host challenge sent');
 
     final ack = await _next(session, 'direct_handshake_ack');
+    SyncDiagnosticsLog.add('[DIRECT_HANDSHAKE] host ack received');
     _validatePacketScope(ack, identity);
     if (ack['deviceId']?.toString().trim() != expectedClientDeviceId ||
         ack['nonce']?.toString().trim() != clientNonce ||
@@ -161,6 +170,7 @@ class DirectPeerHandshake {
         )) {
       throw StateError('Direct client handshake acknowledgement is invalid.');
     }
+    SyncDiagnosticsLog.add('[DIRECT_HANDSHAKE] host success');
     return _material(
       clientNonce: clientNonce,
       hostNonce: hostNonce,
@@ -199,6 +209,7 @@ class DirectPeerHandshake {
           .firstWhere((message) => message['type']?.toString() == type)
           .timeout(_timeout);
     } on TimeoutException {
+      SyncDiagnosticsLog.add('[DIRECT_HANDSHAKE] timeout waiting=$type');
       throw TimeoutException('Direct handshake timed out waiting for $type.');
     }
   }

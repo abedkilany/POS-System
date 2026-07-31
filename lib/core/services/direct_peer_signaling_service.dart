@@ -62,7 +62,10 @@ class DirectPeerSignalingSession {
     }));
   }
 
-  Future<void> close() => channel.sink.close();
+  Future<void> close() {
+    SyncDiagnosticsLog.add('[DIRECT_SIGNAL] websocket closing');
+    return channel.sink.close();
+  }
 }
 
 class DirectPeerSignalingService {
@@ -91,6 +94,8 @@ class DirectPeerSignalingService {
     DirectPeerSignalingSettings settings,
   ) async {
     final identity = store.appIdentity;
+    SyncDiagnosticsLog.add(
+        '[DIRECT_SIGNAL] ticket request role=${identity.deviceRole.name}');
     final response = await _client
         .get(
           settings.endpoint('/api/sync/direct-ticket', {
@@ -117,6 +122,8 @@ class DirectPeerSignalingService {
       throw StateError('Direct signaling response is missing a ticket.');
     }
 
+    SyncDiagnosticsLog.add(
+        '[DIRECT_SIGNAL] ticket accepted role=${identity.deviceRole.name}');
     final channel = WebSocketChannel.connect(
       settings.realtimeEndpoint('/api/sync/realtime', {'ticket': ticket}),
     );

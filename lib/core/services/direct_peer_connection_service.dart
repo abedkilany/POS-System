@@ -46,6 +46,9 @@ class DirectPeerConnection implements SecurePeerSession {
         channel.state != RTCDataChannelState.RTCDataChannelOpen) {
       throw StateError('Direct data channel is not open.');
     }
+    if (type.startsWith('direct_handshake_')) {
+      SyncDiagnosticsLog.add('[DIRECT_HANDSHAKE] send type=$type');
+    }
     await channel.send(RTCDataChannelMessage(jsonEncode({
       'type': type,
       ...payload,
@@ -59,9 +62,15 @@ class DirectPeerConnection implements SecurePeerSession {
       try {
         final decoded = jsonDecode(message.text);
         if (decoded is Map) {
-          _messages.add(Map<String, dynamic>.from(decoded));
+          final packet = Map<String, dynamic>.from(decoded);
+          final type = packet['type']?.toString() ?? '-';
+          if (type.startsWith('direct_handshake_')) {
+            SyncDiagnosticsLog.add('[DIRECT_HANDSHAKE] received type=$type');
+          }
+          _messages.add(packet);
         }
-      } catch (_) {
+      } catch (error) {
+        SyncDiagnosticsLog.add('[DIRECT_DATA] invalid frame error=$error');
         // Invalid frames are ignored. The sync protocol validates each
         // request after decoding and never trusts arbitrary payloads.
       }
@@ -78,6 +87,7 @@ class DirectPeerConnection implements SecurePeerSession {
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
+    SyncDiagnosticsLog.add('[DIRECT_WEBRTC] connection closing');
     await _signalSubscription?.cancel();
     await dataChannel?.close();
     await peerConnection.close();
@@ -107,6 +117,8 @@ class DirectPeerConnectionService {
       'iceTransportPolicy': iceTransportPolicy,
       'iceCandidatePoolSize': iceCandidatePoolSize.clamp(0, 16),
     });
+    SyncDiagnosticsLog.add(
+        '[DIRECT_ICE] host peer created servers=${iceServers.length} policy=$iceTransportPolicy');
     final connection = Completer<SecurePeerSession>();
     var authenticationStarted = false;
     late Future<void> Function() authenticateHost;
@@ -127,7 +139,7 @@ class DirectPeerConnectionService {
 
     peer.onIceCandidate = (candidate) {
       SyncDiagnosticsLog.add(
-          '[DIRECT_WEBRTC] client ice candidate=${candidate.candidate?.isNotEmpty == true}');
+          '[DIRECT_WEBRTC] host ice candidate type=${_candidateType(candidate.candidate)}');
       signaling.send({
         'kind': 'candidate',
         'targetDeviceId': clientDeviceId,
@@ -197,10 +209,13 @@ class DirectPeerConnectionService {
 
     final offer = await peer.createOffer({});
     await peer.setLocalDescription(offer);
+    final localOffer = await peer.getLocalDescription() ?? offer;
+    SyncDiagnosticsLog.add(
+        '[DIRECT_ICE] host offer candidates=${_candidateCount(localOffer.sdp)}');
     signaling.send({
       'kind': 'offer',
       'targetDeviceId': clientDeviceId,
-      'description': offer.toMap(),
+      'description': localOffer.toMap(),
     });
 
     final connected = await connection.future.timeout(
@@ -225,6 +240,8 @@ class DirectPeerConnectionService {
       'iceTransportPolicy': iceTransportPolicy,
       'iceCandidatePoolSize': iceCandidatePoolSize.clamp(0, 16),
     });
+    SyncDiagnosticsLog.add(
+        '[DIRECT_ICE] client peer created servers=${iceServers.length} policy=$iceTransportPolicy');
     final connection = Completer<SecurePeerSession>();
     final pendingCandidates = <RTCIceCandidate>[];
     var remoteDescriptionSet = false;
@@ -260,6 +277,8 @@ class DirectPeerConnectionService {
         await peer.setLocalDescription(offer);
         await _waitForIceGatheringComplete(peer);
         final localOffer = await peer.getLocalDescription() ?? offer;
+        SyncDiagnosticsLog.add(
+            '[DIRECT_ICE] client restart offer candidates=${_candidateCount(localOffer.sdp)}');
         signaling.send({
           'kind': 'offer',
           'targetDeviceId': hostDeviceId,
@@ -277,6 +296,8 @@ class DirectPeerConnectionService {
     }
 
     peer.onIceCandidate = (candidate) {
+      SyncDiagnosticsLog.add(
+          '[DIRECT_WEBRTC] client ice candidate type=${_candidateType(candidate.candidate)}');
       signaling.send({
         'kind': 'candidate',
         'targetDeviceId': hostDeviceId,
@@ -353,30 +374,50 @@ class DirectPeerConnectionService {
     };
 
     final subscription = signaling.signals.listen((signal) async {
-      if (signal['sourceDeviceId']?.toString() != hostDeviceId) return;
-      final kind = signal['kind']?.toString();
-      if (kind == 'answer') {
-        final description = Map<String, dynamic>.from(
-            (signal['description'] as Map?) ?? const <String, dynamic>{});
-        await peer.setRemoteDescription(
-          RTCSessionDescription(
-            description['sdp']?.toString(),
-            description['type']?.toString(),
-          ),
-        );
-        remoteDescriptionSet = true;
-        for (final candidate in pendingCandidates) {
-          await peer.addCandidate(candidate);
+      try {
+        if (signal['sourceDeviceId']?.toString() != hostDeviceId) return;
+        final kind = signal['kind']?.toString();
+        SyncDiagnosticsLog.add('[DIRECT_WEBRTC] client signal kind=$kind');
+        if (kind == 'answer') {
+          final description = Map<String, dynamic>.from(
+              (signal['description'] as Map?) ?? const <String, dynamic>{});
+          await peer.setRemoteDescription(
+            RTCSessionDescription(
+              description['sdp']?.toString(),
+              description['type']?.toString(),
+            ),
+          );
+          remoteDescriptionSet = true;
+          for (final candidate in pendingCandidates) {
+            await peer.addCandidate(candidate);
+          }
+          pendingCandidates.clear();
+        } else if (kind == 'candidate') {
+          final candidate = _candidateFromJson(signal['candidate']);
+          if (candidate == null) return;
+          if (remoteDescriptionSet) {
+            await peer.addCandidate(candidate);
+            SyncDiagnosticsLog.add(
+                '[DIRECT_ICE] client remote candidate added');
+          } else {
+            pendingCandidates.add(candidate);
+            SyncDiagnosticsLog.add(
+                '[DIRECT_ICE] client remote candidate queued count=${pendingCandidates.length}');
+          }
         }
-        pendingCandidates.clear();
-      } else if (kind == 'candidate') {
-        final candidate = _candidateFromJson(signal['candidate']);
-        if (candidate == null) return;
-        if (remoteDescriptionSet) {
-          await peer.addCandidate(candidate);
-        } else {
-          pendingCandidates.add(candidate);
-        }
+      } catch (error, stackTrace) {
+        SyncDiagnosticsLog.add('[DIRECT_WEBRTC] client signal error=$error');
+        if (!connection.isCompleted)
+          connection.completeError(error, stackTrace);
+      }
+    }, onError: (Object error, StackTrace stackTrace) {
+      SyncDiagnosticsLog.add('[DIRECT_SIGNAL] client stream error=$error');
+      if (!connection.isCompleted) connection.completeError(error, stackTrace);
+    }, onDone: () {
+      SyncDiagnosticsLog.add('[DIRECT_SIGNAL] client stream closed');
+      if (!connection.isCompleted) {
+        connection.completeError(
+            StateError('Direct Client signaling channel was closed.'));
       }
     });
 
@@ -384,6 +425,8 @@ class DirectPeerConnectionService {
     await peer.setLocalDescription(offer);
     await _waitForIceGatheringComplete(peer);
     final localOffer = await peer.getLocalDescription() ?? offer;
+    SyncDiagnosticsLog.add(
+        '[DIRECT_ICE] client offer candidates=${_candidateCount(localOffer.sdp)}');
     signaling.send({
       'kind': 'offer',
       'targetDeviceId': hostDeviceId,
@@ -399,6 +442,8 @@ class DirectPeerConnectionService {
       result?.attachSignalSubscription(subscription);
       return connected;
     } catch (_) {
+      SyncDiagnosticsLog.add(
+          '[DIRECT_WEBRTC] client connection failed or timed out');
       await subscription.cancel();
       await peer.close();
       await signaling.close();
@@ -421,6 +466,8 @@ class DirectPeerConnectionService {
       'iceTransportPolicy': iceTransportPolicy,
       'iceCandidatePoolSize': iceCandidatePoolSize.clamp(0, 16),
     });
+    SyncDiagnosticsLog.add(
+        '[DIRECT_ICE] host-listener peer created servers=${iceServers.length} policy=$iceTransportPolicy');
     final connection = Completer<SecurePeerSession>();
     final pendingCandidates = <RTCIceCandidate>[];
     var remoteDescriptionSet = false;
@@ -431,7 +478,7 @@ class DirectPeerConnectionService {
 
     peer.onIceCandidate = (candidate) {
       SyncDiagnosticsLog.add(
-          '[DIRECT_WEBRTC] host-listener ice candidate=${candidate.candidate?.isNotEmpty == true}');
+          '[DIRECT_WEBRTC] host-listener ice candidate type=${_candidateType(candidate.candidate)}');
       if (sourceDeviceId.isEmpty) return;
       signaling.send({
         'kind': 'candidate',
@@ -525,6 +572,8 @@ class DirectPeerConnectionService {
           await peer.setLocalDescription(answer);
           await _waitForIceGatheringComplete(peer);
           final localAnswer = await peer.getLocalDescription() ?? answer;
+          SyncDiagnosticsLog.add(
+              '[DIRECT_ICE] host answer candidates=${_candidateCount(localAnswer.sdp)}');
           signaling.send({
             'kind': 'answer',
             'targetDeviceId': sourceDeviceId,
@@ -540,8 +589,11 @@ class DirectPeerConnectionService {
           if (candidate == null) return;
           if (remoteDescriptionSet) {
             await peer.addCandidate(candidate);
+            SyncDiagnosticsLog.add('[DIRECT_ICE] host remote candidate added');
           } else {
             pendingCandidates.add(candidate);
+            SyncDiagnosticsLog.add(
+                '[DIRECT_ICE] host remote candidate queued count=${pendingCandidates.length}');
           }
         }
       } catch (error) {
@@ -564,6 +616,7 @@ class DirectPeerConnectionService {
       result?.attachSignalSubscription(subscription);
       return connected;
     } catch (_) {
+      SyncDiagnosticsLog.add('[DIRECT_WEBRTC] host connection failed');
       await subscription.cancel();
       await peer.close();
       await signaling.close();
@@ -639,5 +692,14 @@ class DirectPeerConnectionService {
       raw['sdpMid']?.toString(),
       int.tryParse(raw['sdpMLineIndex']?.toString() ?? ''),
     );
+  }
+
+  static int _candidateCount(String? sdp) =>
+      RegExp(r'^a=candidate:', multiLine: true).allMatches(sdp ?? '').length;
+
+  static String _candidateType(String? raw) {
+    final value = raw?.trim() ?? '';
+    final match = RegExp(r' typ ([a-z]+)').firstMatch(value);
+    return match?.group(1) ?? (value.isEmpty ? 'none' : 'unknown');
   }
 }
