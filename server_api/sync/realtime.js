@@ -23,6 +23,20 @@ function oppositeRole(role) {
 function addClient(client) {
   const key = scopeKey(client.storeId, client.branchId);
   const clients = clientsByScope.get(key) || new Set();
+  // There is one authoritative Host listener per store. A timed-out native
+  // WebRTC attempt must not leave an old listener competing with the next
+  // pairing attempt and producing multiple answers.
+  if (client.transport === 'direct' && client.role === 'host') {
+    for (const existing of clients) {
+      if (existing.role !== 'host' || existing.transport !== 'direct') continue;
+      clients.delete(existing);
+      try {
+        existing.socket.close(1000, 'Replaced by a newer Host listener');
+      } catch (_) {
+        existing.socket.terminate();
+      }
+    }
+  }
   clients.add(client);
   clientsByScope.set(key, clients);
 }

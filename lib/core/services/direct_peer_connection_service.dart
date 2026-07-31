@@ -235,19 +235,28 @@ class DirectPeerConnectionService {
 
     final offer = await peer.createOffer({});
     await peer.setLocalDescription(offer);
+    await _waitForIceGatheringComplete(peer);
+    final localOffer = await peer.getLocalDescription() ?? offer;
     signaling.send({
       'kind': 'offer',
       'targetDeviceId': hostDeviceId,
-      'description': offer.toMap(),
+      'description': localOffer.toMap(),
     });
 
-    final connected = await connection.future.timeout(
-      const Duration(seconds: 30),
-      onTimeout: () =>
-          throw TimeoutException('Direct Client connection timed out.'),
-    );
-    connected.attachSignalSubscription(subscription);
-    return connected;
+    try {
+      final connected = await connection.future.timeout(
+        const Duration(seconds: 30),
+        onTimeout: () =>
+            throw TimeoutException('Direct Client connection timed out.'),
+      );
+      connected.attachSignalSubscription(subscription);
+      return connected;
+    } catch (_) {
+      await subscription.cancel();
+      await peer.close();
+      await signaling.close();
+      rethrow;
+    }
   }
 
   /// Waits for one Client offer and completes the Host side of the direct
@@ -334,10 +343,12 @@ class DirectPeerConnectionService {
           pendingCandidates.clear();
           final answer = await peer.createAnswer({});
           await peer.setLocalDescription(answer);
+          await _waitForIceGatheringComplete(peer);
+          final localAnswer = await peer.getLocalDescription() ?? answer;
           signaling.send({
             'kind': 'answer',
             'targetDeviceId': sourceDeviceId,
-            'description': answer.toMap(),
+            'description': localAnswer.toMap(),
           });
         } else if (kind == 'candidate') {
           final candidate = _candidateFromJson(signal['candidate']);
@@ -354,13 +365,20 @@ class DirectPeerConnectionService {
       }
     });
 
-    final connected = await connection.future.timeout(
-      const Duration(seconds: 30),
-      onTimeout: () =>
-          throw TimeoutException('Direct Host connection timed out.'),
-    );
-    connected.attachSignalSubscription(subscription);
-    return connected;
+    try {
+      final connected = await connection.future.timeout(
+        const Duration(seconds: 30),
+        onTimeout: () =>
+            throw TimeoutException('Direct Host connection timed out.'),
+      );
+      connected.attachSignalSubscription(subscription);
+      return connected;
+    } catch (_) {
+      await subscription.cancel();
+      await peer.close();
+      await signaling.close();
+      rethrow;
+    }
   }
 
   static Future<void> _addCandidate(
@@ -369,6 +387,30 @@ class DirectPeerConnectionService {
   ) async {
     final candidate = _candidateFromJson(raw);
     if (candidate != null) await peer.addCandidate(candidate);
+  }
+
+  static Future<void> _waitForIceGatheringComplete(
+    RTCPeerConnection peer,
+  ) async {
+    final current = await peer.getIceGatheringState();
+    if (current == RTCIceGatheringState.RTCIceGatheringStateComplete) {
+      return;
+    }
+    final completed = Completer<void>();
+    final previous = peer.onIceGatheringState;
+    peer.onIceGatheringState = (state) {
+      previous?.call(state);
+      if (state == RTCIceGatheringState.RTCIceGatheringStateComplete &&
+          !completed.isCompleted) {
+        completed.complete();
+      }
+    };
+    try {
+      await completed.future.timeout(const Duration(seconds: 5));
+    } on TimeoutException {
+      // Trickle candidates remain enabled. A peer may still connect with the
+      // candidates already emitted before the gathering timeout.
+    }
   }
 
   static RTCIceCandidate? _candidateFromJson(Object? raw) {
