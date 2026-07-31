@@ -17,6 +17,8 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       : _settings = settings ?? DirectSyncSettings.load();
 
   final AppStore store;
+  static final Map<String, Future<DirectPeerHostEndpoint>> _hostListeners =
+      <String, Future<DirectPeerHostEndpoint>>{};
   final DirectSyncSettings _settings;
   DirectPeerRequestSession? _session;
   DirectPeerHostEndpoint? _hostEndpoint;
@@ -247,27 +249,39 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       return;
     }
     _hostListenerStarting = true;
-    () async {
-      try {
-        final connection =
-            await DirectPeerConnectionService(store).acceptAsHost(
-          signalingSettings: DirectPeerSignalingSettings(
-            apiBaseUrl: _signalingSettings.apiBaseUrl,
-          ),
-          iceServers: _settings.iceServersForApiBaseUrl(
-            _signalingSettings.apiBaseUrl,
-          ),
-        );
-        _hostEndpoint = DirectPeerHostEndpoint(
-          connection,
-          onRequest: DirectHostSyncEndpoint(store).handleRequest,
-        );
-      } catch (_) {
-        // The next registration/sync tick retries the listener.
-      } finally {
-        _hostListenerStarting = false;
-      }
+    final listenerKey =
+        '${store.appIdentity.storeId}:${store.deviceId}';
+    final existingListener = _hostListeners[listenerKey];
+    if (existingListener != null) {
+      existingListener.then((endpoint) {
+        _hostEndpoint ??= endpoint;
+      });
+      _hostListenerStarting = false;
+      return;
+    }
+    final listener = () async {
+      final connection =
+          await DirectPeerConnectionService(store).acceptAsHost(
+        signalingSettings: DirectPeerSignalingSettings(
+          apiBaseUrl: _signalingSettings.apiBaseUrl,
+        ),
+        iceServers: _settings.iceServersForApiBaseUrl(
+          _signalingSettings.apiBaseUrl,
+        ),
+      );
+      return DirectPeerHostEndpoint(
+        connection,
+        onRequest: DirectHostSyncEndpoint(store).handleRequest,
+      );
     }();
+    _hostListeners[listenerKey] = listener;
+    listener.then((endpoint) {
+      _hostEndpoint = endpoint;
+      _hostListenerStarting = false;
+    }, onError: (_) {
+      _hostListeners.remove(listenerKey);
+      _hostListenerStarting = false;
+    });
   }
 
   UnifiedCursorEnvelope _cursor() {
