@@ -4292,6 +4292,8 @@ class AppStore extends ChangeNotifier {
     return stored > highestInvoiceNo ? stored : highestInvoiceNo;
   }
 
+  // Legacy migration path retained for controlled recovery of pre-v17 stores.
+  // ignore: unused_element
   Future<void> _runDataMigrationsIfNeeded() async {
     final current =
         int.tryParse(LocalDatabaseService.getString(_schemaVersionKey) ?? '') ??

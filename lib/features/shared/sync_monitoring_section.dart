@@ -448,6 +448,8 @@ String _transportLabel(BuildContext context, String transport) {
       return tr.text('lan');
     case 'cloud':
       return tr.text('connection_cloud');
+    case 'direct':
+      return 'Direct';
     case 'local':
       return tr.text('connection_local');
     default:
@@ -547,6 +549,12 @@ String _activeTransportForHostPeer(
       (state?.lastSyncTransport ?? cloudDevice?.lastSyncTransport ?? '')
           .trim()
           .toLowerCase();
+  if (lastTransport == 'direct' ||
+      (cloudDevice?.lastSyncTransport ?? '').trim().toLowerCase() == 'direct' ||
+      cloudTransport == 'direct' ||
+      (cloudDevice?.activeTransport ?? '').trim().toLowerCase() == 'direct') {
+    return _transportLabel(context, 'direct');
+  }
   if (lanAuthorized && cloudDevice != null) {
     final active = cloudTransport.isNotEmpty ? cloudTransport : lastTransport;
     if (active == 'lan' || active == 'cloud') {

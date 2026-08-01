@@ -169,11 +169,13 @@ class DirectPeerSignalingService {
           headers: _headers(),
         )
         .timeout(const Duration(seconds: 8));
-    if (response.statusCode == 404 || response.statusCode == 503)
+    if (response.statusCode == 404 || response.statusCode == 503) {
       SyncDiagnosticsLog.add(
           '[DIRECT_ICE] config status=${response.statusCode} servers=0');
-    if (response.statusCode == 404 || response.statusCode == 503)
+    }
+    if (response.statusCode == 404 || response.statusCode == 503) {
       return const [];
+    }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw StateError(
         'Direct ICE config lookup failed: ${response.statusCode} ${response.body}',

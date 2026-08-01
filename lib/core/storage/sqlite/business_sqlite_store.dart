@@ -417,9 +417,10 @@ class BusinessSqliteStore {
     final safeOffset = _safeOffset(offset);
     final usesTextSearch = normalized.isNotEmpty;
     final queryLimit = usesTextSearch ? safeLimit + 1 : safeLimit;
-    final totalFuture = usesTextSearch
-        ? null
-        : _countWhere(db, 'products', whereSql, variables);
+    // The total must represent the complete filtered result set, including
+    // text-search queries. Estimating it from the current page makes the
+    // first page report a smaller total whenever more than `limit` rows match.
+    final totalFuture = _countWhere(db, 'products', whereSql, variables);
     final allowLegacyFallback = !await _warehouseInventoryBackfillCompleted(db);
     final rows = await db.customSelect('''
       SELECT id, name, code, name_en AS nameEn, name_ar AS nameAr,
@@ -478,9 +479,7 @@ class BusinessSqliteStore {
                 purchaseUnitsByProduct: purchaseUnitsByProduct,
               ))
           .toList(growable: false),
-      totalCount: usesTextSearch
-          ? safeOffset + pageRows.length + (hasMoreSearchRows ? 1 : 0)
-          : await totalFuture!,
+      totalCount: await totalFuture,
       limit: safeLimit,
       offset: safeOffset,
     );

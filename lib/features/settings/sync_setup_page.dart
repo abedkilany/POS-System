@@ -684,7 +684,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
                     tooltip: 'Copy log',
                     onPressed: () async {
                       await Clipboard.setData(ClipboardData(text: combined));
-                      if (mounted) {
+                      if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
                                 content: Text('Connection log copied')));
@@ -1125,7 +1125,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
               onPressed: () async {
                 await Clipboard.setData(
                     ClipboardData(text: _fullConnectionLogText));
-                if (mounted) {
+                if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(content: Text('Connection log copied')));
                 }

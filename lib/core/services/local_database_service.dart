@@ -217,6 +217,9 @@ class LocalDatabaseService {
     );
   }
 
+  // Retained as an explicit maintenance entry point for future opt-in
+  // migrations; startup intentionally does not invoke it on large stores.
+  // ignore: unused_element
   static Future<void> _runDeferredBootstrapMaintenance(
     VentioDriftDatabase db,
   ) async {

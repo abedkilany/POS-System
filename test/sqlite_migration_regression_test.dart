@@ -1,6 +1,5 @@
 import 'dart:io';
 
-import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
@@ -33,7 +32,7 @@ Future<File> _createLegacyDatabaseFile() async {
       sort_index INTEGER NOT NULL DEFAULT 0
     );
   ''');
-  sqlite.dispose();
+  sqlite.close();
 
   return file;
 }

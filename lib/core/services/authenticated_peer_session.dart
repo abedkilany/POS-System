@@ -78,8 +78,9 @@ class AuthenticatedPeerSession implements SecurePeerSession {
           sequence <= _lastReceivedSequence ||
           messageType.isEmpty ||
           payload is! Map ||
-          !_constantTimeEquals(message['mac']?.toString() ?? '', _mac(frame)))
+          !_constantTimeEquals(message['mac']?.toString() ?? '', _mac(frame))) {
         return;
+      }
       _lastReceivedSequence = sequence;
       _messages.add({
         'type': messageType,

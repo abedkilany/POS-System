@@ -1003,8 +1003,9 @@ class AppStoreRecoveryService {
     if (db == null) return const <Map<String, dynamic>>[];
     final raw =
         await BusinessSqliteStore.readEntityListJsonByKey(db, storageKey);
-    if (raw == null || raw.trim().isEmpty)
+    if (raw == null || raw.trim().isEmpty) {
       return const <Map<String, dynamic>>[];
+    }
     try {
       final decoded = jsonDecode(raw);
       if (decoded is! List) return const <Map<String, dynamic>>[];

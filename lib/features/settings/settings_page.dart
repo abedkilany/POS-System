@@ -7929,7 +7929,7 @@ class _SettingsSection {
 }
 
 class _DeferredSettingsPage extends StatelessWidget {
-  const _DeferredSettingsPage({super.key, required this.builder});
+  const _DeferredSettingsPage({required this.builder});
 
   final WidgetBuilder builder;
 

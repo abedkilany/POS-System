@@ -134,7 +134,9 @@ class DirectPeerConnectionService {
     );
     channel.onDataChannelState = (state) {
       if (state == RTCDataChannelState.RTCDataChannelOpen &&
-          !connection.isCompleted) authenticateHost();
+          !connection.isCompleted) {
+        authenticateHost();
+      }
     };
 
     peer.onIceCandidate = (candidate) {
@@ -333,10 +335,14 @@ class DirectPeerConnectionService {
       result ??= DirectPeerConnection(
           peerConnection: peer, signaling: signaling, dataChannel: channel);
       if (channel.state == RTCDataChannelState.RTCDataChannelOpen &&
-          !connection.isCompleted) authenticateClient();
+          !connection.isCompleted) {
+        authenticateClient();
+      }
       channel.onDataChannelState = (state) {
         if (state == RTCDataChannelState.RTCDataChannelOpen &&
-            !connection.isCompleted) authenticateClient();
+            !connection.isCompleted) {
+          authenticateClient();
+        }
       };
     };
     authenticateClient = () async {
@@ -363,8 +369,9 @@ class DirectPeerConnectionService {
           ));
         }
       } catch (error, stackTrace) {
-        if (!connection.isCompleted)
+        if (!connection.isCompleted) {
           connection.completeError(error, stackTrace);
+        }
       }
     };
 
@@ -429,8 +436,9 @@ class DirectPeerConnectionService {
         }
       } catch (error, stackTrace) {
         SyncDiagnosticsLog.add('[DIRECT_WEBRTC] client signal error=$error');
-        if (!connection.isCompleted)
+        if (!connection.isCompleted) {
           connection.completeError(error, stackTrace);
+        }
       }
     }, onError: (Object error, StackTrace stackTrace) {
       SyncDiagnosticsLog.add('[DIRECT_SIGNAL] client stream error=$error');
@@ -517,19 +525,25 @@ class DirectPeerConnectionService {
       SyncDiagnosticsLog.add(
           '[DIRECT_WEBRTC] host data channel received state=${channel.state}');
       if (channel.state == RTCDataChannelState.RTCDataChannelOpen &&
-          !connection.isCompleted) authenticateHost();
+          !connection.isCompleted) {
+        authenticateHost();
+      }
       channel.onDataChannelState = (state) {
         SyncDiagnosticsLog.add(
             '[DIRECT_WEBRTC] host data channel state=$state');
         if (state == RTCDataChannelState.RTCDataChannelOpen &&
-            !connection.isCompleted) authenticateHost();
+            !connection.isCompleted) {
+          authenticateHost();
+        }
       };
     };
     authenticateHost = () async {
       if (authenticationStarted ||
           result == null ||
           sourceDeviceId.isEmpty ||
-          connection.isCompleted) return;
+          connection.isCompleted) {
+        return;
+      }
       authenticationStarted = true;
       try {
         final material = await DirectPeerHandshake.authenticateHost(
@@ -546,8 +560,9 @@ class DirectPeerConnectionService {
           ));
         }
       } catch (error, stackTrace) {
-        if (!connection.isCompleted)
+        if (!connection.isCompleted) {
           connection.completeError(error, stackTrace);
+        }
       }
     };
 

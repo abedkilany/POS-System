@@ -1,4 +1,10 @@
-import { ensureCloudSyncAccessColumn, sendError, sql } from '../_db.js';
+import {
+  assertAccountOrDevice,
+  assertStoreAllowed,
+  ensureCloudSyncAccessColumn,
+  sendError,
+  sql,
+} from '../_db.js';
 
 export default async function handler(req, res) {
   try {
@@ -7,12 +13,25 @@ export default async function handler(req, res) {
       return res.status(405).json({ ok: false, error: 'Method not allowed.' });
     }
 
-    await ensureCloudSyncAccessColumn();
     const storeId = String(req.headers['x-store-id'] || req.headers['X-Store-Id'] || req.query?.storeId || '').trim();
     const branchId = String(req.headers['x-branch-id'] || req.headers['X-Branch-Id'] || req.query?.branchId || 'main').trim() || 'main';
     if (!storeId) {
       return res.status(400).json({ ok: false, error: 'Missing store id.' });
     }
+
+    assertStoreAllowed(storeId);
+    // This endpoint exposes store entitlement state, so it must not be a
+    // public store-id probe. Account sessions authorize Hosts; paired devices
+    // authorize both Hosts and Clients through their device token. Do not pass
+    // `cloud` as an allowed transport here: a disabled Cloud plan should be
+    // reported as `{ allowed: false }`, not rejected before the query runs.
+    await assertAccountOrDevice(req, {
+      storeId,
+      branchId,
+      allowedRoles: ['host', 'client'],
+    });
+
+    await ensureCloudSyncAccessColumn();
 
     const rows = await sql`
       select cloud_sync_enabled

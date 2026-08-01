@@ -58,8 +58,9 @@ class DirectPeerHandshake {
     // the Client nonce echoed back for scope validation.
     final hostNonce = challenge['nonce']?.toString().trim() ?? '';
     final hostPublicKey = challenge['publicKey']?.toString().trim() ?? '';
-    if (hostNonce.isEmpty)
+    if (hostNonce.isEmpty) {
       throw StateError('Direct handshake host nonce missing.');
+    }
     if (expectedHostPublicKey.trim().isNotEmpty &&
         hostPublicKey != expectedHostPublicKey.trim()) {
       throw StateError(

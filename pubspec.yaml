@@ -1,7 +1,7 @@
 name: ventio
 description: Ventio offline-first merchant and marketplace management app.
 publish_to: 'none'
-version: 1.0.86+86
+version: 1.0.87+87
 environment:
   sdk: '>=3.3.0 <4.0.0'
 
@@ -40,6 +40,7 @@ dev_dependencies:
   flutter_lints: ^5.0.0
   build_runner: ^2.4.13
   drift_dev: ^2.22.1
+  sqlite3: ^3.3.3
 
 flutter:
   uses-material-design: true
