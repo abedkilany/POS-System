@@ -4799,7 +4799,24 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         final hostCloudEnabled = identity.isHost &&
             (_cloudEnabled || (identity.isCloudEnabled && cloud.isConfigured));
         final messages = <String>[];
-        if (hostCloudEnabled ||
+        if (identity.activeSyncTransportNormalized == 'direct') {
+          final result =
+              await UnifiedSyncFactory.directEngine(widget.store).syncNow(
+            onProgress: (value, label) {
+              if (mounted) {
+                setState(() {
+                  _status =
+                      'Direct: ${localizeRuntimeMessage(label, tr)} ${(value * 100).round()}%';
+                  _statusProgress = value;
+                });
+              }
+            },
+          );
+          if (!result.ok) {
+            throw StateError(localizeRuntimeMessage(result.message, tr));
+          }
+          messages.add('Direct: ${tr.text('sync_completed')}');
+        } else if (hostCloudEnabled ||
             (!identity.isHost &&
                 identity.activeSyncTransportNormalized == 'cloud')) {
           final result = await _cloudEngine(enabled: true).syncNow(

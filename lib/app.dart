@@ -172,6 +172,7 @@ class _VentioAppState extends State<VentioApp> {
     _syncStarted = false;
     await _autoSyncController.stop();
     _autoDirectSyncController.stop();
+    await UnifiedSyncFactory.disposeDirect(_store);
     _autoCloudSyncController.stop();
   }
 
@@ -246,6 +247,8 @@ class _VentioAppState extends State<VentioApp> {
   @override
   void dispose() {
     unawaited(_autoSyncController.stop());
+    _autoDirectSyncController.stop();
+    unawaited(UnifiedSyncFactory.disposeDirect(_store));
     _autoCloudSyncController.stop();
     _autoSnapshotProgress.dispose();
     AccountingService.setMutationListener(null);

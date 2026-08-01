@@ -7,6 +7,7 @@ import '../sync_unified/sync_transport_adapter.dart';
 import '../sync_unified/unified_snapshot_lifecycle.dart';
 import 'unified_sync_core_service.dart';
 import 'direct_peer_protocol.dart';
+import 'sync_diagnostics_log.dart';
 
 /// Implements the Host-side Direct request protocol.
 ///
@@ -23,6 +24,8 @@ class DirectHostSyncEndpoint {
     String requestKind,
     Map<String, dynamic> payload,
   ) async {
+    SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] host protocol dispatch kind=$requestKind requestId=${payload['requestId'] ?? '-'}');
     switch (requestKind) {
       case 'direct_client_push':
         return _handlePush(payload);
@@ -75,6 +78,8 @@ class DirectHostSyncEndpoint {
 
   Future<Map<String, dynamic>> _handlePush(Map<String, dynamic> payload) async {
     final rawChanges = payload['changes'] as List<dynamic>? ?? const [];
+    SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] host push received count=${rawChanges.length} device=${payload['deviceId'] ?? '-'}');
     final changes =
         _core.filterOutLocalEchoes(_core.decodeRemoteChanges(rawChanges));
     if (_core.containsHostOnlyOperation(changes)) {
@@ -85,6 +90,8 @@ class DirectHostSyncEndpoint {
       mirrorToCloud: false,
       verifyApplied: true,
     );
+    SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] host push applied accepted=${accepted.ackIds.length} rejected=${accepted.rejected.length}');
     final deviceId = payload['deviceId']?.toString().trim() ?? '';
     final sequence = int.tryParse(
           payload['sequence']?.toString() ??
@@ -116,10 +123,13 @@ class DirectHostSyncEndpoint {
               '0',
         ) ??
         0;
+    SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] host pull received device=${payload['deviceId'] ?? '-'} sinceSequence=$sinceSequence');
     final since = DateTime.tryParse(
       payload['since']?.toString() ?? payload['sinceAt']?.toString() ?? '',
     );
     if (sinceSequence <= 0 && since == null) {
+      SyncDiagnosticsLog.add('[SYNC_TRACE] host pull requiresSnapshot=true');
       return {
         'needsSnapshot': true,
         'changes': const <dynamic>[],
@@ -132,6 +142,8 @@ class DirectHostSyncEndpoint {
         sinceSequence: sinceSequence,
       ),
     ) as Map<String, dynamic>;
+    SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] host pull response changes=${(decoded['changes'] as List?)?.length ?? 0} generatedSequence=${decoded['generatedSequence'] ?? 0}');
     return {
       ...decoded,
       'needsSnapshot': false,
@@ -158,6 +170,8 @@ class DirectHostSyncEndpoint {
     final ackCursor = DateTime.tryParse(
       payload['ackCursor']?.toString() ?? '',
     );
+    SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] host ack received device=$deviceId appliedSequence=$appliedSequence ackSequence=$ackSequence');
     if (deviceId.isNotEmpty) {
       await SyncDeviceStateStore.recordPeerSyncResult(
         deviceId: deviceId,
@@ -186,6 +200,8 @@ class DirectClientSyncService {
   Future<UnifiedSyncResult> pushPending() async {
     final pending = _core.pendingChangesForTarget(UnifiedSyncQueueTarget.host);
     final ids = _core.changeIds(pending);
+    SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] client push prepare count=${pending.length} ids=${ids.take(20).join(',')}');
     if (pending.isEmpty) {
       return const UnifiedSyncResult(
         ok: true,
@@ -194,6 +210,8 @@ class DirectClientSyncService {
     }
     try {
       await _core.markPushInProgress(ids);
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] client push markedInProgress count=${ids.length}');
       final response = await session.sendRequest('direct_client_push', {
         'deviceId': store.deviceId,
         'deviceName': store.appIdentity.deviceName,
@@ -219,6 +237,8 @@ class DirectClientSyncService {
       }
       if (rejected.isNotEmpty) await _core.markPushRejected(rejected);
       await _core.markPushAcknowledged(ackIds, fallbackIds: ids);
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] client push finalized acknowledged=${ackIds.length} rejected=${rejected.length}');
       return UnifiedSyncResultFactory.success(
         label: 'Direct',
         pushed: ackIds.length,
@@ -227,6 +247,7 @@ class DirectClientSyncService {
         message: 'Direct push completed.',
       );
     } catch (error) {
+      SyncDiagnosticsLog.add('[SYNC_TRACE] client push failed error=$error');
       await _core.markPushFailed(ids, error.toString());
       return UnifiedSyncResult(
         ok: false,
@@ -241,6 +262,8 @@ class DirectClientSyncService {
 
   Future<UnifiedSyncResult> pullChanges() async {
     final state = SyncDeviceStateStore.load(store.appIdentity);
+    SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] client pull prepare sinceSequence=${state.lastAppliedSequence} cursor=${state.lastAppliedHostCursor?.toIso8601String() ?? '-'}');
     final response = await session.sendRequest('direct_client_pull', {
       'deviceId': store.deviceId,
       'since': state.lastAppliedHostCursor?.toIso8601String(),
@@ -257,12 +280,17 @@ class DirectClientSyncService {
       );
     }
     if (response['needsSnapshot'] == true) {
+      SyncDiagnosticsLog.add('[SYNC_TRACE] client pull requiresSnapshot=true');
       return rebuildFromHostSnapshot();
     }
     final changes = _core.normalizePulledChanges(
       response['changes'] as List<dynamic>? ?? const [],
     );
+    SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] client pull received count=${changes.length}');
     await _core.applyAuthoritativeChanges(changes);
+    SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] client pull applied count=${changes.length}');
     final generatedAt = DateTime.tryParse(
           response['generatedAt']?.toString() ?? '',
         ) ??
@@ -284,6 +312,8 @@ class DirectClientSyncService {
       'appliedSequence': generatedSequence,
       'ackSequence': generatedSequence,
     });
+    SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] client ack sent sequence=$generatedSequence');
     return UnifiedSyncResultFactory.success(
       label: 'Direct',
       pushed: 0,
@@ -301,6 +331,7 @@ class DirectClientSyncService {
     void Function(double value, String label)? onProgress,
   }) async {
     try {
+      SyncDiagnosticsLog.add('[SYNC_TRACE] client snapshot start');
       final manifest = await session.sendRequest(
         'direct_client_snapshot_manifest',
         {'deviceId': store.deviceId},
@@ -319,6 +350,8 @@ class DirectClientSyncService {
         final chunk = response['chunk'];
         if (chunk is! Map) throw StateError('Invalid Direct snapshot chunk.');
         chunks.add(Map<String, dynamic>.from(chunk));
+        SyncDiagnosticsLog.add(
+            '[SYNC_TRACE] client snapshot chunk index=$index total=$total');
         onProgress?.call((index + 1) / total, 'Receiving Direct snapshot');
       }
       final envelope = store.unifiedSnapshotPayloadFromChunks(chunks);
@@ -343,6 +376,8 @@ class DirectClientSyncService {
         'appliedSequence': applied.sequence,
         'ackSequence': applied.sequence,
       });
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] client snapshot complete sequence=${applied.sequence}');
       return UnifiedSyncResultFactory.success(
         label: 'Direct',
         pushed: 0,
@@ -355,6 +390,8 @@ class DirectClientSyncService {
         message: 'Direct initial snapshot completed.',
       );
     } catch (error) {
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] client snapshot failed error=$error');
       return UnifiedSyncResult(
         ok: false,
         message: 'Direct snapshot failed: $error',

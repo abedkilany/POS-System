@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'secure_peer_session.dart';
+import 'sync_diagnostics_log.dart';
 
 typedef DirectPeerRequestHandler = Future<Map<String, dynamic>> Function(
   String requestKind,
@@ -43,6 +44,8 @@ class DirectPeerRequestSession {
       throw StateError('Direct request session is closed.');
     }
     final requestId = _requestId();
+    SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] direct request start kind=$requestKind requestId=$requestId');
     final completer = Completer<Map<String, dynamic>>();
     _pending[requestId] = completer;
     try {
@@ -51,7 +54,14 @@ class DirectPeerRequestSession {
         'requestKind': requestKind,
         ...payload,
       });
-      return await completer.future.timeout(timeout);
+      final response = await completer.future.timeout(timeout);
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] direct request result kind=$requestKind requestId=$requestId ok=${response['ok'] == true}');
+      return response;
+    } catch (error) {
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] direct request failed kind=$requestKind requestId=$requestId error=$error');
+      rethrow;
     } finally {
       _pending.remove(requestId);
     }
@@ -97,13 +107,19 @@ class DirectPeerHostEndpoint {
     final requestKind = message['requestKind']?.toString().trim() ?? '';
     if (requestId.isEmpty || requestKind.isEmpty) return;
     try {
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] host request start kind=$requestKind requestId=$requestId');
       final response = await onRequest(requestKind, message);
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] host request result kind=$requestKind requestId=$requestId ok=true');
       await connection.send('direct_response', {
         'requestId': requestId,
         'ok': true,
         ...response,
       });
     } catch (error) {
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] host request result kind=$requestKind requestId=$requestId ok=false error=$error');
       await connection.send('direct_response', {
         'requestId': requestId,
         'ok': false,

@@ -15,15 +15,18 @@ import 'unified_sync_orchestration.dart';
 /// and signaling; sync requests are sent through the peer data channel.
 class DirectSyncTransportAdapter implements SyncTransportAdapter {
   DirectSyncTransportAdapter(this.store, {DirectSyncSettings? settings})
-      : _settings = settings ?? DirectSyncSettings.load();
+      : _settings = settings ?? DirectSyncSettings.load(),
+        _coordination = DirectPeerSignalingService(store),
+        _usesPersistedSettings = settings == null;
 
   final AppStore store;
   static final Map<String, Future<DirectPeerHostEndpoint>> _hostListeners =
       <String, Future<DirectPeerHostEndpoint>>{};
-  final DirectSyncSettings _settings;
-  late final DirectPeerSignalingService _coordination =
-      DirectPeerSignalingService(store);
+  DirectSyncSettings _settings;
+  final bool _usesPersistedSettings;
+  DirectPeerSignalingService _coordination;
   DirectPeerRequestSession? _session;
+  Future<DirectPeerRequestSession>? _sessionFuture;
   DirectPeerHostEndpoint? _hostEndpoint;
   bool _hostListenerStarting = false;
 
@@ -54,6 +57,19 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
   Future<DirectPeerRequestSession> _clientSession() async {
     final existing = _session;
     if (existing != null) return existing;
+    final pending = _sessionFuture;
+    if (pending != null) return pending;
+    final future = _openClientSession();
+    _sessionFuture = future;
+    try {
+      return await future;
+    } finally {
+      if (identical(_sessionFuture, future)) _sessionFuture = null;
+    }
+  }
+
+  Future<DirectPeerRequestSession> _openClientSession() async {
+    if (_usesPersistedSettings) _settings = DirectSyncSettings.load();
     if (!_settings.isConfigured) {
       throw StateError('Direct pairing is not configured.');
     }
@@ -191,6 +207,9 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       code,
       onProgress: onProgress,
     );
+    if (result.ok && _usesPersistedSettings) {
+      _settings = DirectSyncSettings.load();
+    }
     SyncDiagnosticsLog.add(
         '[DIRECT_PAIRING] claim result ok=${result.ok} transport=direct '
         'message=${result.message.replaceAll(RegExp(r'\s+'), ' ').trim()}');
@@ -220,7 +239,14 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       return await DirectClientSyncService(store, session).pushPending();
     } catch (error) {
       await _invalidateClientSession(error);
-      rethrow;
+      return UnifiedSyncResult(
+        ok: false,
+        message: 'Direct push connection failed: $error',
+        error: const UnifiedSyncError(
+          code: UnifiedSyncErrorCode.networkUnavailable,
+        ),
+        cursor: _cursor(),
+      );
     }
   }
 
@@ -231,7 +257,14 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       return await DirectClientSyncService(store, session).pullChanges();
     } catch (error) {
       await _invalidateClientSession(error);
-      rethrow;
+      return UnifiedSyncResult(
+        ok: false,
+        message: 'Direct pull connection failed: $error',
+        error: const UnifiedSyncError(
+          code: UnifiedSyncErrorCode.networkUnavailable,
+        ),
+        cursor: _cursor(),
+      );
     }
   }
 
@@ -247,7 +280,14 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       );
     } catch (error) {
       await _invalidateClientSession(error);
-      rethrow;
+      return UnifiedSyncResult(
+        ok: false,
+        message: 'Direct snapshot connection failed: $error',
+        error: const UnifiedSyncError(
+          code: UnifiedSyncErrorCode.networkUnavailable,
+        ),
+        cursor: _cursor(),
+      );
     }
   }
 
@@ -257,11 +297,15 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<void> stopHostIfSupported() async {
+    final listenerKey = '${store.appIdentity.storeId}:${store.deviceId}';
+    _hostListeners.remove(listenerKey);
     await _hostEndpoint?.close();
     _hostEndpoint = null;
     await _session?.close();
     _session = null;
+    _sessionFuture = null;
     _coordination.dispose();
+    _coordination = DirectPeerSignalingService(store);
   }
 
   @override
@@ -301,6 +345,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       return;
     }
     _hostListenerStarting = true;
+    if (_usesPersistedSettings) _settings = DirectSyncSettings.load();
     final listenerKey = '${store.appIdentity.storeId}:${store.deviceId}';
     final existingListener = _hostListeners[listenerKey];
     if (existingListener != null) {
@@ -310,7 +355,8 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       _hostListenerStarting = false;
       return;
     }
-    final listener = () async {
+    late Future<DirectPeerHostEndpoint> listener;
+    listener = () async {
       // Keep one Host listener alive. A temporary WebSocket or WebRTC failure
       // must not make a still-running Host disappear until the next app tick.
       while (store.appIdentity.isHost) {
@@ -339,6 +385,9 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
               if (_hostEndpoint?.connection == connection) {
                 _hostEndpoint = null;
                 _hostListenerStarting = false;
+                if (identical(_hostListeners[listenerKey], listener)) {
+                  _hostListeners.remove(listenerKey);
+                }
                 _startHostListener();
               }
             },

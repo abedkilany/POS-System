@@ -2015,7 +2015,7 @@ class AppStore extends ChangeNotifier {
   String get activeClientSyncTarget {
     if (!appIdentity.isClient) return '';
     final active = appIdentity.activeSyncTransportNormalized;
-    if (active == 'lan') return 'host';
+    if (active == 'lan' || active == 'direct') return 'host';
     if (active == 'cloud') return 'cloud_host';
     return '';
   }
@@ -8062,6 +8062,7 @@ class AppStore extends ChangeNotifier {
     final activeTransport = identity.activeSyncTransportNormalized;
     final isLanClient =
         identity.isClient && activeTransport == 'lan' && _isLanClientConfigured;
+    final isDirectClient = identity.isClient && activeTransport == 'direct';
 
     // Sync architecture v2: the Host is the only source of truth.
     // - Host devices publish accepted/authoritative changes to Cloud.
@@ -8073,12 +8074,14 @@ class AppStore extends ChangeNotifier {
         ? 'cloud'
         : isLanClient
             ? 'host'
-            : (identity.isClient && activeTransport == 'cloud')
-                ? 'cloud_host'
-                : (identity.platform == AppPlatformType.web &&
-                        activeTransport == 'cloud')
+            : isDirectClient
+                ? 'host'
+                : (identity.isClient && activeTransport == 'cloud')
                     ? 'cloud_host'
-                    : 'local';
+                    : (identity.platform == AppPlatformType.web &&
+                            activeTransport == 'cloud')
+                        ? 'cloud_host'
+                        : 'local';
     if (target == 'local') return null;
     final item = SyncQueueItem(
       id: '$changeId-$target',

@@ -88,6 +88,9 @@ Future<void> _recoverCloudSyncQueues(AppStore store) =>
 class UnifiedSyncFactory {
   const UnifiedSyncFactory._();
 
+  static final Map<AppStore, DirectSyncTransportAdapter> _directAdapters =
+      <AppStore, DirectSyncTransportAdapter>{};
+
   static UnifiedSyncEngine cloudEngine(AppStore store,
       {CloudSyncSettings? settings, bool enabled = true, http.Client? client}) {
     final current = settings ?? CloudSyncSettings.load();
@@ -110,9 +113,18 @@ class UnifiedSyncFactory {
   }
 
   static UnifiedSyncEngine directEngine(AppStore store) {
-    return UnifiedSyncEngine(
-      DirectSyncTransportAdapter(store),
+    final adapter = _directAdapters.putIfAbsent(
+      store,
+      () => DirectSyncTransportAdapter(store),
     );
+    return UnifiedSyncEngine(
+      adapter,
+    );
+  }
+
+  static Future<void> disposeDirect(AppStore store) async {
+    final adapter = _directAdapters.remove(store);
+    await adapter?.stopHostIfSupported();
   }
 
   static UnifiedSyncEngine activeEngine(
@@ -150,7 +162,10 @@ class UnifiedSyncFactory {
     final settings = CloudSyncSettings.load();
     final identity = store.appIdentity;
     final allowed = identity.isHost || identity.isClient;
-    return allowed && identity.isCloudEnabled && settings.isConfigured;
+    return identity.activeSyncTransportNormalized != 'direct' &&
+        allowed &&
+        identity.isCloudEnabled &&
+        settings.isConfigured;
   }
 }
 
@@ -773,7 +788,10 @@ class UnifiedAutoDirectSyncController {
     }
     _running = true;
     try {
-      await UnifiedSyncFactory.directEngine(store).syncNow();
+      final result = await UnifiedSyncFactory.directEngine(store).syncNow();
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] autoDirect:tick result ok=${result.ok} '
+          'pushed=${result.pushed} pulled=${result.pulled} message=${result.message}');
     } catch (error) {
       SyncDiagnosticsLog.add('[DIRECT_FALLBACK] direct sync failed=$error');
       if (UnifiedSyncFactory.cloudFallbackCanCheck(store)) {

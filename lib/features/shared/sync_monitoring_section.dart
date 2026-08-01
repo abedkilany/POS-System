@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/localization/app_localizations.dart';
@@ -6,6 +7,7 @@ import '../../core/services/account_auth_service.dart';
 import '../../core/services/cloud_sync_admin_service.dart';
 import '../../core/services/cloud_sync_service.dart';
 import '../../core/services/lan_sync_service.dart';
+import '../../core/services/sync_diagnostics_log.dart';
 import '../../core/sync_unified/sync_device_state.dart';
 import '../../data/app_store.dart';
 
@@ -346,6 +348,8 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
               cloudSettings: cloudSettings,
               onRefresh: _refresh,
             ),
+          const SizedBox(height: 12),
+          const _SyncTraceDiagnosticsPanel(),
         ],
       ),
     );
@@ -579,6 +583,73 @@ String _pendingChangesForHostPeer(
     if (pending) count++;
   }
   return '$count';
+}
+
+class _SyncTraceDiagnosticsPanel extends StatelessWidget {
+  const _SyncTraceDiagnosticsPanel();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return ValueListenableBuilder<List<String>>(
+      valueListenable: SyncDiagnosticsLog.lines,
+      builder: (context, lines, _) {
+        final trace = lines
+            .where((line) => line.contains('[SYNC_TRACE]'))
+            .toList(growable: false);
+        final text = trace.join('\n');
+        return Card(
+          color: theme.colorScheme.surfaceContainerHighest,
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.route_outlined),
+                    const SizedBox(width: 8),
+                    const Expanded(child: Text('Sync trace diagnostics')),
+                    IconButton(
+                      tooltip: 'Copy sync trace',
+                      onPressed: text.isEmpty
+                          ? null
+                          : () async {
+                              await Clipboard.setData(
+                                  ClipboardData(text: text));
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                      content: Text('Sync trace copied')),
+                                );
+                              }
+                            },
+                      icon: const Icon(Icons.copy_outlined),
+                    ),
+                    IconButton(
+                      tooltip: 'Clear sync trace',
+                      onPressed: text.isEmpty
+                          ? null
+                          : SyncDiagnosticsLog.clearSyncTrace,
+                      icon: const Icon(Icons.delete_sweep_outlined),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                SelectableText(
+                  text.isEmpty ? 'No sync trace yet.' : text,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontFamily: 'monospace',
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
 }
 
 int _hostPeerAckSequence(

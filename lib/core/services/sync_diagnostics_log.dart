@@ -21,6 +21,15 @@ class SyncDiagnosticsLog {
     lines.value = const <String>[];
   }
 
+  static void clearSyncTrace() {
+    lines.value = List.unmodifiable(
+      lines.value.where((line) => !line.contains('[SYNC_TRACE]')),
+    );
+  }
+
+  static List<String> get syncTraceLines =>
+      lines.value.where((line) => line.contains('[SYNC_TRACE]')).toList();
+
   static String dump() => lines.value.join('\n');
 
   static DirectDiagnosticsSummary directSummary() {
