@@ -306,11 +306,11 @@ class LanSyncSettings {
     return copyWith(hostRegistry: migrated);
   }
 
-  /// Adopt a Cloud-paired Client into the Host Registry. The Registry remains
-  /// the Monitoring source of truth; Cloud pairing is only allowed to add a
+  /// Adopt a Direct-paired Client into the Host Registry. The Registry remains
+  /// the Monitoring source of truth; Direct pairing is only allowed to add a
   /// device after the Host verifies that the single-use pairing code was
   /// consumed by that Client for this Host.
-  LanSyncSettings withCloudPairedHostRegistryDevice({
+  LanSyncSettings withDirectPairedHostRegistryDevice({
     required String hostDeviceId,
     required String clientDeviceId,
     String deviceToken = '',
@@ -334,7 +334,7 @@ class LanSyncSettings {
               deviceToken: cleanToken,
               hostDeviceId: cleanHostId,
               deviceName: cleanName,
-              source: 'cloud_pairing_claim',
+              source: 'direct_pairing_claim',
               pairedAt: pairedAt ?? DateTime.now(),
               lastSeenAt: pairedAt ?? DateTime.now(),
             ))
@@ -343,7 +343,7 @@ class LanSyncSettings {
       hostDeviceId: cleanHostId,
       deviceName: cleanName,
       status: 'active',
-      source: 'cloud_pairing_claim',
+      source: 'direct_pairing_claim',
       pairedAt: existing?.pairedAt ?? pairedAt ?? DateTime.now(),
       lastSeenAt: pairedAt ?? DateTime.now(),
     );
@@ -426,7 +426,7 @@ class LanSyncService {
       const LanSyncResult(
           ok: false,
           message:
-              'LAN sync is not available in the web build. Use Cloud Sync/API instead.');
+              'LAN sync is not available in the web build. Use Direct Sync/API instead.');
   Future<LanSyncResult> claimPairingCode(String host,
           {int port = 8787,
           required String code,
@@ -470,7 +470,7 @@ class LanSyncService {
       const LanSyncResult(
           ok: false,
           message:
-              'LAN repair is not available in the web build. Use Cloud Sync/API instead.');
+              'LAN repair is not available in the web build. Use Direct Sync/API instead.');
   Future<void> recordDeviceSyncState(
     String transport, {
     DateTime? cursor,

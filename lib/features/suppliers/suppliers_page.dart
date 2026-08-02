@@ -510,29 +510,29 @@ class _SuppliersPageState extends State<SuppliersPage> {
       builder: (_) => _SupplierDialog(supplier: supplier),
     );
     if (result != null) {
-      final isCloud =
-          widget.store.appIdentity.activeSyncTransportNormalized == 'cloud';
-      if (isCloud) SyncDiagnosticsLog.clear();
+      final isDirect =
+          widget.store.appIdentity.activeSyncTransportNormalized == 'direct';
+      if (isDirect) SyncDiagnosticsLog.clear();
       await widget.store.addOrUpdateSupplier(result);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(AppLocalizations.of(context).text(
                 supplier == null ? 'supplier_saved' : 'supplier_updated'))));
-        if (isCloud) {
-          await _showCloudSupplierTrace(context, result);
+        if (isDirect) {
+          await _showDirectSupplierTrace(context, result);
         }
       }
     }
   }
 
-  Future<void> _showCloudSupplierTrace(
+  Future<void> _showDirectSupplierTrace(
     BuildContext context,
     Supplier supplier,
   ) async {
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text('Cloud sync trace: ${supplier.name}'),
+        title: Text('Direct sync trace: ${supplier.name}'),
         content: SizedBox(
           width: 760,
           height: 440,
@@ -540,7 +540,7 @@ class _SuppliersPageState extends State<SuppliersPage> {
             valueListenable: SyncDiagnosticsLog.lines,
             builder: (context, lines, _) {
               final text = lines.isEmpty
-                  ? 'Waiting for Cloud sync trace...'
+                  ? 'Waiting for Direct sync trace...'
                   : lines.join('\n');
               return SingleChildScrollView(
                 child: SelectableText(

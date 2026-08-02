@@ -50,7 +50,7 @@ class UnifiedSnapshotManifestResponse {
   final int? requiredMinSequence;
 }
 
-/// Transport adapter implemented by LAN and Cloud only for IO.
+/// Transport adapter implemented by LAN and Direct only for IO.
 /// The transfer algorithm below is intentionally shared by both transports.
 abstract class UnifiedSnapshotChunkPullTransport {
   Future<UnifiedSnapshotManifestResponse> requestManifest({bool force = false});
@@ -61,7 +61,7 @@ abstract class UnifiedSnapshotChunkPullTransport {
 /// Shared downloader for Snapshot phase 2.
 ///
 /// It is responsible for manifest -> chunk loop -> retry -> ack -> envelope.
-/// LAN and Cloud only provide requestManifest/requestChunk implementations.
+/// LAN and Direct only provide requestManifest/requestChunk implementations.
 class UnifiedSnapshotTransferService {
   const UnifiedSnapshotTransferService({
     this.maxRetries = 3,

@@ -80,7 +80,6 @@ async function ensureTables() {
   await sql`alter table app_accounts add column if not exists namespace_slug text not null default ''`;
   await sql`alter table app_accounts add column if not exists account_type text not null default 'store_owner'`;
   await sql`alter table app_stores add column if not exists slug text`;
-  await sql`alter table app_stores add column if not exists cloud_sync_enabled boolean not null default false`;
   await sql`update app_stores set slug = lower(regexp_replace(name, '[^a-zA-Z0-9_-]+', '', 'g')) where slug is null or slug = ''`;
   await sql`alter table app_stores alter column slug set not null`;
   await sql`create unique index if not exists app_stores_slug_key on app_stores(slug)`;
@@ -100,7 +99,6 @@ async function listSubscribers(res) {
       s.slug as store_slug,
       s.name as store_name,
       s.status as store_status,
-      s.cloud_sync_enabled,
       sub.id as subscription_id,
       sub.plan,
       sub.status as subscription_status,
@@ -166,7 +164,6 @@ async function updateSubscriber(req, res) {
   const subscriptionStatus = cleanSimple(body.subscriptionStatus ?? body.subscription_status ?? 'trial') || 'trial';
   const parsedDevicesLimit = Number.parseInt(String(body.devicesLimit ?? body.devices_limit ?? '2'), 10);
   const devicesLimit = Math.max(0, Number.isFinite(parsedDevicesLimit) ? parsedDevicesLimit : 2);
-  const cloudSyncEnabled = body.cloudSyncEnabled === true || body.cloud_sync_enabled === true;
   const trialEndsAtRaw = String(body.trialEndsAt ?? body.trial_ends_at ?? '').trim();
 
   if (!username) return res.status(400).json({ ok: false, error: 'Username is required.' });
@@ -199,7 +196,7 @@ async function updateSubscriber(req, res) {
   if (storeId) {
     await sql`
       update app_stores
-      set name = ${storeName}, slug = ${storeSlug}, status = ${storeStatus}, cloud_sync_enabled = ${cloudSyncEnabled}, updated_at = now()
+      set name = ${storeName}, slug = ${storeSlug}, status = ${storeStatus}, updated_at = now()
       where id = ${storeId}
     `;
   }
@@ -239,15 +236,11 @@ async function deleteSubscriber(req, res) {
   if (storeId) {
     await sql`delete from bootstrap_snapshot_sections where store_id = ${storeId}`;
     await sql`delete from bootstrap_snapshot_jobs where store_id = ${storeId}`;
-    await sql`delete from cloud_change_requests where store_id = ${storeId}`;
-    await sql`delete from cloud_sync_sequences where store_id = ${storeId}`;
     await sql`delete from device_pairing_codes where store_id = ${storeId}`;
-    await sql`delete from entity_snapshots where store_id = ${storeId}`;
     await sql`delete from host_transfer_requests where store_id = ${storeId}`;
     await sql`delete from store_devices where store_id = ${storeId}`;
     await sql`delete from store_host_heartbeats where store_id = ${storeId}`;
     await sql`delete from store_recovery_keys where store_id = ${storeId}`;
-    await sql`delete from sync_events where store_id = ${storeId}`;
     await sql`delete from unified_snapshot_chunks where store_id = ${storeId}`;
   }
   await sql`delete from app_accounts where id = ${accountId}`;

@@ -25,7 +25,7 @@ Map<String, String> _hostIdentitySeed() {
       'createdAt': now,
       'updatedAt': now,
       'hostDeviceId': '',
-      'cloudTenantId': '',
+      'controlPlaneTenantId': '',
       'deviceToken': 'device_stress_host',
       'storeEpoch': 1,
       'recoveryKey': 'RK-STRE-TEST-HOST',

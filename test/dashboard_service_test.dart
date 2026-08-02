@@ -15,7 +15,7 @@ Map<String, String> _hostIdentitySeed() {
   final now = DateTime(2026, 1, 1).toIso8601String();
   return <String, String>{
     'app_identity_v1':
-        '{"storeId":"ST-DASH","branchId":"BR-DASH","deviceId":"DV-DASH","deviceName":"Dashboard Host","platform":"windows","deviceRole":"host","appRole":"store","syncMode":"localOnly","createdAt":"$now","updatedAt":"$now","hostDeviceId":"","cloudTenantId":"","deviceToken":"device_dashboard_host","storeEpoch":1,"recoveryKey":"RK-DASH-TEST","activeSyncTransport":"local"}',
+        '{"storeId":"ST-DASH","branchId":"BR-DASH","deviceId":"DV-DASH","deviceName":"Dashboard Host","platform":"windows","deviceRole":"host","appRole":"store","syncMode":"localOnly","createdAt":"$now","updatedAt":"$now","hostDeviceId":"","controlPlaneTenantId":"","deviceToken":"device_dashboard_host","storeEpoch":1,"recoveryKey":"RK-DASH-TEST","activeSyncTransport":"local"}',
   };
 }
 

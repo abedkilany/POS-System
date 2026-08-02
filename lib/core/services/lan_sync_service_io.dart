@@ -321,11 +321,11 @@ class LanSyncSettings {
     return copyWith(hostRegistry: migrated);
   }
 
-  /// Adopt a Cloud-paired Client into the Host Registry. The Registry remains
-  /// the Monitoring source of truth; Cloud pairing is only allowed to add a
+  /// Adopt a Direct-paired Client into the Host Registry. The Registry remains
+  /// the Monitoring source of truth; Direct pairing is only allowed to add a
   /// device after the Host verifies that the single-use pairing code was
   /// consumed by that Client for this Host.
-  LanSyncSettings withCloudPairedHostRegistryDevice({
+  LanSyncSettings withDirectPairedHostRegistryDevice({
     required String hostDeviceId,
     required String clientDeviceId,
     String deviceToken = '',
@@ -349,7 +349,7 @@ class LanSyncSettings {
               deviceToken: cleanToken,
               hostDeviceId: cleanHostId,
               deviceName: cleanName,
-              source: 'cloud_pairing_claim',
+              source: 'direct_pairing_claim',
               pairedAt: pairedAt ?? DateTime.now(),
               lastSeenAt: pairedAt ?? DateTime.now(),
             ))
@@ -358,7 +358,7 @@ class LanSyncSettings {
       hostDeviceId: cleanHostId,
       deviceName: cleanName,
       status: 'active',
-      source: 'cloud_pairing_claim',
+      source: 'direct_pairing_claim',
       pairedAt: existing?.pairedAt ?? pairedAt ?? DateTime.now(),
       lastSeenAt: pairedAt ?? DateTime.now(),
     );
@@ -548,7 +548,7 @@ class LanSyncService {
   String _restoreCommandIdFromChanges(List<SyncChange> changes) {
     for (final change in changes) {
       if (change.entityType == 'system' &&
-          change.operation == 'cloud_restore_snapshot_ready') {
+          change.operation == 'restore_snapshot_ready') {
         return _remoteHostRestoreCommandId(change.payload);
       }
     }
@@ -1215,8 +1215,8 @@ class LanSyncService {
             0;
         final accepted = await _syncCore.acceptClientChangesOnHost(
           changes,
-          mirrorToCloud:
-              store.appIdentity.isCloudEnabled && store.appIdentity.isHost,
+          mirrorToDirect:
+              store.appIdentity.isDirectEnabled && store.appIdentity.isHost,
         );
         final clientDeviceId =
             decoded['deviceId']?.toString() ?? receivedDeviceId ?? '';
@@ -1297,7 +1297,7 @@ class LanSyncService {
           message:
               'Host devices cannot pair as LAN Clients. Use Transfer Host instead.');
     }
-    // A Client may configure both LAN and Cloud transports. Pairing LAN only
+    // A Client may configure both LAN and Direct transports. Pairing LAN only
     // prepares another delivery method; the active transport still decides
     // which one auto-sync runs.
     try {
@@ -2186,6 +2186,6 @@ class _LanSnapshotPullTransport implements UnifiedSnapshotChunkPullTransport {
   @override
   Future<void> ackChunk(int ordinal) async {
     // LAN snapshot chunk ACK is currently client-local; the unified transfer
-    // engine still calls this hook so LAN and Cloud share the same pipeline.
+    // engine still calls this hook so LAN and Direct share the same pipeline.
   }
 }

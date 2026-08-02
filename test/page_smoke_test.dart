@@ -44,7 +44,7 @@ Map<String, String> _hostIdentitySeed() {
       'createdAt': now,
       'updatedAt': now,
       'hostDeviceId': '',
-      'cloudTenantId': '',
+      'controlPlaneTenantId': '',
       'deviceToken': 'device_page_host',
       'storeEpoch': 1,
       'recoveryKey': 'RK-PAGE-TEST-HOST',

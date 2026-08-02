@@ -124,11 +124,11 @@ void main() {
     });
 
     test('AppIdentity round trip preserves platform and sync mode enums', () {
-      final identity = AppIdentity(storeId: 'store', branchId: 'main', deviceId: 'dev', deviceName: 'Device', platform: AppPlatformType.windows, deviceRole: DeviceRole.host, appRole: AppRole.store, syncMode: SyncMode.cloudConnected, createdAt: created, updatedAt: updated, storeEpoch: 2);
+      final identity = AppIdentity(storeId: 'store', branchId: 'main', deviceId: 'dev', deviceName: 'Device', platform: AppPlatformType.windows, deviceRole: DeviceRole.host, appRole: AppRole.store, syncMode: SyncMode.directConnected, createdAt: created, updatedAt: updated, storeEpoch: 2);
       final decoded = AppIdentity.fromJson(identity.toJson());
 
       expect(decoded.isHost, isTrue);
-      expect(decoded.isCloudEnabled, isTrue);
+      expect(decoded.isDirectEnabled, isTrue);
       expect(decoded.platform, AppPlatformType.windows);
       expect(decoded.storeEpoch, 2);
     });
@@ -143,7 +143,7 @@ void main() {
     });
 
     test('SyncQueueItem round trip preserves retry status', () {
-      final item = SyncQueueItem(id: 'q1', changeId: 'chg1', target: 'cloud', status: 'failed', attempts: 2, createdAt: created, updatedAt: updated, lastError: 'timeout', nextRetryAt: updated);
+      final item = SyncQueueItem(id: 'q1', changeId: 'chg1', target: 'host', status: 'failed', attempts: 2, createdAt: created, updatedAt: updated, lastError: 'timeout', nextRetryAt: updated);
       final decoded = SyncQueueItem.fromJson(item.toJson());
 
       expect(decoded.isFailed, isTrue);

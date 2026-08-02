@@ -57,7 +57,7 @@ export default async function handler(req, res) {
 
     const rows = await sql`
       select a.id, a.username, a.full_name, a.namespace_slug, a.password_hash, a.status, a.account_type,
-             s.id as store_id, s.slug as store_slug, s.name as store_name, s.branch_id, s.cloud_sync_enabled
+             s.id as store_id, s.slug as store_slug, s.name as store_name, s.branch_id
       from app_accounts a
       left join app_stores s on s.owner_account_id = a.id
       where a.id = ${String(payload.accountId || '')}
@@ -92,7 +92,7 @@ export default async function handler(req, res) {
       storeName: row.store_name || '',
       loginName: storeSlug ? `${row.username}@${storeSlug}` : row.username || '',
       accountType: row.account_type || 'store_owner',
-      cloudSyncEnabled: row.cloud_sync_enabled === true,
+      directSyncEnabled: false,
     });
   } catch (error) {
     return sendError(res, error);

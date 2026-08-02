@@ -22,7 +22,7 @@ export default async function handler(req, res) {
       storeId,
       branchId,
       allowedRoles: ['host', 'client'],
-      allowedTransports: ['cloud'],
+      allowedTransports: ['direct'],
     });
 
     return res.status(200).json({

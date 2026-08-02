@@ -8,7 +8,7 @@ import 'sync_transport_adapter.dart';
 /// 2) pull authoritative Host changes through the same transport,
 /// 3) attempt snapshot repair when pull fails after a successful push.
 ///
-/// LAN and Cloud adapters should only know how to move data. Decisions about
+/// LAN and Direct adapters should only know how to move data. Decisions about
 /// sync order, failure handling, and result aggregation live here so bugs in the
 /// sync flow are fixed once for both transports.
 class UnifiedSyncEngine {

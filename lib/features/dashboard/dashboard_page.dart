@@ -482,7 +482,7 @@ class _DashboardPageState extends State<DashboardPage> {
               _SystemStatusData(
                 title: tr.text('current_backup_status'),
                 value: state.backupStatus.title,
-                icon: Icons.cloud_done_outlined,
+                icon: Icons.sync,
                 color: _statusColor(context, state.backupStatus.level),
               ),
               _SystemStatusData(
@@ -661,7 +661,7 @@ class _HeroHeader extends StatelessWidget {
                   _StatusPill(
                     title: backupStatus.title,
                     subtitle: backupStatus.detail,
-                    icon: Icons.cloud_done_outlined,
+                    icon: Icons.sync,
                     color: statusColor(backupStatus.level),
                   ),
                 ],

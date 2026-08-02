@@ -93,16 +93,6 @@ class MaintenanceService {
           title: 'Database re-check completed',
           message: 'No data was changed. The health check was refreshed only.',
         );
-      case MaintenanceRepairAction.repairMissingCloudQueue:
-        final repaired =
-            await store.repairMissingHostCloudQueueForPendingChanges();
-        return MaintenanceRepairResult(
-          title: 'Cloud sync queue repair completed',
-          message: repaired == 0
-              ? 'No missing Host → Cloud queue rows were found.'
-              : '$repaired missing Host → Cloud queue rows were recreated.',
-          changedRecords: repaired,
-        );
     }
   }
 
@@ -297,9 +287,6 @@ class MaintenanceService {
         (counts['pendingSyncChanges'] ?? store.pendingSyncChanges.length) +
             (counts['pendingSyncQueue'] ?? store.pendingSyncQueue.length);
     final conflicts = counts['dataConflicts'] ?? store.dataConflicts.length;
-    final canRepairCloudQueue = store.appIdentity.isHost &&
-        store.appIdentity.isCloudEnabled &&
-        pendingSync > 0;
     return [
       MaintenanceIssue(
         id: 'data_conflicts',
@@ -320,9 +307,6 @@ class MaintenanceService {
         message: pendingSync == 0
             ? 'No pending sync changes.'
             : '$pendingSync changes are waiting for sync.',
-        repairAction: canRepairCloudQueue
-            ? MaintenanceRepairAction.repairMissingCloudQueue
-            : null,
       ),
     ];
   }

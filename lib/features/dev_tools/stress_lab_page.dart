@@ -13,7 +13,7 @@ import 'package:flutter/services.dart';
 
 import '../../core/services/account_auth_service.dart';
 import '../../core/services/app_logging_service.dart';
-import '../../core/services/cloud_sync_service.dart';
+import '../../core/services/direct_control_plane_service.dart';
 import '../../core/services/database_sql_editor_service.dart';
 import '../../core/services/barcode_feedback_service.dart';
 import '../../core/services/local_auto_backup_service.dart';
@@ -715,16 +715,15 @@ class _StressLabPageState extends State<StressLabPage> {
   String _effectiveSyncTransport() {
     final identity = store.appIdentity;
     final lan = LanSyncSettings.load();
-    final cloud = CloudSyncSettings.load();
-    final cloudActive = cloud.isConfigured &&
-        (identity.isCloudEnabled ||
-            identity.activeSyncTransportNormalized == 'cloud');
+    final directSettings = VpsControlPlaneSettings.load();
+    final directActive = directSettings.isConfigured &&
+        identity.activeSyncTransportNormalized == 'direct';
     final lanHostActive = identity.isHost && lan.setupComplete && lan.isHost;
     final lanClientActive = identity.isClient &&
         lan.setupComplete &&
         lan.isClient &&
         identity.activeSyncTransportNormalized == 'lan';
-    if (cloudActive) return 'cloud';
+    if (directActive) return 'direct';
     if (lanHostActive || lanClientActive) return 'lan';
     return 'local';
   }
@@ -733,13 +732,13 @@ class _StressLabPageState extends State<StressLabPage> {
     final identity = store.appIdentity;
     final transport = _effectiveSyncTransport();
     if (identity.isHost) {
-      return transport == 'cloud'
-          ? 'HOST_CLOUD'
+      return transport == 'direct'
+          ? 'HOST_DIRECT'
           : transport == 'lan'
               ? 'HOST_LAN'
               : 'HOST_LOCAL';
     }
-    if (identity.isClient && transport == 'cloud') return 'CLIENT_CLOUD';
+    if (identity.isClient && transport == 'direct') return 'CLIENT_DIRECT';
     if (identity.isClient && transport == 'lan') return 'CLIENT_LAN';
     return 'LOCAL_${identity.deviceRole.name.toUpperCase()}';
   }
@@ -1379,17 +1378,17 @@ class _StressLabPageState extends State<StressLabPage> {
         () async {
       // Important diagnostic fix:
       // A Host must never run the LAN client push/pull/rebuild flow. Its LAN role
-      // is to keep serving local clients. When Cloud is enabled, the Host's
+      // is to keep serving local clients. When Direct is enabled, the Host's
       // active sync responsibility is to publish its authoritative changes to
-      // Cloud so Cloud clients can pull the complete store state.
+      // Direct so Direct clients can pull the complete store state.
       if (identity.isHost) {
-        if (effectiveTransport == 'cloud') {
+        if (effectiveTransport == 'direct') {
           _addLog(
-              'Host active sync route: Cloud host push/pull. LAN host will not run client pull.');
+              'Host active sync route: Direct host push/pull. LAN host will not run client pull.');
           final result =
-              await UnifiedSyncFactory.cloudEngine(store, enabled: true)
+              await UnifiedSyncFactory.directEngine(store, enabled: true)
                   .syncNow(onProgress: (value, label) {
-            _setStatus('Host Cloud Sync: $label',
+            _setStatus('Host Direct Sync: $label',
                 progress: 0.84 + 0.10 * value);
             _addLog(
                 'Sync progress ${(value * 100).toStringAsFixed(0)}% $label');
@@ -1410,17 +1409,17 @@ class _StressLabPageState extends State<StressLabPage> {
         }
 
         _addLog(
-            'Host active sync route: local/offline. LAN is disabled and Cloud is not configured; no sync transport will run.');
+            'Host active sync route: local/offline. LAN is disabled and Direct is not configured; no sync transport will run.');
         return;
       }
 
       final transport = effectiveTransport;
-      final engine = transport == 'cloud'
-          ? UnifiedSyncFactory.cloudEngine(store)
+      final engine = transport == 'direct'
+          ? UnifiedSyncFactory.directEngine(store)
           : transport == 'lan'
               ? UnifiedSyncFactory.lanEngine(store)
-              : identity.isCloudEnabled
-                  ? UnifiedSyncFactory.cloudEngine(store)
+              : identity.isDirectEnabled
+                  ? UnifiedSyncFactory.directEngine(store)
                   : UnifiedSyncFactory.lanEngine(store);
       final result = await engine.syncNow(onProgress: (value, label) {
         _setStatus('Sync: $label', progress: 0.84 + 0.10 * value);
@@ -1554,7 +1553,7 @@ class _StressLabPageState extends State<StressLabPage> {
     required String storeName,
     required String username,
     required String loginName,
-    required bool cloudSyncEnabled,
+    required bool directSyncEnabled,
     required String adminToken,
     required String accountToken,
     required String subscriptionStatus,
@@ -1576,7 +1575,7 @@ class _StressLabPageState extends State<StressLabPage> {
       devicesLimit: 5,
       adminToken: adminToken,
       accountToken: accountToken,
-      cloudSyncEnabled: cloudSyncEnabled,
+      directSyncEnabled: directSyncEnabled,
       lastVerifiedAt: DateTime.now(),
     );
   }
@@ -1616,7 +1615,7 @@ class _StressLabPageState extends State<StressLabPage> {
             'devicesLimit': 9,
             'adminToken': 'adm_probe_login',
             'accountToken': 'acc_probe_login',
-            'cloudSyncEnabled': true,
+            'directSyncEnabled': true,
           });
         case '/api/auth/register':
           return _stressJsonResponse({
@@ -1635,7 +1634,7 @@ class _StressLabPageState extends State<StressLabPage> {
             'devicesLimit': 4,
             'adminToken': 'adm_probe_register',
             'accountToken': 'acc_probe_register',
-            'cloudSyncEnabled': true,
+            'directSyncEnabled': true,
           });
         case '/api/auth/session':
           return _stressJsonResponse({
@@ -1653,7 +1652,7 @@ class _StressLabPageState extends State<StressLabPage> {
             'devicesLimit': 12,
             'adminToken': 'adm_probe_session',
             'accountToken': 'acc_probe_session',
-            'cloudSyncEnabled': true,
+            'directSyncEnabled': true,
           });
         case '/api/account/change-password':
           return _stressJsonResponse({
@@ -1666,7 +1665,7 @@ class _StressLabPageState extends State<StressLabPage> {
             'accountType': 'store_owner',
             'accountToken': 'acc_probe_password',
             'adminToken': 'adm_probe_password',
-            'cloudSyncEnabled': true,
+            'directSyncEnabled': true,
           });
         case '/api/account/owner-profile':
           return _stressJsonResponse({
@@ -1680,7 +1679,7 @@ class _StressLabPageState extends State<StressLabPage> {
             'accountType': 'store_owner',
             'accountToken': 'acc_probe_owner_profile',
             'adminToken': 'adm_probe_owner_profile',
-            'cloudSyncEnabled': true,
+            'directSyncEnabled': true,
           });
         case '/api/admin/subscribers':
           if (request.method.toUpperCase() == 'GET') {
@@ -1707,7 +1706,7 @@ class _StressLabPageState extends State<StressLabPage> {
                   'account_status': 'active',
                   'devices_limit': 12,
                   'device_count': 3,
-                  'cloud_sync_enabled': true,
+                  'direct_sync_enabled': true,
                   'trial_ends_at':
                       now.add(const Duration(days: 30)).toIso8601String(),
                   'account_created_at':
@@ -1728,7 +1727,7 @@ class _StressLabPageState extends State<StressLabPage> {
                   'account_status': 'active',
                   'devices_limit': 4,
                   'device_count': 1,
-                  'cloud_sync_enabled': true,
+                  'direct_sync_enabled': true,
                   'trial_ends_at':
                       now.add(const Duration(days: 7)).toIso8601String(),
                   'account_created_at':
@@ -1755,7 +1754,7 @@ class _StressLabPageState extends State<StressLabPage> {
     });
   }
 
-  http.Client _buildCloudProbeClient() {
+  http.Client _buildDirectProbeClient() {
     return MockClient((request) async {
       final path = request.url.path;
       if (path.endsWith('/api/sync/pairing/claim')) {
@@ -1764,7 +1763,7 @@ class _StressLabPageState extends State<StressLabPage> {
           'storeId': 'ST-PRB001',
           'branchId': 'BR-PRB001',
           'hostDeviceId': 'DV-PRB001',
-          'transport': 'cloud',
+          'transport': 'direct',
           'deviceToken': 'device_probe_token',
         });
       }
@@ -1868,7 +1867,7 @@ class _StressLabPageState extends State<StressLabPage> {
         plan: 'pro',
         subscriptionStatus: 'active',
         devicesLimit: 12,
-        cloudSyncEnabled: true,
+        directSyncEnabled: true,
         trialEndsAt: DateTime.now().add(const Duration(days: 21)),
       );
       _auditCheck(
@@ -1951,7 +1950,7 @@ class _StressLabPageState extends State<StressLabPage> {
       _auditCheck(
         'StoreAccountDashboardPage',
         'Recovery flag readiness',
-        storeOwnerCache.cloudSyncEnabled &&
+        storeOwnerCache.directSyncEnabled &&
             storeOwnerCache.accountToken.isNotEmpty,
         'Store account dashboard can expose recovery actions.',
         'Store account dashboard still lacks recovery-ready cache data.',
@@ -2066,11 +2065,6 @@ class _StressLabPageState extends State<StressLabPage> {
     final deep = await service.runHealthCheck(deep: true);
     final report = service.buildDiagnosticReport(deep);
     final decoded = jsonDecode(report);
-    final availableRepairActions = deep.issues
-        .map((issue) => issue.repairAction)
-        .whereType<MaintenanceRepairAction>()
-        .toSet();
-
     _auditCheck(
       'MaintenancePage',
       'Quick health check available',
@@ -2101,18 +2095,6 @@ class _StressLabPageState extends State<StressLabPage> {
       'Maintenance refresh repair did not return a usable result.',
     );
 
-    if (availableRepairActions
-        .contains(MaintenanceRepairAction.repairMissingCloudQueue)) {
-      final queueRepair = await service
-          .runRepair(MaintenanceRepairAction.repairMissingCloudQueue);
-      _auditCheck(
-        'MaintenancePage',
-        'Cloud queue repair path',
-        queueRepair.changedRecords >= 0,
-        'Maintenance can repair missing Host to Cloud queue rows when needed.',
-        'Maintenance cloud queue repair did not return a valid result.',
-      );
-    }
   }
 
   Future<void> _runSettingsSurfaceScenario() async {
@@ -2130,7 +2112,7 @@ class _StressLabPageState extends State<StressLabPage> {
 
   Future<void> _runSettingsSurfaceBody() async {
     final originalProfile = store.storeProfile;
-    final originalCloud = CloudSyncSettings.load();
+    final originalDirect = VpsControlPlaneSettings.load();
     final originalLan = LanSyncSettings.load();
     final originalAutoBackup = await LocalAutoBackupService.loadSettings();
     final originalBarcode = BarcodeFeedbackService.loadSettings();
@@ -2174,23 +2156,23 @@ class _StressLabPageState extends State<StressLabPage> {
         'Local backup settings did not roundtrip correctly.',
       );
 
-      final cloudUpdated = originalCloud.copyWith(
-        autoSyncEnabled: !originalCloud.autoSyncEnabled,
-        intervalSeconds: originalCloud.intervalSeconds ==
-                CloudSyncSettings.maxIntervalSeconds
-            ? CloudSyncSettings.minIntervalSeconds
-            : originalCloud.intervalSeconds + 1,
+      final directUpdated = originalDirect.copyWith(
+        autoSyncEnabled: !originalDirect.autoSyncEnabled,
+        intervalSeconds: originalDirect.intervalSeconds ==
+                VpsControlPlaneSettings.maxIntervalSeconds
+            ? VpsControlPlaneSettings.minIntervalSeconds
+            : originalDirect.intervalSeconds + 1,
       );
-      await cloudUpdated.save();
-      final cloudReloaded = CloudSyncSettings.load();
+      await directUpdated.save();
+      final directReloaded = VpsControlPlaneSettings.load();
       _auditCheck(
         'SettingsPage',
-        'Cloud sync settings',
-        cloudReloaded.apiBaseUrl.trim().isNotEmpty &&
-            cloudReloaded.autoSyncEnabled == cloudUpdated.autoSyncEnabled &&
-            cloudReloaded.intervalSeconds == cloudUpdated.intervalSeconds,
-        'Settings can persist cloud sync preferences.',
-        'Cloud sync settings did not roundtrip correctly.',
+        'Direct sync settings',
+        directReloaded.apiBaseUrl.trim().isNotEmpty &&
+            directReloaded.autoSyncEnabled == directUpdated.autoSyncEnabled &&
+            directReloaded.intervalSeconds == directUpdated.intervalSeconds,
+        'Settings can persist direct sync preferences.',
+        'Direct sync settings did not roundtrip correctly.',
       );
 
       final lanUpdated = originalLan.copyWith(
@@ -2233,7 +2215,7 @@ class _StressLabPageState extends State<StressLabPage> {
     } finally {
       await store.updateStoreProfile(originalProfile);
       await LocalAutoBackupService.saveSettings(originalAutoBackup);
-      await originalCloud.save();
+      await originalDirect.save();
       await originalLan.save();
       await BarcodeFeedbackService.saveSettings(originalBarcode);
     }
@@ -2303,7 +2285,7 @@ class _StressLabPageState extends State<StressLabPage> {
         id: 'sync-setup-surface',
         title: 'Sync Setup Surface',
         kind: StressLabScenarioKind.sync,
-        description: 'Exercise sync settings and cloud pairing logic.',
+        description: 'Exercise sync settings and direct pairing logic.',
         execute: _runSyncSetupSurfaceBody,
       ),
       body: _runSyncSetupSurfaceBody,
@@ -2312,21 +2294,21 @@ class _StressLabPageState extends State<StressLabPage> {
 
   Future<void> _runSyncSetupSurfaceBody() async {
     final originalIdentity = store.appIdentity;
-    final originalCloud = CloudSyncSettings.load();
+    final originalDirect = VpsControlPlaneSettings.load();
     final originalLan = LanSyncSettings.load();
     final originalIdentityJson =
         jsonEncode(originalIdentity.copyWith().toJson());
 
     try {
-      final cloudUpdated = originalCloud.copyWith(
-        autoSyncEnabled: !originalCloud.autoSyncEnabled,
-        intervalSeconds: originalCloud.intervalSeconds ==
-                CloudSyncSettings.maxIntervalSeconds
-            ? CloudSyncSettings.minIntervalSeconds
-            : originalCloud.intervalSeconds + 1,
+      final directUpdated = originalDirect.copyWith(
+        autoSyncEnabled: !originalDirect.autoSyncEnabled,
+        intervalSeconds: originalDirect.intervalSeconds ==
+                VpsControlPlaneSettings.maxIntervalSeconds
+            ? VpsControlPlaneSettings.minIntervalSeconds
+            : originalDirect.intervalSeconds + 1,
       );
-      await cloudUpdated.save();
-      final cloudReloaded = CloudSyncSettings.load();
+      await directUpdated.save();
+      final directReloaded = VpsControlPlaneSettings.load();
 
       final lanUpdated = originalLan.copyWith(
         autoSyncEnabled: !originalLan.autoSyncEnabled,
@@ -2351,30 +2333,30 @@ class _StressLabPageState extends State<StressLabPage> {
         jsonEncode(probeIdentity.toJson()),
       );
       await store.refreshAfterDatabaseChange('app_identity_v1');
-      final cloudClaim = await UnifiedSyncFactory.cloudEngine(
+      final directClaim = await UnifiedSyncFactory.directEngine(
         store,
-        settings: const CloudSyncSettings(
+        settings: const VpsControlPlaneSettings(
           enabled: true,
           apiBaseUrl: 'https://sync-probe.ventio.test',
         ),
-        client: _buildCloudProbeClient(),
+        client: _buildDirectProbeClient(),
       ).claimPairingCode('PAIR-12345');
 
       _auditCheck(
         'SyncSetupPage',
-        'Cloud settings persistence',
-        cloudReloaded.apiBaseUrl.trim().isNotEmpty &&
-            cloudReloaded.autoSyncEnabled == cloudUpdated.autoSyncEnabled &&
-            cloudReloaded.intervalSeconds == cloudUpdated.intervalSeconds,
-        'Sync setup can persist cloud settings changes.',
-        'Sync setup cloud settings did not roundtrip correctly.',
+        'Direct settings persistence',
+        directReloaded.apiBaseUrl.trim().isNotEmpty &&
+            directReloaded.autoSyncEnabled == directUpdated.autoSyncEnabled &&
+            directReloaded.intervalSeconds == directUpdated.intervalSeconds,
+        'Sync setup can persist direct settings changes.',
+        'Sync setup direct settings did not roundtrip correctly.',
       );
       _auditCheck(
         'SyncSetupPage',
-        'Cloud pairing probe',
-        cloudClaim.ok && cloudClaim.message.isNotEmpty,
-        'Sync setup can complete the simulated cloud pairing claim.',
-        'Sync setup simulated cloud pairing did not complete.',
+        'Direct pairing probe',
+        directClaim.ok && directClaim.message.isNotEmpty,
+        'Sync setup can complete the simulated direct pairing claim.',
+        'Sync setup simulated direct pairing did not complete.',
         warning: true,
       );
       _auditCheck(
@@ -2401,7 +2383,7 @@ class _StressLabPageState extends State<StressLabPage> {
         originalIdentityJson,
       );
       await store.refreshAfterDatabaseChange('app_identity_v1');
-      await originalCloud.save();
+      await originalDirect.save();
       await originalLan.save();
     }
   }
@@ -2749,13 +2731,13 @@ class _StressLabPageState extends State<StressLabPage> {
     final backupBytes = (await store.exportBackupJson()).length;
 
     final transport = _effectiveSyncTransport();
-    final pendingIsExpectedForCloud =
-        transport == 'cloud' && failedQueue == 0 && rejectedQueue == 0;
+    final pendingIsExpectedForDirect =
+        transport == 'direct' && failedQueue == 0 && rejectedQueue == 0;
     final syncHealth = (pendingQueue == 0 &&
                 pendingChanges == 0 &&
                 failedQueue == 0 &&
                 rejectedQueue == 0) ||
-            pendingIsExpectedForCloud
+            pendingIsExpectedForDirect
         ? 'PASS'
         : 'FAIL';
 
@@ -2789,7 +2771,7 @@ class _StressLabPageState extends State<StressLabPage> {
         'products=${store.products.length} customers=${store.customers.length} suppliers=${store.suppliers.length} sales=${store.sales.length} '
         'purchases=${store.purchases.length} expenses=${store.expenses.length} stockMovements=${store.stockMovements.length} '
         'allChanges=$changes allQueue=$queue pendingQueue=$pendingQueue pendingChanges=$pendingChanges rejectedQueue=$rejectedQueue failedQueue=$failedQueue '
-        'logicalDbBytes=$logicalBytes backupBytes=$backupBytes dbBloatReason=$dbBloatReason syncMode=$transport pendingExpectedForCloud=$pendingIsExpectedForCloud');
+        'logicalDbBytes=$logicalBytes backupBytes=$backupBytes dbBloatReason=$dbBloatReason syncMode=$transport pendingExpectedForDirect=$pendingIsExpectedForDirect');
   }
 
   int _stableHash(Iterable<String> values) {
@@ -5278,11 +5260,11 @@ class _StressLabPageState extends State<StressLabPage> {
     final rejectedQueue = store.syncQueue
         .where((item) => item.status.toLowerCase() == 'rejected')
         .length;
-    final isCloud = transport == 'cloud';
-    final details = isCloud
+    final isDirect = transport == 'direct';
+    final details = isDirect
         ? _dual(
-            'mode=cloud pendingQueue=$pendingQueue pendingChanges=$pendingChanges failed=$failedQueue rejected=$rejectedQueue needsSync=${pendingQueue > 0 || pendingChanges > 0} interpretation=Pending changes are expected immediately after generating stress data until cloud sync completes; failed/rejected must remain zero.',
-            'mode=cloud pendingQueue=$pendingQueue pendingChanges=$pendingChanges failed=$failedQueue rejected=$rejectedQueue needsSync=${pendingQueue > 0 || pendingChanges > 0} interpretation=Pending changes are expected immediately after generating stress data until cloud sync completes; failed/rejected must remain zero.')
+            'mode=direct pendingQueue=$pendingQueue pendingChanges=$pendingChanges failed=$failedQueue rejected=$rejectedQueue needsSync=${pendingQueue > 0 || pendingChanges > 0} interpretation=Pending changes are expected immediately after generating stress data until direct sync completes; failed/rejected must remain zero.',
+            'mode=direct pendingQueue=$pendingQueue pendingChanges=$pendingChanges failed=$failedQueue rejected=$rejectedQueue needsSync=${pendingQueue > 0 || pendingChanges > 0} interpretation=Pending changes are expected immediately after generating stress data until direct sync completes; failed/rejected must remain zero.')
         : _dual(
             'mode=$transport pendingQueue=$pendingQueue pendingChanges=$pendingChanges failed=$failedQueue rejected=$rejectedQueue needsSync=false interpretation=Local/LAN mode should not accumulate failed or rejected queue items.',
             'mode=$transport pendingQueue=$pendingQueue pendingChanges=$pendingChanges failed=$failedQueue rejected=$rejectedQueue needsSync=false interpretation=Local/LAN mode should not accumulate failed or rejected queue items.');
@@ -5326,11 +5308,11 @@ class _StressLabPageState extends State<StressLabPage> {
           '[MEDIUM] راجع أقسام الأداء المتباطئة المذكورة في Performance Investigation، وابدأ بالاستعلامات/الفهارس الخاصة بالمشتريات والمنتجات.',
           '[MEDIUM] Review the slow performance areas reported by Performance Investigation, starting with purchase and product queries/indexes.'));
     }
-    if (syncEvidence.contains('mode=cloud') &&
+    if (syncEvidence.contains('mode=direct') &&
         syncEvidence.contains('needsSync=true')) {
       suggestions.add(_dual(
-          '[LOW] في وضع Cloud، شغّل/انتظر المزامنة بعد الاختبار ثم أعد الفحص؛ pending queue وحدها ليست فشلًا ما دام failed/rejected = 0.',
-          '[LOW] In Cloud mode, run or wait for sync after the test and re-check; a pending queue alone is not a failure as long as failed/rejected = 0.'));
+          '[LOW] في وضع Direct، شغّل/انتظر المزامنة بعد الاختبار ثم أعد الفحص؛ pending queue وحدها ليست فشلًا ما دام failed/rejected = 0.',
+          '[LOW] In Direct mode, run or wait for sync after the test and re-check; a pending queue alone is not a failure as long as failed/rejected = 0.'));
     }
     if (_report.any(
             (row) => _sectionMatches(row.section, 'المشتريات') && row.isFail) ||

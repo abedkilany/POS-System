@@ -63,8 +63,8 @@ void main() {
           deviceId: 'DV-CLIENT',
           deviceToken: 'new-token',
         ),
-        syncMode: SyncMode.cloudConnected,
-        activeTransport: 'cloud',
+        syncMode: SyncMode.directConnected,
+        activeTransport: 'direct',
       );
 
       expect(identity.deviceRole, DeviceRole.client);
@@ -73,7 +73,7 @@ void main() {
       expect(identity.hostDeviceId, 'DV-HOST');
       expect(identity.deviceId, 'DV-CLIENT');
       expect(identity.deviceToken, 'new-token');
-      expect(identity.activeSyncTransportNormalized, 'cloud');
+      expect(identity.activeSyncTransportNormalized, 'direct');
     });
   });
 }

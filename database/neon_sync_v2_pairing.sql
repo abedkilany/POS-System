@@ -7,7 +7,7 @@ create table if not exists device_pairing_codes (
   branch_id text not null default 'main',
   host_device_id text not null,
   host_device_name text default '',
-  transport text not null check (transport in ('lan', 'cloud')),
+  transport text not null check (transport in ('lan', 'direct')),
   expires_at timestamptz not null,
   claimed_by_device_id text default '',
   claimed_at timestamptz,

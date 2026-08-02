@@ -21,7 +21,7 @@ void main() {
         hostDeviceId: 'DV-HOST',
         activeSyncTransport: 'lan',
       );
-      final cloudClient = client.copyWith(activeSyncTransport: 'cloud');
+      final directClient = client.copyWith(activeSyncTransport: 'direct');
 
       expect(
         UnifiedSyncPolicy.isLanAllowedForCurrentRole(
@@ -43,7 +43,7 @@ void main() {
       );
       expect(
         UnifiedSyncPolicy.isLanAllowedForCurrentRole(
-          cloudClient,
+          directClient,
           setupComplete: true,
           isHostModeEnabled: false,
           isClientModeEnabled: true,
@@ -52,15 +52,14 @@ void main() {
       );
     });
 
-    test('allows Cloud only for a cloud-enabled Host or active Cloud client',
-        () {
+    test('allows Direct for a Host or the active Direct client', () {
       final host = AppIdentity.defaults(
         deviceId: 'DV-HOST',
         platform: AppPlatformType.web,
       ).copyWith(
         deviceRole: DeviceRole.host,
-        syncMode: SyncMode.cloudConnected,
-        activeSyncTransport: 'cloud',
+        syncMode: SyncMode.directConnected,
+        activeSyncTransport: 'direct',
       );
       final client = AppIdentity.defaults(
         deviceId: 'DV-CLIENT',
@@ -68,25 +67,25 @@ void main() {
       ).copyWith(
         deviceRole: DeviceRole.client,
         hostDeviceId: 'DV-HOST',
-        syncMode: SyncMode.cloudConnected,
-        activeSyncTransport: 'cloud',
+        syncMode: SyncMode.directConnected,
+        activeSyncTransport: 'direct',
       );
       final lanClient = client.copyWith(activeSyncTransport: 'lan');
 
-      expect(UnifiedSyncPolicy.isCloudAllowedForCurrentRole(host), isTrue);
-      expect(UnifiedSyncPolicy.isCloudAllowedForCurrentRole(client), isTrue);
+      expect(UnifiedSyncPolicy.isDirectAllowedForCurrentRole(host), isTrue);
+      expect(UnifiedSyncPolicy.isDirectAllowedForCurrentRole(client), isTrue);
       expect(
-          UnifiedSyncPolicy.isCloudAllowedForCurrentRole(lanClient), isFalse);
+          UnifiedSyncPolicy.isDirectAllowedForCurrentRole(lanClient), isFalse);
     });
 
-    test('gates pairing and rebuild readiness through shared policy', () {
+    test('gates Direct and LAN roles through shared policy', () {
       final host = AppIdentity.defaults(
         deviceId: 'DV-HOST',
         platform: AppPlatformType.web,
       ).copyWith(
         deviceRole: DeviceRole.host,
-        syncMode: SyncMode.cloudConnected,
-        activeSyncTransport: 'cloud',
+        syncMode: SyncMode.directConnected,
+        activeSyncTransport: 'direct',
       );
       final client = AppIdentity.defaults(
         deviceId: 'DV-CLIENT',
@@ -94,49 +93,10 @@ void main() {
       ).copyWith(
         deviceRole: DeviceRole.client,
         hostDeviceId: 'DV-HOST',
-        syncMode: SyncMode.cloudConnected,
-        activeSyncTransport: 'cloud',
+        syncMode: SyncMode.directConnected,
+        activeSyncTransport: 'direct',
       );
 
-      expect(
-        UnifiedSyncPolicy.canCreateCloudPairingCode(
-          host,
-          settingsEnabled: true,
-          hasApiBaseUrl: true,
-        ),
-        isTrue,
-      );
-      expect(
-        UnifiedSyncPolicy.canCreateCloudPairingCode(
-          client,
-          settingsEnabled: true,
-          hasApiBaseUrl: true,
-        ),
-        isFalse,
-      );
-      expect(UnifiedSyncPolicy.canClaimCloudPairingCode(host), isFalse);
-      expect(UnifiedSyncPolicy.canClaimCloudPairingCode(client), isTrue);
-      expect(
-        UnifiedSyncPolicy.canRequestCloudSnapshot(
-          client,
-          isConfigured: true,
-        ),
-        isTrue,
-      );
-      expect(
-        UnifiedSyncPolicy.canRebuildFromCloudSnapshot(
-          client,
-          isConfigured: true,
-        ),
-        isTrue,
-      );
-      expect(
-        UnifiedSyncPolicy.canRebuildFromCloudSnapshot(
-          host,
-          isConfigured: true,
-        ),
-        isFalse,
-      );
       expect(UnifiedSyncPolicy.canClaimLanPairingCode(host), isFalse);
       expect(UnifiedSyncPolicy.canClaimLanPairingCode(client), isTrue);
       expect(UnifiedSyncPolicy.canRebuildFromLanSnapshot(host), isFalse);
@@ -149,20 +109,10 @@ void main() {
         UnifiedSyncPolicy.shouldTrackRemoteSnapshotGeneration(client),
         isTrue,
       );
-      expect(UnifiedSyncPolicy.canCheckCloudPairingStatus(host), isTrue);
-      expect(UnifiedSyncPolicy.canCheckCloudPairingStatus(client), isFalse);
-      expect(UnifiedSyncPolicy.canSuspendCloudDevices(host), isTrue);
-      expect(UnifiedSyncPolicy.canSuspendCloudDevices(client), isFalse);
-      expect(UnifiedSyncPolicy.canRevokeCloudDevices(host), isTrue);
-      expect(UnifiedSyncPolicy.canRevokeCloudDevices(client), isFalse);
-      expect(UnifiedSyncPolicy.canRemoveCloudDevices(host), isTrue);
-      expect(UnifiedSyncPolicy.canRemoveCloudDevices(client), isFalse);
-      expect(UnifiedSyncPolicy.canRequestCloudHostTransfer(host), isFalse);
-      expect(UnifiedSyncPolicy.canRequestCloudHostTransfer(client), isTrue);
-      expect(UnifiedSyncPolicy.canApproveCloudHostTransfer(host), isTrue);
-      expect(UnifiedSyncPolicy.canApproveCloudHostTransfer(client), isFalse);
-      expect(UnifiedSyncPolicy.canRepairCloudDeviceLinks(host), isTrue);
-      expect(UnifiedSyncPolicy.canRepairCloudDeviceLinks(client), isFalse);
+      expect(UnifiedSyncPolicy.isDirectHostAllowed(host), isTrue);
+      expect(UnifiedSyncPolicy.isDirectHostAllowed(client), isFalse);
+      expect(UnifiedSyncPolicy.isDirectClientAllowed(client), isTrue);
+      expect(UnifiedSyncPolicy.isDirectClientAllowed(host), isFalse);
     });
   });
 }

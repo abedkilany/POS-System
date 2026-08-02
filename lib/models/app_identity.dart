@@ -6,7 +6,12 @@ enum DeviceRole { standalone, host, client }
 
 enum AppRole { store, customer, delivery, admin }
 
-enum SyncMode { localOnly, lanOnly, cloudConnected, marketplaceEnabled }
+enum SyncMode {
+  localOnly,
+  lanOnly,
+  directConnected,
+  marketplaceEnabled,
+}
 
 class AppIdentity {
   const AppIdentity({
@@ -21,7 +26,7 @@ class AppIdentity {
     required this.createdAt,
     required this.updatedAt,
     this.hostDeviceId = '',
-    this.cloudTenantId = '',
+    this.controlPlaneTenantId = '',
     this.deviceToken = '',
     this.storeEpoch = 1,
     this.recoveryKey = '',
@@ -39,7 +44,7 @@ class AppIdentity {
   final DateTime createdAt;
   final DateTime updatedAt;
   final String hostDeviceId;
-  final String cloudTenantId;
+  final String controlPlaneTenantId;
 
   /// Per-device token assigned during pairing. It is intentionally device-scoped
   /// so Clients no longer share a single master sync token.
@@ -53,23 +58,18 @@ class AppIdentity {
 
   bool get isHost => deviceRole == DeviceRole.host;
   bool get isClient => deviceRole == DeviceRole.client;
-  bool get isCloudEnabled =>
-      syncMode == SyncMode.cloudConnected ||
-      syncMode == SyncMode.marketplaceEnabled;
+  bool get isDirectEnabled => syncMode == SyncMode.directConnected;
   bool get isMarketplaceEnabled => syncMode == SyncMode.marketplaceEnabled;
   String get activeSyncTransportNormalized {
     final normalized = activeSyncTransport.trim().toLowerCase();
     if (normalized == 'lan' ||
-        normalized == 'cloud' ||
         normalized == 'direct' ||
         normalized == 'local') {
       return normalized;
     }
-    // LAN must be enabled by the current Sync settings, not inferred from the
-    // legacy syncMode value. An old Host/Client identity may still carry
-    // syncMode=lanOnly after LAN was disabled, so never treat lanOnly alone as
-    // an active transport.
-    return isCloudEnabled ? 'cloud' : 'local';
+    // LAN must be enabled by the current Sync settings, not inferred from
+    // syncMode=lanOnly after LAN was disabled.
+    return isDirectEnabled ? 'direct' : 'local';
   }
 
   String get transportType => activeSyncTransportNormalized;
@@ -86,7 +86,7 @@ class AppIdentity {
     DateTime? createdAt,
     DateTime? updatedAt,
     String? hostDeviceId,
-    String? cloudTenantId,
+    String? controlPlaneTenantId,
     String? deviceToken,
     int? storeEpoch,
     String? recoveryKey,
@@ -104,7 +104,7 @@ class AppIdentity {
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       hostDeviceId: hostDeviceId ?? this.hostDeviceId,
-      cloudTenantId: cloudTenantId ?? this.cloudTenantId,
+      controlPlaneTenantId: controlPlaneTenantId ?? this.controlPlaneTenantId,
       deviceToken: deviceToken ?? this.deviceToken,
       storeEpoch: storeEpoch ?? this.storeEpoch,
       recoveryKey: recoveryKey ?? this.recoveryKey,
@@ -124,7 +124,7 @@ class AppIdentity {
         'createdAt': createdAt.toIso8601String(),
         'updatedAt': updatedAt.toIso8601String(),
         'hostDeviceId': hostDeviceId,
-        'cloudTenantId': cloudTenantId,
+        'controlPlaneTenantId': controlPlaneTenantId,
         'deviceToken': deviceToken,
         'transportType': activeSyncTransport.trim().toLowerCase(),
         'storeEpoch': storeEpoch,
@@ -163,7 +163,10 @@ class AppIdentity {
       createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? '') ?? now,
       updatedAt: DateTime.tryParse(json['updatedAt']?.toString() ?? '') ?? now,
       hostDeviceId: json['hostDeviceId']?.toString() ?? '',
-      cloudTenantId: json['cloudTenantId']?.toString() ?? '',
+      controlPlaneTenantId: (json['controlPlaneTenantId'] ??
+              json['directTenantId'])
+          ?.toString() ??
+          '',
       deviceToken: json['deviceToken']?.toString() ??
           json['device_token']?.toString() ??
           '',
@@ -198,7 +201,7 @@ class AppIdentity {
           : DeviceRole.standalone,
       appRole: AppRole.store,
       syncMode: platform == AppPlatformType.web
-          ? SyncMode.cloudConnected
+          ? SyncMode.directConnected
           : SyncMode.localOnly,
       createdAt: now,
       updatedAt: now,
@@ -206,7 +209,7 @@ class AppIdentity {
           'device_${now.microsecondsSinceEpoch}_${deviceId.hashCode.abs()}',
       storeEpoch: 1,
       recoveryKey: _recoveryKey(),
-      activeSyncTransport: platform == AppPlatformType.web ? 'cloud' : 'local',
+      activeSyncTransport: platform == AppPlatformType.web ? 'direct' : 'local',
     );
   }
 

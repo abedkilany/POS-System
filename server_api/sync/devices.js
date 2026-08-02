@@ -16,7 +16,7 @@ function asIso(value) {
 
 function normalizeTransport(value) {
   const v = String(value || '').trim().toLowerCase();
-  return v === 'lan' || v === 'cloud' || v === 'direct' ? v : '';
+  return v === 'lan' || v === 'direct' ? v : '';
 }
 
 function asNullableDate(value) {
@@ -108,7 +108,8 @@ export default async function handler(req, res) {
       const deviceName = String(body.deviceName || body.device_name || '').trim();
       const platform = String(body.platform || '').trim();
       const role = String(body.role || '').trim();
-      const transport = normalizeTransport(body.transport) || String(body.transport || '').trim();
+      const requestedTransport = String(body.transport || '').trim().toLowerCase();
+      const transport = normalizeTransport(requestedTransport);
       const activeTransport = normalizeTransport(body.activeTransport || body.active_transport) || transport;
       const lastSyncTransport = normalizeTransport(body.lastSyncTransport || body.last_sync_transport) || activeTransport || transport;
       const appVersion = String(body.appVersion || body.app_version || '').trim();
@@ -138,19 +139,19 @@ export default async function handler(req, res) {
           storeId,
           branchId,
           allowedRoles: ['host', 'client'],
-          allowedTransports: ['cloud'],
+          allowedTransports: ['lan', 'direct'],
           force: true,
         });
         usedDeviceAuth = true;
       } catch (deviceError) {
-        if (String(role || '').trim() !== 'host' || activeTransport !== 'cloud') {
+        if (String(role || '').trim() !== 'host' || !['lan', 'direct'].includes(activeTransport)) {
           throw deviceError;
         }
         await assertAccountOrDevice(req, {
           storeId,
           branchId,
           allowedRoles: ['host'],
-          allowedTransports: ['cloud'],
+          allowedTransports: ['lan', 'direct'],
         });
       }
       if (usedDeviceAuth) {
@@ -221,7 +222,7 @@ export default async function handler(req, res) {
       const branchId = String(req.query.branch_id || req.query.branchId || 'main').trim() || 'main';
       if (!storeId) return res.status(400).json({ ok: false, error: 'store_id is required.' });
       assertStoreAllowed(storeId);
-      await assertAccountOrDevice(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['cloud'] });
+      await assertAccountOrDevice(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['lan', 'direct'] });
       const rows = await sql`
         select store_id, branch_id, device_id, device_name, platform, role, transport, active_transport, last_sync_transport,
           app_version, host_device_id, store_epoch, revoked, suspended, wipe_pending, online, last_applied_cursor, last_ack_cursor, last_applied_sequence, last_ack_sequence, last_ack_at, last_seen_at
@@ -243,7 +244,7 @@ export default async function handler(req, res) {
       if (!storeId) return res.status(400).json({ ok: false, error: 'storeId is required.' });
       if (!deviceId) return res.status(400).json({ ok: false, error: 'deviceId is required.' });
       assertStoreAllowed(storeId);
-      await assertAccountOrDevice(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['cloud'] });
+      await assertAccountOrDevice(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['lan', 'direct'] });
       const rows = await sql`
         delete from store_devices
         where store_id = ${storeId}

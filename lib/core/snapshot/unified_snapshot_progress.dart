@@ -6,7 +6,7 @@ import 'unified_snapshot.dart';
 /// Shared visual progress for all snapshot lifecycle operations.
 ///
 /// Phase 3 keeps Connect, Restore publish, Repair, and Rebuild on the same
-/// user-facing progress model. LAN and Cloud feed the same value/label stream;
+/// user-facing progress model. LAN and Direct feed the same value/label stream;
 /// the widget only presents the unified snapshot sections.
 class UnifiedSnapshotProgressView extends StatelessWidget {
   const UnifiedSnapshotProgressView({
@@ -33,7 +33,7 @@ class UnifiedSnapshotProgressView extends StatelessWidget {
       children: [
         Row(
           children: [
-            const Icon(Icons.cloud_sync_outlined),
+            const Icon(Icons.sync),
             const SizedBox(width: 8),
             Expanded(
               child: Text(

@@ -1,4 +1,4 @@
-import { accountTokenFromRequest, ensureCloudSyncAccessColumn, sql } from '../_db.js';
+import { accountTokenFromRequest, sql } from '../_db.js';
 
 function sendError(res, error) {
   const status = Number(error?.statusCode || error?.status || 500);
@@ -17,11 +17,9 @@ export default async function handler(req, res) {
       return res.status(401).json({ ok: false, error: 'Invalid or missing account session.' });
     }
 
-    await ensureCloudSyncAccessColumn();
     const rows = await sql`
       select a.id as account_id, a.username, a.namespace_slug, a.account_type,
              s.id as store_id, s.branch_id, s.slug as store_slug, s.name as store_name,
-             s.cloud_sync_enabled,
              sub.status as subscription_status, sub.trial_ends_at, sub.devices_limit
       from app_accounts a
       left join app_stores s on s.owner_account_id = a.id and s.slug = a.namespace_slug
@@ -53,7 +51,7 @@ export default async function handler(req, res) {
       subscriptionStatus: row.subscription_status || '',
       trialEndsAt: row.trial_ends_at ? new Date(row.trial_ends_at).toISOString() : null,
       devicesLimit: row.devices_limit == null ? null : Number(row.devices_limit),
-      cloudSyncEnabled: row.cloud_sync_enabled === true,
+      directSyncEnabled: false,
     });
   } catch (error) {
     return sendError(res, error);

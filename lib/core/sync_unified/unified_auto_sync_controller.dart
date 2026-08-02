@@ -3,15 +3,13 @@ import 'dart:async';
 import 'package:http/http.dart' as http;
 
 import '../../data/app_store.dart';
-import '../services/cloud_sync_service.dart';
+import '../services/direct_control_plane_service.dart';
 import '../services/local_database_service.dart';
 import '../services/lan_sync_service.dart';
 import '../services/sync_diagnostics_log.dart';
-import 'cloud_sync_transport_adapter.dart';
 import 'lan_sync_transport_adapter.dart';
 import 'direct_sync_transport_adapter.dart';
 import 'unified_sync_policy.dart';
-import 'sync_device_state.dart';
 import 'unified_sync_engine.dart';
 import 'sync_contracts.dart';
 
@@ -82,25 +80,11 @@ Future<void> _recoverSyncQueues(
 Future<void> _recoverClientSyncQueue(AppStore store) =>
     _recoverSyncQueues(store, const ['host']);
 
-Future<void> _recoverCloudSyncQueues(AppStore store) =>
-    _recoverSyncQueues(store, const ['cloud', 'cloud_host']);
-
 class UnifiedSyncFactory {
   const UnifiedSyncFactory._();
 
   static final Map<AppStore, DirectSyncTransportAdapter> _directAdapters =
       <AppStore, DirectSyncTransportAdapter>{};
-
-  static UnifiedSyncEngine cloudEngine(AppStore store,
-      {CloudSyncSettings? settings, bool enabled = true, http.Client? client}) {
-    final current = settings ?? CloudSyncSettings.load();
-    return UnifiedSyncEngine(
-      CloudSyncTransportAdapter(
-        service: CloudSyncService(store, client: client),
-        settings: current.copyWith(enabled: enabled),
-      ),
-    );
-  }
 
   static UnifiedSyncEngine lanEngine(AppStore store,
       {LanSyncSettings? settings}) {
@@ -112,7 +96,12 @@ class UnifiedSyncFactory {
     );
   }
 
-  static UnifiedSyncEngine directEngine(AppStore store) {
+  static UnifiedSyncEngine directEngine(
+    AppStore store, {
+    VpsControlPlaneSettings? settings,
+    bool enabled = true,
+    http.Client? client,
+  }) {
     final adapter = _directAdapters.putIfAbsent(
       store,
       () => DirectSyncTransportAdapter(store),
@@ -129,43 +118,26 @@ class UnifiedSyncFactory {
 
   static UnifiedSyncEngine activeEngine(
     AppStore store, {
-    bool cloudEnabled = true,
-    CloudSyncSettings? cloudSettings,
+    bool directEnabled = true,
+    VpsControlPlaneSettings? directSettings,
     LanSyncSettings? lanSettings,
   }) {
     final identity = store.appIdentity;
     if (identity.activeSyncTransportNormalized == 'direct') {
       return directEngine(store);
     }
-    if (identity.activeSyncTransportNormalized == 'cloud') {
-      return cloudEngine(
-        store,
-        settings: cloudSettings ?? CloudSyncSettings.load(),
-        enabled: cloudEnabled,
-      );
-    }
     return lanEngine(store, settings: lanSettings ?? LanSyncSettings.load());
   }
 
   static bool get isLanSetupComplete => LanSyncSettings.load().setupComplete;
   static bool get isLanHost => LanSyncSettings.load().isHost;
-  static bool get isCloudConfigured => CloudSyncSettings.load().isConfigured;
-  static bool cloudCanCheck(AppStore store) {
-    final settings = CloudSyncSettings.load();
-    final allowed = UnifiedSyncPolicy.isCloudAllowedForCurrentRole(
-      store.appIdentity,
-    );
-    return allowed && settings.isConfigured;
+  static bool get isDirectConfigured => false;
+  static bool directCanCheck(AppStore store) {
+    return false;
   }
 
-  static bool cloudFallbackCanCheck(AppStore store) {
-    final settings = CloudSyncSettings.load();
-    final identity = store.appIdentity;
-    final allowed = identity.isHost || identity.isClient;
-    return identity.activeSyncTransportNormalized != 'direct' &&
-        allowed &&
-        identity.isCloudEnabled &&
-        settings.isConfigured;
+  static bool directFallbackCanCheck(AppStore store) {
+    return false;
   }
 }
 
@@ -424,341 +396,9 @@ class UnifiedAutoLanSyncController {
   }
 }
 
-class UnifiedAutoCloudSyncController {
-  UnifiedAutoCloudSyncController(this.store, {this.onSnapshotProgress});
-
-  final AppStore store;
-  final AutoSnapshotProgressPresenter? onSnapshotProgress;
-
-  bool _cloudAllowedForCurrentRole() {
-    if (store.appIdentity.activeSyncTransportNormalized == 'direct') {
-      return false;
-    }
-    return UnifiedSyncPolicy.isCloudAllowedForCurrentRole(store.appIdentity);
-  }
-
-  Timer? _timer;
-  Timer? _debounceTimer;
-  bool _running = false;
-  bool _disposed = false;
-  bool _signalLoopRunning = false;
-  bool _hostRealtimeLoopRunning = false;
-  bool _workRefreshInFlight = false;
-  String _lastSettingsSignature = '';
-
-  bool _cloudReady(CloudSyncSettings settings) =>
-      settings.autoSyncEnabled &&
-      settings.isConfigured &&
-      _cloudAllowedForCurrentRole();
-
-  String _settingsSignature(CloudSyncSettings settings) => [
-        settings.autoSyncEnabled,
-        settings.isConfigured,
-        settings.apiBaseUrl.trim(),
-        settings.intervalSeconds,
-        store.appIdentity.deviceRole.name,
-        store.appIdentity.activeSyncTransportNormalized,
-      ].join('|');
-
-  void _restartPeriodicTimer(CloudSyncSettings settings) {
-    _timer?.cancel();
-    final interval = Duration(
-      seconds: CloudSyncSettings.normalizeIntervalSeconds(
-        settings.intervalSeconds,
-      ),
-    );
-    _timer = Timer.periodic(interval, (_) => _tick());
-  }
-
-  Future<void> start() async {
-    stop();
-    _disposed = false;
-    final settings = CloudSyncSettings.load();
-    _lastSettingsSignature = _settingsSignature(settings);
-    SyncDiagnosticsLog.add(
-      '[SYNC_TRACE] autoCloud:start device=${store.deviceId} '
-      'role=${store.appIdentity.deviceRole.name} '
-      'ready=${_cloudReady(settings)} auto=${settings.autoSyncEnabled} '
-      'configured=${settings.isConfigured} apiBase=${settings.apiBaseUrl} '
-      'transport=${store.appIdentity.activeSyncTransportNormalized}',
-    );
-
-    store.removeListener(_onStoreChanged);
-    store.addListener(_onStoreChanged);
-
-    _restartPeriodicTimer(settings);
-    // A Cloud Host must keep a realtime channel open. The heartbeat only
-    // marks the Host online; snapshot requests are delivered over this stream.
-    if (store.appIdentity.isHost) {
-      unawaited(_hostRealtimeLoop());
-    } else {
-      unawaited(_signalLoop());
-    }
-    if (_cloudReady(settings)) {
-      await _tick();
-    }
-  }
-
-  void stop() {
-    _disposed = true;
-    store.removeListener(_onStoreChanged);
-    _timer?.cancel();
-    _debounceTimer?.cancel();
-    _timer = null;
-    _debounceTimer = null;
-  }
-
-  Future<void> _hostRealtimeLoop() async {
-    if (_hostRealtimeLoopRunning) return;
-    _hostRealtimeLoopRunning = true;
-    var retrySeconds = 1;
-    try {
-      while (!_disposed && store.appIdentity.isHost) {
-        final settings = CloudSyncSettings.load();
-        if (!_cloudReady(settings)) {
-          await Future<void>.delayed(const Duration(seconds: 5));
-          continue;
-        }
-        try {
-          SyncDiagnosticsLog.add(
-              '[SYNC_TRACE] autoCloud:hostRealtime connecting');
-          final service = CloudSyncService(store);
-          await for (final _ in service.watchRealtimeSignals(settings)) {
-            if (_disposed || !store.appIdentity.isHost) break;
-          }
-          if (!_disposed) {
-            SyncDiagnosticsLog.add(
-                '[SYNC_TRACE] autoCloud:hostRealtime closed; reconnecting');
-          }
-          retrySeconds = 1;
-        } catch (error) {
-          SyncDiagnosticsLog.add(
-              '[SYNC_TRACE] autoCloud:hostRealtime error=$error retry=${retrySeconds}s');
-          if (!_disposed) {
-            await Future<void>.delayed(Duration(seconds: retrySeconds));
-            retrySeconds = (retrySeconds * 2).clamp(1, 30);
-          }
-        }
-      }
-    } finally {
-      _hostRealtimeLoopRunning = false;
-    }
-  }
-
-  Future<void> _signalLoop() async {
-    if (_signalLoopRunning) return;
-    _signalLoopRunning = true;
-    try {
-      await _runUnifiedRealtimeSignalLoop<CloudSyncSettings>(
-        isDisposed: () => _disposed,
-        loadSettings: CloudSyncSettings.load,
-        isReady: _cloudReady,
-        onFirstReady: _tick,
-        waitForSignal: (settings) async {
-          final changed = await UnifiedSyncFactory.cloudEngine(
-            store,
-            settings: settings,
-          ).waitForRealtimeSignal();
-          return (
-            changed: changed,
-            debugLabel: changed
-                ? '[SYNC_TRACE] autoCloud:realtimeWake transport=cloud'
-                : null,
-          );
-        },
-        onWake: _tick,
-        onError: (error) {
-          SyncDiagnosticsLog.add(
-            '[SYNC_TRACE] autoCloud:realtimeFallback error=$error',
-          );
-        },
-        postWakeDelay: const Duration(seconds: 2),
-      );
-    } finally {
-      _signalLoopRunning = false;
-    }
-  }
-
-  void _onStoreChanged() {
-    if (_disposed) return;
-    final settings = CloudSyncSettings.load();
-    final signature = _settingsSignature(settings);
-    if (signature != _lastSettingsSignature) {
-      _lastSettingsSignature = signature;
-      _restartPeriodicTimer(settings);
-    }
-    if (!settings.autoSyncEnabled ||
-        !settings.isConfigured ||
-        !_cloudAllowedForCurrentRole()) {
-      return;
-    }
-    unawaited(_refreshPendingCloudWork());
-  }
-
-  Future<void> _refreshPendingCloudWork() async {
-    if (_disposed || _workRefreshInFlight) return;
-    _workRefreshInFlight = true;
-    try {
-      final settings = CloudSyncSettings.load();
-      if (!settings.autoSyncEnabled ||
-          !settings.isConfigured ||
-          !_cloudAllowedForCurrentRole()) {
-        return;
-      }
-      final cloudCount =
-          await LocalDatabaseService.pendingSyncQueueCountForTarget(
-        'cloud',
-        readyOnly: false,
-      );
-      final relayCount =
-          await LocalDatabaseService.pendingSyncQueueCountForTarget(
-        'cloud_host',
-        readyOnly: false,
-      );
-      final pendingAuthorityCount =
-          await LocalDatabaseService.pendingSyncChangesCount();
-      final hasPendingCloudWork =
-          cloudCount > 0 || relayCount > 0 || pendingAuthorityCount > 0;
-      if (_disposed || !hasPendingCloudWork) return;
-      _debounceTimer?.cancel();
-      _debounceTimer = Timer(const Duration(seconds: 1), () => _tick());
-    } finally {
-      _workRefreshInFlight = false;
-    }
-  }
-
-  void Function(double value, String label)? _snapshotOnlyProgress(
-      String transport) {
-    final presenter = onSnapshotProgress;
-    if (presenter == null) return null;
-    var active = false;
-    return (value, label) {
-      final normalized = label.toLowerCase();
-      if (!active && _looksLikeSnapshotLifecycleMessage(normalized)) {
-        active = true;
-      }
-      if (active) presenter(transport, value, label);
-    };
-  }
-
-  bool _looksLikeSnapshotLifecycleMessage(String normalized) {
-    return normalized.contains('snapshot') ||
-        normalized.contains('rebuild') ||
-        normalized.contains('restore') ||
-        normalized.contains('لقطة') ||
-        normalized.contains('إعادة') ||
-        normalized.contains('اعادة') ||
-        normalized.contains('استرجاع');
-  }
-
-  Future<void> _tick() async {
-    if (_running || _disposed) {
-      SyncDiagnosticsLog.add(
-        '[SYNC_TRACE] autoCloud:tickSkipped running=$_running disposed=$_disposed',
-      );
-      return;
-    }
-    _running = true;
-    try {
-      var settings = CloudSyncSettings.load();
-      final cloudCount =
-          await LocalDatabaseService.pendingSyncQueueCountForTarget(
-        'cloud',
-        readyOnly: false,
-      );
-      final relayCount =
-          await LocalDatabaseService.pendingSyncQueueCountForTarget(
-        'cloud_host',
-        readyOnly: false,
-      );
-      final pendingAuthorityCount =
-          await LocalDatabaseService.pendingSyncChangesCount();
-      SyncDiagnosticsLog.add(
-        '[SYNC_TRACE] autoCloud:tick start device=${store.deviceId} '
-        'role=${store.appIdentity.deviceRole.name} '
-        'ready=${_cloudReady(settings)} auto=${settings.autoSyncEnabled} '
-        'configured=${settings.isConfigured} cursor=${settings.lastPullCursor?.toIso8601String()} '
-        'cloudQueue=$cloudCount relayQueue=$relayCount',
-      );
-      if (settings.autoSyncEnabled &&
-          settings.isConfigured &&
-          _cloudAllowedForCurrentRole()) {
-        final hasOutgoingWork =
-            cloudCount > 0 || relayCount > 0 || pendingAuthorityCount > 0;
-        final now = DateTime.now().toUtc();
-        final deviceState = SyncDeviceStateStore.load(store.appIdentity);
-        final hasAppliedCloudBaseline =
-            store.appIdentity.isClient && deviceState.lastAppliedSequence > 0;
-        final pendingProvisioning =
-            store.appIdentity.isClient && CloudProvisioningStatus.isPending;
-        if (pendingProvisioning) {
-          if (hasAppliedCloudBaseline) {
-            await CloudProvisioningStatus.markComplete(
-              message: 'Initial Store data installed.',
-            );
-          } else {
-            final lastAttempt = CloudProvisioningStatus.lastAttemptAt;
-            final shouldRequest = lastAttempt == null ||
-                now.difference(lastAttempt) > const Duration(minutes: 10);
-            if (shouldRequest) {
-              await CloudProvisioningStatus.markAttempted(now);
-              final requestedAt = CloudProvisioningStatus.requestedAt ?? now;
-              await UnifiedSyncFactory.cloudEngine(
-                store,
-                settings: settings,
-              ).requestFreshHostSnapshotIfSupported(
-                requestedAt: requestedAt,
-              );
-              settings = settings.copyWith(clearLastPullCursor: true);
-            }
-          }
-        }
-
-        final cursor = settings.lastPullCursor;
-        final staleClient = store.appIdentity.isClient &&
-            !hasAppliedCloudBaseline &&
-            cursor != null &&
-            now.difference(cursor.toUtc()) > const Duration(days: 7);
-        await _recoverCloudSyncQueues(store);
-        final engine =
-            UnifiedSyncFactory.cloudEngine(store, settings: settings);
-        if (staleClient && !hasOutgoingWork) {
-          final repair = await engine.rebuildFromHostSnapshot(
-            onProgress: _snapshotOnlyProgress('Cloud'),
-          );
-          if (!repair.ok) {
-            await CloudSyncSettings.clearSavedPullCursor();
-            settings = settings.copyWith(clearLastPullCursor: true);
-          } else {
-            settings = CloudSyncSettings.load();
-          }
-        }
-        final result =
-            await UnifiedSyncFactory.cloudEngine(store, settings: settings)
-                .syncNow(
-          onProgress: _snapshotOnlyProgress('Cloud'),
-        );
-        SyncDiagnosticsLog.add(
-          '[SYNC_TRACE] autoCloud:tick syncDone ok=${result.ok} '
-          'pushed=${result.pushed} pulled=${result.pulled} '
-          'restored=${result.restoredSnapshot} message=${result.message}',
-        );
-      } else {
-        SyncDiagnosticsLog.add(
-          '[SYNC_TRACE] autoCloud:tick notReady auto=${settings.autoSyncEnabled} '
-          'configured=${settings.isConfigured} allowed=${_cloudAllowedForCurrentRole()}',
-        );
-      }
-    } finally {
-      SyncDiagnosticsLog.add('[SYNC_TRACE] autoCloud:tick end');
-      _running = false;
-    }
-  }
-}
-
 /// Auto-sync loop for the Direct transport. It deliberately does not reuse
-/// the Cloud loop: a Direct device must never wake or contact the Cloud sync
-/// path just because it has Cloud credentials.
+/// the Direct loop: a Direct device must never wake or contact the Direct sync
+/// path just because it has Direct credentials.
 class UnifiedAutoDirectSyncController {
   UnifiedAutoDirectSyncController(this.store);
 
@@ -793,18 +433,10 @@ class UnifiedAutoDirectSyncController {
           '[SYNC_TRACE] autoDirect:tick result ok=${result.ok} '
           'pushed=${result.pushed} pulled=${result.pulled} message=${result.message}');
     } catch (error) {
-      SyncDiagnosticsLog.add('[DIRECT_FALLBACK] direct sync failed=$error');
-      if (UnifiedSyncFactory.cloudFallbackCanCheck(store)) {
-        try {
-          SyncDiagnosticsLog.add('[DIRECT_FALLBACK] trying cloud transport');
-          final result = await UnifiedSyncFactory.cloudEngine(store).syncNow();
-          SyncDiagnosticsLog.add(
-              '[DIRECT_FALLBACK] cloud result ok=${result.ok} message=${result.message}');
-        } catch (fallbackError) {
-          SyncDiagnosticsLog.add(
-              '[DIRECT_FALLBACK] cloud sync failed=$fallbackError');
-        }
-      }
+      // Direct failures remain Direct failures. Never fall back to the
+      // retired Direct Sync transport; the user must explicitly choose LAN or
+      // Direct and repair that selected transport.
+      SyncDiagnosticsLog.add('[DIRECT] sync failed=$error');
     } finally {
       _running = false;
     }

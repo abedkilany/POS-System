@@ -216,35 +216,6 @@ class _MaintenancePageState extends State<MaintenancePage> {
     }
   }
 
-  Future<void> _confirmAndRunRepair(MaintenanceRepairAction action) async {
-    final tr = AppLocalizations.of(context);
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(tr.text('run_maintenance_repair')),
-        content: Text(tr.text('maintenance_repair_confirm_desc')),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: Text(tr.text('cancel'))),
-          FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: Text(tr.text('run_repair'))),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-
-    final result = await _service.runRepair(action);
-    await _refresh();
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-          content: Text(
-              '${_localizedMaintenanceRepairTitle(tr, result.title)}: ${_localizedMaintenanceRepairMessage(tr, result.message)}')),
-    );
-  }
-
   @override
   void dispose() {
     _hideStressLabButton();
@@ -511,16 +482,6 @@ class _MaintenancePageState extends State<MaintenancePage> {
               icon: const Icon(Icons.download_for_offline_outlined),
               label: Text(tr.text('windows_installer_versions')),
             ),
-            if (availableRepairActions
-                .contains(MaintenanceRepairAction.repairMissingCloudQueue))
-              OutlinedButton.icon(
-                onPressed: _loading || !widget.store.canManageMaintenance
-                    ? null
-                    : () => _confirmAndRunRepair(
-                        MaintenanceRepairAction.repairMissingCloudQueue),
-                icon: const Icon(Icons.sync_problem_outlined),
-                label: Text(tr.text('repair_cloud_sync_queue')),
-              ),
           ],
         ),
       ],
@@ -1180,29 +1141,6 @@ String _localizedMaintenanceRecommendation(
       tr.text('maintenance_rec_backup_after'),
     _ => recommendation,
   };
-}
-
-String _localizedMaintenanceRepairTitle(AppLocalizations tr, String title) {
-  return switch (title) {
-    'Database re-check completed' => tr.text('maintenance_recheck_completed'),
-    'Cloud sync queue repair completed' =>
-      tr.text('maintenance_cloud_queue_repair_completed'),
-    _ => title,
-  };
-}
-
-String _localizedMaintenanceRepairMessage(AppLocalizations tr, String message) {
-  final count = _leadingCount(message);
-  if (message == 'No data was changed. The health check was refreshed only.') {
-    return tr.text('maintenance_recheck_no_changes');
-  }
-  if (message.startsWith('No missing Host')) {
-    return tr.text('maintenance_cloud_queue_repair_none');
-  }
-  if (count != null && message.contains('missing Host')) {
-    return tr.format('maintenance_cloud_queue_repair_count', {'count': count});
-  }
-  return localizeRuntimeMessage(message, tr);
 }
 
 String _localizedMaintenanceIssueTitle(

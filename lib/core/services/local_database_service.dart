@@ -260,6 +260,8 @@ class LocalDatabaseService {
 
   static Map<String, String>? get _memoryStore => _memoryStoreForTesting;
 
+  static String? testingRawValue(String key) => _memoryStore?[key];
+
   static Future<void> _persistWebString(String key, String value) async {
     final prefs = _webPreferences;
     if (prefs != null) await prefs.setString(key, value);
@@ -285,7 +287,7 @@ class LocalDatabaseService {
       _secureStringMirror[_secureRecoveryKeyKey] = secureRecoveryKey;
     }
 
-    await _deleteRawScalarValueImmediate('cloud_api_token');
+    await _deleteRawScalarValueImmediate('direct_api_token');
 
     final rawIdentity = _rawScalarValue(_appIdentityKey);
     if (rawIdentity != null && rawIdentity.trim().isNotEmpty) {

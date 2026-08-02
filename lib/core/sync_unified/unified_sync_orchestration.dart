@@ -11,7 +11,7 @@ typedef UnifiedSnapshotRepairInvoker = Future<UnifiedSyncResult> Function({
   void Function(double value, String label)? onProgress,
 });
 
-/// Shared push/pull/repair orchestration used by LAN and Cloud transports.
+/// Shared push/pull/repair orchestration used by LAN and Direct transports.
 ///
 /// The caller provides transport-specific push, pull, and repair handlers.
 /// This keeps the sync order and result aggregation in one place while leaving

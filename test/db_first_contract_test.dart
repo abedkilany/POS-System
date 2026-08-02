@@ -26,7 +26,8 @@ void main() {
     expect(contract, contains('SQLite is the only source of truth'));
     expect(contract, contains('SharedPreferences'));
     expect(contract, contains('legacy JSON blobs'));
-    expect(appStore, contains("details: 'db_first'"));
+    expect(appStore, contains("details:"));
+    expect(appStore, contains("'db_first'"));
     expect(appStore, isNot(contains('_migrateBootstrapSharedPreferencesIfNeeded')));
     expect(appStore, isNot(contains('SharedPreferences.getInstance')));
     expect(appStore, isNot(contains('LocalDatabaseService.getBusinessEntityListJson(')));

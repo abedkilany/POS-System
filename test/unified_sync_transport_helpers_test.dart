@@ -9,14 +9,14 @@ void main() {
         () {
       final error = UnifiedSyncTransportHelpers.classifyError(
         false,
-        'Cloud relay is not supported on this platform.',
+        'Direct relay is not supported on this platform.',
       );
 
       expect(error.code, UnifiedSyncErrorCode.unsupported);
       expect(
-          error.userMessage, 'Cloud relay is not supported on this platform.');
+          error.userMessage, 'Direct relay is not supported on this platform.');
       expect(
-          error.debugMessage, 'Cloud relay is not supported on this platform.');
+          error.debugMessage, 'Direct relay is not supported on this platform.');
     });
 
     test('classifies authorization and conflict errors consistently', () {

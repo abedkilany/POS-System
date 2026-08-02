@@ -20,7 +20,7 @@ class _ScannedPairingPayload {
     required this.storeId,
     required this.branchId,
     required this.hostDeviceId,
-    required this.cloudTenantId,
+    required this.controlPlaneTenantId,
   });
 
   final String raw;
@@ -32,20 +32,20 @@ class _ScannedPairingPayload {
   final String storeId;
   final String branchId;
   final String hostDeviceId;
-  final String cloudTenantId;
+  final String controlPlaneTenantId;
 }
 
-class _CloudMonitoringSnapshot {
-  const _CloudMonitoringSnapshot({
+class _DirectMonitoringSnapshot {
+  const _DirectMonitoringSnapshot({
     required this.devices,
     this.limit,
   });
 
-  final List<CloudDeviceStatus> devices;
-  final CloudDeviceLimitStatus? limit;
+  final List<DirectDeviceStatus> devices;
+  final DirectDeviceLimitStatus? limit;
 }
 
-CloudDeviceLimitStatus? _localClientDeviceLimitStatus(
+DirectDeviceLimitStatus? _localClientDeviceLimitStatus(
   AppStore store,
   LanSyncSettings settings, {
   String excludeDeviceId = '',
@@ -60,7 +60,7 @@ CloudDeviceLimitStatus? _localClientDeviceLimitStatus(
     return device.isActive;
   }).length;
   final normalizedAllowed = allowed < 0 ? 0 : allowed;
-  return CloudDeviceLimitStatus(
+  return DirectDeviceLimitStatus(
     allowed: normalizedAllowed,
     linked: linked,
     available: (normalizedAllowed - linked).clamp(0, 1 << 30).toInt(),
@@ -99,12 +99,12 @@ String _deviceLabel(
   BuildContext context,
   String deviceId, {
   HostRegistryDevice? registryDevice,
-  CloudDeviceStatus? cloudDevice,
+  DirectDeviceStatus? directDevice,
 }) {
   final name = registryDevice?.deviceName.trim().isNotEmpty == true
       ? registryDevice!.deviceName.trim()
-      : cloudDevice?.deviceName.trim().isNotEmpty == true
-          ? cloudDevice!.deviceName.trim()
+      : directDevice?.deviceName.trim().isNotEmpty == true
+          ? directDevice!.deviceName.trim()
           : '';
   if (name.isNotEmpty) return name;
   final id = deviceId.trim();
@@ -125,8 +125,8 @@ String _transportLabel(BuildContext context, String transport) {
   switch (transport.trim().toLowerCase()) {
     case 'lan':
       return tr.text('lan');
-    case 'cloud':
-      return tr.text('connection_cloud');
+    case 'direct':
+      return tr.text('connection_direct');
     case 'local':
       return tr.text('connection_local');
     default:
@@ -137,7 +137,7 @@ String _transportLabel(BuildContext context, String transport) {
 _SyncStatusView _connectionStatusForHostPeer(
   BuildContext context, {
   required HostPeerSyncState? state,
-  required CloudDeviceStatus? cloudDevice,
+  required DirectDeviceStatus? directDevice,
   required bool suspended,
   bool wipePending = false,
 }) {
@@ -148,15 +148,15 @@ _SyncStatusView _connectionStatusForHostPeer(
         color: Theme.of(context).colorScheme.error,
         icon: Icons.delete_sweep_outlined);
   }
-  if (suspended || cloudDevice?.revoked == true) {
+  if (suspended || directDevice?.revoked == true) {
     return _SyncStatusView(
         label: tr.text('connection_state_pending'),
         color: Theme.of(context).colorScheme.error,
-        icon: Icons.cloud_off_outlined);
+        icon: Icons.sync_disabled);
   }
-  final lastSeen = _lastSeenForHostPeer(state: state, cloudDevice: cloudDevice);
-  // Cloud `online` is a sticky database flag and is not a live connection source.
-  // Treat Cloud devices as online only when their heartbeat/lastSeen is fresh.
+  final lastSeen = _lastSeenForHostPeer(state: state, directDevice: directDevice);
+  // Direct `online` is a sticky database flag and is not a live connection source.
+  // Treat Direct devices as online only when their heartbeat/lastSeen is fresh.
   final recentlySeen = lastSeen != null &&
       DateTime.now().toUtc().difference(lastSeen.toUtc()) <=
           const Duration(seconds: 90);
@@ -182,12 +182,12 @@ _SyncStatusView _connectionStatusForClient(
   BuildContext context, {
   required SyncDeviceState state,
   required LanSyncSettings lanSettings,
-  required CloudSyncSettings cloudSettings,
+  required VpsControlPlaneSettings directSettings,
 }) {
   final tr = AppLocalizations.of(context);
   final active = state.activeTransport.trim().toLowerCase();
-  final configured = active == 'cloud'
-      ? cloudSettings.isConfigured
+  final configured = active == 'direct'
+      ? directSettings.isConfigured
       : active == 'lan'
           ? lanSettings.setupComplete
           : false;
@@ -216,28 +216,28 @@ _SyncStatusView _connectionStatusForClient(
 String _activeTransportForHostPeer(
   BuildContext context, {
   required bool lanAuthorized,
-  required CloudDeviceStatus? cloudDevice,
+  required DirectDeviceStatus? directDevice,
   required HostPeerSyncState? state,
 }) {
   final tr = AppLocalizations.of(context);
-  final cloudTransport =
-      (cloudDevice?.activeTransport ?? cloudDevice?.transport ?? '')
+  final directTransport =
+      (directDevice?.activeTransport ?? directDevice?.transport ?? '')
           .trim()
           .toLowerCase();
   final lastTransport =
-      (state?.lastSyncTransport ?? cloudDevice?.lastSyncTransport ?? '')
+      (state?.lastSyncTransport ?? directDevice?.lastSyncTransport ?? '')
           .trim()
           .toLowerCase();
-  if (lanAuthorized && cloudDevice != null) {
-    final active = cloudTransport.isNotEmpty ? cloudTransport : lastTransport;
-    if (active == 'lan' || active == 'cloud') {
+  if (lanAuthorized && directDevice != null) {
+    final active = directTransport.isNotEmpty ? directTransport : lastTransport;
+    if (active == 'lan' || active == 'direct') {
       return _transportLabel(context, active);
     }
-    return '${tr.text('lan')} + ${tr.text('cloud')}';
+    return '${tr.text('lan')} + ${tr.text('direct')}';
   }
-  if (cloudDevice != null) {
+  if (directDevice != null) {
     return _transportLabel(
-        context, cloudTransport.isNotEmpty ? cloudTransport : 'cloud');
+        context, directTransport.isNotEmpty ? directTransport : 'direct');
   }
   if (lanAuthorized) return tr.text('lan');
   if (lastTransport.isNotEmpty) return _transportLabel(context, lastTransport);
@@ -249,12 +249,12 @@ String _pendingChangesForHostPeer(
   required AppStore store,
   required String deviceId,
   required HostPeerSyncState? state,
-  required CloudDeviceStatus? cloudDevice,
+  required DirectDeviceStatus? directDevice,
 }) {
-  final ackSequence = _hostPeerAckSequence(state, cloudDevice);
+  final ackSequence = _hostPeerAckSequence(state, directDevice);
   final ackCursor = state?.lastAckCursor ??
-      cloudDevice?.lastAckCursor ??
-      cloudDevice?.lastAckAt;
+      directDevice?.lastAckCursor ??
+      directDevice?.lastAckAt;
   var count = 0;
   for (final change in store.syncChanges) {
     if (change.deviceId == deviceId) continue;
@@ -268,11 +268,11 @@ String _pendingChangesForHostPeer(
 
 int _hostPeerAckSequence(
   HostPeerSyncState? state,
-  CloudDeviceStatus? cloudDevice,
+  DirectDeviceStatus? directDevice,
 ) {
   final local = state?.lastAckSequence ?? 0;
-  final cloud = cloudDevice?.lastAckSequence ?? 0;
-  return local > cloud ? local : cloud;
+  final direct = directDevice?.lastAckSequence ?? 0;
+  return local > direct ? local : direct;
 }
 
 DateTime? _latestSyncDate(DateTime? current, DateTime? candidate) {
@@ -283,24 +283,24 @@ DateTime? _latestSyncDate(DateTime? current, DateTime? candidate) {
 
 DateTime? _lastSuccessfulSyncForHostPeer({
   required HostPeerSyncState? state,
-  required CloudDeviceStatus? cloudDevice,
+  required DirectDeviceStatus? directDevice,
 }) {
   DateTime? latest;
   latest = _latestSyncDate(latest, state?.lastAckCursor);
   latest = _latestSyncDate(latest, state?.lastAppliedHostCursor);
-  latest = _latestSyncDate(latest, cloudDevice?.lastAckAt);
-  latest = _latestSyncDate(latest, cloudDevice?.lastAckCursor);
-  if (latest == null && _hostPeerAckSequence(state, cloudDevice) > 0) {
-    latest = _latestSyncDate(state?.updatedAt, cloudDevice?.lastSeenAt);
+  latest = _latestSyncDate(latest, directDevice?.lastAckAt);
+  latest = _latestSyncDate(latest, directDevice?.lastAckCursor);
+  if (latest == null && _hostPeerAckSequence(state, directDevice) > 0) {
+    latest = _latestSyncDate(state?.updatedAt, directDevice?.lastSeenAt);
   }
   return latest;
 }
 
 DateTime? _lastSeenForHostPeer({
   required HostPeerSyncState? state,
-  required CloudDeviceStatus? cloudDevice,
+  required DirectDeviceStatus? directDevice,
 }) {
-  return cloudDevice?.lastSeenAt ?? state?.updatedAt;
+  return directDevice?.lastSeenAt ?? state?.updatedAt;
 }
 
 DateTime? _lastSuccessfulSyncForClient(SyncDeviceState state) {
@@ -311,7 +311,7 @@ _SyncStatusView _syncStatusForHostPeer(
   BuildContext context,
   HostPeerSyncState? state, {
   required bool lanAuthorized,
-  required CloudDeviceStatus? cloudDevice,
+  required DirectDeviceStatus? directDevice,
   required bool suspended,
   bool wipePending = false,
 }) {
@@ -328,21 +328,21 @@ _SyncStatusView _syncStatusForHostPeer(
         color: Colors.orange,
         icon: Icons.pause_circle_outline);
   }
-  if (cloudDevice?.revoked == true) {
+  if (directDevice?.revoked == true) {
     return _SyncStatusView(
         label: tr.text('revoked'),
         color: Theme.of(context).colorScheme.error,
         icon: Icons.block_outlined);
   }
-  if (!lanAuthorized && cloudDevice == null) {
+  if (!lanAuthorized && directDevice == null) {
     return _SyncStatusView(
         label: tr.text('connection_state_not_configured'),
         color: Theme.of(context).colorScheme.outline,
         icon: Icons.link_off_outlined);
   }
   final lastSync =
-      _lastSuccessfulSyncForHostPeer(state: state, cloudDevice: cloudDevice);
-  if (lanAuthorized && cloudDevice == null) {
+      _lastSuccessfulSyncForHostPeer(state: state, directDevice: directDevice);
+  if (lanAuthorized && directDevice == null) {
     return _SyncStatusView(
         label: tr.text('lan_host_running'),
         color: Colors.green,

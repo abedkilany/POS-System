@@ -1,5 +1,5 @@
-import '../services/cloud_sync_service.dart';
 import '../services/direct_peer_connection_service.dart';
+import '../services/direct_peer_pairing_service.dart';
 import '../services/direct_peer_protocol.dart';
 import '../services/direct_peer_signaling_service.dart';
 import '../services/direct_sync_protocol_service.dart';
@@ -17,6 +17,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
   DirectSyncTransportAdapter(this.store, {DirectSyncSettings? settings})
       : _settings = settings ?? DirectSyncSettings.load(),
         _coordination = DirectPeerSignalingService(store),
+        _pairing = DirectPeerPairingService(store),
         _usesPersistedSettings = settings == null;
 
   final AppStore store;
@@ -25,6 +26,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
   DirectSyncSettings _settings;
   final bool _usesPersistedSettings;
   DirectPeerSignalingService _coordination;
+  final DirectPeerPairingService _pairing;
   DirectPeerRequestSession? _session;
   Future<DirectPeerRequestSession>? _sessionFuture;
   DirectPeerHostEndpoint? _hostEndpoint;
@@ -44,15 +46,16 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
 
   String get _apiBaseUrl {
     final directUrl = _settings.apiBaseUrl.trim();
-    if (directUrl.isNotEmpty) return directUrl;
-    final savedUrl = CloudSyncSettings.load().apiBaseUrl.trim();
-    return savedUrl.isNotEmpty ? savedUrl : CloudSyncSettings.bundledApiBaseUrl;
+    return directUrl.isNotEmpty
+        ? directUrl
+        : DirectSyncSettings.bundledApiBaseUrl;
   }
 
-  CloudSyncSettings get _signalingSettings => CloudSyncSettings(
-        enabled: true,
-        apiBaseUrl: _apiBaseUrl,
-      );
+  DirectPeerSignalingSettings get _signalingSettings =>
+      DirectPeerSignalingSettings(apiBaseUrl: _apiBaseUrl);
+
+  DirectSyncSettings get _pairingSettings =>
+      _settings.copyWith(apiBaseUrl: _apiBaseUrl);
 
   Future<DirectPeerRequestSession> _clientSession() async {
     final existing = _session;
@@ -138,7 +141,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
   Future<UnifiedHostStatus> getHostStatus() async {
     final result = await testConnection();
     return UnifiedHostStatus(
-      cloudReachable: false,
+      controlPlaneReachable: false,
       hostReachable: result.ok,
       message: result.message,
       lastSeenAt: result.ok ? DateTime.now() : null,
@@ -172,9 +175,8 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
     if (store.appIdentity.isHost) {
       _startHostListener();
     }
-    final result = await CloudSyncService(store).createPairingCode(
-      _signalingSettings,
-      transport: 'direct',
+    final result = await _pairing.createPairingCode(
+      _pairingSettings,
       ttlMinutes: ttlMinutes,
     );
     SyncDiagnosticsLog.add(
@@ -202,8 +204,8 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
   Future<UnifiedPairingClaimResult> claimPairingCode(String code,
       {void Function(double value, String label)? onProgress}) async {
     SyncDiagnosticsLog.add('[DIRECT_PAIRING] claim start');
-    final result = await CloudSyncService(store).claimPairingCode(
-      _signalingSettings,
+    final result = await _pairing.claimPairingCode(
+      _pairingSettings,
       code,
       onProgress: onProgress,
     );

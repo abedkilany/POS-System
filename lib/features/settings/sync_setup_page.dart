@@ -7,7 +7,6 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../core/localization/app_localizations.dart';
 import '../../core/utils/responsive.dart';
-import '../../core/services/cloud_sync_service.dart';
 import '../../core/services/direct_sync_settings.dart';
 import '../../core/services/lan_sync_service.dart';
 import '../../core/sync_unified/sync_unified.dart';
@@ -17,7 +16,7 @@ import '../../data/app_store.dart';
 import '../../core/services/page_timing_scope.dart';
 import '../barcode/barcode_scanner_page.dart';
 
-enum _ConnectMode { lan, cloud, direct }
+enum _ConnectMode { lan, direct }
 
 enum _SetupStatus { idle, info, success, warning, error }
 
@@ -49,9 +48,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
     text: LanSyncSettings.load().secret.trim(),
   );
 
-  final _cloudApiController =
-      TextEditingController(text: CloudSyncSettings.load().apiBaseUrl);
-  final _cloudPairingCodeController = TextEditingController();
+  final _directPairingCodeController = TextEditingController();
 
   UnifiedSyncEngine _lanEngine() => UnifiedSyncFactory.lanEngine(
         widget.store,
@@ -65,7 +62,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
         ),
       );
 
-  _ConnectMode _mode = _ConnectMode.cloud;
+  _ConnectMode _mode = _ConnectMode.direct;
   bool _busy = false;
   String _status = '';
   _SetupStatus _statusType = _SetupStatus.idle;
@@ -78,8 +75,8 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
 
   int get _port => int.tryParse(_portController.text.trim()) ?? 8787;
 
-  String get _activePairingCode => _mode == _ConnectMode.cloud
-      ? _cloudPairingCodeController.text.trim()
+  String get _activePairingCode => _mode == _ConnectMode.direct
+      ? _directPairingCodeController.text.trim()
       : _lanTokenController.text.trim();
 
   void _startQrCountdownTimer() {
@@ -244,8 +241,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
     _hostController.dispose();
     _portController.dispose();
     _lanTokenController.dispose();
-    _cloudApiController.dispose();
-    _cloudPairingCodeController.dispose();
+    _directPairingCodeController.dispose();
     _qrCountdownTimer?.cancel();
     super.dispose();
   }
@@ -284,9 +280,8 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
             .toLowerCase();
         if (transport.contains('lan')) {
           _mode = _ConnectMode.lan;
-        } else if (transport.contains('cloud')) {
-          _mode = _ConnectMode.cloud;
-        } else if (transport.contains('direct')) {
+        } else if (transport.contains('direct') ||
+            transport.contains('direct')) {
           _mode = _ConnectMode.direct;
         }
 
@@ -301,10 +296,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
                 decoded['pairingToken'] ??
                 '')
             .toString();
-        apiBaseUrl = (decoded['apiBaseUrl'] ??
-                decoded['apiUrl'] ??
-                decoded['cloudApiUrl'] ??
-                '')
+        apiBaseUrl = (decoded['apiBaseUrl'] ?? decoded['apiUrl'] ?? '')
             .toString()
             .trim();
         peerDeviceId = (decoded['hostDeviceId'] ?? '').toString().trim();
@@ -340,7 +332,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
       if (_mode == _ConnectMode.lan) {
         _lanTokenController.text = code;
       } else {
-        _cloudPairingCodeController.text = code;
+        _directPairingCodeController.text = code;
       }
       _status = AppLocalizations.of(context).text('qr_detected_connecting');
       _statusType = _SetupStatus.info;
@@ -348,14 +340,11 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
     });
     Future.microtask(() async {
       if (!mounted || _busy) return;
-      if (_mode == _ConnectMode.cloud &&
-          _cloudPairingCodeController.text.trim().isNotEmpty) {
-        await _connectCloud();
-      } else if (_mode == _ConnectMode.lan &&
+      if (_mode == _ConnectMode.lan &&
           _lanTokenController.text.trim().isNotEmpty) {
         await _connectLan();
       } else if (_mode == _ConnectMode.direct &&
-          _cloudPairingCodeController.text.trim().isNotEmpty) {
+          _directPairingCodeController.text.trim().isNotEmpty) {
         await _connectDirect();
       }
     });
@@ -410,98 +399,10 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
     }
   }
 
-  Future<void> _connectCloud() async {
-    final tr = AppLocalizations.of(context);
-    final claimingCloudPairing = tr.text('claiming_cloud_pairing');
-    final cloudPairingCodeRequired = tr.text('cloud_pairing_code_required');
-    final verifyingPairingCode = tr.text('verifying_pairing_code');
-    final connectedStoreSignIn = tr.text('connected_store_sign_in');
-    final cloudConnectionFailed = tr.text('cloud_connection_failed');
-
-    _beginConnectionAttempt(claimingCloudPairing);
-    try {
-      final code = _cloudPairingCodeController.text.trim();
-      if (code.isEmpty) {
-        setState(() => _qrStatus = _ClientPairingState.noCode);
-        _setStatus(cloudPairingCodeRequired, type: _SetupStatus.warning);
-        return;
-      }
-
-      final existing = CloudSyncSettings.load();
-      final normalizedApiBaseUrl = existing.apiBaseUrl.trim().isNotEmpty
-          ? existing.apiBaseUrl.trim()
-          : CloudSyncSettings.bundledApiBaseUrl;
-      _cloudApiController.text = normalizedApiBaseUrl;
-      final settings = CloudSyncSettings(
-        enabled: true,
-        apiBaseUrl: normalizedApiBaseUrl,
-        autoSyncEnabled: true,
-      );
-      await settings.save();
-
-      _setStatus(verifyingPairingCode);
-      // The pairing code is single-use. If the previous attempt already
-      // registered this device but timed out while downloading the snapshot,
-      // retry the snapshot directly instead of claiming the consumed code.
-      final cloudService = CloudSyncService(widget.store);
-      final existingIdentity = widget.store.appIdentity;
-      late final bool resultOk;
-      late final String resultMessage;
-      if (existingIdentity.isClient && CloudProvisioningStatus.isPending) {
-        _addConnectionLog(
-            'RESUME: device already registered; requesting Host snapshot');
-        final result = await cloudService.rebuildFromCloudHostSnapshot(
-          settings,
-          requestFreshSnapshot: false,
-          onDiagnostic: _addConnectionLog,
-          onProgress: (value, label) {
-            _addConnectionLog('SNAPSHOT ${(value * 100).round()}%: $label');
-            _setSnapshotProgress(value, label);
-          },
-        );
-        resultOk = result.ok;
-        resultMessage = result.message;
-      } else {
-        final result = await cloudService.claimPairingCode(
-          settings,
-          code,
-          onProgress: (value, label) {
-            _addConnectionLog('CLOUD ${(value * 100).round()}%: $label');
-            _setSnapshotProgress(value, label);
-          },
-          onDiagnostic: _addConnectionLog,
-        );
-        resultOk = result.ok;
-        resultMessage = result.message;
-      }
-      if (!resultOk) {
-        _addConnectionLog('FAILED: $resultMessage');
-        _markQrFailed(resultMessage);
-        _setStatus(resultMessage, type: _SetupStatus.error);
-        return;
-      }
-
-      await _finishSuccessfulConnection(connectedStoreSignIn);
-      _addConnectionLog('SUCCESS: Cloud pairing and snapshot completed');
-    } on FormatException catch (_) {
-      _addConnectionLog(
-          'FORMAT ERROR: invalid server response or snapshot JSON');
-      _markQrFailed(cloudConnectionFailed);
-      _setStatus(cloudConnectionFailed, type: _SetupStatus.error);
-    } catch (error) {
-      _addConnectionLog('EXCEPTION: $error');
-      _markQrFailed(error.toString());
-      _setStatus(_friendlyErrorMessage(error, fallback: cloudConnectionFailed),
-          type: _SetupStatus.error);
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
   Future<void> _connectDirect() async {
     _beginConnectionAttempt('Connecting directly to Host...');
     try {
-      final code = _cloudPairingCodeController.text.trim();
+      final code = _directPairingCodeController.text.trim();
       if (code.isEmpty) {
         setState(() => _qrStatus = _ClientPairingState.noCode);
         _setStatus('Direct pairing code is required.',
@@ -543,8 +444,7 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
 
   Future<void> _connect() {
     if (_mode == _ConnectMode.lan) return _connectLan();
-    if (_mode == _ConnectMode.direct) return _connectDirect();
-    return _connectCloud();
+    return _connectDirect();
   }
 
   @override
@@ -594,17 +494,13 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
                         const SizedBox(height: 16),
                         _buildSectionTitle(
                             context,
-                            tr.text(_mode == _ConnectMode.cloud
-                                ? 'cloud_setup'
-                                : _mode == _ConnectMode.direct
-                                    ? 'Direct connection'
-                                    : 'lan_setup'),
+                            _mode == _ConnectMode.direct
+                                ? 'Direct connection'
+                                : 'lan_setup',
                             Icons.tune_outlined),
                         const SizedBox(height: 12),
-                        if (_mode == _ConnectMode.cloud)
-                          ..._buildCloudFields(tr),
                         if (_mode == _ConnectMode.direct)
-                          ..._buildCloudFields(tr),
+                          ..._buildDirectFields(tr),
                         if (_mode == _ConnectMode.lan) ..._buildLanFields(tr),
                         const SizedBox(height: 16),
                         SizedBox(
@@ -751,10 +647,6 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
 
     final segments = [
       ButtonSegment(
-          value: _ConnectMode.cloud,
-          label: Text(tr.text('connection_cloud')),
-          icon: const Icon(Icons.cloud_outlined)),
-      ButtonSegment(
           value: _ConnectMode.lan,
           label: Text(tr.text('connection_lan')),
           icon: const Icon(Icons.wifi_outlined)),
@@ -798,9 +690,6 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        mobileButton(_ConnectMode.cloud, Icons.cloud_outlined,
-            tr.text('connection_cloud')),
-        const SizedBox(height: 8),
         mobileButton(
             _ConnectMode.lan, Icons.wifi_outlined, tr.text('connection_lan')),
         const SizedBox(height: 8),
@@ -935,8 +824,8 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
             : _statusType == _SetupStatus.success
                 ? tr.text('connection_state_active')
                 : tr.text('connection_state_pending');
-    final subtitle = _mode == _ConnectMode.cloud
-        ? tr.text('cloud_pairing_code_helper')
+    final subtitle = _mode == _ConnectMode.direct
+        ? 'Pair with the Host through Direct.'
         : tr.text('lan_pairing_code_helper');
     return Card.outlined(
       margin: EdgeInsets.zero,
@@ -1173,15 +1062,15 @@ class _SyncSetupPageState extends State<SyncSetupPage> {
         ),
       ];
 
-  List<Widget> _buildCloudFields(AppLocalizations tr) => [
+  List<Widget> _buildDirectFields(AppLocalizations tr) => [
         TextField(
-          controller: _cloudPairingCodeController,
+          controller: _directPairingCodeController,
           enabled: !_busy,
           onChanged: (_) => setState(_syncQrStatusFromInput),
           textCapitalization: TextCapitalization.characters,
           decoration: InputDecoration(
-            labelText: tr.text('cloud_pairing_code'),
-            helperText: tr.text('cloud_pairing_code_helper'),
+            labelText: 'Direct pairing code',
+            helperText: 'Enter the pairing code generated by the Host.',
             border: const OutlineInputBorder(),
           ),
         ),

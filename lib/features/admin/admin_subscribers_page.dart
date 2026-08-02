@@ -147,7 +147,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
     String subscriptionStatus = subscriber.subscriptionStatus.isEmpty
         ? 'trial'
         : subscriber.subscriptionStatus;
-    var cloudSyncEnabled = subscriber.cloudSyncEnabled;
+    var directSyncEnabled = subscriber.directSyncEnabled;
     String? localError;
 
     final saved = await showDialog<bool>(
@@ -294,11 +294,11 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                       const SizedBox(height: 12),
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
-                        title: Text(tr.text('cloud_sync')),
-                        subtitle: Text(tr.text('cloud_sync_allowed')),
-                        value: cloudSyncEnabled,
+                        title: Text(tr.text('direct_sync')),
+                        subtitle: Text(tr.text('direct_sync_allowed')),
+                        value: directSyncEnabled,
                         onChanged: (value) =>
-                            setDialogState(() => cloudSyncEnabled = value),
+                            setDialogState(() => directSyncEnabled = value),
                       ),
                     ],
                   ),
@@ -359,7 +359,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                       plan: plan,
                       subscriptionStatus: subscriptionStatus,
                       devicesLimit: limit,
-                      cloudSyncEnabled: cloudSyncEnabled,
+                      directSyncEnabled: directSyncEnabled,
                       trialEndsAt: trialEndsAt,
                     );
                     if (!context.mounted) return;
@@ -500,7 +500,7 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                             DataColumn(label: Text(tr.text('subscription_status'))),
                             DataColumn(label: Text(tr.text('trial'))),
                             DataColumn(label: Text(tr.text('devices'))),
-                            DataColumn(label: Text(tr.text('cloud_sync'))),
+                            DataColumn(label: Text(tr.text('direct_sync'))),
                             DataColumn(label: Text(tr.text('created'))),
                             DataColumn(label: Text(tr.text('last_seen'))),
                             DataColumn(label: Text(tr.text('actions'))),
@@ -533,15 +533,15 @@ class _AdminSubscribersPageState extends State<AdminSubscribersPage> {
                                 DataCell(Text(
                                     '${subscriber.deviceCount}/${subscriber.devicesLimit}')),
                                 DataCell(_StatusBadge(
-                                  label: subscriber.cloudSyncEnabled
+                                  label: subscriber.directSyncEnabled
                                       ? tr.text('enabled')
                                       : tr.text('off'),
-                                  color: subscriber.cloudSyncEnabled
+                                  color: subscriber.directSyncEnabled
                                       ? Colors.green.shade700
                                       : Theme.of(context)
                                           .colorScheme
                                           .onSurfaceVariant,
-                                  background: subscriber.cloudSyncEnabled
+                                  background: subscriber.directSyncEnabled
                                       ? Colors.green.withValues(alpha: 0.10)
                                       : Theme.of(context)
                                           .colorScheme

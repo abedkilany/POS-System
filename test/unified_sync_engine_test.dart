@@ -27,10 +27,10 @@ class _FakeTransport implements SyncTransportAdapter {
   );
 
   @override
-  UnifiedSyncTransportKind get kind => UnifiedSyncTransportKind.cloud;
+  UnifiedSyncTransportKind get kind => UnifiedSyncTransportKind.direct;
 
   @override
-  String get label => 'Cloud';
+  String get label => 'Direct';
 
   @override
   String get deviceId => 'DV-TEST';
@@ -44,7 +44,7 @@ class _FakeTransport implements SyncTransportAdapter {
 
   @override
   Future<UnifiedHostStatus> getHostStatus() async => const UnifiedHostStatus(
-        cloudReachable: false,
+        controlPlaneReachable: false,
         hostReachable: false,
         message: 'ok',
       );
@@ -129,13 +129,13 @@ class _FakeTransport implements SyncTransportAdapter {
 
 UnifiedSyncResult _networkFailurePull() => UnifiedSyncResult(
       ok: false,
-      message: 'Cloud pull failed: Host Offline. SocketException: offline',
+      message: 'Direct pull failed: Host Offline. SocketException: offline',
       error: const UnifiedSyncError(
         code: UnifiedSyncErrorCode.networkUnavailable,
         userMessage:
-            'Cloud pull failed: Host Offline. SocketException: offline',
+            'Direct pull failed: Host Offline. SocketException: offline',
         debugMessage:
-            'Cloud pull failed: Host Offline. SocketException: offline',
+            'Direct pull failed: Host Offline. SocketException: offline',
       ),
       cursor: UnifiedCursorEnvelope(
         value: 'pull-cursor',
@@ -146,11 +146,11 @@ UnifiedSyncResult _networkFailurePull() => UnifiedSyncResult(
 
 UnifiedSyncResult _snapshotFailurePull() => UnifiedSyncResult(
       ok: false,
-      message: 'Cloud pull failed: Host snapshot is unavailable.',
+      message: 'Direct pull failed: Host snapshot is unavailable.',
       error: const UnifiedSyncError(
         code: UnifiedSyncErrorCode.snapshotUnavailable,
-        userMessage: 'Cloud pull failed: Host snapshot is unavailable.',
-        debugMessage: 'Cloud pull failed: Host snapshot is unavailable.',
+        userMessage: 'Direct pull failed: Host snapshot is unavailable.',
+        debugMessage: 'Direct pull failed: Host snapshot is unavailable.',
       ),
       cursor: UnifiedCursorEnvelope(
         value: 'pull-cursor',

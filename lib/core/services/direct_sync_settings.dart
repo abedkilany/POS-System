@@ -62,6 +62,10 @@ class DirectSyncSettings {
   });
 
   static const storageKey = 'direct_sync_settings_v1';
+  static const bundledApiBaseUrl = String.fromEnvironment(
+    'PUBLIC_API_BASE_URL',
+    defaultValue: 'https://ventioapp.com',
+  );
   static const bundledStunServer = String.fromEnvironment('VENTIO_STUN_SERVER');
 
   final String apiBaseUrl;
@@ -189,7 +193,7 @@ class DirectSyncSettings {
     final raw = LocalDatabaseService.getString(storageKey);
     if (raw == null || raw.trim().isEmpty) {
       return const DirectSyncSettings(
-        apiBaseUrl: '',
+        apiBaseUrl: bundledApiBaseUrl,
         peerDeviceId: '',
         stunServer: bundledStunServer,
       );
@@ -199,7 +203,7 @@ class DirectSyncSettings {
           Map<String, dynamic>.from(jsonDecode(raw) as Map));
     } catch (_) {
       return const DirectSyncSettings(
-        apiBaseUrl: '',
+        apiBaseUrl: bundledApiBaseUrl,
         peerDeviceId: '',
         stunServer: bundledStunServer,
       );

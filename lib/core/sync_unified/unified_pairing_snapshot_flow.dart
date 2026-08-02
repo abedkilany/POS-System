@@ -22,7 +22,7 @@ class UnifiedPairingSnapshotSuccess {
 class UnifiedPairingSnapshotFlow {
   const UnifiedPairingSnapshotFlow._();
 
-  static Future<UnifiedPairingSnapshotSuccess> applyForCloud({
+  static Future<UnifiedPairingSnapshotSuccess> applyForDirect({
     required AppStore store,
     required Map<String, dynamic> envelope,
     required Future<void> Function() markSnapshotApplied,
@@ -39,7 +39,7 @@ class UnifiedPairingSnapshotFlow {
     }
     await SyncDeviceStateStore.recordSyncResult(
       store.appIdentity,
-      transport: 'cloud',
+      transport: 'direct',
       appliedCursor: applied.cursor,
       ackCursor: applied.cursor,
       appliedSequence: applied.sequence,

@@ -12,8 +12,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../../core/app_brand.dart';
 import '../../core/services/backup_download_service.dart';
 import '../../core/services/barcode_feedback_service.dart';
-import '../../core/services/cloud_sync_admin_service.dart';
-import '../../core/services/cloud_sync_service.dart';
+import '../../core/services/direct_control_plane_service.dart';
 import '../../core/services/direct_sync_settings.dart';
 import '../../core/services/account_auth_service.dart';
 import '../../core/services/accounting_service.dart';
@@ -496,7 +495,7 @@ class SettingsPage extends StatelessWidget {
                     identity.deviceRole.name),
                 _InfoGridItem(Icons.storefront_outlined, tr.text('store_name'),
                     store.storeProfile.name),
-                _InfoGridItem(Icons.cloud_sync_outlined, tr.text('sync_mode'),
+                _InfoGridItem(Icons.sync, tr.text('sync_mode'),
                     identity.isHost ? tr.text('host') : identity.syncMode.name),
               ],
             ),
@@ -2243,13 +2242,13 @@ class SettingsPage extends StatelessWidget {
       progress.value = _OperationProgress(
           0.20, tr.text('resetting_local_client_state_percent'));
       await Future<void>.delayed(const Duration(milliseconds: 80));
-      if (identity.syncMode == SyncMode.cloudConnected ||
+      if (identity.syncMode == SyncMode.directConnected ||
           identity.syncMode == SyncMode.marketplaceEnabled) {
         progress.value = _OperationProgress(
-            0.40, tr.text('contacting_cloud_host_snapshot_percent'));
-        final result = await UnifiedSyncFactory.cloudEngine(
+            0.40, tr.text('contacting_host_snapshot_percent'));
+        final result = await UnifiedSyncFactory.directEngine(
           store,
-          settings: CloudSyncSettings.load(),
+          settings: VpsControlPlaneSettings.load(),
         ).rebuildFromHostSnapshot(
           onProgress: (value, label) => progress.value =
               _OperationProgress(value, '$label ${(value * 100).round()}%'),
@@ -2257,8 +2256,8 @@ class SettingsPage extends StatelessWidget {
         progress.value = _OperationProgress(
             result.ok ? 1.0 : 0.90,
             result.ok
-                ? tr.text('cloud_rebuild_completed_percent')
-                : tr.text('cloud_rebuild_failed_verifying_percent'));
+                ? tr.text('direct_rebuild_completed_percent')
+                : tr.text('direct_rebuild_failed_verifying_percent'));
         message = localizeRuntimeMessage(result.message, tr);
         success = result.ok;
       } else {
@@ -3149,7 +3148,7 @@ class _GoogleDriveBackupSettingsCardState
               itemBuilder: (context, index) {
                 final file = files[index];
                 return ListTile(
-                  leading: const Icon(Icons.cloud_download_outlined),
+                  leading: const Icon(Icons.download),
                   title: Text(file.name),
                   subtitle: Text(
                       '${file.category}${file.createdAt == null ? '' : ' - ${_formatDriveBackupDate(file.createdAt!)}'}'),
@@ -3204,7 +3203,7 @@ class _GoogleDriveBackupSettingsCardState
     final connected = settings.isAuthorized;
     final showDeveloperSetup = _showAdvancedSetup;
     final googleConfigured =
-        CloudSyncSettings.load().apiBaseUrl.trim().isNotEmpty;
+        VpsControlPlaneSettings.load().apiBaseUrl.trim().isNotEmpty;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -3222,7 +3221,7 @@ class _GoogleDriveBackupSettingsCardState
               padding: const EdgeInsets.symmetric(vertical: 4),
               child: Row(
                 children: [
-                  const Icon(Icons.cloud_upload_outlined),
+                  const Icon(Icons.upload),
                   const SizedBox(width: 16),
                   Expanded(
                     child: Text(
@@ -3378,14 +3377,14 @@ class _GoogleDriveBackupSettingsCardState
                 FilledButton.icon(
                   onPressed:
                       disabled || _saving || !connected ? null : _backupNow,
-                  icon: const Icon(Icons.cloud_upload_outlined),
+                  icon: const Icon(Icons.upload),
                   label: Text(tr.text('backup_now')),
                 ),
                 OutlinedButton.icon(
                   onPressed: disabled || _saving || !connected
                       ? null
                       : _downloadFromDrive,
-                  icon: const Icon(Icons.cloud_download_outlined),
+                  icon: const Icon(Icons.download),
                   label: Text(tr.text('download_from_drive')),
                 ),
                 if (connected && settings.folderId.trim().isNotEmpty)
@@ -3694,58 +3693,58 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   final _lanPortController = TextEditingController();
   final _lanIntervalController = TextEditingController();
   final _lanTokenController = TextEditingController();
-  final _cloudApiController = TextEditingController();
-  final _cloudPairingCodeController = TextEditingController();
-  final _cloudIntervalController = TextEditingController();
+  final _directApiController = TextEditingController();
+  final _directPairingCodeController = TextEditingController();
+  final _directIntervalController = TextEditingController();
   final _transferDeviceController = TextEditingController();
   DeviceRole _deviceRole = DeviceRole.host;
   SyncMode _clientSyncMode = SyncMode.lanOnly;
   bool _lanEnabledForHost = false;
-  bool _cloudEnabled = false;
+  bool _directEnabled = false;
   bool _busy = false;
   String _status = '';
   double? _statusProgress;
-  String _latestCloudPairingCode = '';
-  String _latestPairingTransport = 'cloud';
-  DateTime? _latestCloudPairingExpiresAt;
+  String _latestDirectPairingCode = '';
+  String _latestPairingTransport = 'direct';
+  DateTime? _latestDirectPairingExpiresAt;
   List<String> _hostIpAddresses = const <String>[];
   bool _detectingHostIp = false;
   bool _showLanPairingCode = false;
-  bool _showCloudPairingCode = false;
+  bool _showDirectPairingCode = false;
   DateTime? _latestLanPairingExpiresAt;
   bool _latestLanPairingConsumed = false;
-  bool _latestCloudPairingConsumed = false;
-  bool _latestCloudPairingInvalid = false;
-  DateTime? _lastCloudPairingStatusCheck;
+  bool _latestDirectPairingConsumed = false;
+  bool _latestDirectPairingInvalid = false;
+  DateTime? _lastDirectPairingStatusCheck;
   Timer? _pairingCountdownTimer;
   String _expectedPairingStoreId = '';
   String _expectedPairingBranchId = '';
   String _expectedPairingHostDeviceId = '';
-  String _expectedPairingCloudTenantId = '';
+  String _expectedPairingControlPlaneId = '';
 
   AppLocalizations get tr => AppLocalizations.of(context);
 
   static const _lanPairingExpiryStorageKey = 'lan_pairing_expires_at_v1';
-  static const _cloudPairingCodeStorageKey = 'cloud_pairing_code_v1';
-  static const _cloudPairingExpiryStorageKey = 'cloud_pairing_expires_at_v1';
+  static const _directPairingCodeStorageKey = 'direct_pairing_code_v1';
+  static const _directPairingExpiryStorageKey = 'direct_pairing_expires_at_v1';
   static const _pairingCodeLifetime = Duration(minutes: 5);
-  String get _initialCloudHostReadyKey =>
-      'cloud_initial_snapshot_ready_${widget.store.appIdentity.storeId}';
+  String get _initialDirectHostReadyKey =>
+      'direct_initial_snapshot_ready_${widget.store.appIdentity.storeId}';
 
-  bool? _cloudSyncPlanAllowed;
+  bool? _directSyncPlanAllowed;
 
-  bool get _cloudSyncPlanDenied => _cloudSyncPlanAllowed == false;
-  bool get _cloudSyncPlanAllowsUi => !_cloudSyncPlanDenied;
-  bool get _effectiveCloudEnabled => _cloudEnabled && _cloudSyncPlanAllowsUi;
+  bool get _directSyncPlanDenied => _directSyncPlanAllowed == false;
+  bool get _directSyncPlanAllowsUi => !_directSyncPlanDenied;
+  bool get _effectiveDirectEnabled => _directEnabled && _directSyncPlanAllowsUi;
 
-  bool? _cachedCloudPlanAccessForUi(AccountAuthCache? cache) {
+  bool? _cachedDirectPlanAccessForUi(AccountAuthCache? cache) {
     if (cache == null) return null;
-    if (cache.cloudSyncEnabled) return true;
+    if (cache.directSyncEnabled) return true;
 
-    // A local Host created before Cloud Sync is enabled usually has a cached
+    // A local Host created before Direct Sync is enabled usually has a cached
     // registered_local=false result and no account token. That is not an
     // authoritative denial; the server will enforce the entitlement when a
-    // Cloud pairing code is requested.
+    // Direct pairing code is requested.
     if (widget.store.appIdentity.isHost && cache.accountToken.trim().isEmpty) {
       return null;
     }
@@ -3756,32 +3755,35 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   @override
   void initState() {
     super.initState();
-    _cloudSyncPlanAllowed =
-        _cachedCloudPlanAccessForUi(AccountAuthCache.load());
-    unawaited(_refreshCloudSyncPlanAccess());
+    _directSyncPlanAllowed =
+        _cachedDirectPlanAccessForUi(AccountAuthCache.load());
+    _directSyncPlanAllowed = true;
     final identity = widget.store.appIdentity;
     final lan = LanSyncSettings.load();
-    final cloud = CloudSyncSettings.load();
+    final direct = DirectSyncSettings.load();
     _deviceRole = identity.isClient ? DeviceRole.client : DeviceRole.host;
-    _clientSyncMode = identity.activeSyncTransportNormalized == 'cloud'
-        ? SyncMode.cloudConnected
+    _clientSyncMode = identity.activeSyncTransportNormalized == 'direct'
+        ? SyncMode.directConnected
         : SyncMode.lanOnly;
     _lanEnabledForHost = identity.isHost && lan.setupComplete && lan.isHost;
-    _cloudEnabled = identity.isCloudEnabled && _cloudSyncPlanAllowsUi;
+    _directEnabled = identity.isHost ||
+        (identity.isClient &&
+            identity.activeSyncTransportNormalized == 'direct');
     _lanHostController.text = lan.host;
     _lanPortController.text = lan.port.toString();
     _lanIntervalController.text = lan.intervalSeconds.toString();
     _lanTokenController.text = lan.secret.trim();
-    _cloudApiController.text = cloud.apiBaseUrl;
-    _cloudIntervalController.text = cloud.intervalSeconds.toString();
+    _directApiController.text = direct.apiBaseUrl;
+    _directIntervalController.text =
+        LanSyncSettings.defaultIntervalSeconds.toString();
     for (final controller in [
       _lanHostController,
       _lanPortController,
       _lanIntervalController,
       _lanTokenController,
-      _cloudApiController,
-      _cloudPairingCodeController,
-      _cloudIntervalController,
+      _directApiController,
+      _directPairingCodeController,
+      _directIntervalController,
     ]) {
       controller.addListener(_onSyncDraftChanged);
     }
@@ -3798,19 +3800,22 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     _lanPortController.dispose();
     _lanIntervalController.dispose();
     _lanTokenController.dispose();
-    _cloudApiController.dispose();
-    _cloudPairingCodeController.dispose();
-    _cloudIntervalController.dispose();
+    _directApiController.dispose();
+    _directPairingCodeController.dispose();
+    _directIntervalController.dispose();
     _transferDeviceController.dispose();
     _pairingCountdownTimer?.cancel();
     super.dispose();
   }
 
-  Future<void> _refreshCloudSyncPlanAccess() async {
+  // Legacy entitlement refresh is retained for the next server cleanup phase.
+  // It is intentionally not called by the Direct/LAN settings UI.
+  // ignore: unused_element
+  Future<void> _refreshDirectSyncPlanAccess() async {
     final cache = AccountAuthCache.load();
-    bool? planAllowed = _cachedCloudPlanAccessForUi(cache);
+    bool? planAllowed = _cachedDirectPlanAccessForUi(cache);
     final identityAtStart = widget.store.appIdentity;
-    final cloudAtStart = CloudSyncSettings.load();
+    final directAtStart = VpsControlPlaneSettings.load();
 
     String boolLabel(bool? value) {
       if (value == null) return 'unknown';
@@ -3818,15 +3823,15 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     }
 
     SyncDiagnosticsLog.add(
-      '[SYNC_TRACE] cloudPlanAccess:start '
+      '[SYNC_TRACE] directPlanAccess:start '
       'device=${identityAtStart.deviceId} '
       'role=${identityAtStart.deviceRole.name} '
       'store=${identityAtStart.storeId} '
       'branch=${identityAtStart.branchId} '
       'syncMode=${identityAtStart.syncMode.name} '
       'activeTransport=${identityAtStart.activeSyncTransportNormalized} '
-      'apiBase=${cloudAtStart.apiBaseUrl} '
-      'cloudConfigured=${cloudAtStart.isConfigured} '
+      'apiBase=${directAtStart.apiBaseUrl} '
+      'directConfigured=${directAtStart.isConfigured} '
       'hasDeviceToken=${identityAtStart.deviceToken.trim().isNotEmpty} '
       'cacheExists=${cache != null} '
       'cacheMode=${cache?.mode ?? ''} '
@@ -3842,33 +3847,33 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         final result =
             await AccountAuthService().refreshSession(accountToken: token);
         SyncDiagnosticsLog.add(
-          '[SYNC_TRACE] cloudPlanAccess:session '
+          '[SYNC_TRACE] directPlanAccess:session '
           'ok=${result.ok} '
           'store=${result.storeId} '
           'branch=${result.branchId} '
           'status=${result.subscriptionStatus} '
-          'allowed=${result.cloudSyncEnabled} '
+          'allowed=${result.directSyncEnabled} '
           'message=${result.message}',
         );
         if (result.ok) {
           await AccountAuthService.cacheOnlineResult(result,
               mode: cache?.mode ?? 'login');
-          planAllowed = result.cloudSyncEnabled;
+          planAllowed = result.directSyncEnabled;
         }
       } else {
         SyncDiagnosticsLog.add(
-            '[SYNC_TRACE] cloudPlanAccess:session skipped=noAccountToken');
+            '[SYNC_TRACE] directPlanAccess:session skipped=noAccountToken');
       }
 
       // Fallback for local Host sessions. After the user signs in locally as
       // admin, account_auth_cache_v1 may be missing or stale, while the device
       // still has valid store/device credentials. Ask the server directly for
-      // this store's Cloud Sync entitlement using device auth.
+      // this store's Direct Sync entitlement using device auth.
       if (planAllowed != true) {
-        final fallbackAllowed = await _cloudAdminService()
-            .checkPlanAccess(CloudSyncSettings.load());
+        final fallbackAllowed = await _controlPlaneService()
+            .checkDirectSyncPlanAccess(VpsControlPlaneSettings.load());
         SyncDiagnosticsLog.add(
-          '[SYNC_TRACE] cloudPlanAccess:fallback '
+          '[SYNC_TRACE] directPlanAccess:fallback '
           'allowed=$fallbackAllowed '
           'previous=${boolLabel(planAllowed)}',
         );
@@ -3878,23 +3883,23 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       if (!mounted) return;
       final identity = widget.store.appIdentity;
       setState(() {
-        _cloudSyncPlanAllowed = planAllowed;
-        _cloudEnabled = identity.isCloudEnabled && planAllowed != false;
+        _directSyncPlanAllowed = planAllowed;
+        _directEnabled = identity.isDirectEnabled && planAllowed != false;
       });
       SyncDiagnosticsLog.add(
-        '[SYNC_TRACE] cloudPlanAccess:final '
+        '[SYNC_TRACE] directPlanAccess:final '
         'allowed=${boolLabel(planAllowed)} '
         'denied=${planAllowed == false} '
         'uiAllows=${planAllowed != false} '
-        'identityCloud=${identity.isCloudEnabled} '
-        'switchValue=$_cloudEnabled',
+        'identityDirect=${identity.isDirectEnabled} '
+        'switchValue=$_directEnabled',
       );
     } catch (error) {
       SyncDiagnosticsLog.add(
-          '[SYNC_TRACE] cloudPlanAccess:refreshFailed $error');
-      if (mounted && _cloudSyncPlanAllowed != true) {
+          '[SYNC_TRACE] directPlanAccess:refreshFailed $error');
+      if (mounted && _directSyncPlanAllowed != true) {
         setState(() {
-          _status = 'Could not verify Cloud Sync access.';
+          _status = 'Could not verify Direct Sync access.';
         });
       }
       // Keep the cached plan state if the server cannot be reached.
@@ -3903,7 +3908,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
 
   int get _lanPort => int.tryParse(_lanPortController.text.trim()) ?? 8787;
   int get _lanInterval => LanSyncSettings.defaultIntervalSeconds;
-  int get _cloudInterval => CloudSyncSettings.defaultIntervalSeconds;
+  int get _directInterval => LanSyncSettings.defaultIntervalSeconds;
 
   void _onSyncDraftChanged() {
     if (mounted) setState(() {});
@@ -3913,15 +3918,17 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     final identity = widget.store.appIdentity;
     final lan = LanSyncSettings.load();
     final role = identity.isClient ? DeviceRole.client : DeviceRole.host;
-    final clientMode = identity.activeSyncTransportNormalized == 'cloud'
-        ? SyncMode.cloudConnected
+    final clientMode = identity.activeSyncTransportNormalized == 'direct'
+        ? SyncMode.directConnected
         : SyncMode.lanOnly;
     final lanEnabled = identity.isHost && lan.setupComplete && lan.isHost;
-    final cloudEnabled = identity.isCloudEnabled && _cloudSyncPlanAllowsUi;
+    final directEnabled = identity.isHost ||
+        (identity.isClient &&
+            identity.activeSyncTransportNormalized == 'direct');
     return _deviceRole != role ||
         _clientSyncMode != clientMode ||
         _lanEnabledForHost != lanEnabled ||
-        _cloudEnabled != cloudEnabled ||
+        _directEnabled != directEnabled ||
         _lanHostController.text.trim() != lan.host.trim() ||
         _lanPortController.text.trim() != lan.port.toString();
   }
@@ -3929,19 +3936,22 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   void _resetSyncDraft({String? status}) {
     final identity = widget.store.appIdentity;
     final lan = LanSyncSettings.load();
-    final cloud = CloudSyncSettings.load();
+    final direct = DirectSyncSettings.load();
     setState(() {
       _deviceRole = identity.isClient ? DeviceRole.client : DeviceRole.host;
-      _clientSyncMode = identity.activeSyncTransportNormalized == 'cloud'
-          ? SyncMode.cloudConnected
+      _clientSyncMode = identity.activeSyncTransportNormalized == 'direct'
+          ? SyncMode.directConnected
           : SyncMode.lanOnly;
       _lanEnabledForHost = identity.isHost && lan.setupComplete && lan.isHost;
-      _cloudEnabled = identity.isCloudEnabled && _cloudSyncPlanAllowsUi;
+      _directEnabled = identity.isHost ||
+          (identity.isClient &&
+              identity.activeSyncTransportNormalized == 'direct');
       _lanHostController.text = lan.host;
       _lanPortController.text = lan.port.toString();
       _lanIntervalController.text = lan.intervalSeconds.toString();
-      _cloudApiController.text = cloud.apiBaseUrl;
-      _cloudIntervalController.text = cloud.intervalSeconds.toString();
+      _directApiController.text = direct.apiBaseUrl;
+      _directIntervalController.text =
+          LanSyncSettings.defaultIntervalSeconds.toString();
       _status = status ?? AppLocalizations.of(context).text('cancelled');
     });
   }
@@ -3952,9 +3962,9 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       await _testPairedClientConnections();
       return;
     }
-    final shouldTestCloud = identity.activeSyncTransportNormalized == 'cloud';
-    if (shouldTestCloud) {
-      await _testCloudConnection();
+    final shouldTestDirect = identity.activeSyncTransportNormalized == 'direct';
+    if (shouldTestDirect) {
+      await _testDirectConnection();
     } else {
       await _testHostConnection();
     }
@@ -3980,7 +3990,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         .replaceFirst(RegExp(r'^Bad state:\s*'), '')
         .replaceFirst(RegExp(r'^Exception:\s*'), '')
         .trim();
-    // Keep the actual Cloud/LAN failure visible. The old fallback hid relay
+    // Keep the actual Direct/LAN failure visible. The old fallback hid relay
     // errors behind a generic message, making it impossible to distinguish a
     // missing Host, rejected request, or failed pull from the UI.
     return readable.isEmpty ? fallback : localizeRuntimeMessage(readable, tr);
@@ -3990,20 +4000,20 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         final identity = widget.store.appIdentity;
         final tr = AppLocalizations.of(context);
         if (_deviceRole == DeviceRole.host) {
-          if (_cloudEnabled && _cloudSyncPlanDenied) {
-            throw Exception(tr.text('cloud_sync_plan_required'));
+          if (_directEnabled && _directSyncPlanDenied) {
+            throw Exception(tr.text('direct_sync_plan_required'));
           }
-          final effectiveCloudEnabled = _effectiveCloudEnabled;
+          final effectiveDirectEnabled = _effectiveDirectEnabled;
           await widget.store.updateAppIdentityLocalOnly(
             identity.copyWith(
               deviceRole: DeviceRole.host,
-              syncMode: effectiveCloudEnabled
-                  ? SyncMode.cloudConnected
+              syncMode: effectiveDirectEnabled
+                  ? SyncMode.directConnected
                   : (_lanEnabledForHost
                       ? SyncMode.lanOnly
                       : SyncMode.localOnly),
-              activeSyncTransport: effectiveCloudEnabled
-                  ? 'cloud'
+              activeSyncTransport: effectiveDirectEnabled
+                  ? 'direct'
                   : (_lanEnabledForHost ? 'lan' : 'local'),
             ),
             source: 'sync settings save',
@@ -4027,25 +4037,30 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
             pairedDevices: migratedLan.pairedDevices,
             hostRegistry: migratedLan.hostRegistry,
           ).save();
-          await _cloudSettings(enabled: effectiveCloudEnabled).save();
-          if (!effectiveCloudEnabled) {
-            await LocalDatabaseService.deleteString(_initialCloudHostReadyKey);
+          final directSettings = DirectSyncSettings.load();
+          await directSettings
+              .copyWith(
+                apiBaseUrl: _directApiController.text.trim(),
+                peerDeviceId: identity.deviceId,
+                setupComplete: effectiveDirectEnabled,
+                autoSyncEnabled: effectiveDirectEnabled,
+              )
+              .save();
+          if (!effectiveDirectEnabled) {
+            await LocalDatabaseService.deleteString(_initialDirectHostReadyKey);
           }
         } else {
           final activeTransport =
-              _clientSyncMode == SyncMode.cloudConnected ? 'cloud' : 'lan';
+              _clientSyncMode == SyncMode.directConnected ? 'direct' : 'lan';
           final lanSettings = LanSyncSettings.load();
-          final cloudSettings = CloudSyncSettings.load();
+          final directSettings = DirectSyncSettings.load();
           final lanConfigured = _isLanClientConfigured(lanSettings);
-          final cloudConfigured = _isCloudClientConfigured(cloudSettings);
+          final directConfigured = _isDirectClientConfigured(directSettings);
           if (activeTransport == 'lan' && !lanConfigured) {
             throw Exception(tr.text('lan_not_configured_cannot_switch'));
           }
-          if (activeTransport == 'cloud' && _cloudSyncPlanDenied) {
-            throw Exception(tr.text('cloud_sync_plan_required'));
-          }
-          if (activeTransport == 'cloud' && !cloudConfigured) {
-            throw Exception(tr.text('cloud_not_configured_cannot_switch'));
+          if (activeTransport == 'direct' && !directConfigured) {
+            throw Exception('Direct is not configured on this device.');
           }
           await widget.store.updateAppIdentityLocalOnly(
             identity.copyWith(
@@ -4062,10 +4077,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                 intervalSeconds: _lanInterval,
               )
               .save();
-          await cloudSettings
-              .copyWith(
-                autoSyncEnabled: activeTransport == 'cloud',
-              )
+          await directSettings
+              .copyWith(autoSyncEnabled: activeTransport == 'direct')
               .save();
           await widget.store.setActiveSyncTransport(activeTransport);
         }
@@ -4105,27 +4118,27 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     }
   }
 
-  CloudSyncSettings _cloudSettings(
+  VpsControlPlaneSettings _directSettings(
       {bool enabled = true, bool? autoSyncEnabled}) {
-    final current = CloudSyncSettings.load();
+    final current = VpsControlPlaneSettings.load();
     final normalizedUrl = current.apiBaseUrl.trim().isNotEmpty
         ? current.apiBaseUrl
-        : CloudSyncSettings.normalizeApiBaseUrl(
-            CloudSyncSettings.bundledApiBaseUrl,
+        : VpsControlPlaneSettings.normalizeApiBaseUrl(
+            VpsControlPlaneSettings.bundledApiBaseUrl,
             fallback: kIsWeb ? Uri.base.origin : '',
           );
     return current.copyWith(
       enabled: enabled,
       apiBaseUrl: normalizedUrl,
       autoSyncEnabled: autoSyncEnabled ?? enabled,
-      intervalSeconds: _cloudInterval,
+      intervalSeconds: _directInterval,
     );
   }
 
-  UnifiedSyncEngine _cloudEngine({bool enabled = true}) =>
-      UnifiedSyncFactory.cloudEngine(
+  UnifiedSyncEngine _directEngine({bool enabled = true}) =>
+      UnifiedSyncFactory.directEngine(
         widget.store,
-        settings: _cloudSettings(enabled: enabled),
+        settings: _directSettings(enabled: enabled),
         enabled: enabled,
       );
 
@@ -4135,8 +4148,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         settings: settings ?? LanSyncSettings.load(),
       );
 
-  CloudSyncAdminService _cloudAdminService() =>
-      CloudSyncAdminService(widget.store);
+  DirectControlPlaneService _controlPlaneService() => DirectControlPlaneService(widget.store);
 
   Future<void> _refreshHostIpAddresses() async {
     if (_detectingHostIp) return;
@@ -4198,19 +4210,19 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     } else if (lanExpiry != null && !lanExpiry.isAfter(now)) {
       _expireLanPairingCode();
     }
-    final cloudCode =
-        LocalDatabaseService.getString(_cloudPairingCodeStorageKey) ?? '';
-    final cloudExpiry = DateTime.tryParse(
-        LocalDatabaseService.getString(_cloudPairingExpiryStorageKey) ?? '');
-    if (cloudCode.trim().isNotEmpty &&
-        cloudExpiry != null &&
-        cloudExpiry.isAfter(now)) {
-      _latestCloudPairingCode = cloudCode.trim();
-      _latestCloudPairingExpiresAt = cloudExpiry;
-      _latestCloudPairingInvalid = false;
-      _showCloudPairingCode = false;
-    } else if (cloudExpiry != null && !cloudExpiry.isAfter(now)) {
-      _expireCloudPairingCode();
+    final directCode =
+        LocalDatabaseService.getString(_directPairingCodeStorageKey) ?? '';
+    final directExpiry = DateTime.tryParse(
+        LocalDatabaseService.getString(_directPairingExpiryStorageKey) ?? '');
+    if (directCode.trim().isNotEmpty &&
+        directExpiry != null &&
+        directExpiry.isAfter(now)) {
+      _latestDirectPairingCode = directCode.trim();
+      _latestDirectPairingExpiresAt = directExpiry;
+      _latestDirectPairingInvalid = false;
+      _showDirectPairingCode = false;
+    } else if (directExpiry != null && !directExpiry.isAfter(now)) {
+      _expireDirectPairingCode();
     }
   }
 
@@ -4224,16 +4236,16 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         _expireLanPairingCode();
       }
       _refreshLanPairingConsumedState();
-      if (_latestCloudPairingExpiresAt != null &&
-          !_latestCloudPairingExpiresAt!.isAfter(now)) {
-        _expireCloudPairingCode();
+      if (_latestDirectPairingExpiresAt != null &&
+          !_latestDirectPairingExpiresAt!.isAfter(now)) {
+        _expireDirectPairingCode();
       }
-      if (_latestCloudPairingCode.trim().isNotEmpty &&
-          (_latestCloudPairingExpiresAt?.isAfter(now) ?? false)) {
-        final lastCheck = _lastCloudPairingStatusCheck;
+      if (_latestDirectPairingCode.trim().isNotEmpty &&
+          (_latestDirectPairingExpiresAt?.isAfter(now) ?? false)) {
+        final lastCheck = _lastDirectPairingStatusCheck;
         if (lastCheck == null || now.difference(lastCheck).inSeconds >= 5) {
-          _lastCloudPairingStatusCheck = now;
-          unawaited(_refreshCloudPairingStatus());
+          _lastDirectPairingStatusCheck = now;
+          unawaited(_refreshDirectPairingStatus());
         }
       }
       setState(() {});
@@ -4261,14 +4273,14 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     unawaited(LanSyncSettings.load().copyWith(secret: '').save());
   }
 
-  void _expireCloudPairingCode() {
-    _latestCloudPairingCode = '';
-    _latestCloudPairingExpiresAt = null;
-    _latestCloudPairingConsumed = false;
-    _latestCloudPairingInvalid = false;
-    _showCloudPairingCode = false;
-    unawaited(LocalDatabaseService.deleteString(_cloudPairingCodeStorageKey));
-    unawaited(LocalDatabaseService.deleteString(_cloudPairingExpiryStorageKey));
+  void _expireDirectPairingCode() {
+    _latestDirectPairingCode = '';
+    _latestDirectPairingExpiresAt = null;
+    _latestDirectPairingConsumed = false;
+    _latestDirectPairingInvalid = false;
+    _showDirectPairingCode = false;
+    unawaited(LocalDatabaseService.deleteString(_directPairingCodeStorageKey));
+    unawaited(LocalDatabaseService.deleteString(_directPairingExpiryStorageKey));
   }
 
   String _countdownText(DateTime? expiresAt) {
@@ -4286,63 +4298,59 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       _latestLanPairingExpiresAt != null &&
       _latestLanPairingExpiresAt!.isAfter(DateTime.now());
 
-  bool get _hasActiveCloudPairingCode =>
-      _latestCloudPairingCode.trim().isNotEmpty &&
-      _latestCloudPairingExpiresAt != null &&
-      _latestCloudPairingExpiresAt!.isAfter(DateTime.now());
+  bool get _hasActiveDirectPairingCode =>
+      _latestDirectPairingCode.trim().isNotEmpty &&
+      _latestDirectPairingExpiresAt != null &&
+      _latestDirectPairingExpiresAt!.isAfter(DateTime.now());
 
   String get _lanPairingButtonLabel => _hasActiveLanPairingCode
       ? tr.text('regenerate_new_lan_code')
       : tr.text('generate_lan_code');
 
-  String get _cloudPairingButtonLabel => _hasActiveCloudPairingCode
-      ? tr.text('regenerate_new_cloud_code')
-      : tr.text('generate_cloud_code');
-
   String get _directPairingButtonLabel =>
-      _hasActiveCloudPairingCode && _latestPairingTransport == 'direct'
+      _hasActiveDirectPairingCode && _latestPairingTransport == 'direct'
           ? 'Regenerate Direct Code'
           : 'Direct pairing code';
 
-  Future<void> _refreshCloudPairingStatus() async {
-    final code = _latestCloudPairingCode.trim();
+  Future<void> _refreshDirectPairingStatus() async {
+    final code = _latestDirectPairingCode.trim();
     if (code.isEmpty || !widget.store.appIdentity.isHost) return;
-    final settings = _cloudSettings(enabled: true);
+    final settings = _directSettings(enabled: true);
     if (!settings.isConfigured) return;
-    final result = await _cloudAdminService().pairingCodeStatus(settings, code);
+    final result = await _controlPlaneService().pairingCodeStatus(settings, code);
     if (!mounted || !result.ok) return;
     if (result.status == 'consumed') {
-      await _adoptConsumedCloudPairingDevice(result);
+      await _adoptConsumedDirectPairingDevice(result);
       if (!mounted) return;
     }
     setState(() {
       if (result.status == 'consumed') {
-        _latestCloudPairingConsumed = true;
-        _latestCloudPairingInvalid = false;
-        _showCloudPairingCode = true;
+        _latestDirectPairingConsumed = true;
+        _latestDirectPairingInvalid = false;
+        _showDirectPairingCode = true;
       } else if (result.status == 'expired' || result.status == 'invalid') {
-        _latestCloudPairingConsumed = false;
-        _latestCloudPairingInvalid = result.status == 'invalid';
-        _showCloudPairingCode = true;
-        _latestCloudPairingExpiresAt = result.status == 'expired'
+        _latestDirectPairingConsumed = false;
+        _latestDirectPairingInvalid = result.status == 'invalid';
+        _showDirectPairingCode = true;
+        _latestDirectPairingExpiresAt = result.status == 'expired'
             ? DateTime.now().subtract(const Duration(seconds: 1))
-            : _latestCloudPairingExpiresAt;
+            : _latestDirectPairingExpiresAt;
       } else if (result.expiresAt != null) {
-        _latestCloudPairingInvalid = false;
-        _latestCloudPairingExpiresAt = result.expiresAt;
+        _latestDirectPairingInvalid = false;
+        _latestDirectPairingExpiresAt = result.expiresAt;
       }
     });
   }
 
-  Future<void> _adoptConsumedCloudPairingDevice(
-      CloudPairingStatusResult result) async {
+  Future<void> _adoptConsumedDirectPairingDevice(
+      DirectPairingStatusResult result) async {
     final clientDeviceId = result.claimedByDeviceId.trim();
     if (clientDeviceId.isEmpty || !widget.store.appIdentity.isHost) return;
 
     final hostDeviceId = widget.store.deviceId.trim();
     final current =
         LanSyncSettings.load().withMigratedHostRegistry(hostDeviceId);
-    final updated = current.withCloudPairedHostRegistryDevice(
+    final updated = current.withDirectPairedHostRegistryDevice(
       hostDeviceId: hostDeviceId,
       clientDeviceId: clientDeviceId,
       deviceToken: result.claimedDeviceToken,
@@ -4352,26 +4360,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     await updated.save();
   }
 
-  Future<void> _handleCloudPairingButton() async {
-    final identity = widget.store.appIdentity;
-    final cloud = CloudSyncSettings.load();
-    if (!_cloudEnabled || !identity.isCloudEnabled || !cloud.isConfigured) {
-      setState(() => _status = tr.text('enable_cloud_before_pairing_code'));
-      return;
-    }
-    try {
-      final devices = await _cloudAdminService()
-          .listDevicesWithLimit(_cloudSettings(enabled: true));
-      if (devices.limit?.limitReached == true) {
-        setState(() => _status = tr.text('device_limit_reached'));
-        return;
-      }
-    } catch (_) {
-      // The server still enforces the limit when creating/claiming the code.
-    }
-    if (_hasActiveCloudPairingCode) _expireCloudPairingCode();
-    await _createCloudPairingCode();
-  }
+  // ignore: unused_element
+  Future<void> _handleDirectPairingButton() => _createDirectPairingCode();
 
   Future<void> _handleLanPairingButton() async {
     final identity = widget.store.appIdentity;
@@ -4393,9 +4383,9 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   Future<void> _requestHostTransfer() => _run(() async {
         await widget.store.requestHostTransfer(
             reason: tr.text('user_requested_host_role_reason'));
-        final cloud = _cloudSettings(enabled: true);
-        if (cloud.apiBaseUrl.trim().isNotEmpty) {
-          await _cloudAdminService().requestHostTransfer(cloud,
+        final direct = _directSettings(enabled: true);
+        if (direct.apiBaseUrl.trim().isNotEmpty) {
+          await _controlPlaneService().requestHostTransfer(direct,
               reason: tr.text('user_requested_host_role_reason'));
         }
         if (mounted) {
@@ -4429,12 +4419,12 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           ),
         );
         if (confirmed != true) return;
-        final cloud = _cloudSettings(enabled: true);
-        if (cloud.isConfigured) {
-          final cloudResult =
-              await _cloudAdminService().approveHostTransfer(cloud, deviceId);
-          if (!cloudResult.ok) {
-            throw StateError(localizeRuntimeMessage(cloudResult.message, tr));
+        final direct = _directSettings(enabled: true);
+        if (direct.isConfigured) {
+          final directResult =
+              await _controlPlaneService().approveHostTransfer(direct, deviceId);
+          if (!directResult.ok) {
+            throw StateError(localizeRuntimeMessage(directResult.message, tr));
           }
         }
         await widget.store.approveHostTransfer(deviceId);
@@ -4447,9 +4437,9 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       });
 
   Future<void> _activateApprovedHostTransferFromUi() => _run(() async {
-        final cloud = _cloudSettings(enabled: true);
-        if (cloud.apiBaseUrl.trim().isNotEmpty) {
-          await _cloudAdminService().activateHostTransfer(cloud);
+        final direct = _directSettings(enabled: true);
+        if (direct.apiBaseUrl.trim().isNotEmpty) {
+          await _controlPlaneService().activateHostTransfer(direct);
         }
         await widget.store.activateApprovedHostTransfer();
         if (mounted) {
@@ -4466,14 +4456,14 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     _expectedPairingStoreId = '';
     _expectedPairingBranchId = '';
     _expectedPairingHostDeviceId = '';
-    _expectedPairingCloudTenantId = '';
+    _expectedPairingControlPlaneId = '';
   }
 
   void _rememberExpectedPairingTarget(_ScannedPairingPayload payload) {
     _expectedPairingStoreId = payload.storeId.trim();
     _expectedPairingBranchId = payload.branchId.trim();
     _expectedPairingHostDeviceId = payload.hostDeviceId.trim();
-    _expectedPairingCloudTenantId = payload.cloudTenantId.trim();
+    _expectedPairingControlPlaneId = payload.controlPlaneTenantId.trim();
   }
 
   _ScannedPairingPayload _parseScannedPairingPayload(String raw) {
@@ -4485,7 +4475,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     var storeId = '';
     var branchId = '';
     var hostDeviceId = '';
-    var cloudTenantId = '';
+    var controlPlaneTenantId = '';
     try {
       final decoded = jsonDecode(raw);
       if (decoded is Map<String, dynamic>) {
@@ -4501,7 +4491,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         port = (decoded['port'] ?? '').toString().trim();
         apiBaseUrl = (decoded['apiBaseUrl'] ??
                 decoded['apiUrl'] ??
-                decoded['cloudApiUrl'] ??
+                decoded['controlPlaneApiUrl'] ??
                 '')
             .toString()
             .trim();
@@ -4525,7 +4515,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                 '')
             .toString()
             .trim();
-        cloudTenantId = (decoded['cloudTenantId'] ??
+        controlPlaneTenantId = (decoded['controlPlaneTenantId'] ??
                 decoded['tenantId'] ??
                 decoded['tenant_id'] ??
                 '')
@@ -4545,7 +4535,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       storeId: storeId,
       branchId: branchId,
       hostDeviceId: hostDeviceId,
-      cloudTenantId: cloudTenantId,
+      controlPlaneTenantId: controlPlaneTenantId,
     );
   }
 
@@ -4555,8 +4545,9 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     void apply() {
       if (payload.transport.contains('lan')) {
         _clientSyncMode = SyncMode.lanOnly;
-      } else if (payload.transport.contains('cloud')) {
-        _clientSyncMode = SyncMode.cloudConnected;
+      } else if (payload.transport.contains('direct') ||
+          payload.transport.contains('direct')) {
+        _clientSyncMode = SyncMode.directConnected;
       } else if (fallbackMode != null) {
         _clientSyncMode = fallbackMode;
       }
@@ -4565,7 +4556,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       if (_clientSyncMode == SyncMode.lanOnly) {
         _lanTokenController.text = payload.code;
       } else {
-        _cloudPairingCodeController.text = payload.code;
+        _directPairingCodeController.text = payload.code;
       }
       _rememberExpectedPairingTarget(payload);
       _status = tr.text('qr_detected_review_connect');
@@ -4585,11 +4576,11 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     final actualStore = _normalizedPairingId(identity.storeId);
     final actualBranch = _normalizedPairingId(identity.branchId);
     final actualHost = _normalizedPairingId(identity.hostDeviceId);
-    final actualTenant = _normalizedPairingId(identity.cloudTenantId);
+    final actualTenant = _normalizedPairingId(identity.controlPlaneTenantId);
     final expectedStore = _normalizedPairingId(_expectedPairingStoreId);
     final expectedBranch = _normalizedPairingId(_expectedPairingBranchId);
     final expectedHost = _normalizedPairingId(_expectedPairingHostDeviceId);
-    final expectedTenant = _normalizedPairingId(_expectedPairingCloudTenantId);
+    final expectedTenant = _normalizedPairingId(_expectedPairingControlPlaneId);
     if (expectedStore.isNotEmpty && actualStore != expectedStore) {
       mismatches.add(tr.text('store_id_label'));
     }
@@ -4654,8 +4645,9 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     final payload = _parseScannedPairingPayload(raw.trim());
     if (payload.transport.contains('lan')) {
       setDialogMode(SyncMode.lanOnly);
-    } else if (payload.transport.contains('cloud')) {
-      setDialogMode(SyncMode.cloudConnected);
+    } else if (payload.transport.contains('direct') ||
+        payload.transport.contains('direct')) {
+      setDialogMode(SyncMode.directConnected);
     }
     _applyParsedPairingPayload(payload,
         dialogSetState: setDialogState, fallbackMode: fallbackMode);
@@ -4685,37 +4677,9 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     _applyParsedPairingPayload(payload);
   }
 
-  Future<void> _createCloudPairingCode() => _run(() async {
-        final identity = widget.store.appIdentity;
-        final cloud = CloudSyncSettings.load();
-        if (!_cloudEnabled || !identity.isCloudEnabled || !cloud.isConfigured) {
-          throw StateError(tr.text('enable_cloud_before_pairing_code'));
-        }
-        final result = await _cloudEngine(enabled: _cloudEnabled)
-            .createPairingCode(ttlMinutes: _pairingCodeLifetime.inMinutes);
-        if (!result.ok) {
-          throw StateError(localizeRuntimeMessage(result.message, tr));
-        }
-        final expiresAt =
-            result.expiresAt ?? DateTime.now().add(_pairingCodeLifetime);
-        await LocalDatabaseService.setString(
-            _cloudPairingCodeStorageKey, result.code);
-        await LocalDatabaseService.setString(
-            _cloudPairingExpiryStorageKey, expiresAt.toIso8601String());
-        setState(() {
-          _latestPairingTransport = 'cloud';
-          _latestCloudPairingCode = result.code;
-          _latestCloudPairingExpiresAt = expiresAt;
-          _latestCloudPairingConsumed = false;
-          _latestCloudPairingInvalid = false;
-          _showCloudPairingCode = true;
-          _status = tr.text('cloud_pairing_code_created');
-        });
-      });
-
   Future<void> _createDirectPairingCode() => _run(() async {
         final identity = widget.store.appIdentity;
-        final settings = CloudSyncSettings.load();
+        final settings = VpsControlPlaneSettings.load();
         if (!identity.isHost || settings.apiBaseUrl.trim().isEmpty) {
           throw StateError('Direct pairing needs the Ventio server address.');
         }
@@ -4739,17 +4703,17 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         final expiresAt =
             result.expiresAt ?? DateTime.now().add(_pairingCodeLifetime);
         await LocalDatabaseService.setString(
-            _cloudPairingCodeStorageKey, result.code);
+            _directPairingCodeStorageKey, result.code);
         await LocalDatabaseService.setString(
-            _cloudPairingExpiryStorageKey, expiresAt.toIso8601String());
+            _directPairingExpiryStorageKey, expiresAt.toIso8601String());
         if (!mounted) return;
         setState(() {
           _latestPairingTransport = 'direct';
-          _latestCloudPairingCode = result.code;
-          _latestCloudPairingExpiresAt = expiresAt;
-          _latestCloudPairingConsumed = false;
-          _latestCloudPairingInvalid = false;
-          _showCloudPairingCode = true;
+          _latestDirectPairingCode = result.code;
+          _latestDirectPairingExpiresAt = expiresAt;
+          _latestDirectPairingConsumed = false;
+          _latestDirectPairingInvalid = false;
+          _showDirectPairingCode = true;
           _status = 'Direct pairing code created.';
         });
       });
@@ -4793,11 +4757,11 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   Future<void> _syncNow() => _run(() async {
         final identity = widget.store.appIdentity;
         final lan = LanSyncSettings.load();
-        final cloud = CloudSyncSettings.load();
+        final direct = VpsControlPlaneSettings.load();
         final hostLanEnabled = identity.isHost &&
             (_lanEnabledForHost || (lan.setupComplete && lan.isHost));
-        final hostCloudEnabled = identity.isHost &&
-            (_cloudEnabled || (identity.isCloudEnabled && cloud.isConfigured));
+        final hostDirectEnabled = identity.isHost &&
+            (_directEnabled || (identity.isDirectEnabled && direct.isConfigured));
         final messages = <String>[];
         if (identity.activeSyncTransportNormalized == 'direct') {
           final result =
@@ -4816,15 +4780,15 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
             throw StateError(localizeRuntimeMessage(result.message, tr));
           }
           messages.add('Direct: ${tr.text('sync_completed')}');
-        } else if (hostCloudEnabled ||
+        } else if (hostDirectEnabled ||
             (!identity.isHost &&
-                identity.activeSyncTransportNormalized == 'cloud')) {
-          final result = await _cloudEngine(enabled: true).syncNow(
+                identity.activeSyncTransportNormalized == 'direct')) {
+          final result = await _directEngine(enabled: true).syncNow(
             onProgress: (value, label) {
               if (mounted) {
                 setState(() {
                   _status =
-                      '${tr.text('connection_cloud')}: ${localizeRuntimeMessage(label, tr)} ${(value * 100).round()}%';
+                      '${tr.text('connection_direct')}: ${localizeRuntimeMessage(label, tr)} ${(value * 100).round()}%';
                   _statusProgress = value;
                 });
               }
@@ -4834,7 +4798,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
             throw StateError(localizeRuntimeMessage(result.message, tr));
           }
           messages.add(
-              '${tr.text('connection_cloud')}: ${tr.text('sync_completed')}');
+              '${tr.text('connection_direct')}: ${tr.text('sync_completed')}');
         }
         if (identity.isClient &&
             identity.activeSyncTransportNormalized == 'lan') {
@@ -4902,35 +4866,35 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         });
         final identity = widget.store.appIdentity;
         final lan = LanSyncSettings.load();
-        final cloud = CloudSyncSettings.load();
+        final direct = VpsControlPlaneSettings.load();
         final peerStates = <String, HostPeerSyncState>{
           for (final state in SyncDeviceStateStore.loadPeerStates())
             state.deviceId: state,
         };
-        var cloudReachable = false;
-        var cloudProblem = '';
-        var cloudDevices = const <CloudDeviceStatus>[];
-        if ((_cloudEnabled || identity.isCloudEnabled) && cloud.isConfigured) {
-          final cloudConnection =
-              await _cloudEngine(enabled: true).testConnection();
-          cloudReachable = cloudConnection.ok;
-          cloudProblem = cloudConnection.ok ? '' : cloudConnection.message;
-          if (cloudReachable) {
+        var controlPlaneReachable = false;
+        var directProblem = '';
+        var directDevices = const <DirectDeviceStatus>[];
+        if ((_directEnabled || identity.isDirectEnabled) && direct.isConfigured) {
+          final directConnection =
+              await _directEngine(enabled: true).testConnection();
+          controlPlaneReachable = directConnection.ok;
+          directProblem = directConnection.ok ? '' : directConnection.message;
+          if (controlPlaneReachable) {
             try {
-              cloudDevices = await _cloudAdminService().listDevices(cloud);
+              directDevices = await _controlPlaneService().listDevices(direct);
             } catch (error) {
-              cloudReachable = false;
-              cloudProblem = error.toString();
+              controlPlaneReachable = false;
+              directProblem = error.toString();
             }
           }
         }
-        final cloudById = <String, CloudDeviceStatus>{
-          for (final device in cloudDevices)
+        final directById = <String, DirectDeviceStatus>{
+          for (final device in directDevices)
             if (device.deviceId.trim().isNotEmpty)
               device.deviceId.trim(): device,
         };
         // Phase 3: Host Registry is the single source of truth for
-        // Monitoring/Test Connection device discovery. Cloud devices and peer
+        // Monitoring/Test Connection device discovery. Direct devices and peer
         // states are used only as status overlays for registered Clients.
         final registryById = <String, HostRegistryDevice>{
           for (final entry in lan.hostRegistry.entries)
@@ -4951,28 +4915,28 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         var ready = 0;
         for (final id in ids) {
           final registryDevice = registryById[id];
-          final cloudDevice = cloudById[id];
+          final directDevice = directById[id];
           final peer = peerStates[id];
           final lanToken = lan.pairedDevices[id]?.trim().isNotEmpty == true
               ? lan.pairedDevices[id]!.trim()
-              : ((registryDevice?.source != 'cloud_pairing_claim' &&
+              : ((registryDevice?.source != 'direct_pairing_claim' &&
                       registryDevice?.deviceToken.trim().isNotEmpty == true)
                   ? registryDevice!.deviceToken.trim()
                   : '');
           final parts = <String>[];
-          if (cloudDevice != null) {
-            if (cloudDevice.revoked) {
-              parts.add(tr.text('cloud_unauthorized'));
-            } else if (cloudDevice.online || cloudDevice.isOnline) {
-              parts.add(tr.text('cloud_active'));
+          if (directDevice != null) {
+            if (directDevice.revoked) {
+              parts.add(tr.text('direct_unauthorized'));
+            } else if (directDevice.online || directDevice.isOnline) {
+              parts.add(tr.text('direct_active'));
             } else {
-              parts.add(tr.text('cloud_pending'));
+              parts.add(tr.text('direct_pending'));
             }
-          } else if ((_cloudEnabled || identity.isCloudEnabled) &&
-              cloud.isConfigured) {
-            parts.add(cloudReachable
-                ? tr.text('cloud_not_configured')
-                : '${tr.text('cloud_error')}${cloudProblem.isEmpty ? '' : ': $cloudProblem'}');
+          } else if ((_directEnabled || identity.isDirectEnabled) &&
+              direct.isConfigured) {
+            parts.add(controlPlaneReachable
+                ? tr.text('direct_not_configured')
+                : '${tr.text('direct_error')}${directProblem.isEmpty ? '' : ': $directProblem'}');
           }
           if (lanToken.isNotEmpty) {
             parts.add(tr.text('lan_active'));
@@ -4985,9 +4949,9 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                   peer.lastAppliedHostCursor != null);
           final syncStatus = _peerSyncStatus(peer);
           if (peerSynced &&
-              ((cloudDevice != null &&
-                      !cloudDevice.revoked &&
-                      (cloudDevice.online || cloudDevice.isOnline)) ||
+              ((directDevice != null &&
+                      !directDevice.revoked &&
+                      (directDevice.online || directDevice.isOnline)) ||
                   lanToken.isNotEmpty)) {
             ready++;
           }
@@ -4996,7 +4960,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
               '${tr.text('last_sync')}: ${_formatShortDateTime(peer?.lastAckCursor ?? peer?.lastAppliedHostCursor ?? peer?.updatedAt)}');
           final label = _shortDeviceLabel(id,
               name:
-                  registryDevice?.deviceName ?? cloudDevice?.deviceName ?? '');
+                  registryDevice?.deviceName ?? directDevice?.deviceName ?? '');
           lines.add('$label → ${parts.join(' | ')}');
         }
 
@@ -5010,18 +4974,19 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         });
       });
 
-  Future<void> _testCloudConnection() => _run(() async {
+  // ignore: unused_element
+  Future<void> _testDirectConnection() => _run(() async {
         setState(() {
-          _status = tr.text('testing_cloud_connection');
+          _status = tr.text('testing_direct_connection');
           _statusProgress = 0.25;
         });
-        final result = await _cloudEngine(enabled: true).testConnection();
+        final result = await UnifiedSyncFactory.directEngine(widget.store)
+            .testConnection();
         if (!result.ok) {
           throw StateError(localizeRuntimeMessage(result.message, tr));
         }
         setState(() {
-          _status =
-              '${tr.text('connection_cloud')}: ${localizeRuntimeMessage(result.message, tr)}';
+          _status = 'Direct: ${localizeRuntimeMessage(result.message, tr)}';
           _statusProgress = 1.0;
         });
       });
@@ -5055,13 +5020,13 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     final isHost = _deviceRole == DeviceRole.host;
     final lanActive =
         isHost ? _lanEnabledForHost : identity.syncMode == SyncMode.lanOnly;
-    final cloudActive = isHost
-        ? _effectiveCloudEnabled
-        : (identity.syncMode == SyncMode.cloudConnected &&
-            _cloudSyncPlanAllowsUi);
+    final directActive = isHost
+        ? _effectiveDirectEnabled
+        : (identity.syncMode == SyncMode.directConnected &&
+            _directSyncPlanAllowsUi);
     final hostActionLabel = tr.text('sync_now');
     final allGood = widget.store.pendingSyncCount == 0 &&
-        (lanActive || cloudActive || !isHost);
+        (lanActive || directActive || !isHost);
 
     return Card(
       elevation: 0,
@@ -5075,7 +5040,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
               allGood: allGood,
               isHost: isHost,
               lanActive: lanActive,
-              cloudActive: cloudActive,
+              directActive: directActive,
               actionLabel: hostActionLabel,
             ),
             if (widget.store.latestHostTransferNotification != null) ...[
@@ -5087,7 +5052,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                 allGood: allGood,
                 isHost: isHost,
                 lanActive: lanActive,
-                cloudActive: cloudActive),
+                directActive: directActive),
             if (!isHost && widget.store.isSuspendedByHost) ...[
               const SizedBox(height: 14),
               _clientSuspendedWarningCard(context),
@@ -5099,7 +5064,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                 final thisDevice = _thisDeviceCard(context,
                     isHost: isHost,
                     lanActive: lanActive,
-                    cloudActive: cloudActive);
+                    directActive: directActive);
 
                 // Clients are paired during first-time setup/login. Once this
                 // settings page is reachable, the Client should not show a
@@ -5110,7 +5075,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                 }
 
                 final addDevice =
-                    _addDeviceCard(context, isHost: true, isCloudClient: false);
+                    _addDeviceCard(context, isHost: true, isDirectClient: false);
                 if (compact) {
                   return Column(children: [
                     thisDevice,
@@ -5130,7 +5095,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
             ),
             const SizedBox(height: 14),
             _syncChannelsCard(context,
-                isHost: isHost, lanActive: lanActive, cloudActive: cloudActive),
+                isHost: isHost, lanActive: lanActive, directActive: directActive),
             if (isHost) ...[
               const SizedBox(height: 14),
               _advancedSyncCard(context, isHost: isHost),
@@ -5186,7 +5151,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     required bool allGood,
     required bool isHost,
     required bool lanActive,
-    required bool cloudActive,
+    required bool directActive,
     required String actionLabel,
   }) {
     final tr = AppLocalizations.of(context);
@@ -5285,7 +5250,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       {required bool allGood,
       required bool isHost,
       required bool lanActive,
-      required bool cloudActive}) {
+      required bool directActive}) {
     final tr = AppLocalizations.of(context);
     final color = Theme.of(context).colorScheme;
     final accent = allGood ? Colors.green : color.primary;
@@ -5350,9 +5315,9 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                   lanActive ? Colors.green : color.onSurfaceVariant),
               _compactStatusChip(
                   context,
-                  Icons.cloud_outlined,
-                  '${tr.text('cloud')}: ${cloudActive ? tr.text('connection_state_active') : tr.text('off')}',
-                  cloudActive ? Colors.green : color.onSurfaceVariant),
+                  Icons.sync,
+                  '${tr.text('direct')}: ${directActive ? tr.text('connection_state_active') : tr.text('off')}',
+                  directActive ? Colors.green : color.onSurfaceVariant),
               _compactStatusChip(
                   context,
                   Icons.storage_outlined,
@@ -5380,7 +5345,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   Widget _thisDeviceCard(BuildContext context,
       {required bool isHost,
       required bool lanActive,
-      required bool cloudActive}) {
+      required bool directActive}) {
     final tr = AppLocalizations.of(context);
     final color = Theme.of(context).colorScheme;
     return _plainSyncPanel(
@@ -5411,19 +5376,19 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           const SizedBox(height: 8),
           _simpleInfoRow(
               context,
-              tr.text('cloud_connection'),
-              cloudActive
+              tr.text('direct_connection'),
+              directActive
                   ? tr.text('connection_state_active')
                   : tr.text('connection_state_disabled'),
-              Icons.cloud_outlined,
-              cloudActive ? Colors.green : color.onSurfaceVariant),
+              Icons.sync,
+              directActive ? Colors.green : color.onSurfaceVariant),
         ],
       ),
     );
   }
 
   Widget _addDeviceCard(BuildContext context,
-      {required bool isHost, required bool isCloudClient}) {
+      {required bool isHost, required bool isDirectClient}) {
     final tr = AppLocalizations.of(context);
     return _plainSyncPanel(
       context,
@@ -5433,7 +5398,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           ? tr.text('pair_new_device_desc')
           : tr.text('connect_device_desc'),
       child: _pairingContent(context,
-          isHost: isHost, isCloudClient: isCloudClient),
+          isHost: isHost, isDirectClient: isDirectClient),
     );
   }
 
@@ -5442,8 +5407,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       lan.host.trim().isNotEmpty &&
       lan.secret.trim().isNotEmpty;
 
-  bool _isCloudClientConfigured(CloudSyncSettings cloud) =>
-      cloud.isConfigured && cloud.apiBaseUrl.trim().isNotEmpty;
+  bool _isDirectClientConfigured(DirectSyncSettings direct) =>
+      direct.isConfigured && direct.apiBaseUrl.trim().isNotEmpty;
 
   String _clientTransportStatusLabel(BuildContext context,
       {required bool active, required bool configured}) {
@@ -5456,13 +5421,13 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   Future<void> _openConnectToStoreDialog(SyncMode mode) async {
     final tr = AppLocalizations.of(context);
     final lan = LanSyncSettings.load();
-    final cloud = CloudSyncSettings.load();
+    final direct = DirectSyncSettings.load();
     _lanHostController.text = lan.host;
     _lanPortController.text = lan.port.toString();
     _lanIntervalController.text = lan.intervalSeconds.toString();
     _lanTokenController.text = lan.secret.trim();
-    _cloudApiController.text = cloud.apiBaseUrl;
-    _cloudPairingCodeController.clear();
+    _directApiController.text = direct.apiBaseUrl;
+    _directPairingCodeController.clear();
     _clearExpectedPairingTarget();
     var dialogMode = mode;
     var dialogBusy = false;
@@ -5502,9 +5467,9 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                                 icon: const Icon(Icons.lan_outlined),
                                 label: Text(tr.text('lan'))),
                             ButtonSegment<SyncMode>(
-                                value: SyncMode.cloudConnected,
-                                icon: const Icon(Icons.cloud_outlined),
-                                label: Text(tr.text('cloud'))),
+                                value: SyncMode.directConnected,
+                                icon: const Icon(Icons.link_outlined),
+                                label: const Text('Direct')),
                           ],
                           selected: {dialogMode},
                           onSelectionChanged: dialogBusy
@@ -5559,7 +5524,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                       ] else ...[
                         TextField(
                             enabled: !dialogBusy,
-                            controller: _cloudPairingCodeController,
+                            controller: _directPairingCodeController,
                             decoration: InputDecoration(
                                 labelText: tr.text('pairing_code_from_host'),
                                 border: const OutlineInputBorder())),
@@ -5629,13 +5594,13 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                                   widget.store.appIdentity);
                               _validateAgainstExistingClientIdentity(
                                   previousIdentity, widget.store.appIdentity);
-                              if (previousActive == 'cloud') {
+                              if (previousActive == 'direct') {
                                 await widget.store
-                                    .setActiveSyncTransport('cloud');
+                                    .setActiveSyncTransport('direct');
                               }
                             } else {
                               final code =
-                                  _cloudPairingCodeController.text.trim();
+                                  _directPairingCodeController.text.trim();
                               if (code.isEmpty) {
                                 setDialogState(() => dialogBusy = false);
                                 return;
@@ -5643,14 +5608,10 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                               final previousIdentity = widget.store.appIdentity;
                               final previousActive = previousIdentity
                                   .activeSyncTransportNormalized;
-                              final settings =
-                                  CloudSyncSettings.load().copyWith(
-                                enabled: true,
-                                autoSyncEnabled: previousActive == 'cloud',
-                              );
-                              await settings.save();
-                              final result = await _cloudEngine(enabled: true)
-                                  .claimPairingCode(
+                              final result =
+                                  await UnifiedSyncFactory.directEngine(
+                                          widget.store)
+                                      .claimPairingCode(
                                 code,
                                 onProgress: dialogProgress,
                               );
@@ -5663,6 +5624,9 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                               if (previousActive == 'lan') {
                                 await widget.store
                                     .setActiveSyncTransport('lan');
+                              } else {
+                                await widget.store
+                                    .setActiveSyncTransport('direct');
                               }
                             }
                             if (dialogContext.mounted) {
@@ -5698,17 +5662,17 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   Widget _syncChannelsCard(BuildContext context,
       {required bool isHost,
       required bool lanActive,
-      required bool cloudActive}) {
+      required bool directActive}) {
     final tr = AppLocalizations.of(context);
     final lan = LanSyncSettings.load();
-    final cloud = CloudSyncSettings.load();
+    final direct = DirectSyncSettings.load();
     final lanConfigured =
         isHost ? _lanEnabledForHost : _isLanClientConfigured(lan);
-    final cloudPlanDenied = _cloudSyncPlanDenied;
-    final cloudPlanAllowsUi = _cloudSyncPlanAllowsUi;
-    final cloudConfigured = isHost
-        ? _effectiveCloudEnabled
-        : (_isCloudClientConfigured(cloud) && cloudPlanAllowsUi);
+    final directPlanDenied = _directSyncPlanDenied;
+    final directPlanAllowsUi = _directSyncPlanAllowsUi;
+    final directConfigured = isHost
+        ? _effectiveDirectEnabled
+        : (_isDirectClientConfigured(direct) && directPlanAllowsUi);
     return _plainSyncPanel(
       context,
       icon: Icons.hub_outlined,
@@ -5718,7 +5682,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         children: [
           if (!isHost) ...[
             _activeTransportSelector(context,
-                lanConfigured: lanConfigured, cloudConfigured: cloudConfigured),
+                lanConfigured: lanConfigured, directConfigured: directConfigured),
             const SizedBox(height: 12),
           ],
           _syncMethodExpansionTile(
@@ -5782,24 +5746,24 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           const Divider(height: 20),
           _syncMethodExpansionTile(
             context,
-            icon: Icons.cloud_outlined,
-            title: tr.text('cloud_sync'),
+            icon: Icons.link_outlined,
+            title: 'Direct',
             subtitle: isHost
-                ? (cloudPlanDenied
-                    ? tr.text('cloud_sync_plan_locked_short')
-                    : (cloudConfigured
+                ? (directPlanDenied
+                    ? tr.text('direct_sync_plan_locked_short')
+                    : (directConfigured
                         ? tr.text('connection_state_active')
                         : tr.text('connection_state_disabled')))
                 : _clientTransportStatusLabel(context,
-                    active: cloudActive, configured: cloudConfigured),
-            active: cloudActive,
-            configured: cloudConfigured,
+                    active: directActive, configured: directConfigured),
+            active: directActive,
+            configured: directConfigured,
             accent: Colors.blue,
             trailing: isHost
                 ? Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      if (cloudPlanDenied) ...[
+                      if (directPlanDenied) ...[
                         Icon(Icons.lock_outline,
                             size: 18,
                             color:
@@ -5807,37 +5771,37 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                         const SizedBox(width: 8),
                       ],
                       Switch(
-                        value: _effectiveCloudEnabled,
-                        onChanged: (_busy || cloudPlanDenied)
+                        value: _effectiveDirectEnabled,
+                        onChanged: (_busy || directPlanDenied)
                             ? null
-                            : (value) => setState(() => _cloudEnabled = value),
+                            : (value) => setState(() => _directEnabled = value),
                       ),
                     ],
                   )
-                : (!cloudConfigured
+                : (!directConfigured
                     ? TextButton.icon(
-                        onPressed: (_busy || cloudPlanDenied)
+                        onPressed: (_busy || directPlanDenied)
                             ? null
                             : () => _openConnectToStoreDialog(
-                                SyncMode.cloudConnected),
-                        icon: Icon(cloudPlanAllowsUi
+                                SyncMode.directConnected),
+                        icon: Icon(directPlanAllowsUi
                             ? Icons.add_link_outlined
                             : Icons.lock_outline),
-                        label: Text(cloudPlanAllowsUi
+                        label: Text(directPlanAllowsUi
                             ? tr.text('connect_to_store')
-                            : tr.text('cloud_sync_plan_locked_short')))
+                            : 'Direct is unavailable'))
                     : null),
             children: isHost
                 ? [
-                    if (cloudPlanDenied)
+                    if (directPlanDenied)
                       _softNotice(
                         context,
                         Icons.lock_outline,
-                        tr.text('cloud_sync_plan_locked_title'),
-                        tr.text('cloud_sync_plan_locked_desc'),
+                        tr.text('direct_sync_plan_locked_title'),
+                        tr.text('direct_sync_plan_locked_desc'),
                       )
-                    else if (_effectiveCloudEnabled)
-                      ..._cloudFields(showPairingCode: false)
+                    else if (_effectiveDirectEnabled)
+                      ..._directFields(showPairingCode: false)
                     else
                       _miniLine(tr.text('status'),
                           tr.text('connection_state_disabled')),
@@ -5847,10 +5811,10 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                         context,
                         tr.text('status'),
                         _clientTransportStatusLabel(context,
-                            active: cloudActive, configured: cloudConfigured),
-                        cloudActive
+                            active: directActive, configured: directConfigured),
+                        directActive
                             ? Icons.check_circle_outline
-                            : (cloudConfigured
+                            : (directConfigured
                                 ? Icons.lock_outline
                                 : Icons.link_off_outlined)),
                   ],
@@ -5861,12 +5825,12 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   }
 
   Widget _activeTransportSelector(BuildContext context,
-      {required bool lanConfigured, required bool cloudConfigured}) {
+      {required bool lanConfigured, required bool directConfigured}) {
     final tr = AppLocalizations.of(context);
     final canSwitchToLan = lanConfigured;
-    final canSwitchToCloud = cloudConfigured && _cloudSyncPlanAllowsUi;
+    final canSwitchToDirect = directConfigured;
     final alternateConfigured =
-        _clientSyncMode == SyncMode.lanOnly ? cloudConfigured : lanConfigured;
+        _clientSyncMode == SyncMode.lanOnly ? directConfigured : lanConfigured;
     return Card.outlined(
       margin: EdgeInsets.zero,
       child: Padding(
@@ -5902,10 +5866,10 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                     label: Text(tr.text('lan')),
                     enabled: canSwitchToLan),
                 ButtonSegment<SyncMode>(
-                    value: SyncMode.cloudConnected,
-                    icon: const Icon(Icons.cloud_outlined),
-                    label: Text(tr.text('cloud')),
-                    enabled: canSwitchToCloud),
+                    value: SyncMode.directConnected,
+                    icon: const Icon(Icons.link_outlined),
+                    label: const Text('Direct'),
+                    enabled: canSwitchToDirect),
               ],
               selected: {_clientSyncMode},
               onSelectionChanged: _busy
@@ -5913,7 +5877,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                   : (value) {
                       final next = value.first;
                       if (next == SyncMode.lanOnly && !lanConfigured) return;
-                      if (next == SyncMode.cloudConnected && !cloudConfigured) {
+                      if (next == SyncMode.directConnected &&
+                          !directConfigured) {
                         return;
                       }
                       setState(() => _clientSyncMode = next);
@@ -6227,7 +6192,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   }
 
   Widget _pairingContent(BuildContext context,
-      {required bool isHost, required bool isCloudClient}) {
+      {required bool isHost, required bool isDirectClient}) {
     final tr = AppLocalizations.of(context);
     if (isHost) {
       return Column(
@@ -6242,10 +6207,6 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                   icon: const Icon(Icons.lan_outlined),
                   label: Text(_lanPairingButtonLabel)),
               OutlinedButton.icon(
-                  onPressed: _busy ? null : _handleCloudPairingButton,
-                  icon: const Icon(Icons.cloud_queue_outlined),
-                  label: Text(_cloudPairingButtonLabel)),
-              OutlinedButton.icon(
                   onPressed: _busy ? null : _createDirectPairingCode,
                   icon: const Icon(Icons.link_outlined),
                   label: Text(_directPairingButtonLabel)),
@@ -6255,9 +6216,9 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
             const SizedBox(height: 12),
             _lanPairingCodeCard()
           ],
-          if (_showCloudPairingCode) ...[
+          if (_showDirectPairingCode) ...[
             const SizedBox(height: 12),
-            _cloudPairingCodeCard()
+            _directPairingCodeCard()
           ],
         ],
       );
@@ -6329,10 +6290,10 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     final identity = widget.store.appIdentity;
     if (identity.isHost) {
       final lan = LanSyncSettings.load();
-      final cloud = CloudSyncSettings.load();
-      return '${tr.text('connection_role_host')} • ${tr.text('connection_lan')}: ${lan.setupComplete && lan.isHost ? tr.text('connection_state_active') : tr.text('connection_state_disabled')} • ${tr.text('connection_cloud')}: ${identity.isCloudEnabled && cloud.isConfigured ? tr.text('connection_state_active') : tr.text('connection_state_disabled')}';
+      final direct = DirectSyncSettings.load();
+      return '${tr.text('connection_role_host')} • ${tr.text('connection_lan')}: ${lan.setupComplete && lan.isHost ? tr.text('connection_state_active') : tr.text('connection_state_disabled')} • Direct: ${direct.isConfigured ? tr.text('connection_state_active') : tr.text('connection_state_disabled')}';
     }
-    return '${tr.text('connection_role_client')} • ${identity.syncMode == SyncMode.cloudConnected ? tr.text('connection_cloud') : identity.syncMode == SyncMode.lanOnly ? tr.text('connection_lan') : tr.text('connection_local')}';
+    return '${tr.text('connection_role_client')} • ${identity.activeSyncTransportNormalized == 'direct' ? 'Direct' : identity.syncMode == SyncMode.lanOnly ? tr.text('connection_lan') : tr.text('connection_local')}';
   }
 
   Widget _hostChangedNotificationCard() {
@@ -6663,8 +6624,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       'storeId': identity.storeId,
       'branchId': identity.branchId,
       'hostDeviceId': widget.store.deviceId,
-      if (identity.cloudTenantId.trim().isNotEmpty)
-        'cloudTenantId': identity.cloudTenantId,
+      if (identity.controlPlaneTenantId.trim().isNotEmpty)
+        'controlPlaneTenantId': identity.controlPlaneTenantId,
       'expiresAt': _latestLanPairingExpiresAt?.toIso8601String(),
     });
     return Container(
@@ -6796,21 +6757,21 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     );
   }
 
-  Widget _cloudPairingCodeCard() {
+  Widget _directPairingCodeCard() {
     final tr = AppLocalizations.of(context);
-    final code = _latestCloudPairingCode.trim();
+    final code = _latestDirectPairingCode.trim();
     if (code.isEmpty) {
       return const SizedBox.shrink();
     }
     final status = _pairingVisualStatus(
         code: code,
-        expiresAt: _latestCloudPairingExpiresAt,
-        consumed: _latestCloudPairingConsumed,
-        invalid: _latestCloudPairingInvalid);
+        expiresAt: _latestDirectPairingExpiresAt,
+        consumed: _latestDirectPairingConsumed,
+        invalid: _latestDirectPairingInvalid);
     final borderColor = _pairingBorderColor(context, status);
     final expiresText = status == _PairingCodeVisualStatus.active
         ? tr.format('expires_in',
-            {'time': _countdownText(_latestCloudPairingExpiresAt)})
+            {'time': _countdownText(_latestDirectPairingExpiresAt)})
         : tr.format('pairing_code_state_help', {
             'status': _pairingStatusData(context, status).label.toLowerCase()
           });
@@ -6834,7 +6795,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                   child: Text(
                       _latestPairingTransport == 'direct'
                           ? 'Direct Pairing Code'
-                          : tr.text('cloud_pairing_code'),
+                          : tr.text('direct_pairing_code'),
                       style: Theme.of(context).textTheme.titleMedium)),
               _pairingStatusBadge(context, status),
             ],
@@ -6855,13 +6816,13 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                     'apiBaseUrl':
                         DirectSyncSettings.load().apiBaseUrl.trim().isNotEmpty
                             ? DirectSyncSettings.load().apiBaseUrl.trim()
-                            : CloudSyncSettings.load().apiBaseUrl,
+                            : VpsControlPlaneSettings.load().apiBaseUrl,
                   'storeId': widget.store.appIdentity.storeId,
                   'branchId': widget.store.appIdentity.branchId,
                   'hostDeviceId': widget.store.deviceId,
-                  if (widget.store.appIdentity.cloudTenantId.trim().isNotEmpty)
-                    'cloudTenantId': widget.store.appIdentity.cloudTenantId,
-                  'expiresAt': _latestCloudPairingExpiresAt?.toIso8601String(),
+                  if (widget.store.appIdentity.controlPlaneTenantId.trim().isNotEmpty)
+                    'controlPlaneTenantId': widget.store.appIdentity.controlPlaneTenantId,
+                  'expiresAt': _latestDirectPairingExpiresAt?.toIso8601String(),
                 }),
                 version: QrVersions.auto,
                 size: 180,
@@ -6882,9 +6843,9 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           _manualPairingValueTile(
               label: _latestPairingTransport == 'direct'
                   ? 'Direct pairing code'
-                  : tr.text('cloud_pairing_code'),
+                  : tr.text('direct_pairing_code'),
               value: code,
-              copiedMessage: tr.text('cloud_pairing_code_copied')),
+              copiedMessage: tr.text('direct_pairing_code_copied')),
         ],
       ),
     );
@@ -6925,10 +6886,10 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         ],
       ];
 
-  List<Widget> _cloudFields({required bool showPairingCode}) => [
+  List<Widget> _directFields({required bool showPairingCode}) => [
         if (showPairingCode)
           TextField(
-            controller: _cloudPairingCodeController,
+            controller: _directPairingCodeController,
             decoration: InputDecoration(
               labelText:
                   AppLocalizations.of(context).text('pairing_code_from_host'),
@@ -6949,28 +6910,27 @@ class _AdvancedSyncDebugCard extends StatefulWidget {
 }
 
 class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
-  Future<_CloudMonitoringSnapshot>? _cloudMonitoringFuture;
+  Future<_DirectMonitoringSnapshot>? _directMonitoringFuture;
 
-  CloudSyncAdminService _cloudAdminService() =>
-      CloudSyncAdminService(widget.store);
+  DirectControlPlaneService _controlPlaneService() => DirectControlPlaneService(widget.store);
 
   @override
   void initState() {
     super.initState();
-    _refreshCloudDevices();
+    _refreshDirectDevices();
   }
 
-  void _refreshCloudDevices() {
-    final cloudSettings = CloudSyncSettings.load();
-    if (widget.store.appIdentity.isHost && cloudSettings.isConfigured) {
-      _cloudMonitoringFuture = _loadAndAdoptCloudDevices(cloudSettings)
-          .catchError((_) => const _CloudMonitoringSnapshot(
-                devices: <CloudDeviceStatus>[],
+  void _refreshDirectDevices() {
+    final directSettings = VpsControlPlaneSettings.load();
+    if (widget.store.appIdentity.isHost && directSettings.isConfigured) {
+      _directMonitoringFuture = _loadAndAdoptDirectDevices(directSettings)
+          .catchError((_) => const _DirectMonitoringSnapshot(
+                devices: <DirectDeviceStatus>[],
               ));
     } else {
-      _cloudMonitoringFuture = Future<_CloudMonitoringSnapshot>.value(
-        _CloudMonitoringSnapshot(
-          devices: const <CloudDeviceStatus>[],
+      _directMonitoringFuture = Future<_DirectMonitoringSnapshot>.value(
+        _DirectMonitoringSnapshot(
+          devices: const <DirectDeviceStatus>[],
           limit: widget.store.appIdentity.isHost
               ? _localClientDeviceLimitStatus(
                   widget.store,
@@ -6982,29 +6942,29 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
     }
   }
 
-  Future<_CloudMonitoringSnapshot> _loadAndAdoptCloudDevices(
-      CloudSyncSettings cloudSettings) async {
-    final service = _cloudAdminService();
-    var result = await service.listDevicesWithLimit(cloudSettings);
+  Future<_DirectMonitoringSnapshot> _loadAndAdoptDirectDevices(
+      VpsControlPlaneSettings directSettings) async {
+    final service = _controlPlaneService();
+    var result = await service.listDevicesWithLimit(directSettings);
     var devices = result.devices;
-    final repaired = await _repairLegacyCloudDeviceLinks(
-        service, cloudSettings, result.devices);
+    final repaired = await _repairLegacyDirectDeviceLinks(
+        service, directSettings, result.devices);
     if (repaired) {
-      result = await service.listDevicesWithLimit(cloudSettings);
+      result = await service.listDevicesWithLimit(directSettings);
       devices = result.devices;
     }
-    await _adoptCloudRegistryDevices(devices);
-    return _CloudMonitoringSnapshot(
+    await _adoptDirectRegistryDevices(devices);
+    return _DirectMonitoringSnapshot(
       devices: devices,
       limit: result.limit ??
           _localClientDeviceLimitStatus(widget.store, LanSyncSettings.load()),
     );
   }
 
-  Future<bool> _repairLegacyCloudDeviceLinks(
-    CloudSyncAdminService service,
-    CloudSyncSettings cloudSettings,
-    List<CloudDeviceStatus> devices,
+  Future<bool> _repairLegacyDirectDeviceLinks(
+    DirectControlPlaneService service,
+    VpsControlPlaneSettings directSettings,
+    List<DirectDeviceStatus> devices,
   ) async {
     final identity = widget.store.appIdentity;
     if (!identity.isHost) return false;
@@ -7037,15 +6997,15 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
         .toSet();
 
     if (repairIds.isEmpty) return false;
-    final result = await service.repairLegacyCloudDeviceLinks(
-      cloudSettings,
+    final result = await service.repairLegacyDirectDeviceLinks(
+      directSettings,
       clientDeviceIds: repairIds,
     );
     return result.ok;
   }
 
-  Future<void> _adoptCloudRegistryDevices(
-      List<CloudDeviceStatus> devices) async {
+  Future<void> _adoptDirectRegistryDevices(
+      List<DirectDeviceStatus> devices) async {
     final identity = widget.store.appIdentity;
     if (!identity.isHost) return;
     final hostDeviceId = widget.store.deviceId.trim();
@@ -7063,19 +7023,19 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
         continue;
       }
 
-      final cloudDeviceName = device.deviceName.trim();
+      final directDeviceName = device.deviceName.trim();
       final before = settings.hostRegistry[clientDeviceId];
 
       // Fix #1 completion: Host Registry is the display source for Sync
-      // Monitoring, so refresh an already-registered Client name from Cloud
-      // whenever the Cloud device row reports a newer/manual deviceName.
-      // This must work even for legacy Cloud rows that are already in the
+      // Monitoring, so refresh an already-registered Client name from Direct
+      // whenever the Direct device row reports a newer/manual deviceName.
+      // This must work even for legacy Direct rows that are already in the
       // Registry but do not yet have hostDeviceId populated correctly.
       if (before != null) {
         final registry = <String, HostRegistryDevice>{...settings.hostRegistry};
         final updated = before.copyWith(
           deviceName:
-              cloudDeviceName.isNotEmpty ? cloudDeviceName : before.deviceName,
+              directDeviceName.isNotEmpty ? directDeviceName : before.deviceName,
           lastSeenAt: device.lastSeenAt ?? before.lastSeenAt,
         );
         registry[clientDeviceId] = updated;
@@ -7087,14 +7047,14 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
         continue;
       }
 
-      // New Cloud-only Clients are adopted only when the Cloud row is explicitly
+      // New Direct-only Clients are adopted only when the Direct row is explicitly
       // linked to this Host. Existing Registry members were handled above.
       if (device.hostDeviceId.trim() != hostDeviceId) continue;
-      settings = settings.withCloudPairedHostRegistryDevice(
+      settings = settings.withDirectPairedHostRegistryDevice(
         hostDeviceId: hostDeviceId,
         clientDeviceId: clientDeviceId,
         deviceToken: '',
-        deviceName: cloudDeviceName,
+        deviceName: directDeviceName,
         pairedAt: device.lastSeenAt ?? DateTime.now(),
       );
       changed = true;
@@ -7104,11 +7064,11 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
   }
 
   Future<void> _refresh() async {
-    setState(_refreshCloudDevices);
-    final snapshot = await (_cloudMonitoringFuture ??
-        Future<_CloudMonitoringSnapshot>.value(
-            const _CloudMonitoringSnapshot(devices: <CloudDeviceStatus>[])));
-    await _finalizeCloudWipeAcknowledgements(snapshot.devices);
+    setState(_refreshDirectDevices);
+    final snapshot = await (_directMonitoringFuture ??
+        Future<_DirectMonitoringSnapshot>.value(
+            const _DirectMonitoringSnapshot(devices: <DirectDeviceStatus>[])));
+    await _finalizeDirectWipeAcknowledgements(snapshot.devices);
     if (mounted) setState(() {});
   }
 
@@ -7120,10 +7080,10 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
       await SyncDeviceAccessStore.suspend(deviceId);
     }
 
-    final cloudSettings = CloudSyncSettings.load();
-    if (cloudSettings.isConfigured) {
-      await _cloudAdminService().setDeviceSuspended(
-        cloudSettings,
+    final directSettings = VpsControlPlaneSettings.load();
+    if (directSettings.isConfigured) {
+      await _controlPlaneService().setDeviceSuspended(
+        directSettings,
         deviceId,
         suspended: !shouldResume,
       );
@@ -7159,8 +7119,8 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
     await SyncDeviceAccessStore.markDeleted(id, deviceToken: token);
   }
 
-  Future<void> _finalizeCloudWipeAcknowledgements(
-      List<CloudDeviceStatus> cloudDevices) async {
+  Future<void> _finalizeDirectWipeAcknowledgements(
+      List<DirectDeviceStatus> directDevices) async {
     // Fix #11: a wipe ACK must not automatically remove the device record from
     // the Host list. The Host keeps the Wipe Pending row visible and gives the
     // admin an always-available Permanent Delete action, because the physical
@@ -7197,9 +7157,9 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
     await SyncDeviceAccessStore.markWipePending(deviceId,
         deviceToken: deletedDeviceToken);
 
-    final cloudSettings = CloudSyncSettings.load();
-    if (cloudSettings.isConfigured) {
-      await _cloudAdminService().revokeDevice(cloudSettings, deviceId);
+    final directSettings = VpsControlPlaneSettings.load();
+    if (directSettings.isConfigured) {
+      await _controlPlaneService().revokeDevice(directSettings, deviceId);
     }
 
     if (!mounted) return;
@@ -7228,9 +7188,9 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
     if (confirmed != true) return;
 
     await _permanentlyDeleteDeviceRecord(deviceId);
-    final cloudSettings = CloudSyncSettings.load();
-    if (cloudSettings.isConfigured) {
-      await _cloudAdminService().deleteDeviceRecord(cloudSettings, deviceId);
+    final directSettings = VpsControlPlaneSettings.load();
+    if (directSettings.isConfigured) {
+      await _controlPlaneService().deleteDeviceRecord(directSettings, deviceId);
     }
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -7243,7 +7203,7 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
     final tr = AppLocalizations.of(context);
     final isHost = widget.store.appIdentity.isHost;
     final lanSettings = LanSyncSettings.load();
-    final cloudSettings = CloudSyncSettings.load();
+    final directSettings = VpsControlPlaneSettings.load();
     final peers = SyncDeviceStateStore.loadPeerStates();
     final peerById = <String, HostPeerSyncState>{
       for (final peer in peers) peer.deviceId: peer
@@ -7261,16 +7221,16 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         children: [
           if (isHost)
-            FutureBuilder<_CloudMonitoringSnapshot>(
-              future: _cloudMonitoringFuture,
+            FutureBuilder<_DirectMonitoringSnapshot>(
+              future: _directMonitoringFuture,
               builder: (context, snapshot) => _HostSyncMonitoringTable(
                 store: widget.store,
-                cloudDevices:
-                    snapshot.data?.devices ?? const <CloudDeviceStatus>[],
+                directDevices:
+                    snapshot.data?.devices ?? const <DirectDeviceStatus>[],
                 deviceLimit: snapshot.data?.limit,
                 peerStates: peerById,
                 lanSettings: lanSettings,
-                loadingCloudDevices:
+                loadingDirectDevices:
                     snapshot.connectionState == ConnectionState.waiting,
                 onRefresh: _refresh,
                 onToggleSuspend: _toggleSuspend,
@@ -7283,7 +7243,7 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
               state: selfState,
               store: widget.store,
               lanSettings: lanSettings,
-              cloudSettings: cloudSettings,
+              directSettings: directSettings,
               onRefresh: _refresh,
             ),
         ],
@@ -7295,11 +7255,11 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
 class _HostSyncMonitoringTable extends StatefulWidget {
   const _HostSyncMonitoringTable({
     required this.store,
-    required this.cloudDevices,
+    required this.directDevices,
     required this.deviceLimit,
     required this.peerStates,
     required this.lanSettings,
-    required this.loadingCloudDevices,
+    required this.loadingDirectDevices,
     required this.onRefresh,
     required this.onToggleSuspend,
     required this.onDelete,
@@ -7307,11 +7267,11 @@ class _HostSyncMonitoringTable extends StatefulWidget {
   });
 
   final AppStore store;
-  final List<CloudDeviceStatus> cloudDevices;
-  final CloudDeviceLimitStatus? deviceLimit;
+  final List<DirectDeviceStatus> directDevices;
+  final DirectDeviceLimitStatus? deviceLimit;
   final Map<String, HostPeerSyncState> peerStates;
   final LanSyncSettings lanSettings;
-  final bool loadingCloudDevices;
+  final bool loadingDirectDevices;
   final Future<void> Function() onRefresh;
   final Future<void> Function(String deviceId, bool suspended) onToggleSuspend;
   final Future<void> Function(String deviceId) onDelete;
@@ -7334,15 +7294,15 @@ class _HostSyncMonitoringTableState extends State<_HostSyncMonitoringTable> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final cloudById = <String, CloudDeviceStatus>{
-      for (final device in widget.cloudDevices)
+    final directById = <String, DirectDeviceStatus>{
+      for (final device in widget.directDevices)
         if (device.deviceId.trim().isNotEmpty) device.deviceId.trim(): device,
     };
     final deleted = SyncDeviceAccessStore.deletedDeviceIds();
     final suspended = SyncDeviceAccessStore.suspendedDeviceIds();
     final wipePending = SyncDeviceAccessStore.wipePendingDeviceIds();
     // Phase 3: Host Sync Monitoring must discover devices only from the
-    // Host Registry. LAN pairing, Cloud rows, and peer history are status
+    // Host Registry. LAN pairing, Direct rows, and peer history are status
     // details only; they must not add extra devices to this table.
     final registryById = <String, HostRegistryDevice>{
       for (final entry in widget.lanSettings.hostRegistry.entries)
@@ -7357,7 +7317,7 @@ class _HostSyncMonitoringTableState extends State<_HostSyncMonitoringTable> {
     final header = _HostStatusMonitoringCard(
       store: widget.store,
       lanSettings: widget.lanSettings,
-      cloudDevices: widget.cloudDevices,
+      directDevices: widget.directDevices,
       peerStates: widget.peerStates,
     );
 
@@ -7413,7 +7373,7 @@ class _HostSyncMonitoringTableState extends State<_HostSyncMonitoringTable> {
                 icon: const Icon(Icons.refresh)),
           ],
         ),
-        if (widget.loadingCloudDevices)
+        if (widget.loadingDirectDevices)
           const LinearProgressIndicator(minHeight: 2),
         const SizedBox(height: 10),
         LayoutBuilder(
@@ -7435,8 +7395,8 @@ class _HostSyncMonitoringTableState extends State<_HostSyncMonitoringTable> {
                                       .isNotEmpty ??
                                   false) &&
                               registryById[deviceId]?.source !=
-                                  'cloud_pairing_claim'),
-                      cloudDevice: cloudById[deviceId],
+                                  'direct_pairing_claim'),
+                      directDevice: directById[deviceId],
                       suspended: suspended.contains(deviceId),
                       wipePending: wipePending.contains(deviceId),
                       onToggleSuspend: () => widget.onToggleSuspend(
@@ -7483,8 +7443,8 @@ class _HostSyncMonitoringTableState extends State<_HostSyncMonitoringTable> {
                                         .isNotEmpty ??
                                     false) &&
                                 registryById[deviceId]?.source !=
-                                    'cloud_pairing_claim'),
-                        cloudDevice: cloudById[deviceId],
+                                    'direct_pairing_claim'),
+                        directDevice: directById[deviceId],
                         suspended: suspended.contains(deviceId),
                         wipePending: wipePending.contains(deviceId),
                       ),
@@ -7556,28 +7516,28 @@ class _HostSyncMonitoringTableState extends State<_HostSyncMonitoringTable> {
     required HostPeerSyncState? state,
     required HostRegistryDevice? registryDevice,
     required bool lanAuthorized,
-    required CloudDeviceStatus? cloudDevice,
+    required DirectDeviceStatus? directDevice,
     required bool suspended,
     required bool wipePending,
   }) {
     final tr = AppLocalizations.of(context);
     final connection = _connectionStatusForHostPeer(context,
         state: state,
-        cloudDevice: cloudDevice,
+        directDevice: directDevice,
         suspended: suspended,
         wipePending: wipePending);
     final status = _syncStatusForHostPeer(context, state,
         lanAuthorized: lanAuthorized,
-        cloudDevice: cloudDevice,
+        directDevice: directDevice,
         suspended: suspended,
         wipePending: wipePending);
     return DataRow(
       cells: [
         DataCell(Text(_deviceLabel(context, deviceId,
-            registryDevice: registryDevice, cloudDevice: cloudDevice))),
+            registryDevice: registryDevice, directDevice: directDevice))),
         DataCell(Text(_activeTransportForHostPeer(context,
             lanAuthorized: lanAuthorized,
-            cloudDevice: cloudDevice,
+            directDevice: directDevice,
             state: state))),
         DataCell(_StatusChip(
             label: connection.label,
@@ -7588,14 +7548,14 @@ class _HostSyncMonitoringTableState extends State<_HostSyncMonitoringTable> {
         DataCell(Text(_formatDateTime(
             context,
             _lastSuccessfulSyncForHostPeer(
-                state: state, cloudDevice: cloudDevice)))),
+                state: state, directDevice: directDevice)))),
         DataCell(Text(_pendingChangesForHostPeer(context,
             store: widget.store,
             deviceId: deviceId,
             state: state,
-            cloudDevice: cloudDevice))),
+            directDevice: directDevice))),
         DataCell(Text(
-            '${state?.lastAckSequence ?? cloudDevice?.lastAckSequence ?? 0}')),
+            '${state?.lastAckSequence ?? directDevice?.lastAckSequence ?? 0}')),
         DataCell(Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -7624,13 +7584,13 @@ class _HostStatusMonitoringCard extends StatelessWidget {
   const _HostStatusMonitoringCard({
     required this.store,
     required this.lanSettings,
-    required this.cloudDevices,
+    required this.directDevices,
     required this.peerStates,
   });
 
   final AppStore store;
   final LanSyncSettings lanSettings;
-  final List<CloudDeviceStatus> cloudDevices;
+  final List<DirectDeviceStatus> directDevices;
   final Map<String, HostPeerSyncState> peerStates;
 
   @override
@@ -7638,14 +7598,14 @@ class _HostStatusMonitoringCard extends StatelessWidget {
     final tr = AppLocalizations.of(context);
     final lastAckSequence = <int>[
       for (final peer in peerStates.values) peer.lastAckSequence,
-      for (final device in cloudDevices) device.lastAckSequence,
+      for (final device in directDevices) device.lastAckSequence,
     ].fold<int>(0, (latest, value) => value > latest ? value : latest);
     final identity = store.appIdentity;
     final activeTransport = identity.activeSyncTransportNormalized;
     final lanReady = activeTransport == 'lan' &&
         lanSettings.setupComplete &&
         lanSettings.autoSyncEnabled;
-    final cloudReady = activeTransport == 'cloud' && identity.isCloudEnabled;
+    final directReady = activeTransport == 'direct' && identity.isDirectEnabled;
 
     return Container(
       width: double.infinity,
@@ -7675,13 +7635,13 @@ class _HostStatusMonitoringCard extends StatelessWidget {
                         '${tr.text('connection_lan')}: ${tr.text('connection_state_active')}',
                     color: Colors.green,
                     icon: Icons.lan_outlined),
-              if (cloudReady)
+              if (directReady)
                 _StatusChip(
                     label:
-                        '${tr.text('connection_cloud')}: ${tr.text('connection_state_active')}',
+                        '${tr.text('connection_direct')}: ${tr.text('connection_state_active')}',
                     color: Colors.blue,
-                    icon: Icons.cloud_done_outlined),
-              if (!lanReady && !cloudReady)
+                    icon: Icons.sync),
+              if (!lanReady && !directReady)
                 _StatusChip(
                     label: tr.text('connection_state_not_configured'),
                     color: Theme.of(context).colorScheme.error,
@@ -7704,7 +7664,7 @@ class _HostPeerMonitoringCard extends StatelessWidget {
     required this.state,
     required this.registryDevice,
     required this.lanAuthorized,
-    required this.cloudDevice,
+    required this.directDevice,
     required this.suspended,
     required this.wipePending,
     required this.onToggleSuspend,
@@ -7717,7 +7677,7 @@ class _HostPeerMonitoringCard extends StatelessWidget {
   final HostPeerSyncState? state;
   final HostRegistryDevice? registryDevice;
   final bool lanAuthorized;
-  final CloudDeviceStatus? cloudDevice;
+  final DirectDeviceStatus? directDevice;
   final bool suspended;
   final bool wipePending;
   final VoidCallback onToggleSuspend;
@@ -7729,12 +7689,12 @@ class _HostPeerMonitoringCard extends StatelessWidget {
     final tr = AppLocalizations.of(context);
     final connection = _connectionStatusForHostPeer(context,
         state: state,
-        cloudDevice: cloudDevice,
+        directDevice: directDevice,
         suspended: suspended,
         wipePending: wipePending);
     final status = _syncStatusForHostPeer(context, state,
         lanAuthorized: lanAuthorized,
-        cloudDevice: cloudDevice,
+        directDevice: directDevice,
         suspended: suspended,
         wipePending: wipePending);
     return Container(
@@ -7757,7 +7717,7 @@ class _HostPeerMonitoringCard extends StatelessWidget {
                   child: Text(
                       _deviceLabel(context, deviceId,
                           registryDevice: registryDevice,
-                          cloudDevice: cloudDevice),
+                          directDevice: directDevice),
                       style: Theme.of(context).textTheme.titleSmall)),
             ],
           ),
@@ -7775,7 +7735,7 @@ class _HostPeerMonitoringCard extends StatelessWidget {
               title: tr.text('active_transport'),
               value: _activeTransportForHostPeer(context,
                   lanAuthorized: lanAuthorized,
-                  cloudDevice: cloudDevice,
+                  directDevice: directDevice,
                   state: state)),
           _Line(title: tr.text('connection_status'), value: connection.label),
           _Line(title: tr.text('sync_status'), value: status.label),
@@ -7784,18 +7744,18 @@ class _HostPeerMonitoringCard extends StatelessWidget {
               value: _formatDateTime(
                   context,
                   _lastSuccessfulSyncForHostPeer(
-                      state: state, cloudDevice: cloudDevice))),
+                      state: state, directDevice: directDevice))),
           _Line(
               title: tr.text('pending_changes'),
               value: _pendingChangesForHostPeer(context,
                   store: store,
                   deviceId: deviceId,
                   state: state,
-                  cloudDevice: cloudDevice)),
+                  directDevice: directDevice)),
           _Line(
               title: tr.text('last_ack_sequence'),
               value:
-                  '${state?.lastAckSequence ?? cloudDevice?.lastAckSequence ?? 0}'),
+                  '${state?.lastAckSequence ?? directDevice?.lastAckSequence ?? 0}'),
           const SizedBox(height: 8),
           LayoutBuilder(
             builder: (context, constraints) {
@@ -7843,21 +7803,21 @@ class _ClientSyncMonitoringPanel extends StatelessWidget {
     required this.state,
     required this.store,
     required this.lanSettings,
-    required this.cloudSettings,
+    required this.directSettings,
     required this.onRefresh,
   });
 
   final SyncDeviceState state;
   final AppStore store;
   final LanSyncSettings lanSettings;
-  final CloudSyncSettings cloudSettings;
+  final VpsControlPlaneSettings directSettings;
   final Future<void> Function() onRefresh;
 
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final connection = _connectionStatusForClient(context,
-        state: state, lanSettings: lanSettings, cloudSettings: cloudSettings);
+        state: state, lanSettings: lanSettings, directSettings: directSettings);
     final status = _syncStatusForClient(context, state,
         pendingCount: store.activeClientPendingSyncCount);
     return Column(
@@ -8525,11 +8485,11 @@ class _SystemStatusPanel extends StatelessWidget {
     final tr = AppLocalizations.of(context);
     final identity = store.appIdentity;
     final lan = LanSyncSettings.load();
-    final cloud = CloudSyncSettings.load();
+    final direct = VpsControlPlaneSettings.load();
     final transport = identity.activeSyncTransportNormalized;
     final lanConfigured = lan.setupComplete || lan.isHost || lan.isClient;
     final lanActive = transport == 'lan' && lanConfigured;
-    final cloudActive = identity.isCloudEnabled && cloud.isConfigured;
+    final directActive = identity.isDirectEnabled && direct.isConfigured;
     final pending = store.pendingSyncCount;
 
     final roleLabel = identity.isHost
@@ -8544,20 +8504,20 @@ class _SystemStatusPanel extends StatelessWidget {
             ? tr.text('connection_state_disabled')
             : tr.text('connection_state_not_configured');
 
-    final cloudState = cloudActive
+    final directState = directActive
         ? tr.text('connection_state_active')
-        : identity.isCloudEnabled
+        : identity.isDirectEnabled
             ? tr.text('connection_state_not_configured')
             : tr.text('connection_state_disabled');
 
     final syncState = pending > 0
         ? '${tr.text('connection_state_pending')} ($pending)'
-        : (lanActive || cloudActive)
+        : (lanActive || directActive)
             ? tr.text('connection_state_active')
             : tr.text('connection_state_disabled');
 
     final healthy =
-        pending == 0 && (lanActive || cloudActive || transport == 'local');
+        pending == 0 && (lanActive || directActive || transport == 'local');
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -8596,10 +8556,10 @@ class _SystemStatusPanel extends StatelessWidget {
                     : _StatusBulletState.warning,
           ),
           _StatusBullet(
-            label: '${tr.text('connection_cloud')}: $cloudState',
-            state: cloudActive
+            label: '${tr.text('connection_direct')}: $directState',
+            state: directActive
                 ? _StatusBulletState.ok
-                : identity.isCloudEnabled
+                : identity.isDirectEnabled
                     ? _StatusBulletState.warning
                     : _StatusBulletState.disabled,
           ),
@@ -8607,7 +8567,7 @@ class _SystemStatusPanel extends StatelessWidget {
             label: '${tr.text('connection_sync_health')}: $syncState',
             state: pending > 0
                 ? _StatusBulletState.warning
-                : (lanActive || cloudActive)
+                : (lanActive || directActive)
                     ? _StatusBulletState.ok
                     : _StatusBulletState.disabled,
           ),
@@ -9235,8 +9195,7 @@ class _SystemIdentityCard extends StatefulWidget {
 }
 
 class _SystemIdentityCardState extends State<_SystemIdentityCard> {
-  CloudSyncAdminService _cloudAdminService() =>
-      CloudSyncAdminService(widget.store);
+  DirectControlPlaneService _controlPlaneService() => DirectControlPlaneService(widget.store);
 
   Future<void> _editDeviceName() async {
     final tr = AppLocalizations.of(context);
@@ -9298,13 +9257,13 @@ class _SystemIdentityCardState extends State<_SystemIdentityCard> {
     if (result == null || result.trim().isEmpty) return;
     try {
       await widget.store.updateDeviceName(result);
-      final cloud = CloudSyncSettings.load();
-      if (widget.store.appIdentity.isCloudEnabled && cloud.isConfigured) {
-        await _cloudAdminService().registerCurrentDevice(
-          cloud,
+      final direct = VpsControlPlaneSettings.load();
+      if (widget.store.appIdentity.isDirectEnabled && direct.isConfigured) {
+        await _controlPlaneService().registerCurrentDevice(
+          direct,
           transport:
               widget.store.appIdentity.activeSyncTransportNormalized == 'lan'
-                  ? 'cloud'
+                  ? 'direct'
                   : widget.store.appIdentity.activeSyncTransportNormalized,
         );
       }
@@ -9357,10 +9316,10 @@ class _SystemIdentityCardState extends State<_SystemIdentityCard> {
               Icons.sync_outlined,
               tr.text('sync_mode'),
               identity.isHost
-                  ? tr.text('host_lan_cloud_controlled')
+                  ? tr.text('host_lan_direct_controlled')
                   : identity.syncMode.name),
-          _InfoGridItem(Icons.cloud_outlined, tr.text('cloud_tenant'),
-              identity.cloudTenantId.isEmpty ? '—' : identity.cloudTenantId),
+          _InfoGridItem(Icons.sync, tr.text('direct_tenant'),
+              identity.controlPlaneTenantId.isEmpty ? '—' : identity.controlPlaneTenantId),
         ],
       ),
     );

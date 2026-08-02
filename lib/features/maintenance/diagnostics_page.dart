@@ -501,7 +501,7 @@ class _DiagnosticsPageState extends State<DiagnosticsPage>
                 _buildMetricChip(
                   'Background warmup',
                   _formatMsOrPending(primeHeavyCachesMs),
-                  icon: Icons.cloud_sync_outlined,
+                  icon: Icons.sync,
                 ),
               ],
             ),

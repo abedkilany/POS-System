@@ -308,7 +308,7 @@ class AppStoreRecoveryService {
           if (wants('syncChanges') ||
               wants('syncQueue') ||
               wants('localDatabaseEntries')) {
-            await LocalDatabaseService.deleteString('cloud_last_pull_cursor');
+            await LocalDatabaseService.deleteString('direct_last_pull_cursor');
           }
 
           if (wants('syncChanges')) {
@@ -342,7 +342,7 @@ class AppStoreRecoveryService {
               AppStore._syncChangesKey,
               AppStore._syncQueueKey,
               AppStore._syncSequenceKey,
-              'cloud_last_pull_cursor',
+              'direct_last_pull_cursor',
             };
             for (final entry in localDatabaseEntries.entries) {
               final key = entry.key.toString();
@@ -399,7 +399,7 @@ class AppStoreRecoveryService {
       store._recordSyncChange(
         entityType: 'system',
         entityId: 'store',
-        operation: 'cloud_restore_snapshot_ready',
+        operation: 'restore_snapshot_ready',
         payload: {
           'commandId': restoreCommandId,
           'restoreCommandId': restoreCommandId,
@@ -945,7 +945,7 @@ class AppStoreRecoveryService {
 
     // A LAN snapshot contains the Host identity. It must never replace the
     // live Client identity, otherwise the Client can inherit the Host's role,
-    // sync mode, or active Cloud transport immediately after pairing.
+    // sync mode, or active Direct transport immediately after pairing.
     return local.copyWith(
       storeId: imported.storeId.isNotEmpty ? imported.storeId : local.storeId,
       branchId:
@@ -959,9 +959,9 @@ class AppStoreRecoveryService {
           : local.syncMode,
       hostDeviceId:
           imported.deviceId.isNotEmpty ? imported.deviceId : local.hostDeviceId,
-      cloudTenantId: imported.cloudTenantId.isNotEmpty
-          ? imported.cloudTenantId
-          : local.cloudTenantId,
+      controlPlaneTenantId: imported.controlPlaneTenantId.isNotEmpty
+          ? imported.controlPlaneTenantId
+          : local.controlPlaneTenantId,
       deviceToken: local.deviceToken.trim().isNotEmpty
           ? local.deviceToken
           : imported.deviceToken,
@@ -974,9 +974,9 @@ class AppStoreRecoveryService {
     return key == AppStore._appIdentityKey ||
         key == AppStore._deviceIdKey ||
         key == 'lan_sync_settings_v2' ||
-        key == 'cloud_api_base_url' ||
-        key == 'cloud_auto_sync_enabled' ||
-        key == 'cloud_auto_sync_interval_seconds' ||
+        key == 'vps_api_base_url' ||
+        key == 'direct_control_auto_sync_enabled' ||
+        key == 'direct_control_auto_sync_interval_seconds' ||
         key == 'host_authoritative_sync_device_state_v1' ||
         key == 'host_authoritative_sync_peer_states_v1' ||
         key == 'sync_monitoring_suspended_devices_v1' ||

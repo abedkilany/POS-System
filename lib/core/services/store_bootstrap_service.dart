@@ -62,7 +62,7 @@ class StoreBootstrapService {
     final now = DateTime.now();
     final hostIdentity = store.appIdentity.copyWith(
       deviceRole: DeviceRole.host,
-      syncMode: store.appIdentity.syncMode == SyncMode.cloudConnected ||
+      syncMode: store.appIdentity.syncMode == SyncMode.directConnected ||
               store.appIdentity.syncMode == SyncMode.marketplaceEnabled
           ? store.appIdentity.syncMode
           : SyncMode.lanOnly,
@@ -142,7 +142,7 @@ class StoreBootstrapService {
     required String password,
     String? hostDeviceId,
     String? deviceToken,
-    String? cloudTenantId,
+    String? controlPlaneTenantId,
     DeviceRole? deviceRole,
     SyncMode? syncMode,
   }) async {
@@ -177,15 +177,15 @@ class StoreBootstrapService {
       branchId: cleanBranchId,
       deviceRole: role,
       syncMode: syncMode ?? SyncMode.localOnly,
-      activeSyncTransport: syncMode == SyncMode.cloudConnected ? 'cloud' : '',
+      activeSyncTransport: syncMode == SyncMode.directConnected ? 'direct' : '',
       hostDeviceId:
           hostDeviceId ?? (role == DeviceRole.host ? store.deviceId : store.appIdentity.hostDeviceId),
       deviceToken: (deviceToken == null || deviceToken.trim().isEmpty)
           ? store.appIdentity.deviceToken
           : deviceToken.trim(),
-      cloudTenantId: (cloudTenantId == null || cloudTenantId.trim().isEmpty)
-          ? store.appIdentity.cloudTenantId
-          : cloudTenantId.trim(),
+      controlPlaneTenantId: (controlPlaneTenantId == null || controlPlaneTenantId.trim().isEmpty)
+          ? store.appIdentity.controlPlaneTenantId
+          : controlPlaneTenantId.trim(),
       deviceId: store.deviceId,
       platform: platform,
       updatedAt: now,
@@ -266,7 +266,7 @@ class StoreBootstrapService {
     );
   }
 
-  static Future<void> applyCloudStoreOwnerCredentials(
+  static Future<void> applyStoreOwnerCredentials(
     AppStore store, {
     required String username,
     required String password,

@@ -12,7 +12,7 @@ export default async function handler(req, res) {
       storeId,
       branchId,
       allowedRoles: ['host', 'client'],
-      allowedTransports: ['cloud'],
+      allowedTransports: ['lan', 'direct'],
     });
     const rows = await sql`select now() as now`;
     res.status(200).json({ ok: true, service: 'pos-sync-api', databaseTime: rows[0].now });

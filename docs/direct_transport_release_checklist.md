@@ -18,7 +18,7 @@ candidates.
 ## Phase 7: Recovery
 
 When Direct sync fails, the automatic Direct controller clears the failed
-session and attempts Cloud if the identity is Cloud-enabled and Cloud settings
+session and attempts Direct if the identity is Direct-enabled and Direct settings
 are configured. The active transport is not silently changed; the fallback is
 an availability path only.
 
@@ -41,7 +41,7 @@ Run Direct pairing and sync under:
 5. Temporary Internet loss followed by recovery.
 
 Record the selected ICE path (`host`, `srflx`, or `relay`), recovery time, and
-whether Cloud fallback was used.
+whether Direct fallback was used.
 
 ## Phase 10: Release gate
 

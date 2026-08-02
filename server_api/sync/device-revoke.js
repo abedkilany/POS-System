@@ -11,7 +11,7 @@ export default async function handler(req, res) {
     if (!deviceId) return res.status(400).json({ ok: false, error: 'deviceId is required.' });
     assertStoreAllowed(storeId);
     await ensureDeviceAuthColumns();
-    await assertAccountOrDevice(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['cloud'] });
+    await assertAccountOrDevice(req, { storeId, branchId, allowedRoles: ['host'], allowedTransports: ['lan', 'direct'] });
     const rows = await sql`
       update store_devices
       set revoked = true, suspended = false, wipe_pending = true, wipe_requested_at = now(), updated_at = now()

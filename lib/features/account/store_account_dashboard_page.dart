@@ -83,7 +83,7 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
               setDialogState(() => saving = false);
               if (result.ok) {
                 try {
-                  await widget.store.applyCloudStoreOwnerCredentials(
+                  await widget.store.applyStoreOwnerCredentials(
                     username: result.username.isNotEmpty
                         ? result.username
                         : cache.username,
@@ -99,7 +99,7 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
                       content: Text(tr.format(
-                        'cloud_password_changed_local_owner_not_updated',
+                        'direct_password_changed_local_owner_not_updated',
                         {'error': error},
                       )),
                     ),

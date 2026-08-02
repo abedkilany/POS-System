@@ -4,8 +4,7 @@ import 'package:flutter/material.dart';
 import '../../core/localization/app_localizations.dart';
 import '../../core/app_brand.dart';
 import '../../core/services/account_auth_service.dart';
-import '../../core/services/cloud_sync_admin_service.dart';
-import '../../core/services/cloud_sync_service.dart';
+import '../../core/services/direct_control_plane_service.dart';
 import '../../core/services/sync_diagnostics_log.dart';
 import '../../core/services/page_timing_scope.dart';
 import '../../core/services/startup_timing_service.dart';
@@ -53,8 +52,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
   String _onlineSessionPassword = '';
   late final VoidCallback _storeListener;
 
-  CloudSyncAdminService get _cloudAdminService =>
-      CloudSyncAdminService(widget.store);
+  DirectControlPlaneService get _controlPlaneService => DirectControlPlaneService(widget.store);
 
   void _handleStoreChanged() {
     if (!mounted) return;
@@ -142,7 +140,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
   }
 
   String _recoveryUsernameFromResult(
-    CloudStoreRecoveryResult result,
+    DirectStoreRecoveryResult result,
     AccountAuthCache cache,
   ) {
     final resultUsername = result.username.trim().toLowerCase();
@@ -185,7 +183,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
   Future<void> _recoverStoreIdentity(BuildContext context) async {
     final tr = AppLocalizations.of(context);
     final cache = _authCache ?? AccountAuthCache.load();
-    final cloud = CloudSyncSettings.load();
+    final direct = VpsControlPlaneSettings.load();
     final previousIdentity = widget.store.appIdentity;
     final storeId = (cache?.storeId.trim().isNotEmpty == true
             ? cache!.storeId
@@ -282,16 +280,16 @@ class _LoginGatePageState extends State<LoginGatePage> {
       SyncDiagnosticsLog.add(
         '[RECOVER_IDENTITY] start storeId=$storeId branchId=$branchId',
       );
-      final recoverySettings = cloud.copyWith(
+      final recoverySettings = direct.copyWith(
         enabled: true,
-        apiBaseUrl: cloud.apiBaseUrl.trim().isNotEmpty
-            ? cloud.apiBaseUrl.trim()
-            : CloudSyncSettings.bundledApiBaseUrl,
+        apiBaseUrl: direct.apiBaseUrl.trim().isNotEmpty
+            ? direct.apiBaseUrl.trim()
+            : VpsControlPlaneSettings.bundledApiBaseUrl,
         clearLastPullCursor: true,
       );
       await recoverySettings.save();
       final result =
-          await _cloudAdminService.recoverExistingStoreIdentityFromCloud(
+          await _controlPlaneService.recoverExistingStoreIdentityFromDirect(
         recoverySettings,
         storeId: storeId,
         branchId: branchId,
@@ -302,7 +300,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
         'branchId=${result.identity?.branchId ?? branchId} '
         'loginName=${result.loginName} '
         'storeSlug=${result.storeSlug} '
-        'cloudSyncEnabled=${result.cloudSyncEnabled} '
+        'directSyncEnabled=${result.directSyncEnabled} '
         'deviceLimit=${result.deviceLimit?.allowed ?? -1}',
       );
       if (result.ok) {
@@ -326,7 +324,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
                     ? result.identity!.hostDeviceId
                     : widget.store.deviceId,
             deviceToken: result.identity?.deviceToken ?? '',
-            cloudTenantId: result.identity?.cloudTenantId ?? '',
+            controlPlaneTenantId: result.identity?.controlPlaneTenantId ?? '',
             deviceRole: DeviceRole.host,
             syncMode: previousIdentity.syncMode,
           );
@@ -347,7 +345,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
             // Keep the cached entitlement unchanged here. Store recovery may
             // rebuild the identity, but the subscription gate must still be
             // decided by the live plan check, not by the recovery response.
-            cloudSyncEnabled: recoveryCache.cloudSyncEnabled,
+            directSyncEnabled: recoveryCache.directSyncEnabled,
             devicesLimit:
                 result.deviceLimit?.allowed ?? recoveryCache.devicesLimit,
             lastVerifiedAt: DateTime.now(),
@@ -379,7 +377,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
   Future<void> _recoverStoreData(BuildContext context) async {
     final tr = AppLocalizations.of(context);
     final cache = _authCache ?? AccountAuthCache.load();
-    final cloud = CloudSyncSettings.load();
+    final direct = VpsControlPlaneSettings.load();
     SyncDiagnosticsLog.add(
       '[RECOVER_DATA] press '
       'hasLocalStoreData=${widget.store.hasLocalStoreData} '
@@ -420,7 +418,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
     SyncDiagnosticsLog.add(
       '[RECOVER_DATA] refresh_session result ok=${sessionResult.ok} '
       'storeId=${sessionResult.storeId} branchId=${sessionResult.branchId} '
-      'cloudSyncEnabled=${sessionResult.cloudSyncEnabled}',
+      'directSyncEnabled=${sessionResult.directSyncEnabled}',
     );
     if (!context.mounted) return;
     final storeId = (sessionResult.storeId.trim().isNotEmpty
@@ -443,15 +441,15 @@ class _LoginGatePageState extends State<LoginGatePage> {
       );
       return;
     }
-    final cloudAllowed =
-        latestCache.cloudSyncEnabled || sessionResult.cloudSyncEnabled;
-    if (!cloudAllowed) {
+    final directAllowed =
+        latestCache.directSyncEnabled || sessionResult.directSyncEnabled;
+    if (!directAllowed) {
       SyncDiagnosticsLog.add(
-        '[RECOVER_DATA] blocked reason=cloud_sync_not_enabled storeId=$storeId branchId=$branchId',
+        '[RECOVER_DATA] blocked reason=direct_sync_not_enabled storeId=$storeId branchId=$branchId',
       );
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content: Text(tr.text('subscription_not_enrolled_cloud_sync'))),
+            content: Text(tr.text('subscription_not_enrolled_direct_sync'))),
       );
       return;
     }
@@ -492,15 +490,15 @@ class _LoginGatePageState extends State<LoginGatePage> {
       SyncDiagnosticsLog.add(
         '[RECOVER_DATA] start storeId=$storeId branchId=$branchId',
       );
-      final recoverySettings = cloud.copyWith(
+      final recoverySettings = direct.copyWith(
         enabled: true,
-        apiBaseUrl: cloud.apiBaseUrl.trim().isNotEmpty
-            ? cloud.apiBaseUrl.trim()
-            : CloudSyncSettings.bundledApiBaseUrl,
+        apiBaseUrl: direct.apiBaseUrl.trim().isNotEmpty
+            ? direct.apiBaseUrl.trim()
+            : VpsControlPlaneSettings.bundledApiBaseUrl,
         clearLastPullCursor: true,
       );
       await recoverySettings.save();
-      final result = await _cloudAdminService.recoverExistingStoreFromCloud(
+      final result = await _controlPlaneService.recoverExistingStoreFromDirect(
         recoverySettings,
         storeId: storeId,
         branchId: branchId,
@@ -513,7 +511,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
         'pulled=${result.pulled} '
         'loginName=${result.loginName} '
         'storeSlug=${result.storeSlug} '
-        'cloudSyncEnabled=${result.cloudSyncEnabled} '
+        'directSyncEnabled=${result.directSyncEnabled} '
         'deviceLimit=${result.deviceLimit?.allowed ?? -1}',
       );
       if (result.ok) {
@@ -583,7 +581,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
           mode: 'login',
         );
         _setAuthCache(cached);
-        await widget.store.applyCloudStoreOwnerCredentials(
+        await widget.store.applyStoreOwnerCredentials(
           username: onlineResult.username.isNotEmpty
               ? onlineResult.username
               : parts.first,
@@ -866,7 +864,7 @@ class _LoginGatePageState extends State<LoginGatePage> {
           hasStoreIdentity:
               widget.store.appIdentity.hostDeviceId.trim().isNotEmpty,
           hasLocalStoreData: widget.store.hasLocalAdminUser,
-          canRecoverStoreData: authCache.cloudSyncEnabled,
+          canRecoverStoreData: authCache.directSyncEnabled,
           onRecoverStoreIdentity: () => _recoverStoreIdentity(context),
           onRecoverStoreData: () => _recoverStoreData(context),
           onLogout: () async {

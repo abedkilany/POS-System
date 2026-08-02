@@ -2,8 +2,6 @@ import { randomBytes, createHash, timingSafeEqual } from 'crypto';
 import {
   sql,
   assertAccountOrDevice,
-  assertCloudSyncEnabled,
-  assertClientDeviceSlotAvailable,
   assertStoreAllowed,
   sendError,
 } from '../../_db.js';
@@ -41,7 +39,7 @@ async function ensureRecoveryTable() {
       branch_id text not null default 'main',
       recovery_key_hash text not null,
       latest_host_device_id text default '',
-      cloud_tenant_id text default '',
+      control_plane_tenant_id text default '',
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now(),
       primary key (store_id, branch_id)
@@ -98,11 +96,13 @@ async function authorizeLocalHostOrAccount(req, {
       storeId,
       branchId,
       allowedRoles: ['host'],
-      allowedTransports: transport === 'cloud' ? ['cloud'] : [],
+      allowedTransports: transport === 'direct' || transport === 'lan'
+        ? [transport]
+        : [],
     });
     return;
   } catch (accountOrDeviceError) {
-    if (transport !== 'cloud') throw accountOrDeviceError;
+    throw accountOrDeviceError;
   }
 
   if (!recoveryKey) {
@@ -178,19 +178,16 @@ export default async function handler(req, res) {
     const hostDeviceId = String(body.hostDeviceId || body.host_device_id || body.deviceId || '').trim();
     const hostDeviceName = String(body.hostDeviceName || body.host_device_name || '').trim();
     const hostDevicePublicKey = String(body.devicePublicKey || body.device_public_key || '').trim();
-    const requestedTransport = String(body.transport || 'cloud').trim().toLowerCase();
+    const requestedTransport = String(body.transport || 'direct').trim().toLowerCase();
     const transport = requestedTransport === 'lan' || requestedTransport === 'direct'
       ? requestedTransport
-      : 'cloud';
+      : '';
+    if (!transport) return res.status(400).json({ ok: false, error: 'transport must be lan or direct.' });
     const ttlMinutes = Math.min(Math.max(Number(body.ttlMinutes || body.ttl_minutes || 5), 1), 30);
     const recoveryKey = normalizeRecoveryKey(body.recoveryKey || body.recovery_key);
     if (!storeId) return res.status(400).json({ ok: false, error: 'storeId is required.' });
     if (!hostDeviceId) return res.status(400).json({ ok: false, error: 'hostDeviceId is required.' });
     assertStoreAllowed(storeId);
-    if (transport === 'cloud') {
-      await assertCloudSyncEnabled(storeId);
-      await assertClientDeviceSlotAvailable(storeId);
-    }
     await authorizeLocalHostOrAccount(req, {
       storeId,
       branchId,

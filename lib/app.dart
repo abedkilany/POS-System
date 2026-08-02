@@ -12,7 +12,7 @@ import 'core/utils/responsive.dart';
 import 'core/sync_unified/sync_unified.dart';
 import 'core/sync_unified/sync_device_state.dart';
 import 'core/snapshot/unified_snapshot_progress.dart';
-import 'core/services/cloud_sync_service.dart';
+import 'core/services/direct_sync_settings.dart';
 import 'core/services/accounting_service.dart';
 import 'core/services/google_drive_backup_service.dart';
 import 'core/services/lan_sync_service.dart';
@@ -74,11 +74,6 @@ class _VentioAppState extends State<VentioApp> {
     _store,
     onSnapshotProgress: _handleAutoSnapshotProgress,
   );
-  late final UnifiedAutoCloudSyncController _autoCloudSyncController =
-      UnifiedAutoCloudSyncController(
-    _store,
-    onSnapshotProgress: _handleAutoSnapshotProgress,
-  );
   late final UnifiedAutoDirectSyncController _autoDirectSyncController =
       UnifiedAutoDirectSyncController(_store);
   bool _syncStarted = false;
@@ -108,7 +103,7 @@ class _VentioAppState extends State<VentioApp> {
       await StartupTimingService.measure(
         'ventio_app.initialize',
         () async {
-          await _store.initialize();
+        await _store.initialize(hydrateHeavyData: false);
           final savedTheme = await _store.loadThemeMode();
           final savedLocale = await _store.loadLocale();
           if (mounted) {
@@ -142,20 +137,15 @@ class _VentioAppState extends State<VentioApp> {
         if (!mounted || _store.activeUser == null) return;
         unawaited(_autoSyncController.start());
         unawaited(_autoDirectSyncController.start());
-        unawaited(_startCloudAndBackupAfterLogin());
+        unawaited(_startBackupsAfterLogin());
       },
       category: 'app_store',
     );
   }
 
-  Future<void> _startCloudAndBackupAfterLogin() async {
+  Future<void> _startBackupsAfterLogin() async {
     await Future<void>.delayed(const Duration(seconds: 15));
     if (!mounted || _store.activeUser == null) return;
-    unawaited(StartupTimingService.measure(
-      'ventio_app.start_cloud_sync_after_login',
-      () => _autoCloudSyncController.start(),
-      category: 'app_store',
-    ));
     unawaited(StartupTimingService.measure(
       'ventio_app.run_local_backup_after_login',
       () => LocalAutoBackupService.runDueBackup(_store),
@@ -173,7 +163,6 @@ class _VentioAppState extends State<VentioApp> {
     await _autoSyncController.stop();
     _autoDirectSyncController.stop();
     await UnifiedSyncFactory.disposeDirect(_store);
-    _autoCloudSyncController.stop();
   }
 
   void _handleAutoSnapshotProgress(
@@ -225,7 +214,7 @@ class _VentioAppState extends State<VentioApp> {
                       : state.label,
                   titleKey: state.transport.toLowerCase() == 'lan'
                       ? 'snapshot_progress_lan_rebuild_title'
-                      : 'snapshot_progress_cloud_rebuild_title',
+                      : 'preparing_store_data',
                 ),
               ),
             ),
@@ -249,7 +238,6 @@ class _VentioAppState extends State<VentioApp> {
     unawaited(_autoSyncController.stop());
     _autoDirectSyncController.stop();
     unawaited(UnifiedSyncFactory.disposeDirect(_store));
-    _autoCloudSyncController.stop();
     _autoSnapshotProgress.dispose();
     AccountingService.setMutationListener(null);
     _store.dispose();
@@ -361,183 +349,6 @@ class _VentioAppState extends State<VentioApp> {
       },
     );
   }
-}
-
-class _CloudProvisioningPage extends StatefulWidget {
-  const _CloudProvisioningPage({this.onChanged});
-
-  final VoidCallback? onChanged;
-
-  @override
-  State<_CloudProvisioningPage> createState() => _CloudProvisioningPageState();
-}
-
-class _CloudProvisioningPageState extends State<_CloudProvisioningPage> {
-  Timer? _refreshTimer;
-
-  @override
-  void initState() {
-    super.initState();
-    _refreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      widget.onChanged?.call();
-      if (mounted) setState(() {});
-    });
-  }
-
-  @override
-  void dispose() {
-    _refreshTimer?.cancel();
-    super.dispose();
-  }
-
-  bool _isComplete(Map<String, String> sections, Iterable<String> names) {
-    return names.every((name) => sections[name] == 'completed');
-  }
-
-  bool _hasAny(Map<String, String> sections, Iterable<String> names) {
-    return names.any(sections.containsKey);
-  }
-
-  String _stageStatus(Map<String, String> sections, Iterable<String> names,
-      AppLocalizations tr) {
-    final values = names
-        .where(sections.containsKey)
-        .map((name) => sections[name] ?? '')
-        .toList(growable: false);
-    if (values.isEmpty) return tr.text('waiting');
-    if (values.every((value) => value == 'completed')) {
-      return tr.text('completed');
-    }
-    if (values.any((value) => value == 'uploading')) {
-      return tr.text('downloading');
-    }
-    if (values.any((value) => value == 'pending')) {
-      return tr.text('waiting_for_host');
-    }
-    return values.join(', ');
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final tr = AppLocalizations.of(context);
-    final sections = CloudProvisioningStatus.sections;
-    final stages = <_ProvisioningStageView>[
-      _ProvisioningStageView(
-          tr.text('login_settings_and_users'), ['roles', 'users'],
-          forceComplete: true),
-      _ProvisioningStageView(tr.text('catalogs_and_warehouses'),
-          ['categories', 'brands', 'units', 'warehouses']),
-      _ProvisioningStageView(tr.text('products_customers_suppliers'),
-          ['products', 'customers', 'suppliers', 'supplierProductPrices']),
-      _ProvisioningStageView(tr.text('inventory_movements'),
-          ['stockMovements', 'billsOfMaterials', 'manufacturingOrders']),
-      _ProvisioningStageView(tr.text('sales_and_purchases'),
-          ['sales', 'saleQuotations', 'deliveryNotes', 'purchases']),
-      _ProvisioningStageView(tr.text('accounting_and_reports'),
-          ['expenses', 'accountTransactions']),
-    ];
-    final completedCount = stages
-        .where((stage) =>
-            stage.forceComplete || _isComplete(sections, stage.sections))
-        .length;
-    final progress = stages.isEmpty
-        ? null
-        : (completedCount / stages.length).clamp(0.05, 1.0).toDouble();
-
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 560),
-        child: Card(
-          margin: const EdgeInsets.all(24),
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Icon(Icons.cloud_sync_outlined,
-                    size: 48, color: theme.colorScheme.primary),
-                const SizedBox(height: 16),
-                Text(tr.text('preparing_store_data'),
-                    textAlign: TextAlign.center,
-                    style: theme.textTheme.headlineSmall),
-                const SizedBox(height: 8),
-                Text(
-                  localizeRuntimeMessage(CloudProvisioningStatus.message, tr),
-                  textAlign: TextAlign.center,
-                  style: theme.textTheme.bodyMedium,
-                ),
-                const SizedBox(height: 20),
-                LinearProgressIndicator(
-                    value: CloudProvisioningStatus.allSectionsComplete
-                        ? 1
-                        : progress),
-                const SizedBox(height: 20),
-                for (final stage in stages)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Row(
-                      children: [
-                        Builder(
-                          builder: (_) {
-                            final complete = stage.forceComplete ||
-                                _isComplete(sections, stage.sections);
-                            final started = _hasAny(sections, stage.sections);
-                            final icon = complete
-                                ? Icons.check_circle
-                                : started
-                                    ? Icons.downloading_outlined
-                                    : Icons.radio_button_unchecked;
-                            final color = complete
-                                ? Colors.green
-                                : started
-                                    ? theme.colorScheme.primary
-                                    : theme.colorScheme.outline;
-                            return Icon(icon, size: 20, color: color);
-                          },
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(localizeRuntimeMessage(stage.label, tr)),
-                              if (!stage.forceComplete)
-                                Text(
-                                  _stageStatus(sections, stage.sections, tr),
-                                  style: theme.textTheme.bodySmall?.copyWith(
-                                      color:
-                                          theme.colorScheme.onSurfaceVariant),
-                                ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                const SizedBox(height: 12),
-                Text(
-                  tr.text('provisioning_wait_message'),
-                  textAlign: TextAlign.center,
-                  style: theme.textTheme.bodySmall,
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ProvisioningStageView {
-  const _ProvisioningStageView(this.label, this.sections,
-      {this.forceComplete = false});
-
-  final String label;
-  final List<String> sections;
-  final bool forceComplete;
 }
 
 class _ShellItem {
@@ -1350,12 +1161,7 @@ class _MainShellState extends State<MainShell> {
               ),
             ),
           ),
-          body: CloudProvisioningStatus.isPending &&
-                  widget.store.appIdentity.isClient &&
-                  widget.store.appIdentity.activeSyncTransportNormalized ==
-                      'cloud'
-              ? _CloudProvisioningPage(onChanged: () => setState(() {}))
-              : resolvedItems[selectedIndex].page,
+          body: resolvedItems[selectedIndex].page,
         );
       },
     );
@@ -1435,7 +1241,7 @@ class _ConnectionStatusSnapshot {
     required this.roleLabel,
     required this.roleMessage,
     required this.lan,
-    required this.cloud,
+    required this.direct,
     required this.syncHealth,
     required this.activeTransportLabel,
     required this.pendingChanges,
@@ -1444,7 +1250,7 @@ class _ConnectionStatusSnapshot {
   final String roleLabel;
   final String roleMessage;
   final _TransportSnapshot lan;
-  final _TransportSnapshot cloud;
+  final _TransportSnapshot direct;
   final _TransportSnapshot syncHealth;
   final String activeTransportLabel;
   final int pendingChanges;
@@ -1470,8 +1276,8 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     roleMessage: '...',
     lan: _TransportSnapshot(
         label: 'LAN', state: _TransportState.checking, message: '...'),
-    cloud: _TransportSnapshot(
-        label: '', state: _TransportState.checking, message: '...'),
+    direct: _TransportSnapshot(
+        label: 'Direct', state: _TransportState.checking, message: '...'),
     syncHealth: _TransportSnapshot(
         label: '', state: _TransportState.checking, message: '...'),
     activeTransportLabel: '',
@@ -1521,10 +1327,8 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     if (identity.isHost) {
       final lan =
           UnifiedSyncFactory.isLanSetupComplete ? _t('connection_lan') : '';
-      final cloud = UnifiedSyncFactory.cloudCanCheck(widget.store)
-          ? _t('connection_cloud')
-          : '';
-      final parts = [lan, cloud]
+      final direct = 'Direct';
+      final parts = [lan, direct]
           .where((part) => part.trim().isNotEmpty)
           .toList(growable: false);
       if (parts.isEmpty) return _t('local');
@@ -1532,7 +1336,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     }
     final active = identity.activeSyncTransportNormalized;
     if (active == 'lan') return _t('connection_lan');
-    if (active == 'cloud') return _t('connection_cloud');
+    if (active == 'direct') return 'Direct';
     return _t('local');
   }
 
@@ -1542,14 +1346,12 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
       if (snapshot.label == _t('connection_lan')) {
         return UnifiedSyncFactory.isLanSetupComplete;
       }
-      if (snapshot.label == _t('connection_cloud')) {
-        return UnifiedSyncFactory.cloudCanCheck(widget.store);
-      }
+      if (snapshot.label == 'Direct') return true;
       return true;
     }
     final active = identity.activeSyncTransportNormalized;
     if (snapshot.label == _t('connection_lan')) return active == 'lan';
-    if (snapshot.label == _t('connection_cloud')) return active == 'cloud';
+    if (snapshot.label == 'Direct') return active == 'direct';
     return true;
   }
 
@@ -1626,95 +1428,54 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     }
   }
 
-  Future<_TransportSnapshot> _readCloudStatus() async {
+  Future<_TransportSnapshot> _readDirectStatus() async {
     final identity = widget.store.appIdentity;
-    final settings = CloudSyncSettings.load();
-    final provisioning = identity.isClient &&
-        identity.activeSyncTransportNormalized == 'cloud' &&
-        CloudProvisioningStatus.isPending;
-    final hasSavedCloudSettings = settings.isConfigured;
-    final cloudEnabledForRole = identity.isHost
-        ? identity.isCloudEnabled && hasSavedCloudSettings
+    final settings = DirectSyncSettings.load();
+    final directEnabledForRole = identity.isHost
+        ? true
         : identity.isClient &&
-            identity.activeSyncTransportNormalized == 'cloud' &&
-            hasSavedCloudSettings;
+            identity.activeSyncTransportNormalized == 'direct' &&
+            settings.isConfigured;
 
-    if (!cloudEnabledForRole) {
+    if (!directEnabledForRole) {
       return _TransportSnapshot(
-        label: _t('connection_cloud'),
-        state: hasSavedCloudSettings
+        label: 'Direct',
+        state: settings.isConfigured
             ? _TransportState.disabled
             : _TransportState.notConfigured,
-        message: hasSavedCloudSettings
+        message: settings.isConfigured
             ? _t('connection_state_disabled')
-            : _t('connection_cloud_not_configured'),
+            : 'Direct is not configured.',
       );
     }
 
     try {
       final status =
-          await UnifiedSyncFactory.cloudEngine(widget.store, settings: settings)
-              .getHostStatus();
-
-      if (provisioning) {
-        return _TransportSnapshot(
-          label: _t('connection_cloud'),
-          state: _TransportState.provisioning,
-          message:
-              '${_rt(CloudProvisioningStatus.message)} ${_rt(status.message)}'
-                  .trim(),
-          lastSeenAt: status.lastSeenAt,
-        );
-      }
-
-      if (!status.cloudReachable) {
-        return _TransportSnapshot(
-          label: _t('connection_cloud'),
-          state: _TransportState.offline,
-          message: status.message.isEmpty
-              ? _t('connection_cloud_unreachable')
-              : _rt(status.message),
-          lastSeenAt: status.lastSeenAt,
-        );
-      }
-
-      if (widget.store.appIdentity.isHost) {
-        return _TransportSnapshot(
-          label: _t('connection_cloud'),
-          state: status.hostReachable
-              ? _TransportState.online
-              : _TransportState.pending,
-          message: status.hostReachable
-              ? _t('connection_cloud_host_heartbeat_active')
-              : _t('connection_cloud_waiting_heartbeat'),
-          lastSeenAt: status.lastSeenAt,
-        );
-      }
-
+          await UnifiedSyncFactory.directEngine(widget.store).getHostStatus();
       if (status.hostReachable) {
         return _TransportSnapshot(
-          label: _t('connection_cloud'),
+          label: 'Direct',
           state: _TransportState.online,
           message: status.message.isEmpty
-              ? _t('connection_cloud_host_reachable')
+              ? 'Direct Host is reachable.'
               : status.message,
           lastSeenAt: status.lastSeenAt ?? DateTime.now(),
         );
       }
 
       return _TransportSnapshot(
-        label: _t('connection_cloud'),
+        label: 'Direct',
         state: _TransportState.offline,
-        message: status.lastSeenAt == null
-            ? _t('connection_no_host_heartbeat')
-            : _t('connection_host_heartbeat_stale'),
+        message: status.message.isEmpty
+            ? 'Direct Host is not reachable.'
+            : status.message,
         lastSeenAt: status.lastSeenAt,
       );
     } catch (error) {
       return _TransportSnapshot(
-        label: _t('connection_cloud'),
+        label: 'Direct',
         state: _TransportState.error,
-        message: "${_t('connection_cloud_check_failed')}: $error",
+        message: 'Direct connection check failed: $error',
       );
     }
   }
@@ -1729,17 +1490,6 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     final lastSuccessfulSync =
         SyncDeviceStateStore.lastSuccessfulSyncAt(identity);
 
-    if (identity.isClient &&
-        identity.activeSyncTransportNormalized == 'cloud' &&
-        CloudProvisioningStatus.isPending) {
-      return _TransportSnapshot(
-        label: _t('connection_sync_health'),
-        state: _TransportState.provisioning,
-        message: _t('connection_sync_provisioning'),
-        lastSuccessfulSyncAt: lastSuccessfulSync,
-      );
-    }
-
     if (identity.isClient && widget.store.isSuspendedByHost) {
       return _TransportSnapshot(
         label: _t('connection_sync_health'),
@@ -1752,21 +1502,21 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     }
 
     final lanSettings = LanSyncSettings.load();
-    final cloudSettings = CloudSyncSettings.load();
-    final hasSavedCloudSettings = cloudSettings.isConfigured;
+    final directSettings = DirectSyncSettings.load();
+    final hasSavedDirectSettings = directSettings.isConfigured;
     final lanEnabled = identity.isHost
         ? lanSettings.setupComplete && lanSettings.isHost
         : identity.isClient &&
             identity.activeSyncTransportNormalized == 'lan' &&
             lanSettings.setupComplete &&
             lanSettings.isClient;
-    final cloudEnabled = identity.isHost
-        ? identity.isCloudEnabled && hasSavedCloudSettings
+    final directEnabled = identity.isHost
+        ? true
         : identity.isClient &&
-            identity.activeSyncTransportNormalized == 'cloud' &&
-            hasSavedCloudSettings;
+            identity.activeSyncTransportNormalized == 'direct' &&
+            hasSavedDirectSettings;
 
-    if (!lanEnabled && !cloudEnabled) {
+    if (!lanEnabled && !directEnabled) {
       return _TransportSnapshot(
         label: _t('connection_sync_health'),
         state: _TransportState.disabled,
@@ -1810,10 +1560,10 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
           label: _t('connection_lan'),
           state: _TransportState.checking,
           message: _t('connection_lan_checking')),
-      cloud: _TransportSnapshot(
-          label: _t('connection_cloud'),
+      direct: _TransportSnapshot(
+          label: 'Direct',
           state: _TransportState.checking,
-          message: _t('connection_cloud_checking')),
+          message: 'Checking Direct connection...'),
       syncHealth: _TransportSnapshot(
           label: _t('connection_sync_health'),
           state: _TransportState.checking,
@@ -1828,7 +1578,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     if (mounted) setState(() => _snapshot = checking);
 
     final lan = await _readLanStatus();
-    final cloud = await _readCloudStatus();
+    final direct = await _readDirectStatus();
     final syncHealth = _readSyncHealthStatus();
     if (!mounted) return;
     setState(() {
@@ -1836,7 +1586,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
         roleLabel: _roleLabel(),
         roleMessage: _roleMessage(),
         lan: lan,
-        cloud: cloud,
+        direct: direct,
         syncHealth: syncHealth,
         activeTransportLabel: _activeTransportLabel(),
         pendingChanges: widget.store.isSyncDataLoaded
@@ -1909,9 +1659,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     if (identity.isHost) {
       final candidates = <_TransportSnapshot>[];
       if (UnifiedSyncFactory.isLanSetupComplete) candidates.add(_snapshot.lan);
-      if (UnifiedSyncFactory.cloudCanCheck(widget.store)) {
-        candidates.add(_snapshot.cloud);
-      }
+      candidates.add(_snapshot.direct);
       if (candidates.isEmpty) return _snapshot.lan;
       if (candidates.any((item) => item.state == _TransportState.checking)) {
         return candidates
@@ -1928,7 +1676,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
     }
     final active = identity.activeSyncTransportNormalized;
     if (active == 'lan') return _snapshot.lan;
-    if (active == 'cloud') return _snapshot.cloud;
+    if (active == 'direct') return _snapshot.direct;
     return _TransportSnapshot(
         label: _t('local'),
         state: _TransportState.disabled,
@@ -2069,7 +1817,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final lan = _snapshot.lan;
-    final cloud = _snapshot.cloud;
+    final direct = _snapshot.direct;
     final syncHealth = _snapshot.syncHealth;
     final summaryColor = _stateColor(context, _summaryState);
     final tooltip = [
@@ -2081,7 +1829,7 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
       '${_t('pending_changes')}: ${_snapshot.pendingChanges}',
       '${_t('last_successful_sync')}: ${_timeText(syncHealth.lastSuccessfulSyncAt)}',
       "${_t('connection_lan')}: ${_stateText(lan.state)}${_lastSeenText(lan.lastSeenAt)} — ${lan.message}",
-      "${_t('connection_cloud')}: ${_stateText(cloud.state)}${_lastSeenText(cloud.lastSeenAt)} — ${cloud.message}",
+      "Direct: ${_stateText(direct.state)}${_lastSeenText(direct.lastSeenAt)} — ${direct.message}",
     ].join('\n');
 
     return Padding(
@@ -2135,9 +1883,8 @@ class _HostConnectionIndicatorState extends State<HostConnectionIndicator> {
             const PopupMenuDivider(),
             _detailItem(context, Icons.lan_outlined, _t('connection_lan'), lan,
                 activeTransport: _isActiveTransport(lan)),
-            _detailItem(
-                context, Icons.cloud_outlined, _t('connection_cloud'), cloud,
-                activeTransport: _isActiveTransport(cloud)),
+            _detailItem(context, Icons.link_outlined, 'Direct', direct,
+                activeTransport: _isActiveTransport(direct)),
             PopupMenuItem<void>(
               enabled: false,
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),

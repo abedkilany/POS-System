@@ -1,4 +1,4 @@
-import { sql, assertCloudSyncEnabled, assertStoreAllowed, ensureDeviceAuthColumns, sendError } from '../_db.js';
+import { sql, assertStoreAllowed, ensureDeviceAuthColumns, sendError } from '../_db.js';
 
 export default async function handler(req, res) {
   try {
@@ -15,7 +15,6 @@ export default async function handler(req, res) {
     if (!deviceId) return res.status(400).json({ ok: false, error: 'deviceId is required.' });
     if (!deviceToken) return res.status(401).json({ ok: false, authorized: false, error: 'Missing device token.' });
     assertStoreAllowed(storeId);
-    await assertCloudSyncEnabled(storeId);
     await ensureDeviceAuthColumns();
     const rows = await sql`
       select device_id, coalesce(device_token, '') as device_token, revoked, suspended, wipe_pending

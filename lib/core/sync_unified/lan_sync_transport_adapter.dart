@@ -11,7 +11,7 @@ import 'unified_sync_transport_helpers.dart';
 /// LAN adapter shell for Fix 10A.
 ///
 /// It delegates to the current LAN service without changing the existing LAN
-/// protocol. Later phases will normalize its contracts with Cloud.
+/// protocol. Later phases will normalize its contracts with Direct.
 class LanSyncTransportAdapter implements SyncTransportAdapter {
   LanSyncTransportAdapter({
     required LanSyncService service,
@@ -127,14 +127,14 @@ class LanSyncTransportAdapter implements SyncTransportAdapter {
   Future<UnifiedHostStatus> getHostStatus() async {
     if (_settings.isHost) {
       return const UnifiedHostStatus(
-        cloudReachable: false,
+        controlPlaneReachable: false,
         hostReachable: true,
         message: 'This device is the LAN Host.',
       );
     }
     final result = await testConnection();
     return UnifiedHostStatus(
-      cloudReachable: false,
+      controlPlaneReachable: false,
       hostReachable: result.ok,
       message: result.message,
       lastSeenAt: result.ok ? DateTime.now() : null,

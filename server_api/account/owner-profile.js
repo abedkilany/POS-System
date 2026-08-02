@@ -84,7 +84,7 @@ export default async function handler(req, res) {
 
     const rows = await sql`
       select a.id, a.namespace_slug, a.account_type, a.status, s.id as store_id, s.slug as store_slug,
-             s.name as store_name, s.branch_id, s.cloud_sync_enabled
+             s.name as store_name, s.branch_id
       from app_accounts a
       join app_stores s on s.owner_account_id = a.id
       where a.id = ${accountId}
@@ -132,7 +132,7 @@ export default async function handler(req, res) {
       storeName: row.store_name || '',
       loginName: `${username}@${row.namespace_slug || row.store_slug || ''}`,
       accountType: 'store_owner',
-      cloudSyncEnabled: row.cloud_sync_enabled === true,
+      directSyncEnabled: false,
     });
   } catch (error) {
     return sendError(res, error);

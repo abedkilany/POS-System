@@ -71,33 +71,33 @@ String localizeRuntimeMessage(String message, AppLocalizations tr) {
     'Host restored data. Rebuilding this device from the latest snapshot...':
         'host_restored_data_rebuilding_from_snapshot',
     'Preparing LAN sync...': 'preparing_lan_sync',
-    'Preparing Cloud sync...': 'preparing_cloud_sync',
+    'Preparing Direct sync...': 'preparing_direct_sync',
     'Preparing local sync...': 'preparing_local_sync',
     'LAN sync failed while sending local changes.':
         'lan_sync_failed_while_sending_local_changes',
-    'Cloud sync failed while sending local changes.':
-        'cloud_sync_failed_while_sending_local_changes',
+    'Direct sync failed while sending local changes.':
+        'direct_sync_failed_while_sending_local_changes',
     'local sync failed while sending local changes.':
         'local_sync_failed_while_sending_local_changes',
     'Pulling authoritative LAN changes...':
         'pulling_authoritative_lan_changes',
-    'Pulling authoritative Cloud changes...':
-        'pulling_authoritative_cloud_changes',
+    'Pulling authoritative Direct changes...':
+        'pulling_authoritative_direct_changes',
     'Pulling authoritative local changes...':
         'pulling_authoritative_local_changes',
     'LAN pull failed. Trying snapshot repair...':
         'lan_pull_failed_trying_snapshot_repair',
-    'Cloud pull failed. Trying snapshot repair...':
-        'cloud_pull_failed_trying_snapshot_repair',
+    'Direct pull failed. Trying snapshot repair...':
+        'direct_pull_failed_trying_snapshot_repair',
     'local pull failed. Trying snapshot repair...':
         'local_pull_failed_trying_snapshot_repair',
     'LAN sync completed.': 'lan_sync_completed',
-    'Cloud sync completed.': 'cloud_sync_completed',
+    'Direct sync completed.': 'direct_sync_completed',
     'local sync completed.': 'local_sync_completed',
     'LAN sync completed. Pushed {pushed} change(s), pulled {pulled} change(s).':
         'lan_sync_completed_details',
-    'Cloud sync completed. Pushed {pushed} change(s), pulled {pulled} change(s).':
-        'cloud_sync_completed_details',
+    'Direct sync completed. Pushed {pushed} change(s), pulled {pulled} change(s).':
+        'direct_sync_completed_details',
     'local sync completed. Pushed {pushed} change(s), pulled {pulled} change(s).':
         'local_sync_completed_details',
     'Snapshot: requesting manifest...': 'snapshot_requesting_manifest',
@@ -120,7 +120,7 @@ String localizeRuntimeMessage(String message, AppLocalizations tr) {
     'Requesting a fresh Host snapshot...': 'requesting_fresh_host_snapshot',
     'Verifying rebuilt local data...': 'verifying_rebuilt_local_data',
     'Cleaning up local records...': 'cleaning_up_local_records',
-    'Cloud rebuild completed.': 'cloud_rebuild_completed',
+    'Direct rebuild completed.': 'direct_rebuild_completed',
     'Pairing code created.': 'pairing_code_created',
     'Pairing code failed.': 'pairing_code_failed',
     'Pairing code expired or already used. Ask the Host device for a new code.':
@@ -132,60 +132,60 @@ String localizeRuntimeMessage(String message, AppLocalizations tr) {
         'device_paired_waiting_host_login',
     'Device paired successfully. Initial Store data will download automatically when the Host is online.':
         'device_paired_initial_download_auto',
-    'Device suspended in Cloud.': 'device_suspended_cloud',
-    'Device resumed in Cloud.': 'device_resumed_cloud',
+    'Device suspended in Direct.': 'device_suspended_direct',
+    'Device resumed in Direct.': 'device_resumed_direct',
     'Device revoked.': 'device_revoked',
     'Device heartbeat updated.': 'device_heartbeat_updated',
     'Only Clients can request Host transfer.': 'only_clients_host_transfer',
     'Host transfer request sent.': 'host_transfer_request_sent',
     'Only Hosts can approve Host transfer.': 'only_hosts_approve_transfer',
-    'Host transfer approved in Cloud.': 'host_transfer_approved_cloud',
-    'Host transfer activated in Cloud.': 'host_transfer_activated_cloud',
-    'Cloud API connection is healthy.': 'cloud_api_connection_healthy',
-    'Cloud Connected/Ready for Sync.': 'cloud_connected_ready_sync',
+    'Host transfer approved in Direct.': 'host_transfer_approved_direct',
+    'Host transfer activated in Direct.': 'host_transfer_activated_direct',
+    'VPS API connection is healthy.': 'direct_api_connection_healthy',
+    'Direct Connected/Ready for Sync.': 'direct_connected_ready_sync',
     'No other active Host was found.': 'no_other_active_host',
     'Host heartbeat updated.': 'host_heartbeat_updated',
     'Host heartbeat is fresh.': 'host_heartbeat_fresh',
     'No host heartbeat was found.': 'no_host_heartbeat_found',
     'Host heartbeat is stale.': 'host_heartbeat_stale',
     'Rejected by Host.': 'rejected_by_host',
-    'Preparing Host cloud snapshot queue...':
-        'preparing_host_cloud_snapshot_queue',
+    'Preparing Host direct snapshot queue...':
+        'preparing_host_direct_snapshot_queue',
     'Sending Host heartbeat...': 'sending_host_heartbeat',
     'Registering Host device...': 'registering_host_device',
     'Checking Client requests...': 'checking_client_requests',
     'Uploading authoritative Host changes...':
         'uploading_authoritative_host_changes',
     'Registering Client device...': 'registering_client_device',
-    'Cleaning up after Cloud sync...': 'cleaning_up_after_cloud_sync',
+    'Cleaning up after Direct sync...': 'cleaning_up_after_direct_sync',
     'Host is still uploading store data. Download will continue automatically.':
         'host_still_uploading_store_data',
-    'Cloud API URL and token are required.': 'cloud_api_url_token_required',
-    'Cloud Sync is not enabled for this store.':
-        'cloud_sync_not_enabled_for_store',
-    'Cloud Sync is not ready yet.': 'cloud_sync_not_ready_yet',
+    'VPS API URL and token are required.': 'direct_api_url_token_required',
+    'Direct sync is not enabled for this store.':
+        'direct_sync_not_enabled_for_store',
+    'Direct sync is not ready yet.': 'direct_sync_not_ready_yet',
     'Only the Host can create pairing codes.': 'only_host_create_pairing_codes',
     'Only the Host can check pairing code status.':
         'only_host_check_pairing_status',
     'Unauthorized/Token invalid: this Client has no saved device token. Pair this device again.':
         'unauthorized_token_invalid_client',
-    'Heartbeat is only sent by a cloud-enabled Host device.':
-        'heartbeat_only_cloud_host',
-    'Cloud is not the active/configured sync transport for this device.':
-        'cloud_not_active_transport',
-    'Host devices do not pull authoritative Cloud changes.':
-        'host_devices_no_pull_cloud',
-    'Cloud event log gap detected. Snapshot repair is required.':
-        'cloud_event_log_gap_snapshot_required',
-    'Cloud pull pagination failed: missing next cursor.':
-        'cloud_pull_pagination_missing_cursor',
+    'Heartbeat is only sent by a Direct-enabled Host device.':
+        'heartbeat_only_host',
+    'Direct is not the active/configured sync transport for this device.':
+        'direct_not_active_transport',
+    'Host devices do not pull authoritative Direct changes.':
+        'host_devices_no_pull_direct',
+    'Direct event log gap detected. Snapshot repair is required.':
+        'direct_event_log_gap_snapshot_required',
+    'Direct pull pagination failed: missing next cursor.':
+        'direct_pull_pagination_missing_cursor',
     'File save was cancelled.': 'file_save_cancelled',
     'Connection is healthy.': 'connection_is_healthy',
     'LAN pairing completed.': 'lan_pairing_completed',
     'Initial clone completed.': 'initial_clone_completed',
     'Pull completed.': 'pull_completed',
     'No LAN changes to push.': 'no_lan_changes_to_push',
-    'LAN sync is not available in the web build. Use Cloud Sync/API instead.':
+    'LAN sync is not available in the web build. Use Direct sync/API instead.':
         'lan_sync_web_unavailable',
     'LAN pairing is not available in the web build.':
         'lan_pairing_web_unavailable',
@@ -193,22 +193,22 @@ String localizeRuntimeMessage(String message, AppLocalizations tr) {
         'lan_initial_clone_web_unavailable',
     'LAN pull is not available in the web build.': 'lan_pull_web_unavailable',
     'LAN push is not available in the web build.': 'lan_push_web_unavailable',
-    'LAN repair is not available in the web build. Use Cloud Sync/API instead.':
+    'LAN repair is not available in the web build. Use Direct sync/API instead.':
         'lan_repair_web_unavailable',
   };
   final key = exact[value];
   if (key != null) return tr.text(key);
 
-  if (value.contains('Cloud Sync is not enabled for this store.')) {
+  if (value.contains('Direct sync is not enabled for this store.')) {
     return value.replaceFirst(
-      'Cloud Sync is not enabled for this store.',
-      tr.text('cloud_sync_not_enabled_for_store'),
+      'Direct sync is not enabled for this store.',
+      tr.text('direct_sync_not_enabled_for_store'),
     );
   }
-  if (value.contains('Cloud Sync is not ready yet.')) {
+  if (value.contains('Direct sync is not ready yet.')) {
     return value.replaceFirst(
-      'Cloud Sync is not ready yet.',
-      tr.text('cloud_sync_not_ready_yet'),
+      'Direct sync is not ready yet.',
+      tr.text('direct_sync_not_ready_yet'),
     );
   }
 
@@ -233,14 +233,14 @@ String localizeRuntimeMessage(String message, AppLocalizations tr) {
     'Host transfer request failed': 'host_transfer_request_failed',
     'Host transfer approval failed': 'host_transfer_approval_failed',
     'Host transfer activation failed': 'host_transfer_activation_failed',
-    'Cloud API connection failed': 'cloud_api_connection_failed',
-    'Cloud Server Unreachable': 'cloud_server_unreachable',
+    'VPS API connection failed': 'direct_api_connection_failed',
+    'VPS server Unreachable': 'direct_server_unreachable',
     'Host Offline': 'host_offline',
     'Sync Not Ready': 'sync_not_ready',
     'Host heartbeat failed': 'host_heartbeat_failed',
-    'Cloud push failed': 'cloud_push_failed',
-    'Cloud pull failed': 'cloud_pull_failed',
-    'Cloud sync failed': 'cloud_sync_failed',
+    'Direct push failed': 'direct_push_failed',
+    'Direct pull failed': 'direct_pull_failed',
+    'Direct sync failed': 'direct_sync_failed',
     'Connection failed': 'connection_failed',
     'Initial clone failed': 'initial_clone_failed',
     'Pull failed': 'pull_failed',
@@ -252,14 +252,14 @@ String localizeRuntimeMessage(String message, AppLocalizations tr) {
     if (translated.isNotEmpty) return translated;
   }
 
-  final cloudPage =
-      RegExp(r'^Pulling Cloud changes page (\d+)\.\.\.$').firstMatch(value);
-  if (cloudPage != null) {
+  final directPage =
+      RegExp(r'^Pulling Direct changes page (\d+)\.\.\.$').firstMatch(value);
+  if (directPage != null) {
     return tr
-        .format('pulling_cloud_changes_page', {'page': cloudPage.group(1)});
+        .format('pulling_direct_changes_page', {'page': directPage.group(1)});
   }
 
-  final progressMatch = RegExp(r'^(LAN|Cloud|local) sync completed\. Pushed (\d+) change\(s\), pulled (\d+) change\(s\)\.$')
+  final progressMatch = RegExp(r'^(LAN|Direct|local) sync completed\. Pushed (\d+) change\(s\), pulled (\d+) change\(s\)\.$')
       .firstMatch(value);
   if (progressMatch != null) {
     final transport = progressMatch.group(1)!.toLowerCase();
@@ -333,17 +333,17 @@ String localizeRuntimeMessage(String message, AppLocalizations tr) {
   }
 
   if (value.startsWith(
-      'Cloud rebuild completed from a requested fresh Host snapshot.')) {
-    return '${tr.text('cloud_rebuild_completed_fresh')} ${value.substring('Cloud rebuild completed from a requested fresh Host snapshot.'.length).trim()}'
+      'Direct rebuild completed from a requested fresh Host snapshot.')) {
+    return '${tr.text('direct_rebuild_completed_fresh')} ${value.substring('Direct rebuild completed from a requested fresh Host snapshot.'.length).trim()}'
         .trim();
   }
   if (value.startsWith(
-      'Cloud rebuild pulled a fresh Host snapshot, but local verification found problems:')) {
-    return '${tr.text('cloud_rebuild_pulled_but_issues')}: ${value.substring('Cloud rebuild pulled a fresh Host snapshot, but local verification found problems:'.length).trim()}';
+      'Direct rebuild pulled a fresh Host snapshot, but local verification found problems:')) {
+    return '${tr.text('direct_rebuild_pulled_but_issues')}: ${value.substring('Direct rebuild pulled a fresh Host snapshot, but local verification found problems:'.length).trim()}';
   }
   if (value.startsWith(
-      'Cloud rebuild requested a fresh Host snapshot, but no snapshot was pulled yet. Keep the Host online and retry.')) {
-    return '${tr.text('cloud_rebuild_no_snapshot_yet')} ${value.substring('Cloud rebuild requested a fresh Host snapshot, but no snapshot was pulled yet. Keep the Host online and retry.'.length).trim()}'
+      'Direct rebuild requested a fresh Host snapshot, but no snapshot was pulled yet. Keep the Host online and retry.')) {
+    return '${tr.text('direct_rebuild_no_snapshot_yet')} ${value.substring('Direct rebuild requested a fresh Host snapshot, but no snapshot was pulled yet. Keep the Host online and retry.'.length).trim()}'
         .trim();
   }
   if (value.startsWith('Pairing code belongs to a different Store')) {
@@ -358,25 +358,25 @@ String localizeRuntimeMessage(String message, AppLocalizations tr) {
         'Another active Host is already connected for store',
         tr.text('another_active_host_connected'));
   }
-  if (value.startsWith('Host cloud push completed.')) {
+  if (value.startsWith('Host direct push completed.')) {
     return value.replaceFirst(
-        'Host cloud push completed.', tr.text('host_cloud_push_completed'));
+        'Host direct push completed.', tr.text('host_direct_push_completed'));
   }
-  if (value.startsWith('Client cloud push completed.')) {
+  if (value.startsWith('Client direct push completed.')) {
     return value.replaceFirst(
-        'Client cloud push completed.', tr.text('client_cloud_push_completed'));
+        'Client direct push completed.', tr.text('client_direct_push_completed'));
   }
-  if (value.startsWith('Cloud pull stopped after')) {
+  if (value.startsWith('Direct pull stopped after')) {
     return value.replaceFirst(
-        'Cloud pull stopped after', tr.text('cloud_pull_stopped_max_pages'));
+        'Direct pull stopped after', tr.text('direct_pull_stopped_max_pages'));
   }
-  if (value.startsWith('Cloud pull completed.')) {
+  if (value.startsWith('Direct pull completed.')) {
     return value.replaceFirst(
-        'Cloud pull completed.', tr.text('cloud_pull_completed'));
+        'Direct pull completed.', tr.text('direct_pull_completed'));
   }
-  if (value.startsWith('Cloud sync completed.')) {
+  if (value.startsWith('Direct sync completed.')) {
     return value.replaceFirst(
-        'Cloud sync completed.', tr.text('cloud_sync_completed'));
+        'Direct sync completed.', tr.text('direct_sync_completed'));
   }
   if (value.startsWith('LAN push completed.')) {
     return value.replaceFirst(
@@ -392,9 +392,9 @@ String localizeRuntimeMessage(String message, AppLocalizations tr) {
 
   if (tr.isArabic) {
     var localized = value
-        .replaceAll('Cloud Sync', 'مزامنة الاتصال السحابي')
-        .replaceAll('Cloud API', 'واجهة الاتصال السحابي')
-        .replaceAll('Cloud', 'اتصال سحابي')
+        .replaceAll('Direct sync', 'مزامنة الاتصال السحابي')
+        .replaceAll('VPS API', 'واجهة الاتصال السحابي')
+        .replaceAll('Direct', 'اتصال سحابي')
         .replaceAll('LAN Sync', 'مزامنة الشبكة المحلية')
         .replaceAll('LAN', 'شبكة محلية')
         .replaceAll('Host', 'المضيف')

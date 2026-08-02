@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:ventio/core/services/cloud_sync_service.dart';
+import 'package:ventio/core/services/direct_control_plane_service.dart';
 import 'package:ventio/core/services/local_database_service.dart';
 import 'package:ventio/data/app_store.dart';
 
@@ -18,11 +18,11 @@ void main() {
     tearDown(LocalDatabaseService.clearInMemoryStoreForTesting);
 
     const settings =
-        CloudSyncSettings(enabled: true, apiBaseUrl: 'https://sync.test');
+        VpsControlPlaneSettings(enabled: true, apiBaseUrl: 'https://sync.test');
 
     test('offline connection returns a failed result instead of throwing',
         () async {
-      final service = CloudSyncService(
+      final service = DirectControlPlaneService(
         AppStore(),
         client: MockClient(
             (_) async => throw const SocketExceptionForTest('No internet')),
@@ -36,7 +36,7 @@ void main() {
 
     test('online connection can recover after an offline result', () async {
       var online = false;
-      final service = CloudSyncService(
+      final service = DirectControlPlaneService(
         AppStore(),
         client: MockClient((_) async {
           if (!online) throw TimeoutException('offline');

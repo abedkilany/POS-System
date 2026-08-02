@@ -4,7 +4,7 @@ import 'sync_transport_adapter.dart';
 /// Shared transport-facing helpers for the unified sync layer.
 ///
 /// This file is intentionally narrow. It holds logic that should behave the
-/// same for LAN and Cloud, while leaving the actual network transport details
+/// same for LAN and Direct, while leaving the actual network transport details
 /// inside their adapters.
 class UnifiedSyncTransportHelpers {
   const UnifiedSyncTransportHelpers._();

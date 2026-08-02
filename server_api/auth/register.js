@@ -96,7 +96,6 @@ async function ensureTables() {
   await sql`alter table app_accounts add column if not exists account_type text not null default 'store_owner'`;
   await sql`alter table app_stores add column if not exists slug text`;
   await sql`alter table app_stores add column if not exists branch_id text not null default 'BR-MAIN'`;
-  await sql`alter table app_stores add column if not exists cloud_sync_enabled boolean not null default false`;
 
   await sql`
     update app_stores
@@ -179,7 +178,7 @@ export default async function handler(req, res) {
       trialEndsAt,
       devicesLimit: 2,
       accountToken,
-      cloudSyncEnabled: false,
+      directSyncEnabled: false,
     });
   } catch (error) {
     return sendError(res, error);

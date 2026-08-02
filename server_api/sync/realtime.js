@@ -175,9 +175,12 @@ export async function realtimeTicketHandler(req, res) {
     const branchId = String(req.query.branch_id || req.query.branchId || 'main').trim() || 'main';
     const role = String(req.query.role || req.headers['x-device-role'] || '').trim().toLowerCase();
     const requestedTransport = String(
-      req.query.transport || req.headers['x-sync-transport'] || 'cloud',
+      req.query.transport || req.headers['x-sync-transport'] || 'direct',
     ).trim().toLowerCase();
-    const transport = requestedTransport === 'direct' ? 'direct' : 'cloud';
+    if (requestedTransport !== 'direct') {
+      return res.status(400).json({ ok: false, error: 'Realtime signaling supports Direct transport only.' });
+    }
+    const transport = 'direct';
     const deviceId = String(req.headers['x-device-id'] || req.query.device_id || req.query.deviceId || '').trim();
     if (!storeId || (role !== 'host' && role !== 'client')) {
       return res.status(400).json({ ok: false, error: 'Invalid realtime ticket request.' });
@@ -187,7 +190,7 @@ export async function realtimeTicketHandler(req, res) {
       storeId,
       branchId,
       allowedRoles: role === 'host' ? ['host'] : ['client'],
-      // A Host may have been registered previously as Cloud or LAN. Direct
+      // A Host may have been registered previously using a retired transport or LAN. Direct
       // signaling is a connection capability, not a replacement for the
       // Host's stored sync transport. Clients remain restricted to Direct.
       allowedTransports: role === 'host' ? [] : [transport],
@@ -283,7 +286,7 @@ export function attachRealtimeServer(server) {
           storeId,
           branchId,
           role,
-          transport: ticketData.transport || 'cloud',
+          transport: ticketData.transport || 'direct',
           deviceId: ticketData.deviceId || '',
           alive: true,
         };

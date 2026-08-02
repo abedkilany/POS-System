@@ -87,7 +87,7 @@ class DirectHostSyncEndpoint {
     }
     final accepted = await _core.acceptClientChangesOnHost(
       changes,
-      mirrorToCloud: false,
+      mirrorToDirect: false,
       verifyApplied: true,
     );
     SyncDiagnosticsLog.add(

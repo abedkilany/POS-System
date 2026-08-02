@@ -7,7 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../../data/app_store.dart';
-import 'cloud_sync_service.dart';
+import 'direct_control_plane_service.dart';
 import 'google_drive_browser_auth.dart';
 import 'local_database_service.dart';
 
@@ -313,14 +313,14 @@ class GoogleDriveBackupService {
 
   static Future<GoogleDriveBackupSettings> connectWithServer(
       GoogleDriveBackupSettings settings) async {
-    final cloud = CloudSyncSettings.load();
-    final apiBaseUrl = cloud.apiBaseUrl.trim();
+    final direct = VpsControlPlaneSettings.load();
+    final apiBaseUrl = direct.apiBaseUrl.trim();
     if (apiBaseUrl.isEmpty) {
       throw StateError(
-          'Cloud API URL is required for Google Drive connection.');
+          'Direct API URL is required for Google Drive connection.');
     }
     final sessionId = _randomSessionId();
-    final base = CloudSyncSettings.normalizeApiBaseUrl(apiBaseUrl);
+    final base = VpsControlPlaneSettings.normalizeApiBaseUrl(apiBaseUrl);
     final authUrl = Uri.parse('$base/api/google-drive/auth-start')
         .replace(queryParameters: {'session_id': sessionId});
     await GoogleDriveBrowserAuth.openUrl(authUrl.toString());
@@ -674,10 +674,10 @@ class GoogleDriveBackupService {
       throw StateError(
           'Google Drive authorization expired. Connect Google Drive again.');
     }
-    final cloud = CloudSyncSettings.load();
-    if (cloud.apiBaseUrl.trim().isNotEmpty &&
+    final direct = VpsControlPlaneSettings.load();
+    if (direct.apiBaseUrl.trim().isNotEmpty &&
         settings.clientSecret.trim().isEmpty) {
-      final base = CloudSyncSettings.normalizeApiBaseUrl(cloud.apiBaseUrl);
+      final base = VpsControlPlaneSettings.normalizeApiBaseUrl(direct.apiBaseUrl);
       final response = await http.post(
         Uri.parse('$base/api/google-drive/refresh'),
         headers: const {'Content-Type': 'application/json; charset=utf-8'},

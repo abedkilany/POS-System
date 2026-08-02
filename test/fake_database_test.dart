@@ -23,12 +23,12 @@ void main() {
     });
 
     test('records deletes and removes values', () async {
-      final db = FakeLocalDatabase({'cloud_last_pull_cursor': '2026-01-01T00:00:00Z'});
+      final db = FakeLocalDatabase({'direct_last_pull_cursor': '2026-01-01T00:00:00Z'});
 
-      await db.deleteString('cloud_last_pull_cursor');
+      await db.deleteString('direct_last_pull_cursor');
 
-      expect(db.containsKey('cloud_last_pull_cursor'), isFalse);
-      expect(db.deletes, ['cloud_last_pull_cursor']);
+      expect(db.containsKey('direct_last_pull_cursor'), isFalse);
+      expect(db.deletes, ['direct_last_pull_cursor']);
     });
 
     test('simulates offline storage failures', () async {

@@ -4,8 +4,7 @@ import 'package:intl/intl.dart';
 
 import '../../core/localization/app_localizations.dart';
 import '../../core/services/account_auth_service.dart';
-import '../../core/services/cloud_sync_admin_service.dart';
-import '../../core/services/cloud_sync_service.dart';
+import '../../core/services/direct_control_plane_service.dart';
 import '../../core/services/lan_sync_service.dart';
 import '../../core/services/sync_diagnostics_log.dart';
 import '../../core/sync_unified/sync_device_state.dart';
@@ -24,70 +23,63 @@ class SyncMonitoringSection extends StatefulWidget {
 }
 
 class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
-  Future<_CloudMonitoringSnapshot>? _cloudMonitoringFuture;
+  Future<_DirectMonitoringSnapshot>? _directMonitoringFuture;
 
   AppStore get store => widget.store;
-  CloudSyncAdminService get _cloudAdminService => CloudSyncAdminService(store);
+  DirectControlPlaneService get _controlPlaneService => DirectControlPlaneService(store);
 
   @override
   void initState() {
     super.initState();
-    _refreshCloudDevices();
+    _refreshDirectDevices();
   }
 
   @override
   void didUpdateWidget(covariant SyncMonitoringSection oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.store != widget.store) {
-      _refreshCloudDevices();
+      _refreshDirectDevices();
     }
   }
 
-  void _refreshCloudDevices() {
-    final cloudSettings = CloudSyncSettings.load();
-    if (store.appIdentity.isHost && cloudSettings.isConfigured) {
-      _cloudMonitoringFuture = _loadAndAdoptCloudDevices(cloudSettings)
-          .catchError((_) => const _CloudMonitoringSnapshot(
-                devices: <CloudDeviceStatus>[],
-              ));
-    } else {
-      _cloudMonitoringFuture = Future<_CloudMonitoringSnapshot>.value(
-        _CloudMonitoringSnapshot(
-          devices: const <CloudDeviceStatus>[],
-          limit: store.appIdentity.isHost
-              ? _localClientDeviceLimitStatus(
-                  store,
-                  LanSyncSettings.load(),
-                )
-              : null,
-        ),
-      );
-    }
+  void _refreshDirectDevices() {
+    // Direct Sync device registry is no longer part of the application flow.
+    // Direct device administration is handled by the VPS phase; keep this
+    // panel local-only until that registry is exposed through Direct APIs.
+    _directMonitoringFuture = Future<_DirectMonitoringSnapshot>.value(
+      _DirectMonitoringSnapshot(
+        devices: const <DirectDeviceStatus>[],
+        limit: store.appIdentity.isHost
+            ? _localClientDeviceLimitStatus(store, LanSyncSettings.load())
+            : null,
+      ),
+    );
   }
 
-  Future<_CloudMonitoringSnapshot> _loadAndAdoptCloudDevices(
-      CloudSyncSettings cloudSettings) async {
-    final service = _cloudAdminService;
-    var result = await service.listDevicesWithLimit(cloudSettings);
+  // ignore: unused_element
+  Future<_DirectMonitoringSnapshot> _loadAndAdoptDirectDevices(
+      VpsControlPlaneSettings controlPlaneSettings) async {
+    final service = _controlPlaneService;
+    var result = await service.listDevicesWithLimit(controlPlaneSettings);
     var devices = result.devices;
     final repaired =
-        await _repairLegacyCloudDeviceLinks(service, cloudSettings, devices);
+        await _repairLegacyDirectDeviceLinks(service, controlPlaneSettings, devices);
     if (repaired) {
-      result = await service.listDevicesWithLimit(cloudSettings);
+      result = await service.listDevicesWithLimit(controlPlaneSettings);
       devices = result.devices;
     }
-    await _adoptCloudRegistryDevices(devices);
-    return _CloudMonitoringSnapshot(
+    await _adoptDirectRegistryDevices(devices);
+    return _DirectMonitoringSnapshot(
       devices: devices,
       limit: result.limit ??
           _localClientDeviceLimitStatus(store, LanSyncSettings.load()),
     );
   }
 
-  Future<bool> _repairLegacyCloudDeviceLinks(
-    CloudSyncAdminService service,
-    CloudSyncSettings cloudSettings,
-    List<CloudDeviceStatus> devices,
+  Future<bool> _repairLegacyDirectDeviceLinks(
+    DirectControlPlaneService service,
+    VpsControlPlaneSettings controlPlaneSettings,
+    List<DirectDeviceStatus> devices,
   ) async {
     final identity = store.appIdentity;
     if (!identity.isHost) return false;
@@ -114,15 +106,15 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
         .toSet();
 
     if (repairIds.isEmpty) return false;
-    final result = await service.repairLegacyCloudDeviceLinks(
-      cloudSettings,
+    final result = await service.repairLegacyDirectDeviceLinks(
+      controlPlaneSettings,
       clientDeviceIds: repairIds,
     );
     return result.ok;
   }
 
-  Future<void> _adoptCloudRegistryDevices(
-      List<CloudDeviceStatus> devices) async {
+  Future<void> _adoptDirectRegistryDevices(
+      List<DirectDeviceStatus> devices) async {
     final identity = store.appIdentity;
     if (!identity.isHost) return;
     final hostDeviceId = store.deviceId.trim();
@@ -140,13 +132,13 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
         continue;
       }
 
-      final cloudDeviceName = device.deviceName.trim();
+      final peerDeviceName = device.deviceName.trim();
       final before = settings.hostRegistry[clientDeviceId];
       if (before != null) {
         final registry = <String, HostRegistryDevice>{...settings.hostRegistry};
         final updated = before.copyWith(
           deviceName:
-              cloudDeviceName.isNotEmpty ? cloudDeviceName : before.deviceName,
+              peerDeviceName.isNotEmpty ? peerDeviceName : before.deviceName,
           lastSeenAt: device.lastSeenAt ?? before.lastSeenAt,
         );
         registry[clientDeviceId] = updated;
@@ -159,11 +151,11 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
       }
 
       if (device.hostDeviceId.trim() != hostDeviceId) continue;
-      settings = settings.withCloudPairedHostRegistryDevice(
+      settings = settings.withDirectPairedHostRegistryDevice(
         hostDeviceId: hostDeviceId,
         clientDeviceId: clientDeviceId,
         deviceToken: '',
-        deviceName: cloudDeviceName,
+        deviceName: peerDeviceName,
         pairedAt: device.lastSeenAt ?? DateTime.now(),
       );
       changed = true;
@@ -173,11 +165,11 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
   }
 
   Future<void> _refresh() async {
-    setState(_refreshCloudDevices);
-    final snapshot = await (_cloudMonitoringFuture ??
-        Future<_CloudMonitoringSnapshot>.value(
-            const _CloudMonitoringSnapshot(devices: <CloudDeviceStatus>[])));
-    await _finalizeCloudWipeAcknowledgements(snapshot.devices);
+    setState(_refreshDirectDevices);
+    final snapshot = await (_directMonitoringFuture ??
+        Future<_DirectMonitoringSnapshot>.value(
+            const _DirectMonitoringSnapshot(devices: <DirectDeviceStatus>[])));
+    await _finalizeDirectWipeAcknowledgements(snapshot.devices);
     if (mounted) setState(() {});
   }
 
@@ -189,10 +181,10 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
       await SyncDeviceAccessStore.suspend(deviceId);
     }
 
-    final cloudSettings = CloudSyncSettings.load();
-    if (cloudSettings.isConfigured) {
-      await _cloudAdminService.setDeviceSuspended(
-        cloudSettings,
+    final controlPlaneSettings = VpsControlPlaneSettings.load();
+    if (controlPlaneSettings.isConfigured) {
+      await _controlPlaneService.setDeviceSuspended(
+        controlPlaneSettings,
         deviceId,
         suspended: !shouldResume,
       );
@@ -225,8 +217,8 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
     await SyncDeviceAccessStore.markDeleted(id, deviceToken: token);
   }
 
-  Future<void> _finalizeCloudWipeAcknowledgements(
-      List<CloudDeviceStatus> cloudDevices) async {
+  Future<void> _finalizeDirectWipeAcknowledgements(
+      List<DirectDeviceStatus> peerDevices) async {
     return;
   }
 
@@ -259,9 +251,9 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
     await SyncDeviceAccessStore.markWipePending(deviceId,
         deviceToken: deletedDeviceToken);
 
-    final cloudSettings = CloudSyncSettings.load();
-    if (cloudSettings.isConfigured) {
-      await _cloudAdminService.revokeDevice(cloudSettings, deviceId);
+    final controlPlaneSettings = VpsControlPlaneSettings.load();
+    if (controlPlaneSettings.isConfigured) {
+      await _controlPlaneService.revokeDevice(controlPlaneSettings, deviceId);
     }
 
     if (!mounted) return;
@@ -290,9 +282,9 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
     if (confirmed != true) return;
 
     await _permanentlyDeleteDeviceRecord(deviceId);
-    final cloudSettings = CloudSyncSettings.load();
-    if (cloudSettings.isConfigured) {
-      await _cloudAdminService.deleteDeviceRecord(cloudSettings, deviceId);
+    final controlPlaneSettings = VpsControlPlaneSettings.load();
+    if (controlPlaneSettings.isConfigured) {
+      await _controlPlaneService.deleteDeviceRecord(controlPlaneSettings, deviceId);
     }
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -305,7 +297,7 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
     final tr = AppLocalizations.of(context);
     final isHost = store.appIdentity.isHost;
     final lanSettings = LanSyncSettings.load();
-    final cloudSettings = CloudSyncSettings.load();
+    final controlPlaneSettings = VpsControlPlaneSettings.load();
     final peers = SyncDeviceStateStore.loadPeerStates();
     final peerById = <String, HostPeerSyncState>{
       for (final peer in peers) peer.deviceId: peer
@@ -323,16 +315,16 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         children: [
           if (isHost)
-            FutureBuilder<_CloudMonitoringSnapshot>(
-              future: _cloudMonitoringFuture,
+            FutureBuilder<_DirectMonitoringSnapshot>(
+              future: _directMonitoringFuture,
               builder: (context, snapshot) => _HostSyncMonitoringTable(
                 store: store,
-                cloudDevices:
-                    snapshot.data?.devices ?? const <CloudDeviceStatus>[],
+                peerDevices:
+                    snapshot.data?.devices ?? const <DirectDeviceStatus>[],
                 deviceLimit: snapshot.data?.limit,
                 peerStates: peerById,
                 lanSettings: lanSettings,
-                loadingCloudDevices:
+                loadingDirectDevices:
                     snapshot.connectionState == ConnectionState.waiting,
                 onRefresh: _refresh,
                 onToggleSuspend: _toggleSuspend,
@@ -345,7 +337,7 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
               state: selfState,
               store: store,
               lanSettings: lanSettings,
-              cloudSettings: cloudSettings,
+              controlPlaneSettings: controlPlaneSettings,
               onRefresh: _refresh,
             ),
           const SizedBox(height: 12),
@@ -356,17 +348,17 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
   }
 }
 
-class _CloudMonitoringSnapshot {
-  const _CloudMonitoringSnapshot({
+class _DirectMonitoringSnapshot {
+  const _DirectMonitoringSnapshot({
     required this.devices,
     this.limit,
   });
 
-  final List<CloudDeviceStatus> devices;
-  final CloudDeviceLimitStatus? limit;
+  final List<DirectDeviceStatus> devices;
+  final DirectDeviceLimitStatus? limit;
 }
 
-CloudDeviceLimitStatus? _localClientDeviceLimitStatus(
+DirectDeviceLimitStatus? _localClientDeviceLimitStatus(
   AppStore store,
   LanSyncSettings settings, {
   String excludeDeviceId = '',
@@ -381,7 +373,7 @@ CloudDeviceLimitStatus? _localClientDeviceLimitStatus(
     return device.isActive;
   }).length;
   final normalizedAllowed = allowed < 0 ? 0 : allowed;
-  return CloudDeviceLimitStatus(
+  return DirectDeviceLimitStatus(
     allowed: normalizedAllowed,
     linked: linked,
     available: (normalizedAllowed - linked).clamp(0, 1 << 30).toInt(),
@@ -420,12 +412,12 @@ String _deviceLabel(
   BuildContext context,
   String deviceId, {
   HostRegistryDevice? registryDevice,
-  CloudDeviceStatus? cloudDevice,
+  DirectDeviceStatus? peerDevice,
 }) {
   final name = registryDevice?.deviceName.trim().isNotEmpty == true
       ? registryDevice!.deviceName.trim()
-      : cloudDevice?.deviceName.trim().isNotEmpty == true
-          ? cloudDevice!.deviceName.trim()
+      : peerDevice?.deviceName.trim().isNotEmpty == true
+          ? peerDevice!.deviceName.trim()
           : '';
   if (name.isNotEmpty) return name;
   final id = deviceId.trim();
@@ -446,10 +438,8 @@ String _transportLabel(BuildContext context, String transport) {
   switch (transport.trim().toLowerCase()) {
     case 'lan':
       return tr.text('lan');
-    case 'cloud':
-      return tr.text('connection_cloud');
     case 'direct':
-      return 'Direct';
+      return tr.text('connection_direct');
     case 'local':
       return tr.text('connection_local');
     default:
@@ -460,7 +450,7 @@ String _transportLabel(BuildContext context, String transport) {
 _SyncStatusView _connectionStatusForHostPeer(
   BuildContext context, {
   required HostPeerSyncState? state,
-  required CloudDeviceStatus? cloudDevice,
+  required DirectDeviceStatus? peerDevice,
   required bool suspended,
   bool wipePending = false,
 }) {
@@ -471,13 +461,13 @@ _SyncStatusView _connectionStatusForHostPeer(
         color: Theme.of(context).colorScheme.error,
         icon: Icons.delete_sweep_outlined);
   }
-  if (suspended || cloudDevice?.revoked == true) {
+  if (suspended || peerDevice?.revoked == true) {
     return _SyncStatusView(
         label: tr.text('connection_state_pending'),
         color: Theme.of(context).colorScheme.error,
-        icon: Icons.cloud_off_outlined);
+        icon: Icons.sync_disabled);
   }
-  final lastSeen = _lastSeenForHostPeer(state: state, cloudDevice: cloudDevice);
+  final lastSeen = _lastSeenForHostPeer(state: state, peerDevice: peerDevice);
   final recentlySeen = lastSeen != null &&
       DateTime.now().toUtc().difference(lastSeen.toUtc()) <=
           const Duration(seconds: 90);
@@ -503,12 +493,12 @@ _SyncStatusView _connectionStatusForClient(
   BuildContext context, {
   required SyncDeviceState state,
   required LanSyncSettings lanSettings,
-  required CloudSyncSettings cloudSettings,
+  required VpsControlPlaneSettings controlPlaneSettings,
 }) {
   final tr = AppLocalizations.of(context);
   final active = state.activeTransport.trim().toLowerCase();
-  final configured = active == 'cloud'
-      ? cloudSettings.isConfigured
+  final configured = active == 'direct'
+      ? controlPlaneSettings.isConfigured
       : active == 'lan'
           ? lanSettings.setupComplete
           : false;
@@ -537,34 +527,34 @@ _SyncStatusView _connectionStatusForClient(
 String _activeTransportForHostPeer(
   BuildContext context, {
   required bool lanAuthorized,
-  required CloudDeviceStatus? cloudDevice,
+  required DirectDeviceStatus? peerDevice,
   required HostPeerSyncState? state,
 }) {
   final tr = AppLocalizations.of(context);
-  final cloudTransport =
-      (cloudDevice?.activeTransport ?? cloudDevice?.transport ?? '')
+  final peerTransport =
+      (peerDevice?.activeTransport ?? peerDevice?.transport ?? '')
           .trim()
           .toLowerCase();
   final lastTransport =
-      (state?.lastSyncTransport ?? cloudDevice?.lastSyncTransport ?? '')
+      (state?.lastSyncTransport ?? peerDevice?.lastSyncTransport ?? '')
           .trim()
           .toLowerCase();
   if (lastTransport == 'direct' ||
-      (cloudDevice?.lastSyncTransport ?? '').trim().toLowerCase() == 'direct' ||
-      cloudTransport == 'direct' ||
-      (cloudDevice?.activeTransport ?? '').trim().toLowerCase() == 'direct') {
+      (peerDevice?.lastSyncTransport ?? '').trim().toLowerCase() == 'direct' ||
+      peerTransport == 'direct' ||
+      (peerDevice?.activeTransport ?? '').trim().toLowerCase() == 'direct') {
     return _transportLabel(context, 'direct');
   }
-  if (lanAuthorized && cloudDevice != null) {
-    final active = cloudTransport.isNotEmpty ? cloudTransport : lastTransport;
-    if (active == 'lan' || active == 'cloud') {
+  if (lanAuthorized && peerDevice != null) {
+    final active = peerTransport.isNotEmpty ? peerTransport : lastTransport;
+    if (active == 'lan' || active == 'direct') {
       return _transportLabel(context, active);
     }
-    return '${tr.text('lan')} + ${tr.text('connection_cloud')}';
+    return '${tr.text('lan')} + ${tr.text('connection_direct')}';
   }
-  if (cloudDevice != null) {
+  if (peerDevice != null) {
     return _transportLabel(
-        context, cloudTransport.isNotEmpty ? cloudTransport : 'cloud');
+        context, peerTransport.isNotEmpty ? peerTransport : 'direct');
   }
   if (lanAuthorized) return tr.text('lan');
   if (lastTransport.isNotEmpty) return _transportLabel(context, lastTransport);
@@ -576,12 +566,12 @@ String _pendingChangesForHostPeer(
   required AppStore store,
   required String deviceId,
   required HostPeerSyncState? state,
-  required CloudDeviceStatus? cloudDevice,
+  required DirectDeviceStatus? peerDevice,
 }) {
-  final ackSequence = _hostPeerAckSequence(state, cloudDevice);
+  final ackSequence = _hostPeerAckSequence(state, peerDevice);
   final ackCursor = state?.lastAckCursor ??
-      cloudDevice?.lastAckCursor ??
-      cloudDevice?.lastAckAt;
+      peerDevice?.lastAckCursor ??
+      peerDevice?.lastAckAt;
   var count = 0;
   for (final change in store.syncChanges) {
     if (change.deviceId == deviceId) continue;
@@ -662,11 +652,11 @@ class _SyncTraceDiagnosticsPanel extends StatelessWidget {
 
 int _hostPeerAckSequence(
   HostPeerSyncState? state,
-  CloudDeviceStatus? cloudDevice,
+  DirectDeviceStatus? peerDevice,
 ) {
   final local = state?.lastAckSequence ?? 0;
-  final cloud = cloudDevice?.lastAckSequence ?? 0;
-  return local > cloud ? local : cloud;
+  final direct = peerDevice?.lastAckSequence ?? 0;
+  return local > direct ? local : direct;
 }
 
 DateTime? _latestSyncDate(DateTime? current, DateTime? candidate) {
@@ -677,24 +667,24 @@ DateTime? _latestSyncDate(DateTime? current, DateTime? candidate) {
 
 DateTime? _lastSuccessfulSyncForHostPeer({
   required HostPeerSyncState? state,
-  required CloudDeviceStatus? cloudDevice,
+  required DirectDeviceStatus? peerDevice,
 }) {
   DateTime? latest;
   latest = _latestSyncDate(latest, state?.lastAckCursor);
   latest = _latestSyncDate(latest, state?.lastAppliedHostCursor);
-  latest = _latestSyncDate(latest, cloudDevice?.lastAckAt);
-  latest = _latestSyncDate(latest, cloudDevice?.lastAckCursor);
-  if (latest == null && _hostPeerAckSequence(state, cloudDevice) > 0) {
-    latest = _latestSyncDate(state?.updatedAt, cloudDevice?.lastSeenAt);
+  latest = _latestSyncDate(latest, peerDevice?.lastAckAt);
+  latest = _latestSyncDate(latest, peerDevice?.lastAckCursor);
+  if (latest == null && _hostPeerAckSequence(state, peerDevice) > 0) {
+    latest = _latestSyncDate(state?.updatedAt, peerDevice?.lastSeenAt);
   }
   return latest;
 }
 
 DateTime? _lastSeenForHostPeer({
   required HostPeerSyncState? state,
-  required CloudDeviceStatus? cloudDevice,
+  required DirectDeviceStatus? peerDevice,
 }) {
-  return cloudDevice?.lastSeenAt ?? state?.updatedAt;
+  return peerDevice?.lastSeenAt ?? state?.updatedAt;
 }
 
 DateTime? _lastSuccessfulSyncForClient(SyncDeviceState state) {
@@ -705,7 +695,7 @@ _SyncStatusView _syncStatusForHostPeer(
   BuildContext context,
   HostPeerSyncState? state, {
   required bool lanAuthorized,
-  required CloudDeviceStatus? cloudDevice,
+  required DirectDeviceStatus? peerDevice,
   required bool suspended,
   bool wipePending = false,
 }) {
@@ -722,21 +712,21 @@ _SyncStatusView _syncStatusForHostPeer(
         color: Colors.orange,
         icon: Icons.pause_circle_outline);
   }
-  if (cloudDevice?.revoked == true) {
+  if (peerDevice?.revoked == true) {
     return _SyncStatusView(
         label: tr.text('revoked'),
         color: Theme.of(context).colorScheme.error,
         icon: Icons.block_outlined);
   }
-  if (!lanAuthorized && cloudDevice == null) {
+  if (!lanAuthorized && peerDevice == null) {
     return _SyncStatusView(
         label: tr.text('connection_state_not_configured'),
         color: Theme.of(context).colorScheme.outline,
         icon: Icons.link_off_outlined);
   }
   final lastSync =
-      _lastSuccessfulSyncForHostPeer(state: state, cloudDevice: cloudDevice);
-  if (lanAuthorized && cloudDevice == null) {
+      _lastSuccessfulSyncForHostPeer(state: state, peerDevice: peerDevice);
+  if (lanAuthorized && peerDevice == null) {
     return _SyncStatusView(
         label: tr.text('lan_host_running'),
         color: Colors.green,
@@ -804,11 +794,11 @@ _SyncStatusView _syncStatusForClient(
 class _HostSyncMonitoringTable extends StatefulWidget {
   const _HostSyncMonitoringTable({
     required this.store,
-    required this.cloudDevices,
+    required this.peerDevices,
     required this.deviceLimit,
     required this.peerStates,
     required this.lanSettings,
-    required this.loadingCloudDevices,
+    required this.loadingDirectDevices,
     required this.onRefresh,
     required this.onToggleSuspend,
     required this.onDelete,
@@ -816,11 +806,11 @@ class _HostSyncMonitoringTable extends StatefulWidget {
   });
 
   final AppStore store;
-  final List<CloudDeviceStatus> cloudDevices;
-  final CloudDeviceLimitStatus? deviceLimit;
+  final List<DirectDeviceStatus> peerDevices;
+  final DirectDeviceLimitStatus? deviceLimit;
   final Map<String, HostPeerSyncState> peerStates;
   final LanSyncSettings lanSettings;
-  final bool loadingCloudDevices;
+  final bool loadingDirectDevices;
   final Future<void> Function() onRefresh;
   final Future<void> Function(String deviceId, bool suspended) onToggleSuspend;
   final Future<void> Function(String deviceId) onDelete;
@@ -843,8 +833,8 @@ class _HostSyncMonitoringTableState extends State<_HostSyncMonitoringTable> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final cloudById = <String, CloudDeviceStatus>{
-      for (final device in widget.cloudDevices)
+    final directById = <String, DirectDeviceStatus>{
+      for (final device in widget.peerDevices)
         if (device.deviceId.trim().isNotEmpty) device.deviceId.trim(): device,
     };
     final deleted = SyncDeviceAccessStore.deletedDeviceIds();
@@ -868,7 +858,7 @@ class _HostSyncMonitoringTableState extends State<_HostSyncMonitoringTable> {
     final header = _HostStatusMonitoringCard(
       store: widget.store,
       lanSettings: widget.lanSettings,
-      cloudDevices: widget.cloudDevices,
+      peerDevices: widget.peerDevices,
       peerStates: widget.peerStates,
     );
 
@@ -924,7 +914,7 @@ class _HostSyncMonitoringTableState extends State<_HostSyncMonitoringTable> {
                 icon: const Icon(Icons.refresh)),
           ],
         ),
-        if (widget.loadingCloudDevices)
+        if (widget.loadingDirectDevices)
           const LinearProgressIndicator(minHeight: 2),
         const SizedBox(height: 10),
         LayoutBuilder(
@@ -946,7 +936,7 @@ class _HostSyncMonitoringTableState extends State<_HostSyncMonitoringTable> {
                                       .isNotEmpty ??
                                   false) &&
                               widget.lanSettings.setupComplete),
-                      cloudDevice: cloudById[deviceId],
+                      peerDevice: directById[deviceId],
                       suspended: suspended.contains(deviceId),
                       wipePending: wipePending.contains(deviceId),
                       onToggleSuspend: () => widget.onToggleSuspend(
@@ -991,7 +981,7 @@ class _HostSyncMonitoringTableState extends State<_HostSyncMonitoringTable> {
                                         .isNotEmpty ??
                                     false) &&
                                 widget.lanSettings.setupComplete),
-                        cloudDevice: cloudById[deviceId],
+                        peerDevice: directById[deviceId],
                         suspended: suspended.contains(deviceId),
                         wipePending: wipePending.contains(deviceId),
                         onToggleSuspend: () => widget.onToggleSuspend(
@@ -1018,7 +1008,7 @@ DataRow _hostPeerRow(
   required HostPeerSyncState? state,
   required HostRegistryDevice? registryDevice,
   required bool lanAuthorized,
-  required CloudDeviceStatus? cloudDevice,
+  required DirectDeviceStatus? peerDevice,
   required bool suspended,
   required bool wipePending,
   required VoidCallback onToggleSuspend,
@@ -1028,21 +1018,21 @@ DataRow _hostPeerRow(
   final tr = AppLocalizations.of(context);
   final connection = _connectionStatusForHostPeer(context,
       state: state,
-      cloudDevice: cloudDevice,
+      peerDevice: peerDevice,
       suspended: suspended,
       wipePending: wipePending);
   final status = _syncStatusForHostPeer(context, state,
       lanAuthorized: lanAuthorized,
-      cloudDevice: cloudDevice,
+      peerDevice: peerDevice,
       suspended: suspended,
       wipePending: wipePending);
   return DataRow(
     cells: [
       DataCell(Text(_deviceLabel(context, deviceId,
-          registryDevice: registryDevice, cloudDevice: cloudDevice))),
+          registryDevice: registryDevice, peerDevice: peerDevice))),
       DataCell(Text(_activeTransportForHostPeer(context,
           lanAuthorized: lanAuthorized,
-          cloudDevice: cloudDevice,
+          peerDevice: peerDevice,
           state: state))),
       DataCell(_StatusChip(
           label: connection.label,
@@ -1053,13 +1043,13 @@ DataRow _hostPeerRow(
       DataCell(Text(_formatDateTime(
           context,
           _lastSuccessfulSyncForHostPeer(
-              state: state, cloudDevice: cloudDevice)))),
+              state: state, peerDevice: peerDevice)))),
       DataCell(Text(_pendingChangesForHostPeer(context,
           store: store,
           deviceId: deviceId,
           state: state,
-          cloudDevice: cloudDevice))),
-      DataCell(Text('${_hostPeerAckSequence(state, cloudDevice)}')),
+          peerDevice: peerDevice))),
+      DataCell(Text('${_hostPeerAckSequence(state, peerDevice)}')),
       DataCell(Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -1081,13 +1071,13 @@ class _HostStatusMonitoringCard extends StatelessWidget {
   const _HostStatusMonitoringCard({
     required this.store,
     required this.lanSettings,
-    required this.cloudDevices,
+    required this.peerDevices,
     required this.peerStates,
   });
 
   final AppStore store;
   final LanSyncSettings lanSettings;
-  final List<CloudDeviceStatus> cloudDevices;
+  final List<DirectDeviceStatus> peerDevices;
   final Map<String, HostPeerSyncState> peerStates;
 
   @override
@@ -1095,14 +1085,14 @@ class _HostStatusMonitoringCard extends StatelessWidget {
     final tr = AppLocalizations.of(context);
     final lastAckSequence = <int>[
       for (final peer in peerStates.values) peer.lastAckSequence,
-      for (final device in cloudDevices) device.lastAckSequence,
+      for (final device in peerDevices) device.lastAckSequence,
     ].fold<int>(0, (latest, value) => value > latest ? value : latest);
     final identity = store.appIdentity;
     final activeTransport = identity.activeSyncTransportNormalized;
     final lanReady = activeTransport == 'lan' &&
         lanSettings.setupComplete &&
         lanSettings.autoSyncEnabled;
-    final cloudReady = activeTransport == 'cloud' && identity.isCloudEnabled;
+    final directReady = activeTransport == 'direct' && identity.isDirectEnabled;
 
     return Container(
       width: double.infinity,
@@ -1132,13 +1122,13 @@ class _HostStatusMonitoringCard extends StatelessWidget {
                         '${tr.text('connection_lan')}: ${tr.text('connection_state_active')}',
                     color: Colors.green,
                     icon: Icons.lan_outlined),
-              if (cloudReady)
+              if (directReady)
                 _StatusChip(
                     label:
-                        '${tr.text('connection_cloud')}: ${tr.text('connection_state_active')}',
+                        '${tr.text('connection_direct')}: ${tr.text('connection_state_active')}',
                     color: Colors.blue,
-                    icon: Icons.cloud_done_outlined),
-              if (!lanReady && !cloudReady)
+                    icon: Icons.sync),
+              if (!lanReady && !directReady)
                 _StatusChip(
                     label: tr.text('connection_state_not_configured'),
                     color: Theme.of(context).colorScheme.error,
@@ -1161,7 +1151,7 @@ class _HostPeerMonitoringCard extends StatelessWidget {
     required this.state,
     required this.registryDevice,
     required this.lanAuthorized,
-    required this.cloudDevice,
+    required this.peerDevice,
     required this.suspended,
     required this.wipePending,
     required this.onToggleSuspend,
@@ -1174,7 +1164,7 @@ class _HostPeerMonitoringCard extends StatelessWidget {
   final HostPeerSyncState? state;
   final HostRegistryDevice? registryDevice;
   final bool lanAuthorized;
-  final CloudDeviceStatus? cloudDevice;
+  final DirectDeviceStatus? peerDevice;
   final bool suspended;
   final bool wipePending;
   final VoidCallback onToggleSuspend;
@@ -1186,12 +1176,12 @@ class _HostPeerMonitoringCard extends StatelessWidget {
     final tr = AppLocalizations.of(context);
     final connection = _connectionStatusForHostPeer(context,
         state: state,
-        cloudDevice: cloudDevice,
+        peerDevice: peerDevice,
         suspended: suspended,
         wipePending: wipePending);
     final status = _syncStatusForHostPeer(context, state,
         lanAuthorized: lanAuthorized,
-        cloudDevice: cloudDevice,
+        peerDevice: peerDevice,
         suspended: suspended,
         wipePending: wipePending);
     return Container(
@@ -1214,7 +1204,7 @@ class _HostPeerMonitoringCard extends StatelessWidget {
                   child: Text(
                       _deviceLabel(context, deviceId,
                           registryDevice: registryDevice,
-                          cloudDevice: cloudDevice),
+                          peerDevice: peerDevice),
                       style: Theme.of(context).textTheme.titleSmall)),
             ],
           ),
@@ -1232,7 +1222,7 @@ class _HostPeerMonitoringCard extends StatelessWidget {
               title: tr.text('active_transport'),
               value: _activeTransportForHostPeer(context,
                   lanAuthorized: lanAuthorized,
-                  cloudDevice: cloudDevice,
+                  peerDevice: peerDevice,
                   state: state)),
           _Line(title: tr.text('connection_status'), value: connection.label),
           _Line(title: tr.text('sync_status'), value: status.label),
@@ -1241,17 +1231,17 @@ class _HostPeerMonitoringCard extends StatelessWidget {
               value: _formatDateTime(
                   context,
                   _lastSuccessfulSyncForHostPeer(
-                      state: state, cloudDevice: cloudDevice))),
+                      state: state, peerDevice: peerDevice))),
           _Line(
               title: tr.text('pending_changes'),
               value: _pendingChangesForHostPeer(context,
                   store: store,
                   deviceId: deviceId,
                   state: state,
-                  cloudDevice: cloudDevice)),
+                  peerDevice: peerDevice)),
           _Line(
               title: tr.text('last_ack_sequence'),
-              value: '${_hostPeerAckSequence(state, cloudDevice)}'),
+              value: '${_hostPeerAckSequence(state, peerDevice)}'),
           const SizedBox(height: 8),
           LayoutBuilder(
             builder: (context, constraints) {
@@ -1299,21 +1289,21 @@ class _ClientSyncMonitoringPanel extends StatelessWidget {
     required this.state,
     required this.store,
     required this.lanSettings,
-    required this.cloudSettings,
+    required this.controlPlaneSettings,
     required this.onRefresh,
   });
 
   final SyncDeviceState state;
   final AppStore store;
   final LanSyncSettings lanSettings;
-  final CloudSyncSettings cloudSettings;
+  final VpsControlPlaneSettings controlPlaneSettings;
   final Future<void> Function() onRefresh;
 
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final connection = _connectionStatusForClient(context,
-        state: state, lanSettings: lanSettings, cloudSettings: cloudSettings);
+        state: state, lanSettings: lanSettings, controlPlaneSettings: controlPlaneSettings);
     final status = _syncStatusForClient(context, state,
         pendingCount: store.activeClientPendingSyncCount);
     return Column(
@@ -1370,7 +1360,7 @@ class _ClientSyncMonitoringPanel extends StatelessWidget {
 
 Widget? _deviceLimitPanel(
   BuildContext context,
-  CloudDeviceLimitStatus? limit,
+  DirectDeviceLimitStatus? limit,
   int localLinkedClients,
 ) {
   if (limit == null) return null;

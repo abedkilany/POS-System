@@ -15,13 +15,13 @@ const _identity = <String, dynamic>{
   'platform': 'web',
   'deviceRole': 'client',
   'appRole': 'store',
-  'syncMode': 'cloudConnected',
+  'syncMode': 'directConnected',
   'hostDeviceId': 'DV-HOST-1',
-  'cloudTenantId': '',
+  'controlPlaneTenantId': '',
   'deviceToken': 'device-token',
   'storeEpoch': 1,
   'recoveryKey': 'RECOVERY-KEY',
-  'activeSyncTransport': 'cloud',
+  'activeSyncTransport': 'direct',
 };
 
 Future<AppStore> _openStore({
@@ -77,9 +77,9 @@ void main() {
       final storeBeforeCrash = await _openStore(
         change: change,
         queueItem: SyncQueueItem(
-          id: 'draft-after-crash-cloud_host',
+          id: 'draft-after-crash-host',
           changeId: change.id,
-          target: 'cloud_host',
+          target: 'host',
           status: 'inProgress',
           attempts: 1,
           createdAt: crashedAt,
@@ -95,9 +95,9 @@ void main() {
       final recovered = await _openStore(
         change: change,
         queueItem: SyncQueueItem(
-          id: 'draft-after-crash-cloud_host',
+          id: 'draft-after-crash-host',
           changeId: change.id,
-          target: 'cloud_host',
+          target: 'host',
           status: 'inProgress',
           attempts: 1,
           createdAt: crashedAt,
@@ -105,13 +105,13 @@ void main() {
         ),
       );
       await recovered.recoverStaleInProgressSyncQueue(
-        target: 'cloud_host',
+        target: 'host',
         staleAfter: const Duration(seconds: 45),
       );
 
       expect(recovered.syncQueue.single.status, 'pending');
       expect(
-          recovered.pendingSyncChangesForTarget('cloud_host', readyOnly: false),
+          recovered.pendingSyncChangesForTarget('host', readyOnly: false),
           hasLength(1));
       expect(recovered.syncChanges.single.isSynced, isFalse);
       recovered.dispose();
@@ -133,9 +133,9 @@ void main() {
       final storeBeforeCrash = await _openStore(
         change: change,
         queueItem: SyncQueueItem(
-          id: 'draft-after-crash-cloud_host',
+          id: 'draft-after-crash-host',
           changeId: change.id,
-          target: 'cloud_host',
+          target: 'host',
           status: 'submitted',
           attempts: 1,
           createdAt: submittedAt,
@@ -148,9 +148,9 @@ void main() {
       final recovered = await _openStore(
         change: change,
         queueItem: SyncQueueItem(
-          id: 'draft-after-crash-cloud_host',
+          id: 'draft-after-crash-host',
           changeId: change.id,
-          target: 'cloud_host',
+          target: 'host',
           status: 'submitted',
           attempts: 1,
           createdAt: submittedAt,
@@ -161,10 +161,10 @@ void main() {
 
       // Relay receipt is not Host confirmation. After restart, the draft must
       // be retried until the authoritative event is pulled and applied.
-      await recovered.recoverSubmittedSyncQueue(target: 'cloud_host');
+      await recovered.recoverSubmittedSyncQueue(target: 'host');
       expect(recovered.syncQueue.single.status, 'pending');
       expect(
-          recovered.pendingSyncChangesForTarget('cloud_host', readyOnly: false),
+          recovered.pendingSyncChangesForTarget('host', readyOnly: false),
           hasLength(1));
       expect(recovered.syncChanges.single.isSynced, isFalse);
       recovered.dispose();

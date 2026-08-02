@@ -5,7 +5,7 @@ import 'sync_diagnostics_log.dart';
 
 /// Transport-independent Host-authority sync logic.
 ///
-/// LAN and Cloud should keep only their network/HTTP details locally. Shared
+/// LAN and Direct should keep only their network/HTTP details locally. Shared
 /// rules such as pending queue selection, Host acceptance, stale reset
 /// protection, echo filtering, applying authoritative changes, and ACK handling
 /// live here so a sync bug is fixed once for both transports.
@@ -127,10 +127,10 @@ class UnifiedSyncCoreService {
   }
 
   /// Applies Client drafts on the Host using the same acceptance rules for LAN
-  /// and Cloud relay requests.
+  /// and Direct relay requests.
   Future<HostAcceptedChanges> acceptClientChangesOnHost(
     Iterable<SyncChange> remoteChanges, {
-    required bool mirrorToCloud,
+    required bool mirrorToDirect,
     bool verifyApplied = false,
   }) async {
     final plan = evaluateClientChangesOnHost(remoteChanges);
@@ -146,7 +146,7 @@ class UnifiedSyncCoreService {
       await store.applyRemoteSyncChanges(
         plan.accepted,
         markAppliedAsSynced: true,
-        mirrorToCloud: mirrorToCloud,
+        mirrorToDirect: mirrorToDirect,
       );
     }
     if (verifyApplied) {
@@ -293,7 +293,7 @@ class UnifiedSyncCoreService {
   bool hasRestoreMarker(Iterable<SyncChange> changes) {
     return changes.any((item) =>
         item.entityType == 'system' &&
-        item.operation == 'cloud_restore_snapshot_ready');
+        item.operation == 'restore_snapshot_ready');
   }
 }
 

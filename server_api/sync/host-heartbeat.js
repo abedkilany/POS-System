@@ -47,7 +47,7 @@ export default async function handler(req, res) {
         storeId,
         branchId,
         allowedRoles: ['host'],
-        allowedTransports: ['cloud'],
+        allowedTransports: ['direct'],
       });
       await sql`
         delete from store_host_heartbeats
@@ -78,7 +78,7 @@ export default async function handler(req, res) {
         storeId,
         branchId,
         allowedRoles: ['host'],
-        allowedTransports: ['cloud'],
+        allowedTransports: ['direct'],
       });
 
       const hostDeviceName = String(body.hostDeviceName || body.host_device_name || '').trim();
@@ -176,7 +176,7 @@ export default async function handler(req, res) {
         storeId,
         branchId,
         allowedRoles: ['host', 'client'],
-        allowedTransports: ['cloud', 'lan'],
+        allowedTransports: ['direct', 'lan'],
       });
 
       const rows = await sql`

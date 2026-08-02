@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
-import 'cloud_sync_service.dart';
+import 'direct_control_plane_service.dart';
 import 'local_database_service.dart';
 
 class AccountAuthResult {
@@ -22,7 +22,7 @@ class AccountAuthResult {
     this.devicesLimit,
     this.adminToken = '',
     this.accountToken = '',
-    this.cloudSyncEnabled = false,
+    this.directSyncEnabled = false,
   });
 
   final bool ok;
@@ -40,7 +40,7 @@ class AccountAuthResult {
   final int? devicesLimit;
   final String adminToken;
   final String accountToken;
-  final bool cloudSyncEnabled;
+  final bool directSyncEnabled;
 
   factory AccountAuthResult.fromJson(Map<String, dynamic> json) {
     return AccountAuthResult(
@@ -67,8 +67,8 @@ class AccountAuthResult {
       adminToken: (json['adminToken'] ?? json['admin_token'] ?? '').toString(),
       accountToken:
           (json['accountToken'] ?? json['account_token'] ?? '').toString(),
-      cloudSyncEnabled: json['cloudSyncEnabled'] == true ||
-          json['cloud_sync_enabled'] == true,
+      directSyncEnabled: json['directSyncEnabled'] == true ||
+          json['direct_sync_enabled'] == true,
     );
   }
 }
@@ -89,7 +89,7 @@ class AccountAuthCache {
     this.devicesLimit,
     this.adminToken = '',
     this.accountToken = '',
-    this.cloudSyncEnabled = false,
+    this.directSyncEnabled = false,
     this.lastVerifiedAt,
   });
 
@@ -109,7 +109,7 @@ class AccountAuthCache {
   final int? devicesLimit;
   final String adminToken;
   final String accountToken;
-  final bool cloudSyncEnabled;
+  final bool directSyncEnabled;
   final DateTime? lastVerifiedAt;
 
   AccountAuthCache copyWith({
@@ -129,7 +129,7 @@ class AccountAuthCache {
     bool clearDevicesLimit = false,
     String? adminToken,
     String? accountToken,
-    bool? cloudSyncEnabled,
+    bool? directSyncEnabled,
     DateTime? lastVerifiedAt,
     bool clearLastVerifiedAt = false,
   }) {
@@ -149,7 +149,7 @@ class AccountAuthCache {
           clearDevicesLimit ? null : devicesLimit ?? this.devicesLimit,
       adminToken: adminToken ?? this.adminToken,
       accountToken: accountToken ?? this.accountToken,
-      cloudSyncEnabled: cloudSyncEnabled ?? this.cloudSyncEnabled,
+      directSyncEnabled: directSyncEnabled ?? this.directSyncEnabled,
       lastVerifiedAt:
           clearLastVerifiedAt ? null : lastVerifiedAt ?? this.lastVerifiedAt,
     );
@@ -171,7 +171,7 @@ class AccountAuthCache {
         'lastVerifiedAt': lastVerifiedAt?.toIso8601String() ?? '',
         'adminToken': adminToken,
         'accountToken': accountToken,
-        'cloudSyncEnabled': cloudSyncEnabled,
+        'directSyncEnabled': directSyncEnabled,
       };
 
   static AccountAuthCache? load() {
@@ -197,8 +197,8 @@ class AccountAuthCache {
             DateTime.tryParse((json['lastVerifiedAt'] ?? '').toString()),
         adminToken: (json['adminToken'] ?? '').toString(),
         accountToken: (json['accountToken'] ?? '').toString(),
-        cloudSyncEnabled: json['cloudSyncEnabled'] == true ||
-            json['cloud_sync_enabled'] == true,
+        directSyncEnabled: json['directSyncEnabled'] == true ||
+            json['direct_sync_enabled'] == true,
       );
     } catch (_) {
       return null;
@@ -242,7 +242,7 @@ class AdminSubscriber {
     required this.accountStatus,
     required this.devicesLimit,
     required this.deviceCount,
-    required this.cloudSyncEnabled,
+    required this.directSyncEnabled,
     this.trialEndsAt,
     this.createdAt,
     this.lastSeenAt,
@@ -260,7 +260,7 @@ class AdminSubscriber {
   final String accountStatus;
   final int devicesLimit;
   final int deviceCount;
-  final bool cloudSyncEnabled;
+  final bool directSyncEnabled;
   final DateTime? trialEndsAt;
   final DateTime? createdAt;
   final DateTime? lastSeenAt;
@@ -291,8 +291,8 @@ class AdminSubscriber {
               (json['device_count'] ?? json['deviceCount'] ?? '0')
                   .toString()) ??
           0,
-      cloudSyncEnabled: json['cloud_sync_enabled'] == true ||
-          json['cloudSyncEnabled'] == true,
+      directSyncEnabled: json['direct_sync_enabled'] == true ||
+          json['directSyncEnabled'] == true,
       trialEndsAt: DateTime.tryParse(
           (json['trial_ends_at'] ?? json['trialEndsAt'] ?? '').toString()),
       createdAt: DateTime.tryParse(
@@ -314,7 +314,7 @@ class AccountAuthService {
   final http.Client _client;
 
   Uri _endpoint(String path) {
-    final settings = CloudSyncSettings.load();
+    final settings = VpsControlPlaneSettings.load();
     final baseUrl = settings.apiBaseUrl.trim().isEmpty
         ? _defaultApiBaseUrl
         : settings.apiBaseUrl.trim();
@@ -486,7 +486,7 @@ class AccountAuthService {
     required String plan,
     required String subscriptionStatus,
     required int devicesLimit,
-    required bool cloudSyncEnabled,
+    required bool directSyncEnabled,
     required DateTime? trialEndsAt,
   }) async {
     if (adminToken.trim().isEmpty) {
@@ -509,7 +509,7 @@ class AccountAuthService {
         'plan': plan.trim().toLowerCase(),
         'subscriptionStatus': subscriptionStatus.trim().toLowerCase(),
         'devicesLimit': devicesLimit,
-        'cloudSyncEnabled': cloudSyncEnabled,
+        'directSyncEnabled': directSyncEnabled,
         'trialEndsAt': trialEndsAt?.toUtc().toIso8601String() ?? '',
       }),
     );
@@ -565,7 +565,7 @@ class AccountAuthService {
       devicesLimit: result.devicesLimit,
       adminToken: result.adminToken,
       accountToken: result.accountToken,
-      cloudSyncEnabled: result.cloudSyncEnabled,
+      directSyncEnabled: result.directSyncEnabled,
     );
   }
 
@@ -593,7 +593,7 @@ class AccountAuthService {
       accountToken: result.accountToken.isNotEmpty
           ? result.accountToken
           : (existing?.accountToken ?? ''),
-      cloudSyncEnabled: result.cloudSyncEnabled,
+      directSyncEnabled: result.directSyncEnabled,
       lastVerifiedAt: DateTime.now(),
     );
     await AccountAuthCache.save(cache);

@@ -20,21 +20,12 @@ import deviceSuspend from '../server_api/sync/device-suspend.js';
 import deviceAccess from '../server_api/sync/device-access.js';
 import deviceKey from '../server_api/sync/device-key.js';
 import iceConfig from '../server_api/sync/ice-config.js';
-import cloudAccess from '../server_api/sync/cloud-access.js';
 import devices from '../server_api/sync/devices.js';
 import hostHeartbeat from '../server_api/sync/host-heartbeat.js';
-import hostTransferActivate from '../server_api/sync/host-transfer/activate.js';
-import hostTransferApprove from '../server_api/sync/host-transfer/approve.js';
-import hostTransferList from '../server_api/sync/host-transfer/list.js';
-import hostTransferRequest from '../server_api/sync/host-transfer/request.js';
 import pairingClaim from '../server_api/sync/pairing/claim.js';
 import pairingCreate from '../server_api/sync/pairing/create.js';
-import pairingStatus from '../server_api/sync/pairing/status.js';
 import signal from '../server_api/sync/signal.js';
 import { directRealtimeTicketHandler, realtimeTicketHandler } from '../server_api/sync/realtime.js';
-import recoveryClaim from '../server_api/sync/recovery/claim.js';
-import maintenance from '../server_api/sync/maintenance.js';
-import bootstrapSnapshot from '../server_api/sync/bootstrap-snapshot.js';
 import googleDriveAuthStart from '../server_api/google-drive/auth-start.js';
 import googleDriveCallback from '../server_api/google-drive/callback.js';
 import googleDriveStatus from '../server_api/google-drive/status.js';
@@ -55,26 +46,17 @@ const routes = new Map([
   ['sync/device-access', deviceAccess],
   ['sync/device-key', deviceKey],
   ['sync/ice-config', iceConfig],
-  ['sync/cloud-access', cloudAccess],
   ['sync/devices', devices],
   ['sync/host-heartbeat', hostHeartbeat],
-  ['sync/host-transfer/activate', hostTransferActivate],
-  ['sync/host-transfer/approve', hostTransferApprove],
-  ['sync/host-transfer/list', hostTransferList],
-  ['sync/host-transfer/request', hostTransferRequest],
   ['sync/pairing/claim', pairingClaim],
   ['sync/pairing/create', pairingCreate],
-  ['sync/pairing/status', pairingStatus],
   ['sync/signal', signal],
   ['sync/realtime-ticket', realtimeTicketHandler],
   ['sync/direct-ticket', directRealtimeTicketHandler],
-  ['sync/maintenance', maintenance],
-  ['sync/bootstrap-snapshot', bootstrapSnapshot],
   ['google-drive/auth-start', googleDriveAuthStart],
   ['google-drive/callback', googleDriveCallback],
   ['google-drive/status', googleDriveStatus],
   ['google-drive/refresh', googleDriveRefresh],
-  ['sync/recovery/claim', recoveryClaim],
 ]);
 
 function normalizePath(req) {

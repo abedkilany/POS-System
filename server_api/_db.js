@@ -33,7 +33,7 @@ if (isLocalDatabase) {
 export { sql };
 
 export function assertStoreAllowed(storeId) {
-  const allowed = (process.env.CLOUD_SYNC_STORE_ID || '').trim();
+  const allowed = (process.env.DIRECT_SYNC_STORE_ID || '').trim();
   if (allowed && storeId !== allowed) {
     const err = new Error('This deployment is not allowed to access the requested store_id.');
     err.statusCode = 403;
@@ -101,25 +101,6 @@ export function assertAccountStoreToken(req, { storeId, branchId = '' } = {}) {
     throw err;
   }
   return payload;
-}
-
-export async function ensureCloudSyncAccessColumn() {
-  await sql`alter table app_stores add column if not exists cloud_sync_enabled boolean not null default false`;
-}
-
-export async function assertCloudSyncEnabled(storeId) {
-  await ensureCloudSyncAccessColumn();
-  const rows = await sql`
-    select cloud_sync_enabled
-    from app_stores
-    where id = ${storeId}
-    limit 1
-  `;
-  if (!rows.length || rows[0].cloud_sync_enabled !== true) {
-    const err = new Error('Cloud Sync is not enabled for this store.');
-    err.statusCode = 403;
-    throw err;
-  }
 }
 
 async function ensureStoreDevicesTableForLimits() {
@@ -221,7 +202,7 @@ export async function ensureDeviceAuthColumns() {
   await sql`alter table store_devices add column if not exists suspended boolean not null default false`;
   await sql`alter table store_devices add column if not exists wipe_pending boolean not null default false`;
   await sql`alter table store_devices add column if not exists wipe_requested_at timestamptz`;
-  // Host-authoritative per-device sync state. LAN/Cloud are delivery methods;
+  // Host-authoritative per-device sync state. LAN/Direct are delivery methods;
   // progress must be tied to the device, not to the transport used last.
   await sql`alter table store_devices add column if not exists active_transport text default ''`;
   await sql`alter table store_devices add column if not exists last_sync_transport text default ''`;
@@ -277,11 +258,6 @@ export async function assertDeviceAllowed(req, { storeId, branchId = 'main', all
 
 
 export async function assertAccountOrDevice(req, options = {}) {
-  const requireCloudAccess = async () => {
-    if ((options.allowedTransports || []).includes('cloud') && options.storeId) {
-      await assertCloudSyncEnabled(options.storeId);
-    }
-  };
   const allowedRoles = options.allowedRoles || [];
   const accountCanAuthorize =
     options.allowAccount !== false &&
@@ -289,11 +265,9 @@ export async function assertAccountOrDevice(req, options = {}) {
   try {
     if (!accountCanAuthorize) throw new Error('Account authorization is not allowed for this endpoint.');
     assertAccountStoreToken(req, { storeId: options.storeId, branchId: options.branchId || 'main' });
-    await requireCloudAccess();
     return { mode: 'account' };
   } catch (_) {
     await assertDeviceAllowed(req, { ...options, force: true });
-    await requireCloudAccess();
     return { mode: 'device' };
   }
 }

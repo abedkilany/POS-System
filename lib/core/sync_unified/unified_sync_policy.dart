@@ -4,7 +4,7 @@ import '../../models/app_identity.dart';
 ///
 /// Transport adapters should keep network details only. Decisions about whether
 /// the current device may act as a Host/Client for a transport belong here so
-/// LAN and Cloud follow the same role rules.
+/// LAN and Direct follow the same role rules.
 class UnifiedSyncPolicy {
   const UnifiedSyncPolicy._();
 
@@ -47,17 +47,15 @@ class UnifiedSyncPolicy {
     );
   }
 
-  static bool isCloudHostAllowed(AppIdentity identity) {
-    return identity.isHost && identity.isCloudEnabled;
-  }
+  static bool isDirectHostAllowed(AppIdentity identity) => identity.isHost;
 
-  static bool isCloudClientAllowed(AppIdentity identity) {
+  static bool isDirectClientAllowed(AppIdentity identity) {
     return identity.isClient &&
-        identity.activeSyncTransportNormalized == 'cloud';
+        identity.activeSyncTransportNormalized == 'direct';
   }
 
-  static bool isCloudAllowedForCurrentRole(AppIdentity identity) {
-    return isCloudHostAllowed(identity) || isCloudClientAllowed(identity);
+  static bool isDirectAllowedForCurrentRole(AppIdentity identity) {
+    return isDirectHostAllowed(identity) || isDirectClientAllowed(identity);
   }
 
   static bool canCreateLanPairingCode(
@@ -84,64 +82,64 @@ class UnifiedSyncPolicy {
     return identity.isClient;
   }
 
-  static bool canCreateCloudPairingCode(
+  static bool canCreateDirectPairingCode(
     AppIdentity identity, {
     required bool settingsEnabled,
     required bool hasApiBaseUrl,
   }) {
-    return isCloudHostAllowed(identity) && settingsEnabled && hasApiBaseUrl;
+    return identity.isHost && settingsEnabled && hasApiBaseUrl;
   }
 
-  static bool canClaimCloudPairingCode(AppIdentity identity) {
-    return !identity.isHost;
-  }
-
-  static bool canCheckCloudPairingStatus(AppIdentity identity) {
-    return identity.isHost;
-  }
-
-  static bool canUseCloudTransport(
-    AppIdentity identity, {
-    required bool isConfigured,
-  }) {
-    return isCloudAllowedForCurrentRole(identity) && isConfigured;
-  }
-
-  static bool canRequestCloudSnapshot(
-    AppIdentity identity, {
-    required bool isConfigured,
-  }) {
-    return isCloudClientAllowed(identity) && isConfigured;
-  }
-
-  static bool canRebuildFromCloudSnapshot(
-    AppIdentity identity, {
-    required bool isConfigured,
-  }) {
-    return isCloudClientAllowed(identity) && isConfigured;
-  }
-
-  static bool canSuspendCloudDevices(AppIdentity identity) {
-    return identity.isHost;
-  }
-
-  static bool canRevokeCloudDevices(AppIdentity identity) {
-    return identity.isHost;
-  }
-
-  static bool canRemoveCloudDevices(AppIdentity identity) {
-    return identity.isHost;
-  }
-
-  static bool canRequestCloudHostTransfer(AppIdentity identity) {
+  static bool canClaimDirectPairingCode(AppIdentity identity) {
     return identity.isClient;
   }
 
-  static bool canApproveCloudHostTransfer(AppIdentity identity) {
+  static bool canCheckDirectPairingStatus(AppIdentity identity) {
+    return false;
+  }
+
+  static bool canUseDirectTransport(
+    AppIdentity identity, {
+    required bool isConfigured,
+  }) {
+    return isDirectAllowedForCurrentRole(identity) && isConfigured;
+  }
+
+  static bool canRequestDirectSnapshot(
+    AppIdentity identity, {
+    required bool isConfigured,
+  }) {
+    return isDirectClientAllowed(identity) && isConfigured;
+  }
+
+  static bool canRebuildFromDirectSnapshot(
+    AppIdentity identity, {
+    required bool isConfigured,
+  }) {
+    return isDirectClientAllowed(identity) && isConfigured;
+  }
+
+  static bool canSuspendDirectDevices(AppIdentity identity) {
     return identity.isHost;
   }
 
-  static bool canRepairCloudDeviceLinks(AppIdentity identity) {
+  static bool canRevokeDirectDevices(AppIdentity identity) {
+    return identity.isHost;
+  }
+
+  static bool canRemoveDirectDevices(AppIdentity identity) {
+    return identity.isHost;
+  }
+
+  static bool canRequestDirectHostTransfer(AppIdentity identity) {
+    return identity.isClient;
+  }
+
+  static bool canApproveDirectHostTransfer(AppIdentity identity) {
+    return identity.isHost;
+  }
+
+  static bool canRepairDirectDeviceLinks(AppIdentity identity) {
     return identity.isHost;
   }
 }

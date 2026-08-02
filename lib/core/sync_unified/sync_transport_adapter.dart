@@ -2,11 +2,10 @@ import '../../models/app_identity.dart';
 import 'sync_contracts.dart';
 
 /// Transport-independent sync endpoint type.
-///
-/// Fix 10A intentionally introduces this contract without replacing the
-/// existing LAN/Cloud services yet. Later phases can move each service behind
-/// this adapter without changing UI flows again.
-enum UnifiedSyncTransportKind { lan, cloud, direct }
+enum UnifiedSyncTransportKind {
+  lan,
+  direct,
+}
 
 /// Normalized result envelope used by the unified sync layer.
 class UnifiedSyncResult {
@@ -159,13 +158,13 @@ class UnifiedPairingClaimResult extends UnifiedSyncResult {
 
 class UnifiedHostStatus {
   const UnifiedHostStatus({
-    required this.cloudReachable,
+    required this.controlPlaneReachable,
     required this.hostReachable,
     required this.message,
     this.lastSeenAt,
   });
 
-  final bool cloudReachable;
+  final bool controlPlaneReachable;
   final bool hostReachable;
   final String message;
   final DateTime? lastSeenAt;
@@ -200,7 +199,7 @@ class UnifiedSyncPullRequest {
   final UnifiedSyncCursor cursor;
 }
 
-/// Common transport adapter contract for LAN and Cloud.
+/// Common transport adapter contract for LAN and Direct.
 ///
 /// Phase 10A does not force the app to use this adapter yet. It provides the
 /// shared surface that 10B/10C will use to normalize pairing, push, pull,

@@ -12,7 +12,7 @@ void main() {
         platform: AppPlatformType.windows,
       ).copyWith(
         deviceRole: DeviceRole.client,
-        syncMode: SyncMode.cloudConnected,
+        syncMode: SyncMode.directConnected,
         hostDeviceId: 'host-1',
         activeSyncTransport: 'lan',
       );
@@ -22,12 +22,12 @@ void main() {
       expect(identity.transportType, 'lan');
     });
 
-    test('Cloud Client relay ACK state is submitted, not confirmed', () {
+    test('Direct Client relay ACK state is submitted, not confirmed', () {
       final now = DateTime.utc(2026, 1, 1);
       final item = SyncQueueItem(
-        id: 'cmd-1-cloud_host',
+        id: 'cmd-1-host',
         changeId: 'cmd-1',
-        target: 'cloud_host',
+        target: 'host',
         status: 'submitted',
         attempts: 1,
         createdAt: now,
@@ -90,18 +90,18 @@ void main() {
     test('received ACK is separate from Host confirmation state', () {
       final now = DateTime.utc(2026, 1, 1);
       final delivered = SyncQueueItem(
-        id: 'evt-1-cloud',
+        id: 'evt-1-direct',
         changeId: 'evt-1',
-        target: 'cloud',
+        target: 'host',
         status: 'synced',
         attempts: 1,
         createdAt: now,
         updatedAt: now,
       );
       final submittedDraft = SyncQueueItem(
-        id: 'cmd-1-cloud_host',
+        id: 'cmd-1-host',
         changeId: 'cmd-1',
-        target: 'cloud_host',
+        target: 'host',
         status: 'submitted',
         attempts: 1,
         createdAt: now,

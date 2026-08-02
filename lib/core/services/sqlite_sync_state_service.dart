@@ -21,8 +21,8 @@ const String _storeProfileKey = 'store_profile_v5';
 const String _hostTransferRequestKey = 'host_transfer_request_v1';
 const String _hostTransferApprovedDeviceKey =
     'host_transfer_approved_device_v1';
-const String _cloudHostBootstrapMarkerPrefix =
-    'cloud_host_bootstrap_snapshot_v3_';
+const String _directHostBootstrapMarkerPrefix =
+    'host_bootstrap_snapshot_v3_';
 const String _invoiceCounterKey = 'invoice_counter_v1';
 const String _purchaseCounterKey = 'purchase_counter_v1';
 
@@ -530,8 +530,8 @@ class SqliteSyncStateService {
     final active = context.appIdentity.activeSyncTransportNormalized;
     final target = active == 'lan'
         ? 'host'
-        : active == 'cloud'
-            ? 'cloud_host'
+        : active == 'direct'
+            ? 'host'
             : '';
     if (target.isEmpty) return pendingSyncCount(context);
     return pendingSyncQueueCountForTarget(context, target);
@@ -863,133 +863,6 @@ class SqliteSyncStateService {
       );
     }
     await _refreshSyncKeys(context);
-  }
-
-  Future<int> removeLegacyCloudBootstrapSnapshotQueue(
-    BusinessSessionContext context,
-  ) async {
-    final db = _db();
-    if (db == null || !context.appIdentity.isHost || !context.appIdentity.isCloudEnabled) {
-      return 0;
-    }
-    final rows = await db.customSelect(
-      '''
-      SELECT id
-      FROM sync_events
-      WHERE entity_type = 'system'
-        AND entity_id = 'store'
-        AND operation = 'restore_snapshot'
-        AND store_id = ?
-        AND is_synced = 0
-      ''',
-      variables: <Variable<Object>>[Variable<String>(context.appIdentity.storeId)],
-    ).get();
-    final ids = rows
-        .map((row) => row.read<String>('id'))
-        .where((value) => value.trim().isNotEmpty)
-        .toList(growable: false);
-    if (ids.isEmpty) return 0;
-    final placeholders = List<String>.filled(ids.length, '?').join(', ');
-    await db.transaction(() async {
-      await db.customStatement(
-        'DELETE FROM sync_queue WHERE change_id IN ($placeholders)',
-        ids,
-      );
-      await db.customStatement(
-        'DELETE FROM sync_events WHERE id IN ($placeholders)',
-        ids,
-      );
-    });
-    await _refreshSyncKeys(context);
-    return ids.length;
-  }
-
-  Future<int> repairMissingHostCloudQueueForPendingChanges(
-    BusinessSessionContext context,
-  ) async {
-    final db = _db();
-    if (db == null || !context.appIdentity.isHost || !context.appIdentity.isCloudEnabled) {
-      return 0;
-    }
-    final now = DateTime.now();
-    final nowIso = now.toIso8601String();
-    final rows = await db.customSelect(
-      '''
-      SELECT id, device_id, store_id, branch_id, payload_json, operation,
-             entity_type, entity_id, created_at, store_epoch, sequence
-      FROM sync_events
-      WHERE is_synced = 0
-        AND (store_id = ? OR store_id = '')
-      ORDER BY sequence ASC, created_at ASC, id ASC
-      ''',
-      variables: <Variable<Object>>[Variable<String>(context.appIdentity.storeId)],
-    ).get();
-    final existingCloudQueueIds = await db.customSelect(
-      "SELECT change_id FROM sync_queue WHERE target = 'cloud' AND status != 'synced'",
-    ).get();
-    final existingAnyCloudQueueIds = await db.customSelect(
-      "SELECT change_id FROM sync_queue WHERE target = 'cloud'",
-    ).get();
-    final pendingIds = existingCloudQueueIds
-        .map((row) => row.read<String>('change_id'))
-        .toSet();
-    final anyIds = existingAnyCloudQueueIds
-        .map((row) => row.read<String>('change_id'))
-        .toSet();
-
-    var repaired = 0;
-    for (final row in rows) {
-      final change = _changeFromRow(
-        row,
-      );
-      if (change.deviceId == 'cloud-snapshot') continue;
-      if (change.isSynced) continue;
-      final meta = _decodeMap(change.payload['_syncV2'] is Map
-          ? jsonEncode(change.payload['_syncV2'])
-          : '{}');
-      final kind = (meta['kind'] ?? '').toString();
-      final isAuthoritative =
-          kind.isEmpty || kind == 'authoritativeEvent' || change.deviceId == context.deviceId;
-      if (!isAuthoritative) continue;
-      if (pendingIds.contains(change.id)) continue;
-      if (anyIds.contains(change.id)) {
-        await db.customUpdate(
-          "UPDATE sync_queue SET status = 'pending', updated_at = ?, next_retry_at = '', last_error = '' WHERE target = 'cloud' AND change_id = ? AND status = 'synced'",
-          variables: <Variable<Object>>[
-            Variable<String>(nowIso),
-            Variable<String>(change.id),
-          ],
-        );
-        pendingIds.add(change.id);
-        repaired += 1;
-        continue;
-      }
-      await db.customInsert(
-        '''
-        INSERT OR REPLACE INTO sync_queue
-          (id, change_id, target, status, attempts, last_error, next_retry_at, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''',
-        variables: <Variable<Object>>[
-          Variable<String>('${change.id}-cloud'),
-          Variable<String>(change.id),
-          Variable<String>('cloud'),
-          const Variable<String>('pending'),
-          const Variable<int>(0),
-          const Variable<String>(''),
-          const Variable<String>(''),
-          Variable<String>(nowIso),
-          Variable<String>(nowIso),
-        ],
-      );
-      pendingIds.add(change.id);
-      anyIds.add(change.id);
-      repaired += 1;
-    }
-    if (repaired > 0) {
-      await _refreshSyncKeys(context);
-    }
-    return repaired;
   }
 
   Future<void> markSyncChangesSubmittedByIds(
@@ -1424,7 +1297,7 @@ class SqliteSyncStateService {
     BusinessSessionContext context,
     List<SyncChange> incoming, {
     bool markAppliedAsSynced = false,
-    bool mirrorToCloud = false,
+    bool mirrorToDirect = false,
   }) async {
     final db = _db();
     if (db == null) return;
@@ -1434,7 +1307,7 @@ class SqliteSyncStateService {
         db,
         incoming,
         markAppliedAsSynced: markAppliedAsSynced,
-        mirrorToCloud: mirrorToCloud,
+        mirrorToDirect: mirrorToDirect,
       );
     });
     await _refreshSummaryTables();
@@ -1446,7 +1319,7 @@ class SqliteSyncStateService {
     VentioDriftDatabase db,
     List<SyncChange> incoming, {
     required bool markAppliedAsSynced,
-    required bool mirrorToCloud,
+    required bool mirrorToDirect,
   }) async {
     final sorted = [...incoming]..sort((a, b) {
         final epochCompare = a.storeEpoch.compareTo(b.storeEpoch);
@@ -1515,7 +1388,7 @@ class SqliteSyncStateService {
               sequence: nextSequence = nextSequence + 1,
             )
           : change;
-      final storedChange = markAppliedAsSynced && !mirrorToCloud
+      final storedChange = markAppliedAsSynced && !mirrorToDirect
           ? authoritativeChange.copyWith(
               isSynced: true,
               syncedAt: acceptedAt,
@@ -1541,9 +1414,9 @@ class SqliteSyncStateService {
             );
             businessChanged = true;
           } else if (change.operation == 'request_snapshot') {
-            if (context.appIdentity.isHost && context.appIdentity.isCloudEnabled) {
+            if (context.appIdentity.isHost && context.appIdentity.isDirectEnabled) {
               await LocalDatabaseService.setString(
-                '$_cloudHostBootstrapMarkerPrefix${context.appIdentity.storeId}',
+                '$_directHostBootstrapMarkerPrefix${context.appIdentity.storeId}',
                 'direct_chunked',
               );
             }
@@ -1636,15 +1509,15 @@ class SqliteSyncStateService {
           break;
       }
 
-      if (mirrorToCloud &&
+      if (mirrorToDirect &&
           context.appIdentity.isHost &&
           change.deviceId != context.deviceId &&
-          change.deviceId != 'cloud-snapshot') {
+          change.deviceId != 'direct-snapshot') {
         queueItems.add(
           SyncQueueItem(
-            id: '${storedChange.id}-cloud',
+            id: '${storedChange.id}-direct',
             changeId: storedChange.id,
-            target: 'cloud',
+            target: 'host',
             status: 'pending',
             attempts: 0,
             createdAt: acceptedAt,

@@ -134,7 +134,7 @@ class StockTransactionService {
     this.deviceId = '',
     this.defaultStoreId = '',
     this.defaultBranchId = 'main',
-    this.defaultSyncTarget = 'cloud',
+    this.defaultSyncTarget = 'direct',
     this.allowNegativeStockResolver,
   });
 
@@ -234,7 +234,7 @@ class StockTransactionService {
     String storeId = '',
     String branchId = '',
     String deviceId = '',
-    String syncTarget = 'cloud',
+    String syncTarget = 'direct',
     bool skipExistingMovementLookup = false,
   }) async {
     final resolvedStoreId =
@@ -314,7 +314,7 @@ class StockTransactionService {
     String storeId = '',
     String branchId = '',
     String deviceId = '',
-    String syncTarget = 'cloud',
+    String syncTarget = 'direct',
     bool skipExistingMovementLookup = false,
   }) async {
     if (idempotencyKey.trim().isEmpty) {
@@ -384,7 +384,7 @@ class StockTransactionService {
     String storeId = '',
     String branchId = '',
     String deviceId = '',
-    String syncTarget = 'cloud',
+    String syncTarget = 'direct',
   }) {
     final groupId = 'reversal-${originalMovement.id}';
     final opKey = 'reversal:${originalMovement.id}';
@@ -443,7 +443,7 @@ class StockTransactionService {
     String storeId = '',
     String branchId = '',
     String deviceId = '',
-    String syncTarget = 'cloud',
+    String syncTarget = 'direct',
   }) {
     final groupId = 'reversal-${originalMovement.id}';
     final opKey = 'reversal:${originalMovement.id}';

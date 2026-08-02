@@ -6,6 +6,7 @@ import 'package:drift/drift.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ventio/core/repositories/auth_repository.dart';
 import 'package:ventio/core/services/stock_transaction_service.dart';
+import 'package:ventio/core/services/direct_sync_settings.dart';
 import 'package:ventio/core/services/local_database_service.dart';
 import 'package:ventio/core/storage/sqlite/business_sqlite_store.dart';
 import 'package:ventio/core/storage/sqlite/sqlite_migration_manager.dart';
@@ -58,7 +59,7 @@ Map<String, String> hostIdentitySeed([Map<String, String>? seed]) {
       'createdAt': now,
       'updatedAt': now,
       'hostDeviceId': '',
-      'cloudTenantId': '',
+      'controlPlaneTenantId': '',
       'deviceToken': 'device_test_host',
       'storeEpoch': 1,
       'recoveryKey': 'RK-TEST-TEST-TEST',
@@ -326,15 +327,15 @@ void main() {
       final recovered = AppStore();
       await recovered.initialize();
       await recovered.recoverOnlineStoreOwnerIdentity(
-        storeId: 'ST-CLOUD1',
-        branchId: 'BR-CLOUD1',
+        storeId: 'ST-DIRECT1',
+        branchId: 'BR-DIRECT1',
         storeName: 'Server Store',
         username: 'owner',
         password: 'OwnerPass123',
       );
 
-      expect(recovered.appIdentity.storeId, 'ST-CLOUD1');
-      expect(recovered.appIdentity.branchId, 'BR-CLOUD1');
+      expect(recovered.appIdentity.storeId, 'ST-DIRECT1');
+      expect(recovered.appIdentity.branchId, 'BR-DIRECT1');
       expect(recovered.appIdentity.deviceRole, DeviceRole.host);
       expect(recovered.appIdentity.syncMode, SyncMode.localOnly);
       expect(recovered.appIdentity.activeSyncTransport, isEmpty);
@@ -345,8 +346,8 @@ void main() {
 
       expect(recovered.products.single.code, 'P001');
       expect(recovered.storeProfile.name, 'Backup Store');
-      expect(recovered.appIdentity.storeId, 'ST-CLOUD1');
-      expect(recovered.appIdentity.branchId, 'BR-CLOUD1');
+      expect(recovered.appIdentity.storeId, 'ST-DIRECT1');
+      expect(recovered.appIdentity.branchId, 'BR-DIRECT1');
       expect(recovered.appIdentity.deviceRole, DeviceRole.host);
     });
   });
@@ -1278,12 +1279,34 @@ void main() {
     test(
         'marks queue rows in progress, failed, retrying, item failed, and synced',
         () async {
-      final store = await readyStore();
-      await store.updateAppIdentity(store.appIdentity.copyWith(
-          syncMode: SyncMode.cloudConnected, activeSyncTransport: 'cloud'));
+      final hostStore = await readyStore();
+      final clientIdentity = hostStore.appIdentity.copyWith(
+        deviceRole: DeviceRole.client,
+        syncMode: SyncMode.directConnected,
+        activeSyncTransport: 'direct',
+        hostDeviceId: 'DV-HOST-TEST',
+        deviceToken: 'device-token-test',
+      );
+      await LocalDatabaseService.setString(
+        'app_identity_v1',
+        jsonEncode(clientIdentity.toJson()),
+      );
+      await const DirectSyncSettings(
+        apiBaseUrl: 'https://example.test',
+        peerDeviceId: 'DV-HOST-TEST',
+        setupComplete: true,
+      ).save();
+      final store = AppStore();
+      await store.initialize();
+      await store.applySessionUser(
+        activeUser: hostStore.users.first,
+        currentRole: 'Admin',
+        permissions: Set<String>.from(AppPermission.all),
+        rememberLogin: true,
+      );
       await store.addOrUpdateProduct(product());
       final changeIds = store
-          .pendingSyncChangesForTarget('cloud', readyOnly: false)
+          .pendingSyncChangesForTarget('host', readyOnly: false)
           .map((c) => c.id)
           .toList();
       expect(changeIds, isNotEmpty);
@@ -1308,10 +1331,10 @@ void main() {
       expect(store.syncQueue.first.lastError, 'single failure');
 
       await store.markSyncChangesSyncedByIds(changeIds);
-      expect(store.pendingSyncChangesForTarget('cloud', readyOnly: false),
+      expect(store.pendingSyncChangesForTarget('host', readyOnly: false),
           isEmpty);
       expect(
-          store.pendingSyncQueueForTarget('cloud', readyOnly: false), isEmpty);
+          store.pendingSyncQueueForTarget('host', readyOnly: false), isEmpty);
 
       await store.clearPendingSyncQueue();
       expect(store.pendingSyncQueueCount, 0);

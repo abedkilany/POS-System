@@ -71,7 +71,7 @@ class SettingsBackupActions {
 
       await store.importBackupJson(rawJson,
           selectedSectionIds: selectedSections);
-      await _publishImportedSnapshotToCloudIfNeeded(store);
+      await _publishImportedSnapshotToDirectIfNeeded(store);
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(tr.text('backup_imported'))),
@@ -85,21 +85,21 @@ class SettingsBackupActions {
     }
   }
 
-  static Future<void> _publishImportedSnapshotToCloudIfNeeded(
+  static Future<void> _publishImportedSnapshotToDirectIfNeeded(
     AppStore store,
   ) async {
     final identity = store.appIdentity;
-    final cloud = CloudSyncSettings.load();
-    if (!identity.isHost || !identity.isCloudEnabled || !cloud.isConfigured) {
+    final direct = VpsControlPlaneSettings.load();
+    if (!identity.isHost || !identity.isDirectEnabled || !direct.isConfigured) {
       return;
     }
 
-    final settings = cloud.copyWith(enabled: true, clearLastPullCursor: true);
+    final settings = direct.copyWith(enabled: true, clearLastPullCursor: true);
     try {
       SyncDiagnosticsLog.add(
         '[SYNC_TRACE] backupImport:publishHostSnapshot store=${identity.storeId} branch=${identity.branchId}',
       );
-      final service = CloudSyncAdminService(store);
+      final service = DirectControlPlaneService(store);
       // Snapshot data remains on the Host and is served through the relay.
       await service.pushPendingForUnifiedEngine(settings);
       SyncDiagnosticsLog.add(
@@ -118,7 +118,7 @@ class SettingsBackupActions {
   ) async {
     final tr = AppLocalizations.of(context);
     final identity = store.appIdentity;
-    final cloud = CloudSyncSettings.load();
+    final direct = VpsControlPlaneSettings.load();
     var confirmed = false;
     final ok = await showDialog<bool>(
       context: context,
@@ -171,7 +171,7 @@ class SettingsBackupActions {
     try {
       await downloadTextFile(
           filename: filename,
-          content: store.exportRecoveryFileJson(cloudApiUrl: cloud.apiBaseUrl),
+          content: store.exportRecoveryFileJson(controlPlaneApiUrl: direct.apiBaseUrl),
           dialogTitle: tr.text('save_recovery_file'),
           cancelMessage: tr.text('file_save_cancelled'));
       if (context.mounted) {
@@ -212,7 +212,7 @@ class SettingsBackupActions {
   ) async {
     final tr = AppLocalizations.of(context);
     final cache = AccountAuthCache.load();
-    final cloud = CloudSyncSettings.load();
+    final direct = VpsControlPlaneSettings.load();
     final storeId = (cache?.storeId.trim().isNotEmpty == true
             ? cache!.storeId
             : store.appIdentity.storeId)
@@ -274,16 +274,16 @@ class SettingsBackupActions {
     );
     if (confirmed != true) return;
     try {
-      final recoverySettings = cloud.copyWith(
+      final recoverySettings = direct.copyWith(
         enabled: true,
-        apiBaseUrl: cloud.apiBaseUrl.trim().isNotEmpty
-            ? cloud.apiBaseUrl.trim()
-            : CloudSyncSettings.bundledApiBaseUrl,
+        apiBaseUrl: direct.apiBaseUrl.trim().isNotEmpty
+            ? direct.apiBaseUrl.trim()
+            : VpsControlPlaneSettings.bundledApiBaseUrl,
         clearLastPullCursor: true,
       );
       await recoverySettings.save();
-      final result = await CloudSyncAdminService(store)
-          .recoverExistingStoreIdentityFromCloud(
+      final result = await DirectControlPlaneService(store)
+          .recoverExistingStoreIdentityFromDirect(
         recoverySettings,
         storeId: storeId,
         branchId: branchId,
@@ -307,7 +307,7 @@ class SettingsBackupActions {
   ) async {
     final tr = AppLocalizations.of(context);
     final cache = AccountAuthCache.load();
-    final cloud = CloudSyncSettings.load();
+    final direct = VpsControlPlaneSettings.load();
     final storeId = (cache?.storeId.trim().isNotEmpty == true
             ? cache!.storeId
             : store.appIdentity.storeId)
@@ -383,16 +383,16 @@ class SettingsBackupActions {
     );
     if (confirmed != true) return;
     try {
-      final recoverySettings = cloud.copyWith(
+      final recoverySettings = direct.copyWith(
         enabled: true,
-        apiBaseUrl: cloud.apiBaseUrl.trim().isNotEmpty
-            ? cloud.apiBaseUrl.trim()
-            : CloudSyncSettings.bundledApiBaseUrl,
+        apiBaseUrl: direct.apiBaseUrl.trim().isNotEmpty
+            ? direct.apiBaseUrl.trim()
+            : VpsControlPlaneSettings.bundledApiBaseUrl,
         clearLastPullCursor: true,
       );
       await recoverySettings.save();
       final result =
-          await CloudSyncAdminService(store).recoverExistingStoreFromCloud(
+          await DirectControlPlaneService(store).recoverExistingStoreFromDirect(
         recoverySettings,
         storeId: storeId,
         branchId: branchId,
@@ -542,13 +542,13 @@ class SettingsBackupActions {
       progress.value = _OperationProgress(
           0.20, tr.text('resetting_local_client_state_percent'));
       await Future<void>.delayed(const Duration(milliseconds: 80));
-      if (identity.syncMode == SyncMode.cloudConnected ||
+      if (identity.syncMode == SyncMode.directConnected ||
           identity.syncMode == SyncMode.marketplaceEnabled) {
         progress.value = _OperationProgress(
-            0.40, tr.text('contacting_cloud_host_snapshot_percent'));
-        final result = await UnifiedSyncFactory.cloudEngine(
+            0.40, tr.text('contacting_host_snapshot_percent'));
+        final result = await UnifiedSyncFactory.directEngine(
           store,
-          settings: CloudSyncSettings.load(),
+          settings: VpsControlPlaneSettings.load(),
         ).rebuildFromHostSnapshot(
           onProgress: (value, label) => progress.value =
               _OperationProgress(value, '$label ${(value * 100).round()}%'),
@@ -556,8 +556,8 @@ class SettingsBackupActions {
         progress.value = _OperationProgress(
             result.ok ? 1.0 : 0.90,
             result.ok
-                ? tr.text('cloud_rebuild_completed_percent')
-                : tr.text('cloud_rebuild_failed_verifying_percent'));
+                ? tr.text('direct_rebuild_completed_percent')
+                : tr.text('direct_rebuild_failed_verifying_percent'));
         message = localizeRuntimeMessage(result.message, tr);
         success = result.ok;
       } else {

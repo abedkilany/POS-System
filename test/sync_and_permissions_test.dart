@@ -14,7 +14,7 @@ import 'package:ventio/models/user_role.dart';
 void main() {
   group('AppStore sync queue recovery', () {
     test(
-        'recovers submitted cloud_host rows to pending without duplicating work',
+        'recovers submitted host rows to pending without duplicating work',
         () async {
       TestWidgetsFlutterBinding.ensureInitialized();
       SharedPreferences.setMockInitialValues(const <String, Object>{});
@@ -28,15 +28,15 @@ void main() {
           'platform': 'web',
           'deviceRole': 'client',
           'appRole': 'store',
-          'syncMode': 'cloudConnected',
+          'syncMode': 'directConnected',
           'createdAt': now.toIso8601String(),
           'updatedAt': now.toIso8601String(),
           'hostDeviceId': 'HOST-REC',
-          'cloudTenantId': '',
+          'controlPlaneTenantId': '',
           'deviceToken': 'device_rec',
           'storeEpoch': 1,
           'recoveryKey': 'RK-REC',
-          'activeSyncTransport': 'cloud',
+          'activeSyncTransport': 'direct',
         }),
         'sync_changes_v1': jsonEncode(<Map<String, dynamic>>[
           SyncChange(
@@ -62,9 +62,9 @@ void main() {
         'sync_queue_v1',
         <Map<String, dynamic>>[
           SyncQueueItem(
-            id: 'cmd-1-cloud_host',
+            id: 'cmd-1-host',
             changeId: 'cmd-1',
-            target: 'cloud_host',
+            target: 'host',
             status: 'submitted',
             attempts: 1,
             createdAt: now,
@@ -74,16 +74,16 @@ void main() {
       );
       await store.refreshAfterDatabaseChange('sync_queue_v1');
       expect(store.syncQueue.single.status, 'submitted');
-      expect(store.hasOutstandingSyncWorkForTarget('cloud_host'), isTrue);
+      expect(store.hasOutstandingSyncWorkForTarget('host'), isTrue);
 
-      await store.recoverSubmittedSyncQueue(target: 'cloud_host');
+      await store.recoverSubmittedSyncQueue(target: 'host');
       expect(store.syncQueue.single.status, 'pending');
-      expect(store.hasOutstandingSyncWorkForTarget('cloud_host'), isTrue);
+      expect(store.hasOutstandingSyncWorkForTarget('host'), isTrue);
       expect(
-          store.pendingSyncQueueForTarget('cloud_host', readyOnly: false),
+          store.pendingSyncQueueForTarget('host', readyOnly: false),
           hasLength(1));
 
-      await store.recoverSubmittedSyncQueue(target: 'cloud_host');
+      await store.recoverSubmittedSyncQueue(target: 'host');
       expect(store.syncQueue, hasLength(1));
       expect(store.syncQueue.single.status, 'pending');
     });
@@ -94,7 +94,7 @@ void main() {
       final item = SyncQueueItem(
           id: 'q1',
           changeId: 'c1',
-          target: 'cloud',
+          target: 'host',
           status: 'pending',
           attempts: 0,
           createdAt: DateTime.now(),
@@ -107,7 +107,7 @@ void main() {
       final item = SyncQueueItem(
           id: 'q1',
           changeId: 'c1',
-          target: 'cloud',
+          target: 'host',
           status: 'failed',
           attempts: 1,
           createdAt: DateTime.now(),
@@ -122,7 +122,7 @@ void main() {
       final item = SyncQueueItem(
           id: 'q1',
           changeId: 'c1',
-          target: 'cloud',
+          target: 'host',
           status: 'failed',
           attempts: 1,
           createdAt: DateTime.now(),
@@ -135,7 +135,7 @@ void main() {
       final item = SyncQueueItem(
           id: 'q1',
           changeId: 'c1',
-          target: 'cloud',
+          target: 'host',
           status: 'inProgress',
           attempts: 1,
           createdAt: DateTime.now(),
@@ -148,7 +148,7 @@ void main() {
       final item = SyncQueueItem(
           id: 'q1',
           changeId: 'c1',
-          target: 'cloud',
+          target: 'host',
           status: 'inProgress',
           attempts: 1,
           createdAt: DateTime.now().subtract(const Duration(minutes: 2)),
@@ -161,7 +161,7 @@ void main() {
       final item = SyncQueueItem(
           id: 'q1',
           changeId: 'c1',
-          target: 'cloud',
+          target: 'host',
           status: 'synced',
           attempts: 1,
           createdAt: DateTime.now(),
@@ -175,7 +175,7 @@ void main() {
       final original = SyncQueueItem(
           id: 'q1',
           changeId: 'c1',
-          target: 'cloud',
+          target: 'host',
           status: 'failed',
           attempts: 1,
           createdAt: DateTime.now(),
@@ -314,7 +314,7 @@ void main() {
       expect(identity.isHost, isFalse);
       expect(identity.isClient, isFalse);
       expect(identity.syncMode, SyncMode.localOnly);
-      expect(identity.isCloudEnabled, isFalse);
+      expect(identity.isDirectEnabled, isFalse);
       expect(identity.storeId, startsWith('ST-'));
       expect(identity.storeId.length, greaterThan('ST-'.length));
     });
@@ -329,12 +329,12 @@ void main() {
       expect(identity.isHost, isFalse);
       expect(identity.isClient, isFalse);
       expect(identity.syncMode, SyncMode.localOnly);
-      expect(identity.isCloudEnabled, isFalse);
+      expect(identity.isDirectEnabled, isFalse);
       expect(identity.storeId, startsWith('ST-'));
       expect(identity.storeId.length, greaterThan('ST-'.length));
     });
 
-    test('web default is cloud-connected client', () {
+    test('web default is Direct-connected client', () {
       final identity = AppIdentity.defaults(
         deviceId: 'web-1',
         platform: AppPlatformType.web,
@@ -343,8 +343,8 @@ void main() {
       expect(identity.deviceRole, DeviceRole.client);
       expect(identity.isClient, isTrue);
       expect(identity.isHost, isFalse);
-      expect(identity.syncMode, SyncMode.cloudConnected);
-      expect(identity.isCloudEnabled, isTrue);
+      expect(identity.syncMode, SyncMode.directConnected);
+      expect(identity.isDirectEnabled, isTrue);
     });
 
     test('register setup can turn a native standalone device into a host', () {
@@ -380,13 +380,13 @@ void main() {
       expect(identity.hostDeviceId, 'host-1');
     });
 
-    test('marketplace mode is both cloud enabled and marketplace enabled', () {
+    test('marketplace mode remains local-only and marketplace-enabled', () {
       final identity = AppIdentity.defaults(
         deviceId: 'web-1',
         platform: AppPlatformType.web,
       ).copyWith(syncMode: SyncMode.marketplaceEnabled);
 
-      expect(identity.isCloudEnabled, isTrue);
+      expect(identity.isDirectEnabled, isFalse);
       expect(identity.isMarketplaceEnabled, isTrue);
     });
   });

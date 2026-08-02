@@ -5,10 +5,10 @@ import '../services/local_database_service.dart';
 
 /// Sync progress for a single device, with transport-specific cursors.
 ///
-/// The Host remains the authority for accepted changes. LAN and Cloud are only
+/// The Host remains the authority for accepted changes. LAN and Direct are only
 /// delivery methods, so a Client must carry one device-level progress marker
 /// when switching between transports. This store intentionally lives above the
-/// legacy LAN/Cloud cursor keys to allow a safe staged migration.
+/// legacy LAN/Direct cursor keys to allow a safe staged migration.
 class SyncDeviceState {
   const SyncDeviceState({
     required this.deviceId,
@@ -20,10 +20,10 @@ class SyncDeviceState {
     this.lastAckCursor,
     this.lastAppliedSequence = 0,
     this.lastAckSequence = 0,
-    this.cloudLastAppliedHostCursor,
-    this.cloudLastAckCursor,
-    this.cloudLastAppliedSequence = 0,
-    this.cloudLastAckSequence = 0,
+    this.directLastAppliedHostCursor,
+    this.directLastAckCursor,
+    this.directLastAppliedSequence = 0,
+    this.directLastAckSequence = 0,
     this.lanLastAppliedHostCursor,
     this.lanLastAckCursor,
     this.lanLastAppliedSequence = 0,
@@ -42,10 +42,10 @@ class SyncDeviceState {
   final DateTime? lastAckCursor;
   final int lastAppliedSequence;
   final int lastAckSequence;
-  final DateTime? cloudLastAppliedHostCursor;
-  final DateTime? cloudLastAckCursor;
-  final int cloudLastAppliedSequence;
-  final int cloudLastAckSequence;
+  final DateTime? directLastAppliedHostCursor;
+  final DateTime? directLastAckCursor;
+  final int directLastAppliedSequence;
+  final int directLastAckSequence;
   final DateTime? lanLastAppliedHostCursor;
   final DateTime? lanLastAckCursor;
   final int lanLastAppliedSequence;
@@ -64,10 +64,10 @@ class SyncDeviceState {
     DateTime? lastAckCursor,
     int? lastAppliedSequence,
     int? lastAckSequence,
-    DateTime? cloudLastAppliedHostCursor,
-    DateTime? cloudLastAckCursor,
-    int? cloudLastAppliedSequence,
-    int? cloudLastAckSequence,
+    DateTime? directLastAppliedHostCursor,
+    DateTime? directLastAckCursor,
+    int? directLastAppliedSequence,
+    int? directLastAckSequence,
     DateTime? lanLastAppliedHostCursor,
     DateTime? lanLastAckCursor,
     int? lanLastAppliedSequence,
@@ -77,7 +77,7 @@ class SyncDeviceState {
     DateTime? updatedAt,
     bool clearLastAppliedHostCursor = false,
     bool clearLastAckCursor = false,
-    bool clearCloudProgress = false,
+    bool clearDirectProgress = false,
     bool clearLanProgress = false,
   }) {
     return SyncDeviceState(
@@ -93,18 +93,18 @@ class SyncDeviceState {
           clearLastAckCursor ? null : (lastAckCursor ?? this.lastAckCursor),
       lastAppliedSequence: lastAppliedSequence ?? this.lastAppliedSequence,
       lastAckSequence: lastAckSequence ?? this.lastAckSequence,
-      cloudLastAppliedHostCursor: clearCloudProgress
+      directLastAppliedHostCursor: clearDirectProgress
           ? null
-          : (cloudLastAppliedHostCursor ?? this.cloudLastAppliedHostCursor),
-      cloudLastAckCursor: clearCloudProgress
+          : (directLastAppliedHostCursor ?? this.directLastAppliedHostCursor),
+      directLastAckCursor: clearDirectProgress
           ? null
-          : (cloudLastAckCursor ?? this.cloudLastAckCursor),
-      cloudLastAppliedSequence: clearCloudProgress
+          : (directLastAckCursor ?? this.directLastAckCursor),
+      directLastAppliedSequence: clearDirectProgress
           ? 0
-          : (cloudLastAppliedSequence ?? this.cloudLastAppliedSequence),
-      cloudLastAckSequence: clearCloudProgress
+          : (directLastAppliedSequence ?? this.directLastAppliedSequence),
+      directLastAckSequence: clearDirectProgress
           ? 0
-          : (cloudLastAckSequence ?? this.cloudLastAckSequence),
+          : (directLastAckSequence ?? this.directLastAckSequence),
       lanLastAppliedHostCursor: clearLanProgress
           ? null
           : (lanLastAppliedHostCursor ?? this.lanLastAppliedHostCursor),
@@ -132,11 +132,11 @@ class SyncDeviceState {
         'lastAckCursor': lastAckCursor?.toIso8601String(),
         'lastAppliedSequence': lastAppliedSequence,
         'lastAckSequence': lastAckSequence,
-        'cloudLastAppliedHostCursor':
-            cloudLastAppliedHostCursor?.toIso8601String(),
-        'cloudLastAckCursor': cloudLastAckCursor?.toIso8601String(),
-        'cloudLastAppliedSequence': cloudLastAppliedSequence,
-        'cloudLastAckSequence': cloudLastAckSequence,
+        'directLastAppliedHostCursor':
+            directLastAppliedHostCursor?.toIso8601String(),
+        'directLastAckCursor': directLastAckCursor?.toIso8601String(),
+        'directLastAppliedSequence': directLastAppliedSequence,
+        'directLastAckSequence': directLastAckSequence,
         'lanLastAppliedHostCursor': lanLastAppliedHostCursor?.toIso8601String(),
         'lanLastAckCursor': lanLastAckCursor?.toIso8601String(),
         'lanLastAppliedSequence': lanLastAppliedSequence,
@@ -163,14 +163,14 @@ class SyncDeviceState {
           int.tryParse(json['lastAppliedSequence']?.toString() ?? '') ?? 0,
       lastAckSequence:
           int.tryParse(json['lastAckSequence']?.toString() ?? '') ?? 0,
-      cloudLastAppliedHostCursor: DateTime.tryParse(
-          json['cloudLastAppliedHostCursor']?.toString() ?? ''),
-      cloudLastAckCursor:
-          DateTime.tryParse(json['cloudLastAckCursor']?.toString() ?? ''),
-      cloudLastAppliedSequence:
-          int.tryParse(json['cloudLastAppliedSequence']?.toString() ?? '') ?? 0,
-      cloudLastAckSequence:
-          int.tryParse(json['cloudLastAckSequence']?.toString() ?? '') ?? 0,
+      directLastAppliedHostCursor: DateTime.tryParse(
+          json['directLastAppliedHostCursor']?.toString() ?? ''),
+      directLastAckCursor:
+          DateTime.tryParse(json['directLastAckCursor']?.toString() ?? ''),
+      directLastAppliedSequence:
+          int.tryParse(json['directLastAppliedSequence']?.toString() ?? '') ?? 0,
+      directLastAckSequence:
+          int.tryParse(json['directLastAckSequence']?.toString() ?? '') ?? 0,
       lanLastAppliedHostCursor:
           DateTime.tryParse(json['lanLastAppliedHostCursor']?.toString() ?? ''),
       lanLastAckCursor:
@@ -248,7 +248,7 @@ class SyncDeviceStateStore {
   SyncDeviceStateStore._();
 
   static const String _stateKey = 'host_authoritative_sync_device_state_v1';
-  static const String _cloudCursorKey = 'cloud_last_pull_cursor';
+  static const String _remoteCursorKey = 'direct_last_pull_cursor';
   static const String _lanSettingsKey = 'lan_sync_settings_v2';
   static const String _hostPeerStatesKey =
       'host_authoritative_sync_peer_states_v1';
@@ -293,10 +293,10 @@ class SyncDeviceStateStore {
   static DateTime? unifiedCursor(AppIdentity identity) =>
       load(identity).lastAppliedHostCursor;
 
-  /// Clears local client progress so the next Cloud/LAN pull can rebuild from
+  /// Clears local client progress so the next Direct/LAN pull can rebuild from
   /// a fresh Host snapshot instead of continuing after an old event sequence.
   static Future<void> resetClientProgress(AppIdentity identity,
-      {String transport = 'cloud'}) async {
+      {String transport = 'direct'}) async {
     final current = load(identity);
     final normalizedTransport = _normalizeTransport(transport);
     await save(
@@ -305,16 +305,16 @@ class SyncDeviceStateStore {
         activeTransport: normalizedTransport,
         lastAppliedSequence: 0,
         lastAckSequence: 0,
-        cloudLastAppliedHostCursor: normalizedTransport == 'cloud'
+        directLastAppliedHostCursor: normalizedTransport == 'direct'
             ? null
-            : current.cloudLastAppliedHostCursor,
-        cloudLastAckCursor:
-            normalizedTransport == 'cloud' ? null : current.cloudLastAckCursor,
-        cloudLastAppliedSequence: normalizedTransport == 'cloud'
+            : current.directLastAppliedHostCursor,
+        directLastAckCursor:
+            normalizedTransport == 'direct' ? null : current.directLastAckCursor,
+        directLastAppliedSequence: normalizedTransport == 'direct'
             ? 0
-            : current.cloudLastAppliedSequence,
-        cloudLastAckSequence:
-            normalizedTransport == 'cloud' ? 0 : current.cloudLastAckSequence,
+            : current.directLastAppliedSequence,
+        directLastAckSequence:
+            normalizedTransport == 'direct' ? 0 : current.directLastAckSequence,
         lanLastAppliedHostCursor: normalizedTransport == 'lan'
             ? null
             : current.lanLastAppliedHostCursor,
@@ -336,7 +336,7 @@ class SyncDeviceStateStore {
   ///
   /// Clients store their own progress in [SyncDeviceState]. Hosts may only
   /// record successful exchanges per connected peer, so Host health must also
-  /// consider [HostPeerSyncState]. This keeps Desktop, Android, LAN and Cloud
+  /// consider [HostPeerSyncState]. This keeps Desktop, Android, LAN and Direct
   /// status labels consistent.
   static DateTime? lastSuccessfulSyncAt(AppIdentity identity) {
     final state = load(identity);
@@ -387,19 +387,19 @@ class SyncDeviceStateStore {
             _latestInt(current.lastAppliedSequence, appliedSequence),
         lastAckSequence:
             _latestInt(current.lastAckSequence, ackSequence ?? appliedSequence),
-        cloudLastAppliedHostCursor: normalizedTransport == 'cloud'
-            ? (appliedCursor ?? current.cloudLastAppliedHostCursor)
-            : current.cloudLastAppliedHostCursor,
-        cloudLastAckCursor: normalizedTransport == 'cloud'
-            ? (ackCursor ?? appliedCursor ?? current.cloudLastAckCursor)
-            : current.cloudLastAckCursor,
-        cloudLastAppliedSequence: normalizedTransport == 'cloud'
-            ? _latestInt(current.cloudLastAppliedSequence, appliedSequence)
-            : current.cloudLastAppliedSequence,
-        cloudLastAckSequence: normalizedTransport == 'cloud'
+        directLastAppliedHostCursor: normalizedTransport == 'direct'
+            ? (appliedCursor ?? current.directLastAppliedHostCursor)
+            : current.directLastAppliedHostCursor,
+        directLastAckCursor: normalizedTransport == 'direct'
+            ? (ackCursor ?? appliedCursor ?? current.directLastAckCursor)
+            : current.directLastAckCursor,
+        directLastAppliedSequence: normalizedTransport == 'direct'
+            ? _latestInt(current.directLastAppliedSequence, appliedSequence)
+            : current.directLastAppliedSequence,
+        directLastAckSequence: normalizedTransport == 'direct'
             ? _latestInt(
-                current.cloudLastAckSequence, ackSequence ?? appliedSequence)
-            : current.cloudLastAckSequence,
+                current.directLastAckSequence, ackSequence ?? appliedSequence)
+            : current.directLastAckSequence,
         lanLastAppliedHostCursor: normalizedTransport == 'lan'
             ? (appliedCursor ?? current.lanLastAppliedHostCursor)
             : current.lanLastAppliedHostCursor,
@@ -420,7 +420,7 @@ class SyncDeviceStateStore {
   }
 
   /// Records the unified sync outcome for the current device using the same
-  /// cursor/ACK semantics for LAN and Cloud.
+  /// cursor/ACK semantics for LAN and Direct.
   static Future<void> recordUnifiedSyncResult(
     AppIdentity identity, {
     required String transport,
@@ -440,7 +440,7 @@ class SyncDeviceStateStore {
   }
 
   /// Returns the cursor that should seed a legacy transport before a sync run.
-  /// Cloud and LAN keep their own progress markers, but still reuse the same
+  /// Direct and LAN keep their own progress markers, but still reuse the same
   /// sync semantics and fallback cursor wiring.
   static DateTime? cursorForTransport(AppIdentity identity, String transport,
       DateTime? currentTransportCursor) {
@@ -479,8 +479,8 @@ class SyncDeviceStateStore {
     final fallbackToLegacy =
         _normalizeTransport(state.lastSyncTransport) == normalized;
     switch (normalized) {
-      case 'cloud':
-        return state.cloudLastAppliedHostCursor ??
+      case 'direct':
+        return state.directLastAppliedHostCursor ??
             (fallbackToLegacy ? state.lastAppliedHostCursor : null);
       case 'lan':
         return state.lanLastAppliedHostCursor ??
@@ -496,8 +496,8 @@ class SyncDeviceStateStore {
     final fallbackToLegacy =
         _normalizeTransport(state.lastSyncTransport) == normalized;
     switch (normalized) {
-      case 'cloud':
-        return state.cloudLastAckCursor ??
+      case 'direct':
+        return state.directLastAckCursor ??
             (fallbackToLegacy ? state.lastAckCursor : null);
       case 'lan':
         return state.lanLastAckCursor ??
@@ -513,9 +513,9 @@ class SyncDeviceStateStore {
     final fallbackToLegacy =
         _normalizeTransport(state.lastSyncTransport) == normalized;
     switch (normalized) {
-      case 'cloud':
-        return state.cloudLastAppliedSequence != 0
-            ? state.cloudLastAppliedSequence
+      case 'direct':
+        return state.directLastAppliedSequence != 0
+            ? state.directLastAppliedSequence
             : (fallbackToLegacy ? state.lastAppliedSequence : 0);
       case 'lan':
         return state.lanLastAppliedSequence != 0
@@ -531,9 +531,9 @@ class SyncDeviceStateStore {
     final fallbackToLegacy =
         _normalizeTransport(state.lastSyncTransport) == normalized;
     switch (normalized) {
-      case 'cloud':
-        return state.cloudLastAckSequence != 0
-            ? state.cloudLastAckSequence
+      case 'direct':
+        return state.directLastAckSequence != 0
+            ? state.directLastAckSequence
             : (fallbackToLegacy ? state.lastAckSequence : 0);
       case 'lan':
         return state.lanLastAckSequence != 0
@@ -607,8 +607,8 @@ class SyncDeviceStateStore {
   }
 
   static DateTime? _bestLegacyCursor() {
-    final cloud = DateTime.tryParse(
-        LocalDatabaseService.getString(_cloudCursorKey) ?? '');
+    final direct = DateTime.tryParse(
+        LocalDatabaseService.getString(_remoteCursorKey) ?? '');
     DateTime? lan;
     final rawLan = LocalDatabaseService.getString(_lanSettingsKey);
     if (rawLan != null && rawLan.trim().isNotEmpty) {
@@ -617,7 +617,7 @@ class SyncDeviceStateStore {
         lan = DateTime.tryParse(decoded['lastPullCursor']?.toString() ?? '');
       } catch (_) {}
     }
-    return _latest(cloud, lan);
+    return _latest(direct, lan);
   }
 
   static int _latestInt(int a, int? b) {
@@ -803,8 +803,9 @@ class SyncDeviceAccessStore {
 
 String _normalizeTransport(String? value) {
   final normalized = (value ?? '').trim().toLowerCase();
-  if (normalized == 'lan' || normalized == 'cloud' || normalized == 'direct') {
+  if (normalized == 'lan' || normalized == 'direct') {
     return normalized;
   }
+  if (normalized == 'direct') return 'direct';
   return 'local';
 }

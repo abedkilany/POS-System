@@ -1,6 +1,6 @@
 enum MaintenanceSeverity { ok, info, warning, critical }
 
-enum MaintenanceRepairAction { refreshOnly, repairMissingCloudQueue }
+enum MaintenanceRepairAction { refreshOnly }
 
 class MaintenanceIssue {
   const MaintenanceIssue({

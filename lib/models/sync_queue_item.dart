@@ -13,7 +13,7 @@ class SyncQueueItem {
 
   final String id;
   final String changeId;
-  final String target; // host, cloud, cloud_host, marketplace
+  final String target; // host, marketplace
   final String status; // pending, inProgress, submitted, failed, rejected, synced
   final int attempts;
   final DateTime createdAt;

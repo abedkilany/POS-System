@@ -1,19 +1,12 @@
 import '../../models/app_identity.dart';
 
-/// Canonical local queue targets. The transport name is intentionally kept
-/// separate from the queue target so LAN and Cloud use the same Host-facing
-/// semantics while Cloud still routes through its Relay.
+/// Canonical local queue targets. LAN and Direct use the same Host-facing
+/// queue semantics.
 abstract final class UnifiedSyncQueueTarget {
   static const host = 'host';
-  static const cloudHost = 'cloud_host';
-  static const cloudAuthority = 'cloud';
 }
 
-/// Fix 10B canonical sync contracts.
-///
-/// These contracts intentionally sit above the existing LAN and Cloud services.
-/// They normalize the language used by both transports without forcing the
-/// runtime migration that belongs to Fix 10C.
+/// Shared contracts for the LAN and Direct orchestration paths.
 enum UnifiedSyncErrorCode {
   none,
   networkUnavailable,

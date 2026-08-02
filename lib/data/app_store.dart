@@ -10,6 +10,7 @@ import 'package:archive/archive.dart';
 import 'package:pointycastle/export.dart' as pc;
 
 import '../core/services/local_database_service.dart';
+import '../core/services/direct_sync_settings.dart';
 import '../core/services/accounting_service.dart';
 import '../core/services/account_auth_service.dart';
 import '../core/services/app_logging_service.dart';
@@ -2016,7 +2017,6 @@ class AppStore extends ChangeNotifier {
     if (!appIdentity.isClient) return '';
     final active = appIdentity.activeSyncTransportNormalized;
     if (active == 'lan' || active == 'direct') return 'host';
-    if (active == 'cloud') return 'cloud_host';
     return '';
   }
 
@@ -2289,7 +2289,7 @@ class AppStore extends ChangeNotifier {
     final hostIdentity = _normalizedLocalIdentity(
       appIdentity.copyWith(
         deviceRole: DeviceRole.host,
-        syncMode: appIdentity.syncMode == SyncMode.cloudConnected ||
+        syncMode: appIdentity.syncMode == SyncMode.directConnected ||
                 appIdentity.syncMode == SyncMode.marketplaceEnabled
             ? appIdentity.syncMode
             : SyncMode.lanOnly,
@@ -2303,7 +2303,7 @@ class AppStore extends ChangeNotifier {
       source: 'initial Host registration',
       allowInitialHostRegistration: true,
     );
-    _assertLanCloudRoleRules(hostIdentity, source: 'initial Host registration');
+    _assertLanDirectRoleRules(hostIdentity, source: 'initial Host registration');
     _appIdentity = hostIdentity;
     await LocalDatabaseService.setString(
       _appIdentityKey,
@@ -2347,7 +2347,7 @@ class AppStore extends ChangeNotifier {
     required String password,
     String? hostDeviceId,
     String? deviceToken,
-    String? cloudTenantId,
+    String? controlPlaneTenantId,
     DeviceRole? deviceRole,
     SyncMode? syncMode,
   }) async {
@@ -2382,25 +2382,25 @@ class AppStore extends ChangeNotifier {
         branchId: cleanBranchId,
         deviceRole: role,
         // Online registration/recovery of the store owner identity must not
-        // automatically enable Cloud Sync. Cloud Sync is a paid/explicit
+        // automatically enable Direct Sync. Direct Sync is a paid/explicit
         // feature and should only be enabled from the Sync settings page after
         // the user turns it on and the server allows it for this store.
         syncMode: syncMode ?? SyncMode.localOnly,
-        activeSyncTransport: syncMode == SyncMode.cloudConnected ? 'cloud' : '',
+        activeSyncTransport: syncMode == SyncMode.directConnected ? 'direct' : '',
         hostDeviceId: hostDeviceId ??
             (role == DeviceRole.host ? _deviceId : appIdentity.hostDeviceId),
         deviceToken: (deviceToken == null || deviceToken.trim().isEmpty)
             ? appIdentity.deviceToken
             : deviceToken.trim(),
-        cloudTenantId: (cloudTenantId == null || cloudTenantId.trim().isEmpty)
-            ? appIdentity.cloudTenantId
-            : cloudTenantId.trim(),
+        controlPlaneTenantId: (controlPlaneTenantId == null || controlPlaneTenantId.trim().isEmpty)
+            ? appIdentity.controlPlaneTenantId
+            : controlPlaneTenantId.trim(),
         deviceId: _deviceId,
         platform: platform,
         updatedAt: now,
       ),
     );
-    _assertLanCloudRoleRules(recoveredIdentity,
+    _assertLanDirectRoleRules(recoveredIdentity,
         source: 'online store recovery');
     _appIdentity = recoveredIdentity;
     await LocalDatabaseService.setString(
@@ -2458,7 +2458,10 @@ class AppStore extends ChangeNotifier {
   bool hasPermission(String permission) {
     if (_activeUser == null) return false;
     final role = roleById(_activeUser!.roleId);
-    if (role?.isAdmin == true) return true;
+    // The built-in admin role is privileged by identity as well as by its
+    // persisted role record. This keeps permissions stable while role data is
+    // being rehydrated or refreshed from the local database.
+    if (_activeUser!.roleId == 'admin' || role?.isAdmin == true) return true;
     final effective = <String>{
       ...?role?.permissions,
       ..._activeUser!.extraPermissions,
@@ -3085,7 +3088,7 @@ class AppStore extends ChangeNotifier {
     return sorted;
   }
 
-  Future<void> initialize() async {
+  Future<void> initialize({bool hydrateHeavyData = true}) async {
     StartupTimingService.event('app_store.initialize.begin',
         category: 'app_store');
     await LocalDatabaseService.initialize();
@@ -3136,12 +3139,22 @@ class AppStore extends ChangeNotifier {
       category: 'app_store',
     );
 
+    // In-memory tests exercise synchronous AppStore getters immediately after
+    // initialize(). Production keeps the DB-first boot lean and hydrates heavy
+    // collections lazily, while tests need an explicit deterministic boundary.
+    if (hydrateHeavyData && LocalDatabaseService.isInMemoryStoreForTesting) {
+      await ensureHeavyDataLoaded(failOnError: true);
+    }
+
     _isReady = true;
     notifyListeners();
     StartupTimingService.event('app_store.ready', category: 'app_store');
   }
 
   Future<String?> _loadEntityListJsonForStartup(String key) {
+    if (LocalDatabaseService.isInMemoryStoreForTesting) {
+      return Future<String?>.value(LocalDatabaseService.testingRawValue(key));
+    }
     final db = SqliteMigrationManager.database;
     if (db == null) return Future.value(null);
     if (BusinessSqliteStore.isTypedEntityKey(key)) {
@@ -3157,6 +3170,11 @@ class AppStore extends ChangeNotifier {
     String key, {
     int batchSize = 100,
   }) {
+    if (LocalDatabaseService.isInMemoryStoreForTesting) {
+      final raw = LocalDatabaseService.testingRawValue(key);
+      if (raw == null || raw.isEmpty) return Future.value(const <String>[]);
+      return Future.value(<String>[raw]);
+    }
     final db = SqliteMigrationManager.database;
     if (db == null) return Future.value(const <String>[]);
     if (BusinessSqliteStore.isTypedEntityKey(key)) {
@@ -3607,7 +3625,9 @@ class AppStore extends ChangeNotifier {
       await StartupTimingService.measure(
         'app_store.sync_deferred_startup',
         () async {
-          await Future<void>.delayed(Duration.zero);
+          if (!LocalDatabaseService.isInMemoryStoreForTesting) {
+            await Future<void>.delayed(Duration.zero);
+          }
           final syncChanges = await _decodeDeferredList<SyncChange>(
             _syncChangesKey,
             SyncChange.fromJson,
@@ -3616,7 +3636,9 @@ class AppStore extends ChangeNotifier {
           _syncChanges
             ..clear()
             ..addAll(syncChanges);
-          await Future<void>.delayed(Duration.zero);
+          if (!LocalDatabaseService.isInMemoryStoreForTesting) {
+            await Future<void>.delayed(Duration.zero);
+          }
 
           final syncQueue = await _decodeDeferredList<SyncQueueItem>(
             _syncQueueKey,
@@ -3897,6 +3919,7 @@ class AppStore extends ChangeNotifier {
   /// Conservative full refresh used for unknown keys or recovery after a failed
   /// targeted refresh.
   Future<void> reloadAllAfterDatabaseChange() async {
+    final sessionBeforeReload = _activeUser;
     _appIdentity = _loadOrCreateAppIdentity();
     _storeProfile = _loadStoreProfile();
     AccountingService.configureMoneyPolicy(_storeProfile);
@@ -3990,6 +4013,14 @@ class AppStore extends ChangeNotifier {
         LocalDatabaseService.getString(_rememberLoginKey) == 'true';
     _activeUser = null;
     _restoreActiveUser();
+    if (_activeUser == null && sessionBeforeReload != null) {
+      for (final user in _users) {
+        if (user.id == sessionBeforeReload.id && user.isActive) {
+          _activeUser = user;
+          break;
+        }
+      }
+    }
     _normalizeCustomers();
     _ensureCatalogDefaults();
     _ensureDefaultWarehouse();
@@ -4655,7 +4686,7 @@ class AppStore extends ChangeNotifier {
     String? branchId,
     String? hostDeviceId,
     String? deviceToken,
-    String? cloudTenantId,
+    String? controlPlaneTenantId,
     DeviceRole? deviceRole,
     SyncMode? syncMode,
   }) async {
@@ -4678,16 +4709,16 @@ class AppStore extends ChangeNotifier {
       deviceToken: (deviceToken == null || deviceToken.trim().isEmpty)
           ? appIdentity.deviceToken
           : deviceToken.trim(),
-      cloudTenantId: (cloudTenantId == null || cloudTenantId.trim().isEmpty)
-          ? appIdentity.cloudTenantId
-          : cloudTenantId.trim(),
+      controlPlaneTenantId: (controlPlaneTenantId == null || controlPlaneTenantId.trim().isEmpty)
+          ? appIdentity.controlPlaneTenantId
+          : controlPlaneTenantId.trim(),
       deviceRole: nextRole,
       syncMode: syncMode ?? appIdentity.syncMode,
       deviceId: _deviceId,
       platform: _detectPlatform(),
       updatedAt: DateTime.now(),
     );
-    _assertLanCloudRoleRules(recoveredIdentity, source: 'store recovery');
+    _assertLanDirectRoleRules(recoveredIdentity, source: 'store recovery');
     _appIdentity = recoveredIdentity;
     await LocalDatabaseService.setString(
       _appIdentityKey,
@@ -4723,9 +4754,9 @@ class AppStore extends ChangeNotifier {
           : local.syncMode,
       hostDeviceId:
           remote.deviceId.isNotEmpty ? remote.deviceId : local.hostDeviceId,
-      cloudTenantId: remote.cloudTenantId.isNotEmpty
-          ? remote.cloudTenantId
-          : local.cloudTenantId,
+      controlPlaneTenantId: remote.controlPlaneTenantId.isNotEmpty
+          ? remote.controlPlaneTenantId
+          : local.controlPlaneTenantId,
       deviceToken: local.deviceToken.trim().isNotEmpty
           ? local.deviceToken
           : 'device_${DateTime.now().microsecondsSinceEpoch}_${_deviceId.hashCode.abs()}',
@@ -4840,14 +4871,14 @@ class AppStore extends ChangeNotifier {
     }
   }
 
-  void _assertLanCloudRoleRules(AppIdentity next, {required String source}) {
+  void _assertLanDirectRoleRules(AppIdentity next, {required String source}) {
     final platform = next.platform == AppPlatformType.unknown
         ? _detectPlatform()
         : next.platform;
 
     // Fix #9: Web devices must never be authoritative Hosts because browsers
     // cannot reliably run the local Host API/server and should not own Host
-    // authority for Cloud either.
+    // authority for Direct either.
     if (platform == AppPlatformType.web && next.isHost) {
       throw StateError(
         'Web devices cannot operate as Host. Use a desktop or native mobile Host device.',
@@ -4856,16 +4887,12 @@ class AppStore extends ChangeNotifier {
 
     final lanHost = _isLanHostConfigured;
     final lanClient = _isLanClientConfigured;
-    final cloudHost = next.isHost &&
-        (next.syncMode == SyncMode.cloudConnected ||
-            next.syncMode == SyncMode.marketplaceEnabled);
-    final cloudClient = next.isClient &&
-        (next.syncMode == SyncMode.cloudConnected ||
-            next.syncMode == SyncMode.marketplaceEnabled);
+    final directClient =
+        next.isClient && next.activeSyncTransportNormalized == 'direct';
     final lanIdentityClient =
         next.isClient && next.syncMode == SyncMode.lanOnly;
 
-    // A Host may be LAN Host, Cloud Host, or both. It must not simultaneously
+    // A Host may expose LAN and Direct together. It must not simultaneously
     // carry LAN Client state from an old pairing.
     if (next.isHost && lanClient) {
       throw StateError(
@@ -4873,35 +4900,29 @@ class AppStore extends ChangeNotifier {
       );
     }
 
-    // A Client may configure both LAN and Cloud transport settings, but only
-    // one active transport may run at a time. Sync progress is tracked by
-    // deviceId/storeId/branchId, not by the transport that delivered it.
-    if (next.isClient && lanClient && cloudClient) {
+    // A Client may have both transport configurations available, but only one
+    // active transport may run at a time.
+    if (next.isClient && lanClient && directClient) {
       final active = next.activeSyncTransportNormalized;
-      if (active != 'lan' && active != 'cloud') {
+      if (active != 'lan' && active != 'direct') {
         throw StateError(
-          'Client has LAN and Cloud configured but no active sync transport was selected.',
+          'Client has LAN and Direct configured but no active sync transport was selected.',
         );
       }
     }
-    if (lanIdentityClient && cloudClient) {
+    if (lanIdentityClient && directClient) {
       final active = next.activeSyncTransportNormalized;
-      if (active != 'lan' && active != 'cloud') {
+      if (active != 'lan' && active != 'direct') {
         throw StateError(
-          'Client has LAN and Cloud configured but no active sync transport was selected.',
+          'Client has LAN and Direct configured but no active sync transport was selected.',
         );
       }
     }
 
-    // Prevent cross-authority conflicts: Host in one system, Client in another.
-    if (lanHost && cloudClient) {
+    // Prevent a Host from retaining Client configuration from a prior pairing.
+    if (lanHost && directClient) {
       throw StateError(
-        'LAN Host + Cloud Client is not allowed by $source. Host devices cannot be Clients in another sync system.',
-      );
-    }
-    if (cloudHost && lanClient) {
-      throw StateError(
-        'Cloud Host + LAN Client is not allowed by $source. Host devices cannot be Clients in another sync system.',
+        'LAN Host + Direct Client is not allowed by $source. Host devices cannot be Clients in another sync system.',
       );
     }
   }
@@ -4909,7 +4930,7 @@ class AppStore extends ChangeNotifier {
   Future<void> updateAppIdentityDuringSetup(AppIdentity identity) async {
     final normalized = _normalizedLocalIdentity(identity);
     _assertSafeRoleTransition(normalized, source: 'setup/pairing/rebuild');
-    _assertLanCloudRoleRules(normalized, source: 'setup/pairing/rebuild');
+    _assertLanDirectRoleRules(normalized, source: 'setup/pairing/rebuild');
     _appIdentity = normalized;
     await LocalDatabaseService.setString(
       _appIdentityKey,
@@ -4926,7 +4947,7 @@ class AppStore extends ChangeNotifier {
     requirePermission(AppPermission.settingsManage);
     final normalized = _normalizedLocalIdentity(identity);
     _assertSafeRoleTransition(normalized, source: 'settings update');
-    _assertLanCloudRoleRules(normalized, source: 'settings update');
+    _assertLanDirectRoleRules(normalized, source: 'settings update');
     final previousJson = jsonEncode(appIdentity.toJson());
     final nextJson = jsonEncode(normalized.toJson());
     if (previousJson == nextJson) return;
@@ -4953,7 +4974,7 @@ class AppStore extends ChangeNotifier {
     requirePermission(AppPermission.settingsManage);
     final normalized = _normalizedLocalIdentity(identity);
     _assertSafeRoleTransition(normalized, source: source);
-    _assertLanCloudRoleRules(normalized, source: source);
+    _assertLanDirectRoleRules(normalized, source: source);
     final previousJson = jsonEncode(appIdentity.toJson());
     final nextJson = jsonEncode(normalized.toJson());
     if (previousJson == nextJson) return;
@@ -4969,13 +4990,14 @@ class AppStore extends ChangeNotifier {
   Future<void> setActiveSyncTransport(String transport) async {
     requirePermission(AppPermission.settingsManage);
     final normalizedTransport = transport.trim().toLowerCase();
-    if (normalizedTransport != 'lan' && normalizedTransport != 'cloud') {
-      throw ArgumentError('Active sync transport must be either lan or cloud.');
+    if (normalizedTransport != 'lan' && normalizedTransport != 'direct') {
+      throw ArgumentError(
+          'Active sync transport must be either lan or direct.');
     }
     final identity = appIdentity;
     if (!identity.isClient) {
       throw StateError(
-        'Only Client devices switch the active sync transport. Hosts may run LAN and Cloud together.',
+        'Only Client devices switch the active sync transport. Hosts may run LAN and Direct together.',
       );
     }
     if (normalizedTransport == 'lan' && !_isLanClientConfigured) {
@@ -4983,20 +5005,20 @@ class AppStore extends ChangeNotifier {
         'LAN is configured only when this device has a saved Client pairing. Configure LAN before switching to it.',
       );
     }
-    if (normalizedTransport == 'cloud' && !_isCloudClientConfigured) {
+    if (normalizedTransport == 'direct' && !_isDirectClientConfigured) {
       throw StateError(
-        'Cloud is configured only when this device has saved Cloud credentials. Configure Cloud before switching to it.',
+        'Direct is configured only when this device has saved Direct credentials. Pair this device with a Host before switching to Direct.',
       );
     }
 
     final nextIdentity = identity.copyWith(
       syncMode: normalizedTransport == 'lan'
           ? SyncMode.lanOnly
-          : SyncMode.cloudConnected,
+          : SyncMode.directConnected,
       activeSyncTransport: normalizedTransport,
       updatedAt: DateTime.now(),
     );
-    _assertLanCloudRoleRules(nextIdentity, source: 'active transport switch');
+    _assertLanDirectRoleRules(nextIdentity, source: 'active transport switch');
     _appIdentity = nextIdentity;
     await LocalDatabaseService.setString(
       _appIdentityKey,
@@ -5011,8 +5033,8 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<void> _retargetPendingClientSyncQueue(String activeTransport) async {
-    final newTarget = activeTransport == 'lan' ? 'host' : 'cloud_host';
-    final oldTarget = activeTransport == 'lan' ? 'cloud_host' : 'host';
+    final newTarget = 'host';
+    final oldTarget = 'host';
     final now = DateTime.now();
     var changed = false;
     for (var i = 0; i < _syncQueue.length; i++) {
@@ -5128,7 +5150,7 @@ class AppStore extends ChangeNotifier {
       source: 'approved Host transfer',
       allowApprovedTransfer: true,
     );
-    _assertLanCloudRoleRules(next, source: 'approved Host transfer');
+    _assertLanDirectRoleRules(next, source: 'approved Host transfer');
     _appIdentity = next;
     await LocalDatabaseService.setString(
       _appIdentityKey,
@@ -5171,9 +5193,11 @@ class AppStore extends ChangeNotifier {
 
   Future<List<UserRole>> _loadRoles() async {
     final db = SqliteMigrationManager.database;
-    final raw = db == null
-        ? null
-        : await BusinessSqliteStore.readEntityListJsonByKey(db, _rolesKey);
+    final raw = LocalDatabaseService.isInMemoryStoreForTesting
+        ? LocalDatabaseService.testingRawValue(_rolesKey)
+        : db == null
+            ? null
+            : await BusinessSqliteStore.readEntityListJsonByKey(db, _rolesKey);
     if (raw == null || raw.isEmpty) return <UserRole>[];
     final decoded = jsonDecode(raw) as List<dynamic>;
     return decoded
@@ -5185,9 +5209,11 @@ class AppStore extends ChangeNotifier {
 
   Future<List<AppUser>> _loadUsers() async {
     final db = SqliteMigrationManager.database;
-    final raw = db == null
-        ? null
-        : await BusinessSqliteStore.readEntityListJsonByKey(db, _usersKey);
+    final raw = LocalDatabaseService.isInMemoryStoreForTesting
+        ? LocalDatabaseService.testingRawValue(_usersKey)
+        : db == null
+            ? null
+            : await BusinessSqliteStore.readEntityListJsonByKey(db, _usersKey);
     if (raw == null || raw.isEmpty) return <AppUser>[];
     final decoded = jsonDecode(raw) as List<dynamic>;
     return decoded
@@ -5313,19 +5339,18 @@ class AppStore extends ChangeNotifier {
       _activeUser = updated;
       _rememberLogin = remember;
       notifyListeners();
-      unawaited(
-        LocalDatabaseService.setString(
-          _rememberLoginKey,
-          remember ? 'true' : 'false',
-        ),
+      // Login is a session boundary. Persist it before returning so an
+      // immediate restart or database refresh cannot observe a half-written
+      // user/session state.
+      await LocalDatabaseService.setString(
+        _rememberLoginKey,
+        remember ? 'true' : 'false',
       );
-      unawaited(
-        LocalDatabaseService.setString(
-          _activeUserKey,
-          remember ? updated.id : '',
-        ),
+      await LocalDatabaseService.setString(
+        _activeUserKey,
+        remember ? updated.id : '',
       );
-      unawaited(_saveRolesAndUsers());
+      await _saveRolesAndUsers();
       unawaited(
         AppLogger.info(
           area: 'login',
@@ -5549,7 +5574,7 @@ class AppStore extends ChangeNotifier {
     return user.isSystem && user.roleId == 'admin';
   }
 
-  Future<void> _syncStoreOwnerUserToCloud(
+  Future<void> _syncStoreOwnerUserToControlPlane(
     AppUser current,
     AppUser desired, {
     String? password,
@@ -5558,7 +5583,7 @@ class AppStore extends ChangeNotifier {
     var token = cache?.accountToken.trim() ?? '';
     if (token.isEmpty) {
       throw const AppStoreActionException(
-        'Cloud owner re-authentication required before editing the protected Store Owner.',
+        'Account re-authentication required before editing the protected Store Owner.',
       );
     }
 
@@ -5604,7 +5629,7 @@ class AppStore extends ChangeNotifier {
             accountToken: session.accountToken.isNotEmpty
                 ? session.accountToken
                 : previous.accountToken,
-            cloudSyncEnabled: session.cloudSyncEnabled,
+            directSyncEnabled: session.directSyncEnabled,
             lastVerifiedAt: DateTime.now(),
           ),
         );
@@ -5615,7 +5640,7 @@ class AppStore extends ChangeNotifier {
         session.message.toLowerCase().contains('token') ||
         session.message.contains('401')) {
       throw const AppStoreActionException(
-        'Cloud owner re-authentication required before editing the protected Store Owner.',
+        'Account re-authentication required before editing the protected Store Owner.',
       );
     }
 
@@ -5636,12 +5661,12 @@ class AppStore extends ChangeNotifier {
           msg.contains('token') ||
           msg.contains('401')) {
         throw const AppStoreActionException(
-          'Cloud owner re-authentication required before editing the protected Store Owner.',
+          'Account re-authentication required before editing the protected Store Owner.',
         );
       }
       throw AppStoreActionException(
         result.message.isEmpty
-            ? 'Cloud rejected the Store Owner update. Local changes were not saved.'
+            ? 'The account service rejected the Store Owner update. Local changes were not saved.'
             : result.message,
       );
     }
@@ -5676,7 +5701,7 @@ class AppStore extends ChangeNotifier {
           accountToken: result.accountToken.isNotEmpty
               ? result.accountToken
               : cache.accountToken,
-          cloudSyncEnabled: result.cloudSyncEnabled,
+          directSyncEnabled: result.directSyncEnabled,
           lastVerifiedAt: DateTime.now(),
         ),
       );
@@ -5690,7 +5715,7 @@ class AppStore extends ChangeNotifier {
     return null;
   }
 
-  Future<void> applyCloudStoreOwnerCredentials({
+  Future<void> applyStoreOwnerCredentials({
     required String username,
     required String password,
     String? fullName,
@@ -5799,7 +5824,7 @@ class AppStore extends ChangeNotifier {
     );
 
     if (editingStoreOwner) {
-      await _syncStoreOwnerUserToCloud(current, saved, password: password);
+      await _syncStoreOwnerUserToControlPlane(current, saved, password: password);
     }
 
     if (index == -1) {
@@ -7350,7 +7375,7 @@ class AppStore extends ChangeNotifier {
     if (wants('syncChanges') ||
         wants('syncQueue') ||
         wants('localDatabaseEntries')) {
-      await LocalDatabaseService.deleteString('cloud_last_pull_cursor');
+      await LocalDatabaseService.deleteString('direct_last_pull_cursor');
     }
     await _saveAll();
     notifyListeners();
@@ -7370,7 +7395,7 @@ class AppStore extends ChangeNotifier {
     if (wants('syncChanges') ||
         wants('syncQueue') ||
         wants('localDatabaseEntries')) {
-      await LocalDatabaseService.deleteString('cloud_last_pull_cursor');
+      await LocalDatabaseService.deleteString('direct_last_pull_cursor');
     }
     final lanRaw = LocalDatabaseService.getString('lan_sync_settings_v2');
     if (lanRaw != null && lanRaw.trim().isNotEmpty) {
@@ -7484,7 +7509,7 @@ class AppStore extends ChangeNotifier {
     if (wants('syncChanges') ||
         wants('syncQueue') ||
         wants('localDatabaseEntries')) {
-      await LocalDatabaseService.deleteString('cloud_last_pull_cursor');
+      await LocalDatabaseService.deleteString('direct_last_pull_cursor');
     }
     await LocalDatabaseService.deleteString('lan_sync_settings_v2');
     _touchDataRevisions(
@@ -7953,7 +7978,7 @@ class AppStore extends ChangeNotifier {
       // The existing SyncChange envelope is still kept for compatibility with
       // tests, LAN endpoints, and old installations, but every new local change
       // is explicitly tagged as either a Client DraftCommand or a Host
-      // AuthoritativeEvent. Cloud/LAN transports can therefore enforce the new
+      // AuthoritativeEvent. Direct/LAN transports can therefore enforce the new
       // Host-authoritative contract without guessing from endpoint names.
       final mutationId =
           '${_deviceId}_${now.microsecondsSinceEpoch}_${entityType}_${entityId}_$operation';
@@ -8027,22 +8052,13 @@ class AppStore extends ChangeNotifier {
     }
   }
 
-  bool get _isCloudClientConfigured {
-    final raw = LocalDatabaseService.getString(_appIdentityKey);
-    if (raw == null || raw.trim().isEmpty) return false;
-    try {
-      final identity = AppIdentity.fromJson(
-        Map<String, dynamic>.from(jsonDecode(raw) as Map),
-      );
-      final base =
-          LocalDatabaseService.getString('cloud_api_base_url')?.trim() ?? '';
-      return identity.isClient &&
-          identity.deviceId.trim().isNotEmpty &&
-          identity.deviceToken.trim().isNotEmpty &&
-          base.isNotEmpty;
-    } catch (_) {
-      return false;
-    }
+  bool get _isDirectClientConfigured {
+    final identity = appIdentity;
+    final settings = DirectSyncSettings.load();
+    return identity.isClient &&
+        identity.deviceId.trim().isNotEmpty &&
+        identity.deviceToken.trim().isNotEmpty &&
+        settings.isConfigured;
   }
 
   bool get _isLanHostConfigured {
@@ -8066,24 +8082,9 @@ class AppStore extends ChangeNotifier {
         identity.isClient && activeTransport == 'lan' && _isLanClientConfigured;
     final isDirectClient = identity.isClient && activeTransport == 'direct';
 
-    // Sync architecture v2: the Host is the only source of truth.
-    // - Host devices publish accepted/authoritative changes to Cloud.
-    // - LAN clients send drafts to the Host over LAN.
-    // - Web/remote desktop clients cannot reach LAN directly, so they send drafts
-    //   to a Cloud relay inbox. The Host later pulls that inbox, applies the
-    //   changes, and republishes them as authoritative sync_events.
-    final target = identity.isHost && identity.isCloudEnabled
-        ? 'cloud'
-        : isLanClient
-            ? 'host'
-            : isDirectClient
-                ? 'host'
-                : (identity.isClient && activeTransport == 'cloud')
-                    ? 'cloud_host'
-                    : (identity.platform == AppPlatformType.web &&
-                            activeTransport == 'cloud')
-                        ? 'cloud_host'
-                        : 'local';
+    // Sync architecture v2: the Host is the only source of truth. Both
+    // supported remote transports deliver Client work to that Host.
+    final target = isLanClient || isDirectClient ? 'host' : 'local';
     if (target == 'local') return null;
     final item = SyncQueueItem(
       id: '$changeId-$target',
@@ -13675,11 +13676,6 @@ class AppStore extends ChangeNotifier {
               'Insufficient stock in warehouse ${resolvedWarehouse.id} for product ${item.productId}.',
             );
           }
-          final updatedProduct = _withSyncMeta<Product>(
-            product.copyWith(stock: product.stock - item.effectiveBaseQuantity),
-            now,
-          );
-          _products[index] = updatedProduct;
           final movement = StockMovement(
             id: '${sale.id}-${item.productId}-sale-$lineIndex',
             productId: item.productId,
@@ -13718,7 +13714,16 @@ class AppStore extends ChangeNotifier {
     await _traceAsync<void>(
       'sales.createSale',
       'refresh_product_stock_cache',
-      () async => _applyProductStockCompatibilityDeltas(stockMovements),
+      () async {
+        if (LocalDatabaseService.isSqliteAuthoritative &&
+            SqliteMigrationManager.database != null) {
+          await _refreshProductStockCompatibilityCache(
+            stockMovements.map((movement) => movement.productId),
+          );
+        } else {
+          _applyProductStockCompatibilityDeltas(stockMovements);
+        }
+      },
     );
     _traceSync('sales.createSale', 'record_sale_ledger', () {
       _sales.add(sale);
@@ -14147,12 +14152,12 @@ class AppStore extends ChangeNotifier {
     'lastModifiedByDeviceId',
     'syncChanges',
     'syncQueue',
-    'cloud_last_pull_cursor',
-    'cloudCursor',
+    'direct_last_pull_cursor',
+    'remoteCursor',
     'pairingCode',
     'pairingData',
     'deviceToken',
-    'cloudToken',
+    'remoteToken',
     'lanSession',
     'hostDeviceId',
     'activeUser',
@@ -14505,7 +14510,7 @@ class AppStore extends ChangeNotifier {
       chunks[i]['restoreCommandId'] = currentHostRestoreCommandId();
       chunks[i]['hostRestoreCommandId'] = currentHostRestoreCommandId();
       chunks[i]['rebuildCommandId'] = currentHostRestoreCommandId();
-      // Legacy progress fields remain collection-based so the current Cloud
+      // Legacy progress fields remain collection-based so the current Direct
       // provisioning screen and server responses keep working during phase 1.
       chunks[i]['sectionChunkIndex'] = collectionIndex;
       chunks[i]['sectionTotalChunks'] = collectionTotals[collection] ?? 1;
@@ -14641,9 +14646,9 @@ class AppStore extends ChangeNotifier {
     return const <String, dynamic>{};
   }
 
-  /// The single snapshot builder used by Cloud, LAN, restore, repair, and
+  /// The single snapshot builder used by Direct, LAN, restore, repair, and
   /// pairing flows. The same catalog, manifest, payload shape, and chunk
-  /// structure are used by both LAN and Cloud transports.
+  /// structure are used by both LAN and Direct transports.
   Future<List<Map<String, dynamic>>> exportUnifiedSnapshotChunks({
     String kind = 'full_store',
     Set<String>? sectionIds,
@@ -14783,14 +14788,14 @@ class AppStore extends ChangeNotifier {
   }
 
   Future<List<Map<String, dynamic>>>
-      exportCloudLoginBootstrapSnapshotChunks() async {
+      exportDirectLoginBootstrapSnapshotChunks() async {
     return await exportUnifiedSnapshotChunks(
       kind: 'login_bootstrap',
       sectionIds: {UnifiedSnapshotCatalog.loginSettingsAndUsers.id},
     );
   }
 
-  Future<List<Map<String, dynamic>>> exportCloudBootstrapSnapshotChunks({
+  Future<List<Map<String, dynamic>>> exportDirectBootstrapSnapshotChunks({
     int maxItemsPerChunk = 250,
     int maxEncodedPayloadBytes = 900 * 1024,
   }) async {
@@ -14801,7 +14806,7 @@ class AppStore extends ChangeNotifier {
     );
   }
 
-  String exportRecoveryFileJson({String cloudApiUrl = ''}) {
+  String exportRecoveryFileJson({String controlPlaneApiUrl = ''}) {
     requirePermission(AppPermission.backupExport);
     final payload = <String, dynamic>{
       'format': 'ventio_store_recovery_file',
@@ -14809,7 +14814,7 @@ class AppStore extends ChangeNotifier {
       'generatedAt': DateTime.now().toIso8601String(),
       'storeId': appIdentity.storeId,
       'branchId': appIdentity.branchId,
-      'cloudApiUrl': cloudApiUrl.trim(),
+      'controlPlaneApiUrl': controlPlaneApiUrl.trim(),
       'recoveryKey': appIdentity.recoveryKey,
       'storeEpoch': appIdentity.storeEpoch,
     };
@@ -14855,7 +14860,7 @@ class AppStore extends ChangeNotifier {
     return {
       'storeId': storeId,
       'branchId': branchId,
-      'cloudApiUrl': payload['cloudApiUrl']?.toString().trim() ?? '',
+      'controlPlaneApiUrl': payload['controlPlaneApiUrl']?.toString().trim() ?? '',
       'recoveryKey': recoveryKey,
     };
   }
@@ -14895,7 +14900,7 @@ class AppStore extends ChangeNotifier {
     final markers = _syncChanges.where(
       (item) =>
           item.entityType == 'system' &&
-          item.operation == 'cloud_restore_snapshot_ready',
+          item.operation == 'restore_snapshot_ready',
     );
     if (markers.isEmpty) return '';
     final latest = markers.reduce(
@@ -14917,7 +14922,7 @@ class AppStore extends ChangeNotifier {
     final markers = _syncChanges.where(
       (item) =>
           item.entityType == 'system' &&
-          item.operation == 'cloud_restore_snapshot_ready',
+          item.operation == 'restore_snapshot_ready',
     );
     if (markers.isEmpty) return '';
     final latest = markers.reduce(
@@ -15011,7 +15016,7 @@ class AppStore extends ChangeNotifier {
     final hasHostRestoreMarker = _syncChanges.any(
       (item) =>
           item.entityType == 'system' &&
-          item.operation == 'cloud_restore_snapshot_ready',
+          item.operation == 'restore_snapshot_ready',
     );
 
     // If a client asks for an old sequence that has already been compacted,
@@ -15519,6 +15524,8 @@ class AppStore extends ChangeNotifier {
     _invalidateAccountLedgerCache();
     final restoreFullDeviceBackup =
         decoded['backupType']?.toString() == 'full_device_backup';
+    final sessionBeforeImport = _activeUser;
+    final rememberBeforeImport = _rememberLogin;
     final localDatabaseEntries =
         restoreFullDeviceBackup && decoded['localDatabaseEntries'] is Map
             ? Map<String, dynamic>.from(decoded['localDatabaseEntries'] as Map)
@@ -15573,7 +15580,7 @@ class AppStore extends ChangeNotifier {
     // device is already a paired Host, keep the current sync identity so
     // existing Clients remain attached to the same store after Restore. The
     // restored file replaces business data only; it must not move the Host to a
-    // different cloud/LAN store namespace and make Clients miss the rebuild
+    // different direct/LAN store namespace and make Clients miss the rebuild
     // marker.
     if (wants('appIdentity')) {
       final importedStoreId = decoded['storeId']?.toString().trim() ?? '';
@@ -15621,7 +15628,7 @@ class AppStore extends ChangeNotifier {
     if (wants('syncChanges') ||
         wants('syncQueue') ||
         wants('localDatabaseEntries')) {
-      await LocalDatabaseService.deleteString('cloud_last_pull_cursor');
+      await LocalDatabaseService.deleteString('direct_last_pull_cursor');
     }
     if (wants('usersAndRoles')) {
       if (roles.isNotEmpty) {
@@ -15659,6 +15666,10 @@ class AppStore extends ChangeNotifier {
     }
 
     await _saveAll();
+    // Users and roles are persisted in their own typed tables and are not part
+    // of the generic business save batch. Re-save them after a full-device
+    // clear so the following runtime reload keeps the live session intact.
+    await _saveRolesAndUsers();
 
     if (restoreFullDeviceBackup) {
       await LocalDatabaseService.runSqliteAuthoritativeTransaction(() async {
@@ -15692,7 +15703,7 @@ class AppStore extends ChangeNotifier {
         _syncChangesKey,
         _syncQueueKey,
         _syncSequenceKey,
-        'cloud_last_pull_cursor',
+        'direct_last_pull_cursor',
       };
       for (final entry in localDatabaseEntries.entries) {
         final key = entry.key.toString();
@@ -15714,6 +15725,20 @@ class AppStore extends ChangeNotifier {
       for (final entry in liveHostConnectionEntries.entries) {
         await LocalDatabaseService.setString(entry.key, entry.value);
       }
+      if (sessionBeforeImport != null) {
+        for (final user in _users) {
+          if (user.id == sessionBeforeImport.id && user.isActive) {
+            _activeUser = user;
+            _rememberLogin = rememberBeforeImport;
+            await LocalDatabaseService.setString(_activeUserKey, user.id);
+            await LocalDatabaseService.setString(
+              _rememberLoginKey,
+              rememberBeforeImport ? 'true' : 'false',
+            );
+            break;
+          }
+        }
+      }
       await reloadAllAfterDatabaseChange();
     }
 
@@ -15732,7 +15757,7 @@ class AppStore extends ChangeNotifier {
       _recordSyncChange(
         entityType: 'system',
         entityId: 'store',
-        operation: 'cloud_restore_snapshot_ready',
+        operation: 'restore_snapshot_ready',
         payload: {
           'commandId': restoreCommandId,
           'restoreCommandId': restoreCommandId,
@@ -15757,9 +15782,9 @@ class AppStore extends ChangeNotifier {
     return key == _appIdentityKey ||
         key == _deviceIdKey ||
         key == 'lan_sync_settings_v2' ||
-        key == 'cloud_api_base_url' ||
-        key == 'cloud_auto_sync_enabled' ||
-        key == 'cloud_auto_sync_interval_seconds' ||
+        key == 'vps_api_base_url' ||
+        key == 'direct_control_auto_sync_enabled' ||
+        key == 'direct_control_auto_sync_interval_seconds' ||
         key == 'host_authoritative_sync_device_state_v1' ||
         key == 'host_authoritative_sync_peer_states_v1' ||
         key == 'sync_monitoring_suspended_devices_v1' ||
@@ -15820,9 +15845,17 @@ class AppStore extends ChangeNotifier {
   }
 
   void _replaceUsersWithoutDuplicates(List<AppUser> incoming) {
+    final activeBeforeReplace = _activeUser;
+    final normalizedIncoming = List<AppUser>.from(incoming);
+    // A business-data reset does not log the operator out. Keep the active
+    // session when a transient empty reload reaches the save path before the
+    // users table has been rehydrated.
+    if (normalizedIncoming.isEmpty && activeBeforeReplace != null) {
+      normalizedIncoming.add(activeBeforeReplace);
+    }
     _users
       ..clear()
-      ..addAll(_dedupeUsersByUsername(incoming));
+      ..addAll(_dedupeUsersByUsername(normalizedIncoming));
     if (_activeUser != null &&
         !_users.any((user) => user.id == _activeUser!.id && user.isActive)) {
       _activeUser = null;
@@ -16514,130 +16547,6 @@ class AppStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<int> removeLegacyCloudBootstrapSnapshotQueue() async {
-    final identity = appIdentity;
-    if (!identity.isHost || !identity.isCloudEnabled) return 0;
-    final legacyIds = _syncChanges
-        .where(
-          (change) =>
-              change.entityType == 'system' &&
-              change.entityId == 'store' &&
-              change.operation == 'restore_snapshot' &&
-              change.storeId == identity.storeId &&
-              !change.isSynced,
-        )
-        .map((change) => change.id)
-        .toSet();
-    if (legacyIds.isEmpty) return 0;
-    _syncChanges.removeWhere((change) => legacyIds.contains(change.id));
-    _syncQueue.removeWhere((item) => legacyIds.contains(item.changeId));
-    await _saveSyncStateOnly();
-    notifyListeners();
-    return legacyIds.length;
-  }
-
-  Future<void> ensureHostCloudBootstrapSnapshotQueued({
-    bool force = false,
-  }) async {
-    // Safety fix: Cloud bootstrap snapshots must not be stored as giant
-    // restore_snapshot SyncChange rows. They are now published directly to the
-    // Cloud materialized snapshot endpoint in compressed chunks by
-    // CloudSyncService._publishBootstrapSnapshotToCloud(). Keep this method as
-    // a compatibility no-op so older call-sites no longer bloat the local SQLite store.
-    final identity = appIdentity;
-    if (!identity.isHost || !identity.isCloudEnabled) return;
-    final markerKey = 'cloud_host_bootstrap_snapshot_v3_${identity.storeId}';
-    await LocalDatabaseService.setString(markerKey, 'direct_chunked');
-  }
-
-  /// Diagnostic/safety repair for Host -> Cloud publishing.
-  ///
-  /// Older builds and aggressive sync-history compaction could leave Host
-  /// authoritative SyncChange rows marked unsynced while their cloud queue row
-  /// was missing. In that state Host Sync Now reported pendingChanges but had
-  /// nothing (or only a small tail) to upload, so Cloud clients stayed behind.
-  ///
-  /// This method recreates missing cloud queue rows for every unsynced Host
-  /// authoritative change before a Host cloud push.
-  Future<int> repairMissingHostCloudQueueForPendingChanges() async {
-    final identity = appIdentity;
-    if (!identity.isHost || !identity.isCloudEnabled) return 0;
-
-    final existingCloudQueueIds = _syncQueue
-        .where((item) => item.target == 'cloud' && item.status != 'synced')
-        .map((item) => item.changeId)
-        .toSet();
-    final existingAnyCloudQueueIds = _syncQueue
-        .where((item) => item.target == 'cloud')
-        .map((item) => item.changeId)
-        .toSet();
-
-    var repaired = 0;
-    final now = DateTime.now();
-    for (final change in _syncChanges) {
-      if (change.isSynced) continue;
-      if (change.storeId.isNotEmpty && change.storeId != identity.storeId) {
-        continue;
-      }
-      if (change.branchId.isNotEmpty && change.branchId != identity.branchId) {
-        continue;
-      }
-      if (change.deviceId == 'cloud-snapshot') continue;
-      // Host only publishes authoritative Host events to Cloud. Client draft
-      // commands must first be accepted/restamped by the Host.
-      final meta = Map<String, dynamic>.from(
-        change.payload['_syncV2'] as Map? ?? const {},
-      );
-      final kind = (meta['kind'] ?? '').toString();
-      final isAuthoritative = kind.isEmpty ||
-          kind == 'authoritativeEvent' ||
-          change.deviceId == _deviceId;
-      if (!isAuthoritative) continue;
-      if (existingCloudQueueIds.contains(change.id)) continue;
-      if (existingAnyCloudQueueIds.contains(change.id)) {
-        // If a cloud queue row exists but is synced while the change is still
-        // unsynced, revive it as pending instead of adding a duplicate row.
-        for (var i = 0; i < _syncQueue.length; i++) {
-          final item = _syncQueue[i];
-          if (item.target == 'cloud' &&
-              item.changeId == change.id &&
-              item.status == 'synced') {
-            _syncQueue[i] = item.copyWith(
-              status: 'pending',
-              updatedAt: now,
-              clearNextRetryAt: true,
-              lastError: '',
-            );
-            existingCloudQueueIds.add(change.id);
-            repaired += 1;
-            break;
-          }
-        }
-        continue;
-      }
-      _enqueueSyncChangeForTarget(change.id, 'cloud', now);
-      existingCloudQueueIds.add(change.id);
-      existingAnyCloudQueueIds.add(change.id);
-      repaired += 1;
-    }
-
-    if (repaired > 0) {
-      await _saveSyncStateOnly();
-      notifyListeners();
-    }
-    return repaired;
-  }
-
-  bool _shouldMirrorRemoteChangeToCloud(SyncChange change) {
-    if (!appIdentity.isCloudEnabled || !appIdentity.isHost) return false;
-    if (change.deviceId == _deviceId) return false;
-    if (change.deviceId == 'cloud-snapshot') return false;
-    if (change.storeId.isNotEmpty && change.storeId != appIdentity.storeId) {
-      return false;
-    }
-    return true;
-  }
-
   Map<String, int> _syncHistoryCompactionResult({
     required int beforeChanges,
     required int beforeQueue,
@@ -16709,7 +16618,7 @@ class AppStore extends ChangeNotifier {
     if (!appIdentity.isHost) {
       return Map<String, int>.from(before)..['skipped'] = 1;
     }
-    // Host maintenance must not stop just because there is pending Cloud/LAN work.
+    // Host maintenance must not stop just because there is pending Direct/LAN work.
     // Pending queue rows are protected inside _compactSyncedSyncHistory via
     // pendingChangeIds, while old already-synced rows can still be trimmed.
     if (safeFloorSequence <= 0) {
@@ -16787,7 +16696,7 @@ class AppStore extends ChangeNotifier {
     }
     // Client compaction must still run when authoritative history is above the
     // retention window, even if it is below the Host maintenance threshold.
-    // Example: Cloud Client can have 353 authoritative synced changes, queue=0,
+    // Example: Direct Client can have 353 authoritative synced changes, queue=0,
     // and keepRecentSyncedChanges=200. The old minChangesBeforeCompact=1000
     // guard skipped compaction forever, leaving DB_BLOAT=FAIL although there
     // was no pending work. Skip only when there is nothing to trim.
@@ -16966,33 +16875,10 @@ class AppStore extends ChangeNotifier {
     return result;
   }
 
-  void _enqueueSyncChangeForTarget(
-    String changeId,
-    String target,
-    DateTime now,
-  ) {
-    if (_syncQueue.any(
-      (item) => item.changeId == changeId && item.target == target,
-    )) {
-      return;
-    }
-    final item = SyncQueueItem(
-      id: '$changeId-$target',
-      changeId: changeId,
-      target: target,
-      status: 'pending',
-      attempts: 0,
-      createdAt: now,
-      updatedAt: now,
-    );
-    _syncQueue.add(item);
-    _sqliteDirtySyncQueue.add(item);
-  }
-
   Future<void> applyRemoteSyncChanges(
     List<SyncChange> incoming, {
     bool markAppliedAsSynced = false,
-    bool mirrorToCloud = false,
+    bool mirrorToDirect = false,
   }) async {
     final existingIds = _syncChanges.map((item) => item.id).toSet();
     final existingEventIds = _syncChanges
@@ -17022,7 +16908,7 @@ class AppStore extends ChangeNotifier {
     SyncDiagnosticsLog.add(
       '[SYNC_TRACE] applyRemote:start incoming=${incoming.length} '
       'sorted=${sorted.length} markApplied=$markAppliedAsSynced '
-      'mirrorToCloud=$mirrorToCloud lastAppliedSequence=$lastAppliedSequence '
+      'mirrorToDirect=$mirrorToDirect lastAppliedSequence=$lastAppliedSequence '
       'currentEpoch=$currentEpoch',
     );
     for (final change in sorted.take(40)) {
@@ -17177,13 +17063,10 @@ class AppStore extends ChangeNotifier {
       }
       _rememberRemoteSqliteBusinessRows(change);
       markEntityDirty(change);
-      final shouldMirrorToCloud =
-          mirrorToCloud && _shouldMirrorRemoteChangeToCloud(change);
-
       // Host-authority sync note:
       // Any draft accepted by the Host must become a new authoritative Host
       // event, even in LAN-only mode. v12 only restamped events that were also
-      // mirrored to Cloud; pure Local/LAN installs kept the original Client
+      // mirrored to Direct; pure Local/LAN installs kept the original Client
       // timestamp, so other Clients could miss the delta behind their cursor.
       // Restamping on every Host acceptance makes Local sync timing stable.
       final acceptedAt = DateTime.now();
@@ -17223,14 +17106,11 @@ class AppStore extends ChangeNotifier {
               sequence: _nextSyncSequence(),
             )
           : change;
-      final storedChange = markAppliedAsSynced && !shouldMirrorToCloud
+      final storedChange = markAppliedAsSynced
           ? authoritativeChange.copyWith(isSynced: true, syncedAt: acceptedAt)
           : authoritativeChange.copyWith(isSynced: false, syncedAt: null);
       _syncChanges.add(storedChange);
       _sqliteDirtySyncChanges.add(storedChange);
-      if (shouldMirrorToCloud) {
-        _enqueueSyncChangeForTarget(storedChange.id, 'cloud', acceptedAt);
-      }
       existingIds.add(change.id);
       existingIds.add(storedChange.id);
       final storedEventId = _syncMetaString(storedChange, 'eventId');
@@ -17601,24 +17481,15 @@ class AppStore extends ChangeNotifier {
             keepStoreProfile: p['keepStoreProfile'] as bool? ?? true,
           );
         } else if (change.operation == 'restore_snapshot') {
-          // A cloud/LAN bootstrap snapshot contains the Host identity. Never let
+          // A direct/LAN bootstrap snapshot contains the Host identity. Never let
           // a Client import that identity or it may start behaving as the Host.
           await _replaceFromBackupMap(
             p,
             preserveLocalIdentityForLanClient: true,
           );
         } else if (change.operation == 'request_snapshot') {
-          // Cloud Clients cannot contact the Host directly. They place a
-          // request in the Cloud relay; when the Host sees it, it immediately
-          // queues a fresh full restore_snapshot event for the authoritative
-          // Cloud stream. This makes Cloud Rebuild generate a fresh Host
-          // snapshot instead of relying only on whatever snapshot already
-          // exists in entity_snapshots.
-          if (appIdentity.isHost && appIdentity.isCloudEnabled) {
-            // Cloud snapshots are served from entity_snapshots through the
-            // chunked bootstrap publisher, not queued as giant SyncChange rows.
-            await ensureHostCloudBootstrapSnapshotQueued();
-          }
+          // Snapshot requests are handled by the selected LAN/Direct
+          // transport. The retired Direct relay is intentionally ignored.
         }
         break;
       case 'host_transfer':
@@ -18172,7 +18043,7 @@ class AppStore extends ChangeNotifier {
   /// push loop runs, leaving a permanent pending row on the Host.
   Future<void> settleLegacyLanHostQueue() async {
     await ensureSyncDataLoaded();
-    if (!appIdentity.isHost || appIdentity.isCloudEnabled) return;
+    if (!appIdentity.isHost || appIdentity.isDirectEnabled) return;
     final ids = _syncQueue
         .where((item) => item.target == 'host' && item.status != 'synced')
         .map((item) => item.changeId)

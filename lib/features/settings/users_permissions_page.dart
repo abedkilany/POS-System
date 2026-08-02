@@ -148,12 +148,12 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
         message = message.substring(prefix.length).trim();
       }
     }
-    if (message.contains('Cloud owner re-authentication required') ||
-        message.contains('Connect to the cloud account before editing') ||
+    if (message.contains('Direct owner re-authentication required') ||
+        message.contains('Connect to the direct account before editing') ||
         message.contains('Online account session is missing')) {
       return 'يجب تأكيد الحساب السحابي قبل تعديل المدير الأساسي.';
     }
-    if (message.contains('Cloud rejected the Store Owner update')) {
+    if (message.contains('Direct rejected the Store Owner update')) {
       return 'فشل تحديث المدير الأساسي على السحابة. لم يتم حفظ أي تعديل محلي.';
     }
     if (message.contains('Store Owner must always keep Full Access')) {
@@ -496,17 +496,17 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
     await _saveUserEditResult(result, isStoreOwner: isStoreOwner);
   }
 
-  bool _isCloudAuthRequired(Object error) {
+  bool _isDirectAuthRequired(Object error) {
     final message = error.toString();
-    return message.contains('Cloud owner re-authentication required') ||
+    return message.contains('Direct owner re-authentication required') ||
         message.contains('Online account session is missing') ||
-        message.contains('Connect to the cloud account before editing');
+        message.contains('Connect to the direct account before editing');
   }
 
   Future<void> _saveUserEditResult(
     _UserEditResult result, {
     required bool isStoreOwner,
-    bool alreadyAskedCloudAuth = false,
+    bool alreadyAskedDirectAuth = false,
   }) async {
     try {
       await widget.store
@@ -522,14 +522,14 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
         );
       }
     } catch (e) {
-      if (isStoreOwner && !alreadyAskedCloudAuth && _isCloudAuthRequired(e)) {
+      if (isStoreOwner && !alreadyAskedDirectAuth && _isDirectAuthRequired(e)) {
         final authenticated =
-            await _showCloudReauthDialog(result.user.username);
+            await _showDirectReauthDialog(result.user.username);
         if (authenticated == true && mounted) {
           await _saveUserEditResult(
             result,
             isStoreOwner: isStoreOwner,
-            alreadyAskedCloudAuth: true,
+            alreadyAskedDirectAuth: true,
           );
           return;
         }
@@ -542,7 +542,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
     }
   }
 
-  String _defaultCloudLoginName(String localUsername) {
+  String _defaultDirectLoginName(String localUsername) {
     final cache = AccountAuthCache.load();
     if ((cache?.loginName.trim().isNotEmpty ?? false)) {
       return cache!.loginName.trim().toLowerCase();
@@ -573,10 +573,10 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
     return groups;
   }
 
-  Future<bool?> _showCloudReauthDialog(String localUsername) async {
+  Future<bool?> _showDirectReauthDialog(String localUsername) async {
     final tr = AppLocalizations.of(context);
     final loginController =
-        TextEditingController(text: _defaultCloudLoginName(localUsername));
+        TextEditingController(text: _defaultDirectLoginName(localUsername));
     final passwordController = TextEditingController();
     bool isSubmitting = false;
     String? errorMessage;
@@ -588,7 +588,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
         builder: (context, setDialogState) => AlertDialog(
           title: Text(tr.isArabic
               ? 'تأكيد الحساب السحابي'
-              : 'Confirm cloud account'),
+              : 'Confirm direct account'),
           content: SizedBox(
             width: VentioResponsive.modalMaxWidth(context, 420),
             child: Column(
@@ -597,7 +597,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                 Text(
                   tr.isArabic
                       ? 'جلسة السحابة غير متاحة أو منتهية. أدخل حساب المدير الأساسي السحابي للمتابعة دون مغادرة الصفحة.'
-                      : 'The cloud session is unavailable or expired. Enter the primary cloud admin account to continue without leaving this page.',
+                      : 'The direct session is unavailable or expired. Enter the primary direct admin account to continue without leaving this page.',
                 ),
                 const SizedBox(height: 16),
                 TextField(
@@ -605,7 +605,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                   decoration: InputDecoration(
                       labelText: tr.isArabic
                           ? 'الحساب السحابي'
-                          : 'Cloud account'),
+                          : 'Direct account'),
                   enabled: !isSubmitting,
                 ),
                 const SizedBox(height: 12),
@@ -664,7 +664,7 @@ class _UsersPermissionsPageState extends State<UsersPermissionsPage> {
                             errorMessage = result.message.isEmpty
                                 ? (tr.isArabic
                                     ? 'فشل تسجيل الدخول إلى السحابة.'
-                                    : 'Cloud login failed.')
+                                    : 'Direct login failed.')
                                 : result.message;
                           });
                           return;
