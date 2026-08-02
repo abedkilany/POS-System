@@ -4,7 +4,7 @@ class AppBrand {
   static const name = 'Ventio';
   static const version = String.fromEnvironment(
     'APP_VERSION',
-    defaultValue: '1.0.90+90',
+    defaultValue: '1.0.1+1',
   );
   static const directAppVersion = 'ventio';
   static const description =

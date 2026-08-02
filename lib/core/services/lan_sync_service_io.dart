@@ -4,6 +4,9 @@ import 'dart:io';
 import 'dart:developer' as developer;
 import 'dart:math';
 
+import 'package:web_socket_channel/io.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+
 import '../../data/app_store.dart';
 import '../../models/app_identity.dart';
 import '../../models/sync_change.dart';
@@ -472,7 +475,45 @@ class LanSyncService {
   DateTime? _snapshotTransferCacheAt;
   static HttpServer? _sharedServer;
   static int? _sharedPort;
+  static LanSyncService? _sharedHostService;
+  static final Map<WebSocket, String> _realtimeClients = <WebSocket, String>{};
   static final Set<String> _activeSnapshotGenerationRebuilds = <String>{};
+  WebSocketChannel? _realtimeChannel;
+  StreamSubscription<dynamic>? _realtimeSubscription;
+  final StreamController<bool> _realtimeSignals =
+      StreamController<bool>.broadcast();
+  bool _storeListenerAttached = false;
+
+  void _attachStoreListener() {
+    if (_storeListenerAttached) return;
+    store.addListener(_onStoreChanged);
+    _storeListenerAttached = true;
+  }
+
+  void _onStoreChanged() {
+    if (!store.appIdentity.isHost) return;
+    final sequence = store.latestStoredAuthoritativeSequence;
+    if (sequence <= 0) return;
+    final payload = jsonEncode({
+      'type': 'sync_changed',
+      'changed': true,
+      'latestSequence': sequence,
+      'serverTime': DateTime.now().toIso8601String(),
+    });
+    for (final entry
+        in List<MapEntry<WebSocket, String>>.from(_realtimeClients.entries)) {
+      final socket = entry.key;
+      if (socket.readyState != WebSocket.open) {
+        _realtimeClients.remove(socket);
+        continue;
+      }
+      try {
+        socket.add(payload);
+      } catch (_) {
+        _realtimeClients.remove(socket);
+      }
+    }
+  }
 
   bool _isNetworkFailure(Object error) {
     if (error is SocketException ||
@@ -760,10 +801,16 @@ class LanSyncService {
 
   Future<void> startHost({int port = 8787}) async {
     await _ensureHostRegistryMigration();
-    if (_sharedServer != null && _sharedPort == port) return;
+    if (_sharedServer != null && _sharedPort == port) {
+      _attachStoreListener();
+      _sharedHostService = this;
+      return;
+    }
     await stopHost();
     _sharedServer = await HttpServer.bind(InternetAddress.anyIPv4, port);
     _sharedPort = port;
+    _sharedHostService = this;
+    _attachStoreListener();
     _sharedServer!.listen(_handleRequest, onError: (_) {});
   }
 
@@ -775,9 +822,21 @@ class LanSyncService {
   }
 
   Future<void> stopHost() async {
+    await _closeRealtimeClient();
+    for (final socket in _realtimeClients.keys.toList()) {
+      await socket.close(WebSocketStatus.goingAway, 'Host stopped');
+    }
+    _realtimeClients.clear();
     await _sharedServer?.close(force: true);
     _sharedServer = null;
     _sharedPort = null;
+    if (identical(_sharedHostService, this)) {
+      if (_storeListenerAttached) {
+        store.removeListener(_onStoreChanged);
+        _storeListenerAttached = false;
+      }
+      _sharedHostService = null;
+    }
   }
 
   bool _authorized(HttpRequest request, LanSyncSettings settings) {
@@ -1068,6 +1127,11 @@ class LanSyncService {
         return;
       }
 
+      if (request.method == 'GET' && request.uri.path == '/realtime') {
+        await _handleRealtimeSocket(request);
+        return;
+      }
+
       if (request.method == 'GET' && request.uri.path == '/health') {
         await _json(request, {
           'ok': true,
@@ -1268,6 +1332,37 @@ class LanSyncService {
             status: HttpStatus.internalServerError);
       } catch (_) {}
     }
+  }
+
+  Future<void> _handleRealtimeSocket(HttpRequest request) async {
+    if (!store.appIdentity.isHost) {
+      request.response.statusCode = HttpStatus.forbidden;
+      await request.response.close();
+      return;
+    }
+    final deviceId = request.headers.value('x-device-id')?.trim() ?? '';
+    final socket = await WebSocketTransformer.upgrade(request);
+    _realtimeClients[socket] = deviceId;
+    socket.pingInterval = const Duration(seconds: 30);
+    socket.add(jsonEncode({
+      'type': 'realtime_welcome',
+      'changed': false,
+      'hostDeviceId': store.deviceId,
+      'serverTime': DateTime.now().toIso8601String(),
+    }));
+    socket.listen(
+      (_) {},
+      onDone: () => _realtimeClients.remove(socket),
+      onError: (_, __) => _realtimeClients.remove(socket),
+      cancelOnError: true,
+    );
+  }
+
+  Future<void> _closeRealtimeClient() async {
+    await _realtimeSubscription?.cancel();
+    _realtimeSubscription = null;
+    await _realtimeChannel?.sink.close();
+    _realtimeChannel = null;
   }
 
   HttpClient _client() =>
@@ -1796,6 +1891,77 @@ class LanSyncService {
   }
 
   Future<bool> waitForRealtimeSignal(String host,
+      {int port = 8787,
+      String token = '',
+      Duration wait = const Duration(seconds: 25)}) async {
+    try {
+      await _ensureRealtimeClient(host, port: port, token: token);
+      final signal = await _realtimeSignals.stream.first.timeout(wait);
+      return signal;
+    } catch (_) {
+      await _closeRealtimeClient();
+      // Keep the existing long-poll endpoint as a compatibility fallback
+      // while older Hosts or restricted LANs are being upgraded.
+      final fallback = await _waitForLongPollSignal(
+        host,
+        port: port,
+        token: token,
+        wait: wait,
+      );
+      if (!fallback) {
+        await Future<void>.delayed(const Duration(seconds: 2));
+      }
+      return fallback;
+    }
+  }
+
+  Future<void> _ensureRealtimeClient(String host,
+      {int port = 8787, String token = ''}) async {
+    if (_realtimeChannel != null) return;
+    final cleanHost = host.trim();
+    if (cleanHost.isEmpty) throw const SocketException('LAN Host is empty.');
+    final uri = Uri(
+      scheme: 'ws',
+      host: cleanHost,
+      port: port,
+      path: '/realtime',
+    );
+    final identity = store.appIdentity;
+    final headers = <String, String>{
+      'X-Device-Id': identity.deviceId,
+      'X-Device-Token':
+          token.trim().isNotEmpty ? token.trim() : identity.deviceToken.trim(),
+      'X-Device-Role': identity.deviceRole.name,
+    };
+    final channel = IOWebSocketChannel.connect(uri, headers: headers);
+    _realtimeChannel = channel;
+    _realtimeSubscription = channel.stream.listen(
+      (raw) {
+        try {
+          final decoded = jsonDecode(raw.toString());
+          if (decoded is Map && decoded['type'] == 'sync_changed') {
+            _realtimeSignals.add(true);
+          }
+        } catch (_) {
+          // Invalid realtime frames are ignored; pull reconciliation remains authoritative.
+        }
+      },
+      onDone: () {
+        _realtimeChannel = null;
+        _realtimeSubscription = null;
+        _realtimeSignals.add(false);
+      },
+      onError: (_, __) {
+        _realtimeChannel = null;
+        _realtimeSubscription = null;
+        _realtimeSignals.add(false);
+      },
+      cancelOnError: true,
+    );
+    await channel.ready;
+  }
+
+  Future<bool> _waitForLongPollSignal(String host,
       {int port = 8787,
       String token = '',
       Duration wait = const Duration(seconds: 25)}) async {

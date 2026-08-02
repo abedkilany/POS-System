@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../services/direct_peer_connection_service.dart';
 import '../services/direct_peer_pairing_service.dart';
 import '../services/direct_peer_protocol.dart';
@@ -31,6 +33,38 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
   Future<DirectPeerRequestSession>? _sessionFuture;
   DirectPeerHostEndpoint? _hostEndpoint;
   bool _hostListenerStarting = false;
+  StreamSubscription<Map<String, dynamic>>? _clientEventSubscription;
+  int _lastAdvertisedSequence = 0;
+  bool _storeListenerAttached = false;
+
+  void _attachStoreListener() {
+    if (_storeListenerAttached) return;
+    store.addListener(_onStoreChanged);
+    _storeListenerAttached = true;
+  }
+
+  void _onStoreChanged() {
+    if (!store.appIdentity.isHost || _hostEndpoint == null) return;
+    final sequence = store.latestStoredAuthoritativeSequence;
+    if (sequence <= 0 || sequence <= _lastAdvertisedSequence) return;
+    _lastAdvertisedSequence = sequence;
+    unawaited(_sendHostRealtimeEvent(sequence));
+  }
+
+  Future<void> _sendHostRealtimeEvent(int sequence) async {
+    try {
+      await _hostEndpoint?.connection.send('sync_changed', {
+        'changed': true,
+        'latestSequence': sequence,
+        'sourceDeviceId': store.deviceId,
+      });
+      SyncDiagnosticsLog.add(
+          '[DIRECT_REALTIME] host sync_changed sequence=$sequence');
+    } catch (error) {
+      SyncDiagnosticsLog.add(
+          '[DIRECT_REALTIME] host event failed sequence=$sequence error=$error');
+    }
+  }
 
   @override
   UnifiedSyncTransportKind get kind => UnifiedSyncTransportKind.direct;
@@ -72,6 +106,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
   }
 
   Future<DirectPeerRequestSession> _openClientSession() async {
+    _attachStoreListener();
     if (_usesPersistedSettings) _settings = DirectSyncSettings.load();
     if (!_settings.isConfigured) {
       throw StateError('Direct pairing is not configured.');
@@ -97,6 +132,20 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       );
       final session = DirectPeerRequestSession(connection);
       _session = session;
+      _clientEventSubscription = session.events.listen(
+        (event) {
+          SyncDiagnosticsLog.add(
+              '[DIRECT_REALTIME] client event type=${event['type']} '
+              'sequence=${event['latestSequence'] ?? '-'}');
+        },
+        onDone: () {
+          if (identical(_session, session)) {
+            _session = null;
+            _clientEventSubscription = null;
+            SyncDiagnosticsLog.add('[DIRECT_REALTIME] client session closed');
+          }
+        },
+      );
       return session;
     } catch (error) {
       SyncDiagnosticsLog.add(
@@ -110,11 +159,37 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
     SyncDiagnosticsLog.add('[DIRECT_WEBRTC] client session invalidated=$error');
     final session = _session;
     _session = null;
+    await _clientEventSubscription?.cancel();
+    _clientEventSubscription = null;
     await session?.close();
   }
 
   @override
-  Future<bool> waitForRealtimeSignal() async => false;
+  Future<bool> waitForRealtimeSignal() async {
+    if (store.appIdentity.isHost) return false;
+    try {
+      final session = await _clientSession();
+      final completer = Completer<bool>();
+      late final StreamSubscription<Map<String, dynamic>> subscription;
+      subscription = session.events.listen((event) {
+        if (event['type'] != 'sync_changed' || completer.isCompleted) return;
+        completer.complete(true);
+      }, onDone: () {
+        if (!completer.isCompleted) completer.complete(false);
+      });
+      try {
+        return await completer.future.timeout(
+          const Duration(seconds: 25),
+          onTimeout: () => false,
+        );
+      } finally {
+        await subscription.cancel();
+      }
+    } catch (error) {
+      SyncDiagnosticsLog.add('[DIRECT_REALTIME] wait failed=$error');
+      return false;
+    }
+  }
 
   @override
   Future<UnifiedSyncResult> testConnection() async {
@@ -150,6 +225,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<UnifiedSyncResult> registerCurrentHost({String transport = ''}) async {
+    _attachStoreListener();
     _startHostListener();
     return const UnifiedSyncResult(
       ok: true,
@@ -305,6 +381,12 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
     _hostEndpoint = null;
     await _session?.close();
     _session = null;
+    await _clientEventSubscription?.cancel();
+    _clientEventSubscription = null;
+    if (_storeListenerAttached) {
+      store.removeListener(_onStoreChanged);
+      _storeListenerAttached = false;
+    }
     _sessionFuture = null;
     _coordination.dispose();
     _coordination = DirectPeerSignalingService(store);
@@ -341,6 +423,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
   }
 
   void _startHostListener() {
+    _attachStoreListener();
     if (_hostListenerStarting ||
         _hostEndpoint != null ||
         !store.appIdentity.isHost) {

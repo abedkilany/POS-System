@@ -11,15 +11,26 @@ typedef DirectPeerRequestHandler = Future<Map<String, dynamic>> Function(
 
 class DirectPeerRequestSession {
   DirectPeerRequestSession(this.connection) {
-    _subscription = connection.messages.listen(_handleMessage);
+    _subscription = connection.messages.listen(
+      _handleMessage,
+      onDone: _handleConnectionClosed,
+      onError: (Object error, StackTrace stack) {
+        _handleConnectionClosed();
+      },
+    );
   }
 
   final SecurePeerSession connection;
   final Map<String, Completer<Map<String, dynamic>>> _pending =
       <String, Completer<Map<String, dynamic>>>{};
+  final StreamController<Map<String, dynamic>> _events =
+      StreamController<Map<String, dynamic>>.broadcast();
   late final StreamSubscription<Map<String, dynamic>> _subscription;
   int _counter = 0;
   bool _closed = false;
+
+  /// Realtime peer events which are not request/response frames.
+  Stream<Map<String, dynamic>> get events => _events.stream;
 
   String _requestId() {
     _counter += 1;
@@ -27,12 +38,30 @@ class DirectPeerRequestSession {
   }
 
   void _handleMessage(Map<String, dynamic> message) {
-    if (message['type']?.toString() != 'direct_response') return;
+    final type = message['type']?.toString();
+    if (type != 'direct_response') {
+      if (type == 'sync_changed' || type == 'host_requests') {
+        _events.add(message);
+      }
+      return;
+    }
     final id = message['requestId']?.toString().trim() ?? '';
     final completer = _pending.remove(id);
     if (completer != null && !completer.isCompleted) {
       completer.complete(message);
     }
+  }
+
+  void _handleConnectionClosed() {
+    if (_closed) return;
+    _closed = true;
+    for (final completer in _pending.values) {
+      if (!completer.isCompleted) {
+        completer.completeError(StateError('Direct peer connection closed.'));
+      }
+    }
+    _pending.clear();
+    unawaited(_events.close());
   }
 
   Future<Map<String, dynamic>> sendRequest(
@@ -77,6 +106,7 @@ class DirectPeerRequestSession {
     }
     _pending.clear();
     await _subscription.cancel();
+    await _events.close();
     await connection.close();
   }
 }

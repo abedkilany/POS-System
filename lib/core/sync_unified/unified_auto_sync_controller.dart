@@ -83,6 +83,8 @@ Future<void> _recoverClientSyncQueue(AppStore store) =>
 class UnifiedSyncFactory {
   const UnifiedSyncFactory._();
 
+  static final Map<AppStore, LanSyncService> _lanServices =
+      <AppStore, LanSyncService>{};
   static final Map<AppStore, DirectSyncTransportAdapter> _directAdapters =
       <AppStore, DirectSyncTransportAdapter>{};
 
@@ -90,7 +92,7 @@ class UnifiedSyncFactory {
       {LanSyncSettings? settings}) {
     return UnifiedSyncEngine(
       LanSyncTransportAdapter(
-        service: LanSyncService(store),
+        service: _lanServices.putIfAbsent(store, () => LanSyncService(store)),
         settings: settings ?? LanSyncSettings.load(),
       ),
     );
@@ -404,20 +406,60 @@ class UnifiedAutoDirectSyncController {
 
   final AppStore store;
   Timer? _timer;
+  Timer? _localPushDebounce;
   bool _running = false;
   bool _disposed = false;
+  bool _signalLoopRunning = false;
 
   Future<void> start() async {
     stop();
     _disposed = false;
+    store.addListener(_onStoreChanged);
     _timer = Timer.periodic(const Duration(seconds: 15), (_) => _tick());
+    unawaited(_signalLoop());
     await _tick();
   }
 
   void stop() {
     _disposed = true;
+    store.removeListener(_onStoreChanged);
     _timer?.cancel();
     _timer = null;
+    _localPushDebounce?.cancel();
+    _localPushDebounce = null;
+  }
+
+  void _onStoreChanged() {
+    if (_disposed ||
+        store.appIdentity.activeSyncTransportNormalized != 'direct' ||
+        !store.appIdentity.isClient) {
+      return;
+    }
+    _localPushDebounce?.cancel();
+    _localPushDebounce = Timer(const Duration(milliseconds: 250), _tick);
+  }
+
+  Future<void> _signalLoop() async {
+    if (_signalLoopRunning) return;
+    _signalLoopRunning = true;
+    try {
+      while (!_disposed) {
+        if (store.appIdentity.activeSyncTransportNormalized != 'direct' ||
+            store.appIdentity.isHost) {
+          await Future<void>.delayed(const Duration(seconds: 5));
+          continue;
+        }
+        final changed = await UnifiedSyncFactory.directEngine(store)
+            .waitForRealtimeSignal();
+        if (changed && !_disposed) {
+          await _tick();
+        } else if (!_disposed) {
+          await Future<void>.delayed(const Duration(seconds: 2));
+        }
+      }
+    } finally {
+      _signalLoopRunning = false;
+    }
   }
 
   Future<void> _tick() async {
