@@ -83,6 +83,7 @@ async function ensureTables() {
   await sql`update app_stores set slug = lower(regexp_replace(name, '[^a-zA-Z0-9_-]+', '', 'g')) where slug is null or slug = ''`;
   await sql`alter table app_stores alter column slug set not null`;
   await sql`create unique index if not exists app_stores_slug_key on app_stores(slug)`;
+  await sql`alter table app_subscriptions add column if not exists direct_sync_enabled boolean not null default false`;
 }
 
 async function listSubscribers(res) {
@@ -104,6 +105,7 @@ async function listSubscribers(res) {
       sub.status as subscription_status,
       sub.trial_ends_at,
       sub.devices_limit,
+      sub.direct_sync_enabled,
       coalesce(dev.device_count, 0) as device_count,
       dev.last_seen_at
     from app_accounts a
@@ -164,6 +166,9 @@ async function updateSubscriber(req, res) {
   const subscriptionStatus = cleanSimple(body.subscriptionStatus ?? body.subscription_status ?? 'trial') || 'trial';
   const parsedDevicesLimit = Number.parseInt(String(body.devicesLimit ?? body.devices_limit ?? '2'), 10);
   const devicesLimit = Math.max(0, Number.isFinite(parsedDevicesLimit) ? parsedDevicesLimit : 2);
+  const directSyncEnabled = body.directSyncEnabled === true ||
+    body.direct_sync_enabled === true ||
+    String(body.directSyncEnabled ?? body.direct_sync_enabled ?? '').toLowerCase() === 'true';
   const trialEndsAtRaw = String(body.trialEndsAt ?? body.trial_ends_at ?? '').trim();
 
   if (!username) return res.status(400).json({ ok: false, error: 'Username is required.' });
@@ -204,13 +209,13 @@ async function updateSubscriber(req, res) {
     if (trialEndsAtRaw) {
       await sql`
         update app_subscriptions
-        set plan = ${plan}, status = ${subscriptionStatus}, devices_limit = ${devicesLimit}, trial_ends_at = ${trialEndsAtRaw}::timestamptz, updated_at = now()
+        set plan = ${plan}, status = ${subscriptionStatus}, devices_limit = ${devicesLimit}, direct_sync_enabled = ${directSyncEnabled}, trial_ends_at = ${trialEndsAtRaw}::timestamptz, updated_at = now()
         where id = ${subscriptionId}
       `;
     } else {
       await sql`
         update app_subscriptions
-        set plan = ${plan}, status = ${subscriptionStatus}, devices_limit = ${devicesLimit}, trial_ends_at = null, updated_at = now()
+        set plan = ${plan}, status = ${subscriptionStatus}, devices_limit = ${devicesLimit}, direct_sync_enabled = ${directSyncEnabled}, trial_ends_at = null, updated_at = now()
         where id = ${subscriptionId}
       `;
     }

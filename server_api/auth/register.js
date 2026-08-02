@@ -87,10 +87,12 @@ async function ensureTables() {
       status text not null default 'trial',
       trial_ends_at timestamptz,
       devices_limit integer not null default 2,
+      direct_sync_enabled boolean not null default false,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
     )
   `;
+  await sql`alter table app_subscriptions add column if not exists direct_sync_enabled boolean not null default false`;
 
   await sql`alter table app_accounts add column if not exists namespace_slug text not null default ''`;
   await sql`alter table app_accounts add column if not exists account_type text not null default 'store_owner'`;

@@ -20,7 +20,7 @@ export default async function handler(req, res) {
     const rows = await sql`
       select a.id as account_id, a.username, a.namespace_slug, a.account_type,
              s.id as store_id, s.branch_id, s.slug as store_slug, s.name as store_name,
-             sub.status as subscription_status, sub.trial_ends_at, sub.devices_limit
+             sub.status as subscription_status, sub.trial_ends_at, sub.devices_limit, sub.direct_sync_enabled
       from app_accounts a
       left join app_stores s on s.owner_account_id = a.id and s.slug = a.namespace_slug
       left join app_subscriptions sub on sub.store_id = s.id
@@ -51,7 +51,7 @@ export default async function handler(req, res) {
       subscriptionStatus: row.subscription_status || '',
       trialEndsAt: row.trial_ends_at ? new Date(row.trial_ends_at).toISOString() : null,
       devicesLimit: row.devices_limit == null ? null : Number(row.devices_limit),
-      directSyncEnabled: false,
+      directSyncEnabled: row.direct_sync_enabled === true,
     });
   } catch (error) {
     return sendError(res, error);

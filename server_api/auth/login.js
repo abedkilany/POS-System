@@ -107,10 +107,12 @@ async function ensureTables() {
       status text not null default 'trial',
       trial_ends_at timestamptz,
       devices_limit integer not null default 2,
+      direct_sync_enabled boolean not null default false,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
     )
   `;
+  await sql`alter table app_subscriptions add column if not exists direct_sync_enabled boolean not null default false`;
 
   await sql`alter table app_accounts add column if not exists namespace_slug text not null default ''`;
   await sql`alter table app_accounts add column if not exists account_type text not null default 'store_owner'`;
@@ -152,7 +154,7 @@ export default async function handler(req, res) {
       select a.id as account_id, a.username, a.namespace_slug, a.password_hash,
              a.status as account_status, a.account_type,
              s.id as store_id, s.branch_id, s.slug as store_slug, s.name as store_name,
-             sub.status as subscription_status, sub.trial_ends_at, sub.devices_limit
+             sub.status as subscription_status, sub.trial_ends_at, sub.devices_limit, sub.direct_sync_enabled
       from app_accounts a
       left join app_stores s on s.owner_account_id = a.id and s.slug = a.namespace_slug
       left join app_subscriptions sub on sub.store_id = s.id
@@ -188,7 +190,7 @@ export default async function handler(req, res) {
       devicesLimit: row.devices_limit == null ? null : Number(row.devices_limit),
       adminToken,
       accountToken,
-      directSyncEnabled: false,
+      directSyncEnabled: row.direct_sync_enabled === true,
     });
   } catch (error) {
     return sendError(res, error);

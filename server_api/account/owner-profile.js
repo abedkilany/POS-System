@@ -84,9 +84,10 @@ export default async function handler(req, res) {
 
     const rows = await sql`
       select a.id, a.namespace_slug, a.account_type, a.status, s.id as store_id, s.slug as store_slug,
-             s.name as store_name, s.branch_id
+      s.name as store_name, s.branch_id, sub.direct_sync_enabled
       from app_accounts a
       join app_stores s on s.owner_account_id = a.id
+      left join app_subscriptions sub on sub.store_id = s.id
       where a.id = ${accountId}
         and s.id = ${storeId}
       limit 1
@@ -132,7 +133,7 @@ export default async function handler(req, res) {
       storeName: row.store_name || '',
       loginName: `${username}@${row.namespace_slug || row.store_slug || ''}`,
       accountType: 'store_owner',
-      directSyncEnabled: false,
+      directSyncEnabled: row.direct_sync_enabled === true,
     });
   } catch (error) {
     return sendError(res, error);
