@@ -91,6 +91,7 @@ async function authorizeLocalHostOrAccount(req, {
   recoveryKey,
   transport,
 }) {
+  let authorizationError;
   try {
     await assertAccountOrDevice(req, {
       storeId,
@@ -101,14 +102,15 @@ async function authorizeLocalHostOrAccount(req, {
         : [],
     });
     return;
-  } catch (accountOrDeviceError) {
-    throw accountOrDeviceError;
+  } catch (error) {
+    // A local Host may authenticate with its Recovery Key when the account
+    // session is unavailable or its previously registered device token is
+    // stale. Keep the original device-auth error for the no-key case.
+    authorizationError = error;
   }
 
   if (!recoveryKey) {
-    const err = new Error('Recovery Key is required to create a remote pairing code from a local Host.');
-    err.statusCode = 401;
-    throw err;
+    throw authorizationError;
   }
 
   const existing = await sql`

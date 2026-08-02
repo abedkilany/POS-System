@@ -4,8 +4,8 @@
     "channel":  "stable",
     "windows":  {
                     "url":  "https://ventioapp.com/releases/windows/VentioSetup-1.0.89-build89.exe",
-                    "sha256":  "fdac8c34fc9ff5f0b57b3728ff9b6100c7fbed6c5a3884fdb1515d70e2ba8215",
-                    "size":  24230259
+                    "sha256":  "691f28288dad53c144a985e451c7ff0adaf2161079c8c16348c4048479c75e9d",
+                    "size":  24230264
                 },
     "android":  {
                     "source":  "play_store"
