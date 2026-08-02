@@ -2303,7 +2303,8 @@ class AppStore extends ChangeNotifier {
       source: 'initial Host registration',
       allowInitialHostRegistration: true,
     );
-    _assertLanDirectRoleRules(hostIdentity, source: 'initial Host registration');
+    _assertLanDirectRoleRules(hostIdentity,
+        source: 'initial Host registration');
     _appIdentity = hostIdentity;
     await LocalDatabaseService.setString(
       _appIdentityKey,
@@ -2386,13 +2387,15 @@ class AppStore extends ChangeNotifier {
         // feature and should only be enabled from the Sync settings page after
         // the user turns it on and the server allows it for this store.
         syncMode: syncMode ?? SyncMode.localOnly,
-        activeSyncTransport: syncMode == SyncMode.directConnected ? 'direct' : '',
+        activeSyncTransport:
+            syncMode == SyncMode.directConnected ? 'direct' : '',
         hostDeviceId: hostDeviceId ??
             (role == DeviceRole.host ? _deviceId : appIdentity.hostDeviceId),
         deviceToken: (deviceToken == null || deviceToken.trim().isEmpty)
             ? appIdentity.deviceToken
             : deviceToken.trim(),
-        controlPlaneTenantId: (controlPlaneTenantId == null || controlPlaneTenantId.trim().isEmpty)
+        controlPlaneTenantId: (controlPlaneTenantId == null ||
+                controlPlaneTenantId.trim().isEmpty)
             ? appIdentity.controlPlaneTenantId
             : controlPlaneTenantId.trim(),
         deviceId: _deviceId,
@@ -3155,6 +3158,9 @@ class AppStore extends ChangeNotifier {
     if (LocalDatabaseService.isInMemoryStoreForTesting) {
       return Future<String?>.value(LocalDatabaseService.testingRawValue(key));
     }
+    if (kIsWeb) {
+      return Future<String?>.value(LocalDatabaseService.getString(key));
+    }
     final db = SqliteMigrationManager.database;
     if (db == null) return Future.value(null);
     if (BusinessSqliteStore.isTypedEntityKey(key)) {
@@ -3172,6 +3178,11 @@ class AppStore extends ChangeNotifier {
   }) {
     if (LocalDatabaseService.isInMemoryStoreForTesting) {
       final raw = LocalDatabaseService.testingRawValue(key);
+      if (raw == null || raw.isEmpty) return Future.value(const <String>[]);
+      return Future.value(<String>[raw]);
+    }
+    if (kIsWeb) {
+      final raw = LocalDatabaseService.getString(key);
       if (raw == null || raw.isEmpty) return Future.value(const <String>[]);
       return Future.value(<String>[raw]);
     }
@@ -4171,8 +4182,11 @@ class AppStore extends ChangeNotifier {
 
   Future<List<SyncChange>> _loadSyncChanges() async {
     final db = SqliteMigrationManager.database;
-    final raw =
-        db == null ? null : await SyncSqliteStore.readSyncChangesJson(db);
+    final raw = kIsWeb
+        ? LocalDatabaseService.getString(_syncChangesKey)
+        : db == null
+            ? null
+            : await SyncSqliteStore.readSyncChangesJson(db);
     if (raw == null || raw.isEmpty) return <SyncChange>[];
     final decoded = jsonDecode(raw) as List<dynamic>;
     return decoded
@@ -4709,9 +4723,10 @@ class AppStore extends ChangeNotifier {
       deviceToken: (deviceToken == null || deviceToken.trim().isEmpty)
           ? appIdentity.deviceToken
           : deviceToken.trim(),
-      controlPlaneTenantId: (controlPlaneTenantId == null || controlPlaneTenantId.trim().isEmpty)
-          ? appIdentity.controlPlaneTenantId
-          : controlPlaneTenantId.trim(),
+      controlPlaneTenantId:
+          (controlPlaneTenantId == null || controlPlaneTenantId.trim().isEmpty)
+              ? appIdentity.controlPlaneTenantId
+              : controlPlaneTenantId.trim(),
       deviceRole: nextRole,
       syncMode: syncMode ?? appIdentity.syncMode,
       deviceId: _deviceId,
@@ -5195,9 +5210,12 @@ class AppStore extends ChangeNotifier {
     final db = SqliteMigrationManager.database;
     final raw = LocalDatabaseService.isInMemoryStoreForTesting
         ? LocalDatabaseService.testingRawValue(_rolesKey)
-        : db == null
-            ? null
-            : await BusinessSqliteStore.readEntityListJsonByKey(db, _rolesKey);
+        : kIsWeb
+            ? LocalDatabaseService.getString(_rolesKey)
+            : db == null
+                ? null
+                : await BusinessSqliteStore.readEntityListJsonByKey(
+                    db, _rolesKey);
     if (raw == null || raw.isEmpty) return <UserRole>[];
     final decoded = jsonDecode(raw) as List<dynamic>;
     return decoded
@@ -5211,9 +5229,12 @@ class AppStore extends ChangeNotifier {
     final db = SqliteMigrationManager.database;
     final raw = LocalDatabaseService.isInMemoryStoreForTesting
         ? LocalDatabaseService.testingRawValue(_usersKey)
-        : db == null
-            ? null
-            : await BusinessSqliteStore.readEntityListJsonByKey(db, _usersKey);
+        : kIsWeb
+            ? LocalDatabaseService.getString(_usersKey)
+            : db == null
+                ? null
+                : await BusinessSqliteStore.readEntityListJsonByKey(
+                    db, _usersKey);
     if (raw == null || raw.isEmpty) return <AppUser>[];
     final decoded = jsonDecode(raw) as List<dynamic>;
     return decoded
@@ -5824,7 +5845,8 @@ class AppStore extends ChangeNotifier {
     );
 
     if (editingStoreOwner) {
-      await _syncStoreOwnerUserToControlPlane(current, saved, password: password);
+      await _syncStoreOwnerUserToControlPlane(current, saved,
+          password: password);
     }
 
     if (index == -1) {
@@ -14860,7 +14882,8 @@ class AppStore extends ChangeNotifier {
     return {
       'storeId': storeId,
       'branchId': branchId,
-      'controlPlaneApiUrl': payload['controlPlaneApiUrl']?.toString().trim() ?? '',
+      'controlPlaneApiUrl':
+          payload['controlPlaneApiUrl']?.toString().trim() ?? '',
       'recoveryKey': recoveryKey,
     };
   }

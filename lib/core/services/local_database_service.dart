@@ -39,6 +39,12 @@ class LocalDatabaseService {
   LocalDatabaseService._();
 
   static const FlutterSecureStorage _secureStorage = FlutterSecureStorage();
+  static const String _webWarehouseInventoryKey = 'web_warehouse_inventory_v1';
+  static const String _webStockOperationsKey = 'web_stock_operations_v1';
+  static const String _webInventoryReconciliationsKey =
+      'web_inventory_reconciliations_v1';
+  static const String _webInventoryMigrationAdjustmentsKey =
+      'web_inventory_migration_adjustments_v1';
   static const String _appIdentityKey = 'app_identity_v1';
   static const String _legacySecureDeviceTokenKey =
       'app_identity_device_token_v1';
@@ -429,7 +435,16 @@ class LocalDatabaseService {
 
   static Future<List<WarehouseInventory>?>
       getWarehouseInventoriesFromSqlite() async {
-    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+    if (_webStore != null) {
+      final raw = _webStore![_webWarehouseInventoryKey];
+      if (raw == null || raw.isEmpty) return <WarehouseInventory>[];
+      final decoded = jsonDecode(raw) as List<dynamic>;
+      return decoded
+          .map((item) => WarehouseInventory.fromJson(
+              Map<String, dynamic>.from(item as Map)))
+          .toList(growable: false);
+    }
+    if (_memoryStore != null || !_sqliteReady) {
       return null;
     }
     final db = SqliteMigrationManager.database;
@@ -452,7 +467,16 @@ class LocalDatabaseService {
 
   static Future<List<InventoryReconciliation>?>
       getInventoryReconciliationsFromSqlite() async {
-    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+    if (_webStore != null) {
+      final raw = _webStore![_webInventoryReconciliationsKey];
+      if (raw == null || raw.isEmpty) return <InventoryReconciliation>[];
+      final decoded = jsonDecode(raw) as List<dynamic>;
+      return decoded
+          .map((item) => InventoryReconciliation.fromJson(
+              Map<String, dynamic>.from(item as Map)))
+          .toList(growable: false);
+    }
+    if (_memoryStore != null || !_sqliteReady) {
       return null;
     }
     final db = SqliteMigrationManager.database;
@@ -476,7 +500,16 @@ class LocalDatabaseService {
 
   static Future<List<Map<String, dynamic>>?>
       getStockOperationsFromSqlite() async {
-    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+    if (_webStore != null) {
+      final raw = _webStore![_webStockOperationsKey];
+      if (raw == null || raw.isEmpty) return <Map<String, dynamic>>[];
+      final decoded = jsonDecode(raw) as List<dynamic>;
+      return decoded
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList(growable: false);
+    }
+    if (_memoryStore != null || !_sqliteReady) {
       return null;
     }
     final db = SqliteMigrationManager.database;
@@ -500,7 +533,16 @@ class LocalDatabaseService {
 
   static Future<List<Map<String, dynamic>>?>
       getInventoryMigrationAdjustmentsFromSqlite() async {
-    if (_memoryStore != null || _webStore != null || !_sqliteReady) {
+    if (_webStore != null) {
+      final raw = _webStore![_webInventoryMigrationAdjustmentsKey];
+      if (raw == null || raw.isEmpty) return <Map<String, dynamic>>[];
+      final decoded = jsonDecode(raw) as List<dynamic>;
+      return decoded
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList(growable: false);
+    }
+    if (_memoryStore != null || !_sqliteReady) {
       return null;
     }
     final db = SqliteMigrationManager.database;
@@ -1219,7 +1261,13 @@ class LocalDatabaseService {
     List<Map<String, dynamic>> rows,
   ) async {
     final memory = _memoryStore;
-    if (memory != null || _webStore != null) return;
+    if (memory != null) return;
+    if (_webStore != null) {
+      final encoded = jsonEncode(rows);
+      _webStore![_webWarehouseInventoryKey] = encoded;
+      await _persistWebString(_webWarehouseInventoryKey, encoded);
+      return;
+    }
     final db = SqliteMigrationManager.database;
     if (!_sqliteReady || db == null) return;
     await db.customStatement('DELETE FROM warehouse_inventory');
@@ -1271,7 +1319,13 @@ class LocalDatabaseService {
     List<Map<String, dynamic>> rows,
   ) async {
     final memory = _memoryStore;
-    if (memory != null || _webStore != null) return;
+    if (memory != null) return;
+    if (_webStore != null) {
+      final encoded = jsonEncode(rows);
+      _webStore![_webStockOperationsKey] = encoded;
+      await _persistWebString(_webStockOperationsKey, encoded);
+      return;
+    }
     final db = SqliteMigrationManager.database;
     if (!_sqliteReady || db == null) return;
     await db.customStatement('DELETE FROM stock_operations');
@@ -1460,7 +1514,13 @@ class LocalDatabaseService {
     List<Map<String, dynamic>> rows,
   ) async {
     final memory = _memoryStore;
-    if (memory != null || _webStore != null) return;
+    if (memory != null) return;
+    if (_webStore != null) {
+      final encoded = jsonEncode(rows);
+      _webStore![_webInventoryReconciliationsKey] = encoded;
+      await _persistWebString(_webInventoryReconciliationsKey, encoded);
+      return;
+    }
     final db = SqliteMigrationManager.database;
     if (!_sqliteReady || db == null) return;
     await db.customStatement('DELETE FROM inventory_reconciliations');
@@ -1516,7 +1576,13 @@ class LocalDatabaseService {
     List<Map<String, dynamic>> rows,
   ) async {
     final memory = _memoryStore;
-    if (memory != null || _webStore != null) return;
+    if (memory != null) return;
+    if (_webStore != null) {
+      final encoded = jsonEncode(rows);
+      _webStore![_webInventoryMigrationAdjustmentsKey] = encoded;
+      await _persistWebString(_webInventoryMigrationAdjustmentsKey, encoded);
+      return;
+    }
     final db = SqliteMigrationManager.database;
     if (!_sqliteReady || db == null) return;
     await db.customStatement('DELETE FROM inventory_migration_adjustments');
