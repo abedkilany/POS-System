@@ -807,26 +807,28 @@ class DirectPeerHostManager {
     if (deviceId.isEmpty) return;
     final kind = signal['kind']?.toString() ?? '';
     var peer = _peers[deviceId];
-    if (kind == 'offer') {
-      if (peer != null) {
-        SyncDiagnosticsLog.add(
-            '[DIRECT_WEBRTC] replacing stale Host peer device=$deviceId');
-        await _removePeer(deviceId, peer);
-      }
-      peer = await _createPeer(deviceId);
-      _peers[deviceId] = peer;
-    }
-    if (peer == null) return;
     try {
       if (kind == 'offer') {
-        await peer.handleOffer(signal);
+        if (peer != null) {
+          SyncDiagnosticsLog.add(
+              '[DIRECT_WEBRTC] replacing stale Host peer device=$deviceId');
+          await _removePeer(deviceId, peer);
+        }
+        peer = await _createPeer(deviceId);
+        _peers[deviceId] = peer;
+      }
+      final currentPeer = peer;
+      if (currentPeer == null) return;
+      if (kind == 'offer') {
+        await currentPeer.handleOffer(signal);
       } else if (kind == 'candidate') {
-        await peer.handleCandidate(signal['candidate']);
+        await currentPeer.handleCandidate(signal['candidate']);
       }
     } catch (error) {
       SyncDiagnosticsLog.add(
           '[DIRECT_WEBRTC] host peer signal failed device=$deviceId error=$error');
-      await _removePeer(deviceId, peer);
+      final currentPeer = _peers[deviceId];
+      if (currentPeer != null) await _removePeer(deviceId, currentPeer);
     }
   }
 

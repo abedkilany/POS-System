@@ -34,6 +34,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
   final Map<String, DirectPeerHostEndpoint> _hostEndpoints =
       <String, DirectPeerHostEndpoint>{};
   bool _hostListenerStarting = false;
+  bool _hostRestartScheduled = false;
   StreamSubscription<Map<String, dynamic>>? _clientEventSubscription;
   int _lastAdvertisedSequence = 0;
   bool _storeListenerAttached = false;
@@ -464,10 +465,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
         onAuthenticated: _onHostClientAuthenticated,
         onStopped: () {
           if (identical(_hostManager, manager)) {
-            _hostManager = null;
-            _hostListenerStarting = false;
-            unawaited(manager.close());
-            _startHostListener();
+            unawaited(_restartHostManager(manager));
           }
         },
       );
@@ -481,6 +479,22 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       if (store.appIdentity.isHost) {
         Future<void>.delayed(const Duration(seconds: 2), _startHostListener);
       }
+    }
+  }
+
+  Future<void> _restartHostManager(DirectPeerHostManager manager) async {
+    if (_hostRestartScheduled) return;
+    _hostRestartScheduled = true;
+    try {
+      if (identical(_hostManager, manager)) {
+        _hostManager = null;
+        _hostListenerStarting = false;
+      }
+      await manager.close();
+      await Future<void>.delayed(const Duration(seconds: 1));
+      if (store.appIdentity.isHost) _startHostListener();
+    } finally {
+      _hostRestartScheduled = false;
     }
   }
 
