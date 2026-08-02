@@ -4,6 +4,7 @@ import '../services/direct_peer_connection_service.dart';
 import '../services/direct_peer_pairing_service.dart';
 import '../services/direct_peer_protocol.dart';
 import '../services/direct_peer_signaling_service.dart';
+import '../services/secure_peer_session.dart';
 import '../services/direct_sync_protocol_service.dart';
 import '../services/direct_sync_settings.dart';
 import '../services/sync_diagnostics_log.dart';
@@ -23,15 +24,15 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
         _usesPersistedSettings = settings == null;
 
   final AppStore store;
-  static final Map<String, Future<DirectPeerHostEndpoint>> _hostListeners =
-      <String, Future<DirectPeerHostEndpoint>>{};
   DirectSyncSettings _settings;
   final bool _usesPersistedSettings;
   DirectPeerSignalingService _coordination;
   final DirectPeerPairingService _pairing;
   DirectPeerRequestSession? _session;
   Future<DirectPeerRequestSession>? _sessionFuture;
-  DirectPeerHostEndpoint? _hostEndpoint;
+  DirectPeerHostManager? _hostManager;
+  final Map<String, DirectPeerHostEndpoint> _hostEndpoints =
+      <String, DirectPeerHostEndpoint>{};
   bool _hostListenerStarting = false;
   StreamSubscription<Map<String, dynamic>>? _clientEventSubscription;
   int _lastAdvertisedSequence = 0;
@@ -44,7 +45,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
   }
 
   void _onStoreChanged() {
-    if (!store.appIdentity.isHost || _hostEndpoint == null) return;
+    if (!store.appIdentity.isHost || _hostEndpoints.isEmpty) return;
     final sequence = store.latestStoredAuthoritativeSequence;
     if (sequence <= 0 || sequence <= _lastAdvertisedSequence) return;
     _lastAdvertisedSequence = sequence;
@@ -52,17 +53,22 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
   }
 
   Future<void> _sendHostRealtimeEvent(int sequence) async {
-    try {
-      await _hostEndpoint?.connection.send('sync_changed', {
-        'changed': true,
-        'latestSequence': sequence,
-        'sourceDeviceId': store.deviceId,
-      });
+    final endpoints = List<DirectPeerHostEndpoint>.from(_hostEndpoints.values);
+    await Future.wait(endpoints.map((endpoint) async {
+      try {
+        await endpoint.connection.send('sync_changed', {
+          'changed': true,
+          'latestSequence': sequence,
+          'sourceDeviceId': store.deviceId,
+        });
+      } catch (error) {
+        SyncDiagnosticsLog.add(
+            '[DIRECT_REALTIME] host event failed sequence=$sequence error=$error');
+      }
+    }));
+    if (endpoints.isNotEmpty) {
       SyncDiagnosticsLog.add(
-          '[DIRECT_REALTIME] host sync_changed sequence=$sequence');
-    } catch (error) {
-      SyncDiagnosticsLog.add(
-          '[DIRECT_REALTIME] host event failed sequence=$sequence error=$error');
+          '[DIRECT_REALTIME] host sync_changed sequence=$sequence clients=${endpoints.length}');
     }
   }
 
@@ -375,10 +381,13 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<void> stopHostIfSupported() async {
-    final listenerKey = '${store.appIdentity.storeId}:${store.deviceId}';
-    _hostListeners.remove(listenerKey);
-    await _hostEndpoint?.close();
-    _hostEndpoint = null;
+    await _hostManager?.close();
+    _hostManager = null;
+    for (final endpoint
+        in List<DirectPeerHostEndpoint>.from(_hostEndpoints.values)) {
+      await endpoint.close();
+    }
+    _hostEndpoints.clear();
     await _session?.close();
     _session = null;
     await _clientEventSubscription?.cancel();
@@ -425,73 +434,73 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
   void _startHostListener() {
     _attachStoreListener();
     if (_hostListenerStarting ||
-        _hostEndpoint != null ||
+        _hostManager != null ||
         !store.appIdentity.isHost) {
       return;
     }
     _hostListenerStarting = true;
     if (_usesPersistedSettings) _settings = DirectSyncSettings.load();
-    final listenerKey = '${store.appIdentity.storeId}:${store.deviceId}';
-    final existingListener = _hostListeners[listenerKey];
-    if (existingListener != null) {
-      existingListener.then((endpoint) {
-        _hostEndpoint ??= endpoint;
-      });
+    unawaited(_openHostManager());
+  }
+
+  Future<void> _openHostManager() async {
+    try {
+      final dynamicIceServers = await _coordination.fetchIceServers(
+        DirectPeerSignalingSettings(apiBaseUrl: _apiBaseUrl),
+      );
+      SyncDiagnosticsLog.add(
+          '[DIRECT_ICE] host configured=${_settings.iceServersForApiBaseUrl(_apiBaseUrl).length} dynamic=${dynamicIceServers.length}');
+      late final DirectPeerHostManager manager;
+      manager = DirectPeerHostManager(
+        store: store,
+        signalingService: _coordination,
+        signalingSettings: _signalingSettings,
+        iceServers: [
+          ..._settings.iceServersForApiBaseUrl(_apiBaseUrl),
+          ...dynamicIceServers,
+        ],
+        iceTransportPolicy: _settings.iceTransportPolicy,
+        iceCandidatePoolSize: _settings.iceCandidatePoolSize,
+        onAuthenticated: _onHostClientAuthenticated,
+        onStopped: () {
+          if (identical(_hostManager, manager)) {
+            _hostManager = null;
+            _hostListenerStarting = false;
+            unawaited(manager.close());
+            _startHostListener();
+          }
+        },
+      );
+      _hostManager = manager;
+      await manager.start();
       _hostListenerStarting = false;
-      return;
-    }
-    late Future<DirectPeerHostEndpoint> listener;
-    listener = () async {
-      // Keep one Host listener alive. A temporary WebSocket or WebRTC failure
-      // must not make a still-running Host disappear until the next app tick.
-      while (store.appIdentity.isHost) {
-        try {
-          final dynamicIceServers = await _coordination.fetchIceServers(
-            DirectPeerSignalingSettings(apiBaseUrl: _apiBaseUrl),
-          );
-          SyncDiagnosticsLog.add(
-              '[DIRECT_ICE] host configured=${_settings.iceServersForApiBaseUrl(_apiBaseUrl).length} dynamic=${dynamicIceServers.length}');
-          final connection =
-              await DirectPeerConnectionService(store).acceptAsHost(
-            signalingSettings: DirectPeerSignalingSettings(
-              apiBaseUrl: _signalingSettings.apiBaseUrl,
-            ),
-            iceServers: [
-              ..._settings.iceServersForApiBaseUrl(_apiBaseUrl),
-              ...dynamicIceServers,
-            ],
-            iceTransportPolicy: _settings.iceTransportPolicy,
-            iceCandidatePoolSize: _settings.iceCandidatePoolSize,
-          );
-          return DirectPeerHostEndpoint(
-            connection,
-            onRequest: DirectHostSyncEndpoint(store).handleRequest,
-            onClosed: () {
-              if (_hostEndpoint?.connection == connection) {
-                _hostEndpoint = null;
-                _hostListenerStarting = false;
-                if (identical(_hostListeners[listenerKey], listener)) {
-                  _hostListeners.remove(listenerKey);
-                }
-                _startHostListener();
-              }
-            },
-          );
-        } catch (error) {
-          SyncDiagnosticsLog.add('[DIRECT_WEBRTC] host listener retry=$error');
-          await Future<void>.delayed(const Duration(seconds: 1));
-        }
+    } catch (error) {
+      _hostManager = null;
+      _hostListenerStarting = false;
+      SyncDiagnosticsLog.add('[DIRECT_WEBRTC] host listener retry=$error');
+      if (store.appIdentity.isHost) {
+        Future<void>.delayed(const Duration(seconds: 2), _startHostListener);
       }
-      throw StateError('Direct Host listener stopped.');
-    }();
-    _hostListeners[listenerKey] = listener;
-    listener.then((endpoint) {
-      _hostEndpoint = endpoint;
-      _hostListenerStarting = false;
-    }, onError: (_) {
-      _hostListeners.remove(listenerKey);
-      _hostListenerStarting = false;
-    });
+    }
+  }
+
+  Future<void> _onHostClientAuthenticated(
+      String deviceId, SecurePeerSession connection) async {
+    final previous = _hostEndpoints.remove(deviceId);
+    await previous?.close();
+    late final DirectPeerHostEndpoint endpoint;
+    endpoint = DirectPeerHostEndpoint(
+      connection,
+      onRequest: DirectHostSyncEndpoint(store).handleRequest,
+      onClosed: () {
+        if (identical(_hostEndpoints[deviceId], endpoint)) {
+          _hostEndpoints.remove(deviceId);
+        }
+      },
+    );
+    _hostEndpoints[deviceId] = endpoint;
+    SyncDiagnosticsLog.add(
+        '[DIRECT_WEBRTC] host client ready device=$deviceId clients=${_hostEndpoints.length}');
   }
 
   UnifiedCursorEnvelope _cursor() {
