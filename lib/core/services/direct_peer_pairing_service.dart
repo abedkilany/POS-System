@@ -179,11 +179,15 @@ class DirectPeerPairingService {
           response.statusCode >= 300 ||
           decoded['ok'] != true) {
         SyncDiagnosticsLog.add(
-            '[DIRECT_PAIRING] claim rejected status=${response.statusCode}');
-        return const DirectPairingClaimResult(
+            '[DIRECT_PAIRING] claim rejected status=${response.statusCode} '
+            'message=${_serverMessage(response, decoded, 'Pairing claim failed.')}');
+        return DirectPairingClaimResult(
           ok: false,
-          message:
-              'Pairing code expired or already used. Ask the Host for a new code.',
+          message: _serverMessage(
+            response,
+            decoded,
+            'Pairing claim failed.',
+          ),
         );
       }
 

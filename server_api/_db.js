@@ -153,7 +153,9 @@ export async function getClientDeviceLimitStatus(storeId, { excludeDeviceId = ''
   await ensureStoreDevicesTableForLimits();
   await ensureDeviceAuthColumns();
   const limitRows = await sql`
-    select coalesce(max(devices_limit), 0)::int as devices_limit
+    // Legacy stores may not have an app_subscriptions row yet. Treat those
+    // stores as the default trial allowance instead of blocking every claim.
+    select coalesce(max(devices_limit), 2)::int as devices_limit
     from app_subscriptions
     where store_id = ${storeId}
   `;
