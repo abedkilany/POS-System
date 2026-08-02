@@ -92,6 +92,7 @@ async function authorizeLocalHostOrAccount(req, {
   transport,
 }) {
   let authorizationError;
+  let authorizedWithAccountOrDevice = false;
   try {
     await assertAccountOrDevice(req, {
       storeId,
@@ -101,7 +102,7 @@ async function authorizeLocalHostOrAccount(req, {
         ? [transport]
         : [],
     });
-    return;
+    authorizedWithAccountOrDevice = true;
   } catch (error) {
     // A local Host may authenticate with its Recovery Key when the account
     // session is unavailable or its previously registered device token is
@@ -109,26 +110,28 @@ async function authorizeLocalHostOrAccount(req, {
     authorizationError = error;
   }
 
-  if (!recoveryKey) {
+  if (!authorizedWithAccountOrDevice && !recoveryKey) {
     throw authorizationError;
   }
 
-  const existing = await sql`
-    select recovery_key_hash
-    from store_recovery_keys
-    where store_id = ${storeId}
-      and branch_id = ${branchId}
-    limit 1
-  `;
-  if (existing.length && existing[0].recovery_key_hash) {
-    const expectedHash = String(existing[0].recovery_key_hash || '');
-    const providedHash = hashRecoveryKey(recoveryKey);
-    const a = Buffer.from(expectedHash, 'hex');
-    const b = Buffer.from(providedHash, 'hex');
-    if (a.length !== b.length || !timingSafeEqual(a, b)) {
-      const err = new Error('Invalid Recovery Key for this Store ID.');
-      err.statusCode = 403;
-      throw err;
+  if (!authorizedWithAccountOrDevice) {
+    const existing = await sql`
+      select recovery_key_hash
+      from store_recovery_keys
+      where store_id = ${storeId}
+        and branch_id = ${branchId}
+      limit 1
+    `;
+    if (existing.length && existing[0].recovery_key_hash) {
+      const expectedHash = String(existing[0].recovery_key_hash || '');
+      const providedHash = hashRecoveryKey(recoveryKey);
+      const a = Buffer.from(expectedHash, 'hex');
+      const b = Buffer.from(providedHash, 'hex');
+      if (a.length !== b.length || !timingSafeEqual(a, b)) {
+        const err = new Error('Invalid Recovery Key for this Store ID.');
+        err.statusCode = 403;
+        throw err;
+      }
     }
   }
 
