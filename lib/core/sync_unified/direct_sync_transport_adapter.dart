@@ -35,6 +35,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       <String, DirectPeerHostEndpoint>{};
   bool _hostListenerStarting = false;
   bool _hostRestartScheduled = false;
+  bool _hostStopRequested = false;
   StreamSubscription<Map<String, dynamic>>? _clientEventSubscription;
   int _lastAdvertisedSequence = 0;
   bool _storeListenerAttached = false;
@@ -382,6 +383,8 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<void> stopHostIfSupported() async {
+    _hostStopRequested = true;
+    _hostRestartScheduled = false;
     await _hostManager?.close();
     _hostManager = null;
     for (final endpoint
@@ -434,7 +437,9 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
 
   void _startHostListener() {
     _attachStoreListener();
-    if (_hostListenerStarting ||
+    _hostStopRequested = false;
+    if (_hostRestartScheduled ||
+        _hostListenerStarting ||
         _hostManager != null ||
         !store.appIdentity.isHost) {
       return;
@@ -471,30 +476,57 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       );
       _hostManager = manager;
       await manager.start();
-      _hostListenerStarting = false;
+      if (identical(_hostManager, manager) && !_hostRestartScheduled) {
+        _hostListenerStarting = false;
+      }
     } catch (error) {
       _hostManager = null;
-      _hostListenerStarting = false;
       SyncDiagnosticsLog.add('[DIRECT_WEBRTC] host listener retry=$error');
-      if (store.appIdentity.isHost) {
-        Future<void>.delayed(const Duration(seconds: 2), _startHostListener);
-      }
+      _hostListenerStarting = false;
+      _scheduleHostRestart();
     }
   }
 
-  Future<void> _restartHostManager(DirectPeerHostManager manager) async {
-    if (_hostRestartScheduled) return;
+  void _scheduleHostRestart() {
+    if (_hostRestartScheduled ||
+        _hostStopRequested ||
+        !store.appIdentity.isHost) {
+      return;
+    }
     _hostRestartScheduled = true;
+    Future<void>.delayed(const Duration(seconds: 2), () {
+      if (_hostStopRequested || !store.appIdentity.isHost) {
+        _hostRestartScheduled = false;
+        return;
+      }
+      _hostRestartScheduled = false;
+      _hostListenerStarting = false;
+      _startHostListener();
+    });
+  }
+
+  Future<void> _restartHostManager(DirectPeerHostManager manager) async {
+    if (_hostRestartScheduled ||
+        _hostStopRequested ||
+        !identical(_hostManager, manager)) {
+      return;
+    }
+    _hostRestartScheduled = true;
+    _hostListenerStarting = true;
     try {
-      if (identical(_hostManager, manager)) {
-        _hostManager = null;
+      await manager.close();
+      if (identical(_hostManager, manager)) _hostManager = null;
+      await Future<void>.delayed(const Duration(seconds: 1));
+      if (!_hostStopRequested && store.appIdentity.isHost) {
+        _hostRestartScheduled = false;
+        _hostListenerStarting = false;
+        _startHostListener();
+      }
+    } finally {
+      if (_hostStopRequested || !store.appIdentity.isHost) {
+        _hostRestartScheduled = false;
         _hostListenerStarting = false;
       }
-      await manager.close();
-      await Future<void>.delayed(const Duration(seconds: 1));
-      if (store.appIdentity.isHost) _startHostListener();
-    } finally {
-      _hostRestartScheduled = false;
     }
   }
 

@@ -771,6 +771,7 @@ class DirectPeerHostManager {
 
   final Map<String, _DirectHostPeerState> _peers =
       <String, _DirectHostPeerState>{};
+  final Set<Future<void>> _inFlightSignals = <Future<void>>{};
   DirectPeerSignalingSession? _signaling;
   StreamSubscription<Map<String, dynamic>>? _subscription;
   bool _closed = false;
@@ -788,7 +789,12 @@ class DirectPeerHostManager {
     _signaling = await signalingService.open(signalingSettings);
     final signaling = _signaling!;
     _subscription = signaling.signals.listen(
-      (signal) => unawaited(_handleSignal(signal)),
+      (signal) {
+        late final Future<void> handler;
+        handler = _handleSignal(signal);
+        _inFlightSignals.add(handler);
+        unawaited(handler.whenComplete(() => _inFlightSignals.remove(handler)));
+      },
       onError: (Object error, StackTrace stack) {
         SyncDiagnosticsLog.add(
             '[DIRECT_WEBRTC] host manager signal error=$error');
@@ -839,6 +845,10 @@ class DirectPeerHostManager {
       'iceTransportPolicy': iceTransportPolicy,
       'iceCandidatePoolSize': iceCandidatePoolSize.clamp(0, 16),
     });
+    if (_closed) {
+      await peerConnection.close();
+      throw StateError('Direct Host listener is closing.');
+    }
     final state = _DirectHostPeerState(
       store: store,
       deviceId: deviceId,
@@ -865,6 +875,9 @@ class DirectPeerHostManager {
     _closed = true;
     await _subscription?.cancel();
     _subscription = null;
+    if (_inFlightSignals.isNotEmpty) {
+      await Future.wait(List<Future<void>>.from(_inFlightSignals));
+    }
     for (final entry
         in List<MapEntry<String, _DirectHostPeerState>>.from(_peers.entries)) {
       await _removePeer(entry.key, entry.value);
