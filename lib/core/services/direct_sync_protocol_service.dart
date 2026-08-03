@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../../data/app_store.dart';
+import '../../models/sync_change.dart';
 import '../sync_unified/sync_contracts.dart';
 import '../sync_unified/sync_device_state.dart';
 import '../sync_unified/sync_transport_adapter.dart';
@@ -14,6 +15,8 @@ import 'sync_diagnostics_log.dart';
 /// Only sync commands are handled here. The signaling server never sees these
 /// frames because they are sent through the established data channel.
 class DirectHostSyncEndpoint {
+  static const int _maxChangePayloadBytes = 16 * 1024;
+
   DirectHostSyncEndpoint(this.store) : _core = UnifiedSyncCoreService(store);
 
   final AppStore store;
@@ -140,6 +143,7 @@ class DirectHostSyncEndpoint {
       store.exportSyncChangesJson(
         since: since,
         sinceSequence: sinceSequence,
+        maxEncodedPayloadBytes: _maxChangePayloadBytes,
       ),
     ) as Map<String, dynamic>;
     SyncDiagnosticsLog.add(
@@ -190,6 +194,8 @@ class DirectHostSyncEndpoint {
 }
 
 class DirectClientSyncService {
+  static const int _maxChangePayloadBytes = 16 * 1024;
+
   DirectClientSyncService(this.store, this.session)
       : _core = UnifiedSyncCoreService(store);
 
@@ -199,6 +205,7 @@ class DirectClientSyncService {
 
   Future<UnifiedSyncResult> pushPending() async {
     final pending = _core.pendingChangesForTarget(UnifiedSyncQueueTarget.host);
+    final batches = _splitIntoBatches(pending);
     final ids = _core.changeIds(pending);
     SyncDiagnosticsLog.add(
         '[SYNC_TRACE] client push prepare count=${pending.length} ids=${ids.take(20).join(',')}');
@@ -208,47 +215,61 @@ class DirectClientSyncService {
         message: 'No Direct changes to push.',
       );
     }
+    var pushed = 0;
+    var rejectedCount = 0;
     try {
-      await _core.markPushInProgress(ids);
-      SyncDiagnosticsLog.add(
-          '[SYNC_TRACE] client push markedInProgress count=${ids.length}');
-      final response = await session.sendRequest('direct_client_push', {
-        'deviceId': store.deviceId,
-        'deviceName': store.appIdentity.deviceName,
-        'sequence': SyncDeviceStateStore.lastAppliedSequenceForTransport(
-          store.appIdentity,
-          'direct',
-        ),
-        'changes': pending.map((item) => item.toJson()).toList(),
-      });
-      if (response['ok'] != true) {
-        throw StateError(
-            response['error']?.toString() ?? 'Direct push failed.');
-      }
-      final ackIds = (response['ackIds'] as List<dynamic>? ?? const [])
-          .map((item) => item.toString())
-          .toList();
-      final rejected = <String, String>{};
-      for (final item in response['rejected'] as List<dynamic>? ?? const []) {
-        if (item is Map && item['id'] != null) {
-          rejected[item['id'].toString()] =
-              item['reason']?.toString() ?? 'Rejected by Host.';
+      for (var index = 0; index < batches.length; index++) {
+        final batch = batches[index];
+        final batchIds = _core.changeIds(batch);
+        try {
+          await _core.markPushInProgress(batchIds);
+          SyncDiagnosticsLog.add(
+              '[SYNC_TRACE] client push batch=${index + 1}/${batches.length} count=${batch.length}');
+          final response = await session.sendRequest('direct_client_push', {
+            'deviceId': store.deviceId,
+            'deviceName': store.appIdentity.deviceName,
+            'sequence': SyncDeviceStateStore.lastAppliedSequenceForTransport(
+              store.appIdentity,
+              'direct',
+            ),
+            'changes': batch.map((item) => item.toJson()).toList(),
+          });
+          if (response['ok'] != true) {
+            throw StateError(
+                response['error']?.toString() ?? 'Direct push failed.');
+          }
+          final ackIds = (response['ackIds'] as List<dynamic>? ?? const [])
+              .map((item) => item.toString())
+              .toList();
+          final rejected = <String, String>{};
+          for (final item
+              in response['rejected'] as List<dynamic>? ?? const []) {
+            if (item is Map && item['id'] != null) {
+              rejected[item['id'].toString()] =
+                  item['reason']?.toString() ?? 'Rejected by Host.';
+            }
+          }
+          if (rejected.isNotEmpty) {
+            await _core.markPushRejected(rejected);
+          }
+          await _core.markPushAcknowledged(ackIds, fallbackIds: batchIds);
+          pushed += ackIds.length;
+          rejectedCount += rejected.length;
+        } catch (error) {
+          await _core.markPushFailed(batchIds, error.toString());
+          rethrow;
         }
       }
-      if (rejected.isNotEmpty) await _core.markPushRejected(rejected);
-      await _core.markPushAcknowledged(ackIds, fallbackIds: ids);
-      SyncDiagnosticsLog.add(
-          '[SYNC_TRACE] client push finalized acknowledged=${ackIds.length} rejected=${rejected.length}');
       return UnifiedSyncResultFactory.success(
         label: 'Direct',
-        pushed: ackIds.length,
+        pushed: pushed,
         pulled: 0,
         cursor: _cursor(),
-        message: 'Direct push completed.',
+        message:
+            'Direct push completed in ${batches.length} batch(es); rejected=$rejectedCount.',
       );
     } catch (error) {
       SyncDiagnosticsLog.add('[SYNC_TRACE] client push failed error=$error');
-      await _core.markPushFailed(ids, error.toString());
       return UnifiedSyncResult(
         ok: false,
         message: 'Direct push failed: $error',
@@ -264,67 +285,110 @@ class DirectClientSyncService {
     final state = SyncDeviceStateStore.load(store.appIdentity);
     SyncDiagnosticsLog.add(
         '[SYNC_TRACE] client pull prepare sinceSequence=${state.lastAppliedSequence} cursor=${state.lastAppliedHostCursor?.toIso8601String() ?? '-'}');
-    final response = await session.sendRequest('direct_client_pull', {
-      'deviceId': store.deviceId,
-      'since': state.lastAppliedHostCursor?.toIso8601String(),
-      'sinceSequence': state.lastAppliedSequence,
-    });
-    if (response['ok'] != true) {
-      return UnifiedSyncResult(
-        ok: false,
-        message: response['error']?.toString() ?? 'Direct pull failed.',
-        error: const UnifiedSyncError(
-          code: UnifiedSyncErrorCode.networkUnavailable,
-        ),
-        cursor: _cursor(),
+    var currentSequence = state.lastAppliedSequence;
+    var currentCursor = state.lastAppliedHostCursor;
+    var totalPulled = 0;
+    var batches = 0;
+    while (true) {
+      final response = await session.sendRequest('direct_client_pull', {
+        'deviceId': store.deviceId,
+        'since': currentCursor?.toIso8601String(),
+        'sinceSequence': currentSequence,
+      });
+      if (response['ok'] != true) {
+        return UnifiedSyncResult(
+          ok: false,
+          message: response['error']?.toString() ?? 'Direct pull failed.',
+          error: const UnifiedSyncError(
+            code: UnifiedSyncErrorCode.networkUnavailable,
+          ),
+          cursor: _cursor(),
+        );
+      }
+      if (response['needsSnapshot'] == true) {
+        SyncDiagnosticsLog.add(
+            '[SYNC_TRACE] client pull requiresSnapshot=true');
+        return rebuildFromHostSnapshot();
+      }
+      batches++;
+      final previousSequence = currentSequence;
+      final changes = _core.normalizePulledChanges(
+        response['changes'] as List<dynamic>? ?? const [],
       );
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] client pull batch=$batches received count=${changes.length}');
+      await _core.applyAuthoritativeChanges(changes);
+      final generatedAt = DateTime.tryParse(
+            response['generatedAt']?.toString() ?? '',
+          ) ??
+          DateTime.now().toUtc();
+      final generatedSequence = int.tryParse(
+            response['generatedSequence']?.toString() ?? '',
+          ) ??
+          currentSequence;
+      if (generatedSequence < previousSequence) {
+        throw StateError('Direct pull sequence moved backwards.');
+      }
+      currentCursor = generatedAt;
+      currentSequence = generatedSequence;
+      totalPulled += changes.length;
+      await _core.recordTransportSyncState(
+        store,
+        transport: 'direct',
+        cursor: generatedAt,
+        sequence: generatedSequence,
+      );
+      await session.sendRequest('direct_client_ack', {
+        'deviceId': store.deviceId,
+        'appliedCursor': generatedAt.toIso8601String(),
+        'ackCursor': generatedAt.toIso8601String(),
+        'appliedSequence': generatedSequence,
+        'ackSequence': generatedSequence,
+      });
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] client ack sent sequence=$generatedSequence batch=$batches');
+      if (response['hasMoreChanges'] != true) break;
+      if (changes.isEmpty || generatedSequence <= previousSequence) {
+        throw StateError(
+            'Direct pull did not advance while more changes exist.');
+      }
     }
-    if (response['needsSnapshot'] == true) {
-      SyncDiagnosticsLog.add('[SYNC_TRACE] client pull requiresSnapshot=true');
-      return rebuildFromHostSnapshot();
-    }
-    final changes = _core.normalizePulledChanges(
-      response['changes'] as List<dynamic>? ?? const [],
-    );
-    SyncDiagnosticsLog.add(
-        '[SYNC_TRACE] client pull received count=${changes.length}');
-    await _core.applyAuthoritativeChanges(changes);
-    SyncDiagnosticsLog.add(
-        '[SYNC_TRACE] client pull applied count=${changes.length}');
-    final generatedAt = DateTime.tryParse(
-          response['generatedAt']?.toString() ?? '',
-        ) ??
-        DateTime.now().toUtc();
-    final generatedSequence = int.tryParse(
-          response['generatedSequence']?.toString() ?? '',
-        ) ??
-        0;
-    await _core.recordTransportSyncState(
-      store,
-      transport: 'direct',
-      cursor: generatedAt,
-      sequence: generatedSequence,
-    );
-    await session.sendRequest('direct_client_ack', {
-      'deviceId': store.deviceId,
-      'appliedCursor': generatedAt.toIso8601String(),
-      'ackCursor': generatedAt.toIso8601String(),
-      'appliedSequence': generatedSequence,
-      'ackSequence': generatedSequence,
-    });
-    SyncDiagnosticsLog.add(
-        '[SYNC_TRACE] client ack sent sequence=$generatedSequence');
     return UnifiedSyncResultFactory.success(
       label: 'Direct',
       pushed: 0,
-      pulled: changes.length,
+      pulled: totalPulled,
       cursor: UnifiedCursorEnvelope(
-        value: generatedAt.toIso8601String(),
-        generatedAt: generatedAt,
+        value: currentCursor.toIso8601String(),
+        generatedAt: currentCursor,
         source: 'device',
       ),
-      message: 'Direct pull completed.',
+      message: 'Direct pull completed in $batches batch(es).',
     );
+  }
+
+  List<List<SyncChange>> _splitIntoBatches(List<SyncChange> changes) {
+    final batches = <List<SyncChange>>[];
+    var batch = <SyncChange>[];
+    var encodedBytes = utf8.encode('{"changes":[').length;
+    for (final change in changes) {
+      final changeBytes = utf8.encode(jsonEncode(change.toJson())).length;
+      final separatorBytes = batch.isEmpty ? 0 : 1;
+      if (batch.isNotEmpty &&
+          encodedBytes + separatorBytes + changeBytes + 2 >
+              _maxChangePayloadBytes) {
+        batches.add(batch);
+        batch = <SyncChange>[];
+        encodedBytes = utf8.encode('{"changes":[').length;
+      }
+      batch.add(change);
+      encodedBytes += (batch.length == 1 ? 0 : 1) + changeBytes;
+      if (encodedBytes + 2 > _maxChangePayloadBytes && batch.length == 1) {
+        throw StateError(
+            'A single Direct change exceeds the maximum message size.');
+      }
+    }
+    if (batch.isNotEmpty) batches.add(batch);
+    return batches;
   }
 
   Future<UnifiedSyncResult> rebuildFromHostSnapshot({

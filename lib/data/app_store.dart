@@ -15032,7 +15032,11 @@ class AppStore extends ChangeNotifier {
     }
   }
 
-  String exportSyncChangesJson({DateTime? since, int? sinceSequence}) {
+  String exportSyncChangesJson({
+    DateTime? since,
+    int? sinceSequence,
+    int? maxEncodedPayloadBytes,
+  }) {
     final sequenceFloor = sinceSequence ?? 0;
     final earliestSequence = _earliestStoredAuthoritativeSequence();
     final latestSequence = _latestStoredAuthoritativeSequence();
@@ -15061,7 +15065,7 @@ class AppStore extends ChangeNotifier {
                 latestSequence > 0 &&
                 sequenceFloor > latestSequence));
 
-    final changes = needsSnapshot
+    final allChanges = needsSnapshot
         ? <SyncChange>[]
         : (_syncChanges.where((item) {
             if (sequenceFloor > 0) return item.sequence > sequenceFloor;
@@ -15069,6 +15073,29 @@ class AppStore extends ChangeNotifier {
             return true;
           }).toList()
           ..sort((a, b) => a.sequence.compareTo(b.sequence)));
+    var changes = allChanges;
+    var hasMoreChanges = false;
+    final maxPayloadBytes = maxEncodedPayloadBytes ?? 0;
+    if (!needsSnapshot && maxPayloadBytes > 0 && allChanges.isNotEmpty) {
+      final limited = <SyncChange>[];
+      var encodedBytes = utf8.encode('{"changes":[').length;
+      for (final change in allChanges) {
+        final changeBytes = utf8.encode(jsonEncode(change.toJson())).length;
+        final separatorBytes = limited.isEmpty ? 0 : 1;
+        if (limited.isNotEmpty &&
+            encodedBytes + separatorBytes + changeBytes + 2 > maxPayloadBytes) {
+          hasMoreChanges = true;
+          break;
+        }
+        limited.add(change);
+        encodedBytes += separatorBytes + changeBytes;
+        if (encodedBytes + 2 > maxPayloadBytes) {
+          hasMoreChanges = limited.length < allChanges.length;
+          break;
+        }
+      }
+      changes = limited;
+    }
     final cursor = changes.isEmpty
         ? (since ?? DateTime.fromMillisecondsSinceEpoch(0))
         : changes
@@ -15094,6 +15121,7 @@ class AppStore extends ChangeNotifier {
       'restoreCommandId': currentHostRestoreCommandId(),
       'hostRestoreCommandId': currentHostRestoreCommandId(),
       'needsSnapshot': needsSnapshot,
+      'hasMoreChanges': hasMoreChanges,
       'changes': changes.map((item) => item.toJson()).toList(),
     });
   }

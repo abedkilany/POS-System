@@ -334,6 +334,12 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<UnifiedSyncResult> pushPending(UnifiedSyncPushRequest request) async {
+    if (store.appIdentity.isHost) {
+      return const UnifiedSyncResult(
+        ok: true,
+        message: 'Direct Host does not push as a Client.',
+      );
+    }
     try {
       final session = await _clientSession();
       return await DirectClientSyncService(store, session).pushPending();
@@ -352,6 +358,12 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<UnifiedSyncResult> pullChanges(UnifiedSyncPullRequest request) async {
+    if (store.appIdentity.isHost) {
+      return const UnifiedSyncResult(
+        ok: true,
+        message: 'Direct Host does not pull as a Client.',
+      );
+    }
     try {
       final session = await _clientSession();
       return await DirectClientSyncService(store, session).pullChanges();
@@ -372,6 +384,12 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
   Future<UnifiedSyncResult> rebuildFromHostSnapshot({
     void Function(double value, String label)? onProgress,
   }) async {
+    if (store.appIdentity.isHost) {
+      return const UnifiedSyncResult(
+        ok: true,
+        message: 'Direct Host already owns the authoritative snapshot.',
+      );
+    }
     try {
       final session = await _clientSession();
       return await DirectClientSyncService(store, session)
