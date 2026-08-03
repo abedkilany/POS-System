@@ -33,6 +33,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../repositories/business_repositories.dart';
 import '../repositories/inventory_reconciliation_repository.dart';
 import 'startup_timing_service.dart';
+import 'web_indexed_store.dart';
 import '../../models/sale_summary.dart';
 
 class LocalDatabaseService {
@@ -53,6 +54,8 @@ class LocalDatabaseService {
   static Map<String, String>? _memoryStoreForTesting;
   static Map<String, String>? _webStore;
   static SharedPreferences? _webPreferences;
+  static WebIndexedStore? _webIndexedStore;
+  static Future<void> _webIndexedWriteChain = Future<void>.value();
   static final Map<String, String> _sqliteMirror = <String, String>{};
   static Future<void>? _initializeInFlight;
   static final Map<String, String> _pendingScalarWrites = <String, String>{};
@@ -118,6 +121,8 @@ class LocalDatabaseService {
     _memoryStoreForTesting = null;
     _webStore = null;
     _webPreferences = null;
+    _webIndexedStore = null;
+    _webIndexedWriteChain = Future<void>.value();
     _sqliteReady = false;
     _sqliteMirror.clear();
     _pendingScalarWrites.clear();
@@ -159,18 +164,46 @@ class LocalDatabaseService {
             final prefs = await SharedPreferences.getInstance().timeout(
               const Duration(seconds: 5),
             );
-            _webPreferences = prefs;
-            _webStore = <String, String>{
+            final legacyStore = <String, String>{
               for (final key in prefs.getKeys())
                 if (prefs.getString(key) != null) key: prefs.getString(key)!,
             };
+            final indexedStore = WebIndexedStore();
+            await indexedStore.open();
+            final existingIndexedStore = await indexedStore.readAll();
+            _webIndexedStore = indexedStore;
+            _webPreferences = prefs;
+            _webStore = <String, String>{
+              ...legacyStore,
+              ...existingIndexedStore,
+            };
+
+            // Migrate the old localStorage-backed values once. IndexedDB wins
+            // when a key exists in both stores, so a partially completed
+            // migration can safely be resumed on the next launch.
+            for (final entry in legacyStore.entries) {
+              if (!existingIndexedStore.containsKey(entry.key)) {
+                await indexedStore.put(entry.key, entry.value);
+              }
+              await prefs.remove(entry.key);
+            }
           } catch (error, stackTrace) {
             debugPrint(
-              'Web storage bootstrap fell back to in-memory mode: $error',
+              'Web IndexedDB bootstrap fell back to SharedPreferences: $error',
             );
             debugPrint('$stackTrace');
-            _webPreferences = null;
-            _webStore = <String, String>{};
+            _webIndexedStore = null;
+            try {
+              final prefs = await SharedPreferences.getInstance();
+              _webPreferences = prefs;
+              _webStore = <String, String>{
+                for (final key in prefs.getKeys())
+                  if (prefs.getString(key) != null) key: prefs.getString(key)!,
+              };
+            } catch (_) {
+              _webPreferences = null;
+              _webStore = <String, String>{};
+            }
           }
           return;
         }
@@ -269,11 +302,29 @@ class LocalDatabaseService {
   static String? testingRawValue(String key) => _memoryStore?[key];
 
   static Future<void> _persistWebString(String key, String value) async {
+    final indexedStore = _webIndexedStore;
+    if (indexedStore != null) {
+      final write = _webIndexedWriteChain
+          .catchError((_) {})
+          .then((_) => indexedStore.put(key, value));
+      _webIndexedWriteChain = write.then<void>((_) {});
+      await write;
+      return;
+    }
     final prefs = _webPreferences;
     if (prefs != null) await prefs.setString(key, value);
   }
 
   static Future<void> _deleteWebString(String key) async {
+    final indexedStore = _webIndexedStore;
+    if (indexedStore != null) {
+      final write = _webIndexedWriteChain
+          .catchError((_) {})
+          .then((_) => indexedStore.delete(key));
+      _webIndexedWriteChain = write.then<void>((_) {});
+      await write;
+      return;
+    }
     final prefs = _webPreferences;
     if (prefs != null) await prefs.remove(key);
   }
