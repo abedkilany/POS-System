@@ -771,6 +771,8 @@ class DirectPeerHostManager {
 
   final Map<String, _DirectHostPeerState> _peers =
       <String, _DirectHostPeerState>{};
+  final Map<String, List<Object?>> _pendingCandidatesByDevice =
+      <String, List<Object?>>{};
   final Set<Future<void>> _inFlightSignals = <Future<void>>{};
   DirectPeerSignalingSession? _signaling;
   StreamSubscription<Map<String, dynamic>>? _subscription;
@@ -809,12 +811,25 @@ class DirectPeerHostManager {
 
   Future<void> _handleSignal(Map<String, dynamic> signal) async {
     if (_closed) return;
+    final targetDeviceId = signal['targetDeviceId']?.toString().trim() ?? '';
+    final hostDeviceId = store.deviceId.trim();
+    // The coordination service may deliver a signal to every WebSocket
+    // session belonging to the pairing. A Host must process only signals
+    // addressed to this Host; otherwise echoed offers or another session's
+    // traffic can create a peer for the wrong device.
+    if (targetDeviceId.isNotEmpty &&
+        hostDeviceId.isNotEmpty &&
+        targetDeviceId != hostDeviceId) {
+      return;
+    }
     final deviceId = signal['sourceDeviceId']?.toString().trim() ?? '';
-    if (deviceId.isEmpty) return;
+    if (deviceId.isEmpty || deviceId == hostDeviceId) return;
     final kind = signal['kind']?.toString() ?? '';
     var peer = _peers[deviceId];
     try {
       if (kind == 'offer') {
+        final pendingCandidates =
+            _pendingCandidatesByDevice.remove(deviceId) ?? <Object?>[];
         if (peer != null) {
           SyncDiagnosticsLog.add(
               '[DIRECT_WEBRTC] replacing stale Host peer device=$deviceId');
@@ -822,9 +837,26 @@ class DirectPeerHostManager {
         }
         peer = await _createPeer(deviceId);
         _peers[deviceId] = peer;
+        // Candidates can arrive before the offer over the signaling socket.
+        // Replay them into the per-client peer; the peer state queues them
+        // until its remote description is installed.
+        for (final candidate in pendingCandidates) {
+          await peer.handleCandidate(candidate);
+        }
       }
       final currentPeer = peer;
-      if (currentPeer == null) return;
+      if (currentPeer == null) {
+        if (kind == 'candidate') {
+          final pending = _pendingCandidatesByDevice.putIfAbsent(
+              deviceId, () => <Object?>[]);
+          if (pending.length < 64) {
+            pending.add(signal['candidate']);
+          }
+          SyncDiagnosticsLog.add(
+              '[DIRECT_ICE] host candidate queued before offer device=$deviceId count=${pending.length}');
+        }
+        return;
+      }
       if (kind == 'offer') {
         await currentPeer.handleOffer(signal);
       } else if (kind == 'candidate') {
@@ -867,6 +899,7 @@ class DirectPeerHostManager {
 
   Future<void> _removePeer(String deviceId, _DirectHostPeerState peer) async {
     if (identical(_peers[deviceId], peer)) _peers.remove(deviceId);
+    _pendingCandidatesByDevice.remove(deviceId);
     await peer.close();
   }
 
@@ -883,6 +916,7 @@ class DirectPeerHostManager {
       await _removePeer(entry.key, entry.value);
     }
     _peers.clear();
+    _pendingCandidatesByDevice.clear();
     await _signaling?.close();
     _signaling = null;
   }
