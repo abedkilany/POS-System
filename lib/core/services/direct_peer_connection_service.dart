@@ -16,6 +16,8 @@ import 'sync_diagnostics_log.dart';
 /// Application sync frames are sent through the WebRTC data channel after it
 /// becomes connected.
 class DirectPeerConnection implements SecurePeerSession {
+  static const int _maxDataChannelPayloadBytes = 6000;
+
   DirectPeerConnection({
     required this.peerConnection,
     required this.signaling,
@@ -33,6 +35,10 @@ class DirectPeerConnection implements SecurePeerSession {
   final StreamController<Map<String, dynamic>> _messages =
       StreamController<Map<String, dynamic>>.broadcast();
   StreamSubscription<Map<String, dynamic>>? _signalSubscription;
+  final Map<String, List<String?>> _incomingFragments =
+      <String, List<String?>>{};
+  Future<void> _sendTail = Future<void>.value();
+  int _fragmentCounter = 0;
   bool _closed = false;
 
   @override
@@ -43,18 +49,53 @@ class DirectPeerConnection implements SecurePeerSession {
 
   @override
   Future<void> send(String type, Map<String, dynamic> payload) async {
-    final channel = dataChannel;
-    if (channel == null ||
-        channel.state != RTCDataChannelState.RTCDataChannelOpen) {
-      throw StateError('Direct data channel is not open.');
+    final operation = Completer<void>();
+    final previous = _sendTail;
+    _sendTail = operation.future;
+    try {
+      await previous;
+      final channel = dataChannel;
+      if (channel == null ||
+          channel.state != RTCDataChannelState.RTCDataChannelOpen) {
+        throw StateError('Direct data channel is not open.');
+      }
+      if (type.startsWith('direct_handshake_')) {
+        SyncDiagnosticsLog.add('[DIRECT_HANDSHAKE] send type=$type');
+      }
+      final encoded = utf8.encode(jsonEncode({
+        'type': type,
+        ...payload,
+      }));
+      if (encoded.length <= _maxDataChannelPayloadBytes) {
+        await channel.send(RTCDataChannelMessage(utf8.decode(encoded)));
+        return;
+      }
+
+      _fragmentCounter++;
+      final fragmentId =
+          'fragment-${DateTime.now().microsecondsSinceEpoch}-$_fragmentCounter';
+      final total = (encoded.length + _maxDataChannelPayloadBytes - 1) ~/
+          _maxDataChannelPayloadBytes;
+      SyncDiagnosticsLog.add(
+          '[DIRECT_DATA] send fragmented type=$type bytes=${encoded.length} fragments=$total');
+      for (var index = 0; index < total; index++) {
+        final start = index * _maxDataChannelPayloadBytes;
+        final end = (start + _maxDataChannelPayloadBytes).clamp(
+          0,
+          encoded.length,
+        );
+        final fragment = <String, dynamic>{
+          'type': 'direct_fragment',
+          'fragmentId': fragmentId,
+          'index': index,
+          'total': total,
+          'data': base64Encode(encoded.sublist(start, end)),
+        };
+        await channel.send(RTCDataChannelMessage(jsonEncode(fragment)));
+      }
+    } finally {
+      operation.complete();
     }
-    if (type.startsWith('direct_handshake_')) {
-      SyncDiagnosticsLog.add('[DIRECT_HANDSHAKE] send type=$type');
-    }
-    await channel.send(RTCDataChannelMessage(jsonEncode({
-      'type': type,
-      ...payload,
-    })));
   }
 
   void _bindDataChannel(RTCDataChannel channel) {
@@ -65,6 +106,10 @@ class DirectPeerConnection implements SecurePeerSession {
         final decoded = jsonDecode(message.text);
         if (decoded is Map) {
           final packet = Map<String, dynamic>.from(decoded);
+          if (packet['type']?.toString() == 'direct_fragment') {
+            _handleIncomingFragment(packet);
+            return;
+          }
           final type = packet['type']?.toString() ?? '-';
           if (type.startsWith('direct_handshake_')) {
             SyncDiagnosticsLog.add('[DIRECT_HANDSHAKE] received type=$type');
@@ -77,6 +122,49 @@ class DirectPeerConnection implements SecurePeerSession {
         // request after decoding and never trusts arbitrary payloads.
       }
     };
+  }
+
+  void _handleIncomingFragment(Map<String, dynamic> fragment) {
+    final id = fragment['fragmentId']?.toString() ?? '';
+    final index = int.tryParse(fragment['index']?.toString() ?? '') ?? -1;
+    final total = int.tryParse(fragment['total']?.toString() ?? '') ?? 0;
+    final data = fragment['data']?.toString() ?? '';
+    if (id.isEmpty ||
+        index < 0 ||
+        total < 1 ||
+        index >= total ||
+        data.isEmpty) {
+      return;
+    }
+    final parts = _incomingFragments.putIfAbsent(
+      id,
+      () => List<String?>.filled(total, null),
+    );
+    if (parts.length != total) {
+      _incomingFragments.remove(id);
+      return;
+    }
+    parts[index] = data;
+    if (parts.any((part) => part == null)) return;
+    _incomingFragments.remove(id);
+    try {
+      final bytes = <int>[];
+      for (final part in parts) {
+        bytes.addAll(base64Decode(part!));
+      }
+      final decoded = jsonDecode(utf8.decode(bytes));
+      if (decoded is Map) {
+        final packet = Map<String, dynamic>.from(decoded);
+        final type = packet['type']?.toString() ?? '-';
+        if (type.startsWith('direct_handshake_')) {
+          SyncDiagnosticsLog.add('[DIRECT_HANDSHAKE] received type=$type');
+        }
+        _messages.add(packet);
+      }
+    } catch (error) {
+      SyncDiagnosticsLog.add(
+          '[DIRECT_DATA] invalid fragmented frame error=$error');
+    }
   }
 
   void attachSignalSubscription(
