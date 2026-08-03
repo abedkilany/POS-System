@@ -10,18 +10,36 @@ import 'unified_sync_core_service.dart';
 import 'direct_peer_protocol.dart';
 import 'sync_diagnostics_log.dart';
 
+class _DirectPullJob {
+  _DirectPullJob({
+    required this.id,
+    required this.chunks,
+    required this.generatedAt,
+    required this.generatedSequence,
+    required this.hasMoreChanges,
+  });
+
+  final String id;
+  final List<List<dynamic>> chunks;
+  final String generatedAt;
+  final int generatedSequence;
+  final bool hasMoreChanges;
+}
+
 /// Implements the Host-side Direct request protocol.
 ///
 /// Only sync commands are handled here. The signaling server never sees these
 /// frames because they are sent through the established data channel.
 class DirectHostSyncEndpoint {
   static const int _maxChangePayloadBytes = 16 * 1024;
+  static const int _maxPullChunkBytes = 8 * 1024;
 
   DirectHostSyncEndpoint(this.store) : _core = UnifiedSyncCoreService(store);
 
   final AppStore store;
   final UnifiedSyncCoreService _core;
   List<Map<String, dynamic>>? _snapshotChunks;
+  final Map<String, _DirectPullJob> _pullJobs = <String, _DirectPullJob>{};
 
   Future<Map<String, dynamic>> handleRequest(
     String requestKind,
@@ -34,6 +52,8 @@ class DirectHostSyncEndpoint {
         return _handlePush(payload);
       case 'direct_client_pull':
         return _handlePull(payload);
+      case 'direct_client_pull_chunk':
+        return _handlePullChunk(payload);
       case 'direct_client_ack':
         return _handleAck(payload);
       case 'direct_client_snapshot_manifest':
@@ -146,12 +166,82 @@ class DirectHostSyncEndpoint {
         maxEncodedPayloadBytes: _maxChangePayloadBytes,
       ),
     ) as Map<String, dynamic>;
+    final changes = decoded['changes'] as List<dynamic>? ?? const <dynamic>[];
+    final chunks = _splitPullChunks(changes);
+    final pullId =
+        'pull-${DateTime.now().microsecondsSinceEpoch}-${_pullJobs.length}';
+    final job = _DirectPullJob(
+      id: pullId,
+      chunks: chunks,
+      generatedAt: decoded['generatedAt']?.toString() ?? '',
+      generatedSequence:
+          int.tryParse(decoded['generatedSequence']?.toString() ?? '') ?? 0,
+      hasMoreChanges: decoded['hasMoreChanges'] == true,
+    );
+    if (chunks.length > 1) {
+      _pullJobs[pullId] = job;
+      while (_pullJobs.length > 64) {
+        _pullJobs.remove(_pullJobs.keys.first);
+      }
+    }
     SyncDiagnosticsLog.add(
-        '[SYNC_TRACE] host pull response changes=${(decoded['changes'] as List?)?.length ?? 0} generatedSequence=${decoded['generatedSequence'] ?? 0}');
+        '[SYNC_TRACE] host pull response changes=${changes.length} chunks=${chunks.length} generatedSequence=${decoded['generatedSequence'] ?? 0}');
     return {
-      ...decoded,
+      'pullChunked': true,
+      'pullId': pullId,
+      'chunkIndex': 0,
+      'totalChunks': chunks.length,
+      'changes': chunks.first,
+      'generatedAt': job.generatedAt,
+      'generatedSequence': job.generatedSequence,
+      'hasMoreChanges': job.hasMoreChanges,
       'needsSnapshot': false,
     };
+  }
+
+  Future<Map<String, dynamic>> _handlePullChunk(
+    Map<String, dynamic> payload,
+  ) async {
+    final pullId = payload['pullId']?.toString().trim() ?? '';
+    final index = int.tryParse(payload['chunkIndex']?.toString() ?? '') ?? -1;
+    final job = _pullJobs[pullId];
+    if (job == null) {
+      throw StateError('Direct pull job is no longer available.');
+    }
+    if (index < 0 || index >= job.chunks.length) {
+      throw StateError('Invalid Direct pull chunk index: $index.');
+    }
+    if (index == job.chunks.length - 1) {
+      _pullJobs.remove(pullId);
+    }
+    return {
+      'pullChunked': true,
+      'pullId': pullId,
+      'chunkIndex': index,
+      'totalChunks': job.chunks.length,
+      'changes': job.chunks[index],
+    };
+  }
+
+  List<List<dynamic>> _splitPullChunks(List<dynamic> changes) {
+    final chunks = <List<dynamic>>[];
+    var chunk = <dynamic>[];
+    var encodedBytes = utf8.encode('{"changes":[').length;
+    for (final change in changes) {
+      final changeBytes = utf8.encode(jsonEncode(change)).length;
+      final separatorBytes = chunk.isEmpty ? 0 : 1;
+      if (chunk.isNotEmpty &&
+          encodedBytes + separatorBytes + changeBytes + 2 >
+              _maxPullChunkBytes) {
+        chunks.add(chunk);
+        chunk = <dynamic>[];
+        encodedBytes = utf8.encode('{"changes":[').length;
+      }
+      chunk.add(change);
+      encodedBytes += (chunk.length == 1 ? 0 : 1) + changeBytes;
+    }
+    if (chunk.isNotEmpty || chunks.isEmpty) chunks.add(chunk);
+    return chunks;
   }
 
   Future<Map<String, dynamic>> _handleAck(Map<String, dynamic> payload) async {
@@ -310,20 +400,21 @@ class DirectClientSyncService {
             '[SYNC_TRACE] client pull requiresSnapshot=true');
         return rebuildFromHostSnapshot();
       }
+      final pullResponse = await _collectPullChunks(response);
       batches++;
       final previousSequence = currentSequence;
       final changes = _core.normalizePulledChanges(
-        response['changes'] as List<dynamic>? ?? const [],
+        pullResponse['changes'] as List<dynamic>? ?? const [],
       );
       SyncDiagnosticsLog.add(
           '[SYNC_TRACE] client pull batch=$batches received count=${changes.length}');
       await _core.applyAuthoritativeChanges(changes);
       final generatedAt = DateTime.tryParse(
-            response['generatedAt']?.toString() ?? '',
+            pullResponse['generatedAt']?.toString() ?? '',
           ) ??
           DateTime.now().toUtc();
       final generatedSequence = int.tryParse(
-            response['generatedSequence']?.toString() ?? '',
+            pullResponse['generatedSequence']?.toString() ?? '',
           ) ??
           currentSequence;
       if (generatedSequence < previousSequence) {
@@ -347,7 +438,7 @@ class DirectClientSyncService {
       });
       SyncDiagnosticsLog.add(
           '[SYNC_TRACE] client ack sent sequence=$generatedSequence batch=$batches');
-      if (response['hasMoreChanges'] != true) break;
+      if (pullResponse['hasMoreChanges'] != true) break;
       if (changes.isEmpty || generatedSequence <= previousSequence) {
         throw StateError(
             'Direct pull did not advance while more changes exist.');
@@ -364,6 +455,39 @@ class DirectClientSyncService {
       ),
       message: 'Direct pull completed in $batches batch(es).',
     );
+  }
+
+  Future<Map<String, dynamic>> _collectPullChunks(
+    Map<String, dynamic> response,
+  ) async {
+    if (response['pullChunked'] != true) return response;
+    final pullId = response['pullId']?.toString().trim() ?? '';
+    final totalChunks =
+        int.tryParse(response['totalChunks']?.toString() ?? '') ?? 1;
+    if (pullId.isEmpty || totalChunks < 1) {
+      throw StateError('Invalid Direct pull chunk manifest.');
+    }
+    final changes = <dynamic>[
+      ...(response['changes'] as List<dynamic>? ?? const <dynamic>[]),
+    ];
+    for (var index = 1; index < totalChunks; index++) {
+      final chunk = await session.sendRequest('direct_client_pull_chunk', {
+        'deviceId': store.deviceId,
+        'pullId': pullId,
+        'chunkIndex': index,
+      });
+      if (chunk['ok'] != true || chunk['pullId']?.toString() != pullId) {
+        throw StateError(
+            chunk['error']?.toString() ?? 'Direct pull chunk failed.');
+      }
+      final returnedIndex =
+          int.tryParse(chunk['chunkIndex']?.toString() ?? '') ?? -1;
+      if (returnedIndex != index) {
+        throw StateError('Direct pull chunks arrived out of order.');
+      }
+      changes.addAll(chunk['changes'] as List<dynamic>? ?? const <dynamic>[]);
+    }
+    return <String, dynamic>{...response, 'changes': changes};
   }
 
   List<List<SyncChange>> _splitIntoBatches(List<SyncChange> changes) {
