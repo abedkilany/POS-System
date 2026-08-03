@@ -100,6 +100,9 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       _settings.copyWith(apiBaseUrl: _apiBaseUrl);
 
   Future<DirectPeerRequestSession> _clientSession() async {
+    if (store.appIdentity.isHost) {
+      throw StateError('Direct Host cannot open a Client session.');
+    }
     final existing = _session;
     if (existing != null) return existing;
     final pending = _sessionFuture;
@@ -115,6 +118,9 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
 
   Future<DirectPeerRequestSession> _openClientSession() async {
     _attachStoreListener();
+    if (store.appIdentity.isHost) {
+      throw StateError('Direct Host cannot open a Client session.');
+    }
     if (_usesPersistedSettings) _settings = DirectSyncSettings.load();
     if (!_settings.isConfigured) {
       throw StateError('Direct pairing is not configured.');
@@ -201,6 +207,14 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
 
   @override
   Future<UnifiedSyncResult> testConnection() async {
+    if (store.appIdentity.isHost) {
+      _startHostListener();
+      return UnifiedSyncResult(
+        ok: true,
+        message: 'Direct Host is ready for peer connections.',
+        cursor: _cursor(),
+      );
+    }
     try {
       await _clientSession();
       return UnifiedSyncResult(
