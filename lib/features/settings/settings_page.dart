@@ -4148,7 +4148,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         settings: settings ?? LanSyncSettings.load(),
       );
 
-  DirectControlPlaneService _controlPlaneService() => DirectControlPlaneService(widget.store);
+  DirectControlPlaneService _controlPlaneService() =>
+      DirectControlPlaneService(widget.store);
 
   Future<void> _refreshHostIpAddresses() async {
     if (_detectingHostIp) return;
@@ -4280,7 +4281,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     _latestDirectPairingInvalid = false;
     _showDirectPairingCode = false;
     unawaited(LocalDatabaseService.deleteString(_directPairingCodeStorageKey));
-    unawaited(LocalDatabaseService.deleteString(_directPairingExpiryStorageKey));
+    unawaited(
+        LocalDatabaseService.deleteString(_directPairingExpiryStorageKey));
   }
 
   String _countdownText(DateTime? expiresAt) {
@@ -4317,7 +4319,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     if (code.isEmpty || !widget.store.appIdentity.isHost) return;
     final settings = _directSettings(enabled: true);
     if (!settings.isConfigured) return;
-    final result = await _controlPlaneService().pairingCodeStatus(settings, code);
+    final result =
+        await _controlPlaneService().pairingCodeStatus(settings, code);
     if (!mounted || !result.ok) return;
     if (result.status == 'consumed') {
       await _adoptConsumedDirectPairingDevice(result);
@@ -4421,8 +4424,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         if (confirmed != true) return;
         final direct = _directSettings(enabled: true);
         if (direct.isConfigured) {
-          final directResult =
-              await _controlPlaneService().approveHostTransfer(direct, deviceId);
+          final directResult = await _controlPlaneService()
+              .approveHostTransfer(direct, deviceId);
           if (!directResult.ok) {
             throw StateError(localizeRuntimeMessage(directResult.message, tr));
           }
@@ -4761,7 +4764,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         final hostLanEnabled = identity.isHost &&
             (_lanEnabledForHost || (lan.setupComplete && lan.isHost));
         final hostDirectEnabled = identity.isHost &&
-            (_directEnabled || (identity.isDirectEnabled && direct.isConfigured));
+            (_directEnabled ||
+                (identity.isDirectEnabled && direct.isConfigured));
         final messages = <String>[];
         if (identity.activeSyncTransportNormalized == 'direct') {
           final result =
@@ -4874,7 +4878,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         var controlPlaneReachable = false;
         var directProblem = '';
         var directDevices = const <DirectDeviceStatus>[];
-        if ((_directEnabled || identity.isDirectEnabled) && direct.isConfigured) {
+        if ((_directEnabled || identity.isDirectEnabled) &&
+            direct.isConfigured) {
           final directConnection =
               await _directEngine(enabled: true).testConnection();
           controlPlaneReachable = directConnection.ok;
@@ -5074,8 +5079,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                   return thisDevice;
                 }
 
-                final addDevice =
-                    _addDeviceCard(context, isHost: true, isDirectClient: false);
+                final addDevice = _addDeviceCard(context,
+                    isHost: true, isDirectClient: false);
                 if (compact) {
                   return Column(children: [
                     thisDevice,
@@ -5095,7 +5100,9 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
             ),
             const SizedBox(height: 14),
             _syncChannelsCard(context,
-                isHost: isHost, lanActive: lanActive, directActive: directActive),
+                isHost: isHost,
+                lanActive: lanActive,
+                directActive: directActive),
             if (isHost) ...[
               const SizedBox(height: 14),
               _advancedSyncCard(context, isHost: isHost),
@@ -5682,7 +5689,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         children: [
           if (!isHost) ...[
             _activeTransportSelector(context,
-                lanConfigured: lanConfigured, directConfigured: directConfigured),
+                lanConfigured: lanConfigured,
+                directConfigured: directConfigured),
             const SizedBox(height: 12),
           ],
           _syncMethodExpansionTile(
@@ -6820,8 +6828,11 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                   'storeId': widget.store.appIdentity.storeId,
                   'branchId': widget.store.appIdentity.branchId,
                   'hostDeviceId': widget.store.deviceId,
-                  if (widget.store.appIdentity.controlPlaneTenantId.trim().isNotEmpty)
-                    'controlPlaneTenantId': widget.store.appIdentity.controlPlaneTenantId,
+                  if (widget.store.appIdentity.controlPlaneTenantId
+                      .trim()
+                      .isNotEmpty)
+                    'controlPlaneTenantId':
+                        widget.store.appIdentity.controlPlaneTenantId,
                   'expiresAt': _latestDirectPairingExpiresAt?.toIso8601String(),
                 }),
                 version: QrVersions.auto,
@@ -6912,7 +6923,8 @@ class _AdvancedSyncDebugCard extends StatefulWidget {
 class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
   Future<_DirectMonitoringSnapshot>? _directMonitoringFuture;
 
-  DirectControlPlaneService _controlPlaneService() => DirectControlPlaneService(widget.store);
+  DirectControlPlaneService _controlPlaneService() =>
+      DirectControlPlaneService(widget.store);
 
   @override
   void initState() {
@@ -7034,8 +7046,9 @@ class _AdvancedSyncDebugCardState extends State<_AdvancedSyncDebugCard> {
       if (before != null) {
         final registry = <String, HostRegistryDevice>{...settings.hostRegistry};
         final updated = before.copyWith(
-          deviceName:
-              directDeviceName.isNotEmpty ? directDeviceName : before.deviceName,
+          deviceName: directDeviceName.isNotEmpty
+              ? directDeviceName
+              : before.deviceName,
           lastSeenAt: device.lastSeenAt ?? before.lastSeenAt,
         );
         registry[clientDeviceId] = updated;
@@ -7596,10 +7609,6 @@ class _HostStatusMonitoringCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final lastAckSequence = <int>[
-      for (final peer in peerStates.values) peer.lastAckSequence,
-      for (final device in directDevices) device.lastAckSequence,
-    ].fold<int>(0, (latest, value) => value > latest ? value : latest);
     final identity = store.appIdentity;
     final activeTransport = identity.activeSyncTransportNormalized;
     final lanReady = activeTransport == 'lan' &&
@@ -7650,7 +7659,9 @@ class _HostStatusMonitoringCard extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           _Line(title: tr.text('device_id'), value: identity.deviceId),
-          _Line(title: tr.text('last_ack_sequence'), value: '$lastAckSequence'),
+          _Line(
+              title: tr.text('host_sequence'),
+              value: '${store.latestStoredAuthoritativeSequence}'),
         ],
       ),
     );
@@ -9195,7 +9206,8 @@ class _SystemIdentityCard extends StatefulWidget {
 }
 
 class _SystemIdentityCardState extends State<_SystemIdentityCard> {
-  DirectControlPlaneService _controlPlaneService() => DirectControlPlaneService(widget.store);
+  DirectControlPlaneService _controlPlaneService() =>
+      DirectControlPlaneService(widget.store);
 
   Future<void> _editDeviceName() async {
     final tr = AppLocalizations.of(context);
@@ -9318,8 +9330,12 @@ class _SystemIdentityCardState extends State<_SystemIdentityCard> {
               identity.isHost
                   ? tr.text('host_lan_direct_controlled')
                   : identity.syncMode.name),
-          _InfoGridItem(Icons.sync, tr.text('direct_tenant'),
-              identity.controlPlaneTenantId.isEmpty ? '—' : identity.controlPlaneTenantId),
+          _InfoGridItem(
+              Icons.sync,
+              tr.text('direct_tenant'),
+              identity.controlPlaneTenantId.isEmpty
+                  ? '—'
+                  : identity.controlPlaneTenantId),
         ],
       ),
     );

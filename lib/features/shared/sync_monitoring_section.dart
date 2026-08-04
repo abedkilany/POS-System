@@ -26,7 +26,8 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
   Future<_DirectMonitoringSnapshot>? _directMonitoringFuture;
 
   AppStore get store => widget.store;
-  DirectControlPlaneService get _controlPlaneService => DirectControlPlaneService(store);
+  DirectControlPlaneService get _controlPlaneService =>
+      DirectControlPlaneService(store);
 
   @override
   void initState() {
@@ -62,8 +63,8 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
     final service = _controlPlaneService;
     var result = await service.listDevicesWithLimit(controlPlaneSettings);
     var devices = result.devices;
-    final repaired =
-        await _repairLegacyDirectDeviceLinks(service, controlPlaneSettings, devices);
+    final repaired = await _repairLegacyDirectDeviceLinks(
+        service, controlPlaneSettings, devices);
     if (repaired) {
       result = await service.listDevicesWithLimit(controlPlaneSettings);
       devices = result.devices;
@@ -284,7 +285,8 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
     await _permanentlyDeleteDeviceRecord(deviceId);
     final controlPlaneSettings = VpsControlPlaneSettings.load();
     if (controlPlaneSettings.isConfigured) {
-      await _controlPlaneService.deleteDeviceRecord(controlPlaneSettings, deviceId);
+      await _controlPlaneService.deleteDeviceRecord(
+          controlPlaneSettings, deviceId);
     }
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -1031,9 +1033,7 @@ DataRow _hostPeerRow(
       DataCell(Text(_deviceLabel(context, deviceId,
           registryDevice: registryDevice, peerDevice: peerDevice))),
       DataCell(Text(_activeTransportForHostPeer(context,
-          lanAuthorized: lanAuthorized,
-          peerDevice: peerDevice,
-          state: state))),
+          lanAuthorized: lanAuthorized, peerDevice: peerDevice, state: state))),
       DataCell(_StatusChip(
           label: connection.label,
           color: connection.color,
@@ -1083,10 +1083,6 @@ class _HostStatusMonitoringCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final lastAckSequence = <int>[
-      for (final peer in peerStates.values) peer.lastAckSequence,
-      for (final device in peerDevices) device.lastAckSequence,
-    ].fold<int>(0, (latest, value) => value > latest ? value : latest);
     final identity = store.appIdentity;
     final activeTransport = identity.activeSyncTransportNormalized;
     final lanReady = activeTransport == 'lan' &&
@@ -1137,7 +1133,9 @@ class _HostStatusMonitoringCard extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           _Line(title: tr.text('device_id'), value: identity.deviceId),
-          _Line(title: tr.text('last_ack_sequence'), value: '$lastAckSequence'),
+          _Line(
+              title: tr.text('host_sequence'),
+              value: '${store.latestStoredAuthoritativeSequence}'),
         ],
       ),
     );
@@ -1303,7 +1301,9 @@ class _ClientSyncMonitoringPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     final connection = _connectionStatusForClient(context,
-        state: state, lanSettings: lanSettings, controlPlaneSettings: controlPlaneSettings);
+        state: state,
+        lanSettings: lanSettings,
+        controlPlaneSettings: controlPlaneSettings);
     final status = _syncStatusForClient(context, state,
         pendingCount: store.activeClientPendingSyncCount);
     return Column(

@@ -1038,6 +1038,7 @@
   "language_arabic": "Arabic",
   "language_english": "English",
   "last_ack_sequence": "Last ACK sequence",
+  "host_sequence": "Host sequence",
   "last_base": "Last/base",
   "last_check": "Last check",
   "last_checked_at": "Last checked: {time}",

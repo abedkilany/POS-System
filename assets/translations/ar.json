@@ -1078,6 +1078,7 @@
   "language_arabic": "العربية",
   "language_english": "الإنجليزية",
   "last_ack_sequence": "آخر تسلسل ACK",
+  "host_sequence": "تسلسل Host",
   "last_base": "آخر سعر/الأساس",
   "last_check": "آخر فحص",
   "last_checked_at": "آخر فحص: {time}",
