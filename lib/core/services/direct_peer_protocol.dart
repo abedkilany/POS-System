@@ -46,6 +46,8 @@ class DirectPeerRequestSession {
       return;
     }
     final id = message['requestId']?.toString().trim() ?? '';
+    SyncDiagnosticsLog.add(
+        '[DIRECT_RX] response received requestId=$id matched=${_pending.containsKey(id)} ok=${message['ok'] == true} pending=${_pending.length}');
     final completer = _pending.remove(id);
     if (completer != null && !completer.isCompleted) {
       completer.complete(message);
@@ -55,6 +57,8 @@ class DirectPeerRequestSession {
   void _handleConnectionClosed() {
     if (_closed) return;
     _closed = true;
+    SyncDiagnosticsLog.add(
+        '[DIRECT_RX] request session closed pending=${_pending.length}');
     for (final completer in _pending.values) {
       if (!completer.isCompleted) {
         completer.completeError(StateError('Direct peer connection closed.'));

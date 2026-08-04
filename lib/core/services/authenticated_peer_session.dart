@@ -77,6 +77,7 @@ class AuthenticatedPeerSession implements SecurePeerSession {
 
   void _handleMessage(Map<String, dynamic> message) {
     if (_closed || message['type']?.toString() != 'secure_frame') return;
+    final receivedAt = DateTime.now().toUtc().toIso8601String();
     try {
       _ensureUsable();
       final frame = Map<String, dynamic>.from(message)
@@ -85,22 +86,41 @@ class AuthenticatedPeerSession implements SecurePeerSession {
       final sequence = int.tryParse(frame['sequence']?.toString() ?? '');
       final messageType = frame['messageType']?.toString().trim() ?? '';
       final payload = frame['payload'];
-      if (frame['version'] != _version ||
-          frame['sessionId']?.toString() != sessionId ||
-          frame['expiresAtMs'] != expiresAt.millisecondsSinceEpoch ||
-          sequence == null ||
-          sequence <= _lastReceivedSequence ||
-          messageType.isEmpty ||
-          payload is! Map ||
-          !_constantTimeEquals(message['mac']?.toString() ?? '', _mac(frame))) {
+      final rejectionReasons = <String>[];
+      if (frame['version'] != _version) rejectionReasons.add('version');
+      if (frame['sessionId']?.toString() != sessionId) {
+        rejectionReasons.add('session');
+      }
+      if (frame['expiresAtMs'] != expiresAt.millisecondsSinceEpoch) {
+        rejectionReasons.add('expiry');
+      }
+      if (sequence == null) {
+        rejectionReasons.add('sequence_missing');
+      } else if (sequence <= _lastReceivedSequence) {
+        rejectionReasons.add('sequence_replay');
+      }
+      if (messageType.isEmpty) rejectionReasons.add('message_type');
+      if (payload is! Map) rejectionReasons.add('payload');
+      if (!_constantTimeEquals(message['mac']?.toString() ?? '', _mac(frame))) {
+        rejectionReasons.add('mac');
+      }
+      if (rejectionReasons.isNotEmpty) {
+        SyncDiagnosticsLog.add(
+            '[DIRECT_RX] secure rejected at=$receivedAt frameSequence=${sequence ?? '-'} lastReceived=$_lastReceivedSequence messageType=${messageType.isEmpty ? '-' : messageType} reasons=${rejectionReasons.join(',')}');
         return;
       }
-      _lastReceivedSequence = sequence;
+      final acceptedSequence = sequence;
+      if (acceptedSequence == null) return;
+      _lastReceivedSequence = acceptedSequence;
+      SyncDiagnosticsLog.add(
+          '[DIRECT_RX] secure accepted at=$receivedAt frameSequence=$acceptedSequence messageType=$messageType');
       _messages.add({
         'type': messageType,
         ...Map<String, dynamic>.from(payload),
       });
-    } catch (_) {
+    } catch (error) {
+      SyncDiagnosticsLog.add(
+          '[DIRECT_RX] secure processing error at=$receivedAt error=$error');
       // Invalid, expired, or replayed frames are deliberately discarded.
     }
   }

@@ -119,6 +119,11 @@ class DirectPeerConnection implements SecurePeerSession {
         final decoded = jsonDecode(message.text);
         if (decoded is Map) {
           final packet = Map<String, dynamic>.from(decoded);
+          final packetType = packet['type']?.toString() ?? '-';
+          if (packetType == 'secure_frame') {
+            SyncDiagnosticsLog.add(
+                '[DIRECT_RX] raw frame received type=$packetType bytes=${message.text.length} channelState=${channel.state}');
+          }
           if (packet['type']?.toString() == 'direct_fragment') {
             _handleIncomingFragment(packet);
             return;
@@ -169,6 +174,8 @@ class DirectPeerConnection implements SecurePeerSession {
       if (decoded is Map) {
         final packet = Map<String, dynamic>.from(decoded);
         final type = packet['type']?.toString() ?? '-';
+        SyncDiagnosticsLog.add(
+            '[DIRECT_RX] reassembled frame received type=$type bytes=${bytes.length} channelState=${dataChannel?.state}');
         if (type.startsWith('direct_handshake_')) {
           SyncDiagnosticsLog.add('[DIRECT_HANDSHAKE] received type=$type');
         }
