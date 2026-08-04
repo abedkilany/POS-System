@@ -108,13 +108,15 @@ class DirectHostSyncEndpoint {
     if (_core.containsHostOnlyOperation(changes)) {
       throw StateError('Reset data can only be initiated on the Host device.');
     }
+    final applyWatch = Stopwatch()..start();
     final accepted = await _core.acceptClientChangesOnHost(
       changes,
       mirrorToDirect: false,
       verifyApplied: true,
     );
+    applyWatch.stop();
     SyncDiagnosticsLog.add(
-        '[SYNC_TRACE] host push applied accepted=${accepted.ackIds.length} rejected=${accepted.rejected.length}');
+        '[SYNC_TRACE] host push applied accepted=${accepted.ackIds.length} rejected=${accepted.rejected.length} applyMs=${applyWatch.elapsedMilliseconds} hostSequence=${store.latestStoredAuthoritativeSequence}');
     final deviceId = payload['deviceId']?.toString().trim() ?? '';
     final sequence = int.tryParse(
           payload['sequence']?.toString() ??
@@ -159,6 +161,7 @@ class DirectHostSyncEndpoint {
         'generatedSequence': store.latestStoredAuthoritativeSequence,
       };
     }
+    final exportWatch = Stopwatch()..start();
     final decoded = jsonDecode(
       store.exportSyncChangesJson(
         since: since,
@@ -166,6 +169,7 @@ class DirectHostSyncEndpoint {
         maxEncodedPayloadBytes: _maxChangePayloadBytes,
       ),
     ) as Map<String, dynamic>;
+    exportWatch.stop();
     final changes = decoded['changes'] as List<dynamic>? ?? const <dynamic>[];
     final chunks = _splitPullChunks(changes);
     final pullId =
@@ -185,7 +189,7 @@ class DirectHostSyncEndpoint {
       }
     }
     SyncDiagnosticsLog.add(
-        '[SYNC_TRACE] host pull response changes=${changes.length} chunks=${chunks.length} generatedSequence=${decoded['generatedSequence'] ?? 0}');
+        '[SYNC_TRACE] host pull response changes=${changes.length} chunks=${chunks.length} exportMs=${exportWatch.elapsedMilliseconds} generatedSequence=${decoded['generatedSequence'] ?? 0} hasMore=${decoded['hasMoreChanges'] == true}');
     return {
       'pullChunked': true,
       'pullId': pullId,
@@ -267,6 +271,7 @@ class DirectHostSyncEndpoint {
     SyncDiagnosticsLog.add(
         '[SYNC_TRACE] host ack received device=$deviceId appliedSequence=$appliedSequence ackSequence=$ackSequence');
     if (deviceId.isNotEmpty) {
+      final stateWatch = Stopwatch()..start();
       await SyncDeviceStateStore.recordPeerSyncResult(
         deviceId: deviceId,
         transport: 'direct',
@@ -275,6 +280,9 @@ class DirectHostSyncEndpoint {
         appliedCursor: appliedCursor,
         ackCursor: ackCursor,
       );
+      stateWatch.stop();
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] host ack persisted device=$deviceId sequence=$ackSequence persistMs=${stateWatch.elapsedMilliseconds}');
     }
     return {
       'appliedSequence': appliedSequence,
@@ -408,7 +416,9 @@ class DirectClientSyncService {
       );
       SyncDiagnosticsLog.add(
           '[SYNC_TRACE] client pull batch=$batches received count=${changes.length}');
+      final applyWatch = Stopwatch()..start();
       await _core.applyAuthoritativeChanges(changes);
+      applyWatch.stop();
       final generatedAt = DateTime.tryParse(
             pullResponse['generatedAt']?.toString() ?? '',
           ) ??
@@ -423,12 +433,17 @@ class DirectClientSyncService {
       currentCursor = generatedAt;
       currentSequence = generatedSequence;
       totalPulled += changes.length;
+      final stateWatch = Stopwatch()..start();
       await _core.recordTransportSyncState(
         store,
         transport: 'direct',
         cursor: generatedAt,
         sequence: generatedSequence,
       );
+      stateWatch.stop();
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] client pull applied batch=$batches count=${changes.length} applyMs=${applyWatch.elapsedMilliseconds} stateMs=${stateWatch.elapsedMilliseconds} sequence=$generatedSequence');
+      final ackWatch = Stopwatch()..start();
       await session.sendRequest('direct_client_ack', {
         'deviceId': store.deviceId,
         'appliedCursor': generatedAt.toIso8601String(),
@@ -436,8 +451,9 @@ class DirectClientSyncService {
         'appliedSequence': generatedSequence,
         'ackSequence': generatedSequence,
       });
+      ackWatch.stop();
       SyncDiagnosticsLog.add(
-          '[SYNC_TRACE] client ack sent sequence=$generatedSequence batch=$batches');
+          '[SYNC_TRACE] client ack sent sequence=$generatedSequence batch=$batches requestMs=${ackWatch.elapsedMilliseconds}');
       if (pullResponse['hasMoreChanges'] != true) break;
       if (changes.isEmpty || generatedSequence <= previousSequence) {
         throw StateError(

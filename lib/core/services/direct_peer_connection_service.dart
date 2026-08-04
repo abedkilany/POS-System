@@ -38,6 +38,8 @@ class DirectPeerConnection implements SecurePeerSession {
   final Map<String, List<String?>> _incomingFragments =
       <String, List<String?>>{};
   Future<void> _sendTail = Future<void>.value();
+  int _sendQueueDepth = 0;
+  int _maxSendQueueDepth = 0;
   int _fragmentCounter = 0;
   bool _closed = false;
 
@@ -49,11 +51,21 @@ class DirectPeerConnection implements SecurePeerSession {
 
   @override
   Future<void> send(String type, Map<String, dynamic> payload) async {
+    final queuedAt = Stopwatch()..start();
+    _sendQueueDepth++;
+    if (_sendQueueDepth > _maxSendQueueDepth) {
+      _maxSendQueueDepth = _sendQueueDepth;
+    }
     final operation = Completer<void>();
     final previous = _sendTail;
     _sendTail = operation.future;
     try {
       await previous;
+      final queueWaitMs = queuedAt.elapsedMilliseconds;
+      if (queueWaitMs >= 100 || _sendQueueDepth >= 8) {
+        SyncDiagnosticsLog.add(
+            '[DIRECT_QUEUE] data send type=$type queueWaitMs=$queueWaitMs depth=$_sendQueueDepth maxDepth=$_maxSendQueueDepth');
+      }
       final channel = dataChannel;
       if (channel == null ||
           channel.state != RTCDataChannelState.RTCDataChannelOpen) {
@@ -94,6 +106,7 @@ class DirectPeerConnection implements SecurePeerSession {
         await channel.send(RTCDataChannelMessage(jsonEncode(fragment)));
       }
     } finally {
+      _sendQueueDepth--;
       operation.complete();
     }
   }

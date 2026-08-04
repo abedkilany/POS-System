@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 
 import 'secure_peer_session.dart';
+import 'sync_diagnostics_log.dart';
 
 /// Application-level integrity and replay protection layered over a transport.
 class AuthenticatedPeerSession implements SecurePeerSession {
@@ -26,6 +27,8 @@ class AuthenticatedPeerSession implements SecurePeerSession {
       StreamController<Map<String, dynamic>>.broadcast();
   late final StreamSubscription<Map<String, dynamic>> _subscription;
   Future<void> _sendTail = Future<void>.value();
+  int _sendQueueDepth = 0;
+  int _maxSendQueueDepth = 0;
   int _nextSequence = 0;
   int _lastReceivedSequence = -1;
   bool _closed = false;
@@ -38,11 +41,21 @@ class AuthenticatedPeerSession implements SecurePeerSession {
 
   @override
   Future<void> send(String type, Map<String, dynamic> payload) async {
+    final queuedAt = Stopwatch()..start();
+    _sendQueueDepth++;
+    if (_sendQueueDepth > _maxSendQueueDepth) {
+      _maxSendQueueDepth = _sendQueueDepth;
+    }
     final operation = Completer<void>();
     final previous = _sendTail;
     _sendTail = operation.future;
     try {
       await previous;
+      final queueWaitMs = queuedAt.elapsedMilliseconds;
+      if (queueWaitMs >= 100 || _sendQueueDepth >= 8) {
+        SyncDiagnosticsLog.add(
+            '[DIRECT_QUEUE] secure send type=$type queueWaitMs=$queueWaitMs depth=$_sendQueueDepth maxDepth=$_maxSendQueueDepth');
+      }
       _ensureUsable();
       final frame = <String, dynamic>{
         'version': _version,
@@ -57,6 +70,7 @@ class AuthenticatedPeerSession implements SecurePeerSession {
         'mac': _mac(frame),
       });
     } finally {
+      _sendQueueDepth--;
       operation.complete();
     }
   }

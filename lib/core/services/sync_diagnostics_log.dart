@@ -3,7 +3,9 @@ import 'package:flutter/foundation.dart';
 class SyncDiagnosticsLog {
   SyncDiagnosticsLog._();
 
-  static const int _maxLines = 700;
+  // Stress Lab can generate several trace lines per request. Keep enough
+  // history to reconstruct a run involving multiple Direct clients.
+  static const int _maxLines = 5000;
   static final ValueNotifier<List<String>> lines =
       ValueNotifier<List<String>>(<String>[]);
 

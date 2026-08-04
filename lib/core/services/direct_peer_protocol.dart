@@ -73,23 +73,33 @@ class DirectPeerRequestSession {
       throw StateError('Direct request session is closed.');
     }
     final requestId = _requestId();
+    final totalWatch = Stopwatch()..start();
+    final pendingBefore = _pending.length;
     SyncDiagnosticsLog.add(
-        '[SYNC_TRACE] direct request start kind=$requestKind requestId=$requestId');
+        '[SYNC_TRACE] direct request start kind=$requestKind requestId=$requestId pendingBefore=$pendingBefore');
     final completer = Completer<Map<String, dynamic>>();
     _pending[requestId] = completer;
     try {
+      final sendWatch = Stopwatch()..start();
       await connection.send('direct_request', {
         'requestId': requestId,
         'requestKind': requestKind,
         ...payload,
       });
-      final response = await completer.future.timeout(timeout);
+      sendWatch.stop();
       SyncDiagnosticsLog.add(
-          '[SYNC_TRACE] direct request result kind=$requestKind requestId=$requestId ok=${response['ok'] == true}');
+          '[SYNC_TRACE] direct request sent kind=$requestKind requestId=$requestId sendMs=${sendWatch.elapsedMilliseconds} pending=${_pending.length}');
+      final waitWatch = Stopwatch()..start();
+      final response = await completer.future.timeout(timeout);
+      waitWatch.stop();
+      totalWatch.stop();
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] direct request result kind=$requestKind requestId=$requestId ok=${response['ok'] == true} waitMs=${waitWatch.elapsedMilliseconds} totalMs=${totalWatch.elapsedMilliseconds} pending=${_pending.length}');
       return response;
     } catch (error) {
+      totalWatch.stop();
       SyncDiagnosticsLog.add(
-          '[SYNC_TRACE] direct request failed kind=$requestKind requestId=$requestId error=$error');
+          '[SYNC_TRACE] direct request failed kind=$requestKind requestId=$requestId totalMs=${totalWatch.elapsedMilliseconds} pending=${_pending.length} error=$error');
       rethrow;
     } finally {
       _pending.remove(requestId);
@@ -130,6 +140,8 @@ class DirectPeerHostEndpoint {
   final void Function()? onClosed;
   late final StreamSubscription<Map<String, dynamic>> _subscription;
   bool _closed = false;
+  int _activeRequests = 0;
+  int _maxActiveRequests = 0;
 
   Future<void> _handleMessage(Map<String, dynamic> message) async {
     if (message['type']?.toString() != 'direct_request') return;
@@ -137,16 +149,29 @@ class DirectPeerHostEndpoint {
     final requestKind = message['requestKind']?.toString().trim() ?? '';
     if (requestId.isEmpty || requestKind.isEmpty) return;
     try {
+      _activeRequests++;
+      if (_activeRequests > _maxActiveRequests) {
+        _maxActiveRequests = _activeRequests;
+      }
+      final receivedAt = Stopwatch()..start();
+      final deviceId = message['deviceId']?.toString().trim() ?? '-';
       SyncDiagnosticsLog.add(
-          '[SYNC_TRACE] host request start kind=$requestKind requestId=$requestId');
+          '[SYNC_TRACE] host request start kind=$requestKind requestId=$requestId device=$deviceId active=$_activeRequests maxActive=$_maxActiveRequests');
+      final handlerWatch = Stopwatch()..start();
       final response = await onRequest(requestKind, message);
+      handlerWatch.stop();
       SyncDiagnosticsLog.add(
-          '[SYNC_TRACE] host request result kind=$requestKind requestId=$requestId ok=true');
+          '[SYNC_TRACE] host request handled kind=$requestKind requestId=$requestId device=$deviceId handlerMs=${handlerWatch.elapsedMilliseconds}');
+      final responseWatch = Stopwatch()..start();
       await connection.send('direct_response', {
         'requestId': requestId,
         'ok': true,
         ...response,
       });
+      responseWatch.stop();
+      receivedAt.stop();
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] host request result kind=$requestKind requestId=$requestId device=$deviceId ok=true responseSendMs=${responseWatch.elapsedMilliseconds} totalMs=${receivedAt.elapsedMilliseconds}');
     } catch (error) {
       SyncDiagnosticsLog.add(
           '[SYNC_TRACE] host request result kind=$requestKind requestId=$requestId ok=false error=$error');
@@ -155,6 +180,8 @@ class DirectPeerHostEndpoint {
         'ok': false,
         'error': error.toString(),
       });
+    } finally {
+      _activeRequests--;
     }
   }
 
