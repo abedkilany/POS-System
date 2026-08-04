@@ -37,7 +37,9 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
   bool _hostRestartScheduled = false;
   bool _hostStopRequested = false;
   StreamSubscription<Map<String, dynamic>>? _clientEventSubscription;
-  int _lastAdvertisedSequence = 0;
+  final Map<String, int> _pendingHostRealtimeSequences = <String, int>{};
+  final Map<String, int> _lastAdvertisedSequenceByClient = <String, int>{};
+  final Set<String> _drainingHostRealtimeClients = <String>{};
   bool _storeListenerAttached = false;
 
   void _attachStoreListener() {
@@ -49,28 +51,44 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
   void _onStoreChanged() {
     if (!store.appIdentity.isHost || _hostEndpoints.isEmpty) return;
     final sequence = store.latestStoredAuthoritativeSequence;
-    if (sequence <= 0 || sequence <= _lastAdvertisedSequence) return;
-    _lastAdvertisedSequence = sequence;
-    unawaited(_sendHostRealtimeEvent(sequence));
+    if (sequence <= 0) return;
+    for (final deviceId in _hostEndpoints.keys) {
+      final pending = _pendingHostRealtimeSequences[deviceId] ?? 0;
+      if (sequence > pending) {
+        _pendingHostRealtimeSequences[deviceId] = sequence;
+      }
+      unawaited(_drainHostRealtimeEvents(deviceId));
+    }
   }
 
-  Future<void> _sendHostRealtimeEvent(int sequence) async {
-    final endpoints = List<DirectPeerHostEndpoint>.from(_hostEndpoints.values);
-    await Future.wait(endpoints.map((endpoint) async {
-      try {
-        await endpoint.connection.send('sync_changed', {
-          'changed': true,
-          'latestSequence': sequence,
-          'sourceDeviceId': store.deviceId,
-        });
-      } catch (error) {
-        SyncDiagnosticsLog.add(
-            '[DIRECT_REALTIME] host event failed sequence=$sequence error=$error');
+  Future<void> _drainHostRealtimeEvents(String deviceId) async {
+    if (!_drainingHostRealtimeClients.add(deviceId)) return;
+    try {
+      while (true) {
+        final endpoint = _hostEndpoints[deviceId];
+        final sequence = _pendingHostRealtimeSequences.remove(deviceId);
+        if (endpoint == null || sequence == null) break;
+        final lastAdvertised = _lastAdvertisedSequenceByClient[deviceId] ?? 0;
+        if (sequence <= lastAdvertised) continue;
+        try {
+          await endpoint.connection.send('sync_changed', {
+            'changed': true,
+            'latestSequence': sequence,
+            'sourceDeviceId': store.deviceId,
+          });
+          _lastAdvertisedSequenceByClient[deviceId] = sequence;
+          SyncDiagnosticsLog.add(
+              '[DIRECT_REALTIME] host sync_changed sequence=$sequence client=$deviceId');
+        } catch (error) {
+          SyncDiagnosticsLog.add(
+              '[DIRECT_REALTIME] host event failed sequence=$sequence client=$deviceId error=$error');
+        }
       }
-    }));
-    if (endpoints.isNotEmpty) {
-      SyncDiagnosticsLog.add(
-          '[DIRECT_REALTIME] host sync_changed sequence=$sequence clients=${endpoints.length}');
+    } finally {
+      _drainingHostRealtimeClients.remove(deviceId);
+      if (_pendingHostRealtimeSequences.containsKey(deviceId)) {
+        unawaited(_drainHostRealtimeEvents(deviceId));
+      }
     }
   }
 
@@ -424,6 +442,9 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       await endpoint.close();
     }
     _hostEndpoints.clear();
+    _pendingHostRealtimeSequences.clear();
+    _lastAdvertisedSequenceByClient.clear();
+    _drainingHostRealtimeClients.clear();
     await _session?.close();
     _session = null;
     await _clientEventSubscription?.cancel();
@@ -566,6 +587,9 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       String deviceId, SecurePeerSession connection) async {
     final previous = _hostEndpoints.remove(deviceId);
     await previous?.close();
+    _pendingHostRealtimeSequences.remove(deviceId);
+    _lastAdvertisedSequenceByClient.remove(deviceId);
+    _drainingHostRealtimeClients.remove(deviceId);
     late final DirectPeerHostEndpoint endpoint;
     endpoint = DirectPeerHostEndpoint(
       connection,
@@ -573,6 +597,9 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       onClosed: () {
         if (identical(_hostEndpoints[deviceId], endpoint)) {
           _hostEndpoints.remove(deviceId);
+          _pendingHostRealtimeSequences.remove(deviceId);
+          _lastAdvertisedSequenceByClient.remove(deviceId);
+          _drainingHostRealtimeClients.remove(deviceId);
         }
       },
     );
