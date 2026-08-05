@@ -410,6 +410,7 @@ class UnifiedAutoDirectSyncController {
   bool _running = false;
   bool _disposed = false;
   bool _signalLoopRunning = false;
+  int _syncRunCounter = 0;
 
   Future<void> start() async {
     stop();
@@ -464,15 +465,23 @@ class UnifiedAutoDirectSyncController {
 
   Future<void> _tick() async {
     if (_disposed ||
-        _running ||
         store.appIdentity.activeSyncTransportNormalized != 'direct') {
       return;
     }
+    if (_running) {
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] [DIRECT_RUN] skipped reason=already_running device=${store.deviceId}');
+      return;
+    }
     _running = true;
+    final runId = 'direct-run-${++_syncRunCounter}';
+    final runWatch = Stopwatch()..start();
+    SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] [DIRECT_RUN] start runId=$runId device=${store.deviceId}');
     try {
       final result = await UnifiedSyncFactory.directEngine(store).syncNow();
       SyncDiagnosticsLog.add(
-          '[SYNC_TRACE] autoDirect:tick result ok=${result.ok} '
+          '[SYNC_TRACE] autoDirect:tick result runId=$runId ok=${result.ok} '
           'pushed=${result.pushed} pulled=${result.pulled} message=${result.message}');
     } catch (error) {
       // Direct failures remain Direct failures. Never fall back to the
@@ -480,6 +489,9 @@ class UnifiedAutoDirectSyncController {
       // Direct and repair that selected transport.
       SyncDiagnosticsLog.add('[DIRECT] sync failed=$error');
     } finally {
+      runWatch.stop();
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] [DIRECT_RUN] end runId=$runId durationMs=${runWatch.elapsedMilliseconds}');
       _running = false;
     }
   }

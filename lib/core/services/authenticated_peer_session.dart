@@ -54,7 +54,7 @@ class AuthenticatedPeerSession implements SecurePeerSession {
       final queueWaitMs = queuedAt.elapsedMilliseconds;
       if (queueWaitMs >= 100 || _sendQueueDepth >= 8) {
         SyncDiagnosticsLog.add(
-            '[DIRECT_QUEUE] secure send type=$type queueWaitMs=$queueWaitMs depth=$_sendQueueDepth maxDepth=$_maxSendQueueDepth');
+            '[SYNC_TRACE] [DIRECT_QUEUE] secure send type=$type queueWaitMs=$queueWaitMs depth=$_sendQueueDepth maxDepth=$_maxSendQueueDepth sessionId=$sessionId');
       }
       _ensureUsable();
       final frame = <String, dynamic>{
@@ -106,21 +106,21 @@ class AuthenticatedPeerSession implements SecurePeerSession {
       }
       if (rejectionReasons.isNotEmpty) {
         SyncDiagnosticsLog.add(
-            '[DIRECT_RX] secure rejected at=$receivedAt frameSequence=${sequence ?? '-'} lastReceived=$_lastReceivedSequence messageType=${messageType.isEmpty ? '-' : messageType} reasons=${rejectionReasons.join(',')}');
+            '[SYNC_TRACE] [DIRECT_RX] secure rejected at=$receivedAt frameSequence=${sequence ?? '-'} lastReceived=$_lastReceivedSequence messageType=${messageType.isEmpty ? '-' : messageType} reasons=${rejectionReasons.join(',')} sessionId=$sessionId');
         return;
       }
       final acceptedSequence = sequence;
       if (acceptedSequence == null) return;
       _lastReceivedSequence = acceptedSequence;
       SyncDiagnosticsLog.add(
-          '[DIRECT_RX] secure accepted at=$receivedAt frameSequence=$acceptedSequence messageType=$messageType');
+          '[SYNC_TRACE] [DIRECT_RX] secure accepted at=$receivedAt frameSequence=$acceptedSequence messageType=$messageType sessionId=$sessionId');
       _messages.add({
         'type': messageType,
         ...Map<String, dynamic>.from(payload),
       });
     } catch (error) {
       SyncDiagnosticsLog.add(
-          '[DIRECT_RX] secure processing error at=$receivedAt error=$error');
+          '[SYNC_TRACE] [DIRECT_RX] secure processing error at=$receivedAt error=$error sessionId=$sessionId');
       // Invalid, expired, or replayed frames are deliberately discarded.
     }
   }

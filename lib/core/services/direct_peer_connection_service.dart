@@ -64,7 +64,7 @@ class DirectPeerConnection implements SecurePeerSession {
       final queueWaitMs = queuedAt.elapsedMilliseconds;
       if (queueWaitMs >= 100 || _sendQueueDepth >= 8) {
         SyncDiagnosticsLog.add(
-            '[DIRECT_QUEUE] data send type=$type queueWaitMs=$queueWaitMs depth=$_sendQueueDepth maxDepth=$_maxSendQueueDepth');
+            '[SYNC_TRACE] [DIRECT_QUEUE] data send type=$type queueWaitMs=$queueWaitMs depth=$_sendQueueDepth maxDepth=$_maxSendQueueDepth');
       }
       final channel = dataChannel;
       if (channel == null ||
@@ -78,8 +78,12 @@ class DirectPeerConnection implements SecurePeerSession {
         'type': type,
         ...payload,
       }));
+      final bufferedBefore = await _readBufferedAmount(channel);
       if (encoded.length <= _maxDataChannelPayloadBytes) {
         await channel.send(RTCDataChannelMessage(utf8.decode(encoded)));
+        final bufferedAfter = await _readBufferedAmount(channel);
+        SyncDiagnosticsLog.add(
+            '[SYNC_TRACE] [DIRECT_CHANNEL] send type=$type requestId=${payload['requestId'] ?? '-'} bytes=${encoded.length} state=${channel.state} bufferedBefore=${bufferedBefore ?? '-'} bufferedAfter=${bufferedAfter ?? '-'} queueWaitMs=$queueWaitMs');
         return;
       }
 
@@ -89,7 +93,7 @@ class DirectPeerConnection implements SecurePeerSession {
       final total = (encoded.length + _maxDataChannelPayloadBytes - 1) ~/
           _maxDataChannelPayloadBytes;
       SyncDiagnosticsLog.add(
-          '[DIRECT_DATA] send fragmented type=$type bytes=${encoded.length} fragments=$total');
+          '[SYNC_TRACE] [DIRECT_DATA] send fragmented type=$type bytes=${encoded.length} fragments=$total');
       for (var index = 0; index < total; index++) {
         final start = index * _maxDataChannelPayloadBytes;
         final end = (start + _maxDataChannelPayloadBytes).clamp(
@@ -105,6 +109,9 @@ class DirectPeerConnection implements SecurePeerSession {
         };
         await channel.send(RTCDataChannelMessage(jsonEncode(fragment)));
       }
+      final bufferedAfter = await _readBufferedAmount(channel);
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] [DIRECT_CHANNEL] send type=$type requestId=${payload['requestId'] ?? '-'} bytes=${encoded.length} fragments=$total state=${channel.state} bufferedBefore=${bufferedBefore ?? '-'} bufferedAfter=${bufferedAfter ?? '-'} queueWaitMs=$queueWaitMs');
     } finally {
       _sendQueueDepth--;
       operation.complete();
@@ -121,8 +128,12 @@ class DirectPeerConnection implements SecurePeerSession {
           final packet = Map<String, dynamic>.from(decoded);
           final packetType = packet['type']?.toString() ?? '-';
           if (packetType == 'secure_frame') {
+            final securePayload = packet['payload'];
+            final requestId = securePayload is Map
+                ? securePayload['requestId']?.toString() ?? '-'
+                : '-';
             SyncDiagnosticsLog.add(
-                '[DIRECT_RX] raw frame received type=$packetType bytes=${message.text.length} channelState=${channel.state}');
+                '[SYNC_TRACE] [DIRECT_RX] raw frame received type=$packetType messageType=${packet['messageType'] ?? '-'} requestId=$requestId bytes=${message.text.length} channelState=${channel.state}');
           }
           if (packet['type']?.toString() == 'direct_fragment') {
             _handleIncomingFragment(packet);
@@ -130,12 +141,14 @@ class DirectPeerConnection implements SecurePeerSession {
           }
           final type = packet['type']?.toString() ?? '-';
           if (type.startsWith('direct_handshake_')) {
-            SyncDiagnosticsLog.add('[DIRECT_HANDSHAKE] received type=$type');
+            SyncDiagnosticsLog.add(
+                '[SYNC_TRACE] [DIRECT_HANDSHAKE] received type=$type');
           }
           _messages.add(packet);
         }
       } catch (error) {
-        SyncDiagnosticsLog.add('[DIRECT_DATA] invalid frame error=$error');
+        SyncDiagnosticsLog.add(
+            '[SYNC_TRACE] [DIRECT_DATA] invalid frame error=$error');
         // Invalid frames are ignored. The sync protocol validates each
         // request after decoding and never trusts arbitrary payloads.
       }
@@ -174,16 +187,29 @@ class DirectPeerConnection implements SecurePeerSession {
       if (decoded is Map) {
         final packet = Map<String, dynamic>.from(decoded);
         final type = packet['type']?.toString() ?? '-';
+        final securePayload = packet['payload'];
+        final requestId = securePayload is Map
+            ? securePayload['requestId']?.toString() ?? '-'
+            : '-';
         SyncDiagnosticsLog.add(
-            '[DIRECT_RX] reassembled frame received type=$type bytes=${bytes.length} channelState=${dataChannel?.state}');
+            '[SYNC_TRACE] [DIRECT_RX] reassembled frame received type=$type messageType=${packet['messageType'] ?? '-'} requestId=$requestId bytes=${bytes.length} channelState=${dataChannel?.state}');
         if (type.startsWith('direct_handshake_')) {
-          SyncDiagnosticsLog.add('[DIRECT_HANDSHAKE] received type=$type');
+          SyncDiagnosticsLog.add(
+              '[SYNC_TRACE] [DIRECT_HANDSHAKE] received type=$type');
         }
         _messages.add(packet);
       }
     } catch (error) {
       SyncDiagnosticsLog.add(
-          '[DIRECT_DATA] invalid fragmented frame error=$error');
+          '[SYNC_TRACE] [DIRECT_DATA] invalid fragmented frame error=$error');
+    }
+  }
+
+  static Future<int?> _readBufferedAmount(RTCDataChannel channel) async {
+    try {
+      return await channel.getBufferedAmount();
+    } catch (_) {
+      return null;
     }
   }
 
@@ -259,11 +285,16 @@ class DirectPeerConnectionService {
       });
     };
     peer.onConnectionState = (state) {
-      SyncDiagnosticsLog.add('[DIRECT_WEBRTC] host state=$state');
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] [DIRECT_ICE] host connectionState=$state');
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected &&
           !connection.isCompleted) {
         unawaited(_logIcePath(peer, 'host'));
         authenticateHost();
+      }
+      if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
+          state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected) {
+        unawaited(_logIcePath(peer, 'host-state-$state'));
       }
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed &&
           !connection.isCompleted) {
@@ -271,7 +302,8 @@ class DirectPeerConnectionService {
       }
     };
     peer.onIceConnectionState = (state) {
-      SyncDiagnosticsLog.add('[DIRECT_WEBRTC] host ice state=$state');
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] [DIRECT_ICE] host iceConnectionState=$state');
     };
     authenticateHost = () async {
       if (authenticationStarted || connection.isCompleted) return;
@@ -486,13 +518,15 @@ class DirectPeerConnectionService {
     };
 
     peer.onConnectionState = (state) {
-      SyncDiagnosticsLog.add('[DIRECT_WEBRTC] client state=$state');
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] [DIRECT_ICE] client connectionState=$state');
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
         iceRestartAttempts = 0;
         unawaited(_logIcePath(peer, 'client'));
       } else if (state ==
               RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
           state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
+        unawaited(_logIcePath(peer, 'client-state-$state'));
         unawaited(restartIceOffer());
         if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed &&
             !connection.isCompleted &&
@@ -504,14 +538,16 @@ class DirectPeerConnectionService {
       }
     };
     peer.onIceConnectionState = (state) {
-      SyncDiagnosticsLog.add('[DIRECT_WEBRTC] client ice state=$state');
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] [DIRECT_ICE] client iceConnectionState=$state');
       if (state == RTCIceConnectionState.RTCIceConnectionStateDisconnected ||
           state == RTCIceConnectionState.RTCIceConnectionStateFailed) {
         unawaited(restartIceOffer());
       }
     };
     peer.onIceGatheringState = (state) {
-      SyncDiagnosticsLog.add('[DIRECT_WEBRTC] client ice gathering=$state');
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] [DIRECT_ICE] client iceGatheringState=$state');
     };
 
     final subscription = signaling.signals.listen((signal) async {
@@ -679,14 +715,20 @@ class DirectPeerConnectionService {
     };
 
     peer.onConnectionState = (state) {
-      SyncDiagnosticsLog.add('[DIRECT_WEBRTC] host-listener state=$state');
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] [DIRECT_ICE] host-listener connectionState=$state');
+      if (state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
+          state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
+        unawaited(_logIcePath(peer, 'host-listener-state-$state'));
+      }
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed &&
           !connection.isCompleted) {
         connection.completeError(StateError('Direct Host connection failed.'));
       }
     };
     peer.onIceConnectionState = (state) {
-      SyncDiagnosticsLog.add('[DIRECT_WEBRTC] host-listener ice state=$state');
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] [DIRECT_ICE] host-listener iceConnectionState=$state');
     };
     peer.onIceGatheringState = (state) {
       SyncDiagnosticsLog.add(
@@ -821,14 +863,21 @@ class DirectPeerConnectionService {
       );
       final values = selected.values;
       SyncDiagnosticsLog.add(
-        '[DIRECT_WEBRTC] $role path state=${values['state'] ?? '-'} '
+        '[SYNC_TRACE] [DIRECT_ICE] $role path state=${values['state'] ?? '-'} '
         'localType=${values['localCandidateType'] ?? '-'} '
         'remoteType=${values['remoteCandidateType'] ?? '-'} '
-        'protocol=${values['protocol'] ?? '-'}',
+        'protocol=${values['protocol'] ?? '-'} '
+        'localId=${values['localCandidateId'] ?? '-'} '
+        'remoteId=${values['remoteCandidateId'] ?? '-'} '
+        'bytesSent=${values['bytesSent'] ?? '-'} '
+        'bytesReceived=${values['bytesReceived'] ?? '-'} '
+        'rtt=${values['currentRoundTripTime'] ?? '-'} '
+        'requestsSent=${values['requestsSent'] ?? '-'} '
+        'responsesReceived=${values['responsesReceived'] ?? '-'}',
       );
     } catch (error) {
       SyncDiagnosticsLog.add(
-          '[DIRECT_WEBRTC] $role path stats unavailable=$error');
+          '[SYNC_TRACE] [DIRECT_ICE] $role path stats unavailable=$error');
     }
   }
 
