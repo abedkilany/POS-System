@@ -135,7 +135,13 @@ class AuthenticatedPeerSession implements SecurePeerSession {
     }
   }
 
-  String _canonicalFrame(Map<String, dynamic> frame) => jsonEncode({
+  /// Encodes every level of the frame deterministically before signing.
+  ///
+  /// jsonEncode preserves insertion order, which is not a safe wire-level
+  /// contract when a frame has been decoded and rebuilt on another platform.
+  /// Sorting only the outer frame still leaves nested payload maps
+  /// platform-dependent, so canonicalization must be recursive.
+  String _canonicalFrame(Map<String, dynamic> frame) => _canonicalJson({
         'expiresAtMs': frame['expiresAtMs'],
         'messageType': frame['messageType'],
         'payload': frame['payload'],
@@ -143,6 +149,36 @@ class AuthenticatedPeerSession implements SecurePeerSession {
         'sessionId': frame['sessionId'],
         'version': frame['version'],
       });
+
+  static String _canonicalJson(Object? value) {
+    if (value == null) return 'null';
+    if (value is bool) return value ? 'true' : 'false';
+    if (value is String) return jsonEncode(value);
+    if (value is int) return value.toString();
+    if (value is double) {
+      if (!value.isFinite) {
+        throw FormatException('Non-finite number cannot be signed.');
+      }
+      // Treat 1.0 and 1 identically after JSON decoding on different
+      // platforms. Keep a stable JSON representation for fractional values.
+      if (value == value.truncateToDouble()) {
+        return value.toInt().toString();
+      }
+      return jsonEncode(value);
+    }
+    if (value is List) {
+      return '[${value.map(_canonicalJson).join(',')}]';
+    }
+    if (value is Map) {
+      final entries = value.entries
+          .map((entry) => MapEntry(entry.key.toString(), entry.value))
+          .toList()
+        ..sort((left, right) => left.key.compareTo(right.key));
+      return '{${entries.map((entry) => '${jsonEncode(entry.key)}:${_canonicalJson(entry.value)}').join(',')}}';
+    }
+    throw FormatException(
+        'Unsupported value in authenticated frame: ${value.runtimeType}');
+  }
 
   String _macForCanonical(String canonical) {
     return base64UrlEncode(

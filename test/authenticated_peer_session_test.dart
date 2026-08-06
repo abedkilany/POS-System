@@ -128,4 +128,41 @@ void main() {
     );
     await session.close();
   });
+
+  test('uses the same MAC for reordered nested payload maps', () async {
+    final first = _FakePeerSession();
+    final second = _FakePeerSession();
+    final left = AuthenticatedPeerSession(
+      inner: first,
+      sessionId: sessionId,
+      sessionKey: key,
+      expiresAt: expiresAt,
+    );
+    final right = AuthenticatedPeerSession(
+      inner: second,
+      sessionId: sessionId,
+      sessionKey: key,
+      expiresAt: expiresAt,
+    );
+
+    final payloadA = <String, dynamic>{
+      'changes': [
+        {'z': 3, 'a': 1},
+      ],
+      'requestId': 'r2',
+    };
+    final payloadB = <String, dynamic>{
+      'requestId': 'r2',
+      'changes': [
+        {'a': 1.0, 'z': 3.0},
+      ],
+    };
+
+    await left.send('direct_response', payloadA);
+    await right.send('direct_response', payloadB);
+
+    expect(first.sent.single['mac'], second.sent.single['mac']);
+    await left.close();
+    await right.close();
+  });
 }
