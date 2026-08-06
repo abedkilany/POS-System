@@ -65,9 +65,13 @@ class AuthenticatedPeerSession implements SecurePeerSession {
         'payload': payload,
         'expiresAtMs': expiresAt.millisecondsSinceEpoch,
       };
+      final canonical = _canonicalFrame(frame);
+      final mac = _macForCanonical(canonical);
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] [DIRECT_MAC] tx sessionId=$sessionId sequence=${frame['sequence']} messageType=$type requestId=${payload['requestId'] ?? '-'} canonicalLength=${canonical.length} canonicalSha256=${_sha256(canonical)} macSha256=${_sha256(mac)} payload=${_payloadSummary(payload)}');
       await inner.send('secure_frame', {
         ...frame,
-        'mac': _mac(frame),
+        'mac': mac,
       });
     } finally {
       _sendQueueDepth--;
@@ -101,7 +105,13 @@ class AuthenticatedPeerSession implements SecurePeerSession {
       }
       if (messageType.isEmpty) rejectionReasons.add('message_type');
       if (payload is! Map) rejectionReasons.add('payload');
-      if (!_constantTimeEquals(message['mac']?.toString() ?? '', _mac(frame))) {
+      final canonical = _canonicalFrame(frame);
+      final calculatedMac = _macForCanonical(canonical);
+      final receivedMac = message['mac']?.toString() ?? '';
+      final macMatches = _constantTimeEquals(receivedMac, calculatedMac);
+      SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] [DIRECT_MAC] rx sessionId=$sessionId sequence=${sequence ?? '-'} messageType=${messageType.isEmpty ? '-' : messageType} requestId=${payload is Map ? payload['requestId'] ?? '-' : '-'} canonicalLength=${canonical.length} canonicalSha256=${_sha256(canonical)} receivedMacSha256=${_sha256(receivedMac)} calculatedMacSha256=${_sha256(calculatedMac)} macMatch=$macMatches payload=${_payloadSummary(payload)}');
+      if (!macMatches) {
         rejectionReasons.add('mac');
       }
       if (rejectionReasons.isNotEmpty) {
@@ -125,17 +135,32 @@ class AuthenticatedPeerSession implements SecurePeerSession {
     }
   }
 
-  String _mac(Map<String, dynamic> frame) {
-    final canonical = jsonEncode({
-      'expiresAtMs': frame['expiresAtMs'],
-      'messageType': frame['messageType'],
-      'payload': frame['payload'],
-      'sequence': frame['sequence'],
-      'sessionId': frame['sessionId'],
-      'version': frame['version'],
-    });
+  String _canonicalFrame(Map<String, dynamic> frame) => jsonEncode({
+        'expiresAtMs': frame['expiresAtMs'],
+        'messageType': frame['messageType'],
+        'payload': frame['payload'],
+        'sequence': frame['sequence'],
+        'sessionId': frame['sessionId'],
+        'version': frame['version'],
+      });
+
+  String _macForCanonical(String canonical) {
     return base64UrlEncode(
         Hmac(sha256, sessionKey).convert(utf8.encode(canonical)).bytes);
+  }
+
+  static String _sha256(String value) =>
+      sha256.convert(utf8.encode(value)).toString();
+
+  static String _payloadSummary(Object? payload) {
+    if (payload is Map) {
+      final keys = payload.keys.map((key) => key.toString()).toList()..sort();
+      final changes = payload['changes'];
+      final changesCount = changes is List ? changes.length : '-';
+      return 'mapKeys=${keys.take(12).join(',')} changes=$changesCount';
+    }
+    if (payload is List) return 'listLength=${payload.length}';
+    return 'type=${payload.runtimeType}';
   }
 
   void _ensureUsable() {
