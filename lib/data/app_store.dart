@@ -1355,12 +1355,24 @@ class AppStore extends ChangeNotifier {
   void notifyListeners() {
     _storeRevision += 1;
     _invalidateDerivedDataCaches();
+    final unsyncedChanges = _syncChanges.where((item) => !item.isSynced).length;
+    final outboundChangeIds = _syncQueue
+        .where((item) =>
+            item.target == activeClientSyncTarget ||
+            (appIdentity.isHost && item.target == 'host'))
+        .where((item) => item.isReadyToSend)
+        .map((item) => item.changeId)
+        .toSet();
+    final outboundChanges = _syncChanges
+        .where((item) => !item.isSynced && outboundChangeIds.contains(item.id))
+        .length;
     SyncDiagnosticsLog.add(
       '[SYNC_TRACE] notifyListeners device=$_deviceId '
       'role=${appIdentity.deviceRole.name} customers=${_customers.length} '
       'sales=${_sales.length} accounts=${_accountTransactions.length} '
-      'seq=$_syncSequence pendingQueue=${_syncQueue.length} '
-      'pendingChanges=${_syncChanges.length}',
+      'seq=$_syncSequence queueEntries=${_syncQueue.length} '
+      'syncHistoryEntries=${_syncChanges.length} '
+      'unsyncedChanges=$unsyncedChanges outboundChanges=$outboundChanges',
     );
     super.notifyListeners();
   }
