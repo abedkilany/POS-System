@@ -928,6 +928,7 @@ class AppStore extends ChangeNotifier {
       ensureCustomersLoaded(),
       ensureDeliveryNotesLoaded(),
       ensureProductPricingLoaded(),
+      ensureWarehousesLoaded(),
     ]);
   }
 
@@ -1311,6 +1312,25 @@ class AppStore extends ChangeNotifier {
       (item) => item.isDefault,
       orElse: () => defaultWarehouse,
     );
+  }
+
+  String get saleWarehouseId {
+    final storeId = appIdentity.storeId.trim();
+    if (storeId.isEmpty) return '';
+    return LocalDatabaseService.getString(
+          'sale_warehouse_v1_${storeId}_${appIdentity.branchId.trim()}',
+        )?.trim() ??
+        '';
+  }
+
+  Future<void> setSaleWarehouseId(String warehouseId) async {
+    final storeId = appIdentity.storeId.trim();
+    if (storeId.isEmpty) return;
+    await LocalDatabaseService.setString(
+      'sale_warehouse_v1_${storeId}_${appIdentity.branchId.trim()}',
+      warehouseId.trim(),
+    );
+    notifyListeners();
   }
 
   Warehouse resolveWarehouseForPurchase({String warehouseId = ''}) {

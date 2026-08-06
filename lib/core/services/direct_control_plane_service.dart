@@ -2250,14 +2250,16 @@ class DirectControlPlaneService {
     }
   }
 
-  Map<String, String> _headers(VpsControlPlaneSettings settings) {
+  Map<String, String> _headers(VpsControlPlaneSettings settings,
+      {bool includeAccountTokenForClient = false}) {
     final identity = store.appIdentity;
     return {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
       // Clients authenticate with their own per-device token. Host/account
       // flows authenticate with the online account session.
-      if (!identity.isClient && settings.accountToken.trim().isNotEmpty)
+      if ((includeAccountTokenForClient || !identity.isClient) &&
+          settings.accountToken.trim().isNotEmpty)
         'Authorization': 'Bearer ${settings.accountToken.trim()}',
       'X-Device-Id': store.deviceId,
       'X-Device-Token': identity.deviceToken,
@@ -3016,18 +3018,26 @@ class DirectControlPlaneService {
   }
 
   Future<DirectDevicesResult> listDevicesWithLimit(
-      VpsControlPlaneSettings settings) async {
+    VpsControlPlaneSettings settings, {
+    String? storeIdOverride,
+    String? branchIdOverride,
+  }) async {
     final identity = store.appIdentity;
     if (!settings.isConfigured) {
+      return const DirectDevicesResult(devices: <DirectDeviceStatus>[]);
+    }
+    final storeId = (storeIdOverride ?? identity.storeId).trim();
+    final branchId = (branchIdOverride ?? identity.branchId).trim();
+    if (storeId.isEmpty) {
       return const DirectDevicesResult(devices: <DirectDeviceStatus>[]);
     }
     final response = await _client
         .get(
           settings.endpoint('/api/sync/devices', {
-            'store_id': identity.storeId,
-            'branch_id': identity.branchId,
+            'store_id': storeId,
+            'branch_id': branchId.isEmpty ? 'main' : branchId,
           }),
-          headers: _headers(settings),
+          headers: _headers(settings, includeAccountTokenForClient: true),
         )
         .timeout(const Duration(seconds: 10));
     if (response.statusCode < 200 || response.statusCode >= 300) {

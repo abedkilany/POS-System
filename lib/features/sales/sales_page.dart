@@ -51,6 +51,8 @@ class SalesPage extends StatefulWidget {
 }
 
 class _SalesPageState extends State<SalesPage> {
+  bool get _legacyShiftButtonVisible => false;
+
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _barcodeController = TextEditingController();
   final TextEditingController _discountController = TextEditingController();
@@ -139,6 +141,7 @@ class _SalesPageState extends State<SalesPage> {
       widget.store.canDeleteOrCancel,
       widget.store.hasPermission(AppPermission.salesPrint),
       widget.store.hasPermission(AppPermission.salesExport),
+      widget.store.saleWarehouseId,
     ]);
   }
 
@@ -150,13 +153,27 @@ class _SalesPageState extends State<SalesPage> {
     _invoiceCurrency = widget.store.storeProfile.defaultSaleInvoiceCurrency;
     _paymentCurrency = widget.store.storeProfile.defaultSalePaymentCurrency;
     _discountCurrency = widget.store.storeProfile.defaultSaleInvoiceCurrency;
-    _selectedWarehouseId = widget.store.resolveWarehouseForSale().id;
+    _selectedWarehouseId = widget.store
+        .resolveWarehouseForSale(
+          warehouseId: widget.store.saleWarehouseId,
+        )
+        .id;
     _paymentExchangeRateController.text =
         widget.store.storeProfile.usdToLbpRate.toStringAsFixed(0);
     _storeUiRevision = _currentStoreUiRevision();
     _loadQuickProductPages();
     _loadHeldSaleCarts();
     _dataFuture = widget.store.ensureSalesPageDataLoaded();
+    _dataFuture.then((_) {
+      if (!mounted) return;
+      setState(() {
+        _selectedWarehouseId = widget.store
+            .resolveWarehouseForSale(
+              warehouseId: widget.store.saleWarehouseId,
+            )
+            .id;
+      });
+    });
     HardwareKeyboard.instance.addHandler(_handleSaleHardwareShortcutKey);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _manualBarcodeInput) return;
@@ -186,6 +203,16 @@ class _SalesPageState extends State<SalesPage> {
       _expandedInvoiceIds.clear();
       _resetProductSearchReveal();
       _dataFuture = widget.store.ensureSalesPageDataLoaded();
+      _dataFuture.then((_) {
+        if (!mounted) return;
+        setState(() {
+          _selectedWarehouseId = widget.store
+              .resolveWarehouseForSale(
+                warehouseId: widget.store.saleWarehouseId,
+              )
+              .id;
+        });
+      });
       _storeUiRevision = _currentStoreUiRevision();
     }
   }
@@ -1168,6 +1195,9 @@ class _SalesPageState extends State<SalesPage> {
     );
   }
 
+  // Kept as an internal fallback for older layouts; the current UI uses only
+  // the action button above and does not render this status message card.
+  // ignore: unused_element
   Widget _buildSaleShiftStatusCard(BuildContext context, AppLocalizations tr) {
     return FutureBuilder<_SaleShiftStatus>(
       key: ValueKey('sale_shift_status_$_cashShiftRefreshKey'),
@@ -1263,57 +1293,71 @@ class _SalesPageState extends State<SalesPage> {
     );
   }
 
-  Widget _buildSalesWarehouseSelector(
+  Widget _buildSaleShiftActionButton(
       BuildContext context, AppLocalizations tr) {
-    final activeWarehouses = widget.store.warehouses;
-    final selectedWarehouse = activeWarehouses.firstWhere(
-      (item) => item.id == _selectedWarehouseId,
-      orElse: () => widget.store.resolveWarehouseForSale(),
+    return FutureBuilder<_SaleShiftStatus>(
+      key: ValueKey('sale_shift_action_$_cashShiftRefreshKey'),
+      future: _loadSaleShiftStatus(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const SizedBox(
+            width: 22,
+            height: 22,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          );
+        }
+        final status = snapshot.data;
+        final openSession = status?.openSession;
+        if (openSession == null) {
+          return OutlinedButton.icon(
+            onPressed: status == null || status.drawers.isEmpty
+                ? null
+                : () => _openSaleDrawerDialog(status),
+            icon: const Icon(Icons.lock_open_outlined),
+            label: Text(tr.isArabic ? 'فتح وردية' : 'Open shift'),
+          );
+        }
+        return OutlinedButton.icon(
+          onPressed: status == null
+              ? null
+              : () => _closeSaleDrawerDialog(openSession, status),
+          icon: const Icon(Icons.lock_outline),
+          label: Text(tr.isArabic ? 'إغلاق / تسليم' : 'Close / Handover'),
+        );
+      },
     );
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: VentioResponsive.cardInsets(context),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              tr.text('warehouse'),
-              style: Theme.of(context).textTheme.titleSmall,
-            ),
-            const SizedBox(height: 10),
-            DropdownButtonFormField<String>(
-              initialValue: selectedWarehouse.id,
-              decoration: InputDecoration(
-                labelText: tr.text('warehouse'),
-              ),
-              items: activeWarehouses
-                  .map(
-                    (warehouse) => DropdownMenuItem<String>(
-                      value: warehouse.id,
-                      child: Text(
-                        warehouse.id == Warehouse.defaultId
-                            ? '${warehouse.name} (${tr.text('default')})'
-                            : warehouse.name,
-                      ),
-                    ),
-                  )
-                  .toList(growable: false),
-              onChanged: activeWarehouses.isEmpty
-                  ? null
-                  : (value) {
-                      if (value == null || value.trim().isEmpty) return;
-                      setState(() => _selectedWarehouseId = value.trim());
-                    },
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '${tr.text('stock')}: ${selectedWarehouse.name}',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ],
-        ),
-      ),
+  }
+
+  Widget _buildSaleShiftMobileAction(AppLocalizations tr) {
+    return FutureBuilder<_SaleShiftStatus>(
+      key: ValueKey('sale_shift_mobile_action_$_cashShiftRefreshKey'),
+      future: _loadSaleShiftStatus(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const SizedBox(
+            width: 28,
+            height: 28,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          );
+        }
+        final status = snapshot.data;
+        final openSession = status?.openSession;
+        return _MobileSaleAction(
+          icon: openSession == null
+              ? Icons.lock_open_outlined
+              : Icons.lock_outline,
+          label: openSession == null
+              ? (tr.isArabic ? 'فتح وردية' : 'Open shift')
+              : (tr.isArabic ? 'إغلاق / تسليم' : 'Close / Handover'),
+          onTap: status == null
+              ? () {}
+              : openSession == null
+                  ? (status.drawers.isEmpty
+                      ? () {}
+                      : () => _openSaleDrawerDialog(status))
+                  : () => _closeSaleDrawerDialog(openSession, status),
+        );
+      },
     );
   }
 
@@ -1687,12 +1731,15 @@ class _SalesPageState extends State<SalesPage> {
               spacing: 8,
               runSpacing: 8,
               children: [
-                OutlinedButton.icon(
-                  onPressed:
-                      widget.store.canSell ? _showSaleShiftQuickAction : null,
-                  icon: const Icon(Icons.point_of_sale_outlined),
-                  label: Text(tr.isArabic ? 'إدارة الوردية' : 'Manage shift'),
-                ),
+                if (widget.store.canSell)
+                  _buildSaleShiftActionButton(context, tr),
+                if (_legacyShiftButtonVisible)
+                  OutlinedButton.icon(
+                    onPressed:
+                        widget.store.canSell ? _showSaleShiftQuickAction : null,
+                    icon: const Icon(Icons.point_of_sale_outlined),
+                    label: Text(tr.isArabic ? 'إدارة الوردية' : 'Manage shift'),
+                  ),
                 OutlinedButton.icon(
                   onPressed: _showInvoicesSheet,
                   icon: const Icon(Icons.receipt_long_outlined),
@@ -1704,10 +1751,7 @@ class _SalesPageState extends State<SalesPage> {
           const SizedBox(height: 8),
           _buildShortcutGuide(context, tr),
           const SizedBox(height: 8),
-          _buildSaleShiftStatusCard(context, tr),
-          const SizedBox(height: 8),
-          _buildSalesWarehouseSelector(context, tr),
-          const SizedBox(height: 12),
+          const SizedBox(height: 4),
           Expanded(
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2511,10 +2555,7 @@ class _SalesPageState extends State<SalesPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _buildSaleShiftStatusCard(context, tr),
-                  const SizedBox(height: 8),
-                  _buildSalesWarehouseSelector(context, tr),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 4),
                   _buildMobileSaleControls(context, tr, products),
                   const SizedBox(height: 8),
                   _buildCart(context, tr,
@@ -2559,18 +2600,21 @@ class _SalesPageState extends State<SalesPage> {
               spacing: 8,
               runSpacing: 8,
               children: [
-                _MobileSaleAction(
-                    icon: Icons.search,
-                    label: tr.text('search'),
-                    onTap: () => _showProductSearchSheet(products)),
+                _buildSaleShiftMobileAction(tr),
+                if (true)
+                  _MobileSaleAction(
+                      icon: Icons.search,
+                      label: tr.text('search'),
+                      onTap: () => _showProductSearchSheet(products)),
                 _MobileSaleAction(
                     icon: Icons.grid_view_rounded,
                     label: tr.text('quick_products'),
                     onTap: () => _showQuickProductsSheet(products)),
-                _MobileSaleAction(
-                    icon: Icons.point_of_sale_outlined,
-                    label: 'الوردية',
-                    onTap: _showSaleShiftQuickAction),
+                if (_legacyShiftButtonVisible)
+                  _MobileSaleAction(
+                      icon: Icons.point_of_sale_outlined,
+                      label: 'الوردية',
+                      onTap: () {}),
                 _MobileSaleAction(
                     icon: Icons.receipt_long_outlined,
                     label: tr.text('recent_invoices'),
@@ -5143,7 +5187,11 @@ class _SalesPageState extends State<SalesPage> {
       _invoiceCurrency = widget.store.storeProfile.defaultSaleInvoiceCurrency;
       _paymentCurrency = widget.store.storeProfile.defaultSalePaymentCurrency;
       _discountCurrency = widget.store.storeProfile.defaultSaleInvoiceCurrency;
-      _selectedWarehouseId = widget.store.resolveWarehouseForSale().id;
+      _selectedWarehouseId = widget.store
+          .resolveWarehouseForSale(
+            warehouseId: widget.store.saleWarehouseId,
+          )
+          .id;
       _paymentExchangeRateController.text =
           widget.store.storeProfile.usdToLbpRate.toStringAsFixed(0);
       _searchController.clear();

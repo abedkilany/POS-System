@@ -34,6 +34,7 @@ import '../../data/app_store.dart';
 import '../../models/store_profile.dart';
 import '../../models/app_identity.dart';
 import '../../models/product_costing.dart';
+import '../../models/warehouse.dart';
 import '../../models/user_role.dart';
 import '../shared/sync_monitoring_section.dart';
 import '../barcode/barcode_scanner_page.dart';
@@ -750,6 +751,8 @@ class SettingsPage extends StatelessWidget {
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
             ),
+            const SizedBox(height: 16),
+            _SaleWarehouseSettingsCard(store: store),
             const SizedBox(height: 16),
             _CurrentDeviceCashDrawerSettingsCard(store: store),
           ],
@@ -3491,6 +3494,105 @@ class _BackupSummaryDetails extends StatelessWidget {
   }
 }
 
+class _SaleWarehouseSettingsCard extends StatefulWidget {
+  const _SaleWarehouseSettingsCard({required this.store});
+
+  final AppStore store;
+
+  @override
+  State<_SaleWarehouseSettingsCard> createState() =>
+      _SaleWarehouseSettingsCardState();
+}
+
+class _SaleWarehouseSettingsCardState
+    extends State<_SaleWarehouseSettingsCard> {
+  late Future<void> _future;
+  String _selectedWarehouseId = '';
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _load();
+  }
+
+  Future<void> _load() async {
+    await widget.store.ensureWarehousesLoaded();
+    _selectedWarehouseId = widget.store
+        .resolveWarehouseForSale(
+          warehouseId: widget.store.saleWarehouseId,
+        )
+        .id;
+  }
+
+  Future<void> _save(String? value) async {
+    final id = value?.trim() ?? '';
+    if (id.isEmpty || _saving) return;
+    setState(() {
+      _selectedWarehouseId = id;
+      _saving = true;
+    });
+    try {
+      await widget.store.setSaleWarehouseId(id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(AppLocalizations.of(context).text('saved'))),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.toString())),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    return _SectionCard(
+      icon: Icons.warehouse_outlined,
+      title: tr.text('sale_warehouse'),
+      subtitle: tr.text('sale_warehouse_desc'),
+      child: FutureBuilder<void>(
+        future: _future,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const LinearProgressIndicator();
+          }
+          final warehouses = widget.store.warehouses;
+          if (warehouses.isEmpty) {
+            return Text(tr.text('no_warehouses'));
+          }
+          return DropdownButtonFormField<String>(
+            initialValue:
+                warehouses.any((item) => item.id == _selectedWarehouseId)
+                    ? _selectedWarehouseId
+                    : warehouses.first.id,
+            decoration: InputDecoration(
+              labelText: tr.text('warehouse'),
+              border: const OutlineInputBorder(),
+            ),
+            items: [
+              for (final warehouse in warehouses)
+                DropdownMenuItem<String>(
+                  value: warehouse.id,
+                  child: Text(
+                    warehouse.id == Warehouse.defaultId
+                        ? '${warehouse.name} (${tr.text('default')})'
+                        : warehouse.name,
+                  ),
+                ),
+            ],
+            onChanged: _saving ? null : _save,
+          );
+        },
+      ),
+    );
+  }
+}
+
 class _CurrentDeviceCashDrawerSettingsCard extends StatefulWidget {
   const _CurrentDeviceCashDrawerSettingsCard({required this.store});
 
@@ -3711,6 +3813,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   bool _detectingHostIp = false;
   bool _showLanPairingCode = false;
   bool _showDirectPairingCode = false;
+  bool _showDirectDiagnostics = false;
   DateTime? _latestLanPairingExpiresAt;
   bool _latestLanPairingConsumed = false;
   bool _latestDirectPairingConsumed = false;
@@ -4191,22 +4294,23 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         lanExpiry != null &&
         lanExpiry.isAfter(now)) {
       _latestLanPairingExpiresAt = lanExpiry;
-      _showLanPairingCode = false;
     } else if (lanExpiry != null && !lanExpiry.isAfter(now)) {
       _expireLanPairingCode();
     }
     final directCode =
         LocalDatabaseService.getString(_directPairingCodeStorageKey) ?? '';
+    if (directCode.trim().isNotEmpty) {
+      _latestDirectPairingCode = directCode.trim();
+    }
     final directExpiry = DateTime.tryParse(
         LocalDatabaseService.getString(_directPairingExpiryStorageKey) ?? '');
     if (directCode.trim().isNotEmpty &&
         directExpiry != null &&
         directExpiry.isAfter(now)) {
-      _latestDirectPairingCode = directCode.trim();
       _latestDirectPairingExpiresAt = directExpiry;
       _latestDirectPairingInvalid = false;
-      _showDirectPairingCode = false;
     } else if (directExpiry != null && !directExpiry.isAfter(now)) {
+      _latestDirectPairingExpiresAt = directExpiry;
       _expireDirectPairingCode();
     }
   }
@@ -4245,25 +4349,18 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     final savedSecret = LanSyncSettings.load().secret.trim();
     if (savedSecret.isEmpty || savedSecret != activeCode) {
       _latestLanPairingConsumed = true;
-      _showLanPairingCode = true;
     }
   }
 
   void _expireLanPairingCode() {
-    _lanTokenController.clear();
-    _latestLanPairingExpiresAt = null;
     _latestLanPairingConsumed = false;
-    _showLanPairingCode = false;
     unawaited(LocalDatabaseService.deleteString(_lanPairingExpiryStorageKey));
     unawaited(LanSyncSettings.load().copyWith(secret: '').save());
   }
 
   void _expireDirectPairingCode() {
-    _latestDirectPairingCode = '';
-    _latestDirectPairingExpiresAt = null;
     _latestDirectPairingConsumed = false;
     _latestDirectPairingInvalid = false;
-    _showDirectPairingCode = false;
     unawaited(LocalDatabaseService.deleteString(_directPairingCodeStorageKey));
     unawaited(
         LocalDatabaseService.deleteString(_directPairingExpiryStorageKey));
@@ -4314,11 +4411,9 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       if (result.status == 'consumed') {
         _latestDirectPairingConsumed = true;
         _latestDirectPairingInvalid = false;
-        _showDirectPairingCode = true;
       } else if (result.status == 'expired' || result.status == 'invalid') {
         _latestDirectPairingConsumed = false;
         _latestDirectPairingInvalid = result.status == 'invalid';
-        _showDirectPairingCode = true;
         _latestDirectPairingExpiresAt = result.status == 'expired'
             ? DateTime.now().subtract(const Duration(seconds: 1))
             : _latestDirectPairingExpiresAt;
@@ -4666,6 +4761,11 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
 
   Future<void> _createDirectPairingCode() => _run(() async {
         final identity = widget.store.appIdentity;
+        if (!_directEnabled ||
+            !_effectiveDirectEnabled ||
+            !identity.isDirectEnabled) {
+          throw StateError(tr.text('enable_direct_before_pairing_code'));
+        }
         final settings = VpsControlPlaneSettings.load();
         if (!identity.isHost || settings.apiBaseUrl.trim().isEmpty) {
           throw StateError('Direct pairing needs the Ventio server address.');
@@ -6197,6 +6297,21 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                   onPressed: _busy ? null : _createDirectPairingCode,
                   icon: const Icon(Icons.link_outlined),
                   label: Text(_directPairingButtonLabel)),
+              if (_lanTokenController.text.trim().isNotEmpty &&
+                  !_showLanPairingCode)
+                OutlinedButton.icon(
+                  onPressed: () => setState(() => _showLanPairingCode = true),
+                  icon: const Icon(Icons.visibility_outlined),
+                  label: const Text('Show code'),
+                ),
+              if (_latestDirectPairingCode.trim().isNotEmpty &&
+                  !_showDirectPairingCode)
+                OutlinedButton.icon(
+                  onPressed: () =>
+                      setState(() => _showDirectPairingCode = true),
+                  icon: const Icon(Icons.visibility_outlined),
+                  label: const Text('Show code'),
+                ),
             ],
           ),
           if (_showLanPairingCode) ...[
@@ -6637,6 +6752,12 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                   child: Text(tr.text('lan_one_time_pairing_code'),
                       style: Theme.of(context).textTheme.titleMedium)),
               _pairingStatusBadge(context, status),
+              const SizedBox(width: 8),
+              TextButton.icon(
+                onPressed: () => setState(() => _showLanPairingCode = false),
+                icon: const Icon(Icons.visibility_off_outlined),
+                label: const Text('Hide code'),
+              ),
             ],
           ),
           const SizedBox(height: 12),
@@ -6691,6 +6812,16 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   }
 
   Widget _temporaryDirectDiagnostics() {
+    if (!_showDirectDiagnostics) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: OutlinedButton.icon(
+          onPressed: () => setState(() => _showDirectDiagnostics = true),
+          icon: const Icon(Icons.terminal_outlined),
+          label: const Text('Show log'),
+        ),
+      );
+    }
     return ValueListenableBuilder<List<String>>(
       valueListenable: SyncDiagnosticsLog.lines,
       builder: (context, lines, _) {
@@ -6710,6 +6841,12 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                     const SizedBox(width: 8),
                     const Expanded(
                         child: Text('Direct diagnostics (temporary)')),
+                    IconButton(
+                      tooltip: 'Hide log',
+                      onPressed: () =>
+                          setState(() => _showDirectDiagnostics = false),
+                      icon: const Icon(Icons.visibility_off_outlined),
+                    ),
                     IconButton(
                       tooltip: 'Copy diagnostics',
                       onPressed: text.isEmpty
@@ -6785,6 +6922,12 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                           : tr.text('direct_pairing_code'),
                       style: Theme.of(context).textTheme.titleMedium)),
               _pairingStatusBadge(context, status),
+              const SizedBox(width: 8),
+              TextButton.icon(
+                onPressed: () => setState(() => _showDirectPairingCode = false),
+                icon: const Icon(Icons.visibility_off_outlined),
+                label: const Text('Hide code'),
+              ),
             ],
           ),
           const SizedBox(height: 12),

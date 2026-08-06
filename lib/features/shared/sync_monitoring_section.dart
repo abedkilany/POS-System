@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -14,9 +16,15 @@ class SyncMonitoringSection extends StatefulWidget {
   const SyncMonitoringSection({
     super.key,
     required this.store,
+    this.forceHostView = false,
+    this.storeIdOverride,
+    this.branchIdOverride,
   });
 
   final AppStore store;
+  final bool forceHostView;
+  final String? storeIdOverride;
+  final String? branchIdOverride;
 
   @override
   State<SyncMonitoringSection> createState() => _SyncMonitoringSectionState();
@@ -44,29 +52,51 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
   }
 
   void _refreshDirectDevices() {
-    // Direct Sync device registry is no longer part of the application flow.
-    // Direct device administration is handled by the VPS phase; keep this
-    // panel local-only until that registry is exposed through Direct APIs.
-    _directMonitoringFuture = Future<_DirectMonitoringSnapshot>.value(
-      _DirectMonitoringSnapshot(
-        devices: const <DirectDeviceStatus>[],
-        limit: store.appIdentity.isHost
-            ? _localClientDeviceLimitStatus(store, LanSyncSettings.load())
-            : null,
-      ),
+    final lanSettings = LanSyncSettings.load();
+    final fallback = _DirectMonitoringSnapshot(
+      devices: const <DirectDeviceStatus>[],
+      limit: store.appIdentity.isHost
+          ? _localClientDeviceLimitStatus(store, lanSettings)
+          : null,
     );
+    final controlPlaneSettings = VpsControlPlaneSettings.load();
+    final showHostView = widget.forceHostView || store.appIdentity.isHost;
+    if (!showHostView || !controlPlaneSettings.isConfigured) {
+      _directMonitoringFuture = Future<_DirectMonitoringSnapshot>.value(
+        fallback,
+      );
+      return;
+    }
+
+    final remoteFuture = _loadAndAdoptDirectDevices(controlPlaneSettings);
+    _directMonitoringFuture = remoteFuture.catchError((error, stackTrace) {
+      SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] monitoring device refresh failed error=$error',
+      );
+      return fallback;
+    });
+    _directMonitoringFuture!.then((_) {
+      if (mounted) setState(() {});
+    });
   }
 
-  // ignore: unused_element
   Future<_DirectMonitoringSnapshot> _loadAndAdoptDirectDevices(
       VpsControlPlaneSettings controlPlaneSettings) async {
     final service = _controlPlaneService;
-    var result = await service.listDevicesWithLimit(controlPlaneSettings);
+    var result = await service.listDevicesWithLimit(
+      controlPlaneSettings,
+      storeIdOverride: widget.storeIdOverride,
+      branchIdOverride: widget.branchIdOverride,
+    );
     var devices = result.devices;
     final repaired = await _repairLegacyDirectDeviceLinks(
         service, controlPlaneSettings, devices);
     if (repaired) {
-      result = await service.listDevicesWithLimit(controlPlaneSettings);
+      result = await service.listDevicesWithLimit(
+        controlPlaneSettings,
+        storeIdOverride: widget.storeIdOverride,
+        branchIdOverride: widget.branchIdOverride,
+      );
       devices = result.devices;
     }
     await _adoptDirectRegistryDevices(devices);
@@ -297,7 +327,7 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
-    final isHost = store.appIdentity.isHost;
+    final isHost = widget.forceHostView || store.appIdentity.isHost;
     final lanSettings = LanSyncSettings.load();
     final controlPlaneSettings = VpsControlPlaneSettings.load();
     final peers = SyncDeviceStateStore.loadPeerStates();
@@ -585,11 +615,31 @@ String _pendingChangesForHostPeer(
   return '$count';
 }
 
-class _SyncTraceDiagnosticsPanel extends StatelessWidget {
+class _SyncTraceDiagnosticsPanel extends StatefulWidget {
   const _SyncTraceDiagnosticsPanel();
 
   @override
+  State<_SyncTraceDiagnosticsPanel> createState() =>
+      _SyncTraceDiagnosticsPanelState();
+}
+
+class _SyncTraceDiagnosticsPanelState
+    extends State<_SyncTraceDiagnosticsPanel> {
+  bool _showLog = false;
+
+  @override
   Widget build(BuildContext context) {
+    if (!_showLog) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: OutlinedButton.icon(
+          onPressed: () => setState(() => _showLog = true),
+          icon: const Icon(Icons.terminal_outlined),
+          label: const Text('Show log'),
+        ),
+      );
+    }
+
     final theme = Theme.of(context);
     return ValueListenableBuilder<List<String>>(
       valueListenable: SyncDiagnosticsLog.lines,
@@ -610,6 +660,11 @@ class _SyncTraceDiagnosticsPanel extends StatelessWidget {
                     const Icon(Icons.route_outlined),
                     const SizedBox(width: 8),
                     const Expanded(child: Text('Sync trace diagnostics')),
+                    IconButton(
+                      tooltip: 'Hide log',
+                      onPressed: () => setState(() => _showLog = false),
+                      icon: const Icon(Icons.visibility_off_outlined),
+                    ),
                     IconButton(
                       tooltip: 'Copy sync trace',
                       onPressed: text.isEmpty
@@ -847,8 +902,20 @@ class _HostSyncMonitoringTableState extends State<_HostSyncMonitoringTable> {
         if (entry.key.trim().isNotEmpty && entry.value.isActive)
           entry.key.trim(): entry.value,
     };
-    final deviceIds = registryById.keys.toSet()
-      ..removeWhere((id) => deleted.contains(id));
+    final serverClientIds = directById.values
+        .where((device) =>
+            device.deviceId.trim().isNotEmpty &&
+            device.deviceId.trim() != widget.store.deviceId.trim() &&
+            device.role.trim().toLowerCase() != 'host' &&
+            !device.revoked)
+        .map((device) => device.deviceId.trim());
+    final deviceIds = <String>{
+      ...registryById.keys,
+      ...widget.lanSettings.pairedDevices.keys
+          .map((id) => id.trim())
+          .where((id) => id.isNotEmpty),
+      ...serverClientIds,
+    }..removeWhere((id) => deleted.contains(id));
     final pairedDeviceIds = deviceIds.toList()..sort();
     final limitPanel = _deviceLimitPanel(
       context,

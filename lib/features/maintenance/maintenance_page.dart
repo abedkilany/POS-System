@@ -31,10 +31,12 @@ class _MaintenancePageState extends State<MaintenancePage> {
   bool _showDatabaseExplorer = false;
   int _advancedToolsTapCount = 0;
   bool _stressLabUnlocked = false;
+  bool _stressLabButtonHidden = false;
+  Timer? _stressLabHideTimer;
   bool get _showAdvancedTools =>
       kDebugMode || widget.store.canManageMaintenance;
   bool get _showStressLabButton =>
-      widget.store.isStressLabEnabled || _stressLabUnlocked;
+      !_stressLabButtonHidden && _stressLabUnlocked;
 
   @override
   void initState() {
@@ -67,12 +69,29 @@ class _MaintenancePageState extends State<MaintenancePage> {
     setState(() {
       _advancedToolsTapCount = 0;
       _stressLabUnlocked = true;
+      _stressLabButtonHidden = false;
+    });
+    _stressLabHideTimer?.cancel();
+    _stressLabHideTimer = Timer(const Duration(seconds: 30), () {
+      if (!mounted) return;
+      _hideStressLabButton();
     });
   }
 
   void _hideStressLabButton() {
-    _advancedToolsTapCount = 0;
-    _stressLabUnlocked = false;
+    _stressLabHideTimer?.cancel();
+    _stressLabHideTimer = null;
+    if (!mounted) {
+      _advancedToolsTapCount = 0;
+      _stressLabUnlocked = false;
+      _stressLabButtonHidden = true;
+      return;
+    }
+    setState(() {
+      _advancedToolsTapCount = 0;
+      _stressLabUnlocked = false;
+      _stressLabButtonHidden = true;
+    });
   }
 
   String _formatBytes(int bytes) {
@@ -219,6 +238,7 @@ class _MaintenancePageState extends State<MaintenancePage> {
   @override
   void dispose() {
     _hideStressLabButton();
+    _stressLabHideTimer?.cancel();
     super.dispose();
   }
 
@@ -514,6 +534,7 @@ class _MaintenancePageState extends State<MaintenancePage> {
                     onPressed: () async {
                       await widget.store.setStressLabEnabled(true);
                       if (!mounted) return;
+                      _hideStressLabButton();
                       await Navigator.of(context).push(
                         MaterialPageRoute(
                           builder: (_) => PageTimingScope(
@@ -524,8 +545,6 @@ class _MaintenancePageState extends State<MaintenancePage> {
                           ),
                         ),
                       );
-                      if (!mounted) return;
-                      _hideStressLabButton();
                     },
                     icon: const Icon(Icons.speed_outlined),
                     label: Text(tr.text('stress_lab')),
