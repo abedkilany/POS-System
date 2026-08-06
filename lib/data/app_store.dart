@@ -3659,6 +3659,7 @@ class AppStore extends ChangeNotifier {
           _syncQueue
             ..clear()
             ..addAll(syncQueue);
+          await _reconcileUnsyncedChangesWithQueue();
           notifyListeners();
         },
         category: 'app_store',
@@ -4019,6 +4020,7 @@ class AppStore extends ChangeNotifier {
     _syncQueue
       ..clear()
       ..addAll(_loadSyncQueue());
+    await _reconcileUnsyncedChangesWithQueue();
 
     _rememberLogin =
         LocalDatabaseService.getString(_rememberLoginKey) == 'true';
@@ -8103,10 +8105,17 @@ class AppStore extends ChangeNotifier {
     final isLanClient =
         identity.isClient && activeTransport == 'lan' && _isLanClientConfigured;
     final isDirectClient = identity.isClient && activeTransport == 'direct';
+    final isDirectHost = identity.isHost && activeTransport == 'direct';
 
     // Sync architecture v2: the Host is the only source of truth. Both
     // supported remote transports deliver Client work to that Host.
-    final target = isLanClient || isDirectClient ? 'host' : 'local';
+    // Direct Host events must enter the publish queue as well. They are
+    // authoritative locally, but Clients still need a broadcast wake-up and
+    // must be able to pull them from the Host timeline. Previously Host local
+    // writes were marked synced immediately and never reached the publish
+    // path, which is especially visible under Stress Lab.
+    final target =
+        isLanClient || isDirectClient || isDirectHost ? 'host' : 'local';
     if (target == 'local') return null;
     final item = SyncQueueItem(
       id: '$changeId-$target',
@@ -8119,6 +8128,70 @@ class AppStore extends ChangeNotifier {
     );
     _syncQueue.add(item);
     return item;
+  }
+
+  /// Repairs the split-brain state where a change exists in the sync history
+  /// but its outbound queue row is missing. This can be left by older
+  /// snapshot/restore flows that persisted the two stores independently.
+  ///
+  /// Only local Client drafts are reconstructed. Host-authoritative history
+  /// received by a Client must never be re-queued as a new draft.
+  Future<void> _reconcileUnsyncedChangesWithQueue() async {
+    final identity = appIdentity;
+    final isRemoteClient = identity.isClient &&
+        (identity.activeSyncTransportNormalized == 'direct' ||
+            identity.activeSyncTransportNormalized == 'lan');
+    final isDirectHost =
+        identity.isHost && identity.activeSyncTransportNormalized == 'direct';
+    if (!isRemoteClient && !isDirectHost) return;
+
+    const target = 'host';
+    final queueByChangeId = <String, SyncQueueItem>{
+      for (final item in _syncQueue.where((item) => item.target == target))
+        item.changeId: item,
+    };
+    var repaired = 0;
+    var reset = 0;
+    final now = DateTime.now();
+
+    for (final change in _syncChanges.where((item) => !item.isSynced)) {
+      if (isRemoteClient && change.deviceId != _deviceId) continue;
+      final existing = queueByChangeId[change.id];
+      if (existing == null) {
+        final item = SyncQueueItem(
+          id: '${change.id}-$target',
+          changeId: change.id,
+          target: target,
+          status: 'pending',
+          attempts: 0,
+          createdAt: change.createdAt,
+          updatedAt: now,
+        );
+        _syncQueue.add(item);
+        queueByChangeId[change.id] = item;
+        repaired++;
+      } else if (existing.status == 'synced') {
+        // The change itself is still unsynced, so a synced queue row is stale.
+        final repairedItem = existing.copyWith(
+          status: 'pending',
+          updatedAt: now,
+          clearNextRetryAt: true,
+        );
+        final index = _syncQueue.indexOf(existing);
+        if (index >= 0) _syncQueue[index] = repairedItem;
+        queueByChangeId[change.id] = repairedItem;
+        reset++;
+      }
+    }
+
+    if (repaired == 0 && reset == 0) return;
+    await _saveSyncStateOnly();
+    SyncDiagnosticsLog.add(
+      '[SYNC_TRACE] syncQueue:reconciled role=${identity.deviceRole.name} '
+      'target=$target repaired=$repaired reset=$reset '
+      'unsynced=${_syncChanges.where((item) => !item.isSynced).length} '
+      'queue=${_syncQueue.length}',
+    );
   }
 
   T _withSyncMeta<T>(
