@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { WebSocketServer, WebSocket } from 'ws';
-import { assertAccountOrDevice, assertStoreAllowed, sendError } from '../_db.js';
+import { assertAccountOrDevice, assertStoreAllowed, assertDirectSyncEnabled, sendError } from '../_db.js';
 
 const clientsByScope = new Map();
 const tickets = new Map();
@@ -186,6 +186,7 @@ export async function realtimeTicketHandler(req, res) {
       return res.status(400).json({ ok: false, error: 'Invalid realtime ticket request.' });
     }
     assertStoreAllowed(storeId);
+    await assertDirectSyncEnabled(storeId);
     await assertAccountOrDevice(req, {
       storeId,
       branchId,

@@ -2,6 +2,7 @@ import {
   sql,
   assertAccountOrDevice,
   assertStoreAllowed,
+  assertDirectSyncEnabled,
   sendError,
 } from '../_db.js';
 
@@ -43,6 +44,7 @@ export default async function handler(req, res) {
         return res.status(400).json({ ok: false, error: 'storeId and hostDeviceId are required.' });
       }
       assertStoreAllowed(storeId);
+      await assertDirectSyncEnabled(storeId);
       await assertAccountOrDevice(req, {
         storeId,
         branchId,
@@ -73,6 +75,7 @@ export default async function handler(req, res) {
       }
 
       assertStoreAllowed(storeId);
+      await assertDirectSyncEnabled(storeId);
 
       await assertAccountOrDevice(req, {
         storeId,

@@ -3733,31 +3733,16 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
 
   bool? _directSyncPlanAllowed;
 
-  bool get _directSyncPlanDenied => _directSyncPlanAllowed == false;
-  bool get _directSyncPlanAllowsUi => !_directSyncPlanDenied;
+  bool get _directSyncPlanDenied => _directSyncPlanAllowed != true;
+  bool get _directSyncPlanAllowsUi => _directSyncPlanAllowed == true;
   bool get _effectiveDirectEnabled => _directEnabled && _directSyncPlanAllowsUi;
-
-  bool? _cachedDirectPlanAccessForUi(AccountAuthCache? cache) {
-    if (cache == null) return null;
-    if (cache.directSyncEnabled) return true;
-
-    // A local Host created before Direct Sync is enabled usually has a cached
-    // registered_local=false result and no account token. That is not an
-    // authoritative denial; the server will enforce the entitlement when a
-    // Direct pairing code is requested.
-    if (widget.store.appIdentity.isHost && cache.accountToken.trim().isEmpty) {
-      return null;
-    }
-
-    return false;
-  }
 
   @override
   void initState() {
     super.initState();
-    _directSyncPlanAllowed =
-        _cachedDirectPlanAccessForUi(AccountAuthCache.load());
-    _directSyncPlanAllowed = true;
+    // Direct entitlement is controlled by Admin > Subscribers. Until the
+    // live entitlement is verified, keep Direct disabled by default.
+    _directSyncPlanAllowed = null;
     final identity = widget.store.appIdentity;
     final lan = LanSyncSettings.load();
     final direct = DirectSyncSettings.load();
@@ -3766,9 +3751,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         ? SyncMode.directConnected
         : SyncMode.lanOnly;
     _lanEnabledForHost = identity.isHost && lan.setupComplete && lan.isHost;
-    _directEnabled = identity.isHost ||
-        (identity.isClient &&
-            identity.activeSyncTransportNormalized == 'direct');
+    _directEnabled = identity.isDirectEnabled && _directSyncPlanAllowed == true;
     _lanHostController.text = lan.host;
     _lanPortController.text = lan.port.toString();
     _lanIntervalController.text = lan.intervalSeconds.toString();
@@ -3789,6 +3772,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     }
     _loadActivePairingCodes();
     _startPairingCountdownTimer();
+    unawaited(_refreshDirectSyncPlanAccess());
     // Do not auto-detect or write the LAN Host/IP when the page opens.
     // IP detection is a user-driven action from the Refresh IP button so
     // the Save button only becomes enabled after an intentional change.
@@ -3813,7 +3797,9 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   // ignore: unused_element
   Future<void> _refreshDirectSyncPlanAccess() async {
     final cache = AccountAuthCache.load();
-    bool? planAllowed = _cachedDirectPlanAccessForUi(cache);
+    // Do not treat the local cache as an entitlement. The Admin subscription
+    // response must positively authorize Direct on every verification.
+    bool? planAllowed;
     final identityAtStart = widget.store.appIdentity;
     final directAtStart = VpsControlPlaneSettings.load();
 
@@ -3902,7 +3888,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           _status = 'Could not verify Direct Sync access.';
         });
       }
-      // Keep the cached plan state if the server cannot be reached.
+      // Fail closed if the subscription authority cannot be reached.
     }
   }
 
@@ -3922,9 +3908,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         ? SyncMode.directConnected
         : SyncMode.lanOnly;
     final lanEnabled = identity.isHost && lan.setupComplete && lan.isHost;
-    final directEnabled = identity.isHost ||
-        (identity.isClient &&
-            identity.activeSyncTransportNormalized == 'direct');
+    final directEnabled =
+        identity.isDirectEnabled && _directSyncPlanAllowed == true;
     return _deviceRole != role ||
         _clientSyncMode != clientMode ||
         _lanEnabledForHost != lanEnabled ||
@@ -3943,9 +3928,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           ? SyncMode.directConnected
           : SyncMode.lanOnly;
       _lanEnabledForHost = identity.isHost && lan.setupComplete && lan.isHost;
-      _directEnabled = identity.isHost ||
-          (identity.isClient &&
-              identity.activeSyncTransportNormalized == 'direct');
+      _directEnabled =
+          identity.isDirectEnabled && _directSyncPlanAllowed == true;
       _lanHostController.text = lan.host;
       _lanPortController.text = lan.port.toString();
       _lanIntervalController.text = lan.intervalSeconds.toString();
@@ -4760,12 +4744,9 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   Future<void> _syncNow() => _run(() async {
         final identity = widget.store.appIdentity;
         final lan = LanSyncSettings.load();
-        final direct = VpsControlPlaneSettings.load();
         final hostLanEnabled = identity.isHost &&
             (_lanEnabledForHost || (lan.setupComplete && lan.isHost));
-        final hostDirectEnabled = identity.isHost &&
-            (_directEnabled ||
-                (identity.isDirectEnabled && direct.isConfigured));
+        final hostDirectEnabled = identity.isHost && _effectiveDirectEnabled;
         final messages = <String>[];
         if (identity.activeSyncTransportNormalized == 'direct') {
           final result =
@@ -4878,8 +4859,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
         var controlPlaneReachable = false;
         var directProblem = '';
         var directDevices = const <DirectDeviceStatus>[];
-        if ((_directEnabled || identity.isDirectEnabled) &&
-            direct.isConfigured) {
+        if (_effectiveDirectEnabled && direct.isConfigured) {
           final directConnection =
               await _directEngine(enabled: true).testConnection();
           controlPlaneReachable = directConnection.ok;
@@ -4937,8 +4917,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
             } else {
               parts.add(tr.text('direct_pending'));
             }
-          } else if ((_directEnabled || identity.isDirectEnabled) &&
-              direct.isConfigured) {
+          } else if (_effectiveDirectEnabled && direct.isConfigured) {
             parts.add(controlPlaneReachable
                 ? tr.text('direct_not_configured')
                 : '${tr.text('direct_error')}${directProblem.isEmpty ? '' : ': $directProblem'}');

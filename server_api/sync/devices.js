@@ -5,6 +5,8 @@ import {
   assertDeviceAllowed,
   getClientDeviceLimitStatus,
   assertStoreAllowed,
+  assertDirectSyncEnabled,
+  getDirectSyncEnabled,
   ensureDeviceAuthColumns,
   sendError,
 } from '../_db.js';
@@ -131,6 +133,10 @@ export default async function handler(req, res) {
         Number(body.lastAckSequence || body.last_ack_sequence || 0) || 0,
       );
 
+      if (activeTransport === 'direct' || lastSyncTransport === 'direct') {
+        await assertDirectSyncEnabled(storeId);
+      }
+
       // Hosts can register with their account session. Paired Clients update
       // only themselves with their device-scoped token.
       let usedDeviceAuth = false;
@@ -233,7 +239,8 @@ export default async function handler(req, res) {
         limit 100
       `;
       const limit = await getClientDeviceLimitStatus(storeId);
-      return res.status(200).json({ ok: true, devices: rows.map(rowToDevice), deviceLimit: limit, serverTime: new Date().toISOString() });
+      const directSyncEnabled = await getDirectSyncEnabled(storeId);
+      return res.status(200).json({ ok: true, devices: rows.map(rowToDevice), deviceLimit: limit, directSyncEnabled, serverTime: new Date().toISOString() });
     }
 
     if (req.method === 'DELETE') {

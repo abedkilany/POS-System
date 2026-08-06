@@ -83,13 +83,20 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
               setDialogState(() => saving = false);
               if (result.ok) {
                 try {
-                  await widget.store.applyStoreOwnerCredentials(
-                    username: result.username.isNotEmpty
-                        ? result.username
-                        : cache.username,
-                    fullName: null,
-                    password: newController.text,
-                  );
+                  // Keep the local Store Owner in sync only when this account
+                  // belongs to the Store currently open on this device.
+                  if (widget.store.appIdentity.storeId.trim().isNotEmpty &&
+                      widget.store.appIdentity.storeId.trim() ==
+                          cache.storeId.trim() &&
+                      widget.store.storeOwnerUser != null) {
+                    await widget.store.applyStoreOwnerCredentials(
+                      username: result.username.isNotEmpty
+                          ? result.username
+                          : cache.username,
+                      fullName: null,
+                      password: newController.text,
+                    );
+                  }
                   await AccountAuthService.cacheOnlineResult(
                     result,
                     mode: cache.mode.isEmpty ? 'owner' : cache.mode,
@@ -113,7 +120,8 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
                   SnackBar(
                       content: Text(result.message.isEmpty
                           ? tr.text('account_password_changed_success')
-                          : tr.format('account_password_changed_local_owner_updated', {
+                          : tr.format(
+                              'account_password_changed_local_owner_updated', {
                               'message': result.message,
                             }))),
                 );
@@ -413,20 +421,20 @@ class _StoreAccountDashboardPageState extends State<StoreAccountDashboardPage> {
                       )
                     else
                       FilledButton.icon(
-                        onPressed:
-                            (_recoveringStoreData || !widget.canRecoverStoreData)
-                                ? null
-                                : () async {
-                                    setState(() => _recoveringStoreData = true);
-                                    try {
-                                      await widget.onRecoverStoreData();
-                                    } finally {
-                                      if (mounted) {
-                                        setState(
-                                            () => _recoveringStoreData = false);
-                                      }
-                                    }
-                                  },
+                        onPressed: (_recoveringStoreData ||
+                                !widget.canRecoverStoreData)
+                            ? null
+                            : () async {
+                                setState(() => _recoveringStoreData = true);
+                                try {
+                                  await widget.onRecoverStoreData();
+                                } finally {
+                                  if (mounted) {
+                                    setState(
+                                        () => _recoveringStoreData = false);
+                                  }
+                                }
+                              },
                         icon: _recoveringStoreData
                             ? const SizedBox(
                                 width: 18,

@@ -52,7 +52,8 @@ class _LoginGatePageState extends State<LoginGatePage> {
   String _onlineSessionPassword = '';
   late final VoidCallback _storeListener;
 
-  DirectControlPlaneService get _controlPlaneService => DirectControlPlaneService(widget.store);
+  DirectControlPlaneService get _controlPlaneService =>
+      DirectControlPlaneService(widget.store);
 
   void _handleStoreChanged() {
     if (!mounted) return;
@@ -441,8 +442,9 @@ class _LoginGatePageState extends State<LoginGatePage> {
       );
       return;
     }
-    final directAllowed =
-        latestCache.directSyncEnabled || sessionResult.directSyncEnabled;
+    // The live subscription response is authoritative. A stale local cache
+    // must not keep Direct enabled after Admin disables it.
+    final directAllowed = sessionResult.ok && sessionResult.directSyncEnabled;
     if (!directAllowed) {
       SyncDiagnosticsLog.add(
         '[RECOVER_DATA] blocked reason=direct_sync_not_enabled storeId=$storeId branchId=$branchId',
@@ -581,14 +583,10 @@ class _LoginGatePageState extends State<LoginGatePage> {
           mode: 'login',
         );
         _setAuthCache(cached);
-        await widget.store.applyStoreOwnerCredentials(
-          username: onlineResult.username.isNotEmpty
-              ? onlineResult.username
-              : parts.first,
-          fullName: null,
-          password: _passwordController.text,
-        );
-        await widget.store.logout();
+        // An online login opens the account-management surface. It must not
+        // rewrite the local Store Owner, especially for platform_admin
+        // accounts such as user@ventio. Local credentials are synchronized
+        // only through an explicit password change on either side.
         setState(() => _loggingIn = false);
         return;
       } catch (error) {

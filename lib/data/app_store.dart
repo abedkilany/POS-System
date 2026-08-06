@@ -5616,59 +5616,70 @@ class AppStore extends ChangeNotifier {
   }) async {
     var cache = AccountAuthCache.load();
     var token = cache?.accountToken.trim() ?? '';
-    if (token.isEmpty) {
+    final localStoreId = appIdentity.storeId.trim();
+    final onlineStoreId = cache?.storeId.trim() ?? '';
+    if (cache == null ||
+        cache.accountType != 'store_owner' ||
+        localStoreId.isEmpty ||
+        onlineStoreId.isEmpty ||
+        localStoreId != onlineStoreId ||
+        token.isEmpty) {
       throw const AppStoreActionException(
-        'Account re-authentication required before editing the protected Store Owner.',
+        'The Store Owner must be signed in to the matching store account before editing this password.',
       );
     }
 
     final authService = AccountAuthService();
     final session = await authService.refreshSession(accountToken: token);
     if (session.ok) {
-      cache = AccountAuthCache.load() ?? cache;
-      final previous = cache;
-      if (previous != null) {
-        await AccountAuthCache.save(
-          previous.copyWith(
-            accountId: session.accountId.isNotEmpty
-                ? session.accountId
-                : previous.accountId,
-            storeId:
-                session.storeId.isNotEmpty ? session.storeId : previous.storeId,
-            branchId: session.branchId.isNotEmpty
-                ? session.branchId
-                : previous.branchId,
-            subscriptionStatus: session.subscriptionStatus.isNotEmpty
-                ? session.subscriptionStatus
-                : previous.subscriptionStatus,
-            username: session.username.isNotEmpty
-                ? session.username
-                : previous.username,
-            storeSlug: session.storeSlug.isNotEmpty
-                ? session.storeSlug
-                : previous.storeSlug,
-            storeName: session.storeName.isNotEmpty
-                ? session.storeName
-                : previous.storeName,
-            loginName: session.loginName.isNotEmpty
-                ? session.loginName
-                : previous.loginName,
-            accountType: session.accountType.isNotEmpty
-                ? session.accountType
-                : previous.accountType,
-            trialEndsAt: session.trialEndsAt ?? previous.trialEndsAt,
-            devicesLimit: session.devicesLimit ?? previous.devicesLimit,
-            adminToken: session.adminToken.isNotEmpty
-                ? session.adminToken
-                : previous.adminToken,
-            accountToken: session.accountToken.isNotEmpty
-                ? session.accountToken
-                : previous.accountToken,
-            directSyncEnabled: session.directSyncEnabled,
-            lastVerifiedAt: DateTime.now(),
-          ),
+      if (session.accountType != 'store_owner' ||
+          session.storeId.trim() != localStoreId) {
+        throw const AppStoreActionException(
+          'The signed-in account does not belong to this Store Owner.',
         );
       }
+      cache = AccountAuthCache.load() ?? cache;
+      final previous = cache;
+      await AccountAuthCache.save(
+        previous.copyWith(
+          accountId: session.accountId.isNotEmpty
+              ? session.accountId
+              : previous.accountId,
+          storeId:
+              session.storeId.isNotEmpty ? session.storeId : previous.storeId,
+          branchId: session.branchId.isNotEmpty
+              ? session.branchId
+              : previous.branchId,
+          subscriptionStatus: session.subscriptionStatus.isNotEmpty
+              ? session.subscriptionStatus
+              : previous.subscriptionStatus,
+          username: session.username.isNotEmpty
+              ? session.username
+              : previous.username,
+          storeSlug: session.storeSlug.isNotEmpty
+              ? session.storeSlug
+              : previous.storeSlug,
+          storeName: session.storeName.isNotEmpty
+              ? session.storeName
+              : previous.storeName,
+          loginName: session.loginName.isNotEmpty
+              ? session.loginName
+              : previous.loginName,
+          accountType: session.accountType.isNotEmpty
+              ? session.accountType
+              : previous.accountType,
+          trialEndsAt: session.trialEndsAt ?? previous.trialEndsAt,
+          devicesLimit: session.devicesLimit ?? previous.devicesLimit,
+          adminToken: session.adminToken.isNotEmpty
+              ? session.adminToken
+              : previous.adminToken,
+          accountToken: session.accountToken.isNotEmpty
+              ? session.accountToken
+              : previous.accountToken,
+          directSyncEnabled: session.directSyncEnabled,
+          lastVerifiedAt: DateTime.now(),
+        ),
+      );
       token = session.accountToken.isNotEmpty ? session.accountToken : token;
     } else if (session.message.toLowerCase().contains('session') ||
         session.message.toLowerCase().contains('unauthorized') ||

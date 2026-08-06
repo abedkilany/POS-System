@@ -519,10 +519,12 @@ class DirectDevicesResult {
   const DirectDevicesResult({
     required this.devices,
     this.limit,
+    this.directSyncEnabled,
   });
 
   final List<DirectDeviceStatus> devices;
   final DirectDeviceLimitStatus? limit;
+  final bool? directSyncEnabled;
 }
 
 class DirectProvisioningStatus {
@@ -765,9 +767,8 @@ class DirectControlPlaneService {
     await sendHostHeartbeat(settings);
     onProgress?.call(0.40, 'Registering Host device...');
     await registerCurrentDevice(settings, transport: 'direct');
-    final hostPendingCount = _syncCore
-        .pendingChangesForTarget(UnifiedSyncQueueTarget.host)
-        .length;
+    final hostPendingCount =
+        _syncCore.pendingChangesForTarget(UnifiedSyncQueueTarget.host).length;
     onProgress?.call(0.55, 'Publishing Host changes through Direct relay...');
     final relayPublished = await _broadcastHostAuthorityViaRelay(settings);
     if (!relayPublished) {
@@ -817,8 +818,8 @@ class DirectControlPlaneService {
         SyncDeviceStateStore.lastAppliedSequenceForTransport(
             store.appIdentity, 'direct');
     if (baseLastAppliedSequence <= 0) {
-      onProgress?.call(
-          0.32, 'Rebuilding this device data from the Direct relay snapshot...');
+      onProgress?.call(0.32,
+          'Rebuilding this device data from the Direct relay snapshot...');
       return rebuildFromDirectHostSnapshot(
         settings.copyWith(clearLastPullCursor: true),
         onProgress: onProgress,
@@ -945,10 +946,13 @@ class DirectControlPlaneService {
     }
   }
 
-  Future<bool?> checkDirectSyncPlanAccess(VpsControlPlaneSettings settings) async {
-    // Direct is controlled by the VPS control plane; it has no separate
-    // Direct entitlement endpoint or Direct transport gate.
-    return settings.isConfigured ? true : null;
+  Future<bool?> checkDirectSyncPlanAccess(
+      VpsControlPlaneSettings settings) async {
+    // Read the subscription entitlement from the server using the Host's
+    // authenticated device/account session. Local cache is not authoritative.
+    if (!settings.isConfigured) return null;
+    final result = await listDevicesWithLimit(settings);
+    return result.directSyncEnabled;
   }
 
   String _snapshotGenerationKey(String transport) =>
@@ -1088,8 +1092,10 @@ class DirectControlPlaneService {
     return _syncCore.compactAfterSuccessfulSync();
   }
 
-  Future<DirectPairingCodeResult> createPairingCode(VpsControlPlaneSettings settings,
-      {String transport = 'direct', int ttlMinutes = 5}) async {
+  Future<DirectPairingCodeResult> createPairingCode(
+      VpsControlPlaneSettings settings,
+      {String transport = 'direct',
+      int ttlMinutes = 5}) async {
     final identity = store.appIdentity;
     final canCreate = transport == 'direct'
         ? identity.isHost && settings.apiBaseUrl.trim().isNotEmpty
@@ -1369,8 +1375,9 @@ class DirectControlPlaneService {
         current,
         claim: claim,
         syncMode: transport,
-        activeTransport:
-            claimedTransport == 'lan' ? 'lan' : (isDirect ? 'direct' : 'direct'),
+        activeTransport: claimedTransport == 'lan'
+            ? 'lan'
+            : (isDirect ? 'direct' : 'direct'),
       );
       onProgress?.call(0.22, 'Registering this device...');
       await store.updateAppIdentityDuringSetup(identity);
@@ -1421,7 +1428,8 @@ class DirectControlPlaneService {
             if (attempt > 0) {
               onProgress?.call(0.28, 'Waiting for Host full snapshot...');
             }
-            await DirectProvisioningStatus.markAttempted(DateTime.now().toUtc());
+            await DirectProvisioningStatus.markAttempted(
+                DateTime.now().toUtc());
           },
           attempt: (attempt) async {
             final envelope = await _downloadDirectSnapshotEnvelope(
@@ -1648,7 +1656,8 @@ class DirectControlPlaneService {
           (claim['hostDeviceId'] ?? claim['host_device_id'] ?? store.deviceId)
               .toString();
       final controlPlaneTenantId =
-          (claim['controlPlaneTenantId'] ?? claim['direct_tenant_id'] ?? '').toString();
+          (claim['controlPlaneTenantId'] ?? claim['direct_tenant_id'] ?? '')
+              .toString();
 
       onProgress?.call(0.25, 'Recovering permanent Store identity...');
       await store.recoverExistingStoreIdentity(
@@ -1810,7 +1819,8 @@ class DirectControlPlaneService {
           (claim['hostDeviceId'] ?? claim['host_device_id'] ?? store.deviceId)
               .toString();
       final controlPlaneTenantId =
-          (claim['controlPlaneTenantId'] ?? claim['direct_tenant_id'] ?? '').toString();
+          (claim['controlPlaneTenantId'] ?? claim['direct_tenant_id'] ?? '')
+              .toString();
       final deviceLimit = claim['deviceLimit'] is Map
           ? DirectDeviceLimitStatus.fromJson(
               Map<String, dynamic>.from(claim['deviceLimit'] as Map),
@@ -1893,8 +1903,10 @@ class DirectControlPlaneService {
     return 'direct-rebuild-$now-${device.isEmpty ? 'device' : device}';
   }
 
-  Future<DirectSyncResult> requestFreshHostSnapshot(VpsControlPlaneSettings settings,
-      {DateTime? requestedAt, String snapshotGeneration = ''}) async {
+  Future<DirectSyncResult> requestFreshHostSnapshot(
+      VpsControlPlaneSettings settings,
+      {DateTime? requestedAt,
+      String snapshotGeneration = ''}) async {
     final identity = store.appIdentity;
     if (identity.isHost) {
       return const DirectSyncResult(
@@ -2256,7 +2268,8 @@ class DirectControlPlaneService {
     };
   }
 
-  Map<String, String> headers(VpsControlPlaneSettings settings) => _headers(settings);
+  Map<String, String> headers(VpsControlPlaneSettings settings) =>
+      _headers(settings);
 
   String _newRelayRequestId() {
     _relayRequestCounter += 1;
@@ -2374,7 +2387,8 @@ class DirectControlPlaneService {
     }
     final chunks = kind == 'login_bootstrap'
         ? await store.exportDirectLoginBootstrapSnapshotChunks()
-        : await store.exportDirectBootstrapSnapshotChunks(maxItemsPerChunk: 300);
+        : await store.exportDirectBootstrapSnapshotChunks(
+            maxItemsPerChunk: 300);
     if (chunks.isEmpty) return null;
     if (kind != 'login_bootstrap' &&
         !_relaySnapshotHasBusinessCollections(chunks)) {
@@ -2814,7 +2828,8 @@ class DirectControlPlaneService {
     }
   }
 
-  Future<DirectSyncResult> registerCurrentDevice(VpsControlPlaneSettings settings,
+  Future<DirectSyncResult> registerCurrentDevice(
+      VpsControlPlaneSettings settings,
       {String transport = 'direct'}) async {
     final identity = store.appIdentity;
     if (!settings.isConfigured) {
@@ -3027,7 +3042,16 @@ class DirectControlPlaneService {
     final limit = limitRaw is Map
         ? DirectDeviceLimitStatus.fromJson(Map<String, dynamic>.from(limitRaw))
         : null;
-    return DirectDevicesResult(devices: devices, limit: limit);
+    final directSyncEnabled = decoded['directSyncEnabled'] == true
+        ? true
+        : decoded.containsKey('directSyncEnabled')
+            ? false
+            : null;
+    return DirectDevicesResult(
+      devices: devices,
+      limit: limit,
+      directSyncEnabled: directSyncEnabled,
+    );
   }
 
   Future<DirectSyncResult> repairLegacyDirectDeviceLinks(
@@ -3086,7 +3110,8 @@ class DirectControlPlaneService {
     }
   }
 
-  Future<DirectSyncResult> testConnection(VpsControlPlaneSettings settings) async {
+  Future<DirectSyncResult> testConnection(
+      VpsControlPlaneSettings settings) async {
     if (!settings.isConfigured) {
       return const DirectSyncResult(
           ok: false, message: 'Direct API URL and token are required.');
@@ -3180,7 +3205,8 @@ class DirectControlPlaneService {
     }
   }
 
-  Future<DirectSyncResult> validateSingleHost(VpsControlPlaneSettings settings) async {
+  Future<DirectSyncResult> validateSingleHost(
+      VpsControlPlaneSettings settings) async {
     final identity = store.appIdentity;
     if (!settings.isConfigured) {
       return const DirectSyncResult(
@@ -3201,7 +3227,8 @@ class DirectControlPlaneService {
         ok: true, message: 'No other active Host was found.');
   }
 
-  Future<DirectSyncResult> sendHostHeartbeat(VpsControlPlaneSettings settings) async {
+  Future<DirectSyncResult> sendHostHeartbeat(
+      VpsControlPlaneSettings settings) async {
     final identity = store.appIdentity;
     if (!identity.isDirectEnabled || !identity.isHost) {
       return const DirectSyncResult(
@@ -3358,7 +3385,8 @@ class DirectControlPlaneService {
     }
   }
 
-  Future<HostHeartbeatStatus> getHostHeartbeatStatus(VpsControlPlaneSettings settings,
+  Future<HostHeartbeatStatus> getHostHeartbeatStatus(
+      VpsControlPlaneSettings settings,
       {Duration staleAfter = const Duration(seconds: 90)}) async {
     final identity = store.appIdentity;
     if (!settings.isConfigured) {
@@ -3417,7 +3445,8 @@ class DirectControlPlaneService {
     }
   }
 
-  Future<Map<String, dynamic>?> runDirectMaintenance(VpsControlPlaneSettings settings,
+  Future<Map<String, dynamic>?> runDirectMaintenance(
+      VpsControlPlaneSettings settings,
       {int eventRetentionDays = 30}) async {
     // Direct is a relay only. Sync history and snapshots are maintained by the
     // Host's local database, so there is no remote maintenance operation.
@@ -3723,15 +3752,13 @@ class DirectControlPlaneService {
     // relay call before selecting the Host events to publish. Without this,
     // the event can remain locally unsynced while pendingChangesForTarget()
     // sees no ready row, so the Client stays at an older ACK sequence forever.
-    await store.recoverSubmittedSyncQueue(
-        target: UnifiedSyncQueueTarget.host);
+    await store.recoverSubmittedSyncQueue(target: UnifiedSyncQueueTarget.host);
     await store.recoverStaleInProgressSyncQueue(
         target: UnifiedSyncQueueTarget.host);
-    await store.retryFailedSyncQueue(
-        target: UnifiedSyncQueueTarget.host);
+    await store.retryFailedSyncQueue(target: UnifiedSyncQueueTarget.host);
     final identity = store.appIdentity;
-    final pending = _syncCore
-        .pendingChangesForTarget(UnifiedSyncQueueTarget.host);
+    final pending =
+        _syncCore.pendingChangesForTarget(UnifiedSyncQueueTarget.host);
     if (pending.isEmpty) return true;
     final pendingIds = _syncCore.changeIds(pending);
     final latestSequence = store.latestStoredAuthoritativeSequence;
@@ -4263,7 +4290,8 @@ class _DirectRelaySnapshotPullTransport
     });
     final chunk = response['chunk'];
     if (chunk is! Map) {
-      throw StateError('Direct relay snapshot chunk ${ordinal + 1} is invalid.');
+      throw StateError(
+          'Direct relay snapshot chunk ${ordinal + 1} is invalid.');
     }
     return UnifiedSnapshotChunkResponse(
       chunk: Map<String, dynamic>.from(chunk),

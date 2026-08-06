@@ -3,6 +3,7 @@ import {
   sql,
   assertAccountOrDevice,
   assertStoreAllowed,
+  assertDirectSyncEnabled,
   sendError,
 } from '../../_db.js';
 
@@ -193,6 +194,7 @@ export default async function handler(req, res) {
     if (!storeId) return res.status(400).json({ ok: false, error: 'storeId is required.' });
     if (!hostDeviceId) return res.status(400).json({ ok: false, error: 'hostDeviceId is required.' });
     assertStoreAllowed(storeId);
+    if (transport === 'direct') await assertDirectSyncEnabled(storeId);
     await authorizeLocalHostOrAccount(req, {
       storeId,
       branchId,

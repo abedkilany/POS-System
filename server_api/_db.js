@@ -137,6 +137,40 @@ async function ensureStoreDevicesTableForLimits() {
   await sql`alter table store_devices add column if not exists device_public_key text default ''`;
 }
 
+async function ensureDirectSubscriptionColumn() {
+  await sql`
+    create table if not exists app_subscriptions (
+      id text primary key,
+      store_id text not null,
+      plan text not null default 'trial',
+      status text not null default 'trial',
+      trial_ends_at timestamptz,
+      devices_limit integer not null default 2,
+      direct_sync_enabled boolean not null default false,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    )
+  `;
+  await sql`alter table app_subscriptions add column if not exists direct_sync_enabled boolean not null default false`;
+}
+
+export async function getDirectSyncEnabled(storeId) {
+  await ensureDirectSubscriptionColumn();
+  const rows = await sql`
+    select coalesce(bool_or(direct_sync_enabled), false) as enabled
+    from app_subscriptions
+    where store_id = ${storeId}
+  `;
+  return rows[0]?.enabled === true;
+}
+
+export async function assertDirectSyncEnabled(storeId) {
+  if (await getDirectSyncEnabled(storeId)) return;
+  const err = new Error('Direct Sync is not enabled for this store.');
+  err.statusCode = 403;
+  throw err;
+}
+
 export async function getClientDeviceLimitStatus(storeId, { excludeDeviceId = '' } = {}) {
   await sql`
     create table if not exists app_subscriptions (

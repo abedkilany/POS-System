@@ -1,5 +1,5 @@
 import { randomBytes } from 'crypto';
-import { sql, assertClientDeviceSlotAvailable, assertStoreAllowed, ensureDeviceAuthColumns, sendError } from '../../_db.js';
+import { sql, assertClientDeviceSlotAvailable, assertStoreAllowed, assertDirectSyncEnabled, ensureDeviceAuthColumns, sendError } from '../../_db.js';
 
 async function ensurePairingTable() {
   await sql`
@@ -74,6 +74,9 @@ export default async function handler(req, res) {
     if (new Date(lookup[0].expires_at).getTime() < Date.now()) return res.status(410).json({ ok: false, error: 'Pairing code expired or already used. Ask the Host device for a new code.' });
     if (lookup[0].claimed_at) return res.status(409).json({ ok: false, error: 'Pairing code expired or already used. Ask the Host device for a new code.' });
     assertStoreAllowed(lookup[0].store_id);
+    if (String(lookup[0].transport || '').toLowerCase() === 'direct') {
+      await assertDirectSyncEnabled(lookup[0].store_id);
+    }
     await assertClientDeviceSlotAvailable(lookup[0].store_id, {
       excludeDeviceId: deviceId,
     });

@@ -991,6 +991,24 @@ class LanSyncService {
     return linked >= normalizedAllowed;
   }
 
+  Future<void> _refreshCachedDeviceLimit() async {
+    final cache = AccountAuthCache.load();
+    final token = cache?.accountToken.trim() ?? '';
+    if (token.isEmpty) return;
+    try {
+      final result = await AccountAuthService()
+          .refreshSession(accountToken: token)
+          .timeout(const Duration(seconds: 5));
+      if (!result.ok || result.devicesLimit == null) return;
+      await AccountAuthService.cacheOnlineResult(
+        result,
+        mode: cache?.mode.isEmpty == true ? 'login' : (cache?.mode ?? 'login'),
+      );
+    } catch (_) {
+      // LAN pairing must remain usable offline; keep the last known entitlement.
+    }
+  }
+
   Future<void> _handleRequest(HttpRequest request) async {
     try {
       request.response.headers.add('Access-Control-Allow-Origin', '*');
@@ -1035,6 +1053,7 @@ class LanSyncService {
             : AppIdentity.defaults(
                     deviceId: '', platform: AppPlatformType.unknown)
                 .deviceId;
+        await _refreshCachedDeviceLimit();
         if (_clientDeviceLimitReached(settings, excludeDeviceId: deviceId)) {
           await _json(
             request,
