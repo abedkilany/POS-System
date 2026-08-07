@@ -1,6 +1,15 @@
 {
     "releases":  [
                      {
+                         "name":  "VentioSetup-1.0.2-build2.exe",
+                         "url":  "/releases/windows/VentioSetup-1.0.2-build2.exe",
+                         "version":  "1.0.2",
+                         "build":  2,
+                         "size":  24265107,
+                         "sha256":  "79a08a7effd7eaaf5ba89bbd1867938546d0bd504193208a505cfcdef436b6da",
+                         "publishedAt":  "2026-08-07T11:26:03Z"
+                     },
+                     {
                          "name":  "VentioSetup-1.0.1-build1.exe",
                          "url":  "/releases/windows/VentioSetup-1.0.1-build1.exe",
                          "version":  "1.0.1",

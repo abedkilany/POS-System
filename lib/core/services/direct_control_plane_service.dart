@@ -951,8 +951,47 @@ class DirectControlPlaneService {
     // Read the subscription entitlement from the server using the Host's
     // authenticated device/account session. Local cache is not authoritative.
     if (!settings.isConfigured) return null;
-    final result = await listDevicesWithLimit(settings);
-    return result.directSyncEnabled;
+    // Do not call listDevicesWithLimit here. The normal Direct control-plane
+    // service intentionally uses a retired HTTP client; entitlement lookup is
+    // still needed by the Sync settings page while the Host is on LAN.
+    final client = http.Client();
+    try {
+      final identity = store.appIdentity;
+      final response = await client
+          .get(
+            settings.endpoint('/api/sync/devices', {
+              'store_id': identity.storeId,
+              'branch_id':
+                  identity.branchId.isEmpty ? 'main' : identity.branchId,
+            }),
+            headers: _headers(settings),
+          )
+          .timeout(const Duration(seconds: 10));
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        SyncDiagnosticsLog.add(
+          '[SYNC_TRACE] directPlanAccess:entitlementHttp '
+          'status=${response.statusCode} store=${identity.storeId} '
+          'branch=${identity.branchId}',
+        );
+        return null;
+      }
+
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      final allowed = decoded['directSyncEnabled'] == true
+          ? true
+          : decoded.containsKey('directSyncEnabled')
+              ? false
+              : null;
+      return allowed;
+    } catch (error) {
+      SyncDiagnosticsLog.add(
+        '[SYNC_TRACE] directPlanAccess:entitlementHttpFailed error=$error',
+      );
+      return null;
+    } finally {
+      client.close();
+    }
   }
 
   String _snapshotGenerationKey(String transport) =>
