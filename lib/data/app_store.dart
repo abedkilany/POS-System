@@ -5447,6 +5447,18 @@ class AppStore extends ChangeNotifier {
 
   Future<void> logout() async {
     final user = _activeUser;
+    final authCache = AccountAuthCache.load();
+    if (authCache != null) {
+      try {
+        await AccountAuthService().logout(
+          accountToken: authCache.accountToken,
+          refreshToken: authCache.refreshToken,
+        );
+      } catch (_) {
+        // Local logout must still complete when the control plane is offline.
+      }
+      await AccountAuthCache.clear();
+    }
     _activeUser = null;
     _rememberLogin = false;
     await LocalDatabaseService.setString(_activeUserKey, '');
@@ -5650,7 +5662,10 @@ class AppStore extends ChangeNotifier {
     }
 
     final authService = AccountAuthService();
-    final session = await authService.refreshSession(accountToken: token);
+    final session = await authService.refreshSession(
+      accountToken: token,
+      refreshToken: cache.refreshToken,
+    );
     if (session.ok) {
       if (session.accountType != 'store_owner' ||
           session.storeId.trim() != localStoreId) {
@@ -5696,6 +5711,9 @@ class AppStore extends ChangeNotifier {
           accountToken: session.accountToken.isNotEmpty
               ? session.accountToken
               : previous.accountToken,
+          refreshToken: session.refreshToken.isNotEmpty
+              ? session.refreshToken
+              : previous.refreshToken,
           directSyncEnabled: session.directSyncEnabled,
           lastVerifiedAt: DateTime.now(),
         ),

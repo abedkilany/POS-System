@@ -4,6 +4,8 @@ import {
   assertAccountOrDevice,
   assertStoreAllowed,
   assertDirectSyncEnabled,
+  enforceRateLimit,
+  requestIp,
   sendError,
 } from '../../_db.js';
 
@@ -176,6 +178,12 @@ function makeCode() {
 export default async function handler(req, res) {
   try {
     if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Method not allowed' });
+    await enforceRateLimit({
+      key: `pairing:create:${requestIp(req)}`,
+      limit: 20,
+      windowSeconds: 10 * 60,
+      message: 'Too many pairing-code requests. Try again later.',
+    });
     await ensurePairingTable();
     await ensureRecoveryTable();
     const body = req.body || {};

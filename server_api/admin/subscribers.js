@@ -1,20 +1,8 @@
 import crypto from 'crypto';
-import { sql, sendError } from '../_db.js';
+import { sql, sendError, adminSigningSecret, isAuthSessionActive } from '../_db.js';
 
-function getAdminSecret() {
-  const configuredSecret =
-    process.env.ADMIN_JWT_SECRET || process.env.ACCOUNT_JWT_SECRET || '';
-  if (configuredSecret.trim()) return configuredSecret;
-  if ((process.env.NODE_ENV || '').toLowerCase() === 'production') {
-    throw new Error(
-      'ADMIN_JWT_SECRET or ACCOUNT_JWT_SECRET must be configured in production.',
-    );
-  }
-  return process.env.DATABASE_URL || 'ventio-platform-admin-secret';
-}
-
-function verifyAdminToken(token) {
-  const secret = getAdminSecret();
+async function verifyAdminToken(token) {
+  const secret = adminSigningSecret();
   const parts = String(token || '').split('.');
   if (parts.length !== 2) return false;
   const [payloadB64, signature] = parts;
@@ -32,16 +20,16 @@ function verifyAdminToken(token) {
     if (payload?.type !== 'platform_admin') return false;
     if (String(payload?.namespace || '') !== 'ventio') return false;
     if (Number(payload?.exp || 0) < Math.floor(Date.now() / 1000)) return false;
-    return true;
+    return await isAuthSessionActive(payload.sessionId, payload.accountId);
   } catch (_) {
     return false;
   }
 }
 
-function assertAdmin(req) {
+async function assertAdmin(req) {
   const header = req.headers.authorization || req.headers.Authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
-  if (!verifyAdminToken(token)) {
+  if (!(await verifyAdminToken(token))) {
     const err = new Error('Admin access is required. Sign in as admin@ventio.');
     err.statusCode = 401;
     throw err;
@@ -255,7 +243,7 @@ async function deleteSubscriber(req, res) {
 export default async function handler(req, res) {
   try {
     await ensureTables();
-    assertAdmin(req);
+    await assertAdmin(req);
     if (req.method === 'GET') return listSubscribers(res);
     if (req.method === 'PATCH' || req.method === 'PUT') return updateSubscriber(req, res);
     if (req.method === 'DELETE') return deleteSubscriber(req, res);

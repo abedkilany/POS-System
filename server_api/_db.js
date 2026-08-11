@@ -32,6 +32,175 @@ if (isLocalDatabase) {
 
 export { sql };
 
+const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
+const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+function requiredSecret(name) {
+  const value = String(process.env[name] || '').trim();
+  if (!value) {
+    const error = new Error(`${name} must be configured.`);
+    error.statusCode = 500;
+    throw error;
+  }
+  return value;
+}
+
+export function accountSigningSecret() {
+  return requiredSecret('ACCOUNT_JWT_SECRET');
+}
+
+export function adminSigningSecret() {
+  return requiredSecret('ADMIN_JWT_SECRET');
+}
+
+export async function ensureAuthSessionsTable() {
+  await sql`
+    create table if not exists auth_sessions (
+      id text primary key,
+      account_id text not null,
+      refresh_token_hash text not null unique,
+      expires_at timestamptz not null,
+      revoked_at timestamptz,
+      created_at timestamptz not null default now(),
+      last_used_at timestamptz
+    )
+  `;
+  await sql`create index if not exists idx_auth_sessions_account on auth_sessions (account_id, revoked_at, expires_at)`;
+}
+
+function hashRefreshToken(token) {
+  return crypto.createHash('sha256').update(String(token || ''), 'utf8').digest('hex');
+}
+
+function signToken(payload, secret) {
+  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = crypto.createHmac('sha256', secret).update(payloadB64).digest('base64url');
+  return `${payloadB64}.${signature}`;
+}
+
+export async function createAuthSession({
+  accountId,
+  username,
+  namespace,
+  storeId = '',
+  branchId = '',
+  accountType = 'store_owner',
+}) {
+  await ensureAuthSessionsTable();
+  const sessionId = `ses_${crypto.randomBytes(18).toString('hex')}`;
+  const refreshToken = `ref_${crypto.randomBytes(32).toString('base64url')}`;
+  const now = Math.floor(Date.now() / 1000);
+  const accountIsPlatform = String(namespace || '') === 'ventio' || accountType === 'platform_admin';
+  const common = {
+    sessionId,
+    accountId,
+    username,
+    namespace,
+    storeId,
+    branchId,
+    exp: now + ACCESS_TOKEN_TTL_SECONDS,
+  };
+  const accountToken = signToken({
+    ...common,
+    type: accountIsPlatform ? 'platform_admin' : 'store_account',
+  }, accountSigningSecret());
+  const adminToken = accountIsPlatform
+    ? signToken({ ...common, type: 'platform_admin' }, adminSigningSecret())
+    : '';
+  const expiresAt = new Date((now + REFRESH_TOKEN_TTL_SECONDS) * 1000).toISOString();
+  await sql`
+    insert into auth_sessions (id, account_id, refresh_token_hash, expires_at, last_used_at)
+    values (${sessionId}, ${accountId}, ${hashRefreshToken(refreshToken)}, ${expiresAt}, now())
+  `;
+  return { accountToken, adminToken, refreshToken, sessionId };
+}
+
+export async function findRefreshSession(refreshToken) {
+  const token = String(refreshToken || '').trim();
+  if (!token) return null;
+  await ensureAuthSessionsTable();
+  const rows = await sql`
+    select id, account_id, expires_at, revoked_at
+    from auth_sessions
+    where refresh_token_hash = ${hashRefreshToken(token)}
+      and revoked_at is null
+      and expires_at > now()
+    limit 1
+  `;
+  return rows[0] || null;
+}
+
+export async function revokeAuthSession(sessionId) {
+  const id = String(sessionId || '').trim();
+  if (!id) return;
+  await ensureAuthSessionsTable();
+  await sql`update auth_sessions set revoked_at = coalesce(revoked_at, now()) where id = ${id}`;
+}
+
+export async function revokeAllAuthSessions(accountId) {
+  const id = String(accountId || '').trim();
+  if (!id) return;
+  await ensureAuthSessionsTable();
+  await sql`update auth_sessions set revoked_at = coalesce(revoked_at, now()) where account_id = ${id} and revoked_at is null`;
+}
+
+export async function isAuthSessionActive(sessionId, accountId) {
+  const id = String(sessionId || '').trim();
+  if (!id) return false;
+  await ensureAuthSessionsTable();
+  const rows = await sql`
+    select id
+    from auth_sessions
+    where id = ${id}
+      and account_id = ${String(accountId || '')}
+      and revoked_at is null
+      and expires_at > now()
+    limit 1
+  `;
+  return rows.length > 0;
+}
+
+export async function enforceRateLimit({ key, limit, windowSeconds, message = 'Too many requests. Try again later.' }) {
+  const cleanKey = String(key || '').trim();
+  if (!cleanKey) return;
+  const cleanLimit = Math.max(Number(limit) || 1, 1);
+  const cleanWindow = Math.max(Number(windowSeconds) || 60, 1);
+  await sql`
+    create table if not exists api_rate_limits (
+      key text primary key,
+      window_started_at timestamptz not null,
+      attempts integer not null default 0,
+      updated_at timestamptz not null default now()
+    )
+  `;
+  const rows = await sql`
+    insert into api_rate_limits (key, window_started_at, attempts, updated_at)
+    values (${cleanKey}, now(), 1, now())
+    on conflict (key) do update set
+      attempts = case
+        when api_rate_limits.window_started_at <= now() - make_interval(secs => ${cleanWindow}) then 1
+        else api_rate_limits.attempts + 1
+      end,
+      window_started_at = case
+        when api_rate_limits.window_started_at <= now() - make_interval(secs => ${cleanWindow}) then now()
+        else api_rate_limits.window_started_at
+      end,
+      updated_at = now()
+    returning attempts
+  `;
+  if (Number(rows[0]?.attempts || 0) > cleanLimit) {
+    const error = new Error(message);
+    error.statusCode = 429;
+    error.retryAfterSeconds = cleanWindow;
+    throw error;
+  }
+}
+
+export function requestIp(req) {
+  const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  return forwarded || String(req.socket?.remoteAddress || 'unknown').trim() || 'unknown';
+}
+
 export function assertStoreAllowed(storeId) {
   const allowed = (process.env.DIRECT_SYNC_STORE_ID || '').trim();
   if (allowed && storeId !== allowed) {
@@ -41,20 +210,8 @@ export function assertStoreAllowed(storeId) {
   }
 }
 
-function accountSecret() {
-  const configuredSecret =
-    process.env.ACCOUNT_JWT_SECRET || process.env.ADMIN_JWT_SECRET || '';
-  if (configuredSecret.trim()) return configuredSecret;
-  if ((process.env.NODE_ENV || '').toLowerCase() === 'production') {
-    throw new Error(
-      'ACCOUNT_JWT_SECRET or ADMIN_JWT_SECRET must be configured in production.',
-    );
-  }
-  return process.env.DATABASE_URL || 'ventio-platform-admin-secret';
-}
-
 export function verifyAccountToken(token) {
-  const secret = accountSecret();
+  const secret = accountSigningSecret();
   if (!secret) return null;
   const parts = String(token || '').split('.');
   if (parts.length !== 2) return null;
@@ -69,7 +226,8 @@ export function verifyAccountToken(token) {
   }
   try {
     const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
-    if (payload?.type !== 'store_account') return null;
+    if (!['store_account', 'platform_admin'].includes(payload?.type)) return null;
+    if (!payload?.sessionId) return null;
     if (Number(payload?.exp || 0) < Math.floor(Date.now() / 1000)) return null;
     return payload;
   } catch (_) {
@@ -77,17 +235,24 @@ export function verifyAccountToken(token) {
   }
 }
 
-export function accountTokenFromRequest(req) {
+export async function accountTokenFromRequest(req) {
   const header = req.headers.authorization || req.headers.Authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
-  return verifyAccountToken(token);
+  const payload = verifyAccountToken(token);
+  if (!payload || !(await isAuthSessionActive(payload.sessionId, payload.accountId))) return null;
+  return payload;
 }
 
-export function assertAccountStoreToken(req, { storeId, branchId = '' } = {}) {
-  const payload = accountTokenFromRequest(req);
+export async function assertAccountStoreToken(req, { storeId, branchId = '' } = {}) {
+  const payload = await accountTokenFromRequest(req);
   if (!payload) {
     const err = new Error('Invalid or missing account session.');
     err.statusCode = 401;
+    throw err;
+  }
+  if (payload.type !== 'store_account') {
+    const err = new Error('A store account session is required.');
+    err.statusCode = 403;
     throw err;
   }
   if (storeId && String(payload.storeId || '') !== String(storeId)) {
@@ -300,7 +465,7 @@ export async function assertAccountOrDevice(req, options = {}) {
     (!allowedRoles.length || allowedRoles.includes('host'));
   try {
     if (!accountCanAuthorize) throw new Error('Account authorization is not allowed for this endpoint.');
-    assertAccountStoreToken(req, { storeId: options.storeId, branchId: options.branchId || 'main' });
+    await assertAccountStoreToken(req, { storeId: options.storeId, branchId: options.branchId || 'main' });
     return { mode: 'account' };
   } catch (_) {
     await assertDeviceAllowed(req, { ...options, force: true });
@@ -310,5 +475,8 @@ export async function assertAccountOrDevice(req, options = {}) {
 
 export function sendError(res, error) {
   const status = error.statusCode || 500;
+  if (status === 429 && error.retryAfterSeconds) {
+    res.setHeader('Retry-After', String(error.retryAfterSeconds));
+  }
   res.status(status).json({ ok: false, error: error.message || String(error) });
 }

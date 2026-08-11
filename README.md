@@ -28,11 +28,16 @@ Configure these values on the VPS deployment:
 
 ```bash
 DATABASE_URL=postgresql://...
-ACCOUNT_JWT_SECRET=choose-a-long-random-admin-secret
-ADMIN_JWT_SECRET=choose-a-long-random-admin-secret
+ACCOUNT_JWT_SECRET=choose-a-long-random-account-secret
+ADMIN_JWT_SECRET=choose-a-different-long-random-admin-secret
 VENTIO_API_ALLOWED_ORIGINS=https://your-app-domain.com
 REQUIRE_DEVICE_TOKEN_AUTH=true
 ```
+
+`ACCOUNT_JWT_SECRET` and `ADMIN_JWT_SECRET` are required and must be different.
+The API uses short-lived access tokens with database-backed refresh sessions.
+Changing either secret invalidates existing access tokens; users must sign in
+again after a deployment that introduces this authentication contract.
 
 The `/api` service provides Direct pairing, signaling, ICE configuration,
 device authorization, and Host status. Business payloads move between the

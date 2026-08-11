@@ -22,6 +22,7 @@ class AccountAuthResult {
     this.devicesLimit,
     this.adminToken = '',
     this.accountToken = '',
+    this.refreshToken = '',
     this.directSyncEnabled = false,
   });
 
@@ -40,6 +41,7 @@ class AccountAuthResult {
   final int? devicesLimit;
   final String adminToken;
   final String accountToken;
+  final String refreshToken;
   final bool directSyncEnabled;
 
   factory AccountAuthResult.fromJson(Map<String, dynamic> json) {
@@ -67,6 +69,8 @@ class AccountAuthResult {
       adminToken: (json['adminToken'] ?? json['admin_token'] ?? '').toString(),
       accountToken:
           (json['accountToken'] ?? json['account_token'] ?? '').toString(),
+      refreshToken:
+          (json['refreshToken'] ?? json['refresh_token'] ?? '').toString(),
       directSyncEnabled: json['directSyncEnabled'] == true ||
           json['direct_sync_enabled'] == true,
     );
@@ -89,6 +93,7 @@ class AccountAuthCache {
     this.devicesLimit,
     this.adminToken = '',
     this.accountToken = '',
+    this.refreshToken = '',
     this.directSyncEnabled = false,
     this.lastVerifiedAt,
   });
@@ -109,6 +114,7 @@ class AccountAuthCache {
   final int? devicesLimit;
   final String adminToken;
   final String accountToken;
+  final String refreshToken;
   final bool directSyncEnabled;
   final DateTime? lastVerifiedAt;
 
@@ -129,6 +135,7 @@ class AccountAuthCache {
     bool clearDevicesLimit = false,
     String? adminToken,
     String? accountToken,
+    String? refreshToken,
     bool? directSyncEnabled,
     DateTime? lastVerifiedAt,
     bool clearLastVerifiedAt = false,
@@ -149,6 +156,7 @@ class AccountAuthCache {
           clearDevicesLimit ? null : devicesLimit ?? this.devicesLimit,
       adminToken: adminToken ?? this.adminToken,
       accountToken: accountToken ?? this.accountToken,
+      refreshToken: refreshToken ?? this.refreshToken,
       directSyncEnabled: directSyncEnabled ?? this.directSyncEnabled,
       lastVerifiedAt:
           clearLastVerifiedAt ? null : lastVerifiedAt ?? this.lastVerifiedAt,
@@ -171,6 +179,7 @@ class AccountAuthCache {
         'lastVerifiedAt': lastVerifiedAt?.toIso8601String() ?? '',
         'adminToken': adminToken,
         'accountToken': accountToken,
+        'refreshToken': refreshToken,
         'directSyncEnabled': directSyncEnabled,
       };
 
@@ -197,6 +206,7 @@ class AccountAuthCache {
             DateTime.tryParse((json['lastVerifiedAt'] ?? '').toString()),
         adminToken: (json['adminToken'] ?? '').toString(),
         accountToken: (json['accountToken'] ?? '').toString(),
+        refreshToken: (json['refreshToken'] ?? '').toString(),
         directSyncEnabled: json['directSyncEnabled'] == true ||
             json['direct_sync_enabled'] == true,
       );
@@ -356,22 +366,43 @@ class AccountAuthService {
     return _decode(response);
   }
 
-  Future<AccountAuthResult> refreshSession(
-      {required String accountToken}) async {
-    if (accountToken.trim().isEmpty) {
+  Future<AccountAuthResult> refreshSession({
+    required String accountToken,
+    String refreshToken = '',
+  }) async {
+    if (accountToken.trim().isEmpty && refreshToken.trim().isEmpty) {
       return const AccountAuthResult(
         ok: false,
         message: 'Online account session is missing.',
       );
     }
-    final response = await _client.get(
-      _endpoint('/api/auth/session'),
-      headers: {
-        'Accept': 'application/json',
-        'Authorization': 'Bearer ${accountToken.trim()}',
-      },
-    );
+    final response = refreshToken.trim().isNotEmpty
+        ? await _client.post(
+            _endpoint('/api/auth/session'),
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({'refreshToken': refreshToken.trim()}),
+          )
+        : await _client.get(
+            _endpoint('/api/auth/session'),
+            headers: {
+              'Accept': 'application/json',
+              'Authorization': 'Bearer ${accountToken.trim()}',
+            },
+          );
     return _decode(response);
+  }
+
+  Future<void> logout({String accountToken = '', String refreshToken = ''}) async {
+    if (accountToken.trim().isEmpty && refreshToken.trim().isEmpty) return;
+    await _client.post(
+      _endpoint('/api/auth/logout'),
+      headers: {
+        'Content-Type': 'application/json',
+        if (accountToken.trim().isNotEmpty)
+          'Authorization': 'Bearer ${accountToken.trim()}',
+      },
+      body: jsonEncode({'refreshToken': refreshToken.trim()}),
+    );
   }
 
   Future<AccountAuthResult> changePassword({
@@ -565,6 +596,7 @@ class AccountAuthService {
       devicesLimit: result.devicesLimit,
       adminToken: result.adminToken,
       accountToken: result.accountToken,
+      refreshToken: result.refreshToken,
       directSyncEnabled: result.directSyncEnabled,
     );
   }
@@ -593,6 +625,9 @@ class AccountAuthService {
       accountToken: result.accountToken.isNotEmpty
           ? result.accountToken
           : (existing?.accountToken ?? ''),
+      refreshToken: result.refreshToken.isNotEmpty
+          ? result.refreshToken
+          : (existing?.refreshToken ?? ''),
       directSyncEnabled: result.directSyncEnabled,
       lastVerifiedAt: DateTime.now(),
     );

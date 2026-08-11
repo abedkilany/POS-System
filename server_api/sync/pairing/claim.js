@@ -1,5 +1,5 @@
 import { randomBytes } from 'crypto';
-import { sql, assertClientDeviceSlotAvailable, assertStoreAllowed, assertDirectSyncEnabled, ensureDeviceAuthColumns, sendError } from '../../_db.js';
+import { sql, assertClientDeviceSlotAvailable, assertStoreAllowed, assertDirectSyncEnabled, ensureDeviceAuthColumns, enforceRateLimit, requestIp, sendError } from '../../_db.js';
 
 async function ensurePairingTable() {
   await sql`
@@ -52,6 +52,12 @@ export default async function handler(req, res) {
     // Claiming a pairing code must not require the Host account session.
     // The single-use pairing code is the Client's bootstrap secret.
     if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Method not allowed' });
+    await enforceRateLimit({
+      key: `pairing:claim:${requestIp(req)}`,
+      limit: 10,
+      windowSeconds: 10 * 60,
+      message: 'Too many pairing attempts. Try again later.',
+    });
     await ensurePairingTable();
     await ensureDeviceTable();
     const body = req.body || {};

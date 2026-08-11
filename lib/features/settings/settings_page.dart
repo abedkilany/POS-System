@@ -3821,6 +3821,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   bool _latestDirectPairingInvalid = false;
   DateTime? _lastDirectPairingStatusCheck;
   Timer? _pairingCountdownTimer;
+  Timer? _syncAutoSaveTimer;
   String _expectedPairingStoreId = '';
   String _expectedPairingBranchId = '';
   String _expectedPairingHostDeviceId = '';
@@ -3904,6 +3905,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     _directIntervalController.dispose();
     _transferDeviceController.dispose();
     _pairingCountdownTimer?.cancel();
+    _syncAutoSaveTimer?.cancel();
     super.dispose();
   }
 
@@ -4013,6 +4015,17 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
 
   void _onSyncDraftChanged() {
     if (mounted) setState(() {});
+    if (_deviceRole == DeviceRole.host) {
+      _scheduleHostSyncAutoSave();
+    }
+  }
+
+  void _scheduleHostSyncAutoSave() {
+    _syncAutoSaveTimer?.cancel();
+    _syncAutoSaveTimer = Timer(const Duration(milliseconds: 600), () {
+      if (!mounted || _deviceRole != DeviceRole.host) return;
+      unawaited(_saveSyncSettings());
+    });
   }
 
   bool get _hasUnsavedSyncChanges {
@@ -4169,6 +4182,10 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           );
           await lanSettings
               .copyWith(
+                host: _lanHostController.text.trim().isEmpty
+                    ? lanSettings.host
+                    : _lanHostController.text.trim(),
+                port: _lanPort,
                 autoSyncEnabled: activeTransport == 'lan',
                 hostModeEnabled: false,
                 intervalSeconds: _lanInterval,
@@ -5201,8 +5218,10 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
             ],
             const SizedBox(height: 14),
             _syncStatusMessage(context, color),
-            const SizedBox(height: 14),
-            _syncSaveCancelBar(context),
+            if (!isHost) ...[
+              const SizedBox(height: 14),
+              _syncSaveCancelBar(context),
+            ],
           ],
         ),
       ),
@@ -5802,7 +5821,10 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                     value: _lanEnabledForHost,
                     onChanged: _busy
                         ? null
-                        : (value) => setState(() => _lanEnabledForHost = value))
+                        : (value) {
+                            setState(() => _lanEnabledForHost = value);
+                            unawaited(_saveSyncSettings());
+                          })
                 : (!lanConfigured
                     ? TextButton.icon(
                         onPressed: _busy
@@ -5831,15 +5853,13 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                             : (lanConfigured
                                 ? Icons.lock_outline
                                 : Icons.link_off_outlined)),
-                    _readOnlyTransportLine(context, tr.text('host_ip_address'),
-                        lan.host.isEmpty ? '—' : lan.host, Icons.dns_outlined),
-                    _readOnlyTransportLine(context, tr.text('port'),
-                        '${lan.port}', Icons.tag_outlined),
                     _readOnlyTransportLine(
                         context,
                         tr.text('pairing_token'),
                         lan.secret.trim().isEmpty ? '—' : '••••••••',
                         Icons.vpn_key_outlined),
+                    const SizedBox(height: 12),
+                    ..._lanClientFields(),
                   ],
           ),
           const Divider(height: 20),
@@ -5873,7 +5893,10 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                         value: _effectiveDirectEnabled,
                         onChanged: (_busy || directPlanDenied)
                             ? null
-                            : (value) => setState(() => _directEnabled = value),
+                            : (value) {
+                                setState(() => _directEnabled = value);
+                                unawaited(_saveSyncSettings());
+                              },
                       ),
                     ],
                   )
@@ -7033,6 +7056,27 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
           ),
           const SizedBox(height: 12),
         ],
+      ];
+
+  List<Widget> _lanClientFields() => [
+        TextField(
+          enabled: !_busy,
+          controller: _lanHostController,
+          decoration: InputDecoration(
+            labelText: AppLocalizations.of(context).text('host_ip_address'),
+            border: const OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          enabled: !_busy,
+          controller: _lanPortController,
+          keyboardType: TextInputType.number,
+          decoration: InputDecoration(
+            labelText: AppLocalizations.of(context).text('port'),
+            border: const OutlineInputBorder(),
+          ),
+        ),
       ];
 
   List<Widget> _directFields({required bool showPairingCode}) => [

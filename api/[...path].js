@@ -11,6 +11,7 @@ import deployHealth from '../server_api/deploy-health.js';
 import authRegister from '../server_api/auth/register.js';
 import authLogin from '../server_api/auth/login.js';
 import authSession from '../server_api/auth/session.js';
+import authLogout from '../server_api/auth/logout.js';
 import accountChangePassword from '../server_api/account/change-password.js';
 import accountOwnerProfile from '../server_api/account/owner-profile.js';
 import adminSubscribers from '../server_api/admin/subscribers.js';
@@ -38,6 +39,7 @@ const routes = new Map([
   ['auth/register', authRegister],
   ['auth/login', authLogin],
   ['auth/session', authSession],
+  ['auth/logout', authLogout],
   ['account/change-password', accountChangePassword],
   ['account/owner-profile', accountOwnerProfile],
   ['admin/subscribers', adminSubscribers],

@@ -1,5 +1,11 @@
 import crypto from 'crypto';
-import { sql, sendError } from '../_db.js';
+import {
+  sql,
+  sendError,
+  createAuthSession,
+  enforceRateLimit,
+  requestIp,
+} from '../_db.js';
 
 function normalizePart(value) {
   return String(value || '').trim().toLowerCase();
@@ -15,53 +21,6 @@ function parseLoginName(value) {
   return { username, namespaceSlug };
 }
 
-
-function adminTokenSecret() {
-  const configuredSecret =
-    process.env.ADMIN_JWT_SECRET || process.env.ACCOUNT_JWT_SECRET || '';
-  if (configuredSecret.trim()) return configuredSecret;
-  if ((process.env.NODE_ENV || '').toLowerCase() === 'production') {
-    throw new Error(
-      'ADMIN_JWT_SECRET or ACCOUNT_JWT_SECRET must be configured in production.',
-    );
-  }
-  return process.env.DATABASE_URL || 'ventio-platform-admin-secret';
-}
-
-function createAdminToken(row) {
-  const secret = adminTokenSecret();
-  if (!secret) return '';
-  if (String(row.namespace_slug || '') !== 'ventio') return '';
-  const payload = {
-    type: 'platform_admin',
-    accountId: row.account_id,
-    username: row.username,
-    namespace: row.namespace_slug,
-    exp: Math.floor(Date.now() / 1000) + 8 * 60 * 60,
-  };
-  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
-  const signature = crypto.createHmac('sha256', secret).update(payloadB64).digest('base64url');
-  return `${payloadB64}.${signature}`;
-}
-
-function createAccountToken(row) {
-  const secret = adminTokenSecret();
-  if (!secret) return '';
-  const isPlatform = String(row.namespace_slug || '') === 'ventio'
-    || String(row.account_type || '') === 'platform_admin';
-  const payload = {
-    type: isPlatform ? 'platform_admin' : 'store_account',
-    accountId: row.account_id,
-    username: row.username,
-    namespace: row.namespace_slug,
-    storeId: row.store_id || '',
-    branchId: row.branch_id || '',
-    exp: Math.floor(Date.now() / 1000) + (isPlatform ? 8 * 60 * 60 : 30 * 24 * 60 * 60),
-  };
-  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
-  const signature = crypto.createHmac('sha256', secret).update(payloadB64).digest('base64url');
-  return `${payloadB64}.${signature}`;
-}
 
 function verifyPassword(password, encoded) {
   const parts = String(encoded || '').split('$');
@@ -146,6 +105,18 @@ export default async function handler(req, res) {
     const body = req.body || {};
     const parsed = parseLoginName(body.username || body.loginName || body.login_name);
     const password = String(body.password || '');
+    await enforceRateLimit({
+      key: `login:ip:${requestIp(req)}`,
+      limit: 30,
+      windowSeconds: 15 * 60,
+      message: 'Too many login attempts from this network. Try again later.',
+    });
+    await enforceRateLimit({
+      key: `login:identity:${requestIp(req)}:${parsed?.username || 'invalid'}@${parsed?.namespaceSlug || 'invalid'}`,
+      limit: 8,
+      windowSeconds: 15 * 60,
+      message: 'Too many login attempts for this account. Try again later.',
+    });
     if (!parsed || !password) {
       return res.status(400).json({ ok: false, error: 'Online login must be username@store and password.' });
     }
@@ -169,8 +140,14 @@ export default async function handler(req, res) {
     if (!verifyPassword(password, row.password_hash)) return res.status(401).json({ ok: false, error: 'Invalid username or password.' });
 
     const isPlatformNamespace = String(row.namespace_slug || '') === 'ventio';
-    const adminToken = createAdminToken(row);
-    const accountToken = createAccountToken(row);
+    const tokens = await createAuthSession({
+      accountId: row.account_id,
+      username: row.username,
+      namespace: row.namespace_slug,
+      storeId: row.store_id || '',
+      branchId: row.branch_id || '',
+      accountType: isPlatformNamespace ? 'platform_admin' : (row.account_type || 'store_owner'),
+    });
 
     return res.status(200).json({
       ok: true,
@@ -188,8 +165,9 @@ export default async function handler(req, res) {
       subscriptionStatus: row.subscription_status || '',
       trialEndsAt: row.trial_ends_at ? new Date(row.trial_ends_at).toISOString() : null,
       devicesLimit: row.devices_limit == null ? null : Number(row.devices_limit),
-      adminToken,
-      accountToken,
+      adminToken: tokens.adminToken,
+      accountToken: tokens.accountToken,
+      refreshToken: tokens.refreshToken,
       directSyncEnabled: row.direct_sync_enabled === true,
     });
   } catch (error) {
