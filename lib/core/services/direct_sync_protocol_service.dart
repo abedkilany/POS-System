@@ -280,6 +280,8 @@ class DirectHostSyncEndpoint {
         appliedCursor: appliedCursor,
         ackCursor: ackCursor,
       );
+      await store.settleHostQueueThroughPeerAck();
+      await store.compactSyncedSyncHistoryForMaintenance();
       stateWatch.stop();
       SyncDiagnosticsLog.add(
           '[SYNC_TRACE] host ack persisted device=$deviceId sequence=$ackSequence persistMs=${stateWatch.elapsedMilliseconds}');

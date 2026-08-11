@@ -6699,7 +6699,9 @@ class AppStore extends ChangeNotifier {
   }) {
     if (!appIdentity.isHost) return _latestStoredAuthoritativeSequence();
     final now = DateTime.now();
+    final deletedPeerIds = SyncDeviceAccessStore.deletedDeviceIds();
     final activePeers = SyncDeviceStateStore.loadPeerStates().where((peer) {
+      if (deletedPeerIds.contains(peer.deviceId.trim())) return false;
       final seen = peer.lastSeenAt ?? peer.updatedAt;
       if (seen == null) return false;
       return now.difference(seen) <= activeWindow;
@@ -18219,6 +18221,43 @@ class AppStore extends ChangeNotifier {
             ))
         .toList(growable: false);
     if (ids.isNotEmpty) await markSyncChangesSyncedByIds(ids);
+  }
+
+  /// Marks Host-authored events as complete only after every active peer has
+  /// acknowledged the corresponding Host sequence. Direct Host events are
+  /// intentionally queued with target="host" so the same queue can be used by
+  /// the legacy sync paths, but a Host never runs a Client push loop for that
+  /// target. Without this reconciliation those rows remain pending forever
+  /// even though the events are already in the authoritative Host timeline.
+  Future<int> settleHostQueueThroughPeerAck() async {
+    await ensureSyncDataLoaded();
+    if (!appIdentity.isHost || _syncQueue.isEmpty) return 0;
+
+    final safeFloorSequence = _minimumActivePeerAckSequence();
+    if (safeFloorSequence <= 0) return 0;
+
+    final changesById = <String, SyncChange>{
+      for (final change in _syncChanges) change.id: change,
+    };
+    final ids = _syncQueue
+        .where((item) => item.target == 'host' && item.status != 'synced')
+        .map((item) => item.changeId)
+        .where((changeId) {
+      final change = changesById[changeId];
+      return change != null &&
+          change.deviceId == _deviceId &&
+          change.sequence > 0 &&
+          change.sequence <= safeFloorSequence;
+    }).toList(growable: false);
+    if (ids.isEmpty) return 0;
+
+    await markSyncChangesSyncedByIds(ids);
+    SyncDiagnosticsLog.add(
+      '[SYNC_TRACE] hostQueue:settledThroughPeerAck '
+      'count=${ids.length} safeFloorSequence=$safeFloorSequence '
+      'remainingPending=${pendingSyncQueue.length}',
+    );
+    return ids.length;
   }
 
   Future<void> markSyncQueueChangesInProgress(

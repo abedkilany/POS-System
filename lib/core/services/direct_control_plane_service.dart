@@ -2790,6 +2790,8 @@ class DirectControlPlaneService {
             appliedCursor: appliedCursor,
             ackCursor: ackCursor,
           );
+          await store.settleHostQueueThroughPeerAck();
+          await store.compactSyncedSyncHistoryForMaintenance();
         }
         channel.sink.add(jsonEncode({
           'type': 'relay_response',
@@ -3070,37 +3072,46 @@ class DirectControlPlaneService {
     if (storeId.isEmpty) {
       return const DirectDevicesResult(devices: <DirectDeviceStatus>[]);
     }
-    final response = await _client
-        .get(
-          settings.endpoint('/api/sync/devices', {
-            'store_id': storeId,
-            'branch_id': branchId.isEmpty ? 'main' : branchId,
-          }),
-          headers: _headers(settings, includeAccountTokenForClient: true),
-        )
-        .timeout(const Duration(seconds: 10));
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      return const DirectDevicesResult(devices: <DirectDeviceStatus>[]);
+    // The regular service client is intentionally retired for legacy Direct
+    // sync calls, but the monitoring page still needs the live device registry.
+    // Use a short-lived real HTTP client so Direct-linked devices are visible.
+    final client = http.Client();
+    try {
+      final response = await client
+          .get(
+            settings.endpoint('/api/sync/devices', {
+              'store_id': storeId,
+              'branch_id': branchId.isEmpty ? 'main' : branchId,
+            }),
+            headers: _headers(settings, includeAccountTokenForClient: true),
+          )
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return const DirectDevicesResult(devices: <DirectDeviceStatus>[]);
+      }
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      final devices = (decoded['devices'] as List<dynamic>? ?? [])
+          .map((item) => DirectDeviceStatus.fromJson(
+              Map<String, dynamic>.from(item as Map)))
+          .toList();
+      final limitRaw = decoded['deviceLimit'] ?? decoded['device_limit'];
+      final limit = limitRaw is Map
+          ? DirectDeviceLimitStatus.fromJson(
+              Map<String, dynamic>.from(limitRaw))
+          : null;
+      final directSyncEnabled = decoded['directSyncEnabled'] == true
+          ? true
+          : decoded.containsKey('directSyncEnabled')
+              ? false
+              : null;
+      return DirectDevicesResult(
+        devices: devices,
+        limit: limit,
+        directSyncEnabled: directSyncEnabled,
+      );
+    } finally {
+      client.close();
     }
-    final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-    final devices = (decoded['devices'] as List<dynamic>? ?? [])
-        .map((item) =>
-            DirectDeviceStatus.fromJson(Map<String, dynamic>.from(item as Map)))
-        .toList();
-    final limitRaw = decoded['deviceLimit'] ?? decoded['device_limit'];
-    final limit = limitRaw is Map
-        ? DirectDeviceLimitStatus.fromJson(Map<String, dynamic>.from(limitRaw))
-        : null;
-    final directSyncEnabled = decoded['directSyncEnabled'] == true
-        ? true
-        : decoded.containsKey('directSyncEnabled')
-            ? false
-            : null;
-    return DirectDevicesResult(
-      devices: devices,
-      limit: limit,
-      directSyncEnabled: directSyncEnabled,
-    );
   }
 
   Future<DirectSyncResult> repairLegacyDirectDeviceLinks(

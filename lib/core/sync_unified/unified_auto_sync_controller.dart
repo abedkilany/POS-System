@@ -194,6 +194,10 @@ class UnifiedAutoLanSyncController {
     // A LAN-only Host is the authority; it must not retain legacy queue rows
     // that were incorrectly targeted back to the Host itself.
     await store.settleLegacyLanHostQueue();
+    // Reconcile Direct Host events that were already acknowledged before the
+    // current process started. This also repairs queues created by Stress Lab
+    // without requiring a new data mutation.
+    await store.settleHostQueueThroughPeerAck();
 
     final allowed = _lanAllowedForCurrentRole(settings);
     SyncDiagnosticsLog.add(

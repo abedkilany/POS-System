@@ -3801,6 +3801,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   final _transferDeviceController = TextEditingController();
   DeviceRole _deviceRole = DeviceRole.host;
   SyncMode _clientSyncMode = SyncMode.lanOnly;
+  bool _clientSyncModeDirty = false;
   bool _lanEnabledForHost = false;
   bool _directEnabled = false;
   bool _busy = false;
@@ -3840,6 +3841,16 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
   bool get _directSyncPlanAllowsUi => _directSyncPlanAllowed == true;
   bool get _effectiveDirectEnabled => _directEnabled && _directSyncPlanAllowsUi;
 
+  String _runtimeClientTransport() {
+    final identity = widget.store.appIdentity;
+    final state = SyncDeviceStateStore.load(identity);
+    final active = state.activeTransport.trim().toLowerCase();
+    if (active == 'lan' || active == 'direct') return active;
+    final last = state.lastSyncTransport.trim().toLowerCase();
+    if (last == 'lan' || last == 'direct') return last;
+    return identity.activeSyncTransportNormalized;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -3850,9 +3861,10 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     final lan = LanSyncSettings.load();
     final direct = DirectSyncSettings.load();
     _deviceRole = identity.isClient ? DeviceRole.client : DeviceRole.host;
-    _clientSyncMode = identity.activeSyncTransportNormalized == 'direct'
+    _clientSyncMode = _runtimeClientTransport() == 'direct'
         ? SyncMode.directConnected
         : SyncMode.lanOnly;
+    _clientSyncModeDirty = false;
     _lanEnabledForHost = identity.isHost && lan.setupComplete && lan.isHost;
     _directEnabled = identity.isDirectEnabled && _directSyncPlanAllowed == true;
     _lanHostController.text = lan.host;
@@ -4007,14 +4019,11 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     final identity = widget.store.appIdentity;
     final lan = LanSyncSettings.load();
     final role = identity.isClient ? DeviceRole.client : DeviceRole.host;
-    final clientMode = identity.activeSyncTransportNormalized == 'direct'
-        ? SyncMode.directConnected
-        : SyncMode.lanOnly;
     final lanEnabled = identity.isHost && lan.setupComplete && lan.isHost;
     final directEnabled =
         identity.isDirectEnabled && _directSyncPlanAllowed == true;
     return _deviceRole != role ||
-        _clientSyncMode != clientMode ||
+        _clientSyncModeDirty ||
         _lanEnabledForHost != lanEnabled ||
         _directEnabled != directEnabled ||
         _lanHostController.text.trim() != lan.host.trim() ||
@@ -4027,9 +4036,10 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     final direct = DirectSyncSettings.load();
     setState(() {
       _deviceRole = identity.isClient ? DeviceRole.client : DeviceRole.host;
-      _clientSyncMode = identity.activeSyncTransportNormalized == 'direct'
+      _clientSyncMode = _runtimeClientTransport() == 'direct'
           ? SyncMode.directConnected
           : SyncMode.lanOnly;
+      _clientSyncModeDirty = false;
       _lanEnabledForHost = identity.isHost && lan.setupComplete && lan.isHost;
       _directEnabled =
           identity.isDirectEnabled && _directSyncPlanAllowed == true;
@@ -4049,7 +4059,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       await _testPairedClientConnections();
       return;
     }
-    final shouldTestDirect = identity.activeSyncTransportNormalized == 'direct';
+    final shouldTestDirect = _runtimeClientTransport() == 'direct';
     if (shouldTestDirect) {
       await _testDirectConnection();
     } else {
@@ -5102,15 +5112,17 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     final color = Theme.of(context).colorScheme;
     final identity = widget.store.appIdentity;
     final isHost = _deviceRole == DeviceRole.host;
+    final runtimeClientTransport = isHost
+        ? identity.activeSyncTransportNormalized
+        : _runtimeClientTransport();
     final lanActive =
-        isHost ? _lanEnabledForHost : identity.syncMode == SyncMode.lanOnly;
+        isHost ? _lanEnabledForHost : runtimeClientTransport == 'lan';
     final directActive = isHost
         ? _effectiveDirectEnabled
-        : (identity.syncMode == SyncMode.directConnected &&
-            _directSyncPlanAllowsUi);
+        : (runtimeClientTransport == 'direct' && _directSyncPlanAllowsUi);
     final hostActionLabel = tr.text('sync_now');
-    final allGood = widget.store.pendingSyncCount == 0 &&
-        (lanActive || directActive || !isHost);
+    final pendingCount = isHost ? 0 : widget.store.activeClientPendingSyncCount;
+    final allGood = pendingCount == 0 && (lanActive || directActive || !isHost);
 
     return Card(
       elevation: 0,
@@ -5136,7 +5148,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                 allGood: allGood,
                 isHost: isHost,
                 lanActive: lanActive,
-                directActive: directActive),
+                directActive: directActive,
+                pendingCount: pendingCount),
             if (!isHost && widget.store.isSuspendedByHost) ...[
               const SizedBox(height: 14),
               _clientSuspendedWarningCard(context),
@@ -5259,7 +5272,7 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
               icon: const Icon(Icons.network_check_outlined),
               label: Text(tr.text('test_connection')),
             ),
-            if (widget.store.pendingSyncCount > 0)
+            if (!isHost && widget.store.activeClientPendingSyncCount > 0)
               OutlinedButton.icon(
                 onPressed: _busy ? null : _clearInvalidPendingChanges,
                 icon: const Icon(Icons.cleaning_services_outlined),
@@ -5336,7 +5349,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       {required bool allGood,
       required bool isHost,
       required bool lanActive,
-      required bool directActive}) {
+      required bool directActive,
+      required int pendingCount}) {
     final tr = AppLocalizations.of(context);
     final color = Theme.of(context).colorScheme;
     final accent = allGood ? Colors.green : color.primary;
@@ -5407,10 +5421,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
               _compactStatusChip(
                   context,
                   Icons.storage_outlined,
-                  '${tr.text('pending_changes')}: ${widget.store.pendingSyncCount}',
-                  widget.store.pendingSyncCount == 0
-                      ? Colors.green
-                      : color.error),
+                  '${tr.text('pending_changes')}: $pendingCount',
+                  pendingCount == 0 ? Colors.green : color.error),
             ],
           );
           if (compact) {
@@ -5968,7 +5980,10 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
                           !directConfigured) {
                         return;
                       }
-                      setState(() => _clientSyncMode = next);
+                      setState(() {
+                        _clientSyncMode = next;
+                        _clientSyncModeDirty = true;
+                      });
                     },
             ),
             const SizedBox(height: 8),
@@ -6395,7 +6410,8 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
       final direct = DirectSyncSettings.load();
       return '${tr.text('connection_role_host')} • ${tr.text('connection_lan')}: ${lan.setupComplete && lan.isHost ? tr.text('connection_state_active') : tr.text('connection_state_disabled')} • Direct: ${direct.isConfigured ? tr.text('connection_state_active') : tr.text('connection_state_disabled')}';
     }
-    return '${tr.text('connection_role_client')} • ${identity.activeSyncTransportNormalized == 'direct' ? 'Direct' : identity.syncMode == SyncMode.lanOnly ? tr.text('connection_lan') : tr.text('connection_local')}';
+    final runtimeTransport = _runtimeClientTransport();
+    return '${tr.text('connection_role_client')} • ${runtimeTransport == 'direct' ? 'Direct' : runtimeTransport == 'lan' ? tr.text('connection_lan') : tr.text('connection_local')}';
   }
 
   Widget _hostChangedNotificationCard() {
@@ -8623,7 +8639,9 @@ class _SystemStatusPanel extends StatelessWidget {
     final lanConfigured = lan.setupComplete || lan.isHost || lan.isClient;
     final lanActive = transport == 'lan' && lanConfigured;
     final directActive = identity.isDirectEnabled && direct.isConfigured;
-    final pending = store.pendingSyncCount;
+    // Host health is independent from delivery backlog on offline peers. Each
+    // peer row reports its own pending sequence gap in Sync Monitoring.
+    final pending = identity.isHost ? 0 : store.activeClientPendingSyncCount;
 
     final roleLabel = identity.isHost
         ? tr.text('host_device')

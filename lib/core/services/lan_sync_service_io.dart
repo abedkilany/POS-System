@@ -469,6 +469,9 @@ class LanSyncResult {
 class LanSyncService {
   LanSyncService(this.store);
 
+  static const int _discoveryPort = 8788;
+  static const String _discoveryProtocol = 'ventio-lan-discovery-v1';
+
   final AppStore store;
   late final UnifiedSyncCoreService _syncCore = UnifiedSyncCoreService(store);
   Map<String, dynamic>? _snapshotTransferCache;
@@ -478,6 +481,8 @@ class LanSyncService {
   static LanSyncService? _sharedHostService;
   static final Map<WebSocket, String> _realtimeClients = <WebSocket, String>{};
   static final Set<String> _activeSnapshotGenerationRebuilds = <String>{};
+  RawDatagramSocket? _discoverySocket;
+  bool _hostRecoveryInProgress = false;
   WebSocketChannel? _realtimeChannel;
   StreamSubscription<dynamic>? _realtimeSubscription;
   final StreamController<bool> _realtimeSignals =
@@ -812,6 +817,56 @@ class LanSyncService {
     _sharedHostService = this;
     _attachStoreListener();
     _sharedServer!.listen(_handleRequest, onError: (_) {});
+    await _startDiscoveryResponder();
+  }
+
+  Future<void> _startDiscoveryResponder() async {
+    _discoverySocket?.close();
+    try {
+      final socket = await RawDatagramSocket.bind(
+        InternetAddress.anyIPv4,
+        _discoveryPort,
+        reuseAddress: true,
+      );
+      socket.broadcastEnabled = true;
+      _discoverySocket = socket;
+      socket.listen((event) {
+        if (event != RawSocketEvent.read) return;
+        Datagram? datagram;
+        while ((datagram = socket.receive()) != null) {
+          final packet = datagram!;
+          try {
+            final decoded = jsonDecode(utf8.decode(packet.data));
+            if (decoded is! Map ||
+                decoded['protocol'] != _discoveryProtocol ||
+                decoded['type'] != 'discover') {
+              continue;
+            }
+            final identity = store.appIdentity;
+            final requestedStore = '${decoded['storeId'] ?? ''}'.trim();
+            final requestedBranch = '${decoded['branchId'] ?? ''}'.trim();
+            if (requestedStore != identity.storeId.trim() ||
+                requestedBranch != identity.branchId.trim()) {
+              continue;
+            }
+            final response = jsonEncode({
+              'protocol': _discoveryProtocol,
+              'type': 'host',
+              'storeId': identity.storeId,
+              'branchId': identity.branchId,
+              'hostDeviceId': store.deviceId,
+              'port': _sharedPort ?? 8787,
+            });
+            socket.send(utf8.encode(response), packet.address, packet.port);
+          } catch (_) {
+            // Discovery packets are unauthenticated hints; HTTP auth remains authoritative.
+          }
+        }
+      }, onError: (_) {});
+    } catch (_) {
+      _discoverySocket = null;
+      // LAN HTTP sync remains usable if the platform blocks UDP discovery.
+    }
   }
 
   Future<void> _ensureHostRegistryMigration() async {
@@ -822,6 +877,8 @@ class LanSyncService {
   }
 
   Future<void> stopHost() async {
+    _discoverySocket?.close();
+    _discoverySocket = null;
     await _closeRealtimeClient();
     for (final socket in _realtimeClients.keys.toList()) {
       await socket.close(WebSocketStatus.goingAway, 'Host stopped');
@@ -1265,6 +1322,7 @@ class LanSyncService {
           appliedSequence: sequence,
           ackSequence: sequence,
         );
+        await store.settleHostQueueThroughPeerAck();
         await store.compactSyncedSyncHistoryForMaintenance();
         await _json(request,
             {'ok': true, 'serverTime': DateTime.now().toIso8601String()});
@@ -1386,6 +1444,89 @@ class LanSyncService {
 
   HttpClient _client() =>
       HttpClient()..connectionTimeout = const Duration(seconds: 15);
+
+  Future<String?> discoverHost({int port = 8787}) async {
+    if (store.appIdentity.isHost || store.appIdentity.storeId.trim().isEmpty) {
+      return null;
+    }
+    RawDatagramSocket? socket;
+    StreamSubscription<RawSocketEvent>? subscription;
+    try {
+      socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
+      socket.broadcastEnabled = true;
+      final request = jsonEncode({
+        'protocol': _discoveryProtocol,
+        'type': 'discover',
+        'storeId': store.appIdentity.storeId,
+        'branchId': store.appIdentity.branchId,
+        'hostDeviceId': store.appIdentity.hostDeviceId,
+      });
+      final completer = Completer<String?>();
+      subscription = socket.listen((event) {
+        if (event != RawSocketEvent.read) return;
+        Datagram? datagram;
+        while ((datagram = socket!.receive()) != null) {
+          try {
+            final decoded = jsonDecode(utf8.decode(datagram!.data));
+            if (decoded is! Map ||
+                decoded['protocol'] != _discoveryProtocol ||
+                decoded['type'] != 'host' ||
+                '${decoded['storeId'] ?? ''}'.trim() !=
+                    store.appIdentity.storeId.trim() ||
+                '${decoded['branchId'] ?? ''}'.trim() !=
+                    store.appIdentity.branchId.trim()) {
+              continue;
+            }
+            final expectedHostId = store.appIdentity.hostDeviceId.trim();
+            final discoveredHostId = '${decoded['hostDeviceId'] ?? ''}'.trim();
+            if (expectedHostId.isNotEmpty &&
+                discoveredHostId != expectedHostId) {
+              continue;
+            }
+            final discoveredPort =
+                int.tryParse('${decoded['port'] ?? port}') ?? port;
+            if (discoveredPort != port) continue;
+            if (!completer.isCompleted) {
+              completer.complete(datagram.address.address);
+            }
+          } catch (_) {
+            // Ignore unrelated UDP traffic on the discovery port.
+          }
+        }
+      }, onError: (_) {
+        if (!completer.isCompleted) completer.complete(null);
+      });
+      final payload = utf8.encode(request);
+      socket.send(payload, InternetAddress('255.255.255.255'), _discoveryPort);
+      socket.send(payload, InternetAddress('224.0.0.251'), _discoveryPort);
+      final host = await completer.future.timeout(
+        const Duration(milliseconds: 1200),
+        onTimeout: () => null,
+      );
+      if (host == null || host.trim().isEmpty) return null;
+      try {
+        final client = _client();
+        final health = await client.get(host, port, '/health');
+        _attachToken(health, store.appIdentity.deviceToken);
+        final response = await health.close();
+        await utf8.decoder.bind(response).drain();
+        client.close(force: true);
+        if (response.statusCode != 200) return null;
+      } catch (_) {
+        return null;
+      }
+      final settings = LanSyncSettings.load();
+      if (settings.host.trim() != host.trim()) {
+        await settings.copyWith(host: host.trim()).save();
+      }
+      return host.trim();
+    } catch (_) {
+      return null;
+    } finally {
+      await subscription?.cancel();
+      socket?.close();
+    }
+  }
 
   void _attachToken(HttpClientRequest request, String token,
       {String? deviceId}) {
@@ -1540,6 +1681,10 @@ class LanSyncService {
               ? 'Connection is healthy.'
               : 'Host returned ${response.statusCode}: $body');
     } catch (error) {
+      final recovered = await discoverHost(port: port);
+      if (recovered != null) {
+        return testConnection(recovered, port: port, token: token);
+      }
       return LanSyncResult(ok: false, message: 'Connection failed: $error');
     }
   }
@@ -1682,6 +1827,19 @@ class LanSyncService {
       return const LanSyncResult(
           ok: true, message: 'LAN rebuild completed from snapshot chunks.');
     } catch (error) {
+      if (!_hostRecoveryInProgress && _isNetworkFailure(error)) {
+        _hostRecoveryInProgress = true;
+        final recovered = await discoverHost(port: port);
+        if (recovered != null) {
+          try {
+            return await repairFromHostSnapshot(recovered,
+                port: port, token: token, onProgress: onProgress);
+          } finally {
+            _hostRecoveryInProgress = false;
+          }
+        }
+        _hostRecoveryInProgress = false;
+      }
       return LanSyncResult(
           ok: false, message: 'Repair snapshot failed: $error');
     }
@@ -1903,6 +2061,19 @@ class LanSyncService {
           ok: true,
           message: 'LAN push completed. Pushed ${pending.length} change(s).');
     } catch (error) {
+      if (!_hostRecoveryInProgress && _isNetworkFailure(error)) {
+        _hostRecoveryInProgress = true;
+        final recovered = await discoverHost(port: port);
+        if (recovered != null) {
+          try {
+            return await pushPendingOnly(recovered,
+                port: port, token: token, onProgress: onProgress);
+          } finally {
+            _hostRecoveryInProgress = false;
+          }
+        }
+        _hostRecoveryInProgress = false;
+      }
       await _syncCore.markPushFailed(pendingIds, error.toString());
       return LanSyncResult(
           ok: false, message: _failureMessage('LAN push failed', error));
@@ -2114,6 +2285,19 @@ class LanSyncService {
           ok: true,
           message: 'LAN pull completed. Pulled ${changes.length} change(s).');
     } catch (error) {
+      if (!_hostRecoveryInProgress && _isNetworkFailure(error)) {
+        _hostRecoveryInProgress = true;
+        final recovered = await discoverHost(port: port);
+        if (recovered != null) {
+          try {
+            return await pullChangesOnly(recovered,
+                port: port, token: token, onProgress: onProgress);
+          } finally {
+            _hostRecoveryInProgress = false;
+          }
+        }
+        _hostRecoveryInProgress = false;
+      }
       return LanSyncResult(
           ok: false, message: _failureMessage('LAN pull failed', error));
     }
