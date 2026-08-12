@@ -150,11 +150,12 @@ _SyncStatusView _connectionStatusForHostPeer(
   }
   if (suspended || directDevice?.revoked == true) {
     return _SyncStatusView(
-        label: tr.text('connection_state_pending'),
+        label: tr.text('connection_state_offline'),
         color: Theme.of(context).colorScheme.error,
         icon: Icons.sync_disabled);
   }
-  final lastSeen = _lastSeenForHostPeer(state: state, directDevice: directDevice);
+  final lastSeen =
+      _lastSeenForHostPeer(state: state, directDevice: directDevice);
   // Direct `online` is a sticky database flag and is not a live connection source.
   // Treat Direct devices as online only when their heartbeat/lastSeen is fresh.
   final recentlySeen = lastSeen != null &&
@@ -168,8 +169,8 @@ _SyncStatusView _connectionStatusForHostPeer(
   }
   if (lastSeen != null) {
     return _SyncStatusView(
-        label: tr.text('connection_state_pending'),
-        color: Colors.orange,
+        label: tr.text('connection_state_offline'),
+        color: Theme.of(context).colorScheme.error,
         icon: Icons.wifi_off_outlined);
   }
   return _SyncStatusView(
@@ -287,11 +288,14 @@ DateTime? _lastSuccessfulSyncForHostPeer({
 }) {
   DateTime? latest;
   latest = _latestSyncDate(latest, state?.lastAckCursor);
-  latest = _latestSyncDate(latest, state?.lastAppliedHostCursor);
-  latest = _latestSyncDate(latest, directDevice?.lastAckAt);
   latest = _latestSyncDate(latest, directDevice?.lastAckCursor);
+  // Some older clients acknowledge by sequence only. The ACK timestamp is
+  // still authoritative evidence of a successful exchange in that case.
+  latest = _latestSyncDate(latest, state?.lastAckAt);
+  latest = _latestSyncDate(latest, directDevice?.lastAckAt);
   if (latest == null && _hostPeerAckSequence(state, directDevice) > 0) {
-    latest = _latestSyncDate(state?.updatedAt, directDevice?.lastSeenAt);
+    latest = _latestSyncDate(latest, state?.lastSeenAt);
+    latest = _latestSyncDate(latest, directDevice?.lastSeenAt);
   }
   return latest;
 }
@@ -300,7 +304,9 @@ DateTime? _lastSeenForHostPeer({
   required HostPeerSyncState? state,
   required DirectDeviceStatus? directDevice,
 }) {
-  return directDevice?.lastSeenAt ?? state?.updatedAt;
+  // updatedAt is a local persistence timestamp and must never be presented
+  // as proof that the remote Client is connected.
+  return _latestSyncDate(state?.lastSeenAt, directDevice?.lastSeenAt);
 }
 
 DateTime? _lastSuccessfulSyncForClient(SyncDeviceState state) {
@@ -334,7 +340,15 @@ _SyncStatusView _syncStatusForHostPeer(
         color: Theme.of(context).colorScheme.error,
         icon: Icons.block_outlined);
   }
-  if (!lanAuthorized && directDevice == null) {
+  // A peer may be represented only by the Host's persisted sync state when
+  // the Direct registry has not returned a device row yet. An existing peer
+  // state, ACK, or sync cursor is enough to prove that it is configured.
+  final hasPeerState = state != null;
+  final hasAck = _hostPeerAckSequence(state, directDevice) > 0 ||
+      _lastSuccessfulSyncForHostPeer(
+              state: state, directDevice: directDevice) !=
+          null;
+  if (!lanAuthorized && directDevice == null && !hasPeerState && !hasAck) {
     return _SyncStatusView(
         label: tr.text('connection_state_not_configured'),
         color: Theme.of(context).colorScheme.outline,
@@ -342,36 +356,18 @@ _SyncStatusView _syncStatusForHostPeer(
   }
   final lastSync =
       _lastSuccessfulSyncForHostPeer(state: state, directDevice: directDevice);
-  if (lanAuthorized && directDevice == null) {
-    return _SyncStatusView(
-        label: tr.text('lan_host_running'),
-        color: Colors.green,
-        icon: Icons.dns_outlined);
-  }
-  if (lastSync == null) {
-    return _SyncStatusView(
-        label: tr.text('sync_pending'),
-        color: Colors.orange,
-        icon: Icons.schedule_outlined);
-  }
-  final now = DateTime.now().toUtc();
-  final age = now.difference(lastSync.toUtc());
-  if (age <= const Duration(minutes: 5)) {
-    return _SyncStatusView(
-        label: tr.text('synced'),
-        color: Colors.green,
-        icon: Icons.check_circle_outline);
-  }
-  if (age <= const Duration(hours: 1)) {
+  final hasAcknowledgedSync =
+      lastSync != null || _hostPeerAckSequence(state, directDevice) > 0;
+  if (!hasAcknowledgedSync) {
     return _SyncStatusView(
         label: tr.text('sync_pending'),
         color: Colors.orange,
         icon: Icons.schedule_outlined);
   }
   return _SyncStatusView(
-    label: tr.text('sync_stale'),
-    color: Theme.of(context).colorScheme.error,
-    icon: Icons.warning_amber_outlined,
+    label: tr.text('synced'),
+    color: Colors.green,
+    icon: Icons.check_circle_outline,
   );
 }
 

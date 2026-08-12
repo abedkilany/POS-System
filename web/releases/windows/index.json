@@ -1,13 +1,22 @@
 {
     "releases":  [
                      {
+                         "name":  "VentioSetup-1.0.8-build8.exe",
+                         "url":  "/releases/windows/VentioSetup-1.0.8-build8.exe",
+                         "version":  "1.0.8",
+                         "build":  8,
+                         "size":  24339911,
+                         "sha256":  "fa68d526459c0735b9a70d42aad42586dd58c4557a1f0470b21ce5ca594b9831",
+                         "publishedAt":  "2026-08-12T20:18:31Z"
+                     },
+                     {
                          "name":  "VentioSetup-1.0.7-build7.exe",
                          "url":  "/releases/windows/VentioSetup-1.0.7-build7.exe",
                          "version":  "1.0.7",
                          "build":  7,
-                         "size":  24340570,
-                         "sha256":  "6f27114bccee1781ba77a14365535269f306f055c948cf142c44a7459912c66c",
-                         "publishedAt":  "2026-08-12T11:07:29Z"
+                         "size":  24340571,
+                         "sha256":  "5c86b489e51e0e690334b7208c6fcf428a21a46db8b19134f09f0f1fcc3114a1",
+                         "publishedAt":  "2026-08-12T11:40:12Z"
                      },
                      {
                          "name":  "VentioSetup-1.0.6-build6.exe",

@@ -507,7 +507,7 @@
   "connection_state_disabled": "Disabled",
   "connection_state_error": "Error",
   "connection_state_not_configured": "Not Configured",
-  "connection_state_offline": "Pending",
+  "connection_state_offline": "Offline",
   "connection_state_online": "Active",
   "connection_state_pending": "Pending",
   "connection_state_provisioning": "Provisioning",

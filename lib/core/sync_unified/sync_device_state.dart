@@ -168,7 +168,8 @@ class SyncDeviceState {
       directLastAckCursor:
           DateTime.tryParse(json['directLastAckCursor']?.toString() ?? ''),
       directLastAppliedSequence:
-          int.tryParse(json['directLastAppliedSequence']?.toString() ?? '') ?? 0,
+          int.tryParse(json['directLastAppliedSequence']?.toString() ?? '') ??
+              0,
       directLastAckSequence:
           int.tryParse(json['directLastAckSequence']?.toString() ?? '') ?? 0,
       lanLastAppliedHostCursor:
@@ -202,6 +203,7 @@ class HostPeerSyncState {
     this.lastAckCursor,
     this.lastAppliedSequence = 0,
     this.lastAckSequence = 0,
+    this.lastAckAt,
     this.lastSyncTransport = '',
     this.lastSeenAt,
     this.updatedAt,
@@ -212,6 +214,7 @@ class HostPeerSyncState {
   final DateTime? lastAckCursor;
   final int lastAppliedSequence;
   final int lastAckSequence;
+  final DateTime? lastAckAt;
   final String lastSyncTransport;
   final DateTime? lastSeenAt;
   final DateTime? updatedAt;
@@ -222,6 +225,7 @@ class HostPeerSyncState {
         'lastAckCursor': lastAckCursor?.toIso8601String(),
         'lastAppliedSequence': lastAppliedSequence,
         'lastAckSequence': lastAckSequence,
+        'lastAckAt': lastAckAt?.toIso8601String(),
         'lastSyncTransport': lastSyncTransport,
         'lastSeenAt': lastSeenAt?.toIso8601String(),
         'updatedAt': updatedAt?.toIso8601String(),
@@ -238,6 +242,7 @@ class HostPeerSyncState {
             int.tryParse(json['lastAppliedSequence']?.toString() ?? '') ?? 0,
         lastAckSequence:
             int.tryParse(json['lastAckSequence']?.toString() ?? '') ?? 0,
+        lastAckAt: DateTime.tryParse(json['lastAckAt']?.toString() ?? ''),
         lastSyncTransport: json['lastSyncTransport']?.toString() ?? '',
         lastSeenAt: DateTime.tryParse(json['lastSeenAt']?.toString() ?? ''),
         updatedAt: DateTime.tryParse(json['updatedAt']?.toString() ?? ''),
@@ -308,8 +313,9 @@ class SyncDeviceStateStore {
         directLastAppliedHostCursor: normalizedTransport == 'direct'
             ? null
             : current.directLastAppliedHostCursor,
-        directLastAckCursor:
-            normalizedTransport == 'direct' ? null : current.directLastAckCursor,
+        directLastAckCursor: normalizedTransport == 'direct'
+            ? null
+            : current.directLastAckCursor,
         directLastAppliedSequence: normalizedTransport == 'direct'
             ? 0
             : current.directLastAppliedSequence,
@@ -585,6 +591,12 @@ class SyncDeviceStateStore {
           _latestInt(current?.lastAppliedSequence ?? 0, appliedSequence),
       lastAckSequence: _latestInt(
           current?.lastAckSequence ?? 0, ackSequence ?? appliedSequence),
+      lastAckAt: (ackCursor != null ||
+              appliedCursor != null ||
+              (ackSequence ?? 0) > 0 ||
+              (appliedSequence ?? 0) > 0)
+          ? now
+          : current?.lastAckAt,
       lastSyncTransport: _normalizeTransport(transport),
       lastSeenAt: now,
       updatedAt: now,

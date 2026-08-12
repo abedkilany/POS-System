@@ -543,7 +543,7 @@
   "connection_state_disabled": "معطل",
   "connection_state_error": "خطأ",
   "connection_state_not_configured": "غير مهيأ",
-  "connection_state_offline": "قيد الانتظار",
+  "connection_state_offline": "غير متصل",
   "connection_state_online": "نشط",
   "connection_state_pending": "قيد الانتظار",
   "connection_state_provisioning": "قيد التحضير",

@@ -220,7 +220,6 @@ class SettingsPage extends StatelessWidget {
                       items: navItems,
                       selectedIndex: controller.index,
                       onSelected: controller.animateTo,
-                      store: store,
                     ),
                   ),
                 ),
@@ -8361,13 +8360,11 @@ class _SettingsSideNav extends StatelessWidget {
   const _SettingsSideNav(
       {required this.items,
       required this.selectedIndex,
-      required this.onSelected,
-      required this.store});
+      required this.onSelected});
 
   final List<_SettingsNavData> items;
   final int selectedIndex;
   final ValueChanged<int> onSelected;
-  final AppStore store;
 
   @override
   Widget build(BuildContext context) {
@@ -8383,8 +8380,6 @@ class _SettingsSideNav extends StatelessWidget {
               onTap: () => onSelected(i),
             ),
           ),
-        const SizedBox(height: 18),
-        _SystemStatusPanel(store: store),
       ],
     );
   }
@@ -8931,155 +8926,6 @@ class _WindowsUpdateStatusCardState extends State<_WindowsUpdateStatusCard> {
           );
         },
       ),
-    );
-  }
-}
-
-class _SystemStatusPanel extends StatelessWidget {
-  const _SystemStatusPanel({required this.store});
-
-  final AppStore store;
-
-  @override
-  Widget build(BuildContext context) {
-    final tr = AppLocalizations.of(context);
-    final identity = store.appIdentity;
-    final lan = LanSyncSettings.load();
-    final direct = VpsControlPlaneSettings.load();
-    final transport = identity.activeSyncTransportNormalized;
-    final lanConfigured = lan.setupComplete || lan.isHost || lan.isClient;
-    final lanActive = transport == 'lan' && lanConfigured;
-    final directActive = identity.isDirectEnabled && direct.isConfigured;
-    // Host health is independent from delivery backlog on offline peers. Each
-    // peer row reports its own pending sequence gap in Sync Monitoring.
-    final pending = identity.isHost ? 0 : store.activeClientPendingSyncCount;
-
-    final roleLabel = identity.isHost
-        ? tr.text('host_device')
-        : identity.isClient
-            ? tr.text('client_device')
-            : tr.text('local');
-
-    final lanState = lanActive
-        ? tr.text('connection_state_active')
-        : lanConfigured
-            ? tr.text('connection_state_disabled')
-            : tr.text('connection_state_not_configured');
-
-    final directState = directActive
-        ? tr.text('connection_state_active')
-        : identity.isDirectEnabled
-            ? tr.text('connection_state_not_configured')
-            : tr.text('connection_state_disabled');
-
-    final syncState = pending > 0
-        ? '${tr.text('connection_state_pending')} ($pending)'
-        : (lanActive || directActive)
-            ? tr.text('connection_state_active')
-            : tr.text('connection_state_disabled');
-
-    final healthy =
-        pending == 0 && (lanActive || directActive || transport == 'local');
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Theme.of(context)
-            .colorScheme
-            .surfaceContainerHighest
-            .withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            Icon(Icons.verified_user_outlined,
-                color: Theme.of(context).colorScheme.primary),
-            const SizedBox(width: 8),
-            Text(tr.text('system_status'),
-                style: Theme.of(context)
-                    .textTheme
-                    .titleSmall
-                    ?.copyWith(fontWeight: FontWeight.w700)),
-          ]),
-          const SizedBox(height: 12),
-          _StatusBullet(
-            label: roleLabel,
-            state: _StatusBulletState.info,
-          ),
-          _StatusBullet(
-            label: '${tr.text('connection_lan')}: $lanState',
-            state: lanActive
-                ? _StatusBulletState.ok
-                : lanConfigured
-                    ? _StatusBulletState.disabled
-                    : _StatusBulletState.warning,
-          ),
-          _StatusBullet(
-            label: '${tr.text('connection_direct')}: $directState',
-            state: directActive
-                ? _StatusBulletState.ok
-                : identity.isDirectEnabled
-                    ? _StatusBulletState.warning
-                    : _StatusBulletState.disabled,
-          ),
-          _StatusBullet(
-            label: '${tr.text('connection_sync_health')}: $syncState',
-            state: pending > 0
-                ? _StatusBulletState.warning
-                : (lanActive || directActive)
-                    ? _StatusBulletState.ok
-                    : _StatusBulletState.disabled,
-          ),
-          const Divider(height: 22),
-          Text(
-              healthy
-                  ? tr.text('all_systems_are_running_smoothly')
-                  : pending > 0
-                      ? '${tr.text('pending_changes')}: $pending'
-                      : '${tr.text('sync')}: ${tr.text('connection_state_disabled')}',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant)),
-        ],
-      ),
-    );
-  }
-}
-
-enum _StatusBulletState { ok, warning, disabled, info }
-
-class _StatusBullet extends StatelessWidget {
-  const _StatusBullet(
-      {required this.label, this.state = _StatusBulletState.ok});
-  final String label;
-  final _StatusBulletState state;
-
-  Color _color(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    switch (state) {
-      case _StatusBulletState.ok:
-        return Colors.green.shade600;
-      case _StatusBulletState.warning:
-        return Colors.orange.shade700;
-      case _StatusBulletState.disabled:
-        return scheme.onSurfaceVariant.withValues(alpha: 0.65);
-      case _StatusBulletState.info:
-        return scheme.primary;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(children: [
-        Icon(Icons.circle, size: 9, color: _color(context)),
-        const SizedBox(width: 10),
-        Expanded(
-            child: Text(label, style: Theme.of(context).textTheme.bodyMedium)),
-      ]),
     );
   }
 }
