@@ -1,6 +1,4 @@
 import {
-  assertAccountOrDevice,
-  assertStoreAllowed,
   getDirectSyncEnabled,
   sendError,
 } from '../_db.js';
@@ -23,16 +21,12 @@ export default async function handler(req, res) {
     if (!storeId) {
       return res.status(400).json({ ok: false, error: 'store_id is required.' });
     }
-    assertStoreAllowed(storeId);
-
-    // Authentication is still mandatory, but the current transport is not a
-    // prerequisite for reading the plan entitlement.
-    await assertAccountOrDevice(req, {
-      storeId,
-      branchId,
-      allowedRoles: ['host'],
-      allowedTransports: [],
-    });
+    // This endpoint only exposes the subscription feature flag. It does not
+    // expose store data or authorize any sync operation. The actual sync
+    // endpoints continue to require account/device authentication and call
+    // assertDirectSyncEnabled before accepting Direct traffic. Keeping this
+    // read separate avoids a circular dependency where a local device cannot
+    // learn whether it may enable Direct because it is not Direct yet.
 
     return res.status(200).json({
       ok: true,
