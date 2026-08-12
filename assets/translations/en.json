@@ -2186,5 +2186,23 @@
   "english_name": "English name",
   "arabic_name": "Arabic name",
   "done": "Done",
-  "no_items": "No items yet"
+  "no_items": "No items yet",
+  "thermal_printer": "Thermal printer",
+  "thermal_printer_desc": "ESC/POS receipt printer connection and paper settings.",
+  "connection": "Connection",
+  "printer_address": "Printer address",
+  "paper_width": "Paper width",
+  "printer_name": "Printer name",
+  "printer_ip": "Printer IP address",
+  "printer_port": "Printer port",
+  "bluetooth_address": "Bluetooth address",
+  "usb_address": "USB address",
+  "printer_ip_required": "Enter the printer IP address before enabling network printing."
+  ,"print_thermal_invoice": "Print thermal receipt",
+  "thermal_printer_not_configured": "Configure and enable a thermal printer in Settings first.",
+  "virtual_printer": "Virtual printer",
+  "virtual_print_captured": "Receipt captured by virtual printer"
+  ,"virtual_printer_jobs": "Captured jobs"
+  ,"thermal_print_failed": "Thermal printing failed. Check the printer settings and try again."
+  ,"preview_last_receipt": "Preview last receipt"
 }

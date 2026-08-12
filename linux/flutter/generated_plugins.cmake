@@ -8,6 +8,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   flutter_webrtc
   printing
   sqlite3_flutter_libs
+  thermal_printer_flutter
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST

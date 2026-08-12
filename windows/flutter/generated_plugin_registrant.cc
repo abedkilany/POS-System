@@ -11,6 +11,7 @@
 #include <flutter_webrtc/flutter_web_r_t_c_plugin.h>
 #include <printing/printing_plugin.h>
 #include <sqlite3_flutter_libs/sqlite3_flutter_libs_plugin.h>
+#include <thermal_printer_flutter/thermal_printer_flutter_plugin_c_api.h>
 
 void RegisterPlugins(flutter::PluginRegistry* registry) {
   AudioplayersWindowsPluginRegisterWithRegistrar(
@@ -23,4 +24,6 @@ void RegisterPlugins(flutter::PluginRegistry* registry) {
       registry->GetRegistrarForPlugin("PrintingPlugin"));
   Sqlite3FlutterLibsPluginRegisterWithRegistrar(
       registry->GetRegistrarForPlugin("Sqlite3FlutterLibsPlugin"));
+  ThermalPrinterFlutterPluginCApiRegisterWithRegistrar(
+      registry->GetRegistrarForPlugin("ThermalPrinterFlutterPluginCApi"));
 }

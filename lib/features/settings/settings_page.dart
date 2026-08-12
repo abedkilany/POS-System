@@ -21,6 +21,7 @@ import '../../core/services/lan_sync_service.dart';
 import '../../core/services/local_database_service.dart';
 import '../../core/services/local_auto_backup_service.dart';
 import '../../core/services/app_update_service.dart';
+import '../../core/services/thermal_printer_service.dart';
 import '../../core/services/sync_diagnostics_log.dart';
 import '../../core/services/page_timing_scope.dart';
 import '../../core/shortcuts/app_shortcuts.dart';
@@ -406,6 +407,7 @@ class SettingsPage extends StatelessWidget {
         ),
       ),
       _SystemIdentityCard(store: store),
+      _thermalPrinterCard(context),
       Card(
         child: Padding(
           padding: VentioResponsive.pageInsets(context),
@@ -466,6 +468,265 @@ class SettingsPage extends StatelessWidget {
       ),
       const _ScannerFeedbackSettingsCard(),
     ];
+  }
+
+  Widget _thermalPrinterCard(BuildContext context) {
+    final tr = AppLocalizations.of(context);
+    final printer = store.storeProfile.thermalPrinter;
+    final virtualJob = VirtualPrinterStore.instance.lastJob;
+    final connection = printer.type == 'network'
+        ? (printer.ip.trim().isEmpty
+            ? tr.text('not_configured')
+            : '${printer.ip}:${printer.port}')
+        : printer.type == 'virtual'
+            ? tr.text('virtual_printer')
+            : printer.type == 'bluetooth'
+                ? (printer.bluetoothAddress.isEmpty
+                    ? tr.text('not_configured')
+                    : printer.bluetoothAddress)
+                : (printer.usbAddress.isEmpty
+                    ? tr.text('not_configured')
+                    : printer.usbAddress);
+    return _SectionCard(
+      icon: Icons.print_outlined,
+      title: tr.text('thermal_printer'),
+      subtitle: tr.text('thermal_printer_desc'),
+      trailing: FilledButton.icon(
+        onPressed: store.hasPermission(AppPermission.settingsManage)
+            ? () => _editThermalPrinter(context)
+            : null,
+        icon: const Icon(Icons.edit_outlined),
+        label: Text(tr.text('edit')),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _InfoGrid(
+            items: [
+              _InfoGridItem(
+                  Icons.power_settings_new_outlined,
+                  tr.text('status'),
+                  printer.enabled ? tr.text('enabled') : tr.text('disabled')),
+              _InfoGridItem(Icons.settings_input_component_outlined,
+                  tr.text('connection'), printer.type.toUpperCase()),
+              _InfoGridItem(
+                  Icons.lan_outlined, tr.text('printer_address'), connection),
+              _InfoGridItem(Icons.straighten_outlined, tr.text('paper_width'),
+                  '${printer.paperWidth} mm'),
+              if (printer.type == 'virtual')
+                _InfoGridItem(
+                  Icons.fact_check_outlined,
+                  tr.text('virtual_printer_jobs'),
+                  virtualJob == null
+                      ? '0'
+                      : '${VirtualPrinterStore.instance.jobs.length} (${virtualJob.invoiceNo})',
+                ),
+              if (printer.type == 'virtual' && virtualJob != null)
+                _InfoGridItem(
+                  Icons.preview_outlined,
+                  tr.text('preview_last_receipt'),
+                  tr.text('available'),
+                ),
+            ],
+          ),
+          if (printer.type == 'virtual' && virtualJob != null) ...[
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: () => _showVirtualPrinterPreview(context, virtualJob),
+              icon: const Icon(Icons.preview_outlined),
+              label: Text(tr.text('preview_last_receipt')),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showVirtualPrinterPreview(
+    BuildContext context,
+    VirtualPrinterJob job,
+  ) async {
+    final width = job.paperWidth == ThermalPaperWidth.mm58 ? 384.0 : 576.0;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(
+            '${AppLocalizations.of(dialogContext).text('preview_last_receipt')} · ${job.invoiceNo}'),
+        content: SizedBox(
+          width: width,
+          child: SingleChildScrollView(
+            child: ThermalReceiptWidget(
+              sale: job.sale,
+              profile: job.profile,
+              locale: job.locale,
+              width: width,
+            ),
+          ),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text(AppLocalizations.of(dialogContext).text('close')),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _editThermalPrinter(BuildContext context) async {
+    final current = store.storeProfile.thermalPrinter;
+    final nameController = TextEditingController(text: current.name);
+    final ipController = TextEditingController(text: current.ip);
+    final portController = TextEditingController(text: current.port.toString());
+    final bluetoothController =
+        TextEditingController(text: current.bluetoothAddress);
+    final usbController = TextEditingController(text: current.usbAddress);
+    var enabled = current.enabled;
+    var type = current.type;
+    var paperWidth = current.paperWidth;
+
+    try {
+      final result = await showDialog<ThermalPrinterSettings>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (context, setState) => AlertDialog(
+            title: Text(AppLocalizations.of(context).text('thermal_printer')),
+            content: SizedBox(
+              width: 520,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SwitchListTile.adaptive(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(AppLocalizations.of(context).text('enabled')),
+                      value: enabled,
+                      onChanged: (value) => setState(() => enabled = value),
+                    ),
+                    DropdownButtonFormField<String>(
+                      initialValue: type,
+                      decoration: InputDecoration(
+                          labelText:
+                              AppLocalizations.of(context).text('connection')),
+                      items: const [
+                        DropdownMenuItem(
+                            value: 'network', child: Text('Network')),
+                        DropdownMenuItem(
+                            value: 'bluetooth', child: Text('Bluetooth')),
+                        DropdownMenuItem(value: 'usb', child: Text('USB')),
+                        DropdownMenuItem(
+                            value: 'virtual', child: Text('Virtual printer')),
+                      ],
+                      onChanged: (value) =>
+                          setState(() => type = value ?? 'network'),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: nameController,
+                      decoration: InputDecoration(
+                          labelText: AppLocalizations.of(context)
+                              .text('printer_name')),
+                    ),
+                    if (type == 'network') ...[
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: ipController,
+                        decoration: InputDecoration(
+                            labelText: AppLocalizations.of(context)
+                                .text('printer_ip')),
+                        keyboardType: TextInputType.url,
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: portController,
+                        decoration: InputDecoration(
+                            labelText: AppLocalizations.of(context)
+                                .text('printer_port')),
+                        keyboardType: TextInputType.number,
+                      ),
+                    ],
+                    if (type == 'bluetooth') ...[
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: bluetoothController,
+                        decoration: InputDecoration(
+                            labelText: AppLocalizations.of(context)
+                                .text('bluetooth_address')),
+                      ),
+                    ],
+                    if (type == 'usb') ...[
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: usbController,
+                        decoration: InputDecoration(
+                            labelText: AppLocalizations.of(context)
+                                .text('usb_address')),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<int>(
+                      initialValue: paperWidth,
+                      decoration: InputDecoration(
+                          labelText:
+                              AppLocalizations.of(context).text('paper_width')),
+                      items: const [
+                        DropdownMenuItem(value: 58, child: Text('58 mm')),
+                        DropdownMenuItem(value: 80, child: Text('80 mm')),
+                      ],
+                      onChanged: (value) =>
+                          setState(() => paperWidth = value ?? 80),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: Text(AppLocalizations.of(context).text('cancel')),
+              ),
+              FilledButton(
+                onPressed: () {
+                  final port = int.tryParse(portController.text.trim()) ?? 9100;
+                  if (type == 'network' &&
+                      ipController.text.trim().isEmpty &&
+                      enabled) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                          content: Text(AppLocalizations.of(context)
+                              .text('printer_ip_required'))),
+                    );
+                    return;
+                  }
+                  Navigator.of(dialogContext).pop(ThermalPrinterSettings(
+                    enabled: enabled,
+                    type: type,
+                    name: nameController.text.trim(),
+                    ip: ipController.text.trim(),
+                    port: port.clamp(1, 65535),
+                    bluetoothAddress: bluetoothController.text.trim(),
+                    usbAddress: usbController.text.trim(),
+                    paperWidth: paperWidth,
+                  ));
+                },
+                child: Text(AppLocalizations.of(context).text('save')),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (result != null) {
+        await store.updateStoreProfile(
+          store.storeProfile.copyWith(thermalPrinter: result),
+        );
+      }
+    } finally {
+      nameController.dispose();
+      ipController.dispose();
+      portController.dispose();
+      bluetoothController.dispose();
+      usbController.dispose();
+    }
   }
 
   List<Widget> _aboutCards(BuildContext context) {
@@ -3947,8 +4208,14 @@ class _UnifiedSyncSettingsCardState extends State<_UnifiedSyncSettingsCard> {
     try {
       final token = cache?.accountToken.trim() ?? '';
       if (token.isNotEmpty) {
-        final result =
-            await AccountAuthService().refreshSession(accountToken: token);
+        // Access tokens are intentionally short-lived. The Direct entitlement
+        // check must use the refresh token as well, otherwise an otherwise
+        // valid subscription is displayed as "Locked by plan" after the
+        // 15-minute access-token lifetime expires.
+        final result = await AccountAuthService().refreshSession(
+          accountToken: token,
+          refreshToken: cache?.refreshToken.trim() ?? '',
+        );
         SyncDiagnosticsLog.add(
           '[SYNC_TRACE] directPlanAccess:session '
           'ok=${result.ok} '

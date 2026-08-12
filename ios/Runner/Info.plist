@@ -28,6 +28,12 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Ventio uses the camera to scan product barcodes.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Ventio uses Bluetooth to connect to thermal printers.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>Ventio uses Bluetooth to connect to thermal printers.</string>
+	<key>NSBluetoothAlwaysAndWhenInUseUsageDescription</key>
+	<string>Ventio uses Bluetooth to connect to thermal printers.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

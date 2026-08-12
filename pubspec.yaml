@@ -30,6 +30,7 @@ dependencies:
   flutter_webrtc: ^1.5.2
   mobile_scanner: ^7.1.4
   qr_flutter: ^4.1.0
+  thermal_printer_flutter: ^2.0.0+3
 
   cupertino_icons: ^1.0.8
 

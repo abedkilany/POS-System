@@ -12,6 +12,7 @@ import '../../core/shortcuts/app_shortcuts.dart';
 import '../../core/services/barcode_feedback_service.dart';
 import '../../core/services/page_timing_scope.dart';
 import '../../core/services/invoice_pdf_service.dart';
+import '../../core/services/thermal_printer_service.dart';
 import '../../core/services/accounting_service.dart';
 import '../../core/services/local_database_service.dart';
 import '../../core/utils/currency_utils.dart';
@@ -26,6 +27,7 @@ import '../../models/sale_item.dart';
 import '../../models/sale_summary.dart';
 import '../../models/user_role.dart';
 import '../../models/warehouse.dart';
+import 'package:thermal_printer_flutter/thermal_printer_flutter.dart';
 import '../../widgets/app_section_header.dart';
 import '../../widgets/empty_state_card.dart';
 import '../../widgets/page_data_load_indicator.dart';
@@ -3669,6 +3671,17 @@ class _SalesPageState extends State<SalesPage> {
                                   ),
                                   OutlinedButton.icon(
                                     onPressed: widget.store.hasPermission(
+                                            AppPermission.salesPrint)
+                                        ? () => _handleInvoiceAction(
+                                            () => _printThermalInvoice(context, sale),
+                                            failureMessageKey: 'thermal_print_failed',
+                                          )
+                                        : null,
+                                    icon: const Icon(Icons.print_outlined),
+                                    label: Text(tr.text('print_thermal_invoice')),
+                                  ),
+                                  OutlinedButton.icon(
+                                    onPressed: widget.store.hasPermission(
                                             AppPermission.salesExport)
                                         ? () => _handleInvoiceAction(() =>
                                             InvoicePdfService.shareInvoice(
@@ -3913,6 +3926,16 @@ class _SalesPageState extends State<SalesPage> {
                     : null,
                 icon: const Icon(Icons.print_outlined),
                 label: Text(tr.text('print_invoice')),
+              ),
+              OutlinedButton.icon(
+                onPressed: widget.store.hasPermission(AppPermission.salesPrint)
+                    ? () => _handleInvoiceAction(
+                        () => _printThermalInvoice(context, sale),
+                        failureMessageKey: 'thermal_print_failed',
+                      )
+                    : null,
+                icon: const Icon(Icons.print_outlined),
+                label: Text(tr.text('print_thermal_invoice')),
               ),
               OutlinedButton.icon(
                 onPressed: widget.store.hasPermission(AppPermission.salesExport)
@@ -5212,14 +5235,77 @@ class _SalesPageState extends State<SalesPage> {
     }
   }
 
-  Future<void> _handleInvoiceAction(Future<void> Function() action) async {
+  Future<void> _handleInvoiceAction(
+    Future<void> Function() action, {
+    String failureMessageKey = 'pdf_action_failed',
+  }) async {
     try {
       await action();
-    } catch (_) {
+    } catch (error, stackTrace) {
+      debugPrint('Invoice action failed: $error\n$stackTrace');
       if (!mounted) return;
+      final message = AppLocalizations.of(context).text(failureMessageKey);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content:
-              Text(AppLocalizations.of(context).text('pdf_action_failed'))));
+          content: Text(failureMessageKey == 'thermal_print_failed'
+              ? '$message ($error)'
+              : message)));
+    }
+  }
+
+  Future<void> _printThermalInvoice(BuildContext context, Sale sale) async {
+    final settings = widget.store.storeProfile.thermalPrinter;
+    if (!settings.enabled) {
+      throw StateError(AppLocalizations.of(context).text('thermal_printer_not_configured'));
+    }
+    if (settings.type == 'virtual') {
+      final service = ThermalPrinterService();
+      try {
+        final job = await service.captureSaleForVirtualPrinter(
+          context: context,
+          sale: sale,
+          profile: widget.store.storeProfile,
+          locale: AppLocalizations.of(context).locale,
+          paperWidth: settings.paperWidth == 58
+              ? ThermalPaperWidth.mm58
+              : ThermalPaperWidth.mm80,
+        );
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('${AppLocalizations.of(context).text('virtual_print_captured')} #${job.id}')),
+          );
+        }
+      } finally {
+        await service.dispose();
+      }
+      return;
+    }
+    final type = switch (settings.type) {
+      'bluetooth' => PrinterType.bluetooth,
+      'usb' => PrinterType.usb,
+      _ => PrinterType.network,
+    };
+    final printer = Printer(
+      type: type,
+      name: settings.name,
+      ip: settings.ip,
+      port: settings.port.toString(),
+      bleAddress: settings.bluetoothAddress,
+      usbAddress: settings.usbAddress,
+    );
+    final service = ThermalPrinterService();
+    try {
+      await service.printSale(
+        context: context,
+        sale: sale,
+        profile: widget.store.storeProfile,
+        printer: printer,
+        locale: AppLocalizations.of(context).locale,
+        paperWidth: settings.paperWidth == 58
+            ? ThermalPaperWidth.mm58
+            : ThermalPaperWidth.mm80,
+      );
+    } finally {
+      await service.dispose();
     }
   }
 }
