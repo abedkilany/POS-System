@@ -32,6 +32,7 @@ class SyncMonitoringSection extends StatefulWidget {
 
 class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
   Future<_DirectMonitoringSnapshot>? _directMonitoringFuture;
+  StreamSubscription<SyncPeerLiveEvent>? _liveSubscription;
 
   AppStore get store => widget.store;
   DirectControlPlaneService get _controlPlaneService =>
@@ -40,7 +41,16 @@ class _SyncMonitoringSectionState extends State<SyncMonitoringSection> {
   @override
   void initState() {
     super.initState();
+    _liveSubscription = SyncDeviceStateStore.peerLiveEvents.stream.listen((_) {
+      if (mounted) setState(() {});
+    });
     _refreshDirectDevices();
+  }
+
+  @override
+  void dispose() {
+    _liveSubscription?.cancel();
+    super.dispose();
   }
 
   @override
@@ -481,44 +491,24 @@ String _transportLabel(BuildContext context, String transport) {
 
 _SyncStatusView _connectionStatusForHostPeer(
   BuildContext context, {
+  required String deviceId,
   required HostPeerSyncState? state,
   required DirectDeviceStatus? peerDevice,
   required bool suspended,
   bool wipePending = false,
 }) {
   final tr = AppLocalizations.of(context);
-  if (wipePending) {
+  final live = SyncDeviceStateStore.livePeerStatus(deviceId);
+  if (live?.online == true && !suspended && peerDevice?.revoked != true) {
     return _SyncStatusView(
-        label: tr.text('wipe_pending'),
-        color: Theme.of(context).colorScheme.error,
-        icon: Icons.delete_sweep_outlined);
-  }
-  if (suspended || peerDevice?.revoked == true) {
-    return _SyncStatusView(
-        label: tr.text('connection_state_pending'),
-        color: Theme.of(context).colorScheme.error,
-        icon: Icons.sync_disabled);
-  }
-  final lastSeen = _lastSeenForHostPeer(state: state, peerDevice: peerDevice);
-  final recentlySeen = lastSeen != null &&
-      DateTime.now().toUtc().difference(lastSeen.toUtc()) <=
-          const Duration(seconds: 90);
-  if (recentlySeen) {
-    return _SyncStatusView(
-        label: tr.text('connection_state_active'),
+        label: tr.text('connection_state_online'),
         color: Colors.green,
         icon: Icons.wifi_tethering_outlined);
   }
-  if (lastSeen != null) {
-    return _SyncStatusView(
-        label: tr.text('connection_state_pending'),
-        color: Colors.orange,
-        icon: Icons.wifi_off_outlined);
-  }
   return _SyncStatusView(
-      label: tr.text('unknown'),
-      color: Theme.of(context).colorScheme.outline,
-      icon: Icons.help_outline);
+      label: tr.text('connection_state_offline'),
+      color: Theme.of(context).colorScheme.error,
+      icon: Icons.wifi_off_outlined);
 }
 
 _SyncStatusView _connectionStatusForClient(
@@ -613,6 +603,27 @@ String _pendingChangesForHostPeer(
     if (pending) count++;
   }
   return '$count';
+}
+
+int _pendingChangesCountForHostPeer({
+  required AppStore store,
+  required String deviceId,
+  required HostPeerSyncState? state,
+  required DirectDeviceStatus? peerDevice,
+}) {
+  final ackSequence = _hostPeerAckSequence(state, peerDevice);
+  final ackCursor = state?.lastAckCursor ??
+      peerDevice?.lastAckCursor ??
+      peerDevice?.lastAckAt;
+  var count = 0;
+  for (final change in store.syncChanges) {
+    if (change.deviceId == deviceId) continue;
+    final pending = ackSequence > 0 && change.sequence > 0
+        ? change.sequence > ackSequence
+        : ackCursor == null || change.createdAt.isAfter(ackCursor);
+    if (pending) count++;
+  }
+  return count;
 }
 
 class _SyncTraceDiagnosticsPanel extends StatefulWidget {
@@ -731,17 +742,7 @@ DateTime? _lastSuccessfulSyncForHostPeer({
   latest = _latestSyncDate(latest, state?.lastAppliedHostCursor);
   latest = _latestSyncDate(latest, peerDevice?.lastAckAt);
   latest = _latestSyncDate(latest, peerDevice?.lastAckCursor);
-  if (latest == null && _hostPeerAckSequence(state, peerDevice) > 0) {
-    latest = _latestSyncDate(state?.updatedAt, peerDevice?.lastSeenAt);
-  }
   return latest;
-}
-
-DateTime? _lastSeenForHostPeer({
-  required HostPeerSyncState? state,
-  required DirectDeviceStatus? peerDevice,
-}) {
-  return peerDevice?.lastSeenAt ?? state?.updatedAt;
 }
 
 DateTime? _lastSuccessfulSyncForClient(SyncDeviceState state) {
@@ -751,69 +752,27 @@ DateTime? _lastSuccessfulSyncForClient(SyncDeviceState state) {
 _SyncStatusView _syncStatusForHostPeer(
   BuildContext context,
   HostPeerSyncState? state, {
+  required int pendingCount,
   required bool lanAuthorized,
   required DirectDeviceStatus? peerDevice,
   required bool suspended,
   bool wipePending = false,
 }) {
   final tr = AppLocalizations.of(context);
-  if (wipePending) {
-    return _SyncStatusView(
-        label: tr.text('wipe_pending'),
-        color: Theme.of(context).colorScheme.error,
-        icon: Icons.delete_sweep_outlined);
-  }
-  if (suspended) {
-    return _SyncStatusView(
-        label: tr.text('suspended'),
-        color: Colors.orange,
-        icon: Icons.pause_circle_outline);
-  }
-  if (peerDevice?.revoked == true) {
-    return _SyncStatusView(
-        label: tr.text('revoked'),
-        color: Theme.of(context).colorScheme.error,
-        icon: Icons.block_outlined);
-  }
-  if (!lanAuthorized && peerDevice == null) {
-    return _SyncStatusView(
-        label: tr.text('connection_state_not_configured'),
-        color: Theme.of(context).colorScheme.outline,
-        icon: Icons.link_off_outlined);
-  }
-  final lastSync =
-      _lastSuccessfulSyncForHostPeer(state: state, peerDevice: peerDevice);
-  if (lanAuthorized && peerDevice == null) {
-    return _SyncStatusView(
-        label: tr.text('lan_host_running'),
-        color: Colors.green,
-        icon: Icons.dns_outlined);
-  }
-  if (lastSync == null) {
-    return _SyncStatusView(
-        label: tr.text('sync_pending'),
-        color: Colors.orange,
-        icon: Icons.schedule_outlined);
-  }
-  final now = DateTime.now().toUtc();
-  final age = now.difference(lastSync.toUtc());
-  if (age <= const Duration(minutes: 5)) {
+  final hasAck = _hostPeerAckSequence(state, peerDevice) > 0 ||
+      state?.lastAckCursor != null ||
+      peerDevice?.lastAckCursor != null ||
+      peerDevice?.lastAckAt != null;
+  if (pendingCount == 0 && hasAck) {
     return _SyncStatusView(
         label: tr.text('synced'),
         color: Colors.green,
         icon: Icons.check_circle_outline);
   }
-  if (age <= const Duration(hours: 1)) {
-    return _SyncStatusView(
-        label: tr.text('sync_pending'),
-        color: Colors.orange,
-        icon: Icons.schedule_outlined);
-  }
   return _SyncStatusView(
-    label: tr.text('sync_stale'),
-    color: Theme.of(context).colorScheme.error,
-    icon: Icons.warning_amber_outlined,
-  );
+      label: tr.text('sync_pending'),
+      color: Colors.orange,
+      icon: Icons.schedule_outlined);
 }
 
 _SyncStatusView _syncStatusForClient(
@@ -1085,12 +1044,16 @@ DataRow _hostPeerRow(
   required VoidCallback onPermanentDelete,
 }) {
   final tr = AppLocalizations.of(context);
+  final pendingCount = _pendingChangesCountForHostPeer(
+      store: store, deviceId: deviceId, state: state, peerDevice: peerDevice);
   final connection = _connectionStatusForHostPeer(context,
+      deviceId: deviceId,
       state: state,
       peerDevice: peerDevice,
       suspended: suspended,
       wipePending: wipePending);
   final status = _syncStatusForHostPeer(context, state,
+      pendingCount: pendingCount,
       lanAuthorized: lanAuthorized,
       peerDevice: peerDevice,
       suspended: suspended,
@@ -1239,12 +1202,19 @@ class _HostPeerMonitoringCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
+    final pendingCount = _pendingChangesCountForHostPeer(
+        store: store,
+        deviceId: deviceId,
+        state: state,
+        peerDevice: peerDevice);
     final connection = _connectionStatusForHostPeer(context,
+        deviceId: deviceId,
         state: state,
         peerDevice: peerDevice,
         suspended: suspended,
         wipePending: wipePending);
     final status = _syncStatusForHostPeer(context, state,
+        pendingCount: pendingCount,
         lanAuthorized: lanAuthorized,
         peerDevice: peerDevice,
         suspended: suspended,

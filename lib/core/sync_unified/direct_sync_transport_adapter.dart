@@ -437,9 +437,10 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
     _hostRestartScheduled = false;
     await _hostManager?.close();
     _hostManager = null;
-    for (final endpoint
-        in List<DirectPeerHostEndpoint>.from(_hostEndpoints.values)) {
-      await endpoint.close();
+    for (final entry in List<MapEntry<String, DirectPeerHostEndpoint>>.from(
+        _hostEndpoints.entries)) {
+      SyncDeviceStateStore.recordPeerOffline(entry.key);
+      await entry.value.close();
     }
     _hostEndpoints.clear();
     _pendingHostRealtimeSequences.clear();
@@ -597,6 +598,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       onClosed: () {
         if (identical(_hostEndpoints[deviceId], endpoint)) {
           _hostEndpoints.remove(deviceId);
+          SyncDeviceStateStore.recordPeerOffline(deviceId);
           _pendingHostRealtimeSequences.remove(deviceId);
           _lastAdvertisedSequenceByClient.remove(deviceId);
           _drainingHostRealtimeClients.remove(deviceId);
@@ -604,6 +606,7 @@ class DirectSyncTransportAdapter implements SyncTransportAdapter {
       },
     );
     _hostEndpoints[deviceId] = endpoint;
+    SyncDeviceStateStore.recordPeerOnline(deviceId);
     SyncDiagnosticsLog.add(
         '[DIRECT_WEBRTC] host client ready device=$deviceId clients=${_hostEndpoints.length}');
   }

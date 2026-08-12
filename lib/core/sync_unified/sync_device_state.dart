@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 
 import '../../models/app_identity.dart';
 import '../services/local_database_service.dart';
@@ -249,7 +250,79 @@ class HostPeerSyncState {
       );
 }
 
+/// Process-local presence and ACK facts used by Sync Monitoring.
+///
+/// These values deliberately are not reconstructed from persisted timestamps:
+/// presence is true only while the current transport has an active session.
+class SyncPeerLiveStatus {
+  const SyncPeerLiveStatus({
+    required this.deviceId,
+    required this.online,
+    this.lastAckSequence = 0,
+    this.lastAckAt,
+  });
+
+  final String deviceId;
+  final bool online;
+  final int lastAckSequence;
+  final DateTime? lastAckAt;
+}
+
+class SyncPeerLiveEvent {
+  const SyncPeerLiveEvent({
+    required this.deviceId,
+    required this.online,
+    this.lastAckSequence = 0,
+    this.lastAckAt,
+  });
+
+  final String deviceId;
+  final bool online;
+  final int lastAckSequence;
+  final DateTime? lastAckAt;
+}
+
 class SyncDeviceStateStore {
+  static final StreamController<SyncPeerLiveEvent> peerLiveEvents =
+      StreamController<SyncPeerLiveEvent>.broadcast();
+  static final Map<String, SyncPeerLiveStatus> _livePeerStatuses =
+      <String, SyncPeerLiveStatus>{};
+
+  static SyncPeerLiveStatus? livePeerStatus(String deviceId) =>
+      _livePeerStatuses[deviceId.trim()];
+
+  static void recordPeerOnline(String deviceId) {
+    _setLivePeerStatus(deviceId, online: true);
+  }
+
+  static void recordPeerOffline(String deviceId) {
+    _setLivePeerStatus(deviceId, online: false);
+  }
+
+  static void _setLivePeerStatus(
+    String deviceId, {
+    required bool online,
+    int? ackSequence,
+    DateTime? ackAt,
+  }) {
+    final id = deviceId.trim();
+    if (id.isEmpty) return;
+    final current = _livePeerStatuses[id];
+    final next = SyncPeerLiveStatus(
+      deviceId: id,
+      online: online,
+      lastAckSequence: ackSequence ?? current?.lastAckSequence ?? 0,
+      lastAckAt: ackAt ?? current?.lastAckAt,
+    );
+    _livePeerStatuses[id] = next;
+    peerLiveEvents.add(SyncPeerLiveEvent(
+      deviceId: id,
+      online: next.online,
+      lastAckSequence: next.lastAckSequence,
+      lastAckAt: next.lastAckAt,
+    ));
+  }
+
   SyncDeviceStateStore._();
 
   static const String _stateKey = 'host_authoritative_sync_device_state_v1';
@@ -600,6 +673,14 @@ class SyncDeviceStateStore {
       lastSyncTransport: _normalizeTransport(transport),
       lastSeenAt: now,
       updatedAt: now,
+    );
+    _setLivePeerStatus(
+      id,
+      online: true,
+      ackSequence: _latestInt(current?.lastAckSequence ?? 0, ackSequence ?? appliedSequence),
+      ackAt: (ackCursor != null || appliedCursor != null || (ackSequence ?? 0) > 0 || (appliedSequence ?? 0) > 0)
+          ? now
+          : current?.lastAckAt,
     );
     await LocalDatabaseService.setString(
       _hostPeerStatesKey,

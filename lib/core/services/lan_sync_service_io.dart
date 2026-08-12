@@ -1420,6 +1420,7 @@ class LanSyncService {
     final deviceId = request.headers.value('x-device-id')?.trim() ?? '';
     final socket = await WebSocketTransformer.upgrade(request);
     _realtimeClients[socket] = deviceId;
+    SyncDeviceStateStore.recordPeerOnline(deviceId);
     socket.pingInterval = const Duration(seconds: 30);
     socket.add(jsonEncode({
       'type': 'realtime_welcome',
@@ -1429,8 +1430,14 @@ class LanSyncService {
     }));
     socket.listen(
       (_) {},
-      onDone: () => _realtimeClients.remove(socket),
-      onError: (_, __) => _realtimeClients.remove(socket),
+      onDone: () {
+        _realtimeClients.remove(socket);
+        SyncDeviceStateStore.recordPeerOffline(deviceId);
+      },
+      onError: (_, __) {
+        _realtimeClients.remove(socket);
+        SyncDeviceStateStore.recordPeerOffline(deviceId);
+      },
       cancelOnError: true,
     );
   }
