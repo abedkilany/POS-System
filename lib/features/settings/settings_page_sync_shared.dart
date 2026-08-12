@@ -163,7 +163,7 @@ _SyncStatusView _connectionStatusForHostPeer(
           const Duration(seconds: 90);
   if (recentlySeen) {
     return _SyncStatusView(
-        label: tr.text('connection_state_active'),
+        label: tr.text('online'),
         color: Colors.green,
         icon: Icons.wifi_tethering_outlined);
   }
@@ -174,9 +174,9 @@ _SyncStatusView _connectionStatusForHostPeer(
         icon: Icons.wifi_off_outlined);
   }
   return _SyncStatusView(
-      label: tr.text('unknown'),
-      color: Theme.of(context).colorScheme.outline,
-      icon: Icons.help_outline);
+      label: tr.text('offline'),
+      color: Theme.of(context).colorScheme.error,
+      icon: Icons.wifi_off_outlined);
 }
 
 _SyncStatusView _connectionStatusForClient(
@@ -198,14 +198,14 @@ _SyncStatusView _connectionStatusForClient(
           const Duration(seconds: 90);
   if (recentlySeen) {
     return _SyncStatusView(
-        label: tr.text('connection_state_active'),
+        label: tr.text('online'),
         color: Colors.green,
         icon: Icons.wifi_tethering_outlined);
   }
   if (configured) {
     return _SyncStatusView(
-        label: tr.text('connection_state_pending'),
-        color: Colors.orange,
+        label: tr.text('offline'),
+        color: Theme.of(context).colorScheme.error,
         icon: Icons.wifi_off_outlined);
   }
   return _SyncStatusView(
