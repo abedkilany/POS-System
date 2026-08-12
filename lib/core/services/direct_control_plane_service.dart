@@ -959,7 +959,7 @@ class DirectControlPlaneService {
       final identity = store.appIdentity;
       final response = await client
           .get(
-            settings.endpoint('/api/sync/devices', {
+            settings.endpoint('/api/sync/entitlement', {
               'store_id': identity.storeId,
               'branch_id':
                   identity.branchId.isEmpty ? 'main' : identity.branchId,

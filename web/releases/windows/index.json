@@ -5,9 +5,9 @@
                          "url":  "/releases/windows/VentioSetup-1.0.7-build7.exe",
                          "version":  "1.0.7",
                          "build":  7,
-                         "size":  24342422,
-                         "sha256":  "c5713d728b4f860f7b6f82c6207470ed89f15d4fe90ce73e7496b62903b766b6",
-                         "publishedAt":  "2026-08-12T10:51:02Z"
+                         "size":  24340570,
+                         "sha256":  "6f27114bccee1781ba77a14365535269f306f055c948cf142c44a7459912c66c",
+                         "publishedAt":  "2026-08-12T11:07:29Z"
                      },
                      {
                          "name":  "VentioSetup-1.0.6-build6.exe",

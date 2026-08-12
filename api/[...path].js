@@ -22,6 +22,7 @@ import deviceAccess from '../server_api/sync/device-access.js';
 import deviceKey from '../server_api/sync/device-key.js';
 import iceConfig from '../server_api/sync/ice-config.js';
 import devices from '../server_api/sync/devices.js';
+import entitlement from '../server_api/sync/entitlement.js';
 import hostHeartbeat from '../server_api/sync/host-heartbeat.js';
 import pairingClaim from '../server_api/sync/pairing/claim.js';
 import pairingCreate from '../server_api/sync/pairing/create.js';
@@ -50,6 +51,7 @@ const routes = new Map([
   ['sync/device-key', deviceKey],
   ['sync/ice-config', iceConfig],
   ['sync/devices', devices],
+  ['sync/entitlement', entitlement],
   ['sync/host-heartbeat', hostHeartbeat],
   ['sync/pairing/claim', pairingClaim],
   ['sync/pairing/create', pairingCreate],
