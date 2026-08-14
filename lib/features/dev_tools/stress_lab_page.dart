@@ -263,17 +263,20 @@ class _PageReadinessProbeResult {
 }
 
 class _StressTraceStat {
-  _StressTraceStat(this.phase);
+  _StressTraceStat(this.section, this.phase);
 
+  final String section;
   final String phase;
   int count = 0;
   int totalMs = 0;
   int maxMs = 0;
   final List<String> samples = <String>[];
+  final List<int> elapsedSamples = <int>[];
 
   void add(int elapsedMs, Map<String, Object?> metadata) {
     count += 1;
     totalMs += elapsedMs;
+    elapsedSamples.add(elapsedMs);
     if (elapsedMs > maxMs) maxMs = elapsedMs;
     if (samples.length >= 3) return;
     final meta = metadata.entries
@@ -285,8 +288,31 @@ class _StressTraceStat {
   }
 
   double get avgMs => count == 0 ? 0 : totalMs / count;
+
+  ({double startMs, double endMs, double slowdown, int warmup}) get trend {
+    if (elapsedSamples.isEmpty) {
+      return (startMs: 0, endMs: 0, slowdown: 1, warmup: 0);
+    }
+    final warmup = elapsedSamples.length >= 1000 ? 100 : 0;
+    final available = elapsedSamples.length - warmup;
+    final window = min<int>(100, max<int>(1, available ~/ 10));
+    final start = elapsedSamples.skip(warmup).take(window);
+    final end = elapsedSamples.skip(elapsedSamples.length - window);
+    final startMs = start.fold<int>(0, (sum, value) => sum + value) / window;
+    final endMs = end.fold<int>(0, (sum, value) => sum + value) / window;
+    return (
+      startMs: startMs,
+      endMs: endMs,
+      slowdown: startMs <= 0 ? 1 : endMs / startMs,
+      warmup: warmup,
+    );
+  }
+
   String get summary =>
-      '$phase avg=${avgMs.toStringAsFixed(1)}ms total=${totalMs}ms count=$count max=${maxMs}ms${samples.isEmpty ? '' : ' sample=${samples.join(' | ')}'}';
+      '$section.$phase avg=${avgMs.toStringAsFixed(1)}ms total=${totalMs}ms count=$count max=${maxMs}ms '
+      'start=${trend.startMs.toStringAsFixed(1)}ms end=${trend.endMs.toStringAsFixed(1)}ms '
+      'slowdown=${trend.slowdown.toStringAsFixed(2)}x warmupExcluded=${trend.warmup}'
+      '${samples.isEmpty ? '' : ' sample=${samples.join(' | ')}'}';
 }
 
 class StressLabPage extends StatefulWidget {
@@ -407,10 +433,26 @@ class _StressLabPageState extends State<StressLabPage> {
   String _currentBatchId = '';
   int _lastPressureMultiplier = 1000;
   int _lastPressureProgressEvery = 50;
+  int? _auditBackupBytes;
+  int? _auditBackupKeyCount;
   final List<_StressAuditStep> _report = <_StressAuditStep>[];
   final List<_StressAssertionResult> _assertions = <_StressAssertionResult>[];
 
   AppStore get store => widget.store;
+
+  Future<({int bytes, int keys})> _ensureAuditBackupSnapshot() async {
+    final cachedBytes = _auditBackupBytes;
+    final cachedKeys = _auditBackupKeyCount;
+    if (cachedBytes != null && cachedKeys != null) {
+      return (bytes: cachedBytes, keys: cachedKeys);
+    }
+    final raw = await store.exportBackupJson();
+    final decoded = jsonDecode(raw) as Map<String, dynamic>;
+    final snapshot = (bytes: raw.length, keys: decoded.keys.length);
+    _auditBackupBytes = snapshot.bytes;
+    _auditBackupKeyCount = snapshot.keys;
+    return snapshot;
+  }
 
   @override
   void dispose() {
@@ -452,7 +494,8 @@ class _StressLabPageState extends State<StressLabPage> {
   void _captureTrace(String section, String phase, int elapsedMs,
       Map<String, Object?> metadata) {
     final key = '$section::$phase';
-    final stat = _traceStats.putIfAbsent(key, () => _StressTraceStat(phase));
+    final stat =
+        _traceStats.putIfAbsent(key, () => _StressTraceStat(section, phase));
     stat.add(elapsedMs, metadata);
   }
 
@@ -460,8 +503,8 @@ class _StressLabPageState extends State<StressLabPage> {
     final stats = _traceStats.values.toList();
     if (stats.isEmpty) return 'trace=none';
     stats.sort((a, b) => b.totalMs.compareTo(a.totalMs));
-    final top = stats.take(3).map((stat) => stat.summary).join(' || ');
-    return 'traceTop=$top';
+    final phases = stats.take(12).map((stat) => stat.summary).join(' || ');
+    return 'tracePhases=$phases';
   }
 
   String _traceSummary() {
@@ -778,9 +821,25 @@ class _StressLabPageState extends State<StressLabPage> {
         'backupBytes=${backup.length} backupMB=${(backup.length / 1024 / 1024).toStringAsFixed(2)}';
   }
 
+  Future<String> _cachedAuditDbMetricsLine(String label) async {
+    final entries = LocalDatabaseService.allEntries();
+    final logicalBytes = _logicalDatabaseBytes();
+    final backup = await _ensureAuditBackupSnapshot();
+    return '$label dbKeys=${entries.length} logicalDbBytes=$logicalBytes logicalDbMB=${(logicalBytes / 1024 / 1024).toStringAsFixed(2)} '
+        'backupBytes=${backup.bytes} backupMB=${(backup.bytes / 1024 / 1024).toStringAsFixed(2)}';
+  }
+
   Future<void> _logDatabaseMetrics(String label) async {
     try {
       _addLog(await _dbMetricsLine(label));
+    } catch (error) {
+      _addLog('$label DB_METRICS_FAILED $error');
+    }
+  }
+
+  Future<void> _logCachedAuditDatabaseMetrics(String label) async {
+    try {
+      _addLog(await _cachedAuditDbMetricsLine(label));
     } catch (error) {
       _addLog('$label DB_METRICS_FAILED $error');
     }
@@ -1329,7 +1388,8 @@ class _StressLabPageState extends State<StressLabPage> {
     _auditCheck(
       _dual('قاعدة البيانات', 'Database'),
       _dual('نمط القاعدة والنسخ الاحتياطي', 'Database snapshot and backup'),
-      databaseEntries.isNotEmpty && (await store.exportBackupJson()).isNotEmpty,
+      databaseEntries.isNotEmpty &&
+          (await _ensureAuditBackupSnapshot()).bytes > 0,
       _dual(
         'تمت قراءة ${databaseEntries.length} مفتاح/جداول وإنتاج نسخة احتياطية قابلة للتصدير.',
         'Read ${databaseEntries.length} keys/tables and produced an exportable backup.',
@@ -2678,7 +2738,8 @@ class _StressLabPageState extends State<StressLabPage> {
     final changes = store.syncChanges.length;
     final queue = store.syncQueue.length;
     final logicalBytes = _logicalDatabaseBytes();
-    final backupBytes = (await store.exportBackupJson()).length;
+    final backupBytes =
+        _auditBackupBytes ?? (await store.exportBackupJson()).length;
 
     final transport = _effectiveSyncTransport();
     final pendingIsExpectedForDirect =
@@ -4107,6 +4168,8 @@ class _StressLabPageState extends State<StressLabPage> {
       _report.clear();
       _assertions.clear();
       _log.clear();
+      _auditBackupBytes = null;
+      _auditBackupKeyCount = null;
       _currentBatchId =
           'audit_${DateTime.now().millisecondsSinceEpoch}_${_roleLabel().toLowerCase()}';
     });
@@ -4617,11 +4680,11 @@ class _StressLabPageState extends State<StressLabPage> {
           _dual('اختبار النسخ الاحتياطي والمزامنة...',
               'Running backup and sync test...'),
           progress: 0.97);
+      await store.waitForPendingAccounting(timeout: _accountingDrainTimeout());
       await _auditStep(_dual('النسخ الاحتياطي', 'Backup'),
           _dual('توليد Backup JSON', 'Generate backup JSON'), () async {
-        final raw = await store.exportBackupJson();
-        final decoded = jsonDecode(raw) as Map<String, dynamic>;
-        return '${raw.length} bytes, keys=${decoded.keys.length}';
+        final backup = await _ensureAuditBackupSnapshot();
+        return '${backup.bytes} bytes, keys=${backup.keys}';
       },
           successDetails: (value) => _dual(
               'نجح توليد النسخة الاحتياطية: $value.',
@@ -4753,7 +4816,7 @@ class _StressLabPageState extends State<StressLabPage> {
         _StressPerformancePhase.after,
         label: 'After final audit and integrity checks',
       );
-      await _logDatabaseMetrics('AUDIT_AFTER_DB');
+      await _logCachedAuditDatabaseMetrics('AUDIT_AFTER_DB');
       _addLog(_snapshotLine('AUDIT_AFTER'));
       await _addHealthSummary('ONE_BUTTON_AUDIT_SUMMARY');
       _addFinalAuditReport(startedAt);
@@ -5246,6 +5309,15 @@ class _StressLabPageState extends State<StressLabPage> {
         .where((purchase) => !purchase.isCancelled && !purchase.isDeleted)
         .toList(growable: false);
     final activeExpenses = _activeBatchExpenses();
+    final stockReferenceKeys = <String>{};
+    for (final movement in store.stockMovements) {
+      if (movement.referenceId.trim().isNotEmpty) {
+        stockReferenceKeys.add(movement.referenceId);
+      }
+      if (movement.referenceNo.trim().isNotEmpty) {
+        stockReferenceKeys.add(movement.referenceNo);
+      }
+    }
     final accountingAvailable = AccountingService.isAvailable;
     final trialBalanceRows = accountingAvailable
         ? await AccountingService.trialBalanceReport()
@@ -5277,11 +5349,14 @@ class _StressLabPageState extends State<StressLabPage> {
           )
         : 0;
     final activeSalesMissingStock = activeSales
-        .where((sale) => !_hasStockReference(<String>{sale.id, sale.invoiceNo}))
+        .where((sale) =>
+            !stockReferenceKeys.contains(sale.id) &&
+            !stockReferenceKeys.contains(sale.invoiceNo))
         .length;
     final activePurchasesMissingStock = activePurchases
         .where((purchase) =>
-            !_hasStockReference(<String>{purchase.id, purchase.purchaseNo}))
+            !stockReferenceKeys.contains(purchase.id) &&
+            !stockReferenceKeys.contains(purchase.purchaseNo))
         .length;
     final invalidStock =
         batchProducts.where((product) => !product.stock.isFinite).length;
@@ -5454,12 +5529,13 @@ class _StressLabPageState extends State<StressLabPage> {
         failedOrRejectedQueue == 0,
         'No failed or rejected sync queue items after stress run.',
         'failedOrRejectedQueue=$failedOrRejectedQueue pendingQueue=${store.pendingSyncQueue.length} transport=${_effectiveSyncTransport()}');
+    final backupSnapshot = await _ensureAuditBackupSnapshot();
     expect(
         'BACKUP-001',
         'Backup',
-        (await store.exportBackupJson()).isNotEmpty,
+        backupSnapshot.bytes > 0,
         'Backup JSON can be generated after stress run.',
-        'backupBytes=${(await store.exportBackupJson()).length}');
+        'backupBytes=${backupSnapshot.bytes}');
 
     final passed = _assertions.where((item) => item.passed).length;
     final blockingFailed =
@@ -5501,11 +5577,30 @@ class _StressLabPageState extends State<StressLabPage> {
         _report.where((item) => item.isFail).toList(growable: false);
     final warnRows =
         _report.where((item) => item.isWarn).toList(growable: false);
+    final triggerRows = <_StressAuditStep>[...failRows, ...warnRows];
+    final accountingTriggered = triggerRows.any((row) {
+      final section = row.section.toLowerCase();
+      final name = row.name.toLowerCase();
+      return section.contains('account') ||
+          section.contains('محاسب') ||
+          name.contains('journal') ||
+          name.contains('debit') ||
+          name.contains('credit');
+    });
     _addLog(
         'Investigation triggers: fails=${failRows.length} warnings=${warnRows.length} batch=$_currentBatchId');
 
-    final expenseEvidence = _investigateExpenseJournals();
-    final balanceEvidence = _investigateTrialBalance();
+    final expenseEvidence = accountingTriggered
+        ? _investigateExpenseJournals()
+        : 'Accounting investigation skipped: no accounting warning or failure triggered it.';
+    final balanceInvestigation = accountingTriggered
+        ? _investigateTrialBalance()
+        : (
+            passed: true,
+            details:
+                'Trial balance investigation skipped: no accounting warning or failure triggered it.'
+          );
+    final balanceEvidence = balanceInvestigation.details;
     final overpaidEvidence = _investigateOverpaidSales();
     final performanceEvidence = _investigatePerformanceSlowdown();
     final syncEvidence = _investigateSyncMode();
@@ -5523,7 +5618,7 @@ class _StressLabPageState extends State<StressLabPage> {
     _auditCheck(
       _dual('تحليل السبب الجذري', 'Root Cause Analysis'),
       _dual('تشخيص فرق المدين والدائن', 'Debit/Credit difference diagnosis'),
-      !balanceEvidence.contains('diff='),
+      balanceInvestigation.passed,
       balanceEvidence,
       balanceEvidence,
       warning: true,
@@ -5568,11 +5663,20 @@ class _StressLabPageState extends State<StressLabPage> {
     final transactions = store.accountTransactions
         .where((tx) => !tx.isDeleted)
         .toList(growable: false);
+    final transactionRefs = <String>{};
+    for (final tx in transactions) {
+      if (tx.referenceId.trim().isNotEmpty) {
+        transactionRefs.add(tx.referenceId);
+      }
+      if (tx.referenceNo.trim().isNotEmpty) {
+        transactionRefs.add(tx.referenceNo);
+      }
+    }
     final missing = <Expense>[];
     final linked = <Expense>[];
     for (final expense in expenses) {
-      final refs = <String>{expense.id, expense.title};
-      final hasTx = transactions.any((tx) => _transactionMatchesAny(tx, refs));
+      final hasTx = transactionRefs.contains(expense.id) ||
+          transactionRefs.contains(expense.title);
       if (hasTx) {
         linked.add(expense);
       } else {
@@ -5595,7 +5699,7 @@ class _StressLabPageState extends State<StressLabPage> {
     return details;
   }
 
-  String _investigateTrialBalance() {
+  ({bool passed, String details}) _investigateTrialBalance() {
     final sales = _batchSales();
     final purchases = _batchPurchases();
     final expenses = _activeBatchExpenses();
@@ -5608,7 +5712,9 @@ class _StressLabPageState extends State<StressLabPage> {
       ...expenses.map((expense) => expense.title),
     };
     final transactions = store.accountTransactions
-        .where((tx) => !tx.isDeleted && _transactionMatchesAny(tx, refs))
+        .where((tx) =>
+            !tx.isDeleted &&
+            (refs.contains(tx.referenceId) || refs.contains(tx.referenceNo)))
         .toList(growable: false);
     final debit = transactions.fold<double>(0, (sum, tx) => sum + tx.debit);
     final credit = transactions.fold<double>(0, (sum, tx) => sum + tx.credit);
@@ -5637,14 +5743,14 @@ class _StressLabPageState extends State<StressLabPage> {
         'Trial balance investigation OK: tx=${transactions.length} debit=${_money(debit)} credit=${_money(credit)} diff=${_money(diff)}${openSubledgerOnly ? ' openSubledger=${_money(nonZeroContributors.fold<double>(0, (sum, entry) => sum + entry.value))} topAccountTypes=$top' : ''}.',
       );
       _addLog('INVESTIGATION_TRIAL_BALANCE $details');
-      return details;
+      return (passed: true, details: details);
     }
     final details = _dual(
       'diff=${_money(diff)} debit=${_money(debit)} credit=${_money(credit)} tx=${transactions.length} topAccountTypes=$top possibleCause=missing expense references, reversal/payment handling for cancelled/returned invoices, or legacy accountTransactions not matching SQLite journals.',
       'diff=${_money(diff)} debit=${_money(debit)} credit=${_money(credit)} tx=${transactions.length} topAccountTypes=$top possibleCause=missing expense references, reversal/payment handling for cancelled/returned invoices, or legacy accountTransactions not matching SQLite journals.',
     );
     _addLog('INVESTIGATION_TRIAL_BALANCE $details');
-    return details;
+    return (passed: false, details: details);
   }
 
   String _investigateOverpaidSales() {

@@ -58,6 +58,9 @@ import '../models/app_identity.dart';
 part 'app_store_backup.dart';
 part 'app_store_recovery.dart';
 
+String _encodePrettyBackupPayload(Map<String, dynamic> payload) =>
+    const JsonEncoder.withIndent('  ').convert(payload);
+
 bool _verifyPasswordInBackground(Map<String, String> request) {
   const prefix = 'pbkdf2sha256:';
   final password = request['password'] ?? '';
@@ -2387,6 +2390,7 @@ class AppStore extends ChangeNotifier {
     String? controlPlaneTenantId,
     DeviceRole? deviceRole,
     SyncMode? syncMode,
+    bool activateUser = true,
   }) async {
     final cleanStoreId = storeId.trim().toUpperCase();
     final cleanBranchId = branchId.trim().toUpperCase();
@@ -2480,8 +2484,11 @@ class AppStore extends ChangeNotifier {
     } else {
       _users[existingIndex] = recoveredUser;
     }
-    _activeUser = recoveredUser;
-    await LocalDatabaseService.setString(_activeUserKey, recoveredUser.id);
+    _activeUser = activateUser ? recoveredUser : null;
+    await LocalDatabaseService.setString(
+      _activeUserKey,
+      activateUser ? recoveredUser.id : '',
+    );
     await _saveRolesAndUsers();
     await _saveAll();
     notifyListeners();
@@ -6219,7 +6226,11 @@ class AppStore extends ChangeNotifier {
 
   Future<void> _postPurchaseAccounting(Purchase purchase) async {
     try {
-      await AccountingService.recordPurchase(purchase);
+      await _traceAsync<void>(
+        'purchases.createPurchase',
+        'accounting_post',
+        () => AccountingService.recordPurchase(purchase),
+      );
     } catch (error, stackTrace) {
       unawaited(
         AppLogger.error(
@@ -11309,19 +11320,21 @@ class AppStore extends ChangeNotifier {
     String warehouseName = '',
   }) async {
     requirePermission(AppPermission.suppliersManage);
-    if (items.isEmpty) {
-      throw ArgumentError('Purchase must contain at least one item.');
-    }
-    for (final item in items) {
-      if (item.quantity <= 0 ||
-          item.conversionToBase <= 0 ||
-          item.unitCost < 0) {
-        throw ArgumentError('Invalid purchase item values.');
+    _traceSync('purchases.createPurchase', 'validate_input', () {
+      if (items.isEmpty) {
+        throw ArgumentError('Purchase must contain at least one item.');
       }
-      if (_findProductById(item.productId) == null) {
-        throw ArgumentError('Product not found: ${item.productName}');
+      for (final item in items) {
+        if (item.quantity <= 0 ||
+            item.conversionToBase <= 0 ||
+            item.unitCost < 0) {
+          throw ArgumentError('Invalid purchase item values.');
+        }
+        if (_findProductById(item.productId) == null) {
+          throw ArgumentError('Product not found: ${item.productName}');
+        }
       }
-    }
+    });
     _purchaseCounter += 1;
     final now = DateTime.now();
     final purchaseTotal = items.fold<double>(
@@ -11382,57 +11395,97 @@ class AppStore extends ChangeNotifier {
       );
       final batchService = BatchInventoryService(sqliteDb);
       final receiptMovements = <StockMovement>[];
-      await sqliteDb.transaction(() async {
-        await BusinessSqliteStore.upsertEntityPayloads(
-          sqliteDb,
-          _purchasesKey,
-          <Map<String, dynamic>>[purchase.toJson()],
-          sortIndices: <int?>[0],
-        );
-        if (receiveNow) {
-          for (var lineIndex = 0;
-              lineIndex < purchase.items.length;
-              lineIndex += 1) {
-            final item = purchase.items[lineIndex];
-            final product = _findProductById(item.productId);
-            if (product == null || !product.trackStock) continue;
-            if (product.expiryTrackingEnabled) {
-              final allocations = await batchService.receiveInTransaction(
-                product: product,
-                warehouseId: resolvedWarehouse.id,
-                purchaseId: purchase.id,
-                purchaseLineIndex: lineIndex,
-                expectedQuantity: item.baseQuantity,
-                allocations: item.batchAllocations,
-                receivedAt: now,
-                storeId: purchase.storeId,
-                branchId: purchase.branchId,
-                deviceId: purchase.deviceId,
-              );
-              for (var batchIndex = 0;
-                  batchIndex < allocations.length;
-                  batchIndex += 1) {
-                final allocation = allocations[batchIndex];
+      await _traceAsync<void>('purchases.createPurchase', 'sqlite_transaction',
+          () async {
+        await sqliteDb.transaction(() async {
+          await BusinessSqliteStore.upsertEntityPayloads(
+            sqliteDb,
+            _purchasesKey,
+            <Map<String, dynamic>>[purchase.toJson()],
+            sortIndices: <int?>[0],
+          );
+          if (receiveNow) {
+            for (var lineIndex = 0;
+                lineIndex < purchase.items.length;
+                lineIndex += 1) {
+              final item = purchase.items[lineIndex];
+              final product = _findProductById(item.productId);
+              if (product == null || !product.trackStock) continue;
+              if (product.expiryTrackingEnabled) {
+                final allocations = await batchService.receiveInTransaction(
+                  product: product,
+                  warehouseId: resolvedWarehouse.id,
+                  purchaseId: purchase.id,
+                  purchaseLineIndex: lineIndex,
+                  expectedQuantity: item.baseQuantity,
+                  allocations: item.batchAllocations,
+                  receivedAt: now,
+                  storeId: purchase.storeId,
+                  branchId: purchase.branchId,
+                  deviceId: purchase.deviceId,
+                );
+                for (var batchIndex = 0;
+                    batchIndex < allocations.length;
+                    batchIndex += 1) {
+                  final allocation = allocations[batchIndex];
+                  receiptMovements.add(StockMovement(
+                    id: '${purchase.id}-$lineIndex-${allocation.batchId}-purchase-receive',
+                    productId: item.productId,
+                    productName: item.productName,
+                    type: 'purchase_receive',
+                    quantity: allocation.quantity,
+                    date: now,
+                    referenceId: purchase.id,
+                    referenceNo: purchase.purchaseNo,
+                    reason: 'Purchase received',
+                    unitCost: item.unitCostPerBase,
+                    warehouseId: resolvedWarehouse.id,
+                    warehouseName: normalizedWarehouseName,
+                    batchId: allocation.batchId,
+                    movementGroupId: purchase.id,
+                    documentLineId: '${purchase.id}-line-$lineIndex',
+                    idempotencyKey:
+                        '${purchase.id}:purchase_receive:$lineIndex:$batchIndex',
+                    createdAt: now,
+                    updatedAt: now,
+                    deviceId: purchase.deviceId,
+                    syncStatus: purchase.syncStatus,
+                    storeId: purchase.storeId,
+                    branchId: purchase.branchId,
+                    version: purchase.version,
+                    lastModifiedByDeviceId: purchase.lastModifiedByDeviceId,
+                  ));
+                }
+              } else {
                 receiptMovements.add(StockMovement(
-                  id: '${purchase.id}-$lineIndex-${allocation.batchId}-purchase-receive',
+                  id: [
+                    purchase.id,
+                    lineIndex.toString(),
+                    item.productId,
+                    'purchase-receive'
+                  ].join('-'),
                   productId: item.productId,
                   productName: item.productName,
                   type: 'purchase_receive',
-                  quantity: allocation.quantity,
-                  date: now,
+                  quantity: item.baseQuantity,
+                  date: purchase.date,
                   referenceId: purchase.id,
                   referenceNo: purchase.purchaseNo,
                   reason: 'Purchase received',
                   unitCost: item.unitCostPerBase,
-                  warehouseId: resolvedWarehouse.id,
-                  warehouseName: normalizedWarehouseName,
-                  batchId: allocation.batchId,
+                  warehouseId: purchase.warehouseId.isEmpty
+                      ? Warehouse.defaultId
+                      : purchase.warehouseId,
+                  warehouseName: purchase.warehouseName.isEmpty
+                      ? Warehouse.defaultName
+                      : purchase.warehouseName,
                   movementGroupId: purchase.id,
                   documentLineId: '${purchase.id}-line-$lineIndex',
-                  idempotencyKey:
-                      '${purchase.id}:purchase_receive:$lineIndex:$batchIndex',
-                  createdAt: now,
-                  updatedAt: now,
+                  sourceMovementId: '',
+                  reversalOfMovementId: '',
+                  idempotencyKey: '${purchase.id}:purchase_receive:$lineIndex',
+                  createdAt: purchase.createdAt,
+                  updatedAt: purchase.updatedAt,
                   deviceId: purchase.deviceId,
                   syncStatus: purchase.syncStatus,
                   storeId: purchase.storeId,
@@ -11441,74 +11494,41 @@ class AppStore extends ChangeNotifier {
                   lastModifiedByDeviceId: purchase.lastModifiedByDeviceId,
                 ));
               }
-            } else {
-              receiptMovements.add(StockMovement(
-                id: [
-                  purchase.id,
-                  lineIndex.toString(),
-                  item.productId,
-                  'purchase-receive'
-                ].join('-'),
-                productId: item.productId,
-                productName: item.productName,
-                type: 'purchase_receive',
-                quantity: item.baseQuantity,
-                date: purchase.date,
-                referenceId: purchase.id,
-                referenceNo: purchase.purchaseNo,
-                reason: 'Purchase received',
-                unitCost: item.unitCostPerBase,
-                warehouseId: purchase.warehouseId.isEmpty
-                    ? Warehouse.defaultId
-                    : purchase.warehouseId,
-                warehouseName: purchase.warehouseName.isEmpty
-                    ? Warehouse.defaultName
-                    : purchase.warehouseName,
-                movementGroupId: purchase.id,
-                documentLineId: '${purchase.id}-line-$lineIndex',
-                sourceMovementId: '',
-                reversalOfMovementId: '',
-                idempotencyKey: '${purchase.id}:purchase_receive:$lineIndex',
-                createdAt: purchase.createdAt,
-                updatedAt: purchase.updatedAt,
-                deviceId: purchase.deviceId,
-                syncStatus: purchase.syncStatus,
-                storeId: purchase.storeId,
-                branchId: purchase.branchId,
-                version: purchase.version,
-                lastModifiedByDeviceId: purchase.lastModifiedByDeviceId,
-              ));
             }
+            await stockService.recordMovementsInTransaction(
+              operationType: 'purchase_receive',
+              documentType: 'purchase',
+              documentId: purchase.id,
+              movementGroupId: purchase.id,
+              idempotencyKey: '${purchase.id}:purchase_receive',
+              movements: receiptMovements,
+              storeId: purchase.storeId,
+              branchId: purchase.branchId,
+              deviceId: purchase.deviceId,
+              skipExistingMovementLookup: true,
+            );
+            _mirrorAuthoritativeStockMovements(receiptMovements);
           }
-          await stockService.recordMovementsInTransaction(
-            operationType: 'purchase_receive',
-            documentType: 'purchase',
-            documentId: purchase.id,
-            movementGroupId: purchase.id,
-            idempotencyKey: '${purchase.id}:purchase_receive',
-            movements: receiptMovements,
-            storeId: purchase.storeId,
-            branchId: purchase.branchId,
-            deviceId: purchase.deviceId,
-            skipExistingMovementLookup: true,
-          );
-          _mirrorAuthoritativeStockMovements(receiptMovements);
-        }
+        });
       });
       if (receiveNow) {
-        _applyProductStockCompatibilityDeltas(receiptMovements);
+        _traceSync('purchases.createPurchase', 'update_stock_cache', () {
+          _applyProductStockCompatibilityDeltas(receiptMovements);
+        });
         _schedulePurchaseAccounting(purchase);
       }
-      _putPurchaseAtIndex(purchase, _purchases.length);
-      _recordSyncChange(
-        entityType: 'purchase',
-        entityId: purchase.id,
-        operation: 'create',
-        payload: purchase.toJson(),
-      );
-      if (receiveNow) {
-        _recordPurchaseLedger(purchase, now);
-      }
+      _traceSync('purchases.createPurchase', 'memory_ledger_and_sync', () {
+        _putPurchaseAtIndex(purchase, _purchases.length);
+        _recordSyncChange(
+          entityType: 'purchase',
+          entityId: purchase.id,
+          operation: 'create',
+          payload: purchase.toJson(),
+        );
+        if (receiveNow) {
+          _recordPurchaseLedger(purchase, now);
+        }
+      });
       _touchPurchasesData();
       notifyListeners();
       return purchase;
@@ -15602,9 +15622,8 @@ class AppStore extends ChangeNotifier {
 
   Future<String> exportBackupJson() async {
     requirePermission(AppPermission.backupExport);
-    return const JsonEncoder.withIndent(
-      '  ',
-    ).convert(await _backupPayload(includeDeviceAndSyncState: true));
+    final payload = await _backupPayload(includeDeviceAndSyncState: true);
+    return compute(_encodePrettyBackupPayload, payload);
   }
 
   static const String _hostSnapshotGenerationKey =

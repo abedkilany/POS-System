@@ -713,6 +713,10 @@ class _LoginGatePageState extends State<LoginGatePage> {
             onlineResult.storeName.isEmpty ? storeName : onlineResult.storeName,
         username: username,
         password: password,
+        // Registration provisions the local owner account, but the user must
+        // still sign in explicitly. Avoid publishing a short-lived session
+        // that would briefly reveal the dashboard before logout completes.
+        activateUser: false,
       );
 
       await widget.store.logout();

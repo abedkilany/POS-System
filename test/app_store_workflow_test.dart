@@ -122,7 +122,8 @@ Future<AppStore> readySqliteStore({
   expect(sqliteDb != null, isTrue);
   await sqliteDb!.transaction(() async {
     await sqliteDb.customStatement('DELETE FROM sale_items');
-    await sqliteDb.customStatement('DELETE FROM sale_item_cost_layer_consumptions');
+    await sqliteDb
+        .customStatement('DELETE FROM sale_item_cost_layer_consumptions');
     await sqliteDb.customStatement('DELETE FROM sales');
     await sqliteDb.customStatement('DELETE FROM purchase_items');
     await sqliteDb.customStatement('DELETE FROM purchases');
@@ -130,7 +131,8 @@ Future<AppStore> readySqliteStore({
     await sqliteDb.customStatement('DELETE FROM warehouse_inventory');
     await sqliteDb.customStatement('DELETE FROM stock_operations');
     await sqliteDb.customStatement('DELETE FROM inventory_reconciliations');
-    await sqliteDb.customStatement('DELETE FROM inventory_migration_adjustments');
+    await sqliteDb
+        .customStatement('DELETE FROM inventory_migration_adjustments');
     await sqliteDb.customStatement('DELETE FROM inventory_count_lines');
     await sqliteDb.customStatement('DELETE FROM inventory_counts');
     await sqliteDb.customStatement('DELETE FROM sync_events');
@@ -232,9 +234,13 @@ void main() {
           customerName: 'Alice',
           customerId: 'c1',
           items: const [
-        SaleItem(
-            productId: 'p1', productName: 'Coffee', unitPrice: 12, quantity: 2)
-      ], paymentMethod: 'Credit');
+            SaleItem(
+                productId: 'p1',
+                productName: 'Coffee',
+                unitPrice: 12,
+                quantity: 2)
+          ],
+          paymentMethod: 'Credit');
       final raw = await seeded.exportBackupJson();
 
       final restored = await readySqliteStore(storeId: 'ST-REHYDRATE01');
@@ -349,6 +355,27 @@ void main() {
       expect(recovered.appIdentity.storeId, 'ST-DIRECT1');
       expect(recovered.appIdentity.branchId, 'BR-DIRECT1');
       expect(recovered.appIdentity.deviceRole, DeviceRole.host);
+    });
+
+    test('registration provisions owner without activating a session',
+        () async {
+      SharedPreferences.setMockInitialValues(const <String, Object>{});
+      LocalDatabaseService.useInMemoryStoreForTesting();
+      final store = AppStore();
+      await store.initialize();
+
+      await store.recoverOnlineStoreOwnerIdentity(
+        storeId: 'ST-REG001',
+        branchId: 'BR-REG001',
+        storeName: 'Registered Store',
+        username: 'owner',
+        password: 'OwnerPass123',
+        activateUser: false,
+      );
+
+      expect(store.hasLocalAdminUser, isTrue);
+      expect(store.activeUser, null);
+      expect(await store.login('owner', 'OwnerPass123'), isTrue);
     });
   });
 
@@ -482,8 +509,7 @@ void main() {
       await store.deleteCustomer('c1');
       expect(store.customers.map((c) => c.id), isNot(contains('c1')));
       expect(store.resolveCustomerName('c1'), AppStore.walkInCustomerName);
-      expect(store.sanitizeSelectedCustomerId('c1'),
-          AppStore.walkInCustomerId);
+      expect(store.sanitizeSelectedCustomerId('c1'), AppStore.walkInCustomerId);
       await store.addOrUpdateCustomer(
           Customer(id: 'c3', name: ' alice ', phone: '', address: ''));
       expect(store.customers.map((c) => c.id), contains('c3'));
@@ -511,8 +537,8 @@ void main() {
           store.addOrUpdateCategory(
               CatalogItem(id: 'dup', nameEn: 'Snacks', nameAr: '')),
           throwsArgumentError);
-      final reusableCategory =
-          CatalogItem(id: 'cat_delete', nameEn: 'Reusable Category', nameAr: '');
+      final reusableCategory = CatalogItem(
+          id: 'cat_delete', nameEn: 'Reusable Category', nameAr: '');
       await store.addOrUpdateCategory(reusableCategory);
       await store.replaceAndDeleteCatalogItem(
         type: 'category',
@@ -842,7 +868,8 @@ void main() {
         'warehouse-aware purchases, adjustments, and counts stay in the selected warehouse',
         () async {
       final store = await readySqliteStore();
-      await store.addOrUpdateProduct(product(id: 'p-phase4', stock: 0, cost: 5));
+      await store
+          .addOrUpdateProduct(product(id: 'p-phase4', stock: 0, cost: 5));
       final branchWarehouse = await store.createWarehouse(
         name: 'Warehouse B',
         code: 'WB',
@@ -982,7 +1009,8 @@ void main() {
       expect(validation.isValid, isTrue);
       expect(validation.summary?.productsCount, 1);
       expect(
-          store.syncSnapshotGeneratedAtFromJson(await store.exportSyncSnapshotJson()),
+          store.syncSnapshotGeneratedAtFromJson(
+              await store.exportSyncSnapshotJson()),
           isA<DateTime>());
       expect(store.exportSyncChangesJson(), contains('"changes"'));
 
@@ -1069,7 +1097,8 @@ void main() {
         await sqliteDb.customStatement('DELETE FROM warehouse_inventory');
         await sqliteDb.customStatement('DELETE FROM stock_operations');
         await sqliteDb.customStatement('DELETE FROM inventory_reconciliations');
-        await sqliteDb.customStatement('DELETE FROM inventory_migration_adjustments');
+        await sqliteDb
+            .customStatement('DELETE FROM inventory_migration_adjustments');
         await sqliteDb.customStatement('DELETE FROM sync_events');
         await sqliteDb.customStatement('DELETE FROM pending_sync_changes');
         await sqliteDb.customStatement('DELETE FROM sync_queue');
@@ -1207,7 +1236,8 @@ void main() {
         await sqliteDb.customStatement('DELETE FROM warehouse_inventory');
         await sqliteDb.customStatement('DELETE FROM stock_operations');
         await sqliteDb.customStatement('DELETE FROM inventory_reconciliations');
-        await sqliteDb.customStatement('DELETE FROM inventory_migration_adjustments');
+        await sqliteDb
+            .customStatement('DELETE FROM inventory_migration_adjustments');
         await sqliteDb.customStatement('DELETE FROM sync_events');
         await sqliteDb.customStatement('DELETE FROM pending_sync_changes');
         await sqliteDb.customStatement('DELETE FROM sync_queue');
@@ -1331,8 +1361,8 @@ void main() {
       expect(store.syncQueue.first.lastError, 'single failure');
 
       await store.markSyncChangesSyncedByIds(changeIds);
-      expect(store.pendingSyncChangesForTarget('host', readyOnly: false),
-          isEmpty);
+      expect(
+          store.pendingSyncChangesForTarget('host', readyOnly: false), isEmpty);
       expect(
           store.pendingSyncQueueForTarget('host', readyOnly: false), isEmpty);
 
@@ -1541,8 +1571,7 @@ void main() {
       );
 
       await store.refreshAfterDatabaseChange('users_v1');
-      expect(
-          store.users.singleWhere((u) => u.username == 'cashier').fullName,
+      expect(store.users.singleWhere((u) => u.username == 'cashier').fullName,
           'Cashier Reloaded');
       expect(store.activeUser?.fullName, 'Cashier Reloaded');
     });
