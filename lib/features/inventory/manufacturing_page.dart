@@ -8,6 +8,7 @@ import '../../data/app_store.dart';
 import '../../models/manufacturing.dart';
 import '../../models/product.dart';
 import '../../models/user_role.dart';
+import 'batch_allocation_dialog.dart';
 
 class ManufacturingPage extends StatefulWidget {
   const ManufacturingPage({super.key, required this.store});
@@ -327,12 +328,8 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
       );
       return;
     }
-    var rawWarehouseId = widget.store
-        .resolveWarehouseForPurchase()
-        .id;
-    var finishedWarehouseId = widget.store
-        .resolveWarehouseForSale()
-        .id;
+    var rawWarehouseId = widget.store.resolveWarehouseForPurchase().id;
+    var finishedWarehouseId = widget.store.resolveWarehouseForSale().id;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -346,12 +343,13 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
             orElse: () => warehouses.first,
           );
           final componentAvailability = bom.components.map((component) {
-            final available =
-                widget.store.stockForWarehouse(component.productId, rawWarehouse.id);
+            final available = widget.store
+                .stockForWarehouse(component.productId, rawWarehouse.id);
             return '${component.productName}: ${available.toStringAsFixed(2)}';
           }).toList(growable: false);
           return AlertDialog(
-            title: Text(_tf('produce_product', {'product': bom.outputProductName})),
+            title: Text(
+                _tf('produce_product', {'product': bom.outputProductName})),
             content: SizedBox(
               width: 560,
               child: SingleChildScrollView(
@@ -429,18 +427,35 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
       ),
     );
     if (confirmed != true) return;
+    if (!mounted) return;
     try {
+      final quantity = double.tryParse(qtyController.text) ?? 0;
+      final output = widget.store.products.firstWhere(
+        (item) => item.id == bom.outputProductId,
+      );
+      final outputBatches = output.expiryTrackingEnabled
+          ? await showBatchAllocationDialog(
+              context,
+              product: output,
+              expectedQuantity: quantity,
+              sourceId: 'mfg-${DateTime.now().microsecondsSinceEpoch}',
+            )
+          : null;
+      if (output.expiryTrackingEnabled && outputBatches == null) return;
       await widget.store.completeManufacturingOrder(
         bomId: bom.id,
-        quantity: double.tryParse(qtyController.text) ?? 0,
+        quantity: quantity,
         rawMaterialsWarehouseId: rawWarehouseId,
         rawMaterialsWarehouseName: warehouses
-            .firstWhere((item) => item.id == rawWarehouseId, orElse: () => warehouses.first)
+            .firstWhere((item) => item.id == rawWarehouseId,
+                orElse: () => warehouses.first)
             .name,
         finishedGoodsWarehouseId: finishedWarehouseId,
         finishedGoodsWarehouseName: warehouses
-            .firstWhere((item) => item.id == finishedWarehouseId, orElse: () => warehouses.first)
+            .firstWhere((item) => item.id == finishedWarehouseId,
+                orElse: () => warehouses.first)
             .name,
+        outputBatchAllocations: outputBatches ?? const [],
       );
     } catch (error) {
       if (!mounted) return;

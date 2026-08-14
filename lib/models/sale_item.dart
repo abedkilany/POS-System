@@ -1,4 +1,5 @@
 import 'inventory_cost_layer.dart';
+import 'inventory_batch.dart';
 import 'product_costing.dart';
 
 class SaleItem {
@@ -15,6 +16,7 @@ class SaleItem {
     this.unitName = '',
     this.baseQuantity = 0,
     this.conversionToBase = 1,
+    this.batchAllocations = const <BatchAllocation>[],
   });
 
   final String productId;
@@ -32,14 +34,18 @@ class SaleItem {
   final String costCurrency;
   final double costExchangeRate;
   final List<InventoryCostLayerConsumption> costLayerConsumptions;
+  final List<BatchAllocation> batchAllocations;
 
-  double get effectiveBaseQuantity => baseQuantity > 0 ? baseQuantity : quantity * conversionToBase;
+  double get effectiveBaseQuantity =>
+      baseQuantity > 0 ? baseQuantity : quantity * conversionToBase;
   double get unitCostPerBase => conversionToBase <= 0 ? unitCost : unitCost;
   double get lineTotal => unitPrice * quantity;
   double get lineCost {
-    final fifoCost = costLayerConsumptions.fold<double>(0, (sum, item) => sum + item.totalCost);
+    final fifoCost = costLayerConsumptions.fold<double>(
+        0, (sum, item) => sum + item.totalCost);
     return fifoCost > 0 ? fifoCost : unitCost * effectiveBaseQuantity;
   }
+
   double get lineProfit => lineTotal - lineCost;
 
   Map<String, dynamic> toJson() => {
@@ -52,15 +58,23 @@ class SaleItem {
         'costingMethodAtSale': costingMethodAtSale.code,
         'costCurrency': costCurrency,
         'costExchangeRate': costExchangeRate,
-        'costLayerConsumptions': costLayerConsumptions.map((item) => item.toJson()).toList(),
+        'costLayerConsumptions':
+            costLayerConsumptions.map((item) => item.toJson()).toList(),
         'unitName': unitName,
         'baseQuantity': effectiveBaseQuantity,
         'conversionToBase': conversionToBase,
+        'batchAllocations':
+            batchAllocations.map((item) => item.toJson()).toList(),
       };
 
   factory SaleItem.fromJson(Map<String, dynamic> json) {
-    final rawUnitCost = json['unitCostAtSale'] ?? json['unitCost'] ?? json['costPrice'] ?? json['unit_cost'] ?? 0;
-    final rawConsumptions = json['costLayerConsumptions'] as List<dynamic>? ?? const <dynamic>[];
+    final rawUnitCost = json['unitCostAtSale'] ??
+        json['unitCost'] ??
+        json['costPrice'] ??
+        json['unit_cost'] ??
+        0;
+    final rawConsumptions =
+        json['costLayerConsumptions'] as List<dynamic>? ?? const <dynamic>[];
     return SaleItem(
       productId: json['productId'] as String? ?? '',
       productName: json['productName'] as String? ?? '',
@@ -70,10 +84,19 @@ class SaleItem {
       baseQuantity: (json['baseQuantity'] as num? ?? 0).toDouble(),
       conversionToBase: (json['conversionToBase'] as num? ?? 1).toDouble(),
       unitCost: (rawUnitCost as num? ?? 0).toDouble(),
-      costingMethodAtSale: InventoryCostingMethodJson.fromCode(json['costingMethodAtSale'] as String?),
+      costingMethodAtSale: InventoryCostingMethodJson.fromCode(
+          json['costingMethodAtSale'] as String?),
       costCurrency: (json['costCurrency'] as String? ?? 'USD').toUpperCase(),
       costExchangeRate: (json['costExchangeRate'] as num? ?? 1).toDouble(),
-      costLayerConsumptions: rawConsumptions.map((item) => InventoryCostLayerConsumption.fromJson(Map<String, dynamic>.from(item as Map))).toList(),
+      costLayerConsumptions: rawConsumptions
+          .map((item) => InventoryCostLayerConsumption.fromJson(
+              Map<String, dynamic>.from(item as Map)))
+          .toList(),
+      batchAllocations: (json['batchAllocations'] as List<dynamic>? ??
+              const <dynamic>[])
+          .map((item) =>
+              BatchAllocation.fromJson(Map<String, dynamic>.from(item as Map)))
+          .toList(),
     );
   }
 }

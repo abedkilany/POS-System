@@ -435,6 +435,11 @@ class BusinessSqliteStore {
              quantity_type AS quantityType,
              low_stock_threshold AS lowStockThreshold,
              CASE WHEN track_stock = 1 THEN 1 ELSE 0 END AS trackStock,
+             CASE WHEN expiry_tracking_enabled = 1 THEN 1 ELSE 0 END AS expiryTrackingEnabled,
+             CASE WHEN expiry_entry_required = 1 THEN 1 ELSE 0 END AS expiryEntryRequired,
+             expiry_alert_days AS expiryAlertDays,
+             default_shelf_life_days AS defaultShelfLifeDays,
+             minimum_receipt_shelf_life_days AS minimumReceiptShelfLifeDays,
              CASE WHEN is_active = 1 THEN 1 ELSE 0 END AS isActive,
              image_path AS imagePath, created_at AS createdAt,
              updated_at AS updatedAt, deleted_at AS deletedAt,
@@ -1855,7 +1860,7 @@ class BusinessSqliteStore {
       SELECT id, product_id, product_name, movement_type, quantity,
              movement_date, reference_id, reference_no, reason,
              adjustment_category, notes, evidence_ref, warehouse_id,
-             warehouse_name, movement_group_id, document_line_id,
+             warehouse_name, batch_id, movement_group_id, document_line_id,
              source_movement_id, reversal_of_movement_id, idempotency_key,
              unit_cost, created_at, updated_at, device_id,
              sync_status, store_id, branch_id, version,
@@ -1935,7 +1940,7 @@ class BusinessSqliteStore {
       SELECT id, product_id, product_name, movement_type, quantity,
              movement_date, reference_id, reference_no, reason,
              adjustment_category, notes, evidence_ref, warehouse_id,
-             warehouse_name, movement_group_id, document_line_id,
+             warehouse_name, batch_id, movement_group_id, document_line_id,
              source_movement_id, reversal_of_movement_id, idempotency_key,
              unit_cost, created_at, updated_at, device_id,
              sync_status, store_id, branch_id, version,
@@ -1977,7 +1982,7 @@ class BusinessSqliteStore {
       SELECT id, product_id, product_name, movement_type, quantity,
              movement_date, reference_id, reference_no, reason,
              adjustment_category, notes, evidence_ref, warehouse_id,
-             warehouse_name, movement_group_id, document_line_id,
+             warehouse_name, batch_id, movement_group_id, document_line_id,
              source_movement_id, reversal_of_movement_id, idempotency_key,
              unit_cost, created_at, updated_at, device_id,
              sync_status, store_id, branch_id, version,
@@ -2332,6 +2337,11 @@ class BusinessSqliteStore {
              quantity_type AS quantityType,
              low_stock_threshold AS lowStockThreshold,
              CASE WHEN track_stock = 1 THEN 1 ELSE 0 END AS trackStock,
+             CASE WHEN expiry_tracking_enabled = 1 THEN 1 ELSE 0 END AS expiryTrackingEnabled,
+             CASE WHEN expiry_entry_required = 1 THEN 1 ELSE 0 END AS expiryEntryRequired,
+             expiry_alert_days AS expiryAlertDays,
+             default_shelf_life_days AS defaultShelfLifeDays,
+             minimum_receipt_shelf_life_days AS minimumReceiptShelfLifeDays,
              CASE WHEN is_active = 1 THEN 1 ELSE 0 END AS isActive,
              image_path AS imagePath, created_at AS createdAt,
              updated_at AS updatedAt, deleted_at AS deletedAt,
@@ -2394,6 +2404,10 @@ class BusinessSqliteStore {
       final data = Map<String, dynamic>.from(row.data);
       data['trackStock'] =
           data['trackStock'] == 1 || data['trackStock'] == true;
+      data['expiryTrackingEnabled'] = data['expiryTrackingEnabled'] == 1 ||
+          data['expiryTrackingEnabled'] == true;
+      data['expiryEntryRequired'] = data['expiryEntryRequired'] == 1 ||
+          data['expiryEntryRequired'] == true;
       data['isActive'] = data['isActive'] == 1 || data['isActive'] == true;
       final storeId = data['storeId']?.toString() ?? '';
       final productId = data['id']?.toString() ?? '';
@@ -2429,6 +2443,11 @@ class BusinessSqliteStore {
              quantity_type AS quantityType,
              low_stock_threshold AS lowStockThreshold,
              CASE WHEN track_stock = 1 THEN 1 ELSE 0 END AS trackStock,
+             CASE WHEN expiry_tracking_enabled = 1 THEN 1 ELSE 0 END AS expiryTrackingEnabled,
+             CASE WHEN expiry_entry_required = 1 THEN 1 ELSE 0 END AS expiryEntryRequired,
+             expiry_alert_days AS expiryAlertDays,
+             default_shelf_life_days AS defaultShelfLifeDays,
+             minimum_receipt_shelf_life_days AS minimumReceiptShelfLifeDays,
              CASE WHEN is_active = 1 THEN 1 ELSE 0 END AS isActive,
              image_path AS imagePath, created_at AS createdAt,
              updated_at AS updatedAt, deleted_at AS deletedAt,
@@ -2466,6 +2485,10 @@ class BusinessSqliteStore {
 
     final data = Map<String, dynamic>.from(rows.first.data);
     data['trackStock'] = data['trackStock'] == 1 || data['trackStock'] == true;
+    data['expiryTrackingEnabled'] = data['expiryTrackingEnabled'] == 1 ||
+        data['expiryTrackingEnabled'] == true;
+    data['expiryEntryRequired'] =
+        data['expiryEntryRequired'] == 1 || data['expiryEntryRequired'] == true;
     data['isActive'] = data['isActive'] == 1 || data['isActive'] == true;
     final storeId = data['storeId']?.toString() ?? '';
     final derivedStock = stockByIdentity['$storeId::$productId'];
@@ -2594,6 +2617,12 @@ class BusinessSqliteStore {
       FROM sale_item_cost_layer_consumptions
       ORDER BY sale_item_id ASC, line_no ASC
     ''').get();
+    final batchAllocationRows = await db.customSelect('''
+      SELECT sale_item_id AS saleItemId, line_no AS lineNo,
+             batch_id AS batchId, quantity, expiration_date AS expirationDate
+      FROM sale_item_batch_allocations
+      ORDER BY sale_item_id ASC, line_no ASC
+    ''').get();
 
     final consumptionsByItem = <String, List<Map<String, dynamic>>>{};
     for (final row in consumptionRows) {
@@ -2607,6 +2636,15 @@ class BusinessSqliteStore {
           )
           .add(data);
     }
+    final batchAllocationsByItem = <String, List<Map<String, dynamic>>>{};
+    for (final row in batchAllocationRows) {
+      final data = Map<String, dynamic>.from(row.data);
+      final saleItemId = data['saleItemId']?.toString() ?? '';
+      if (saleItemId.isEmpty) continue;
+      batchAllocationsByItem
+          .putIfAbsent(saleItemId, () => <Map<String, dynamic>>[])
+          .add(data);
+    }
 
     final itemsBySale = <String, List<Map<String, dynamic>>>{};
     for (final row in itemRows) {
@@ -2616,6 +2654,8 @@ class BusinessSqliteStore {
       final itemId = data['id']?.toString() ?? '';
       data['costLayerConsumptions'] =
           consumptionsByItem[itemId] ?? const <Map<String, dynamic>>[];
+      data['batchAllocations'] =
+          batchAllocationsByItem[itemId] ?? const <Map<String, dynamic>>[];
       itemsBySale.putIfAbsent(saleId, () => <Map<String, dynamic>>[]).add(data);
     }
 
@@ -2735,12 +2775,32 @@ class BusinessSqliteStore {
       ORDER BY sale_item_id ASC, line_no ASC
     ''', variables: variables).get();
 
+    final batchAllocationRows = await db.customSelect('''
+      SELECT sale_item_id AS saleItemId, line_no AS lineNo,
+             batch_id AS batchId, quantity, expiration_date AS expirationDate
+      FROM sale_item_batch_allocations
+      WHERE sale_item_id IN (
+        SELECT id FROM sale_items WHERE sale_id IN ($placeholders)
+      )
+      ORDER BY sale_item_id ASC, line_no ASC
+    ''', variables: variables).get();
+
     final consumptionsByItem = <String, List<Map<String, dynamic>>>{};
     for (final row in consumptionRows) {
       final data = Map<String, dynamic>.from(row.data);
       final saleItemId = data['saleItemId']?.toString() ?? '';
       if (saleItemId.isEmpty) continue;
       consumptionsByItem
+          .putIfAbsent(saleItemId, () => <Map<String, dynamic>>[])
+          .add(data);
+    }
+
+    final batchAllocationsByItem = <String, List<Map<String, dynamic>>>{};
+    for (final row in batchAllocationRows) {
+      final data = Map<String, dynamic>.from(row.data);
+      final saleItemId = data['saleItemId']?.toString() ?? '';
+      if (saleItemId.isEmpty) continue;
+      batchAllocationsByItem
           .putIfAbsent(saleItemId, () => <Map<String, dynamic>>[])
           .add(data);
     }
@@ -2753,6 +2813,8 @@ class BusinessSqliteStore {
       final itemId = data['id']?.toString() ?? '';
       data['costLayerConsumptions'] =
           consumptionsByItem[itemId] ?? const <Map<String, dynamic>>[];
+      data['batchAllocations'] =
+          batchAllocationsByItem[itemId] ?? const <Map<String, dynamic>>[];
       itemsBySale.putIfAbsent(saleId, () => <Map<String, dynamic>>[]).add(data);
     }
 
@@ -3045,11 +3107,33 @@ class BusinessSqliteStore {
       FROM purchase_items
       ORDER BY purchase_id ASC, line_no ASC
     ''').get();
+    final batchAllocationRows = await db.customSelect('''
+      SELECT purchase_item_id AS purchaseItemId, line_no AS lineNo,
+             batch_id AS batchId, quantity,
+             supplier_batch_number AS supplierBatchNumber,
+             manufacturing_date AS manufacturingDate,
+             expiration_date AS expirationDate
+      FROM purchase_item_batch_allocations
+      ORDER BY purchase_item_id ASC, line_no ASC
+    ''').get();
+    final batchAllocationsByItem = <String, List<Map<String, dynamic>>>{};
+    for (final row in batchAllocationRows) {
+      final data = Map<String, dynamic>.from(row.data);
+      final purchaseItemId = data['purchaseItemId']?.toString() ?? '';
+      if (purchaseItemId.isEmpty) continue;
+      batchAllocationsByItem
+          .putIfAbsent(purchaseItemId, () => <Map<String, dynamic>>[])
+          .add(data);
+    }
+
     final itemsByPurchase = <String, List<Map<String, dynamic>>>{};
     for (final row in itemRows) {
       final data = Map<String, dynamic>.from(row.data);
       final purchaseId = data['purchaseId']?.toString() ?? '';
       if (purchaseId.isEmpty) continue;
+      final itemId = data['id']?.toString() ?? '';
+      data['batchAllocations'] =
+          batchAllocationsByItem[itemId] ?? const <Map<String, dynamic>>[];
       itemsByPurchase
           .putIfAbsent(
             purchaseId,
@@ -3142,11 +3226,35 @@ class BusinessSqliteStore {
       WHERE purchase_id IN ($placeholders)
       ORDER BY purchase_id ASC, line_no ASC
     ''', variables: variables).get();
+    final batchAllocationRows = await db.customSelect('''
+      SELECT purchase_item_id AS purchaseItemId, line_no AS lineNo,
+             batch_id AS batchId, quantity,
+             supplier_batch_number AS supplierBatchNumber,
+             manufacturing_date AS manufacturingDate,
+             expiration_date AS expirationDate
+      FROM purchase_item_batch_allocations
+      WHERE purchase_item_id IN (
+        SELECT id FROM purchase_items WHERE purchase_id IN ($placeholders)
+      )
+      ORDER BY purchase_item_id ASC, line_no ASC
+    ''', variables: variables).get();
+    final batchAllocationsByItem = <String, List<Map<String, dynamic>>>{};
+    for (final row in batchAllocationRows) {
+      final data = Map<String, dynamic>.from(row.data);
+      final purchaseItemId = data['purchaseItemId']?.toString() ?? '';
+      if (purchaseItemId.isEmpty) continue;
+      batchAllocationsByItem
+          .putIfAbsent(purchaseItemId, () => <Map<String, dynamic>>[])
+          .add(data);
+    }
     final itemsByPurchase = <String, List<Map<String, dynamic>>>{};
     for (final row in itemRows) {
       final data = Map<String, dynamic>.from(row.data);
       final purchaseId = data['purchaseId']?.toString() ?? '';
       if (purchaseId.isEmpty) continue;
+      final itemId = data['id']?.toString() ?? '';
+      data['batchAllocations'] =
+          batchAllocationsByItem[itemId] ?? const <Map<String, dynamic>>[];
       itemsByPurchase
           .putIfAbsent(purchaseId, () => <Map<String, dynamic>>[])
           .add(data);
@@ -4226,11 +4334,11 @@ class BusinessSqliteStore {
          device_id, sync_status, store_id, branch_id, version, sort_index,
          product_id, product_name, movement_type, quantity, movement_date,
          reference_id, reference_no, reason, adjustment_category, notes,
-         evidence_ref, warehouse_id, warehouse_name, movement_group_id,
+         evidence_ref, warehouse_id, warehouse_name, batch_id, movement_group_id,
          document_line_id, source_movement_id, reversal_of_movement_id,
          idempotency_key, unit_cost,
          last_modified_by_device_id, reviewed_at, reviewed_by, review_note)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       """,
       variables: <Variable<Object>>[
         Variable<String>(id),
@@ -4273,6 +4381,7 @@ class BusinessSqliteStore {
         Variable<String>(
           _textValue(payload['warehouseName'], fallback: 'Main warehouse'),
         ),
+        Variable<String>(_textValue(payload['batchId'])),
         Variable<String>(_textValue(payload['movementGroupId'])),
         Variable<String>(_textValue(payload['documentLineId'])),
         Variable<String>(_textValue(payload['sourceMovementId'])),
@@ -4423,6 +4532,16 @@ class BusinessSqliteStore {
         'low_stock_threshold':
             _intValue(payload['lowStockThreshold'], fallback: 5),
         'track_stock': _boolValue(payload['trackStock'], fallback: true),
+        'expiry_tracking_enabled':
+            _boolValue(payload['expiryTrackingEnabled'], fallback: false),
+        'expiry_entry_required':
+            _boolValue(payload['expiryEntryRequired'], fallback: true),
+        'expiry_alert_days':
+            _intValue(payload['expiryAlertDays'], fallback: 30),
+        'default_shelf_life_days':
+            _intValue(payload['defaultShelfLifeDays'], fallback: 0),
+        'minimum_receipt_shelf_life_days':
+            _intValue(payload['minimumReceiptShelfLifeDays'], fallback: 0),
         'is_active': _boolValue(payload['isActive'], fallback: true),
         'image_path': _textValue(payload['imagePath']),
       },
@@ -4507,8 +4626,10 @@ class BusinessSqliteStore {
           'cost_currency, usd_cost, cost_exchange_rate_at_entry, original_price, '
           'original_currency, usd_price, exchange_rate_at_entry, stock, category, '
           'barcode, brand, supplier, description, unit, quantity_type, '
-          'low_stock_threshold, track_stock, is_active, image_path) '
-          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          'low_stock_threshold, track_stock, expiry_tracking_enabled, '
+          'expiry_entry_required, expiry_alert_days, default_shelf_life_days, '
+          'minimum_receipt_shelf_life_days, is_active, image_path) '
+          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
           <Object?>[
             id,
             entityType,
@@ -4520,7 +4641,8 @@ class BusinessSqliteStore {
             _textValue(payload['storeId']),
             _textValue(payload['branchId']),
             _intValue(payload['version'], fallback: 1),
-            _textValue(payload['lastModifiedByDeviceId'] ?? payload['deviceId']),
+            _textValue(
+                payload['lastModifiedByDeviceId'] ?? payload['deviceId']),
             sortIndex ?? 0,
             _textValue(payload['name']),
             _textValue(payload['code']),
@@ -4528,7 +4650,9 @@ class BusinessSqliteStore {
             _textValue(payload['nameAr']),
             _doubleValue(payload['price'] ?? payload['usdPrice']),
             _doubleValue(payload['cost'] ?? payload['usdCost']),
-            _doubleValue(payload['originalCost'] ?? payload['cost'] ?? payload['usdCost']),
+            _doubleValue(payload['originalCost'] ??
+                payload['cost'] ??
+                payload['usdCost']),
             _textValue(payload['costCurrency'], fallback: 'USD'),
             _doubleValue(payload['usdCost'] ?? payload['cost']),
             _doubleValue(payload['costExchangeRateAtEntry']),
@@ -4549,6 +4673,13 @@ class BusinessSqliteStore {
             ),
             _intValue(payload['lowStockThreshold'], fallback: 5),
             _boolValue(payload['trackStock'], fallback: true) ? 1 : 0,
+            _boolValue(payload['expiryTrackingEnabled'], fallback: false)
+                ? 1
+                : 0,
+            _boolValue(payload['expiryEntryRequired'], fallback: true) ? 1 : 0,
+            _intValue(payload['expiryAlertDays'], fallback: 30),
+            _intValue(payload['defaultShelfLifeDays'], fallback: 0),
+            _intValue(payload['minimumReceiptShelfLifeDays'], fallback: 0),
             _boolValue(payload['isActive'], fallback: true) ? 1 : 0,
             _textValue(payload['imagePath']),
           ],
@@ -5212,6 +5343,32 @@ class BusinessSqliteStore {
         ],
       );
 
+      if (itemTable == 'sale_items') {
+        final batchAllocations = _payloadMapList(item['batchAllocations']);
+        for (var batchIndex = 0;
+            batchIndex < batchAllocations.length;
+            batchIndex += 1) {
+          final allocation = batchAllocations[batchIndex];
+          await db.customInsert(
+            '''
+            INSERT OR REPLACE INTO sale_item_batch_allocations
+              (id, sale_item_id, line_no, batch_id, quantity, expiration_date)
+            SELECT ?, ?, ?, ?, ?, ?
+            WHERE EXISTS (SELECT 1 FROM inventory_batches WHERE id = ?)
+            ''',
+            variables: <Variable<Object>>[
+              Variable<String>('$itemId:batch:$batchIndex'),
+              Variable<String>(itemId),
+              Variable<int>(batchIndex),
+              Variable<String>(_textValue(allocation['batchId'])),
+              Variable<double>(_doubleValue(allocation['quantity'])),
+              Variable<String>(_dateString(allocation['expirationDate']) ?? ''),
+              Variable<String>(_textValue(allocation['batchId'])),
+            ],
+          );
+        }
+      }
+
       if (!includeConsumptions || consumptionTable == null) continue;
       final consumptions = _payloadMapList(item['costLayerConsumptions']);
       final parentColumnName = consumptionParentColumn ?? 'sale_item_id';
@@ -5279,6 +5436,35 @@ class BusinessSqliteStore {
           Variable<double>(_doubleValue(item['exchangeRateAtEntry'])),
         ],
       );
+      final batchAllocations = _payloadMapList(item['batchAllocations']);
+      for (var batchIndex = 0;
+          batchIndex < batchAllocations.length;
+          batchIndex += 1) {
+        final allocation = batchAllocations[batchIndex];
+        final batchId = _textValue(allocation['batchId']);
+        if (batchId.isEmpty) continue;
+        await db.customInsert(
+          '''
+          INSERT OR REPLACE INTO purchase_item_batch_allocations
+            (id, purchase_item_id, line_no, batch_id, quantity,
+             supplier_batch_number, manufacturing_date, expiration_date)
+          SELECT ?, ?, ?, ?, ?, ?, ?, ?
+          WHERE EXISTS (SELECT 1 FROM inventory_batches WHERE id = ?)
+          ''',
+          variables: <Variable<Object>>[
+            Variable<String>('$purchaseId:$index:batch:$batchIndex'),
+            Variable<String>('$purchaseId:$index'),
+            Variable<int>(batchIndex),
+            Variable<String>(batchId),
+            Variable<double>(_doubleValue(allocation['quantity'])),
+            Variable<String>(_textValue(allocation['supplierBatchNumber'])),
+            Variable<String>(
+                _dateString(allocation['manufacturingDate']) ?? ''),
+            Variable<String>(_dateString(allocation['expirationDate']) ?? ''),
+            Variable<String>(batchId),
+          ],
+        );
+      }
     }
   }
 
@@ -5591,6 +5777,7 @@ class BusinessSqliteStore {
       warehouseId: _rowText(row, 'warehouse_id', fallback: 'main'),
       warehouseName:
           _rowText(row, 'warehouse_name', fallback: 'Main warehouse'),
+      batchId: _rowText(row, 'batch_id'),
       movementGroupId: _rowText(row, 'movement_group_id'),
       documentLineId: _rowText(row, 'document_line_id'),
       sourceMovementId: _rowText(row, 'source_movement_id'),
@@ -5661,6 +5848,10 @@ class BusinessSqliteStore {
     final data = Map<String, dynamic>.from(row.data);
     final productId = data['id']?.toString() ?? '';
     data['trackStock'] = data['trackStock'] == 1 || data['trackStock'] == true;
+    data['expiryTrackingEnabled'] = data['expiryTrackingEnabled'] == 1 ||
+        data['expiryTrackingEnabled'] == true;
+    data['expiryEntryRequired'] =
+        data['expiryEntryRequired'] == 1 || data['expiryEntryRequired'] == true;
     data['isActive'] = data['isActive'] == 1 || data['isActive'] == true;
     final storeId = data['storeId']?.toString() ?? '';
     final derivedStock = stockByIdentity['$storeId::$productId'];

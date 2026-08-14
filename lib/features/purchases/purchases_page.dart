@@ -18,6 +18,7 @@ import '../../widgets/page_data_load_indicator.dart';
 import '../../models/product.dart';
 import '../../models/purchase.dart';
 import '../../models/purchase_item.dart';
+import '../../models/inventory_batch.dart';
 import '../../models/store_profile.dart';
 import '../../models/supplier.dart';
 import '../../models/supplier_product_price.dart';
@@ -304,9 +305,9 @@ class _PurchasesPageState extends State<PurchasesPage> {
   Widget build(BuildContext context) {
     final tr = AppLocalizations.of(context);
     if (!widget.store.canViewPurchases) {
-        return _AccessDeniedScaffold(
-          title: tr.text('purchases'),
-          message: tr.text('no_access_purchase_records'),
+      return _AccessDeniedScaffold(
+        title: tr.text('purchases'),
+        message: tr.text('no_access_purchase_records'),
       );
     }
     final normalizedQuery = _searchController.text.trim().toLowerCase();
@@ -997,7 +998,31 @@ class _PurchasesPageState extends State<PurchasesPage> {
   Future<void> _receivePurchase(BuildContext context, String id) async {
     if (!widget.store.canManagePurchases) return;
     try {
-      await widget.store.receivePurchase(id);
+      final matches = widget.store.purchases.where((item) => item.id == id);
+      final purchase = matches.isEmpty ? null : matches.first;
+      final allocationsByLine = <int, List<BatchAllocation>>{};
+      if (purchase != null) {
+        for (var lineIndex = 0;
+            lineIndex < purchase.items.length;
+            lineIndex += 1) {
+          final item = purchase.items[lineIndex];
+          final products =
+              widget.store.products.where((p) => p.id == item.productId);
+          final product = products.isEmpty ? null : products.first;
+          if (product == null || !product.expiryTrackingEnabled) continue;
+          final allocations = await _promptBatchAllocations(
+            context,
+            product: product,
+            quantity: item.baseQuantity,
+          );
+          if (allocations == null) return;
+          allocationsByLine[lineIndex] = allocations;
+        }
+      }
+      await widget.store.receivePurchase(
+        id,
+        batchAllocationsByLine: allocationsByLine,
+      );
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content:
@@ -1008,6 +1033,104 @@ class _PurchasesPageState extends State<PurchasesPage> {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(error.toString())));
     }
+  }
+
+  Future<List<BatchAllocation>?> _promptBatchAllocations(
+    BuildContext context, {
+    required Product product,
+    required double quantity,
+  }) async {
+    final tr = AppLocalizations.of(context);
+    final allocations = <BatchAllocation>[];
+    var remaining = quantity;
+    while (remaining > 0.000001) {
+      final quantityController =
+          TextEditingController(text: _formatQuantity(remaining));
+      final batchNumberController = TextEditingController();
+      DateTime? expiry = product.defaultShelfLifeDays > 0
+          ? DateTime.now().add(Duration(days: product.defaultShelfLifeDays))
+          : null;
+      final allocation = await showDialog<BatchAllocation>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (dialogContext, setDialogState) => AlertDialog(
+            title: Text('${tr.text('expiration_date')} — ${product.name}'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                    '${tr.text('remaining_batch_quantity')}: ${_formatQuantity(remaining)}'),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: quantityController,
+                  decoration:
+                      InputDecoration(labelText: tr.text('batch_quantity')),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: batchNumberController,
+                  decoration:
+                      InputDecoration(labelText: tr.text('batch_number')),
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.event_outlined),
+                  label: Text(expiry == null
+                      ? tr.text('expiration_date')
+                      : MaterialLocalizations.of(dialogContext)
+                          .formatMediumDate(expiry!)),
+                  onPressed: () async {
+                    final value = await showDatePicker(
+                      context: dialogContext,
+                      initialDate: expiry ?? DateTime.now(),
+                      firstDate: DateTime.now(),
+                      lastDate: DateTime.now().add(const Duration(days: 36500)),
+                    );
+                    if (value != null) setDialogState(() => expiry = value);
+                  },
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: Text(tr.text('cancel')),
+              ),
+              FilledButton(
+                onPressed: () {
+                  final allocated =
+                      double.tryParse(quantityController.text.trim()) ?? 0;
+                  if (allocated <= 0 || allocated > remaining + 0.000001) {
+                    return;
+                  }
+                  if (product.expiryEntryRequired && expiry == null) return;
+                  Navigator.pop(
+                    dialogContext,
+                    BatchAllocation(
+                      batchId: '',
+                      quantity: allocated,
+                      supplierBatchNumber: batchNumberController.text.trim(),
+                      expirationDate: expiry,
+                    ),
+                  );
+                },
+                child: Text(tr.text('save')),
+              ),
+            ],
+          ),
+        ),
+      );
+      quantityController.dispose();
+      batchNumberController.dispose();
+      if (allocation == null) return null;
+      allocations.add(allocation);
+      remaining -= allocation.quantity;
+      if (!context.mounted) return null;
+    }
+    return allocations;
   }
 
   Future<void> _deleteDraftPurchase(BuildContext context, String id) async {
@@ -2149,11 +2272,157 @@ class _PurchasesPageState extends State<PurchasesPage> {
       setDialogState(() {});
     }
 
+    Future<List<PurchaseItem>?> collectRequiredBatchAllocations(
+      BuildContext dialogContext,
+      List<PurchaseItem> sourceItems,
+    ) async {
+      final resolvedItems = <PurchaseItem>[];
+      for (final item in sourceItems) {
+        final productMatches =
+            purchaseProducts.where((product) => product.id == item.productId);
+        final product = productMatches.isEmpty ? null : productMatches.first;
+        if (product == null || !product.expiryTrackingEnabled) {
+          resolvedItems.add(item);
+          continue;
+        }
+        final existingTotal = item.batchAllocations.fold<double>(
+          0,
+          (sum, allocation) => sum + allocation.quantity,
+        );
+        var allocations = (existingTotal - item.baseQuantity).abs() <= 0.000001
+            ? List<BatchAllocation>.of(item.batchAllocations)
+            : <BatchAllocation>[];
+        var remaining = item.baseQuantity -
+            allocations.fold<double>(
+                0, (sum, allocation) => sum + allocation.quantity);
+        while (remaining > 0.000001) {
+          final quantityController =
+              TextEditingController(text: _formatQuantity(remaining));
+          final batchNumberController = TextEditingController();
+          DateTime? selectedExpiry = product.defaultShelfLifeDays > 0
+              ? DateTime.now().add(Duration(days: product.defaultShelfLifeDays))
+              : null;
+          final allocation = await showDialog<BatchAllocation>(
+            context: dialogContext,
+            barrierDismissible: false,
+            builder: (batchContext) => StatefulBuilder(
+              builder: (batchContext, setBatchState) => AlertDialog(
+                title:
+                    Text('${tr.text('expiration_date')} — ${item.productName}'),
+                content: SizedBox(
+                  width: 420,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        '${tr.text('remaining_batch_quantity')}: ${_formatQuantity(remaining)}',
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: quantityController,
+                        decoration: InputDecoration(
+                            labelText: tr.text('batch_quantity')),
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: batchNumberController,
+                        decoration:
+                            InputDecoration(labelText: tr.text('batch_number')),
+                      ),
+                      const SizedBox(height: 12),
+                      OutlinedButton.icon(
+                        icon: const Icon(Icons.event_outlined),
+                        label: Text(selectedExpiry == null
+                            ? tr.text('expiration_date')
+                            : MaterialLocalizations.of(batchContext)
+                                .formatMediumDate(selectedExpiry!)),
+                        onPressed: () async {
+                          final picked = await showDatePicker(
+                            context: batchContext,
+                            initialDate: selectedExpiry ?? DateTime.now(),
+                            firstDate: DateTime.now(),
+                            lastDate:
+                                DateTime.now().add(const Duration(days: 36500)),
+                          );
+                          if (picked != null) {
+                            setBatchState(() => selectedExpiry = picked);
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(batchContext),
+                    child: Text(tr.text('cancel')),
+                  ),
+                  FilledButton(
+                    onPressed: () {
+                      final quantity =
+                          double.tryParse(quantityController.text.trim()) ?? 0;
+                      if (quantity <= 0 || quantity > remaining + 0.000001) {
+                        return;
+                      }
+                      if (product.expiryEntryRequired &&
+                          selectedExpiry == null) {
+                        return;
+                      }
+                      Navigator.pop(
+                        batchContext,
+                        BatchAllocation(
+                          batchId: '',
+                          quantity: quantity,
+                          supplierBatchNumber:
+                              batchNumberController.text.trim(),
+                          expirationDate: selectedExpiry,
+                        ),
+                      );
+                    },
+                    child: Text(tr.text('save')),
+                  ),
+                ],
+              ),
+            ),
+          );
+          quantityController.dispose();
+          batchNumberController.dispose();
+          if (allocation == null) return null;
+          allocations.add(allocation);
+          remaining -= allocation.quantity;
+        }
+        resolvedItems.add(PurchaseItem(
+          productId: item.productId,
+          productName: item.productName,
+          quantity: item.quantity,
+          unitCost: item.unitCost,
+          purchaseUnitId: item.purchaseUnitId,
+          purchaseUnitName: item.purchaseUnitName,
+          conversionToBase: item.conversionToBase,
+          originalUnitCost: item.originalUnitCost,
+          unitCostCurrency: item.unitCostCurrency,
+          exchangeRateAtEntry: item.exchangeRateAtEntry,
+          batchAllocations: allocations,
+        ));
+      }
+      return resolvedItems;
+    }
+
     Future<void> savePurchaseFromDialog(BuildContext dialogContext) async {
       if (items.isEmpty) return;
       if (!(formKey.currentState?.validate() ?? false)) return;
       try {
-        final purchaseItems = List<PurchaseItem>.of(items);
+        var purchaseItems = List<PurchaseItem>.of(items);
+        if (receiveNow) {
+          final withBatches = await collectRequiredBatchAllocations(
+              dialogContext, purchaseItems);
+          if (withBatches == null) return;
+          purchaseItems = withBatches;
+          if (!dialogContext.mounted) return;
+        }
         final total =
             items.fold<double>(0, (sum, item) => sum + item.lineTotal);
         final paidAmount = paymentStatus == 'partial'

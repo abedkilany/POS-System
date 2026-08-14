@@ -583,6 +583,145 @@ class LocalDatabaseService {
   }
 
   static Future<List<Map<String, dynamic>>?>
+      getInventoryBatchesFromSqlite() async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) return null;
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    final rows = await db.customSelect('''
+      SELECT id, product_id AS productId, product_name AS productName,
+             supplier_batch_number AS supplierBatchNumber,
+             manufacturing_date AS manufacturingDate,
+             expiration_date AS expirationDate, status,
+             source_type AS sourceType, source_id AS sourceId,
+             store_id AS storeId, branch_id AS branchId,
+             created_at AS createdAt, updated_at AS updatedAt,
+             device_id AS deviceId,
+             last_modified_by_device_id AS lastModifiedByDeviceId,
+             sync_status AS syncStatus, version
+      FROM inventory_batches
+      ORDER BY store_id, product_id, expiration_date, id
+    ''').get();
+    return rows
+        .map((row) => Map<String, dynamic>.from(row.data))
+        .toList(growable: false);
+  }
+
+  static Future<List<Map<String, dynamic>>?>
+      getInventoryBatchBalancesFromSqlite() async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) return null;
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    final rows = await db.customSelect('''
+      SELECT id, batch_id AS batchId, product_id AS productId,
+             warehouse_id AS warehouseId, store_id AS storeId,
+             branch_id AS branchId, quantity,
+             reserved_quantity AS reservedQuantity, version,
+             created_at AS createdAt, updated_at AS updatedAt,
+             device_id AS deviceId,
+             last_modified_by_device_id AS lastModifiedByDeviceId,
+             sync_status AS syncStatus
+      FROM inventory_batch_balances
+      ORDER BY store_id, warehouse_id, product_id, batch_id
+    ''').get();
+    return rows
+        .map((row) => Map<String, dynamic>.from(row.data))
+        .toList(growable: false);
+  }
+
+  static Future<List<Map<String, dynamic>>?>
+      getExpiryBatchReportFromSqlite() async {
+    if (_memoryStore != null || _webStore != null || !_sqliteReady) return null;
+    final db = SqliteMigrationManager.database;
+    if (db == null) return null;
+    final rows = await db.customSelect('''
+      SELECT b.id AS batchId, b.product_id AS productId,
+             b.product_name AS productName,
+             b.supplier_batch_number AS supplierBatchNumber,
+             b.expiration_date AS expirationDate, b.status,
+             bb.warehouse_id AS warehouseId, bb.quantity,
+             bb.reserved_quantity AS reservedQuantity,
+             p.expiry_alert_days AS alertDays, p.usd_cost AS unitCost
+      FROM inventory_batches b
+      JOIN inventory_batch_balances bb ON bb.batch_id = b.id
+      JOIN products p ON p.id = b.product_id
+      WHERE bb.quantity > 0.000001 OR b.status = 'disposed'
+      ORDER BY b.expiration_date ASC, b.product_name ASC, b.id ASC
+    ''').get();
+    return rows
+        .map((row) => Map<String, dynamic>.from(row.data))
+        .toList(growable: false);
+  }
+
+  static Future<void> replaceInventoryBatchRowsImmediate({
+    required List<Map<String, dynamic>> batches,
+    required List<Map<String, dynamic>> balances,
+  }) async {
+    final db = SqliteMigrationManager.database;
+    if (_memoryStore != null ||
+        _webStore != null ||
+        !_sqliteReady ||
+        db == null) {
+      return;
+    }
+    await db.transaction(() async {
+      await db.customStatement('DELETE FROM inventory_batch_balances');
+      await db.customStatement('DELETE FROM inventory_batches');
+      for (final row in batches) {
+        await db.customStatement('''
+          INSERT OR REPLACE INTO inventory_batches
+            (id, product_id, product_name, supplier_batch_number,
+             manufacturing_date, expiration_date, status, source_type,
+             source_id, store_id, branch_id, created_at, updated_at, device_id,
+             last_modified_by_device_id, sync_status, version)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', <Object?>[
+          row['id']?.toString() ?? '',
+          row['productId']?.toString() ?? '',
+          row['productName']?.toString() ?? '',
+          row['supplierBatchNumber']?.toString() ?? '',
+          row['manufacturingDate']?.toString() ?? '',
+          row['expirationDate']?.toString() ?? '',
+          row['status']?.toString() ?? 'active',
+          row['sourceType']?.toString() ?? '',
+          row['sourceId']?.toString() ?? '',
+          row['storeId']?.toString() ?? '',
+          row['branchId']?.toString() ?? 'main',
+          row['createdAt']?.toString() ?? DateTime.now().toIso8601String(),
+          row['updatedAt']?.toString() ?? DateTime.now().toIso8601String(),
+          row['deviceId']?.toString() ?? '',
+          row['lastModifiedByDeviceId']?.toString() ?? '',
+          row['syncStatus']?.toString() ?? 'synced',
+          (row['version'] as num? ?? 1).toInt(),
+        ]);
+      }
+      for (final row in balances) {
+        await db.customStatement('''
+          INSERT OR REPLACE INTO inventory_batch_balances
+            (id, batch_id, product_id, warehouse_id, store_id, branch_id,
+             quantity, reserved_quantity, version, created_at, updated_at,
+             device_id, last_modified_by_device_id, sync_status)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', <Object?>[
+          row['id']?.toString() ?? '',
+          row['batchId']?.toString() ?? '',
+          row['productId']?.toString() ?? '',
+          row['warehouseId']?.toString() ?? 'main',
+          row['storeId']?.toString() ?? '',
+          row['branchId']?.toString() ?? 'main',
+          (row['quantity'] as num? ?? 0).toDouble(),
+          (row['reservedQuantity'] as num? ?? 0).toDouble(),
+          (row['version'] as num? ?? 1).toInt(),
+          row['createdAt']?.toString() ?? DateTime.now().toIso8601String(),
+          row['updatedAt']?.toString() ?? DateTime.now().toIso8601String(),
+          row['deviceId']?.toString() ?? '',
+          row['lastModifiedByDeviceId']?.toString() ?? '',
+          row['syncStatus']?.toString() ?? 'synced',
+        ]);
+      }
+    });
+  }
+
+  static Future<List<Map<String, dynamic>>?>
       getInventoryMigrationAdjustmentsFromSqlite() async {
     if (_webStore != null) {
       final raw = _webStore![_webInventoryMigrationAdjustmentsKey];

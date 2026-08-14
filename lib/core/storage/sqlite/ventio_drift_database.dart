@@ -15,7 +15,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
       : super(executor ?? openVentioSqliteConnection());
 
   @override
-  int get schemaVersion => 15;
+  int get schemaVersion => 16;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -137,6 +137,7 @@ class VentioDriftDatabase extends GeneratedDatabase {
     await _ensureInventoryReconciliationsTable();
     await _ensurePerformanceSupportTables();
     await _ensureOperationalBusinessColumns();
+    await _ensureInventoryBatchTables();
     await _ensureSimpleBusinessColumns();
     await _ensureComplexBusinessColumns();
     await _ensureBusinessQueryIndexes();
@@ -623,6 +624,16 @@ class VentioDriftDatabase extends GeneratedDatabase {
         'products', 'track_stock', 'INTEGER NOT NULL DEFAULT 1');
     await _ensureColumn('products', 'is_active', 'INTEGER NOT NULL DEFAULT 1');
     await _ensureColumn('products', 'image_path', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'products', 'expiry_tracking_enabled', 'INTEGER NOT NULL DEFAULT 0');
+    await _ensureColumn(
+        'products', 'expiry_entry_required', 'INTEGER NOT NULL DEFAULT 1');
+    await _ensureColumn(
+        'products', 'expiry_alert_days', 'INTEGER NOT NULL DEFAULT 30');
+    await _ensureColumn(
+        'products', 'default_shelf_life_days', 'INTEGER NOT NULL DEFAULT 0');
+    await _ensureColumn('products', 'minimum_receipt_shelf_life_days',
+        'INTEGER NOT NULL DEFAULT 0');
     await customStatement(
         'CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);');
     await customStatement(
@@ -1325,6 +1336,108 @@ class VentioDriftDatabase extends GeneratedDatabase {
         'CREATE INDEX IF NOT EXISTS idx_warehouse_inventory_warehouse ON warehouse_inventory(warehouse_id);');
     await customStatement(
         'CREATE INDEX IF NOT EXISTS idx_warehouse_inventory_updated_at ON warehouse_inventory(updated_at);');
+  }
+
+  Future<void> _ensureInventoryBatchTables() async {
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS inventory_batches (
+        id TEXT PRIMARY KEY NOT NULL,
+        product_id TEXT NOT NULL,
+        product_name TEXT NOT NULL DEFAULT '',
+        supplier_batch_number TEXT NOT NULL DEFAULT '',
+        manufacturing_date TEXT NOT NULL DEFAULT '',
+        expiration_date TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'active',
+        source_type TEXT NOT NULL DEFAULT '',
+        source_id TEXT NOT NULL DEFAULT '',
+        store_id TEXT NOT NULL,
+        branch_id TEXT NOT NULL DEFAULT 'main',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        device_id TEXT NOT NULL DEFAULT '',
+        last_modified_by_device_id TEXT NOT NULL DEFAULT '',
+        sync_status TEXT NOT NULL DEFAULT 'pending',
+        version INTEGER NOT NULL DEFAULT 1,
+        FOREIGN KEY (product_id) REFERENCES products(id),
+        CHECK (status IN ('active', 'blocked', 'depleted', 'disposed'))
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_inventory_batches_product_expiry ON inventory_batches(product_id, expiration_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_inventory_batches_store_status_expiry ON inventory_batches(store_id, status, expiration_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_inventory_batches_supplier_number ON inventory_batches(supplier_batch_number);');
+
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS inventory_batch_balances (
+        id TEXT PRIMARY KEY NOT NULL,
+        batch_id TEXT NOT NULL,
+        product_id TEXT NOT NULL,
+        warehouse_id TEXT NOT NULL,
+        store_id TEXT NOT NULL,
+        branch_id TEXT NOT NULL DEFAULT 'main',
+        quantity REAL NOT NULL DEFAULT 0,
+        reserved_quantity REAL NOT NULL DEFAULT 0,
+        version INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        device_id TEXT NOT NULL DEFAULT '',
+        last_modified_by_device_id TEXT NOT NULL DEFAULT '',
+        sync_status TEXT NOT NULL DEFAULT 'pending',
+        FOREIGN KEY (batch_id) REFERENCES inventory_batches(id),
+        FOREIGN KEY (product_id) REFERENCES products(id),
+        UNIQUE(store_id, warehouse_id, product_id, batch_id),
+        CHECK (reserved_quantity >= 0)
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_batch_balances_fefo ON inventory_batch_balances(store_id, warehouse_id, product_id, quantity);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_batch_balances_batch ON inventory_batch_balances(batch_id);');
+
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS purchase_item_batch_allocations (
+        id TEXT PRIMARY KEY NOT NULL,
+        purchase_item_id TEXT NOT NULL,
+        line_no INTEGER NOT NULL DEFAULT 0,
+        batch_id TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        supplier_batch_number TEXT NOT NULL DEFAULT '',
+        manufacturing_date TEXT NOT NULL DEFAULT '',
+        expiration_date TEXT NOT NULL DEFAULT '',
+        FOREIGN KEY (purchase_item_id) REFERENCES purchase_items(id) ON DELETE CASCADE,
+        FOREIGN KEY (batch_id) REFERENCES inventory_batches(id),
+        CHECK (quantity > 0)
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_purchase_batch_allocations_item ON purchase_item_batch_allocations(purchase_item_id, line_no);');
+
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS sale_item_batch_allocations (
+        id TEXT PRIMARY KEY NOT NULL,
+        sale_item_id TEXT NOT NULL,
+        line_no INTEGER NOT NULL DEFAULT 0,
+        batch_id TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        expiration_date TEXT NOT NULL DEFAULT '',
+        FOREIGN KEY (sale_item_id) REFERENCES sale_items(id) ON DELETE CASCADE,
+        FOREIGN KEY (batch_id) REFERENCES inventory_batches(id),
+        CHECK (quantity > 0)
+      );
+    ''');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_sale_batch_allocations_item ON sale_item_batch_allocations(sale_item_id, line_no);');
+
+    await _ensureColumn(
+        'stock_movements', 'batch_id', "TEXT NOT NULL DEFAULT ''");
+    await _ensureColumn(
+        'inventory_cost_layers', 'batch_id', "TEXT NOT NULL DEFAULT ''");
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_stock_movements_batch_date ON stock_movements(batch_id, movement_date);');
+    await customStatement(
+        'CREATE INDEX IF NOT EXISTS idx_inventory_cost_layers_batch ON inventory_cost_layers(batch_id);');
   }
 
   Future<void> _ensureStockOperationsTable() async {

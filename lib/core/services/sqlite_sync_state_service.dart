@@ -14,6 +14,7 @@ import '../../models/sync_change.dart';
 import '../../models/sync_queue_item.dart';
 import '../../models/store_profile.dart';
 import '../../models/stock_movement.dart';
+import '../../models/warehouse.dart';
 import '../../models/warehouse_inventory.dart';
 
 const String _appIdentityKey = 'app_identity_v1';
@@ -21,8 +22,7 @@ const String _storeProfileKey = 'store_profile_v5';
 const String _hostTransferRequestKey = 'host_transfer_request_v1';
 const String _hostTransferApprovedDeviceKey =
     'host_transfer_approved_device_v1';
-const String _directHostBootstrapMarkerPrefix =
-    'host_bootstrap_snapshot_v3_';
+const String _directHostBootstrapMarkerPrefix = 'host_bootstrap_snapshot_v3_';
 const String _invoiceCounterKey = 'invoice_counter_v1';
 const String _purchaseCounterKey = 'purchase_counter_v1';
 
@@ -65,7 +65,8 @@ class SqliteSyncStateService {
       if (decoded is! List) return const <SyncQueueItem>[];
       return decoded
           .whereType<Map>()
-          .map((item) => SyncQueueItem.fromJson(Map<String, dynamic>.from(item)))
+          .map(
+              (item) => SyncQueueItem.fromJson(Map<String, dynamic>.from(item)))
           .toList(growable: false);
     } catch (_) {
       return const <SyncQueueItem>[];
@@ -282,7 +283,8 @@ class SqliteSyncStateService {
         }
         final isActive = item.status == 'pending' ||
             item.status == 'failed' ||
-            (item.status == 'inProgress' && item.updatedAt.isBefore(staleCutoff));
+            (item.status == 'inProgress' &&
+                item.updatedAt.isBefore(staleCutoff));
         if (!isActive) return false;
         return item.nextRetryAt == null || !item.nextRetryAt!.isAfter(now);
       }).toList(growable: false);
@@ -295,9 +297,8 @@ class SqliteSyncStateService {
       Variable<String>(target),
     ];
     if (readyOnly) {
-      final staleCutoff = now
-          .subtract(const Duration(seconds: 45))
-          .toIso8601String();
+      final staleCutoff =
+          now.subtract(const Duration(seconds: 45)).toIso8601String();
       conditions.add(
         "(status IN ('pending', 'failed') OR (status = 'inProgress' AND updated_at < ?))",
       );
@@ -341,7 +342,8 @@ class SqliteSyncStateService {
         if (item == null || item.target != target) return false;
         final isActive = item.status == 'pending' ||
             item.status == 'failed' ||
-            (item.status == 'inProgress' && item.updatedAt.isBefore(staleCutoff));
+            (item.status == 'inProgress' &&
+                item.updatedAt.isBefore(staleCutoff));
         if (!isActive) return false;
         if (readyOnly) {
           return item.nextRetryAt == null || !item.nextRetryAt!.isAfter(now);
@@ -355,9 +357,8 @@ class SqliteSyncStateService {
       return list;
     }
     final now = DateTime.now();
-    final staleCutoff = now
-        .subtract(const Duration(seconds: 45))
-        .toIso8601String();
+    final staleCutoff =
+        now.subtract(const Duration(seconds: 45)).toIso8601String();
     final conditions = <String>[
       "q.target = ?",
       "(q.status IN ('pending', 'failed') OR (q.status = 'inProgress' AND q.updated_at < ?))",
@@ -404,7 +405,10 @@ class SqliteSyncStateService {
       };
       return _memorySyncChanges().where((change) {
         final item = queueByChangeId[change.id];
-        return item != null && item.target == target && item.status == 'submitted' && !change.isSynced;
+        return item != null &&
+            item.target == target &&
+            item.status == 'submitted' &&
+            !change.isSynced;
       }).toList(growable: false);
     }
     final rows = await db.customSelect(
@@ -435,7 +439,8 @@ class SqliteSyncStateService {
       return _memorySyncQueue().where((item) {
         return item.status == 'pending' ||
             item.status == 'failed' ||
-            (item.status == 'inProgress' && item.updatedAt.isBefore(staleCutoff));
+            (item.status == 'inProgress' &&
+                item.updatedAt.isBefore(staleCutoff));
       }).length;
     }
     final rows = await db.customSelect(
@@ -461,10 +466,8 @@ class SqliteSyncStateService {
   }
 
   Future<int> pendingSyncQueueCountForTarget(
-    BusinessSessionContext context,
-    String target,
-    {bool readyOnly = true}
-  ) async {
+      BusinessSessionContext context, String target,
+      {bool readyOnly = true}) async {
     final db = _db();
     if (db == null) {
       if (!_useMemoryFallback) return 0;
@@ -473,16 +476,16 @@ class SqliteSyncStateService {
       return _memorySyncQueue().where((item) {
         final isActive = item.status == 'pending' ||
             item.status == 'failed' ||
-            (item.status == 'inProgress' && item.updatedAt.isBefore(staleCutoff));
+            (item.status == 'inProgress' &&
+                item.updatedAt.isBefore(staleCutoff));
         if (!isActive || item.target != target) return false;
         if (!readyOnly) return true;
         return item.nextRetryAt == null || !item.nextRetryAt!.isAfter(now);
       }).length;
     }
     final now = DateTime.now();
-    final staleCutoff = now
-        .subtract(const Duration(seconds: 45))
-        .toIso8601String();
+    final staleCutoff =
+        now.subtract(const Duration(seconds: 45)).toIso8601String();
     final conditions = <String>[
       'target = ?',
       "(status IN ('pending', 'failed') OR (status = 'inProgress' AND updated_at < ?))",
@@ -565,9 +568,11 @@ class SqliteSyncStateService {
     if (db == null) return 0;
     final sequenceRaw = await SyncSqliteStore.readSyncSequence(db);
     final sequence = int.tryParse(sequenceRaw) ?? 0;
-    final row = await db.customSelect(
-      'SELECT COALESCE(MAX(sequence), 0) AS value FROM sync_events',
-    ).getSingle();
+    final row = await db
+        .customSelect(
+          'SELECT COALESCE(MAX(sequence), 0) AS value FROM sync_events',
+        )
+        .getSingle();
     final latest = (row.data['value'] as num?)?.toInt() ?? 0;
     return latest > sequence ? latest : sequence;
   }
@@ -624,19 +629,23 @@ class SqliteSyncStateService {
     Iterable<String> changeIds,
   ) async {
     final db = _db();
-    final ids = changeIds.map((item) => item.trim()).where((item) => item.isNotEmpty).toList(growable: false);
+    final ids = changeIds
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
     if (db == null) {
       if (!_useMemoryFallback || ids.isEmpty) return;
       final now = DateTime.now();
       final idSet = ids.toSet();
       final queue = _memorySyncQueue()
-          .map((item) => idSet.contains(item.changeId) && item.status != 'synced'
-              ? item.copyWith(
-                  status: 'inProgress',
-                  updatedAt: now,
-                  clearNextRetryAt: true,
-                )
-              : item)
+          .map(
+              (item) => idSet.contains(item.changeId) && item.status != 'synced'
+                  ? item.copyWith(
+                      status: 'inProgress',
+                      updatedAt: now,
+                      clearNextRetryAt: true,
+                    )
+                  : item)
           .toList(growable: false);
       await _saveMemorySyncQueue(queue);
       await _refreshSyncKeys(context);
@@ -669,21 +678,19 @@ class SqliteSyncStateService {
       if (!_useMemoryFallback || ids.isEmpty) return;
       final now = DateTime.now();
       final idSet = ids.toSet();
-      final queue = _memorySyncQueue()
-          .map((item) {
-            if (!idSet.contains(item.changeId) || item.status == 'synced') {
-              return item;
-            }
-            final attempts = item.attempts + 1;
-            return item.copyWith(
-              status: 'failed',
-              attempts: attempts,
-              lastError: error,
-              updatedAt: now,
-              nextRetryAt: now.add(Duration(seconds: (attempts * 5).clamp(5, 30))),
-            );
-          })
-          .toList(growable: false);
+      final queue = _memorySyncQueue().map((item) {
+        if (!idSet.contains(item.changeId) || item.status == 'synced') {
+          return item;
+        }
+        final attempts = item.attempts + 1;
+        return item.copyWith(
+          status: 'failed',
+          attempts: attempts,
+          lastError: error,
+          updatedAt: now,
+          nextRetryAt: now.add(Duration(seconds: (attempts * 5).clamp(5, 30))),
+        );
+      }).toList(growable: false);
       await _saveMemorySyncQueue(queue);
       await _refreshSyncKeys(context);
       return;
@@ -712,22 +719,20 @@ class SqliteSyncStateService {
     if (db == null) {
       if (!_useMemoryFallback) return;
       final now = DateTime.now();
-      final queue = _memorySyncQueue()
-          .map((item) {
-            if (item.status != 'failed' ||
-                (target != null && item.target != target) ||
-                (target != null &&
-                    item.nextRetryAt != null &&
-                    item.nextRetryAt!.isAfter(now))) {
-              return item;
-            }
-            return item.copyWith(
-              status: 'pending',
-              updatedAt: now,
-              clearNextRetryAt: true,
-            );
-          })
-          .toList(growable: false);
+      final queue = _memorySyncQueue().map((item) {
+        if (item.status != 'failed' ||
+            (target != null && item.target != target) ||
+            (target != null &&
+                item.nextRetryAt != null &&
+                item.nextRetryAt!.isAfter(now))) {
+          return item;
+        }
+        return item.copyWith(
+          status: 'pending',
+          updatedAt: now,
+          clearNextRetryAt: true,
+        );
+      }).toList(growable: false);
       await _saveMemorySyncQueue(queue);
       await _refreshSyncKeys(context);
       return;
@@ -764,21 +769,20 @@ class SqliteSyncStateService {
       if (!_useMemoryFallback) return;
       final now = DateTime.now();
       final cutoff = now.subtract(staleAfter);
-      final queue = _memorySyncQueue()
-          .map((item) {
-            if (item.status != 'inProgress' ||
-                !item.updatedAt.isBefore(cutoff) ||
-                (target != null && item.target != target)) {
-              return item;
-            }
-            return item.copyWith(
-              status: 'pending',
-              lastError: 'Recovered stale in-progress sync item after timeout/crash.',
-              updatedAt: now,
-              clearNextRetryAt: true,
-            );
-          })
-          .toList(growable: false);
+      final queue = _memorySyncQueue().map((item) {
+        if (item.status != 'inProgress' ||
+            !item.updatedAt.isBefore(cutoff) ||
+            (target != null && item.target != target)) {
+          return item;
+        }
+        return item.copyWith(
+          status: 'pending',
+          lastError:
+              'Recovered stale in-progress sync item after timeout/crash.',
+          updatedAt: now,
+          clearNextRetryAt: true,
+        );
+      }).toList(growable: false);
       await _saveMemorySyncQueue(queue);
       await _refreshSyncKeys(context);
       return;
@@ -820,21 +824,19 @@ class SqliteSyncStateService {
     if (db == null) {
       if (!_useMemoryFallback) return;
       final now = DateTime.now();
-      final queue = _memorySyncQueue()
-          .map((item) {
-            if (item.status != 'submitted' ||
-                (target != null && item.target != target)) {
-              return item;
-            }
-            return item.copyWith(
-              status: 'pending',
-              lastError:
-                  'Recovered legacy submitted sync item for direct Host relay confirmation.',
-              updatedAt: now,
-              clearNextRetryAt: true,
-            );
-          })
-          .toList(growable: false);
+      final queue = _memorySyncQueue().map((item) {
+        if (item.status != 'submitted' ||
+            (target != null && item.target != target)) {
+          return item;
+        }
+        return item.copyWith(
+          status: 'pending',
+          lastError:
+              'Recovered legacy submitted sync item for direct Host relay confirmation.',
+          updatedAt: now,
+          clearNextRetryAt: true,
+        );
+      }).toList(growable: false);
       await _saveMemorySyncQueue(queue);
       await _refreshSyncKeys(context);
       return;
@@ -923,16 +925,14 @@ class SqliteSyncStateService {
       final changesById = <String, SyncChange>{
         for (final change in _memorySyncChanges()) change.id: change,
       };
-      final changes = _memorySyncChanges()
-          .map((change) {
-            final matches = idSet.contains(change.id) ||
-                idSet.contains(_syncMetaString(change, 'eventId')) ||
-                idSet.contains(_syncMetaString(change, 'requestId')) ||
-                idSet.contains(_syncMetaString(change, 'sourceCommandId'));
-            if (!matches) return change;
-            return change.copyWith(isSynced: true, syncedAt: now);
-          })
-          .toList(growable: false);
+      final changes = _memorySyncChanges().map((change) {
+        final matches = idSet.contains(change.id) ||
+            idSet.contains(_syncMetaString(change, 'eventId')) ||
+            idSet.contains(_syncMetaString(change, 'requestId')) ||
+            idSet.contains(_syncMetaString(change, 'sourceCommandId'));
+        if (!matches) return change;
+        return change.copyWith(isSynced: true, syncedAt: now);
+      }).toList(growable: false);
       final queue = _memorySyncQueue().map((item) {
         final change = changesById[item.changeId];
         final matches = idSet.contains(item.changeId) ||
@@ -940,7 +940,8 @@ class SqliteSyncStateService {
             (change != null &&
                 (idSet.contains(_syncMetaString(change, 'eventId')) ||
                     idSet.contains(_syncMetaString(change, 'requestId')) ||
-                    idSet.contains(_syncMetaString(change, 'sourceCommandId'))));
+                    idSet
+                        .contains(_syncMetaString(change, 'sourceCommandId'))));
         if (!matches) return item;
         return item.copyWith(
           status: 'synced',
@@ -988,16 +989,21 @@ class SqliteSyncStateService {
     if (db == null) {
       if (!_useMemoryFallback || rejected.isEmpty) return;
       final now = DateTime.now();
-      final idSet = rejected.keys.map((item) => item.trim()).where((item) => item.isNotEmpty).toSet();
+      final idSet = rejected.keys
+          .map((item) => item.trim())
+          .where((item) => item.isNotEmpty)
+          .toSet();
       final queue = _memorySyncQueue()
-          .map((item) => idSet.contains(item.changeId) && item.status != 'synced'
-              ? item.copyWith(
-                  status: 'rejected',
-                  lastError: rejected[item.changeId] ?? rejected.values.join(' | '),
-                  updatedAt: now,
-                  clearNextRetryAt: true,
-                )
-              : item)
+          .map(
+              (item) => idSet.contains(item.changeId) && item.status != 'synced'
+                  ? item.copyWith(
+                      status: 'rejected',
+                      lastError: rejected[item.changeId] ??
+                          rejected.values.join(' | '),
+                      updatedAt: now,
+                      clearNextRetryAt: true,
+                    )
+                  : item)
           .toList(growable: false);
       final changes = _memorySyncChanges()
           .map((change) => idSet.contains(change.id) ||
@@ -1013,7 +1019,10 @@ class SqliteSyncStateService {
       return;
     }
     if (rejected.isEmpty) return;
-    final ids = rejected.keys.map((item) => item.trim()).where((item) => item.isNotEmpty).toList(growable: false);
+    final ids = rejected.keys
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
     if (ids.isEmpty) return;
     final placeholders = List<String>.filled(ids.length, '?').join(', ');
     final now = DateTime.now();
@@ -1100,21 +1109,19 @@ class SqliteSyncStateService {
     if (db == null) {
       if (!_useMemoryFallback || queueItemId.trim().isEmpty) return;
       final now = DateTime.now();
-      final queue = _memorySyncQueue()
-          .map((item) {
-            if (item.id != queueItemId || item.status == 'synced') {
-              return item;
-            }
-            final attempts = item.attempts + 1;
-            return item.copyWith(
-              status: 'failed',
-              attempts: attempts,
-              lastError: error,
-              updatedAt: now,
-              nextRetryAt: now.add(Duration(minutes: attempts.clamp(1, 30))),
-            );
-          })
-          .toList(growable: false);
+      final queue = _memorySyncQueue().map((item) {
+        if (item.id != queueItemId || item.status == 'synced') {
+          return item;
+        }
+        final attempts = item.attempts + 1;
+        return item.copyWith(
+          status: 'failed',
+          attempts: attempts,
+          lastError: error,
+          updatedAt: now,
+          nextRetryAt: now.add(Duration(minutes: attempts.clamp(1, 30))),
+        );
+      }).toList(growable: false);
       await _saveMemorySyncQueue(queue);
       await _refreshSyncKeys(context);
       return;
@@ -1245,7 +1252,8 @@ class SqliteSyncStateService {
         .map((row) => row.read<String>('id'))
         .toList(growable: false);
     if (deleteIds.isNotEmpty) {
-      final placeholders = List<String>.filled(deleteIds.length, '?').join(', ');
+      final placeholders =
+          List<String>.filled(deleteIds.length, '?').join(', ');
       await db.transaction(() async {
         await db.customStatement(
           'DELETE FROM pending_sync_changes WHERE event_id IN ($placeholders)',
@@ -1273,12 +1281,16 @@ class SqliteSyncStateService {
   }
 
   Future<Map<String, int>> _countsSnapshot(VentioDriftDatabase db) async {
-    final changeRow = await db.customSelect(
-      'SELECT COUNT(*) AS value FROM sync_events',
-    ).getSingle();
-    final queueRow = await db.customSelect(
-      'SELECT COUNT(*) AS value FROM sync_queue',
-    ).getSingle();
+    final changeRow = await db
+        .customSelect(
+          'SELECT COUNT(*) AS value FROM sync_events',
+        )
+        .getSingle();
+    final queueRow = await db
+        .customSelect(
+          'SELECT COUNT(*) AS value FROM sync_queue',
+        )
+        .getSingle();
     return <String, int>{
       'remainingChanges': (changeRow.data['value'] as num?)?.toInt() ?? 0,
       'remainingQueue': (queueRow.data['value'] as num?)?.toInt() ?? 0,
@@ -1410,11 +1422,13 @@ class SqliteSyncStateService {
           if (change.operation == 'reset_store_data') {
             await _applySystemReset(
               context,
-              keepStoreProfile: change.payload['keepStoreProfile'] as bool? ?? true,
+              keepStoreProfile:
+                  change.payload['keepStoreProfile'] as bool? ?? true,
             );
             businessChanged = true;
           } else if (change.operation == 'request_snapshot') {
-            if (context.appIdentity.isHost && context.appIdentity.isDirectEnabled) {
+            if (context.appIdentity.isHost &&
+                context.appIdentity.isDirectEnabled) {
               await LocalDatabaseService.setString(
                 '$_directHostBootstrapMarkerPrefix${context.appIdentity.storeId}',
                 'direct_chunked',
@@ -1452,12 +1466,12 @@ class SqliteSyncStateService {
           break;
         case 'app_identity':
           if (change.entityId == context.deviceId) {
-            final incomingIdentity = AppIdentity.fromJson(change.payload)
-                .copyWith(
-                  deviceId: context.deviceId,
-                  platform: context.appIdentity.platform,
-                  updatedAt: DateTime.now(),
-                );
+            final incomingIdentity =
+                AppIdentity.fromJson(change.payload).copyWith(
+              deviceId: context.deviceId,
+              platform: context.appIdentity.platform,
+              updatedAt: DateTime.now(),
+            );
             await BusinessSqliteStore.saveKeyJson(
               db,
               _appIdentityKey,
@@ -1505,6 +1519,10 @@ class SqliteSyncStateService {
             change,
             refreshKeys: refreshKeys,
           );
+          businessChanged = true;
+          break;
+        case 'inventory_batch':
+          await _applyInventoryBatchChange(db, context, change);
           businessChanged = true;
           break;
       }
@@ -1583,6 +1601,7 @@ class SqliteSyncStateService {
       }
     }
     if (change.entityType == 'purchase') {
+      await _materializePurchaseBatches(db, change);
       final purchase = _sequenceFromDocumentNo(
         change.payload['purchaseNo']?.toString() ?? '',
       );
@@ -1595,6 +1614,56 @@ class SqliteSyncStateService {
             purchase.toString(),
           );
         }
+      }
+    }
+  }
+
+  Future<void> _materializePurchaseBatches(
+    VentioDriftDatabase db,
+    SyncChange change,
+  ) async {
+    final items = change.payload['items'];
+    if (items is! List) return;
+    final nowText = change.createdAt.toUtc().toIso8601String();
+    for (final rawItem in items.whereType<Map>()) {
+      final item = Map<String, dynamic>.from(rawItem);
+      final productId = item['productId']?.toString() ?? '';
+      final productName = item['productName']?.toString() ?? '';
+      final allocations = item['batchAllocations'];
+      if (productId.isEmpty || allocations is! List) continue;
+      for (final rawAllocation in allocations.whereType<Map>()) {
+        final allocation = Map<String, dynamic>.from(rawAllocation);
+        final batchId = allocation['batchId']?.toString().trim() ?? '';
+        if (batchId.isEmpty) continue;
+        await db.customStatement('''
+          INSERT INTO inventory_batches
+            (id, product_id, product_name, supplier_batch_number,
+             manufacturing_date, expiration_date, status, source_type,
+             source_id, store_id, branch_id, created_at, updated_at, device_id,
+             last_modified_by_device_id, sync_status, version)
+          VALUES (?, ?, ?, ?, ?, ?, 'active', 'purchase', ?, ?, ?, ?, ?, ?, ?, 'synced', 1)
+          ON CONFLICT(id) DO UPDATE SET
+            product_name = excluded.product_name,
+            supplier_batch_number = excluded.supplier_batch_number,
+            manufacturing_date = excluded.manufacturing_date,
+            expiration_date = excluded.expiration_date,
+            updated_at = excluded.updated_at,
+            sync_status = 'synced'
+        ''', <Object?>[
+          batchId,
+          productId,
+          productName,
+          allocation['supplierBatchNumber']?.toString() ?? '',
+          allocation['manufacturingDate']?.toString() ?? '',
+          allocation['expirationDate']?.toString() ?? '',
+          change.entityId,
+          change.storeId,
+          change.branchId,
+          nowText,
+          nowText,
+          change.deviceId,
+          change.deviceId,
+        ]);
       }
     }
   }
@@ -1643,6 +1712,72 @@ class SqliteSyncStateService {
     }
   }
 
+  Future<void> _applyInventoryBatchChange(
+    VentioDriftDatabase db,
+    BusinessSessionContext context,
+    SyncChange change,
+  ) async {
+    final payload = change.payload;
+    final status = payload['status']?.toString() ?? 'active';
+    if (payload['productId'] == null) {
+      await db.customStatement(
+        '''UPDATE inventory_batches
+           SET status = ?, updated_at = ?, sync_status = 'synced'
+           WHERE id = ? AND store_id = ?''',
+        <Object?>[
+          status,
+          payload['updatedAt']?.toString() ??
+              change.createdAt.toIso8601String(),
+          change.entityId,
+          change.storeId.isEmpty ? context.appIdentity.storeId : change.storeId,
+        ],
+      );
+      return;
+    }
+    final storeId = payload['storeId']?.toString().trim().isNotEmpty == true
+        ? payload['storeId'].toString()
+        : (change.storeId.isEmpty
+            ? context.appIdentity.storeId
+            : change.storeId);
+    final branchId = payload['branchId']?.toString().trim().isNotEmpty == true
+        ? payload['branchId'].toString()
+        : context.appIdentity.branchId;
+    await db.customStatement('''
+      INSERT INTO inventory_batches
+        (id, product_id, product_name, supplier_batch_number,
+         manufacturing_date, expiration_date, status, source_type, source_id,
+         store_id, branch_id, created_at, updated_at, device_id,
+         last_modified_by_device_id, sync_status, version)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced', ?)
+      ON CONFLICT(id) DO UPDATE SET
+        product_name = excluded.product_name,
+        supplier_batch_number = excluded.supplier_batch_number,
+        manufacturing_date = excluded.manufacturing_date,
+        expiration_date = excluded.expiration_date,
+        status = excluded.status,
+        updated_at = excluded.updated_at,
+        sync_status = 'synced',
+        version = MAX(inventory_batches.version, excluded.version)
+    ''', <Object?>[
+      change.entityId,
+      payload['productId']?.toString() ?? '',
+      payload['productName']?.toString() ?? '',
+      payload['supplierBatchNumber']?.toString() ?? '',
+      payload['manufacturingDate']?.toString() ?? '',
+      payload['expirationDate']?.toString() ?? '',
+      status,
+      payload['sourceType']?.toString() ?? '',
+      payload['sourceId']?.toString() ?? '',
+      storeId,
+      branchId,
+      payload['createdAt']?.toString() ?? change.createdAt.toIso8601String(),
+      payload['updatedAt']?.toString() ?? change.createdAt.toIso8601String(),
+      payload['deviceId']?.toString() ?? change.deviceId,
+      payload['lastModifiedByDeviceId']?.toString() ?? change.deviceId,
+      (payload['version'] as num?)?.toInt() ?? 1,
+    ]);
+  }
+
   Future<void> _applyStockMovementChange(
     BusinessSessionContext context,
     VentioDriftDatabase db,
@@ -1663,9 +1798,11 @@ class SqliteSyncStateService {
     final movement = StockMovement.fromJson(change.payload).copyWith(
       id: change.entityId,
       syncStatus: 'synced',
-      storeId: change.storeId.isEmpty ? context.appIdentity.storeId : change.storeId,
-      branchId:
-          change.branchId.trim().isEmpty ? context.appIdentity.branchId : change.branchId.trim(),
+      storeId:
+          change.storeId.isEmpty ? context.appIdentity.storeId : change.storeId,
+      branchId: change.branchId.trim().isEmpty
+          ? context.appIdentity.branchId
+          : change.branchId.trim(),
       movementGroupId:
           _syncMetaString(change, 'movementGroupId').trim().isNotEmpty
               ? _syncMetaString(change, 'movementGroupId').trim()
@@ -1696,6 +1833,10 @@ class SqliteSyncStateService {
     }
 
     try {
+      final hasAppliedMovement = await _hasAppliedStockMovement(
+        db,
+        movement: movement,
+      );
       await BusinessSqliteStore.upsertEntityPayload(
         db,
         key,
@@ -1703,16 +1844,13 @@ class SqliteSyncStateService {
       );
       refreshKeys.add(key);
 
-      final hasAppliedMovement = await _hasAppliedStockMovement(
-        db,
-        movement: movement,
-      );
       if (!hasAppliedMovement) {
         await _applyWarehouseAwareMovement(
           db,
           context: context,
           movement: movement,
         );
+        await _applyBatchAwareMovement(db, context, movement);
       }
 
       await _updateProductCompatibilityCacheFromWarehouseInventory(
@@ -1741,6 +1879,52 @@ class SqliteSyncStateService {
       );
       rethrow;
     }
+  }
+
+  Future<void> _applyBatchAwareMovement(
+    VentioDriftDatabase db,
+    BusinessSessionContext context,
+    StockMovement movement,
+  ) async {
+    if (movement.batchId.trim().isEmpty) return;
+    final storeId = movement.storeId.isEmpty
+        ? context.appIdentity.storeId
+        : movement.storeId;
+    final branchId = movement.branchId.trim().isEmpty
+        ? context.appIdentity.branchId
+        : movement.branchId.trim();
+    final warehouseId = movement.warehouseId.trim().isEmpty
+        ? Warehouse.defaultId
+        : movement.warehouseId.trim();
+    final nowText = movement.updatedAt.toUtc().toIso8601String();
+    final balanceId =
+        '$storeId::$warehouseId::${movement.productId}::${movement.batchId}';
+    await db.customStatement('''
+      INSERT INTO inventory_batch_balances
+        (id, batch_id, product_id, warehouse_id, store_id, branch_id,
+         quantity, reserved_quantity, version, created_at, updated_at,
+         device_id, last_modified_by_device_id, sync_status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?, ?, 'synced')
+      ON CONFLICT(store_id, warehouse_id, product_id, batch_id) DO UPDATE SET
+        quantity = inventory_batch_balances.quantity + excluded.quantity,
+        version = inventory_batch_balances.version + 1,
+        updated_at = excluded.updated_at,
+        device_id = excluded.device_id,
+        last_modified_by_device_id = excluded.last_modified_by_device_id,
+        sync_status = 'synced'
+    ''', <Object?>[
+      balanceId,
+      movement.batchId,
+      movement.productId,
+      warehouseId,
+      storeId,
+      branchId,
+      movement.quantity,
+      nowText,
+      nowText,
+      movement.deviceId,
+      movement.lastModifiedByDeviceId,
+    ]);
   }
 
   String _stockOperationIdempotencyKey(
@@ -2005,8 +2189,7 @@ class SqliteSyncStateService {
   }) async {
     final db = _db();
     if (db == null) return;
-    final nextEpoch =
-        context.appIdentity.storeEpoch + 1;
+    final nextEpoch = context.appIdentity.storeEpoch + 1;
     final nextIdentity = context.appIdentity.copyWith(
       storeEpoch: nextEpoch,
       updatedAt: DateTime.now(),
@@ -2016,7 +2199,8 @@ class SqliteSyncStateService {
     await BusinessSqliteStore.deleteKey(db, BusinessSqliteStore.salesKey);
     await BusinessSqliteStore.deleteKey(
         db, BusinessSqliteStore.saleQuotationsKey);
-    await BusinessSqliteStore.deleteKey(db, BusinessSqliteStore.deliveryNotesKey);
+    await BusinessSqliteStore.deleteKey(
+        db, BusinessSqliteStore.deliveryNotesKey);
     await BusinessSqliteStore.deleteKey(
         db, BusinessSqliteStore.billsOfMaterialsKey);
     await BusinessSqliteStore.deleteKey(
@@ -2026,7 +2210,8 @@ class SqliteSyncStateService {
         db, BusinessSqliteStore.supplierProductPricesKey);
     await BusinessSqliteStore.deleteKey(db, BusinessSqliteStore.expensesKey);
     await BusinessSqliteStore.deleteKey(db, BusinessSqliteStore.purchasesKey);
-    await BusinessSqliteStore.deleteKey(db, BusinessSqliteStore.stockMovementsKey);
+    await BusinessSqliteStore.deleteKey(
+        db, BusinessSqliteStore.stockMovementsKey);
     await BusinessSqliteStore.deleteKey(
         db, BusinessSqliteStore.accountTransactionsKey);
     await BusinessSqliteStore.saveKeyJson(

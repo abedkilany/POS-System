@@ -981,6 +981,9 @@ class _ProductDialogState extends State<_ProductDialog> {
   late final TextEditingController costController;
   late final TextEditingController stockController;
   late final TextEditingController lowStockController;
+  late final TextEditingController expiryAlertDaysController;
+  late final TextEditingController defaultShelfLifeDaysController;
+  late final TextEditingController minimumReceiptShelfLifeDaysController;
   String category = '';
   String priceCurrency = 'USD';
   String costCurrency = 'USD';
@@ -989,6 +992,8 @@ class _ProductDialogState extends State<_ProductDialog> {
   ProductQuantityType quantityType = ProductQuantityType.countable;
   late List<_SaleUnitDraft> saleUnitDrafts;
   bool trackStock = true;
+  bool expiryTrackingEnabled = false;
+  bool expiryEntryRequired = true;
   bool isActive = true;
   bool addToQuickProducts = false;
   String imagePath = '';
@@ -1044,6 +1049,12 @@ class _ProductDialogState extends State<_ProductDialog> {
         TextEditingController(text: product?.stock.toString() ?? '');
     lowStockController = TextEditingController(
         text: (product?.lowStockThreshold ?? 5).toString());
+    expiryAlertDaysController = TextEditingController(
+        text: (product?.expiryAlertDays ?? 30).toString());
+    defaultShelfLifeDaysController = TextEditingController(
+        text: (product?.defaultShelfLifeDays ?? 0).toString());
+    minimumReceiptShelfLifeDaysController = TextEditingController(
+        text: (product?.minimumReceiptShelfLifeDays ?? 0).toString());
     imagePath = product?.imagePath ?? '';
     category = product?.category ??
         (widget.store.categories.isNotEmpty
@@ -1059,6 +1070,8 @@ class _ProductDialogState extends State<_ProductDialog> {
         .map(_SaleUnitDraft.fromSaleUnit)
         .toList();
     trackStock = product?.trackStock ?? true;
+    expiryTrackingEnabled = product?.expiryTrackingEnabled ?? false;
+    expiryEntryRequired = product?.expiryEntryRequired ?? true;
     isActive = product?.isActive ?? true;
   }
 
@@ -1081,6 +1094,9 @@ class _ProductDialogState extends State<_ProductDialog> {
     costController.dispose();
     stockController.dispose();
     lowStockController.dispose();
+    expiryAlertDaysController.dispose();
+    defaultShelfLifeDaysController.dispose();
+    minimumReceiptShelfLifeDaysController.dispose();
     super.dispose();
   }
 
@@ -1209,6 +1225,50 @@ class _ProductDialogState extends State<_ProductDialog> {
                             value ?? ProductQuantityType.countable),
                       ),
                     ]),
+                    const Divider(height: 28),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(tr.text('expiry_tracking')),
+                      subtitle: Text(tr.text('expiry_tracking_help')),
+                      value: trackStock && expiryTrackingEnabled,
+                      onChanged: trackStock
+                          ? (value) =>
+                              setState(() => expiryTrackingEnabled = value)
+                          : null,
+                    ),
+                    if (trackStock && expiryTrackingEnabled) ...[
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(tr.text('expiry_date_required')),
+                        value: expiryEntryRequired,
+                        onChanged: (value) =>
+                            setState(() => expiryEntryRequired = value),
+                      ),
+                      _ResponsiveFields(children: [
+                        TextFormField(
+                          controller: expiryAlertDaysController,
+                          decoration: InputDecoration(
+                              labelText: tr.text('expiry_alert_days')),
+                          keyboardType: TextInputType.number,
+                          validator: _nonNegativeInteger,
+                        ),
+                        TextFormField(
+                          controller: defaultShelfLifeDaysController,
+                          decoration: InputDecoration(
+                              labelText: tr.text('default_shelf_life_days')),
+                          keyboardType: TextInputType.number,
+                          validator: _nonNegativeInteger,
+                        ),
+                        TextFormField(
+                          controller: minimumReceiptShelfLifeDaysController,
+                          decoration: InputDecoration(
+                              labelText:
+                                  tr.text('minimum_receipt_shelf_life_days')),
+                          keyboardType: TextInputType.number,
+                          validator: _nonNegativeInteger,
+                        ),
+                      ]),
+                    ],
                     const SizedBox(height: 12),
                     ExpansionTile(
                       tilePadding: EdgeInsets.zero,
@@ -1440,6 +1500,15 @@ class _ProductDialogState extends State<_ProductDialog> {
                   item.name.trim().isNotEmpty && item.conversionToBase > 0)
               .toList(),
           trackStock: trackStock,
+          expiryTrackingEnabled: trackStock && expiryTrackingEnabled,
+          expiryEntryRequired: expiryEntryRequired,
+          expiryAlertDays:
+              int.tryParse(expiryAlertDaysController.text.trim()) ?? 30,
+          defaultShelfLifeDays:
+              int.tryParse(defaultShelfLifeDaysController.text.trim()) ?? 0,
+          minimumReceiptShelfLifeDays:
+              int.tryParse(minimumReceiptShelfLifeDaysController.text.trim()) ??
+                  0,
           isActive: isActive,
           createdAt: widget.product?.createdAt,
           updatedAt: widget.product?.updatedAt,

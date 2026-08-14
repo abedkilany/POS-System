@@ -101,6 +101,8 @@ class UnifiedSnapshotCatalog {
       'stockMovements',
       'inventoryCounts',
       'warehouseInventory',
+      'inventoryBatches',
+      'inventoryBatchBalances',
       'stockOperations',
       'inventoryReconciliations',
       'inventoryMigrationAdjustments',

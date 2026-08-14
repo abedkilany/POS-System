@@ -14,6 +14,7 @@ class StockMovement {
     this.evidenceRef = '',
     this.warehouseId = 'main',
     this.warehouseName = 'Main warehouse',
+    this.batchId = '',
     this.movementGroupId = '',
     this.documentLineId = '',
     this.sourceMovementId = '',
@@ -34,8 +35,19 @@ class StockMovement {
   })  : createdAt = createdAt ?? updatedAt ?? date,
         updatedAt = updatedAt ?? createdAt ?? date;
 
-  final String id, productId, productName, type, referenceId, referenceNo, reason;
-  final String adjustmentCategory, notes, evidenceRef, warehouseId, warehouseName;
+  final String id,
+      productId,
+      productName,
+      type,
+      referenceId,
+      referenceNo,
+      reason;
+  final String adjustmentCategory,
+      notes,
+      evidenceRef,
+      warehouseId,
+      warehouseName;
+  final String batchId;
   final String movementGroupId, documentLineId, sourceMovementId;
   final String reversalOfMovementId, idempotencyKey;
   final double quantity;
@@ -65,6 +77,7 @@ class StockMovement {
     String? evidenceRef,
     String? warehouseId,
     String? warehouseName,
+    String? batchId,
     String? movementGroupId,
     String? documentLineId,
     String? sourceMovementId,
@@ -99,11 +112,11 @@ class StockMovement {
         evidenceRef: evidenceRef ?? this.evidenceRef,
         warehouseId: warehouseId ?? this.warehouseId,
         warehouseName: warehouseName ?? this.warehouseName,
+        batchId: batchId ?? this.batchId,
         movementGroupId: movementGroupId ?? this.movementGroupId,
         documentLineId: documentLineId ?? this.documentLineId,
         sourceMovementId: sourceMovementId ?? this.sourceMovementId,
-        reversalOfMovementId:
-            reversalOfMovementId ?? this.reversalOfMovementId,
+        reversalOfMovementId: reversalOfMovementId ?? this.reversalOfMovementId,
         idempotencyKey: idempotencyKey ?? this.idempotencyKey,
         unitCost: unitCost ?? this.unitCost,
         createdAt: createdAt ?? this.createdAt,
@@ -113,7 +126,8 @@ class StockMovement {
         storeId: storeId ?? this.storeId,
         branchId: branchId ?? this.branchId,
         version: version ?? this.version,
-        lastModifiedByDeviceId: lastModifiedByDeviceId ?? this.lastModifiedByDeviceId,
+        lastModifiedByDeviceId:
+            lastModifiedByDeviceId ?? this.lastModifiedByDeviceId,
         reviewedAt: clearReviewedAt ? null : (reviewedAt ?? this.reviewedAt),
         reviewedBy: reviewedBy ?? this.reviewedBy,
         reviewNote: reviewNote ?? this.reviewNote,
@@ -134,6 +148,7 @@ class StockMovement {
         'evidenceRef': evidenceRef,
         'warehouseId': warehouseId,
         'warehouseName': warehouseName,
+        'batchId': batchId,
         'movementGroupId': movementGroupId,
         'documentLineId': documentLineId,
         'sourceMovementId': sourceMovementId,
@@ -154,22 +169,31 @@ class StockMovement {
       };
 
   factory StockMovement.fromJson(Map<String, dynamic> json) {
-    final date = DateTime.tryParse(json['date']?.toString() ?? json['createdAt']?.toString() ?? '') ?? DateTime.now();
+    final date = DateTime.tryParse(
+            json['date']?.toString() ?? json['createdAt']?.toString() ?? '') ??
+        DateTime.now();
     return StockMovement(
-      id: json['id']?.toString() ?? '${json['referenceId'] ?? ''}-${json['productId'] ?? ''}-${json['type'] ?? ''}',
+      id: json['id']?.toString() ??
+          '${json['referenceId'] ?? ''}-${json['productId'] ?? ''}-${json['type'] ?? ''}',
       productId: json['productId']?.toString() ?? '',
       productName: json['productName']?.toString() ?? '',
       type: json['type']?.toString() ?? 'adjustment',
       quantity: (json['quantity'] as num? ?? 0).toDouble(),
       date: date,
-      referenceId: json['referenceId']?.toString() ?? json['saleId']?.toString() ?? json['purchaseId']?.toString() ?? '',
+      referenceId: json['referenceId']?.toString() ??
+          json['saleId']?.toString() ??
+          json['purchaseId']?.toString() ??
+          '',
       referenceNo: json['referenceNo']?.toString() ?? '',
       reason: json['reason']?.toString() ?? '',
-      adjustmentCategory: json['adjustmentCategory']?.toString() ?? json['category']?.toString() ?? '',
+      adjustmentCategory: json['adjustmentCategory']?.toString() ??
+          json['category']?.toString() ??
+          '',
       notes: json['notes']?.toString() ?? '',
       evidenceRef: json['evidenceRef']?.toString() ?? '',
       warehouseId: json['warehouseId']?.toString() ?? 'main',
       warehouseName: json['warehouseName']?.toString() ?? 'Main warehouse',
+      batchId: json['batchId']?.toString() ?? '',
       movementGroupId: json['movementGroupId']?.toString() ?? '',
       documentLineId: json['documentLineId']?.toString() ?? '',
       sourceMovementId: json['sourceMovementId']?.toString() ?? '',
@@ -183,7 +207,9 @@ class StockMovement {
       storeId: json['storeId']?.toString() ?? '',
       branchId: json['branchId']?.toString() ?? '',
       version: (json['version'] as num? ?? 1).toInt(),
-      lastModifiedByDeviceId: json['lastModifiedByDeviceId']?.toString() ?? json['deviceId']?.toString() ?? '',
+      lastModifiedByDeviceId: json['lastModifiedByDeviceId']?.toString() ??
+          json['deviceId']?.toString() ??
+          '',
       reviewedAt: DateTime.tryParse(json['reviewedAt']?.toString() ?? ''),
       reviewedBy: json['reviewedBy']?.toString() ?? '',
       reviewNote: json['reviewNote']?.toString() ?? '',

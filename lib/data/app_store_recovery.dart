@@ -98,6 +98,10 @@ class AppStoreRecoveryService {
           }
 
           await replaceSection('products', AppStore._productsKey, 'products');
+          await LocalDatabaseService.replaceInventoryBatchRowsImmediate(
+            batches: _snapshotListMaps(decoded, 'inventoryBatches'),
+            balances: _snapshotListMaps(decoded, 'inventoryBatchBalances'),
+          );
           await replaceSection(
               'customers', AppStore._customersKey, 'customers');
           await replaceSection('sales', AppStore._salesKey, 'sales');
@@ -449,6 +453,10 @@ class AppStoreRecoveryService {
 
           await mergeRows(
               AppStore._productsKey, _snapshotListMaps(decoded, 'products'));
+          await LocalDatabaseService.replaceInventoryBatchRowsImmediate(
+            batches: _snapshotListMaps(decoded, 'inventoryBatches'),
+            balances: _snapshotListMaps(decoded, 'inventoryBatchBalances'),
+          );
           await mergeRows(
               AppStore._customersKey, _snapshotListMaps(decoded, 'customers'));
           await mergeRows(
@@ -716,6 +724,12 @@ class AppStoreRecoveryService {
               ? const <Map<String, dynamic>>[]
               : _snapshotListMaps(decoded, 'syncQueue');
 
+          await replaceRows(
+              AppStore._productsKey, _snapshotListMaps(decoded, 'products'));
+          await LocalDatabaseService.replaceInventoryBatchRowsImmediate(
+            batches: _snapshotListMaps(decoded, 'inventoryBatches'),
+            balances: _snapshotListMaps(decoded, 'inventoryBatchBalances'),
+          );
           final writes = <Future<void>>[
             replaceRows(
                 AppStore._productsKey, _snapshotListMaps(decoded, 'products')),
@@ -883,6 +897,12 @@ class AppStoreRecoveryService {
           }
 
           await Future.wait(writes);
+          // Re-run document materialization after batch rows exist so the
+          // allocation child tables can satisfy their foreign keys.
+          await replaceRows(
+              AppStore._salesKey, _snapshotListMaps(decoded, 'sales'));
+          await replaceRows(
+              AppStore._purchasesKey, _snapshotListMaps(decoded, 'purchases'));
         });
         await LocalDatabaseService.flushPendingWrites();
       },

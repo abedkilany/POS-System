@@ -947,10 +947,10 @@ class StockTransactionService {
            sync_status, store_id, branch_id, version, sort_index, product_id,
            product_name, movement_type, quantity, movement_date, reference_id,
            reference_no, reason, adjustment_category, notes, evidence_ref,
-           warehouse_id, warehouse_name, movement_group_id, document_line_id,
+           warehouse_id, warehouse_name, batch_id, movement_group_id, document_line_id,
            source_movement_id, reversal_of_movement_id, idempotency_key, unit_cost,
            last_modified_by_device_id, reviewed_at, reviewed_by, review_note)
-        VALUES (?, 'stock_movement', ?, ?, '', ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, 'stock_movement', ?, ?, '', ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''',
         variables: <Variable<Object>>[
           Variable<String>(movement.id),
@@ -974,6 +974,7 @@ class StockTransactionService {
           Variable<String>(movement.evidenceRef),
           Variable<String>(movement.warehouseId),
           Variable<String>(movement.warehouseName),
+          Variable<String>(movement.batchId),
           Variable<String>(movement.movementGroupId),
           Variable<String>(movement.documentLineId),
           Variable<String>(movement.sourceMovementId),
