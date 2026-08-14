@@ -53,7 +53,8 @@ const List<StressLabCoverageEntry> stressLabCoverageManifest =
     seedsData: true,
     drivesUi: true,
     assertsState: true,
-    notes: 'Stress Lab now covers online login, registration, recovery gating, and cache routing for the login surface.',
+    notes:
+        'Stress Lab now covers online login, registration, recovery gating, and cache routing for the login surface.',
   ),
   StressLabCoverageEntry(
     pageKey: 'MainShell',
@@ -63,7 +64,8 @@ const List<StressLabCoverageEntry> stressLabCoverageManifest =
     seedsData: true,
     drivesUi: true,
     assertsState: true,
-    notes: 'Stress Lab now covers shell identity readiness, nav permissions, and admin/store routing branches.',
+    notes:
+        'Stress Lab now covers shell identity readiness, nav permissions, and admin/store routing branches.',
   ),
   StressLabCoverageEntry(
     pageKey: 'DashboardPage',
@@ -73,7 +75,8 @@ const List<StressLabCoverageEntry> stressLabCoverageManifest =
     seedsData: true,
     drivesUi: true,
     assertsState: true,
-    notes: 'Generated data and readiness checks now exercise the dashboard module end-to-end.',
+    notes:
+        'Generated data and readiness checks now exercise the dashboard module end-to-end.',
   ),
   StressLabCoverageEntry(
     pageKey: 'ProductsPage',
@@ -83,7 +86,8 @@ const List<StressLabCoverageEntry> stressLabCoverageManifest =
     seedsData: true,
     drivesUi: true,
     assertsState: true,
-    notes: 'Seed, mutations, pressure checks, and assertions cover the module end-to-end.',
+    notes:
+        'Seed, mutations, pressure checks, and assertions cover the module end-to-end.',
     requiredRole: 'manager',
   ),
   StressLabCoverageEntry(
@@ -94,7 +98,8 @@ const List<StressLabCoverageEntry> stressLabCoverageManifest =
     seedsData: true,
     drivesUi: true,
     assertsState: true,
-    notes: 'Seed, mutations, pressure checks, and assertions cover the module end-to-end.',
+    notes:
+        'Seed, mutations, pressure checks, and assertions cover the module end-to-end.',
     requiredRole: 'manager',
   ),
   StressLabCoverageEntry(
@@ -105,7 +110,8 @@ const List<StressLabCoverageEntry> stressLabCoverageManifest =
     seedsData: true,
     drivesUi: true,
     assertsState: true,
-    notes: 'Seed, mutations, pressure checks, and assertions cover the module end-to-end.',
+    notes:
+        'Seed, mutations, pressure checks, and assertions cover the module end-to-end.',
     requiredRole: 'manager',
   ),
   StressLabCoverageEntry(
@@ -116,7 +122,8 @@ const List<StressLabCoverageEntry> stressLabCoverageManifest =
     seedsData: true,
     drivesUi: true,
     assertsState: true,
-    notes: 'Sales creation, cancellation checks, stock references, and accounting assertions are covered.',
+    notes:
+        'Sales creation, cancellation checks, stock references, and accounting assertions are covered.',
     requiredRole: 'cashier',
   ),
   StressLabCoverageEntry(
@@ -127,7 +134,8 @@ const List<StressLabCoverageEntry> stressLabCoverageManifest =
     seedsData: true,
     drivesUi: true,
     assertsState: true,
-    notes: 'Stress Lab now creates, converts, and validates quotation flows together with downstream sales data.',
+    notes:
+        'Stress Lab now creates, converts, and validates quotation flows together with downstream sales data.',
     requiredRole: 'cashier',
   ),
   StressLabCoverageEntry(
@@ -138,7 +146,8 @@ const List<StressLabCoverageEntry> stressLabCoverageManifest =
     seedsData: true,
     drivesUi: true,
     assertsState: true,
-    notes: 'Stress Lab now creates, delivers, and validates delivery note linkage and reporting readiness.',
+    notes:
+        'Stress Lab now creates, delivers, and validates delivery note linkage and reporting readiness.',
     requiredRole: 'cashier',
   ),
   StressLabCoverageEntry(
@@ -149,7 +158,8 @@ const List<StressLabCoverageEntry> stressLabCoverageManifest =
     seedsData: true,
     drivesUi: true,
     assertsState: true,
-    notes: 'Purchase creation, receiving, stock links, and accounting checks are covered.',
+    notes:
+        'Purchase creation, receiving, stock links, and accounting checks are covered.',
     requiredRole: 'warehouse',
   ),
   StressLabCoverageEntry(
@@ -160,7 +170,8 @@ const List<StressLabCoverageEntry> stressLabCoverageManifest =
     seedsData: true,
     drivesUi: true,
     assertsState: true,
-    notes: 'Expense creation, posting, cancellation, and journal checks are covered.',
+    notes:
+        'Expense creation, posting, cancellation, and journal checks are covered.',
     requiredRole: 'manager',
   ),
   StressLabCoverageEntry(
@@ -171,7 +182,8 @@ const List<StressLabCoverageEntry> stressLabCoverageManifest =
     seedsData: true,
     drivesUi: true,
     assertsState: true,
-    notes: 'Stress Lab now covers journal posting, trial balance, cash drawer, and accounting assertions end-to-end.',
+    notes:
+        'Stress Lab now covers journal posting, trial balance, cash drawer, and accounting assertions end-to-end.',
     requiredRole: 'manager',
   ),
   StressLabCoverageEntry(
@@ -182,7 +194,8 @@ const List<StressLabCoverageEntry> stressLabCoverageManifest =
     seedsData: true,
     drivesUi: true,
     assertsState: true,
-    notes: 'Stock adjustments, transfers, counts, and integrity checks are covered.',
+    notes:
+        'Stock adjustments, transfers, batch-level counts, expiry disposal, FEFO, blocking, reconciliation, and integrity checks are covered.',
     requiredRole: 'warehouse',
   ),
   StressLabCoverageEntry(
@@ -193,7 +206,8 @@ const List<StressLabCoverageEntry> stressLabCoverageManifest =
     seedsData: true,
     drivesUi: true,
     assertsState: true,
-    notes: 'Stress Lab now creates BOMs and completed manufacturing orders and validates the stock impact.',
+    notes:
+        'Stress Lab creates BOMs and completed manufacturing orders, including multi-batch expiry-tracked outputs and FEFO component consumption.',
     requiredRole: 'warehouse',
   ),
   StressLabCoverageEntry(
@@ -204,7 +218,8 @@ const List<StressLabCoverageEntry> stressLabCoverageManifest =
     seedsData: true,
     drivesUi: true,
     assertsState: true,
-    notes: 'Stress Lab now ensures report-ready sources exist for financial, operational, and inventory reporting.',
+    notes:
+        'Stress Lab now ensures report-ready sources exist for financial, operational, and inventory reporting.',
     requiredRole: 'manager',
   ),
   StressLabCoverageEntry(
@@ -215,7 +230,8 @@ const List<StressLabCoverageEntry> stressLabCoverageManifest =
     seedsData: true,
     drivesUi: true,
     assertsState: true,
-    notes: 'Health checks, diagnostics, and repair flows are now exercised through the maintenance surface.',
+    notes:
+        'Health checks, diagnostics, and repair flows are now exercised through the maintenance surface.',
     requiredRole: 'manager',
   ),
   StressLabCoverageEntry(
@@ -226,7 +242,8 @@ const List<StressLabCoverageEntry> stressLabCoverageManifest =
     seedsData: true,
     drivesUi: true,
     assertsState: true,
-    notes: 'Database inspection, SQL validation, and export helpers are now covered.',
+    notes:
+        'Database inspection, SQL validation, and export helpers are now covered.',
     requiredRole: 'manager',
   ),
   StressLabCoverageEntry(
@@ -237,7 +254,8 @@ const List<StressLabCoverageEntry> stressLabCoverageManifest =
     seedsData: true,
     drivesUi: true,
     assertsState: true,
-    notes: 'Core settings data, persistence services, and major subpages are now covered.',
+    notes:
+        'Core settings data, persistence services, and major subpages are now covered.',
     requiredRole: 'manager',
   ),
   StressLabCoverageEntry(
@@ -248,7 +266,8 @@ const List<StressLabCoverageEntry> stressLabCoverageManifest =
     seedsData: true,
     drivesUi: true,
     assertsState: true,
-    notes: 'Stress Lab now covers subscriber loading, filtering, edit, and delete flows through the service layer.',
+    notes:
+        'Stress Lab now covers subscriber loading, filtering, edit, and delete flows through the service layer.',
     requiredRole: 'admin',
   ),
   StressLabCoverageEntry(
@@ -259,7 +278,8 @@ const List<StressLabCoverageEntry> stressLabCoverageManifest =
     seedsData: true,
     drivesUi: true,
     assertsState: true,
-    notes: 'Stress Lab now covers login/cache routing, password changes, owner profile updates, and recovery gating.',
+    notes:
+        'Stress Lab now covers login/cache routing, password changes, owner profile updates, and recovery gating.',
     requiredRole: 'admin',
   ),
   StressLabCoverageEntry(
@@ -270,7 +290,8 @@ const List<StressLabCoverageEntry> stressLabCoverageManifest =
     seedsData: true,
     drivesUi: true,
     assertsState: true,
-    notes: 'Platform admin routing and subscriber management are covered through the admin service probes.',
+    notes:
+        'Platform admin routing and subscriber management are covered through the admin service probes.',
     requiredRole: 'admin',
   ),
   StressLabCoverageEntry(
@@ -281,7 +302,8 @@ const List<StressLabCoverageEntry> stressLabCoverageManifest =
     seedsData: true,
     drivesUi: true,
     assertsState: true,
-    notes: 'Diagnostics now builds health reports, log snapshots, and coverage assertions end-to-end.',
+    notes:
+        'Diagnostics now builds health reports, log snapshots, and coverage assertions end-to-end.',
     requiredRole: 'manager',
   ),
   StressLabCoverageEntry(
@@ -292,7 +314,8 @@ const List<StressLabCoverageEntry> stressLabCoverageManifest =
     seedsData: true,
     drivesUi: true,
     assertsState: true,
-    notes: 'Sync settings persistence and pairing probes now cover the setup surface end-to-end.',
+    notes:
+        'Sync settings persistence and pairing probes now cover the setup surface end-to-end.',
     requiredRole: 'manager',
   ),
   StressLabCoverageEntry(
@@ -303,7 +326,8 @@ const List<StressLabCoverageEntry> stressLabCoverageManifest =
     seedsData: true,
     drivesUi: true,
     assertsState: true,
-    notes: 'Roles, demo users, and role mutation flows are now covered end-to-end.',
+    notes:
+        'Roles, demo users, and role mutation flows are now covered end-to-end.',
     requiredRole: 'manager',
   ),
   StressLabCoverageEntry(
@@ -314,7 +338,8 @@ const List<StressLabCoverageEntry> stressLabCoverageManifest =
     seedsData: true,
     drivesUi: true,
     assertsState: true,
-    notes: 'Scanner support detection and fallback behavior are now covered as part of the device tools journey.',
+    notes:
+        'Scanner support detection and fallback behavior are now covered as part of the device tools journey.',
     requiredRole: 'cashier',
   ),
   StressLabCoverageEntry(
@@ -325,7 +350,8 @@ const List<StressLabCoverageEntry> stressLabCoverageManifest =
     seedsData: true,
     drivesUi: true,
     assertsState: true,
-    notes: 'This is the tooling page itself; the runner is present, but it is not a business module.',
+    notes:
+        'This is the tooling page itself; the runner is present, but it is not a business module.',
     isToolingPage: true,
   ),
   StressLabCoverageEntry(
@@ -336,7 +362,8 @@ const List<StressLabCoverageEntry> stressLabCoverageManifest =
     seedsData: true,
     drivesUi: true,
     assertsState: true,
-    notes: 'Access-denied fallback coverage is now exercised through the protected surface probes.',
+    notes:
+        'Access-denied fallback coverage is now exercised through the protected surface probes.',
     isToolingPage: true,
   ),
 ];

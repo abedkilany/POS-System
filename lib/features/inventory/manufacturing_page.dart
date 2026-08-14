@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
+import '../../core/localization/localized_domain_exception.dart';
 
 import '../../data/app_store.dart';
 import '../../models/manufacturing.dart';
@@ -309,8 +310,9 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
       );
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(error.toString())));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content:
+              Text(localizedErrorText(AppLocalizations.of(context), error))));
     }
   }
 
@@ -459,8 +461,9 @@ class _ManufacturingPageState extends State<ManufacturingPage> {
       );
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(error.toString())));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content:
+              Text(localizedErrorText(AppLocalizations.of(context), error))));
     }
   }
 }

@@ -6,6 +6,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../core/localization/app_localizations.dart';
+import '../../core/localization/localized_domain_exception.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/utils/currency_utils.dart';
 import '../../core/utils/revision_cache.dart';
@@ -1030,8 +1031,9 @@ class _PurchasesPageState extends State<PurchasesPage> {
       setState(() {});
     } catch (error) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(error.toString())));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content:
+              Text(localizedErrorText(AppLocalizations.of(context), error))));
     }
   }
 
@@ -1161,8 +1163,9 @@ class _PurchasesPageState extends State<PurchasesPage> {
       setState(() {});
     } catch (error) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(error.toString())));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content:
+              Text(localizedErrorText(AppLocalizations.of(context), error))));
     }
   }
 
@@ -1197,8 +1200,9 @@ class _PurchasesPageState extends State<PurchasesPage> {
       setState(() {});
     } catch (error) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(error.toString())));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content:
+              Text(localizedErrorText(AppLocalizations.of(context), error))));
     }
   }
 
@@ -1252,8 +1256,9 @@ class _PurchasesPageState extends State<PurchasesPage> {
       setState(() {});
     } catch (error) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(error.toString())));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content:
+              Text(localizedErrorText(AppLocalizations.of(context), error))));
     }
   }
 
@@ -1692,7 +1697,10 @@ class _PurchasesPageState extends State<PurchasesPage> {
         supplierName = created.name;
         setDialogState(() {});
       } catch (error) {
-        if (mounted) showPurchaseError(error.toString());
+        if (context.mounted) {
+          showPurchaseError(
+              localizedErrorText(AppLocalizations.of(context), error));
+        }
       }
     }
 
@@ -1780,7 +1788,10 @@ class _PurchasesPageState extends State<PurchasesPage> {
         applySuggestedSupplierPrice();
         setDialogState(() {});
       } catch (error) {
-        if (mounted) showPurchaseError(error.toString());
+        if (context.mounted) {
+          showPurchaseError(
+              localizedErrorText(AppLocalizations.of(context), error));
+        }
       }
     }
 
@@ -2459,8 +2470,9 @@ class _PurchasesPageState extends State<PurchasesPage> {
         setState(() {});
       } catch (error) {
         if (dialogContext.mounted) {
-          ScaffoldMessenger.of(dialogContext)
-              .showSnackBar(SnackBar(content: Text(error.toString())));
+          ScaffoldMessenger.of(dialogContext).showSnackBar(SnackBar(
+              content: Text(
+                  localizedErrorText(AppLocalizations.of(context), error))));
         }
       }
     }

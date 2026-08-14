@@ -18,6 +18,7 @@ import '../core/services/startup_timing_service.dart';
 import '../core/services/sync_diagnostics_log.dart';
 import '../core/services/stock_transaction_service.dart';
 import '../core/services/batch_inventory_service.dart';
+import '../core/localization/localized_domain_exception.dart';
 import '../core/sync_unified/sync_device_state.dart';
 import '../core/snapshot/unified_snapshot.dart';
 import '../core/storage/sqlite/business_sqlite_store.dart';
@@ -12605,9 +12606,10 @@ class AppStore extends ChangeNotifier {
         .where((product) => product.expiryTrackingEnabled)
         .firstOrNull;
     if (expiryCountedProduct != null) {
-      throw StateError(
-        'Expiry-tracked products must be counted by batch. Remove ${expiryCountedProduct.name} from this aggregate count.',
-      );
+      throw LocalizedDomainException('error_count_expiry_product_by_batch',
+          values: {'product': expiryCountedProduct.name},
+          fallback:
+              'Expiry-tracked products must be counted by batch. Remove ${expiryCountedProduct.name} from this aggregate count.');
     }
     final now = DateTime.now();
     final sqliteDb = SqliteMigrationManager.database;
@@ -12838,7 +12840,8 @@ class AppStore extends ChangeNotifier {
     requirePermission(AppPermission.productsEdit);
     final db = SqliteMigrationManager.database;
     if (!LocalDatabaseService.isSqliteAuthoritative || db == null) {
-      throw StateError('Batch management requires the local database.');
+      throw const LocalizedDomainException('error_batch_database_required',
+          fallback: 'Batch management requires the local database.');
     }
     final now = DateTime.now();
     await db.transaction(
@@ -12909,11 +12912,14 @@ class AppStore extends ChangeNotifier {
     if (quantityDelta == 0) return;
     final product = _findProductById(productId);
     if (product == null || !product.expiryTrackingEnabled) {
-      throw StateError('Expiry-tracked product not found.');
+      throw const LocalizedDomainException(
+          'error_expiry_tracked_product_not_found',
+          fallback: 'Expiry-tracked product not found.');
     }
     final db = SqliteMigrationManager.database;
     if (!LocalDatabaseService.isSqliteAuthoritative || db == null) {
-      throw StateError('Batch management requires the local database.');
+      throw const LocalizedDomainException('error_batch_database_required',
+          fallback: 'Batch management requires the local database.');
     }
     final now = DateTime.now();
     final operationId = '${now.microsecondsSinceEpoch}-$batchId-batch-adjust';

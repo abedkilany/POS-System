@@ -2,6 +2,7 @@ import 'package:drift/drift.dart';
 
 import '../../models/inventory_batch.dart';
 import '../../models/product.dart';
+import '../localization/localized_domain_exception.dart';
 import '../storage/sqlite/ventio_drift_database.dart';
 
 /// Transactional batch/expiry inventory operations.
@@ -28,16 +29,19 @@ class BatchInventoryService {
   }) async {
     if (!product.expiryTrackingEnabled) return const <BatchAllocation>[];
     if (allocations.isEmpty) {
-      throw StateError('Expiry batches are required for ${product.name}.');
+      throw LocalizedDomainException('error_expiry_batches_required',
+          values: {'product': product.name},
+          fallback: 'Expiry batches are required for ${product.name}.');
     }
     final total = allocations.fold<double>(
       0,
       (sum, allocation) => sum + allocation.quantity,
     );
     if ((total - expectedQuantity).abs() > 0.000001) {
-      throw StateError(
-        'Batch quantities for ${product.name} must equal $expectedQuantity.',
-      );
+      throw LocalizedDomainException('error_batch_quantity_total',
+          values: {'product': product.name, 'quantity': expectedQuantity},
+          fallback:
+              'Batch quantities for ${product.name} must equal $expectedQuantity.');
     }
     final minimumExpiry = DateTime.utc(
       receivedAt.year,
@@ -49,16 +53,20 @@ class BatchInventoryService {
     for (var index = 0; index < allocations.length; index += 1) {
       final allocation = allocations[index];
       if (allocation.quantity <= 0) {
-        throw StateError('Batch quantity must be greater than zero.');
+        throw const LocalizedDomainException('error_batch_quantity_positive',
+            fallback: 'Batch quantity must be greater than zero.');
       }
       final expiry = allocation.expirationDate;
       if (product.expiryEntryRequired && expiry == null) {
-        throw StateError('Expiration date is required for ${product.name}.');
+        throw LocalizedDomainException('error_expiration_date_required',
+            values: {'product': product.name},
+            fallback: 'Expiration date is required for ${product.name}.');
       }
       if (expiry != null && expiry.isBefore(minimumExpiry)) {
-        throw StateError(
-          'The remaining shelf life for ${product.name} is below the allowed minimum.',
-        );
+        throw LocalizedDomainException('error_minimum_shelf_life',
+            values: {'product': product.name},
+            fallback:
+                'The remaining shelf life for ${product.name} is below the allowed minimum.');
       }
       final batchId = allocation.batchId.trim().isEmpty
           ? '$sourceId-batch-$index'
@@ -164,7 +172,9 @@ class BatchInventoryService {
       updates: const <TableInfo<Table, Object?>>{},
     );
     if (updated != 1) {
-      throw StateError('The batch does not exist or has insufficient stock.');
+      throw const LocalizedDomainException(
+          'error_batch_missing_or_insufficient',
+          fallback: 'The batch does not exist or has insufficient stock.');
     }
   }
 
@@ -176,7 +186,8 @@ class BatchInventoryService {
     required String deviceId,
   }) async {
     if (!const {'active', 'blocked', 'depleted', 'disposed'}.contains(status)) {
-      throw ArgumentError('Unsupported batch status.');
+      throw const LocalizedDomainException('error_unsupported_batch_status',
+          fallback: 'Unsupported batch status.');
     }
     final updated = await db.customUpdate(
       '''
@@ -195,7 +206,10 @@ class BatchInventoryService {
       ],
       updates: const <TableInfo<Table, Object?>>{},
     );
-    if (updated != 1) throw StateError('Batch not found.');
+    if (updated != 1) {
+      throw const LocalizedDomainException('error_batch_not_found',
+          fallback: 'Batch not found.');
+    }
   }
 
   Future<List<BatchAllocation>> receiveInTransaction({
@@ -212,16 +226,19 @@ class BatchInventoryService {
   }) async {
     if (!product.expiryTrackingEnabled) return const <BatchAllocation>[];
     if (allocations.isEmpty) {
-      throw StateError('Expiry batches are required for ${product.name}.');
+      throw LocalizedDomainException('error_expiry_batches_required',
+          values: {'product': product.name},
+          fallback: 'Expiry batches are required for ${product.name}.');
     }
     final allocatedQuantity = allocations.fold<double>(
       0,
       (sum, allocation) => sum + allocation.quantity,
     );
     if ((allocatedQuantity - expectedQuantity).abs() > 0.000001) {
-      throw StateError(
-        'Batch quantities for ${product.name} must equal $expectedQuantity.',
-      );
+      throw LocalizedDomainException('error_batch_quantity_total',
+          values: {'product': product.name, 'quantity': expectedQuantity},
+          fallback:
+              'Batch quantities for ${product.name} must equal $expectedQuantity.');
     }
 
     final nowText = receivedAt.toUtc().toIso8601String();
@@ -237,16 +254,20 @@ class BatchInventoryService {
     for (var index = 0; index < allocations.length; index += 1) {
       final allocation = allocations[index];
       if (allocation.quantity <= 0) {
-        throw StateError('Batch quantity must be greater than zero.');
+        throw const LocalizedDomainException('error_batch_quantity_positive',
+            fallback: 'Batch quantity must be greater than zero.');
       }
       final expiry = allocation.expirationDate;
       if (product.expiryEntryRequired && expiry == null) {
-        throw StateError('Expiration date is required for ${product.name}.');
+        throw LocalizedDomainException('error_expiration_date_required',
+            values: {'product': product.name},
+            fallback: 'Expiration date is required for ${product.name}.');
       }
       if (expiry != null && expiry.isBefore(minimumExpiry)) {
-        throw StateError(
-          'The remaining shelf life for ${product.name} is below the allowed minimum.',
-        );
+        throw LocalizedDomainException('error_minimum_shelf_life',
+            values: {'product': product.name},
+            fallback:
+                'The remaining shelf life for ${product.name} is below the allowed minimum.');
       }
       final batchId = allocation.batchId.trim().isEmpty
           ? '$purchaseId-batch-$purchaseLineIndex-$index'
@@ -416,9 +437,10 @@ class BatchInventoryService {
       remaining -= used;
     }
     if (remaining > 0.000001) {
-      throw StateError(
-        'Insufficient non-expired batch stock for ${product.name}.',
-      );
+      throw LocalizedDomainException('error_insufficient_valid_batch_stock',
+          values: {'product': product.name},
+          fallback:
+              'Insufficient non-expired batch stock for ${product.name}.');
     }
     return allocations;
   }
@@ -453,7 +475,9 @@ class BatchInventoryService {
         updates: const <TableInfo<Table, Object?>>{},
       );
       if (updated != 1) {
-        throw StateError('Batch ${allocation.batchId} no longer exists.');
+        throw LocalizedDomainException('error_batch_no_longer_exists',
+            values: {'batch': allocation.batchId},
+            fallback: 'Batch ${allocation.batchId} no longer exists.');
       }
     }
   }

@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../../core/localization/app_localizations.dart';
+import '../../core/localization/localized_domain_exception.dart';
 import '../../core/services/local_database_service.dart';
 import '../../core/utils/responsive.dart';
 import '../../core/utils/currency_utils.dart';
@@ -277,7 +278,10 @@ class _ExpiryBatchesTabState extends State<_ExpiryBatchesTab> {
                         } catch (error) {
                           if (context.mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text(error.toString())),
+                              SnackBar(
+                                content: Text(localizedErrorText(
+                                    AppLocalizations.of(context), error)),
+                              ),
                             );
                           }
                         }
@@ -799,8 +803,9 @@ class _InventoryPageState extends State<InventoryPage>
                   if (mounted) setState(() {});
                 } catch (error) {
                   if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(error.toString())));
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                        content: Text(localizedErrorText(
+                            AppLocalizations.of(context), error))));
                   }
                 }
               },
@@ -1186,8 +1191,9 @@ class _WarehousesTabState extends State<_WarehousesTab> {
                 if (mounted) setState(() {});
               } catch (error) {
                 if (context.mounted) {
-                  ScaffoldMessenger.of(context)
-                      .showSnackBar(SnackBar(content: Text(error.toString())));
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                      content: Text(localizedErrorText(
+                          AppLocalizations.of(context), error))));
                 }
               }
             },
@@ -1282,8 +1288,9 @@ class _WarehousesTabState extends State<_WarehousesTab> {
                   if (mounted) setState(() {});
                 } catch (error) {
                   if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(error.toString())));
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                        content: Text(localizedErrorText(
+                            AppLocalizations.of(context), error))));
                   }
                 }
               },
@@ -1896,8 +1903,9 @@ class _AutoCorrectionsTabState extends State<_AutoCorrectionsTab> {
       }
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(error.toString())));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content:
+                Text(localizedErrorText(AppLocalizations.of(context), error))));
       }
     }
   }
@@ -2258,8 +2266,9 @@ class _StockCountTabState extends State<_StockCountTab> {
       if (mounted) setState(() {});
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(error.toString())));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content:
+                Text(localizedErrorText(AppLocalizations.of(context), error))));
       }
     }
   }
@@ -2270,8 +2279,9 @@ class _StockCountTabState extends State<_StockCountTab> {
       if (mounted) setState(() {});
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(error.toString())));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content:
+                Text(localizedErrorText(AppLocalizations.of(context), error))));
       }
     }
   }
@@ -2282,8 +2292,9 @@ class _StockCountTabState extends State<_StockCountTab> {
       if (mounted) setState(() {});
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(error.toString())));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content:
+                Text(localizedErrorText(AppLocalizations.of(context), error))));
       }
     }
   }
@@ -2357,8 +2368,9 @@ class _StockCountProductTile extends StatelessWidget {
           sessionId: activeSessionId, productId: product.id, countedQty: value);
     } catch (error) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(error.toString())));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content:
+                Text(localizedErrorText(AppLocalizations.of(context), error))));
       }
     }
   }

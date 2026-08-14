@@ -23,6 +23,7 @@ import '../../core/services/accounting_service.dart';
 import '../../core/services/sql_result_export_service.dart';
 import '../../core/sync_unified/sync_unified.dart';
 import '../../core/storage/sqlite/business_sqlite_store.dart';
+import '../../core/storage/sqlite/sqlite_migration_manager.dart';
 import '../../data/app_store.dart';
 import 'stress_lab_coverage_manifest.dart';
 import '../../models/app_identity.dart';
@@ -41,6 +42,7 @@ import '../../models/sale_item.dart';
 import '../../models/sale.dart';
 import '../../models/store_profile.dart';
 import '../../models/stock_movement.dart';
+import '../../models/inventory_batch.dart';
 import '../../models/supplier.dart';
 import '../../models/supplier_product_price.dart';
 import '../../models/manufacturing.dart';
@@ -3353,6 +3355,504 @@ class _StressLabPageState extends State<StressLabPage> {
     _addLog('PERF_STEP $status [$section] $name $details');
   }
 
+  Future<void> _runExpiryBatchLifecycle({
+    required Supplier supplier,
+    required Customer customer,
+  }) async {
+    final section = _dual('دورة الصلاحية والدفعات', 'Expiry & Batch Lifecycle');
+    final now = DateTime.now();
+    final warehouse = store.resolveWarehouseForPurchase();
+    final expiryProduct = await _auditStep<Product>(
+      section,
+      _dual('إنشاء منتج خاضع للصلاحية', 'Create expiry-tracked product'),
+      () async {
+        final product = Product(
+          id: '${_currentBatchId}_expiry_food',
+          name: '[STRESS-EXP] Food $_currentBatchId',
+          nameEn: 'Stress Expiry Food',
+          nameAr: 'منتج صلاحية اختباري',
+          code: 'STRESS-EXP-${now.microsecondsSinceEpoch}',
+          price: 9,
+          cost: 4,
+          usdCost: 4,
+          stock: 0,
+          category: 'Stress Expiry',
+          unit: 'pcs',
+          trackStock: true,
+          expiryTrackingEnabled: true,
+          expiryEntryRequired: true,
+          expiryAlertDays: 45,
+          minimumReceiptShelfLifeDays: 0,
+        );
+        await store.addOrUpdateProduct(product);
+        return product;
+      },
+      successDetails: (product) =>
+          'product=${product.id} expiryTracking=${product.expiryTrackingEnabled}',
+    );
+    if (expiryProduct == null) return;
+
+    final earlyExpiry =
+        DateTime(now.year, now.month, now.day).add(const Duration(days: 20));
+    final lateExpiry =
+        DateTime(now.year, now.month, now.day).add(const Duration(days: 80));
+    final earlyBatchId = '${_currentBatchId}_exp_early';
+    final lateBatchId = '${_currentBatchId}_exp_late';
+    final purchase = await _auditStep<Purchase>(
+      section,
+      _dual('استلام دفعتين بتواريخ مختلفة',
+          'Receive two batches with different expiry dates'),
+      () => store.createPurchase(
+        supplierId: supplier.id,
+        supplierName: supplier.name,
+        receiveNow: true,
+        paymentStatus: 'paid',
+        paymentMethod: 'Card',
+        warehouseId: warehouse.id,
+        warehouseName: warehouse.name,
+        note: 'STRESS-EXP multi-batch receipt $_currentBatchId',
+        items: <PurchaseItem>[
+          PurchaseItem(
+            productId: expiryProduct.id,
+            productName: expiryProduct.name,
+            quantity: 10,
+            unitCost: expiryProduct.cost,
+            batchAllocations: <BatchAllocation>[
+              BatchAllocation(
+                batchId: lateBatchId,
+                quantity: 6,
+                supplierBatchNumber: 'LATE-$_currentBatchId',
+                expirationDate: lateExpiry,
+              ),
+              BatchAllocation(
+                batchId: earlyBatchId,
+                quantity: 4,
+                supplierBatchNumber: 'EARLY-$_currentBatchId',
+                expirationDate: earlyExpiry,
+              ),
+            ],
+          ),
+        ],
+      ),
+      successDetails: (value) =>
+          'purchase=${value.purchaseNo} batches=2 quantity=10',
+    );
+    if (purchase == null) return;
+
+    Future<List<Map<String, dynamic>>> rows() async =>
+        (await LocalDatabaseService.getExpiryBatchReportFromSqlite() ??
+                const [])
+            .where((row) => row['productId'] == expiryProduct.id)
+            .toList(growable: false);
+    double batchQuantity(
+      List<Map<String, dynamic>> values,
+      String batchId, {
+      String? warehouseId,
+    }) =>
+        values
+            .where((row) =>
+                row['batchId'] == batchId &&
+                (warehouseId == null || row['warehouseId'] == warehouseId))
+            .fold<double>(
+                0, (sum, row) => sum + (row['quantity'] as num).toDouble());
+
+    var reportRows = await rows();
+    _auditCheck(
+      section,
+      _dual('تطابق كميات الاستلام', 'Receipt batch quantity consistency'),
+      (batchQuantity(reportRows, earlyBatchId) - 4).abs() < .000001 &&
+          (batchQuantity(reportRows, lateBatchId) - 6).abs() < .000001,
+      'expected early=4 late=6 actual early=${batchQuantity(reportRows, earlyBatchId)} late=${batchQuantity(reportRows, lateBatchId)}',
+      'Batch receipt mismatch: early=${batchQuantity(reportRows, earlyBatchId)} late=${batchQuantity(reportRows, lateBatchId)}',
+    );
+
+    final expiredFixtureId = '${_currentBatchId}_exp_expired_fixture';
+    await store.createPurchase(
+      supplierId: supplier.id,
+      supplierName: supplier.name,
+      receiveNow: true,
+      paymentStatus: 'paid',
+      paymentMethod: 'Card',
+      warehouseId: warehouse.id,
+      warehouseName: warehouse.name,
+      note: 'STRESS-EXP fixture that will be aged after receipt',
+      items: <PurchaseItem>[
+        PurchaseItem(
+          productId: expiryProduct.id,
+          productName: expiryProduct.name,
+          quantity: 2,
+          unitCost: expiryProduct.cost,
+          batchAllocations: <BatchAllocation>[
+            BatchAllocation(
+              batchId: expiredFixtureId,
+              quantity: 2,
+              expirationDate: now.add(const Duration(days: 10)),
+            ),
+          ],
+        ),
+      ],
+    );
+    await SqliteMigrationManager.database?.customStatement(
+      'UPDATE inventory_batches SET expiration_date = ? WHERE id = ?',
+      <Object?>[
+        now.subtract(const Duration(days: 1)).toUtc().toIso8601String(),
+        expiredFixtureId,
+      ],
+    );
+
+    Future<bool> rejects(Future<void> Function() action) async {
+      try {
+        await action();
+        return false;
+      } catch (_) {
+        return true;
+      }
+    }
+
+    final mismatchRejected = await rejects(() async {
+      await store.createPurchase(
+        supplierId: supplier.id,
+        supplierName: supplier.name,
+        receiveNow: true,
+        paymentStatus: 'paid',
+        paymentMethod: 'Card',
+        warehouseId: warehouse.id,
+        warehouseName: warehouse.name,
+        note: 'STRESS-EXP expected rejection quantity mismatch',
+        items: <PurchaseItem>[
+          PurchaseItem(
+            productId: expiryProduct.id,
+            productName: expiryProduct.name,
+            quantity: 3,
+            unitCost: expiryProduct.cost,
+            batchAllocations: <BatchAllocation>[
+              BatchAllocation(
+                batchId: '${_currentBatchId}_invalid_total',
+                quantity: 2,
+                expirationDate: lateExpiry,
+              ),
+            ],
+          ),
+        ],
+      );
+    });
+    final expiredRejected = await rejects(() async {
+      await store.createPurchase(
+        supplierId: supplier.id,
+        supplierName: supplier.name,
+        receiveNow: true,
+        paymentStatus: 'paid',
+        paymentMethod: 'Card',
+        warehouseId: warehouse.id,
+        warehouseName: warehouse.name,
+        note: 'STRESS-EXP expected rejection expired receipt',
+        items: <PurchaseItem>[
+          PurchaseItem(
+            productId: expiryProduct.id,
+            productName: expiryProduct.name,
+            quantity: 1,
+            unitCost: expiryProduct.cost,
+            batchAllocations: <BatchAllocation>[
+              BatchAllocation(
+                batchId: '${_currentBatchId}_invalid_expired',
+                quantity: 1,
+                expirationDate: now.subtract(const Duration(days: 1)),
+              ),
+            ],
+          ),
+        ],
+      );
+    });
+    _auditCheck(
+      section,
+      _dual('رفض بيانات الدفعات غير الصالحة', 'Reject invalid batch receipts'),
+      mismatchRejected && expiredRejected,
+      'quantityMismatchRejected=$mismatchRejected expiredReceiptRejected=$expiredRejected',
+      'Expected rejections missing: quantityMismatch=$mismatchRejected expired=$expiredRejected',
+    );
+
+    final fefoSale = await _auditStep<Sale>(
+      section,
+      _dual('بيع يمتد على دفعتين وفق FEFO', 'Sell across batches using FEFO'),
+      () => store.createSale(
+        customerName: customer.name,
+        customerId: customer.id,
+        items: <SaleItem>[
+          SaleItem(
+            productId: expiryProduct.id,
+            productName: expiryProduct.name,
+            unitPrice: expiryProduct.price,
+            quantity: 7,
+            unitCost: expiryProduct.cost,
+          ),
+        ],
+        paymentMethod: 'Card',
+        paymentStatus: 'paid',
+        warehouseId: warehouse.id,
+        warehouseName: warehouse.name,
+      ),
+      successDetails: (sale) => 'sale=${sale.invoiceNo}',
+    );
+    if (fefoSale == null) return;
+    final saleAllocations = fefoSale.items.single.batchAllocations;
+    _auditCheck(
+      section,
+      'FEFO ordering',
+      saleAllocations.length == 2 &&
+          saleAllocations
+              .every((allocation) => allocation.batchId != expiredFixtureId) &&
+          saleAllocations.first.batchId == earlyBatchId &&
+          (saleAllocations.first.quantity - 4).abs() < .000001 &&
+          saleAllocations.last.batchId == lateBatchId &&
+          (saleAllocations.last.quantity - 3).abs() < .000001,
+      'expected=expired excluded,early:4,late:3 actual=${saleAllocations.map((item) => '${item.batchId}:${item.quantity}').join(',')}',
+      'FEFO allocation mismatch actual=${saleAllocations.map((item) => '${item.batchId}:${item.quantity}').join(',')}',
+    );
+    await _auditStep<void>(
+      section,
+      _dual('إرجاع الكمية إلى الدفعات الأصلية',
+          'Return stock to original batches'),
+      () => store.returnSale(fefoSale.id, restoreStock: true),
+    );
+    reportRows = await rows();
+    _auditCheck(
+      section,
+      'Return-to-original-batch',
+      (batchQuantity(reportRows, earlyBatchId) - 4).abs() < .000001 &&
+          (batchQuantity(reportRows, lateBatchId) - 6).abs() < .000001,
+      'early=4 late=6 restored exactly',
+      'Restored balances differ: early=${batchQuantity(reportRows, earlyBatchId)} late=${batchQuantity(reportRows, lateBatchId)}',
+    );
+
+    await store.setExpiryBatchStatus(earlyBatchId, 'blocked');
+    final blockedSale = await store.createSale(
+      customerName: customer.name,
+      customerId: customer.id,
+      items: <SaleItem>[
+        SaleItem(
+          productId: expiryProduct.id,
+          productName: expiryProduct.name,
+          unitPrice: expiryProduct.price,
+          quantity: 2,
+          unitCost: expiryProduct.cost,
+        ),
+      ],
+      paymentMethod: 'Card',
+      paymentStatus: 'paid',
+      warehouseId: warehouse.id,
+      warehouseName: warehouse.name,
+    );
+    final blockedExcluded = blockedSale.items.single.batchAllocations
+        .every((allocation) => allocation.batchId != earlyBatchId);
+    await store.cancelSale(blockedSale.id, restoreStock: true);
+    await store.setExpiryBatchStatus(earlyBatchId, 'active');
+    _auditCheck(
+      section,
+      'Blocked batch exclusion',
+      blockedExcluded,
+      'blockedBatch=$earlyBatchId was skipped and then reactivated',
+      'Blocked batch $earlyBatchId was allocated to sale',
+    );
+
+    var destination = store.warehouses
+        .where((item) => item.id != warehouse.id && !item.isDeleted)
+        .firstOrNull;
+    destination ??= await store.createWarehouse(
+      name: '[STRESS-EXP] Warehouse $_currentBatchId',
+    );
+    await store.transferStock(
+      productId: expiryProduct.id,
+      fromWarehouseId: warehouse.id,
+      toWarehouseId: destination.id,
+      quantity: 5,
+      notes: 'STRESS-EXP preserve batch identity',
+    );
+    reportRows = await rows();
+    final transferIdentityOk = (batchQuantity(reportRows, earlyBatchId,
+                        warehouseId: destination.id) -
+                    4)
+                .abs() <
+            .000001 &&
+        (batchQuantity(reportRows, lateBatchId, warehouseId: destination.id) -
+                    1)
+                .abs() <
+            .000001;
+    _auditCheck(
+      section,
+      'Cross-warehouse batch identity',
+      transferIdentityOk,
+      'destination=${destination.id} early=4 late=1 identities preserved',
+      'Destination batches do not match transferred identities/quantities',
+    );
+
+    await store.adjustExpiryBatchStock(
+      productId: expiryProduct.id,
+      warehouseId: destination.id,
+      batchId: earlyBatchId,
+      quantityDelta: -1,
+      reason: 'STRESS-EXP batch count shortage',
+      adjustmentCategory: 'stock_count_shortage',
+    );
+    await store.adjustExpiryBatchStock(
+      productId: expiryProduct.id,
+      warehouseId: destination.id,
+      batchId: earlyBatchId,
+      quantityDelta: -1,
+      reason: 'STRESS-EXP expired disposal',
+      adjustmentCategory: 'expired',
+    );
+    reportRows = await rows();
+    _auditCheck(
+      section,
+      _dual('الجرد والإتلاف حسب الدفعة', 'Batch count and disposal'),
+      (batchQuantity(reportRows, earlyBatchId, warehouseId: destination.id) - 2)
+              .abs() <
+          .000001,
+      'expected destination early batch=2 after count and disposal',
+      'actual destination early=${batchQuantity(reportRows, earlyBatchId, warehouseId: destination.id)}',
+    );
+
+    await store.adjustExpiryBatchStock(
+      productId: expiryProduct.id,
+      warehouseId: warehouse.id,
+      batchId: expiredFixtureId,
+      quantityDelta: -2,
+      reason: 'STRESS-EXP full expired batch disposal',
+      adjustmentCategory: 'expired',
+    );
+    await store.setExpiryBatchStatus(expiredFixtureId, 'disposed');
+    reportRows = await rows();
+    final disposedRow = reportRows
+        .where((row) => row['batchId'] == expiredFixtureId)
+        .firstOrNull;
+    _auditCheck(
+      section,
+      _dual('إتلاف دفعة منتهية بالكامل', 'Full expired batch disposal'),
+      disposedRow != null &&
+          disposedRow['status'] == 'disposed' &&
+          (disposedRow['quantity'] as num).toDouble().abs() < .000001,
+      'batch=$expiredFixtureId status=disposed quantity=0',
+      'Disposed batch state mismatch: $disposedRow',
+    );
+
+    final outputProduct = await _auditStep<Product>(
+      section,
+      _dual('إنشاء منتج تصنيع بصلاحية',
+          'Create expiry-tracked manufacturing output'),
+      () async {
+        final product = Product(
+          id: '${_currentBatchId}_expiry_output',
+          name: '[STRESS-EXP] Manufactured $_currentBatchId',
+          code: 'STRESS-EXP-MFG-${now.microsecondsSinceEpoch}',
+          price: 14,
+          cost: 4,
+          usdCost: 4,
+          stock: 0,
+          category: 'Stress Expiry',
+          unit: 'pcs',
+          trackStock: true,
+          expiryTrackingEnabled: true,
+          expiryEntryRequired: true,
+        );
+        await store.addOrUpdateProduct(product);
+        return product;
+      },
+    );
+    if (outputProduct != null) {
+      final bom = await store.createBillOfMaterials(
+        name: '[STRESS-EXP] BOM $_currentBatchId',
+        outputProductId: outputProduct.id,
+        outputQuantity: 1,
+        components: <BillOfMaterialsLine>[
+          BillOfMaterialsLine(
+            productId: expiryProduct.id,
+            productName: expiryProduct.name,
+            quantity: 1,
+            unitCost: expiryProduct.cost,
+          ),
+        ],
+        notes: 'STRESS-EXP FEFO manufacturing consumption',
+      );
+      await store.completeManufacturingOrder(
+        bomId: bom.id,
+        quantity: 2,
+        rawMaterialsWarehouseId: warehouse.id,
+        finishedGoodsWarehouseId: warehouse.id,
+        notes: 'STRESS-EXP manufacturing output batches',
+        outputBatchAllocations: <BatchAllocation>[
+          BatchAllocation(
+            batchId: '${_currentBatchId}_mfg_early',
+            quantity: 1,
+            expirationDate: earlyExpiry,
+          ),
+          BatchAllocation(
+            batchId: '${_currentBatchId}_mfg_late',
+            quantity: 1,
+            expirationDate: lateExpiry,
+          ),
+        ],
+      );
+      final outputRows =
+          (await LocalDatabaseService.getExpiryBatchReportFromSqlite() ??
+                  const [])
+              .where((row) => row['productId'] == outputProduct.id)
+              .toList();
+      _auditCheck(
+        section,
+        _dual('دفعات ناتج التصنيع', 'Manufacturing output batches'),
+        outputRows.length == 2 &&
+            outputRows.fold<double>(0,
+                    (sum, row) => sum + (row['quantity'] as num).toDouble()) ==
+                2,
+        'outputBatches=2 outputQuantity=2',
+        'Manufacturing output batches are missing or inconsistent: $outputRows',
+      );
+    }
+
+    reportRows = await rows();
+    final batchTotal = reportRows.fold<double>(
+        0, (sum, row) => sum + (row['quantity'] as num).toDouble());
+    final aggregate =
+        await store.totalWarehouseStockFromSqlite(expiryProduct.id);
+    _auditCheck(
+      section,
+      'Batch/aggregate reconciliation',
+      (batchTotal - aggregate).abs() < .000001,
+      'expected=batchTotal actual=aggregate value=$aggregate',
+      'batchTotal=$batchTotal aggregate=$aggregate difference=${batchTotal - aggregate}',
+    );
+
+    final backup =
+        jsonDecode(await store.exportBackupJson()) as Map<String, dynamic>;
+    final backupText = jsonEncode(backup);
+    final backupPreserved = backupText.contains(earlyBatchId) &&
+        backupText.contains(lateBatchId) &&
+        backupText.contains(earlyExpiry.toIso8601String().substring(0, 10));
+    _auditCheck(
+      section,
+      'Backup batch preservation',
+      backupPreserved,
+      'backup contains batch ids and expiry dates',
+      'backup is missing expiry lifecycle batch metadata',
+    );
+
+    final batchMovements = store.stockMovements
+        .where((movement) =>
+            movement.productId == expiryProduct.id &&
+            movement.batchId.isNotEmpty)
+        .toList();
+    _auditCheck(
+      section,
+      'Batch movement sync payload readiness',
+      batchMovements.isNotEmpty &&
+          batchMovements.every((movement) =>
+              movement.toJson()['batchId'] == movement.batchId &&
+              movement.idempotencyKey.isNotEmpty),
+      'batchMovements=${batchMovements.length} all carry batchId and idempotencyKey',
+      'Some expiry movements cannot be replayed idempotently: count=${batchMovements.length}',
+    );
+  }
+
   Future<void> _runPressureAudit({
     required List<Product> baseProducts,
     required Customer? baseCustomer,
@@ -3937,6 +4437,25 @@ class _StressLabPageState extends State<StressLabPage> {
                   'تم تنفيذ أمر تصنيع ${order.orderNo}.',
                   'Manufacturing order ${order.orderNo} completed.'));
         }
+      }
+
+      _setStatus(
+          _dual('اختبار دورة الصلاحية والدفعات...',
+              'Running expiry and batch lifecycle...'),
+          progress: 0.58);
+      if (supplier != null && customer != null) {
+        await _runExpiryBatchLifecycle(
+          supplier: supplier,
+          customer: customer,
+        );
+      } else {
+        _auditCheck(
+          _dual('دورة الصلاحية والدفعات', 'Expiry & Batch Lifecycle'),
+          _dual('توفر بيانات السيناريو', 'Scenario prerequisites'),
+          false,
+          '',
+          'Supplier or customer setup failed; expiry lifecycle was skipped.',
+        );
       }
 
       _setStatus(

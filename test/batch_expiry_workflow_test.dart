@@ -1,6 +1,7 @@
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ventio/core/services/batch_inventory_service.dart';
+import 'package:ventio/core/localization/localized_domain_exception.dart';
 import 'package:ventio/core/storage/sqlite/business_sqlite_store.dart';
 import 'package:ventio/core/storage/sqlite/ventio_drift_database.dart';
 import 'package:ventio/models/inventory_batch.dart';
@@ -221,7 +222,7 @@ void main() {
             branchId: 'main',
             deviceId: 'device-1',
           )),
-      throwsStateError,
+      throwsA(isA<LocalizedDomainException>()),
     );
   });
 
@@ -304,7 +305,7 @@ void main() {
             storeId: 'store-1',
             deviceId: 'device-1',
           )),
-      throwsStateError,
+      throwsA(isA<LocalizedDomainException>()),
     );
   });
 }
