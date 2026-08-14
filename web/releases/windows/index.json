@@ -5,9 +5,9 @@
                          "url":  "/releases/windows/VentioSetup-1.0.12-build12.exe",
                          "version":  "1.0.12",
                          "build":  12,
-                         "size":  24383529,
-                         "sha256":  "512de37e18c26a45b1b2802981d06c359964e10a073d9668ff8dbc1952d34a29",
-                         "publishedAt":  "2026-08-14T15:27:25Z"
+                         "size":  24384846,
+                         "sha256":  "2f032f8d127ffb73c0c4736193391e0703b7010b15575b919ae5829e26d6879c",
+                         "publishedAt":  "2026-08-14T16:11:36Z"
                      },
                      {
                          "name":  "VentioSetup-1.0.11-build11.exe",

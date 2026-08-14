@@ -868,6 +868,7 @@ class _StressLabPageState extends State<StressLabPage> {
     required _StressLabScenarioDefinition scenario,
     required Future<void> Function() body,
   }) async {
+    final protectedState = _captureProtectedState();
     _addLog(
         '========== VENTIO SCENARIO START id=${scenario.id} title="${scenario.title}" kind=${scenario.kind.name} ==========');
     final startedAt = DateTime.now();
@@ -880,9 +881,52 @@ class _StressLabPageState extends State<StressLabPage> {
           'SCENARIO_FAILED id=${scenario.id} title="${scenario.title}" error=$error');
       rethrow;
     } finally {
+      _assertProtectedStateUnchanged(protectedState, scenario.id);
       _addLog(
           '========== VENTIO SCENARIO END id=${scenario.id} title="${scenario.title}" ==========');
     }
+  }
+
+  Map<String, String> _captureProtectedState() {
+    const protectedKeys = <String>[
+      'app_identity_v1',
+      'sync_device_id_v1',
+      'account_auth_cache_v1',
+      'direct_sync_settings_v1',
+      'direct_device_private_key_v1',
+      'direct_device_public_key_v1',
+      'direct_trusted_peer_keys_v1',
+      'lan_sync_settings_v2',
+      'vps_api_base_url',
+      'direct_control_auto_sync_enabled',
+      'direct_control_auto_sync_interval_seconds',
+    ];
+    final systemUsers = store.users
+        .where((user) => user.isSystem)
+        .map((user) => user.toJson())
+        .toList(growable: false)
+      ..sort((a, b) =>
+          (a['id'] ?? '').toString().compareTo((b['id'] ?? '').toString()));
+    return <String, String>{
+      for (final key in protectedKeys)
+        'storage:$key': LocalDatabaseService.getString(key) ?? '<missing>',
+      'runtime:identity': jsonEncode(store.appIdentity.toJson()),
+      'runtime:system_users': jsonEncode(systemUsers),
+    };
+  }
+
+  void _assertProtectedStateUnchanged(
+      Map<String, String> before, String scenarioId) {
+    final after = _captureProtectedState();
+    final changed = before.keys
+        .where((key) => before[key] != after[key])
+        .toList(growable: false);
+    if (changed.isEmpty) return;
+    _addLog(
+        'PROTECTED_STATE_VIOLATION scenario=$scenarioId keys=${changed.join(',')}');
+    throw StateError(
+      'Stress Lab blocked a protected Store/account change in $scenarioId: ${changed.join(', ')}',
+    );
   }
 
   Future<void> _runFullSimulation() async {
@@ -1369,64 +1413,14 @@ class _StressLabPageState extends State<StressLabPage> {
   }
 
   Future<void> _runActiveSync() async {
-    final identity = store.appIdentity;
-    _setStatus('Running active sync...', progress: 0.84);
+    _setStatus('Inspecting sync state...', progress: 0.84);
     _addLog(_snapshotLine('BEFORE_SYNC'));
     final effectiveTransport = _effectiveSyncTransport();
-    await _measure(
-        'Active sync role=${_roleLabel()} transport=$effectiveTransport',
+    await _measure('Offline sync inspection transport=$effectiveTransport',
         () async {
-      // Important diagnostic fix:
-      // A Host must never run the LAN client push/pull/rebuild flow. Its LAN role
-      // is to keep serving local clients. When Direct is enabled, the Host's
-      // active sync responsibility is to publish its authoritative changes to
-      // Direct so Direct clients can pull the complete store state.
-      if (identity.isHost) {
-        if (effectiveTransport == 'direct') {
-          _addLog(
-              'Host active sync route: Direct host push/pull. LAN host will not run client pull.');
-          final result =
-              await UnifiedSyncFactory.directEngine(store, enabled: true)
-                  .syncNow(onProgress: (value, label) {
-            _setStatus('Host Direct Sync: $label',
-                progress: 0.84 + 0.10 * value);
-            _addLog(
-                'Sync progress ${(value * 100).toStringAsFixed(0)}% $label');
-          });
-          _addLog(
-              'Sync result ok=${result.ok} message=${result.message} cursor=${result.cursor.value} source=${result.cursor.source}');
-          return;
-        }
-
-        if (effectiveTransport == 'lan') {
-          _addLog(
-              'Host active sync route: LAN host only. No LAN client pull will run on Host.');
-          final result = await UnifiedSyncFactory.lanEngine(store)
-              .registerCurrentHost(transportName: 'lan');
-          _addLog(
-              'Sync result ok=${result.ok} message=${result.message} cursor=${result.cursor.value} source=${result.cursor.source}');
-          return;
-        }
-
-        _addLog(
-            'Host active sync route: local/offline. LAN is disabled and Direct is not configured; no sync transport will run.');
-        return;
-      }
-
-      final transport = effectiveTransport;
-      final engine = transport == 'direct'
-          ? UnifiedSyncFactory.directEngine(store)
-          : transport == 'lan'
-              ? UnifiedSyncFactory.lanEngine(store)
-              : identity.isDirectEnabled
-                  ? UnifiedSyncFactory.directEngine(store)
-                  : UnifiedSyncFactory.lanEngine(store);
-      final result = await engine.syncNow(onProgress: (value, label) {
-        _setStatus('Sync: $label', progress: 0.84 + 0.10 * value);
-        _addLog('Sync progress ${(value * 100).toStringAsFixed(0)}% $label');
-      });
-      _addLog(
-          'Sync result ok=${result.ok} message=${result.message} cursor=${result.cursor.value} source=${result.cursor.source}');
+      _addLog('Stress Lab network isolation: no LAN/Direct engine was started. '
+          'pendingQueue=${store.pendingSyncQueue.length} '
+          'pendingChanges=${store.pendingSyncChanges.length}');
     });
     _addLog(_snapshotLine('AFTER_SYNC'));
   }
@@ -1791,188 +1785,198 @@ class _StressLabPageState extends State<StressLabPage> {
   }
 
   Future<void> _runAuthSurfaceBody() async {
-    final originalCache = AccountAuthCache.load();
-    try {
-      final authService = AccountAuthService(client: _buildAuthProbeClient());
-      final loginResult = await authService.login(
-        username: 'admin@ventio',
-        password: 'stress123',
-      );
-      _auditCheck(
-        'LoginGatePage',
-        'Online login success path',
-        loginResult.ok &&
-            loginResult.accountType == 'platform_admin' &&
-            loginResult.accountToken.isNotEmpty &&
-            loginResult.adminToken.isNotEmpty,
-        'Online login returns a platform admin session with both tokens.',
-        'Online login probe did not return a complete platform admin session.',
-      );
-      final platformAdminCache = await AccountAuthService.cacheOnlineResult(
-        loginResult,
-        mode: 'login',
-      );
-      _auditCheck(
-        'LoginGatePage',
-        'Platform admin unlock',
-        platformAdminCache.accountType == 'platform_admin' &&
-            platformAdminCache.loginName.contains('@') &&
-            platformAdminCache.storeSlug == 'ventio',
-        'Platform admin cache can route to the admin dashboard.',
-        'Platform admin cache did not look ready for the admin dashboard.',
-      );
-      final sessionResult = await authService.refreshSession(
-        accountToken: platformAdminCache.accountToken,
-      );
-      _auditCheck(
-        'MainShell',
-        'Session refresh and routing readiness',
-        sessionResult.ok &&
-            sessionResult.accountType == 'platform_admin' &&
-            sessionResult.storeId.startsWith('ST-') &&
-            sessionResult.branchId.startsWith('BR-'),
-        'Main shell has a refreshed platform-admin session to work with.',
-        'Main shell session refresh did not return the expected platform-admin data.',
-      );
-      final subscribersResult = await authService.fetchAdminSubscribers(
-        adminToken: _stressAuthAccessToken(platformAdminCache),
-      );
-      _auditCheck(
-        'PlatformAdminDashboardPage',
-        'Subscribers surface available',
-        subscribersResult.ok &&
-            subscribersResult.subscribers.length >= 2 &&
-            subscribersResult.summary.isNotEmpty,
-        'Platform admin dashboard can load subscriber data.',
-        'Platform admin dashboard did not receive subscriber data.',
-      );
-      _auditCheck(
-        'AdminSubscribersPage',
-        'Subscriber rows and filters',
-        subscribersResult.subscribers
-                .any((item) => item.subscriptionStatus == 'active') &&
-            subscribersResult.subscribers
-                .any((item) => item.subscriptionStatus == 'trial'),
-        'Admin subscribers page has active and trial records to filter and display.',
-        'Admin subscribers page is missing the expected subscriber mix.',
-      );
-      final updateResult = await authService.updateAdminSubscriber(
-        adminToken: _stressAuthAccessToken(platformAdminCache),
-        subscriber: subscribersResult.subscribers.first,
-        username: 'admin',
-        fullName: 'Platform Admin Updated',
-        storeName: 'Ventio Platform',
-        storeSlug: 'ventio',
-        accountStatus: 'active',
-        plan: 'pro',
-        subscriptionStatus: 'active',
-        devicesLimit: 12,
-        directSyncEnabled: true,
-        trialEndsAt: DateTime.now().add(const Duration(days: 21)),
-      );
-      _auditCheck(
-        'AdminSubscribersPage',
-        'Subscriber edit/save path',
-        updateResult.ok,
-        'Admin subscriber edit request succeeds through the service layer.',
-        'Admin subscriber edit request failed in the service layer.',
-      );
-      final deleteResult = await authService.deleteAdminSubscriber(
-        adminToken: _stressAuthAccessToken(platformAdminCache),
-        subscriber: subscribersResult.subscribers.last,
-      );
-      _auditCheck(
-        'AdminSubscribersPage',
-        'Subscriber delete path',
-        deleteResult.ok,
-        'Admin subscriber delete request succeeds through the service layer.',
-        'Admin subscriber delete request failed in the service layer.',
-      );
+    // Authentication probes must remain entirely in memory. Persisting their
+    // synthetic tokens would temporarily replace the real Store Owner session
+    // and can survive an application crash.
+    final authService = AccountAuthService(client: _buildAuthProbeClient());
+    final loginResult = await authService.login(
+      username: 'admin@ventio',
+      password: 'stress123',
+    );
+    _auditCheck(
+      'LoginGatePage',
+      'Online login success path',
+      loginResult.ok &&
+          loginResult.accountType == 'platform_admin' &&
+          loginResult.accountToken.isNotEmpty &&
+          loginResult.adminToken.isNotEmpty,
+      'Online login returns a platform admin session with both tokens.',
+      'Online login probe did not return a complete platform admin session.',
+    );
+    final platformAdminCache = _stressAuthCache(
+      mode: 'login',
+      accountType: loginResult.accountType,
+      storeSlug: loginResult.storeSlug,
+      storeName: loginResult.storeName,
+      username: loginResult.username,
+      loginName: loginResult.loginName,
+      directSyncEnabled: loginResult.directSyncEnabled,
+      adminToken: loginResult.adminToken,
+      accountToken: loginResult.accountToken,
+      subscriptionStatus: loginResult.subscriptionStatus,
+    );
+    _auditCheck(
+      'LoginGatePage',
+      'Platform admin unlock',
+      platformAdminCache.accountType == 'platform_admin' &&
+          platformAdminCache.loginName.contains('@') &&
+          platformAdminCache.storeSlug == 'ventio',
+      'Platform admin cache can route to the admin dashboard.',
+      'Platform admin cache did not look ready for the admin dashboard.',
+    );
+    final sessionResult = await authService.refreshSession(
+      accountToken: platformAdminCache.accountToken,
+    );
+    _auditCheck(
+      'MainShell',
+      'Session refresh and routing readiness',
+      sessionResult.ok &&
+          sessionResult.accountType == 'platform_admin' &&
+          sessionResult.storeId.startsWith('ST-') &&
+          sessionResult.branchId.startsWith('BR-'),
+      'Main shell has a refreshed platform-admin session to work with.',
+      'Main shell session refresh did not return the expected platform-admin data.',
+    );
+    final subscribersResult = await authService.fetchAdminSubscribers(
+      adminToken: _stressAuthAccessToken(platformAdminCache),
+    );
+    _auditCheck(
+      'PlatformAdminDashboardPage',
+      'Subscribers surface available',
+      subscribersResult.ok &&
+          subscribersResult.subscribers.length >= 2 &&
+          subscribersResult.summary.isNotEmpty,
+      'Platform admin dashboard can load subscriber data.',
+      'Platform admin dashboard did not receive subscriber data.',
+    );
+    _auditCheck(
+      'AdminSubscribersPage',
+      'Subscriber rows and filters',
+      subscribersResult.subscribers
+              .any((item) => item.subscriptionStatus == 'active') &&
+          subscribersResult.subscribers
+              .any((item) => item.subscriptionStatus == 'trial'),
+      'Admin subscribers page has active and trial records to filter and display.',
+      'Admin subscribers page is missing the expected subscriber mix.',
+    );
+    final updateResult = await authService.updateAdminSubscriber(
+      adminToken: _stressAuthAccessToken(platformAdminCache),
+      subscriber: subscribersResult.subscribers.first,
+      username: 'admin',
+      fullName: 'Platform Admin Updated',
+      storeName: 'Ventio Platform',
+      storeSlug: 'ventio',
+      accountStatus: 'active',
+      plan: 'pro',
+      subscriptionStatus: 'active',
+      devicesLimit: 12,
+      directSyncEnabled: true,
+      trialEndsAt: DateTime.now().add(const Duration(days: 21)),
+    );
+    _auditCheck(
+      'AdminSubscribersPage',
+      'Subscriber edit/save path',
+      updateResult.ok,
+      'Admin subscriber edit request succeeds through the service layer.',
+      'Admin subscriber edit request failed in the service layer.',
+    );
+    final deleteResult = await authService.deleteAdminSubscriber(
+      adminToken: _stressAuthAccessToken(platformAdminCache),
+      subscriber: subscribersResult.subscribers.last,
+    );
+    _auditCheck(
+      'AdminSubscribersPage',
+      'Subscriber delete path',
+      deleteResult.ok,
+      'Admin subscriber delete request succeeds through the service layer.',
+      'Admin subscriber delete request failed in the service layer.',
+    );
 
-      final registerResult = await authService.register(
-        username: 'owner',
-        password: 'stress123',
-        fullName: 'Store Owner',
-        storeName: 'stresslab',
-      );
-      _auditCheck(
-        'LoginGatePage',
-        'Initial register path',
-        registerResult.ok &&
-            registerResult.accountType == 'store_owner' &&
-            registerResult.storeSlug == 'stresslab',
-        'Registration returns a store-owner session for the login gate.',
-        'Registration did not return a valid store-owner session.',
-      );
-      final storeOwnerCache = await AccountAuthService.cacheOnlineResult(
-        registerResult,
-        mode: 'registered_local',
-      );
-      _auditCheck(
-        'LoginGatePage',
-        'Store owner unlock',
-        storeOwnerCache.accountType == 'store_owner' &&
-            storeOwnerCache.mode == 'registered_local' &&
-            storeOwnerCache.storeSlug == 'stresslab' &&
-            storeOwnerCache.storeSlug != 'ventio',
-        'Store owner cache can route to the store dashboard.',
-        'Store owner cache did not look ready for the store dashboard.',
-      );
-      final passwordResult = await authService.changePassword(
-        accountToken: storeOwnerCache.accountToken,
-        currentPassword: 'stress123',
-        newPassword: 'stress456',
-      );
-      _auditCheck(
-        'StoreAccountDashboardPage',
-        'Password update flow',
-        passwordResult.ok &&
-            passwordResult.accountToken.isNotEmpty &&
-            passwordResult.adminToken.isNotEmpty,
-        'Store account dashboard can complete the password change flow.',
-        'Store account dashboard password change flow did not complete.',
-      );
-      final ownerProfileResult = await authService.updateOwnerProfile(
-        accountToken: passwordResult.accountToken,
-        username: 'owner',
-        fullName: 'Stress Lab Owner',
-        newPassword: 'stress789',
-      );
-      _auditCheck(
-        'StoreAccountDashboardPage',
-        'Owner profile update flow',
-        ownerProfileResult.ok &&
-            ownerProfileResult.loginName.contains('@') &&
-            ownerProfileResult.accountToken.isNotEmpty,
-        'Store account dashboard can push owner profile updates.',
-        'Store account dashboard owner profile update did not complete.',
-      );
-      _auditCheck(
-        'StoreAccountDashboardPage',
-        'Recovery flag readiness',
-        storeOwnerCache.directSyncEnabled &&
-            storeOwnerCache.accountToken.isNotEmpty,
-        'Store account dashboard can expose recovery actions.',
-        'Store account dashboard still lacks recovery-ready cache data.',
-      );
-      _auditCheck(
-        'MainShell',
-        'Navigation and identity readiness',
-        widget.store.appIdentity.deviceId.trim().isNotEmpty &&
-            widget.store.appIdentity.storeId.trim().isNotEmpty &&
-            widget.store.appIdentity.branchId.trim().isNotEmpty &&
-            widget.store.canViewMaintenance &&
-            widget.store.canViewSettings,
-        'Main shell has a valid device/store identity and navigation flags.',
-        'Main shell still lacks part of the identity or navigation state.',
-      );
-    } finally {
-      if (originalCache == null) {
-        await AccountAuthCache.clear();
-      } else {
-        await AccountAuthCache.save(originalCache);
-      }
-    }
+    final registerResult = await authService.register(
+      username: 'owner',
+      password: 'stress123',
+      fullName: 'Store Owner',
+      storeName: 'stresslab',
+    );
+    _auditCheck(
+      'LoginGatePage',
+      'Initial register path',
+      registerResult.ok &&
+          registerResult.accountType == 'store_owner' &&
+          registerResult.storeSlug == 'stresslab',
+      'Registration returns a store-owner session for the login gate.',
+      'Registration did not return a valid store-owner session.',
+    );
+    final storeOwnerCache = _stressAuthCache(
+      mode: 'registered_local',
+      accountType: registerResult.accountType,
+      storeSlug: registerResult.storeSlug,
+      storeName: registerResult.storeName,
+      username: registerResult.username,
+      loginName: registerResult.loginName,
+      directSyncEnabled: registerResult.directSyncEnabled,
+      adminToken: registerResult.adminToken,
+      accountToken: registerResult.accountToken,
+      subscriptionStatus: registerResult.subscriptionStatus,
+    );
+    _auditCheck(
+      'LoginGatePage',
+      'Store owner unlock',
+      storeOwnerCache.accountType == 'store_owner' &&
+          storeOwnerCache.mode == 'registered_local' &&
+          storeOwnerCache.storeSlug == 'stresslab' &&
+          storeOwnerCache.storeSlug != 'ventio',
+      'Store owner cache can route to the store dashboard.',
+      'Store owner cache did not look ready for the store dashboard.',
+    );
+    final passwordResult = await authService.changePassword(
+      accountToken: storeOwnerCache.accountToken,
+      currentPassword: 'stress123',
+      newPassword: 'stress456',
+    );
+    _auditCheck(
+      'StoreAccountDashboardPage',
+      'Password update flow',
+      passwordResult.ok &&
+          passwordResult.accountToken.isNotEmpty &&
+          passwordResult.adminToken.isNotEmpty,
+      'Store account dashboard can complete the password change flow.',
+      'Store account dashboard password change flow did not complete.',
+    );
+    final ownerProfileResult = await authService.updateOwnerProfile(
+      accountToken: passwordResult.accountToken,
+      username: 'owner',
+      fullName: 'Stress Lab Owner',
+      newPassword: 'stress789',
+    );
+    _auditCheck(
+      'StoreAccountDashboardPage',
+      'Owner profile update flow',
+      ownerProfileResult.ok &&
+          ownerProfileResult.loginName.contains('@') &&
+          ownerProfileResult.accountToken.isNotEmpty,
+      'Store account dashboard can push owner profile updates.',
+      'Store account dashboard owner profile update did not complete.',
+    );
+    _auditCheck(
+      'StoreAccountDashboardPage',
+      'Recovery flag readiness',
+      storeOwnerCache.directSyncEnabled &&
+          storeOwnerCache.accountToken.isNotEmpty,
+      'Store account dashboard can expose recovery actions.',
+      'Store account dashboard still lacks recovery-ready cache data.',
+    );
+    _auditCheck(
+      'MainShell',
+      'Navigation and identity readiness',
+      widget.store.appIdentity.deviceId.trim().isNotEmpty &&
+          widget.store.appIdentity.storeId.trim().isNotEmpty &&
+          widget.store.appIdentity.branchId.trim().isNotEmpty &&
+          widget.store.canViewMaintenance &&
+          widget.store.canViewSettings,
+      'Main shell has a valid device/store identity and navigation flags.',
+      'Main shell still lacks part of the identity or navigation state.',
+    );
   }
 
   Future<void> _runDeviceToolsScenario() async {
@@ -2155,43 +2159,27 @@ class _StressLabPageState extends State<StressLabPage> {
         'Local backup settings did not roundtrip correctly.',
       );
 
-      final directUpdated = originalDirect.copyWith(
-        autoSyncEnabled: !originalDirect.autoSyncEnabled,
-        intervalSeconds: originalDirect.intervalSeconds ==
-                VpsControlPlaneSettings.maxIntervalSeconds
-            ? VpsControlPlaneSettings.minIntervalSeconds
-            : originalDirect.intervalSeconds + 1,
-      );
-      await directUpdated.save();
       final directReloaded = VpsControlPlaneSettings.load();
       _auditCheck(
         'SettingsPage',
-        'Direct sync settings',
+        'Direct sync settings read safety',
         directReloaded.apiBaseUrl.trim().isNotEmpty &&
-            directReloaded.autoSyncEnabled == directUpdated.autoSyncEnabled &&
-            directReloaded.intervalSeconds == directUpdated.intervalSeconds,
-        'Settings can persist direct sync preferences.',
-        'Direct sync settings did not roundtrip correctly.',
+            directReloaded.autoSyncEnabled == originalDirect.autoSyncEnabled &&
+            directReloaded.intervalSeconds == originalDirect.intervalSeconds,
+        'Settings can inspect Direct preferences without modifying them.',
+        'Settings could not read the current Direct preferences.',
       );
 
-      final lanUpdated = originalLan.copyWith(
-        autoSyncEnabled: !originalLan.autoSyncEnabled,
-        hostModeEnabled: originalLan.hostModeEnabled,
-        setupComplete: originalLan.setupComplete,
-        mode: originalLan.mode,
-        secret: originalLan.secret,
-      );
-      await lanUpdated.save();
       final lanReloaded = LanSyncSettings.load();
       _auditCheck(
         'SettingsPage',
-        'LAN sync settings',
-        lanReloaded.host.trim() == lanUpdated.host.trim() &&
-            lanReloaded.port == lanUpdated.port &&
-            lanReloaded.autoSyncEnabled == lanUpdated.autoSyncEnabled &&
-            lanReloaded.mode == lanUpdated.mode,
-        'Settings can persist LAN sync preferences.',
-        'LAN sync settings did not roundtrip correctly.',
+        'LAN sync settings read safety',
+        lanReloaded.host.trim() == originalLan.host.trim() &&
+            lanReloaded.port == originalLan.port &&
+            lanReloaded.autoSyncEnabled == originalLan.autoSyncEnabled &&
+            lanReloaded.mode == originalLan.mode,
+        'Settings can inspect LAN preferences without modifying them.',
+        'Settings could not read the current LAN preferences.',
       );
 
       final barcodeUpdated = originalBarcode.copyWith(
@@ -2214,8 +2202,6 @@ class _StressLabPageState extends State<StressLabPage> {
     } finally {
       await store.updateStoreProfile(originalProfile);
       await LocalAutoBackupService.saveSettings(originalAutoBackup);
-      await originalDirect.save();
-      await originalLan.save();
       await BarcodeFeedbackService.saveSettings(originalBarcode);
     }
   }
@@ -2292,99 +2278,56 @@ class _StressLabPageState extends State<StressLabPage> {
   }
 
   Future<void> _runSyncSetupSurfaceBody() async {
-    final originalIdentity = store.appIdentity;
-    final originalDirect = VpsControlPlaneSettings.load();
-    final originalLan = LanSyncSettings.load();
-    final originalIdentityJson =
-        jsonEncode(originalIdentity.copyWith().toJson());
-
+    final direct = VpsControlPlaneSettings.load();
+    final lan = LanSyncSettings.load();
+    final probeClient = _buildDirectProbeClient();
+    late final http.Response probeResponse;
     try {
-      final directUpdated = originalDirect.copyWith(
-        autoSyncEnabled: !originalDirect.autoSyncEnabled,
-        intervalSeconds: originalDirect.intervalSeconds ==
-                VpsControlPlaneSettings.maxIntervalSeconds
-            ? VpsControlPlaneSettings.minIntervalSeconds
-            : originalDirect.intervalSeconds + 1,
-      );
-      await directUpdated.save();
-      final directReloaded = VpsControlPlaneSettings.load();
-
-      final lanUpdated = originalLan.copyWith(
-        autoSyncEnabled: !originalLan.autoSyncEnabled,
-        hostModeEnabled: originalLan.hostModeEnabled,
-        setupComplete: originalLan.setupComplete,
-      );
-      await lanUpdated.save();
-      final lanReloaded = LanSyncSettings.load();
-
-      final probeIdentity = originalIdentity.copyWith(
-        storeId: 'ST-PRB001',
-        branchId: 'BR-PRB001',
-        deviceId: 'DV-PRB001',
-        deviceRole: DeviceRole.client,
-        syncMode: SyncMode.localOnly,
-        hostDeviceId: 'DV-PRB001',
-        deviceToken: 'device_probe_token',
-        activeSyncTransport: 'local',
-      );
-      await LocalDatabaseService.setString(
-        'app_identity_v1',
-        jsonEncode(probeIdentity.toJson()),
-      );
-      await store.refreshAfterDatabaseChange('app_identity_v1');
-      final directClaim = await UnifiedSyncFactory.directEngine(
-        store,
-        settings: const VpsControlPlaneSettings(
-          enabled: true,
-          apiBaseUrl: 'https://sync-probe.ventio.test',
-        ),
-        client: _buildDirectProbeClient(),
-      ).claimPairingCode('PAIR-12345');
-
-      _auditCheck(
-        'SyncSetupPage',
-        'Direct settings persistence',
-        directReloaded.apiBaseUrl.trim().isNotEmpty &&
-            directReloaded.autoSyncEnabled == directUpdated.autoSyncEnabled &&
-            directReloaded.intervalSeconds == directUpdated.intervalSeconds,
-        'Sync setup can persist direct settings changes.',
-        'Sync setup direct settings did not roundtrip correctly.',
-      );
-      _auditCheck(
-        'SyncSetupPage',
-        'Direct pairing probe',
-        directClaim.ok && directClaim.message.isNotEmpty,
-        'Sync setup can complete the simulated direct pairing claim.',
-        'Sync setup simulated direct pairing did not complete.',
-        warning: true,
-      );
-      _auditCheck(
-        'SyncSetupPage',
-        'LAN settings persistence',
-        lanReloaded.host.trim().isNotEmpty &&
-            lanReloaded.port == lanUpdated.port &&
-            lanReloaded.autoSyncEnabled == lanUpdated.autoSyncEnabled,
-        'Sync setup can persist LAN settings and QR-ready host details.',
-        'Sync setup LAN settings did not roundtrip correctly.',
-      );
-      _auditCheck(
-        'BarcodeScannerPage',
-        'QR scan entry point',
-        true,
-        BarcodeScannerPage.isSupportedPlatform || kIsWeb
-            ? 'Sync setup can route into the barcode scanner page when scanning a code.'
-            : 'Current desktop platform uses the fallback scanner screen as expected.',
-        'This check should always be available.',
+      probeResponse = await probeClient.post(
+        Uri.parse('https://sync-probe.ventio.test/api/sync/pairing/claim'),
+        headers: const {'Content-Type': 'application/json'},
+        body: jsonEncode(const {
+          'code': 'PAIR-12345',
+          'deviceId': 'DV-PRB001',
+        }),
       );
     } finally {
-      await LocalDatabaseService.setString(
-        'app_identity_v1',
-        originalIdentityJson,
-      );
-      await store.refreshAfterDatabaseChange('app_identity_v1');
-      await originalDirect.save();
-      await originalLan.save();
+      probeClient.close();
     }
+    final directClaimBody =
+        jsonDecode(probeResponse.body) as Map<String, dynamic>;
+
+    _auditCheck(
+      'SyncSetupPage',
+      'Direct settings read safety',
+      direct.apiBaseUrl.trim().isNotEmpty,
+      'Sync setup can read Direct settings without modifying Store identity.',
+      'Sync setup Direct settings are unavailable.',
+    );
+    _auditCheck(
+      'SyncSetupPage',
+      'Isolated Direct pairing contract',
+      probeResponse.statusCode == 200 && directClaimBody['ok'] == true,
+      'The simulated Direct pairing contract completed without touching the real device or network.',
+      'The isolated Direct pairing contract did not complete.',
+      warning: true,
+    );
+    _auditCheck(
+      'SyncSetupPage',
+      'LAN settings read safety',
+      lan.host.trim().isNotEmpty && lan.port > 0,
+      'Sync setup can inspect LAN settings without modifying pairing credentials.',
+      'Sync setup LAN settings are unavailable.',
+    );
+    _auditCheck(
+      'BarcodeScannerPage',
+      'QR scan entry point',
+      true,
+      BarcodeScannerPage.isSupportedPlatform || kIsWeb
+          ? 'Sync setup can route into the barcode scanner page when scanning a code.'
+          : 'Current desktop platform uses the fallback scanner screen as expected.',
+      'This check should always be available.',
+    );
   }
 
   Future<void> _runUsersPermissionsSurfaceScenario() async {
@@ -2419,43 +2362,49 @@ class _StressLabPageState extends State<StressLabPage> {
       isSystem: false,
     );
 
-    await store.addOrUpdateRole(tempRole);
-    await store.addOrUpdateUser(tempUser, password: 'stress-temp-123');
-    final savedRole = store.roleById(tempRole.id);
-    final savedUser =
-        store.users.where((user) => user.id == tempUser.id).toList();
-    _auditCheck(
-      'UsersPermissionsPage',
-      'Role and user creation',
-      savedRole != null &&
-          savedUser.isNotEmpty &&
-          savedRole.permissions.contains(AppPermission.productsView) &&
-          savedUser.first.roleId == tempRole.id,
-      'Users permissions can create and persist roles and users.',
-      'Users permissions did not persist the temporary role or user.',
-    );
+    try {
+      await store.addOrUpdateRole(tempRole);
+      await store.addOrUpdateUser(tempUser, password: 'stress-temp-123');
+      final savedRole = store.roleById(tempRole.id);
+      final savedUser =
+          store.users.where((user) => user.id == tempUser.id).toList();
+      _auditCheck(
+        'UsersPermissionsPage',
+        'Role and user creation',
+        savedRole != null &&
+            savedUser.isNotEmpty &&
+            savedRole.permissions.contains(AppPermission.productsView) &&
+            savedUser.first.roleId == tempRole.id,
+        'Users permissions can create and persist roles and users.',
+        'Users permissions did not persist the temporary role or user.',
+      );
 
-    await store.addOrUpdateRole(
-      tempRole.copyWith(
-        permissions: const <String>{
-          AppPermission.productsView,
-          AppPermission.customersView,
-          AppPermission.salesView,
-        },
-      ),
-    );
-    final updatedRole = store.roleById(tempRole.id);
-    _auditCheck(
-      'UsersPermissionsPage',
-      'Role updates',
-      updatedRole != null &&
-          updatedRole.permissions.contains(AppPermission.salesView),
-      'Users permissions can update role permissions.',
-      'Users permissions role update did not persist.',
-    );
-
-    await store.deleteUser(tempUser.id);
-    await store.deleteRole(tempRole.id);
+      await store.addOrUpdateRole(
+        tempRole.copyWith(
+          permissions: const <String>{
+            AppPermission.productsView,
+            AppPermission.customersView,
+            AppPermission.salesView,
+          },
+        ),
+      );
+      final updatedRole = store.roleById(tempRole.id);
+      _auditCheck(
+        'UsersPermissionsPage',
+        'Role updates',
+        updatedRole != null &&
+            updatedRole.permissions.contains(AppPermission.salesView),
+        'Users permissions can update role permissions.',
+        'Users permissions role update did not persist.',
+      );
+    } finally {
+      if (store.users.any((user) => user.id == tempUser.id)) {
+        await store.deleteUser(tempUser.id);
+      }
+      if (store.roleById(tempRole.id) != null) {
+        await store.deleteRole(tempRole.id);
+      }
+    }
     _auditCheck(
       'UsersPermissionsPage',
       'Cleanup and system account protection',
@@ -3650,6 +3599,7 @@ class _StressLabPageState extends State<StressLabPage> {
 
   Future<void> _runOneButtonSystemAudit() async {
     if (_running) return;
+    final protectedState = _captureProtectedState();
     setState(() {
       _running = true;
       _progress = 0;
@@ -4292,6 +4242,7 @@ class _StressLabPageState extends State<StressLabPage> {
           progress: 1);
     } finally {
       AppStore.setTraceSink(null);
+      _assertProtectedStateUnchanged(protectedState, 'system-audit');
       if (mounted) setState(() => _running = false);
     }
   }
